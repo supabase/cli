@@ -618,19 +618,19 @@ describe("migration repair target default warning", () => {
     },
   ] as const;
 
-  const runWith = (linked: boolean) => (selector: (typeof selectors)[number] | undefined) => {
-    setLinkedRefFile(tmp.current, linked);
-    const { layer, out } = setup(tmp.current, {
-      args: selector?.args ?? [],
-      noProjectId: true,
+  const runWith = (linked: boolean) => (selector: (typeof selectors)[number] | undefined) =>
+    Effect.andThen(setLinkedRefFile(tmp.current, linked), () => {
+      const { layer, out } = setup(tmp.current, {
+        args: selector?.args ?? [],
+        noProjectId: true,
+      });
+      return migrationRepair(
+        input({ versions: ["20240101000000"], status: "reverted", ...selector?.over }),
+      ).pipe(
+        Effect.provide(layer),
+        Effect.map(() => ({ stdout: out.stdoutText, stderr: out.stderrText })),
+      );
     });
-    return migrationRepair(
-      input({ versions: ["20240101000000"], status: "reverted", ...selector?.over }),
-    ).pipe(
-      Effect.provide(layer),
-      Effect.map(() => ({ stdout: out.stdoutText, stderr: out.stderrText })),
-    );
-  };
 
   it.effect(
     "warns on a bare run in a linked workdir and stays silent with every selector or when unlinked",

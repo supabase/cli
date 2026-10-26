@@ -1003,7 +1003,7 @@ describe("experimental stack start", () => {
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-uploads-" });
       yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
       yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "start-uploads"\n');
-      seedLegacyStateDecoys(root);
+      yield* seedLegacyStateDecoys(root);
       const excluded = ["auth", "realtime", "functions", "mail", "analytics", "pooler"];
       const fixture = fakeStack();
       const recorder = recordingFileSystem();

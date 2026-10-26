@@ -3,8 +3,8 @@ import { describe, expect, it } from "@effect/vitest";
 import { Data, Effect, Exit, FileSystem, Path, Schema } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import {
+  createTempHome,
   makeTempCliProject,
-  makeTempHome,
   runSupabaseEffect,
 } from "../../../../../tests/helpers/cli.ts";
 import { stackArtifactCacheRoot } from "../../../../../tests/helpers/stack-artifacts.ts";
@@ -87,7 +87,8 @@ describe("stack start Storage behind the API gateway (compiled e2e)", () => {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const http = yield* HttpClient.HttpClient;
-          const home = makeTempHome();
+          /* Left to the e2e cleanup drain, which disposes it with the stack project it serves. */
+          const home = yield* createTempHome;
           const project = yield* Effect.promise(() =>
             makeTempCliProject(`stack-storage-${runtime}-e2e-`),
           );

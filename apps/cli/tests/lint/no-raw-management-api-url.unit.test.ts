@@ -1,13 +1,10 @@
-import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { BunServices } from "@effect/platform-bun";
+import { Effect, FileSystem, Path, Schema } from "effect";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
-const oxlintBin = join(repoRoot, "node_modules/.bin/oxlint");
-const pluginPath = join(repoRoot, "tools/oxlint/supabase-plugin.js");
 
 const RULE_NAME = "no-raw-management-api-url";
 const RULE = `supabase/${RULE_NAME}`;
@@ -49,45 +46,74 @@ const allowed = {
   ].join("\n"),
 };
 
+const LintReport = Schema.Struct({
+  diagnostics: Schema.Array(Schema.Struct({ filename: Schema.String, code: Schema.String })),
+  number_of_files: Schema.Finite,
+});
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const decodeLintReport = Schema.decodeUnknownEffect(Schema.fromJsonString(LintReport));
+
 describe("no-raw-management-api-url", () => {
   let dir: string;
   let flaggedFiles: Set<string>;
   let lintedFiles: Set<string>;
 
-  beforeAll(() => {
-    dir = mkdtempSync(join(tmpdir(), "supabase-lint-rule-"));
-    mkdirSync(join(dir, "src"));
-    writeFileSync(
-      join(dir, ".oxlintrc.json"),
-      JSON.stringify({
-        jsPlugins: [pluginPath],
-        categories: { correctness: "off" },
-        rules: { [RULE]: "error" },
-      }),
-    );
-    for (const [name, source] of Object.entries({ ...flagged, ...allowed })) {
-      writeFileSync(join(dir, "src", name), `${source}\n`);
-    }
+  beforeAll(() =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const oxlintBin = path.join(repoRoot, "node_modules/.bin/oxlint");
+        const pluginPath = path.join(repoRoot, "tools/oxlint/supabase-plugin.js");
+        dir = yield* fs.makeTempDirectory({ prefix: "supabase-lint-rule-" });
+        yield* fs.makeDirectory(path.join(dir, "src"));
+        yield* fs.writeFileString(
+          path.join(dir, ".oxlintrc.json"),
+          yield* encodeJson({
+            jsPlugins: [pluginPath],
+            categories: { correctness: "off" },
+            rules: { [RULE]: "error" },
+          }),
+        );
+        for (const [name, source] of Object.entries({ ...flagged, ...allowed })) {
+          yield* fs.writeFileString(path.join(dir, "src", name), `${source}\n`);
+        }
 
-    const result = spawnSync(
-      oxlintBin,
-      ["--config", join(dir, ".oxlintrc.json"), "--format", "json", join(dir, "src")],
-      { encoding: "utf8" },
-    );
-    const report = JSON.parse(result.stdout) as {
-      diagnostics: { filename: string; code: string }[];
-      number_of_files: number;
-    };
-    flaggedFiles = new Set(
-      report.diagnostics.filter((d) => d.code.includes(RULE_NAME)).map((d) => basename(d.filename)),
-    );
-    lintedFiles = new Set(Object.keys({ ...flagged, ...allowed }));
-    expect(report.number_of_files).toBe(lintedFiles.size);
-  });
+        const stdout = yield* spawner.string(
+          ChildProcess.make(
+            oxlintBin,
+            [
+              "--config",
+              path.join(dir, ".oxlintrc.json"),
+              "--format",
+              "json",
+              path.join(dir, "src"),
+            ],
+            /* A plain child, not a process group: no process-group signals. */
+            { detached: false, stdin: "ignore", stderr: "ignore" },
+          ),
+        );
+        const report = yield* decodeLintReport(stdout);
+        flaggedFiles = new Set(
+          report.diagnostics
+            .filter((d) => d.code.includes(RULE_NAME))
+            .map((d) => path.basename(d.filename)),
+        );
+        lintedFiles = new Set(Object.keys({ ...flagged, ...allowed }));
+        expect(report.number_of_files).toBe(lintedFiles.size);
+      }).pipe(Effect.provide(BunServices.layer)),
+    ),
+  );
 
-  afterAll(() => {
-    rmSync(dir, { recursive: true, force: true });
-  });
+  afterAll(() =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.remove(dir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer)),
+    ),
+  );
 
   test.each(Object.keys(flagged))("flags %s", (name) => {
     expect(flaggedFiles.has(name)).toBe(true);

@@ -1774,14 +1774,14 @@ describe("db dump target default warning", () => {
     { label: "--project-ref", over: { projectRef: Option.some("flagflagflagflagflag") } },
   ] as const;
 
-  const runWith = (linked: boolean) => (selector: (typeof selectors)[number] | undefined) => {
-    setLinkedRefFile(tmp.current, linked);
-    const { layer, out } = setup({ conn: REMOTE_CONN, isLocal: false, workdir: tmp.current });
-    return dbDump(flags({ dryRun: true, ...selector?.over })).pipe(
-      Effect.provide(layer),
-      Effect.map(() => ({ stdout: out.stdoutText, stderr: out.stderrText })),
-    );
-  };
+  const runWith = (linked: boolean) => (selector: (typeof selectors)[number] | undefined) =>
+    Effect.andThen(setLinkedRefFile(tmp.current, linked), () => {
+      const { layer, out } = setup({ conn: REMOTE_CONN, isLocal: false, workdir: tmp.current });
+      return dbDump(flags({ dryRun: true, ...selector?.over })).pipe(
+        Effect.provide(layer),
+        Effect.map(() => ({ stdout: out.stdoutText, stderr: out.stderrText })),
+      );
+    });
 
   it.effect(
     "warns on a bare run in a linked workdir and stays silent with every selector or when unlinked",

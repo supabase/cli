@@ -70,20 +70,20 @@ describe("storage target default warning", () => {
   ];
 
   for (const { name, args } of leaves) {
-    const runWith = (linked: boolean) => (selector: (typeof selectors)[number] | undefined) => {
-      setLinkedRefFile(tempRoot.current, linked);
-      const argv = [...args, "--experimental", ...(selector?.args ?? [])];
-      const { layer, out } = setup(argv);
-      return Command.runWith(testRoot, { version: "0.0.0-test" })(argv).pipe(
-        Effect.exit,
-        Effect.provide(layer),
-        Effect.map((exit) => ({
-          stdout: out.stdoutText,
-          stderr: out.stderrText,
-          failure: describeFailure(exit),
-        })),
-      );
-    };
+    const runWith = (linked: boolean) => (selector: (typeof selectors)[number] | undefined) =>
+      Effect.andThen(setLinkedRefFile(tempRoot.current, linked), () => {
+        const argv = [...args, "--experimental", ...(selector?.args ?? [])];
+        const { layer, out } = setup(argv);
+        return Command.runWith(testRoot, { version: "0.0.0-test" })(argv).pipe(
+          Effect.exit,
+          Effect.provide(layer),
+          Effect.map((exit) => ({
+            stdout: out.stdoutText,
+            stderr: out.stderrText,
+            failure: describeFailure(exit),
+          })),
+        );
+      });
 
     it.effect(
       `${name} warns on a bare run in a linked workdir and stays silent with every selector or when unlinked`,

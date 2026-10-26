@@ -177,15 +177,17 @@ describe("link integration in stack mode", () => {
 
   it.effect("never reads or writes supabase/.temp and ignores a legacy link left there", () => {
     const { layer, workdir, accessed } = setup();
-    seedLegacyStateDecoys(workdir);
-    return Effect.gen(function* () {
-      yield* link(flags());
+    return Effect.andThen(
+      seedLegacyStateDecoys(workdir),
+      Effect.gen(function* () {
+        yield* link(flags());
 
-      const document = yield* readProjectLink(workdir);
-      expect(Option.map(document, (value) => value.project.ref)).toEqual(Option.some(VALID_REF));
-      expect(accessed.some((entry) => entry.includes(".link.json"))).toBe(true);
-      expect(legacyStateAccesses(accessed)).toEqual([]);
-    }).pipe(Effect.provide(layer));
+        const document = yield* readProjectLink(workdir);
+        expect(Option.map(document, (value) => value.project.ref)).toEqual(Option.some(VALID_REF));
+        expect(accessed.some((entry) => entry.includes(".link.json"))).toBe(true);
+        expect(legacyStateAccesses(accessed)).toEqual([]);
+      }).pipe(Effect.provide(layer)),
+    );
   });
 
   it.effect("keeps the link, its staged writes, and the stack lease out of version control", () => {

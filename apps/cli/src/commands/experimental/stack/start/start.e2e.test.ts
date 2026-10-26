@@ -16,9 +16,11 @@ import { ChildProcessSpawner } from "effect/process";
 import { parse as parseDotenv } from "dotenv";
 import { afterAll, afterEach, describe, expect, test } from "vitest";
 import {
-  makeTempHome,
+  createTempHome,
   runSupabaseEffect,
+  type SpawnedSupabase,
   spawnSupabase,
+  type TempHome,
 } from "../../../../../tests/helpers/cli.ts";
 
 const START_TIMEOUT_MS = 15 * 60_000;
@@ -162,22 +164,19 @@ const destroyStack = (home: string, stackId: string) =>
           }),
   );
 
-const waitForOutput = (
-  spawned: ReturnType<typeof spawnSupabase>,
-  pattern: RegExp,
-  timeoutMs: number,
-) =>
-  Effect.tryPromise({
-    try: () => spawned.waitForOutput(pattern, timeoutMs),
-    catch: (cause) =>
-      new StartE2eProcessError({
-        message: "stack logs follower did not produce live output",
-        cause,
-      }),
-  });
+const waitForOutput = (spawned: SpawnedSupabase, pattern: RegExp, timeoutMs: number) =>
+  spawned.waitForOutput(pattern, timeoutMs).pipe(
+    Effect.mapError(
+      (cause) =>
+        new StartE2eProcessError({
+          message: "stack logs follower did not produce live output",
+          cause,
+        }),
+    ),
+  );
 
 describe("stack start (compiled e2e)", () => {
-  let home: ReturnType<typeof makeTempHome> | undefined;
+  let home: TempHome | undefined;
   let projectDir: string | undefined;
   let stackId: string | undefined;
   let stackDestroyed = false;
@@ -214,11 +213,14 @@ describe("stack start (compiled e2e)", () => {
     if (projectDir !== undefined) {
       yield* remove(projectDir, { recursive: true, force: true });
     }
-    yield* Effect.try({
-      try: () => home?.[Symbol.dispose](),
-      catch: (cause) =>
-        new StartE2eProcessError({ message: "Failed to dispose temporary CLI home", cause }),
-    });
+    if (home !== undefined) {
+      yield* home.dispose.pipe(
+        Effect.mapError(
+          (cause) =>
+            new StartE2eProcessError({ message: "Failed to dispose temporary CLI home", cause }),
+        ),
+      );
+    }
     home = undefined;
     projectDir = undefined;
     stackId = undefined;
@@ -233,7 +235,7 @@ describe("stack start (compiled e2e)", () => {
     () =>
       runNode(
         Effect.gen(function* () {
-          home = makeTempHome();
+          home = yield* createTempHome;
           projectDir = yield* makeTempDirectory("/tmp/supabase-compiled-stack-start-e2e-");
           yield* makeDirectory(join(projectDir, "supabase"), { recursive: true });
           yield* writeText(join(projectDir, "supabase", "config.toml"), minimalConfig);
@@ -339,44 +341,30 @@ describe("stack start (compiled e2e)", () => {
 
           const followResult = yield* Effect.scoped(
             Effect.gen(function* () {
-              const followed = yield* Effect.acquireRelease(
-                Effect.try({
-                  try: () =>
-                    spawnSupabase(
-                      [
-                        "stack",
-                        "logs",
-                        "--follow",
-                        "--stack-id",
-                        idText,
-                        "--service",
-                        "database",
-                        "--output-format",
-                        "stream-json",
-                      ],
-                      {
-                        cwd: projectRoot,
-                        home: homeDir.dir,
-                        env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
-                        exitTimeoutMs: CLEANUP_TIMEOUT_MS,
-                      },
-                    ),
-                  catch: (cause) =>
+              /* The scope owns the follower: closing it SIGKILLs the group and awaits its exit. */
+              const followed = yield* spawnSupabase(
+                [
+                  "stack",
+                  "logs",
+                  "--follow",
+                  "--stack-id",
+                  idText,
+                  "--service",
+                  "database",
+                  "--output-format",
+                  "stream-json",
+                ],
+                {
+                  cwd: projectRoot,
+                  home: homeDir.dir,
+                  env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+                  exitTimeoutMs: CLEANUP_TIMEOUT_MS,
+                },
+              ).pipe(
+                Effect.mapError(
+                  (cause) =>
                     new StartE2eProcessError({ message: "failed to spawn logs follower", cause }),
-                }),
-                (spawned) =>
-                  Effect.sync(() => spawned.releaseOwned({ successOptOut: false })).pipe(
-                    Effect.flatMap(() => spawned.exitEffect(CLEANUP_TIMEOUT_MS)),
-                    Effect.asVoid,
-                    Effect.catchTag("CliHomeDisposeError", (cause) =>
-                      Effect.die(
-                        new StartE2eProcessError({
-                          message: "Follower reused the shared CLI home; disposal must not fail",
-                          cause,
-                        }),
-                      ),
-                    ),
-                  ),
+                ),
               );
               // History precedes the follow, whose start is the last printed record.
               yield* waitForOutput(
@@ -402,8 +390,8 @@ describe("stack start (compiled e2e)", () => {
                 /"type":"log-entry".*"source":"live"/u,
                 START_TIMEOUT_MS,
               );
-              yield* Effect.sync(() => followed.kill("SIGINT"));
-              return yield* followed.exitEffect(CLEANUP_TIMEOUT_MS);
+              yield* followed.kill("SIGINT");
+              return yield* followed.waitForExit(CLEANUP_TIMEOUT_MS);
             }),
           );
           expect(

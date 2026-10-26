@@ -1,8 +1,19 @@
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import process from "node:process";
-import { BunServices } from "@effect/platform-bun";
-import { Console, ConfigProvider, Deferred, Effect, Layer, Option, Stream } from "effect";
+import { BunPath, BunServices } from "@effect/platform-bun";
+import {
+  Console,
+  ConfigProvider,
+  DateTime,
+  Deferred,
+  Effect,
+  Layer,
+  Option,
+  Path,
+  Random,
+  Schema,
+  Stream,
+} from "effect";
 import type { CliProjectEnvironment, CliProjectPaths } from "@supabase/config";
 import { testRunEnvVar as stackTestRunEnvVar } from "@supabase/stack/internal/test-run-label";
 import { cliSettingsLayer } from "../../src/shared/config/cli-settings.layer.ts";
@@ -51,16 +62,33 @@ type OutputEvent = {
 // created on disk, so a test combining it with a real FileSystem layer can't collide
 // with another run's files. Tests that read/write real files under homeDir should use
 // `useTempWorkdir` in `command-mocks.ts` instead.
-const defaultTestHomeDir = join(
-  tmpdir(),
-  `supabase-cli-test-home-${process.pid.toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+const { defaultTestHomeDir, defaultTestConfigDir } = Effect.runSync(
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const suffix = (yield* Random.next).toString(36).slice(2, 8);
+    const homeDir = path.join(
+      tmpdir(),
+      `supabase-cli-test-home-${process.pid.toString(36)}-${suffix}`,
+    );
+    return { defaultTestHomeDir: homeDir, defaultTestConfigDir: path.join(homeDir, ".supabase") };
+  }).pipe(Effect.provide(BunPath.layer)),
 );
 
-export function mockBrowser(): Layer.Layer<Browser> {
-  return Layer.succeed(Browser, {
-    open: () => Effect.void,
-  });
-}
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+/* JSON.stringify returns undefined for undefined, functions and symbols; those print "undefined". */
+const jsonText = (value: unknown): Effect.Effect<string> =>
+  encodeJson(value).pipe(
+    Effect.catch((error) =>
+      value === undefined || typeof value === "function" || typeof value === "symbol"
+        ? Effect.succeed("undefined")
+        : Effect.die(error),
+    ),
+  );
+
+export const mockBrowser: Layer.Layer<Browser> = Layer.succeed(Browser, {
+  open: () => Effect.void,
+});
 
 export function mockStdin(isTTY: boolean, pipedInput?: string | Uint8Array): Layer.Layer<Stdin> {
   const pipedBytes =
@@ -286,25 +314,25 @@ export function mockOutput(
           };
         }),
       event: (event) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           events.push(event as OutputEvent);
           messages.push({
             type: "info",
             message:
               event.type === "log-entry"
                 ? `[${event.service}] ${event.line}`
-                : JSON.stringify(event),
+                : yield* jsonText(event),
           });
         }),
       result: (data: unknown) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           if (opts.format === "json") {
-            rawChunks.push({ text: `${JSON.stringify(data)}\n`, stream: "stdout" });
+            rawChunks.push({ text: `${yield* jsonText(data)}\n`, stream: "stdout" });
           } else if (opts.format === "stream-json") {
             events.push({
               type: "result",
               data,
-              timestamp: new Date().toISOString(),
+              timestamp: DateTime.formatIso(DateTime.nowUnsafe()),
             });
           }
         }),
@@ -534,7 +562,7 @@ export function mockTelemetryRuntime(
   return Layer.succeed(
     TelemetryRuntime,
     TelemetryRuntime.of({
-      configDir: opts.configDir ?? join(defaultTestHomeDir, ".supabase"),
+      configDir: opts.configDir ?? defaultTestConfigDir,
       consent: opts.consent ?? "granted",
       deviceId: opts.deviceId ?? "test-device-id",
       sessionId: opts.sessionId ?? "test-session-id",
@@ -549,20 +577,34 @@ export function mockTelemetryRuntime(
   );
 }
 
-function applyProcessEnv(values: Readonly<Record<string, string | undefined>>) {
-  const snapshot = { ...process.env };
+function applyProcessEnv(
+  env: NodeJS.ProcessEnv,
+  values: Readonly<Record<string, string | undefined>>,
+) {
+  const snapshot = { ...env };
 
-  for (const key of Object.keys(process.env)) {
-    delete process.env[key];
+  for (const key of Object.keys(env)) {
+    delete env[key];
   }
 
   for (const [key, value] of Object.entries(values)) {
     if (value !== undefined) {
-      process.env[key] = value;
+      env[key] = value;
     }
   }
 
   return snapshot;
+}
+
+/* Keeps the ambient stack test-run label unless `values` pins its own. */
+function withAmbientTestRun(
+  env: NodeJS.ProcessEnv,
+  values: Readonly<Record<string, string | undefined>>,
+): Readonly<Record<string, string | undefined>> {
+  const ambientTestRun = env[stackTestRunEnvVar];
+  return stackTestRunEnvVar in values || ambientTestRun === undefined
+    ? values
+    : { [stackTestRunEnvVar]: ambientTestRun, ...values };
 }
 
 export function processEnvLayer(
@@ -571,12 +613,7 @@ export function processEnvLayer(
   return ConfigProvider.layer(
     Effect.acquireRelease(
       Effect.sync(() => {
-        const ambientTestRun = process.env[stackTestRunEnvVar];
-        const snapshot = applyProcessEnv(
-          stackTestRunEnvVar in values || ambientTestRun === undefined
-            ? values
-            : { [stackTestRunEnvVar]: ambientTestRun, ...values },
-        );
+        const snapshot = applyProcessEnv(process.env, withAmbientTestRun(process.env, values));
         return {
           provider: ConfigProvider.fromEnvRecord(process.env, { preserveEmptyStrings: true }),
           snapshot,
@@ -584,7 +621,7 @@ export function processEnvLayer(
       }),
       ({ snapshot }) =>
         Effect.sync(() => {
-          applyProcessEnv(snapshot);
+          applyProcessEnv(process.env, snapshot);
         }),
     ).pipe(Effect.map(({ provider }) => provider)),
   );
@@ -660,10 +697,10 @@ function mockProjectLinkState(
   );
 }
 
-export function emptyEnv() {
+export function emptyEnv(env: Readonly<Record<string, string | undefined>> = {}) {
   const runtimeInfoLayer = mockRuntimeInfo();
   const cliProjectContextLayer = mockCliProjectContext();
-  const envLayer = processEnvLayer();
+  const envLayer = processEnvLayer(env);
   const cliProjectHomeLayer = mockCliProjectHome();
   const projectLinkStateLayer = mockProjectLinkState();
   const analytics = mockAnalytics();

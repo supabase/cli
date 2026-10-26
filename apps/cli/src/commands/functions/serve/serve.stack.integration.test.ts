@@ -443,7 +443,7 @@ describe("experimental Stack Functions serve", () => {
           `${root}/supabase/config.toml`,
           'project_id = "functions-no-legacy-state"\n\n[edge_runtime]\nenabled = true\n',
         );
-        seedLegacyStateDecoys(root);
+        yield* seedLegacyStateDecoys(root);
         const state = yield* fixture({ standaloneProjectRoot: root });
         const run = yield* functionsServeStack(flags()).pipe(
           Effect.provide(state.layer),

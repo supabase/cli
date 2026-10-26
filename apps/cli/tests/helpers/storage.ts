@@ -1,8 +1,5 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-
 import { BunServices } from "@effect/platform-bun";
-import { ConfigProvider, Effect, Layer, Option, Redacted, Stream } from "effect";
+import { ConfigProvider, Effect, FileSystem, Layer, Option, Path, Redacted, Stream } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import type {
@@ -316,15 +313,28 @@ export function buildStorageStackApi(
  * Management API factory for api-keys.
  */
 export function setupStorage(workdir: string, opts: SetupStorageOptions) {
-  if (opts.toml !== undefined) {
-    mkdirSync(join(workdir, "supabase"), { recursive: true });
-    writeFileSync(join(workdir, "supabase", "config.toml"), opts.toml);
-  }
-  for (const [rel, content] of Object.entries(opts.files ?? {})) {
-    const abs = join(workdir, rel);
-    mkdirSync(dirname(abs), { recursive: true });
-    writeFileSync(abs, content);
-  }
+  /* The fixture files are written once per setup, on first use: later acquisitions of the
+     returned layers never rewrite what a test changed since. */
+  const writeWorkdirFiles = Effect.runSync(
+    Effect.cached(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        if (opts.toml !== undefined) {
+          yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+          yield* fs.writeFileString(path.join(workdir, "supabase", "config.toml"), opts.toml);
+        }
+        for (const [rel, content] of Object.entries(opts.files ?? {})) {
+          const abs = path.join(workdir, rel);
+          yield* fs.makeDirectory(path.dirname(abs), { recursive: true });
+          yield* fs.writeFileString(abs, content);
+        }
+      }),
+    ),
+  );
+  const workdirFiles = Layer.effectDiscard(writeWorkdirFiles).pipe(
+    Layer.provide(BunServices.layer),
+  );
 
   const out = mockOutput({
     format: opts.format ?? "text",
@@ -482,7 +492,7 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
             ConfigProvider.fromEnvRecord(process.env, { preserveEmptyStrings: true }),
           ),
         ]),
-  );
+  ).pipe(Layer.provide(workdirFiles));
 
   return {
     layer,

@@ -455,18 +455,18 @@ describe("migration list target default warning", () => {
     },
   ] as const;
 
-  const runWith = (linked: boolean) => (selector: (typeof selectors)[number] | undefined) => {
-    setLinkedRefFile(tmp.current, linked);
-    const { layer, out } = setup(tmp.current, {
-      args: selector?.args ?? [],
-      remote: ["20240101000000"],
-      noProjectId: true,
+  const runWith = (linked: boolean) => (selector: (typeof selectors)[number] | undefined) =>
+    Effect.andThen(setLinkedRefFile(tmp.current, linked), () => {
+      const { layer, out } = setup(tmp.current, {
+        args: selector?.args ?? [],
+        remote: ["20240101000000"],
+        noProjectId: true,
+      });
+      return migrationList(flags(selector?.over)).pipe(
+        Effect.provide(layer),
+        Effect.map(() => ({ stdout: out.stdoutText, stderr: out.stderrText })),
+      );
     });
-    return migrationList(flags(selector?.over)).pipe(
-      Effect.provide(layer),
-      Effect.map(() => ({ stdout: out.stdoutText, stderr: out.stderrText })),
-    );
-  };
 
   it.effect(
     "warns on a bare run in a linked workdir and stays silent with every selector or when unlinked",

@@ -3075,7 +3075,7 @@ describe("stack backend", () => {
           { method: "POST", match: "/storage/v1/object/", body: {} },
         ],
       });
-      seedLegacyStateDecoys(tmp.current);
+      yield* seedLegacyStateDecoys(tmp.current);
 
       yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer));
 

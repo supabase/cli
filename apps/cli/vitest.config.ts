@@ -1,14 +1,16 @@
-import { readFileSync } from "node:fs";
+import { BunFileSystem } from "@effect/platform-bun";
+import { Config, Effect, FileSystem, Schema } from "effect";
 import { defaultClientConditions, defaultServerConditions } from "vite";
 import { configDefaults, defineConfig } from "vitest/config";
 import { E2eSequencer } from "./tests/e2e-sequencer.ts";
 
 /** E2e files that run concurrently; each stack project picks free ports and its own project id. */
-const e2eWorkers = Number(process.env.SUPABASE_E2E_WORKERS || "1");
+const e2eWorkersSetting = Effect.runSync(
+  Config.String("SUPABASE_E2E_WORKERS").pipe(Config.withDefault("1")),
+);
+const e2eWorkers = Number(e2eWorkersSetting);
 if (!Number.isSafeInteger(e2eWorkers) || e2eWorkers < 1) {
-  throw new Error(
-    `SUPABASE_E2E_WORKERS must be a positive integer, got "${process.env.SUPABASE_E2E_WORKERS}"`,
-  );
+  throw new Error(`SUPABASE_E2E_WORKERS must be a positive integer, got "${e2eWorkersSetting}"`);
 }
 
 /**
@@ -27,6 +29,15 @@ const E2E_EXCLUSIVE_FILES = [
   "src/commands/db/start/start.roles.e2e.test.ts",
 ];
 
+const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
+
+const dockerfileModule = (filePath: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const text = new TextDecoder("utf-8", { ignoreBOM: true }).decode(yield* fs.readFile(filePath));
+    return `export default ${yield* encodeJsonString(text)};`;
+  });
+
 function dockerfileTextPlugin() {
   return {
     name: "dockerfile-text-loader",
@@ -36,7 +47,12 @@ function dockerfileTextPlugin() {
         return undefined;
       }
 
-      return `export default ${JSON.stringify(readFileSync(filePath, "utf8"))};`;
+      return Effect.runPromise(
+        dockerfileModule(filePath).pipe(
+          Effect.catchTag("PlatformError", (error) => Effect.die(error.cause)),
+          Effect.provide(BunFileSystem.layer),
+        ),
+      );
     },
   };
 }

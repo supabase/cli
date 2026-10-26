@@ -10,6 +10,8 @@
     "!packages/config/**",
     "!packages/stack/**",
     "!apps/cli/src/**",
+    "!apps/cli/tests/**",
+    "!apps/cli/vitest.config.ts",
     // Last match wins across the whole list: keep bare re-exclusions after every
     // `!` entry that would otherwise re-include them.
     "apps/cli/src/shared/cli/bin.ts",
@@ -17,13 +19,6 @@
     "apps/cli/src/shared/feedback/database.types.ts",
     "apps/cli/src/command-internal/db-bootstrap/local-db-running.integration.test.ts",
     "apps/cli/src/command-internal/db-bootstrap/local-db-running.ts",
-    "packages/api/src/generated/contracts.ts",
-    "!apps/cli/tests/helpers/branches-live.ts",
-    "!apps/cli/tests/helpers/compute.ts",
-    "!apps/cli/tests/helpers/migration-live.ts",
-    "!apps/cli/tests/helpers/notebooks.ts",
-    "!apps/cli/tests/helpers/postgres-config-live.ts",
-    "!apps/cli/tests/helpers/secrets-live.ts",
-    "!apps/cli/tests/helpers/storage-live.ts"
+    "packages/api/src/generated/contracts.ts"
   ]
 }

@@ -236,7 +236,7 @@ describe("bootstrap linked-project cache location", () => {
           dbConnectionLayer,
           mockLoginApi({ gotrueId: "gotrue-user" }).layer,
           mockLoginCrypto().layer,
-          mockBrowser(),
+          mockBrowser,
           mockStdin(true),
           flagsLayer,
           debugLogger,

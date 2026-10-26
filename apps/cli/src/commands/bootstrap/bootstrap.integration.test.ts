@@ -249,7 +249,7 @@ function setup(path: Path.Path, opts: SetupOpts = {}) {
     dbConnectionLayer,
     loginApi.layer,
     loginCrypto.layer,
-    mockBrowser(),
+    mockBrowser,
     mockStdin(opts.stdinIsTty ?? true),
     Layer.succeed(OutputFlag, Option.none()),
     Layer.succeed(WorkdirFlag, opts.workdir ?? Option.some(tempRoot.current)),

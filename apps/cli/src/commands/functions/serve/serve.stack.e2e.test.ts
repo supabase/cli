@@ -22,7 +22,7 @@ import {
 import { FetchHttpClient, HttpClient } from "effect/http";
 import { homedir } from "node:os";
 
-import { spawnSupabase } from "../../../../tests/helpers/cli.ts";
+import { type SpawnedSupabase, spawnSupabase } from "../../../../tests/helpers/cli.ts";
 import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
 import { destroyTestStack } from "../../../../tests/helpers/stack-cleanup.ts";
 import { stackArtifactCacheRoot } from "../../../../tests/helpers/stack-artifacts.ts";
@@ -155,31 +155,27 @@ const serve = Effect.fn("FunctionsServeE2e.serve")(function* (
   home: string,
   flags: ReadonlyArray<string> = [],
 ) {
-  const child = yield* Effect.acquireRelease(
-    Effect.try({
-      try: () =>
-        spawnSupabase(["functions", "serve", ...flags], {
-          cwd: root,
-          home,
-          env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
-          exitTimeoutMs: 120_000,
-        }),
-      catch: (cause) => new FunctionsServeE2eError({ message: "CLI spawn failed", cause }),
-    }),
-    (process) => Effect.sync(() => process.releaseOwned({ successOptOut: false })),
+  const child = yield* spawnSupabase(["functions", "serve", ...flags], {
+    cwd: root,
+    home,
+    env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+    exitTimeoutMs: 120_000,
+  }).pipe(
+    Effect.mapError((cause) => new FunctionsServeE2eError({ message: "CLI spawn failed", cause })),
   );
-  yield* Effect.tryPromise({
-    try: () => child.waitForOutput(/Serving Functions at /, 120_000),
-    catch: (cause) => new FunctionsServeE2eError({ message: "serve did not become ready", cause }),
-  });
+  yield* child
+    .waitForOutput(/Serving Functions at /, 120_000)
+    .pipe(
+      Effect.mapError(
+        (cause) => new FunctionsServeE2eError({ message: "serve did not become ready", cause }),
+      ),
+    );
   return child;
 });
 
-const interrupt = Effect.fn("FunctionsServeE2e.interrupt")(function* (
-  child: ReturnType<typeof spawnSupabase>,
-) {
-  yield* Effect.sync(() => child.kill("SIGINT"));
-  const exit = yield* child.exitEffect(120_000);
+const interrupt = Effect.fn("FunctionsServeE2e.interrupt")(function* (child: SpawnedSupabase) {
+  yield* child.kill("SIGINT");
+  const exit = yield* child.waitForExit(120_000);
   expect(exit.exitCode, `stdout:\n${child.stdout()}\nstderr:\n${child.stderr()}`).toBe(0);
 });
 

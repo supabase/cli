@@ -1,7 +1,7 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { BunFileSystem, BunPath } from "@effect/platform-bun";
+import { it } from "@effect/vitest";
+import { Effect, FileSystem, Layer, Path, Schema } from "effect";
+import { describe, expect, test } from "vitest";
 import { DEFAULT_DURATION_MS, fallbackDuration, packShards, readTimings } from "./e2e-sequencer.ts";
 
 const files = ["src/a.e2e.test.ts", "src/b.e2e.test.ts", "src/c.e2e.test.ts", "src/d.e2e.test.ts"];
@@ -126,61 +126,83 @@ describe("fallbackDuration", () => {
 });
 
 describe("readTimings", () => {
-  let root: string;
+  const fsLayer = Layer.mergeAll(BunFileSystem.layer, BunPath.layer);
+  const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
-  beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), "e2e-timings-"));
-    mkdirSync(join(root, "tests"));
+  const timingsRoot = Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "e2e-timings-" });
+    yield* fs.makeDirectory(path.join(root, "tests"));
+    const writeTimings = (content: string) =>
+      fs.writeFileString(path.join(root, "tests", "e2e-timings.json"), content);
+    return { root, writeTimings };
   });
 
-  afterEach(() => {
-    rmSync(root, { recursive: true, force: true });
-  });
+  it.effect("reads the files map from a version 1 envelope", () =>
+    Effect.gen(function* () {
+      const { root, writeTimings } = yield* timingsRoot;
+      yield* writeTimings(
+        yield* encodeJson({
+          version: 1,
+          files: { "src/a.e2e.test.ts": 1200, "src/b.e2e.test.ts": 300 },
+        }),
+      );
 
-  const writeTimings = (content: string) =>
-    writeFileSync(join(root, "tests", "e2e-timings.json"), content);
+      expect(yield* readTimings(root)).toEqual({
+        "src/a.e2e.test.ts": 1200,
+        "src/b.e2e.test.ts": 300,
+      });
+    }).pipe(Effect.provide(fsLayer)),
+  );
 
-  test("reads the files map from a version 1 envelope", () => {
-    writeTimings(
-      JSON.stringify({
-        version: 1,
-        files: { "src/a.e2e.test.ts": 1200, "src/b.e2e.test.ts": 300 },
-      }),
-    );
+  it.effect("reads as absent when the file is missing", () =>
+    Effect.gen(function* () {
+      const { root } = yield* timingsRoot;
+      expect(yield* readTimings(root)).toBeUndefined();
+    }).pipe(Effect.provide(fsLayer)),
+  );
 
-    expect(readTimings(root)).toEqual({ "src/a.e2e.test.ts": 1200, "src/b.e2e.test.ts": 300 });
-  });
+  it.effect("reads as absent rather than half-applying when any duration is not a number", () =>
+    Effect.gen(function* () {
+      const { root, writeTimings } = yield* timingsRoot;
+      yield* writeTimings(
+        yield* encodeJson({
+          version: 1,
+          files: { "src/a.e2e.test.ts": 1200, "src/b.e2e.test.ts": "300" },
+        }),
+      );
 
-  test("reads as absent when the file is missing", () => {
-    expect(readTimings(root)).toBeUndefined();
-  });
+      expect(yield* readTimings(root)).toBeUndefined();
+    }).pipe(Effect.provide(fsLayer)),
+  );
 
-  test("reads as absent rather than half-applying when any duration is not a number", () => {
-    writeTimings(
-      JSON.stringify({
-        version: 1,
-        files: { "src/a.e2e.test.ts": 1200, "src/b.e2e.test.ts": "300" },
-      }),
-    );
+  it.effect("reads as absent when the file is not JSON", () =>
+    Effect.gen(function* () {
+      const { root, writeTimings } = yield* timingsRoot;
+      yield* writeTimings("{ not json");
 
-    expect(readTimings(root)).toBeUndefined();
-  });
+      expect(yield* readTimings(root)).toBeUndefined();
+    }).pipe(Effect.provide(fsLayer)),
+  );
 
-  test("reads as absent when the file is not JSON", () => {
-    writeTimings("{ not json");
+  it.effect("reads as absent for a flat map with no envelope", () =>
+    Effect.gen(function* () {
+      const { root, writeTimings } = yield* timingsRoot;
+      yield* writeTimings(
+        yield* encodeJson({ "src/a.e2e.test.ts": 1200, "src/b.e2e.test.ts": 300 }),
+      );
 
-    expect(readTimings(root)).toBeUndefined();
-  });
+      expect(yield* readTimings(root)).toBeUndefined();
+    }).pipe(Effect.provide(fsLayer)),
+  );
 
-  test("reads as absent for a flat map with no envelope", () => {
-    writeTimings(JSON.stringify({ "src/a.e2e.test.ts": 1200, "src/b.e2e.test.ts": 300 }));
+  it.effect("reads as absent for an unknown envelope version", () =>
+    Effect.gen(function* () {
+      const { root, writeTimings } = yield* timingsRoot;
+      yield* writeTimings(yield* encodeJson({ version: 2, files: { "src/a.e2e.test.ts": 1200 } }));
 
-    expect(readTimings(root)).toBeUndefined();
-  });
-
-  test("reads as absent for an unknown envelope version", () => {
-    writeTimings(JSON.stringify({ version: 2, files: { "src/a.e2e.test.ts": 1200 } }));
-
-    expect(readTimings(root)).toBeUndefined();
-  });
+      expect(yield* readTimings(root)).toBeUndefined();
+    }).pipe(Effect.provide(fsLayer)),
+  );
 });

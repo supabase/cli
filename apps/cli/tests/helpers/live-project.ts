@@ -1,11 +1,22 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 
 import { makeApiClient, type OperationOutput } from "@supabase/api/effect";
-import { Cause, Data, Effect, Exit, Schedule, Schema } from "effect";
+import {
+  Cause,
+  Clock,
+  Console,
+  Data,
+  Effect,
+  Exit,
+  FileSystem,
+  Path,
+  type PlatformError,
+  Schedule,
+  Schema,
+} from "effect";
+import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { getDomain } from "tldts";
 
 import {
@@ -15,6 +26,7 @@ import {
   liveOrgId,
   liveProjectName,
   liveRegion,
+  liveRunId,
 } from "./live-env.ts";
 
 const PROJECT_REF_RE = /^[a-z]{20}$/u;
@@ -94,8 +106,17 @@ class LiveStorageError extends Data.TaggedError("LiveStorageError")<{
   readonly cause?: unknown;
 }> {}
 
+class LiveProjectError extends Data.TaggedError("LiveProjectError")<{
+  readonly message: string;
+}> {}
+
 function apiError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
+}
+
+/** Filesystem failures surface as the underlying Node error. */
+function platformCause(error: PlatformError.PlatformError): Error {
+  return apiError(error.cause);
 }
 
 const DIAGNOSTIC_HEADER_NAMES = [
@@ -140,7 +161,11 @@ function liveApiErrorMessage(phase: string, cause: unknown): string {
 export function supportedRegion(value: string): Effect.Effect<Region, Error> {
   const region = REGIONS.find((candidate) => candidate === value);
   return region === undefined
-    ? Effect.fail(new Error(`Unsupported SUPABASE_LIVE_REGION ${JSON.stringify(value)}`))
+    ? Effect.fail(
+        new LiveProjectError({
+          message: `Unsupported SUPABASE_LIVE_REGION ${JSON.stringify(value)}`,
+        }),
+      )
     : Effect.succeed(region);
 }
 
@@ -229,14 +254,14 @@ function timeoutLiveRequest<A, E>(
 ): Effect.Effect<A, E | Error, never> {
   return Effect.timeoutOrElse(effect, {
     duration: POLL_TIMEOUT,
-    orElse: () => Effect.fail(new Error(`${phase} timed out`)),
+    orElse: () => Effect.fail(new LiveProjectError({ message: `${phase} timed out` })),
   });
 }
 
-function uniqueProjectName(): string {
-  const runId = process.env["GITHUB_RUN_ID"] ?? process.env["CI_JOB_ID"] ?? String(Date.now());
-  return `${liveProjectName()}-${runId}-${randomUUID().slice(0, 8)}`;
-}
+const uniqueProjectName = Effect.gen(function* () {
+  const runId = (yield* liveRunId) ?? String(yield* Clock.currentTimeMillis);
+  return `${yield* liveProjectName}-${runId}-${randomUUID().slice(0, 8)}`;
+});
 
 function databasePassword(): string {
   return `supabase-cli-live-${randomBytes(12).toString("hex")}`;
@@ -245,24 +270,26 @@ function databasePassword(): string {
 function resolveOrganization(api: LiveApi): Effect.Effect<Organization, Error, never> {
   return timeoutLiveRequest("organization lookup", api.v1.listAllOrganizations()).pipe(
     Effect.mapError(apiError),
-    Effect.flatMap((organizations) => {
-      const requested = liveOrgId();
-      const organization =
-        requested === undefined
-          ? organizations[0]
-          : organizations.find(
-              (candidate) => candidate.id === requested || candidate.slug === requested,
-            );
-      return organization === undefined
-        ? Effect.fail(
-            new Error(
-              requested === undefined
-                ? "No organizations found; cannot create the live project"
-                : `Organization ${requested} was not found; cannot create the live project`,
-            ),
-          )
-        : Effect.succeed(organization);
-    }),
+    Effect.flatMap((organizations) =>
+      Effect.flatMap(liveOrgId, (requested) => {
+        const organization =
+          requested === undefined
+            ? organizations[0]
+            : organizations.find(
+                (candidate) => candidate.id === requested || candidate.slug === requested,
+              );
+        return organization === undefined
+          ? Effect.fail(
+              new LiveProjectError({
+                message:
+                  requested === undefined
+                    ? "No organizations found; cannot create the live project"
+                    : `Organization ${requested} was not found; cannot create the live project`,
+              }),
+            )
+          : Effect.succeed(organization);
+      }),
+    ),
   );
 }
 
@@ -271,7 +298,8 @@ function createProject(
   name: string,
   password: string,
 ): Effect.Effect<string, Error, never> {
-  return supportedRegion(liveRegion()).pipe(
+  return liveRegion.pipe(
+    Effect.flatMap(supportedRegion),
     Effect.flatMap((region) =>
       resolveOrganization(api).pipe(
         Effect.flatMap((organization) =>
@@ -290,7 +318,11 @@ function createProject(
     Effect.flatMap((project) =>
       PROJECT_REF_RE.test(project.ref)
         ? Effect.succeed(project.ref)
-        : Effect.fail(new Error(`Unexpected project ref from project creation: ${project.ref}`)),
+        : Effect.fail(
+            new LiveProjectError({
+              message: `Unexpected project ref from project creation: ${project.ref}`,
+            }),
+          ),
     ),
   );
 }
@@ -335,8 +367,9 @@ function waitForProject(api: LiveApi, ref: string): Effect.Effect<Project, Error
     shouldRetry: (error) => error instanceof LiveTransientPoll,
   }).pipe(
     Effect.mapError((error) => {
-      if (error instanceof LiveTerminalPoll) return new Error(error.message);
-      if (error instanceof LivePollTimeout) return new Error(error.message);
+      if (error instanceof LiveTerminalPoll)
+        return new LiveProjectError({ message: error.message });
+      if (error instanceof LivePollTimeout) return new LiveProjectError({ message: error.message });
       return apiError(error);
     }),
   );
@@ -378,9 +411,11 @@ function resolveKeys(
   }).pipe(
     Effect.mapError((error) =>
       error instanceof LivePollTimeout
-        ? new Error(`Project ${ref} did not return API keys within ${POLL_TIMEOUT}`)
+        ? new LiveProjectError({
+            message: `Project ${ref} did not return API keys within ${POLL_TIMEOUT}`,
+          })
         : error instanceof LiveTerminalPoll
-          ? new Error(error.message)
+          ? new LiveProjectError({ message: error.message })
           : apiError(error),
     ),
   );
@@ -437,11 +472,11 @@ function resolveDbUrl(
   }).pipe(
     Effect.mapError((error) =>
       error instanceof LivePollTimeout
-        ? new Error(
-            `Project ${ref} did not return a pooler connection string within ${POLL_TIMEOUT}`,
-          )
+        ? new LiveProjectError({
+            message: `Project ${ref} did not return a pooler connection string within ${POLL_TIMEOUT}`,
+          })
         : error instanceof LiveTerminalPoll
-          ? new Error(error.message)
+          ? new LiveProjectError({ message: error.message })
           : apiError(error),
     ),
   );
@@ -452,85 +487,111 @@ function createStorageBucket(
   host: string,
   serviceRoleKey: string,
   bucket: string,
-): Effect.Effect<void, Error, never> {
-  const attempt = Effect.tryPromise({
-    try: async (signal) => {
-      const response = await fetch(`https://${ref}.${host}/storage/v1/bucket`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${serviceRoleKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ id: bucket, name: bucket, public: false }),
-        signal,
-      });
-      if (!response.ok && response.status !== 409) {
-        throw new LiveStorageError({
-          message: `Failed to create storage bucket ${bucket}: ${response.status} ${await response.text()}`,
+): Effect.Effect<void, Error, HttpClient.HttpClient> {
+  return Effect.gen(function* () {
+    const client = yield* HttpClient.HttpClient;
+    const attempt = Effect.gen(function* () {
+      const request = yield* HttpClientRequest.post(
+        `https://${ref}.${host}/storage/v1/bucket`,
+      ).pipe(
+        HttpClientRequest.setHeaders({
+          Authorization: `Bearer ${serviceRoleKey}`,
+          "Content-Type": "application/json",
+        }),
+        HttpClientRequest.bodyJson({ id: bucket, name: bucket, public: false }),
+      );
+      const response = yield* client.execute(request);
+      const ok = response.status >= 200 && response.status <= 299;
+      if (!ok && response.status !== 409) {
+        return yield* new LiveStorageError({
+          message: `Failed to create storage bucket ${bucket}: ${response.status} ${yield* response.text}`,
           retryable: isTransientStorageStatus(response.status),
         });
       }
-    },
-    catch: (cause) =>
-      cause instanceof LiveStorageError
-        ? cause
-        : new LiveStorageError({
-            message: `Failed to create storage bucket ${bucket}: ${apiError(cause).message}`,
-            retryable: true,
-            cause,
-          }),
+    }).pipe(
+      Effect.mapError((cause) =>
+        cause instanceof LiveStorageError
+          ? cause
+          : new LiveStorageError({
+              message: `Failed to create storage bucket ${bucket}: ${apiError(cause).message}`,
+              retryable: true,
+              cause,
+            }),
+      ),
+      Effect.provideService(HttpClient.TracerPropagationEnabled, false),
+    );
+    return yield* retryLiveEffect("storage bucket", attempt, {
+      shouldRetry: (error) => error instanceof LiveStorageError && error.retryable,
+    }).pipe(
+      Effect.mapError((error) =>
+        error instanceof LivePollTimeout
+          ? new LiveProjectError({ message: `storage bucket ${bucket} creation timed out` })
+          : error instanceof LiveStorageError
+            ? new LiveProjectError({ message: error.message })
+            : apiError(error),
+      ),
+    );
   });
-  return retryLiveEffect("storage bucket", attempt, {
-    shouldRetry: (error) => error instanceof LiveStorageError && error.retryable,
-  }).pipe(
-    Effect.mapError((error) =>
-      error instanceof LivePollTimeout
-        ? new Error(`storage bucket ${bucket} creation timed out`)
-        : error instanceof LiveStorageError
-          ? new Error(error.message)
-          : apiError(error),
-    ),
-  );
 }
 
 function writeProfile(
   projectRef: string,
   projectHost: string,
   dbUrl: string,
-): Effect.Effect<string, Error, never> {
-  return Effect.tryPromise({
-    try: async () => {
-      const directory = await mkdtemp(path.join(tmpdir(), "supabase-live-profile-"));
-      const profilePath = path.join(directory, "profile.yaml");
-      try {
-        const poolerHost = resolvePoolerDomain(dbUrl);
-        await writeFile(
+): Effect.Effect<string, Error, FileSystem.FileSystem | Path.Path> {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs
+      .makeTempDirectory({ prefix: "supabase-live-profile-" })
+      .pipe(Effect.mapError(platformCause));
+    const profilePath = path.join(directory, "profile.yaml");
+    const write = Effect.gen(function* () {
+      const poolerHost = yield* Effect.try({
+        try: () => resolvePoolerDomain(dbUrl),
+        catch: (cause) => new LiveProjectError({ message: apiError(cause).message }),
+      });
+      const apiUrl = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(
+        yield* liveApiUrl,
+      );
+      yield* fs
+        .writeFileString(
           profilePath,
           [
             `name: ${PROFILE_NAME}`,
-            `api_url: ${JSON.stringify(liveApiUrl())}`,
-            `dashboard_url: ${JSON.stringify(liveApiUrl())}`,
+            `api_url: ${apiUrl}`,
+            `dashboard_url: ${apiUrl}`,
             `project_host: ${projectHost}`,
             `pooler_host: ${poolerHost}`,
             `# provisioned project: ${projectRef}`,
             "",
           ].join("\n"),
-        );
-        return profilePath;
-      } catch (cause) {
-        try {
-          await rm(directory, { recursive: true, force: true });
-        } catch (cleanup) {
-          throw cleanupErrors(cause, [cleanup]);
-        }
-        throw cause;
-      }
-    },
-    catch: apiError,
+        )
+        .pipe(Effect.mapError(platformCause));
+      return profilePath;
+    });
+    return yield* write.pipe(
+      Effect.catch((cause) =>
+        fs.remove(directory, { recursive: true, force: true }).pipe(
+          Effect.matchEffect({
+            onFailure: (cleanup) => Effect.fail(cleanupErrors(cause, [platformCause(cleanup)])),
+            onSuccess: () => Effect.fail(cause),
+          }),
+        ),
+      ),
+    );
   });
 }
 
-function cleanupDirectory(profilePath: string): Effect.Effect<void, Error, never> {
-  return Effect.tryPromise({
-    try: () => rm(path.dirname(profilePath), { recursive: true, force: true }),
-    catch: apiError,
+function cleanupDirectory(
+  profilePath: string,
+): Effect.Effect<void, Error, FileSystem.FileSystem | Path.Path> {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    yield* fs
+      .remove(path.dirname(profilePath), { recursive: true, force: true })
+      .pipe(Effect.mapError(platformCause));
   });
 }
 
@@ -538,21 +599,21 @@ function cleanupRemote(
   api: LiveApi,
   environment: LiveCliProjectEnvironment,
 ): Effect.Effect<void, Error, never> {
-  return keepLiveProject()
-    ? Effect.sync(() => {
-        console.log(`SUPABASE_LIVE_KEEP_PROJECT=1 — leaving ${environment.project.ref} alive`);
-      })
-    : deleteProject(api, environment.project.ref);
+  return Effect.flatMap(keepLiveProject, (keep) =>
+    keep
+      ? Console.log(`SUPABASE_LIVE_KEEP_PROJECT=1 — leaving ${environment.project.ref} alive`)
+      : deleteProject(api, environment.project.ref),
+  );
 }
 
 function cleanupCreatedProject(api: LiveApi, ref: string): Effect.Effect<void, Error, never> {
-  return keepLiveProject()
-    ? Effect.sync(() => {
-        console.log(
+  return Effect.flatMap(keepLiveProject, (keep) =>
+    keep
+      ? Console.log(
           `SUPABASE_LIVE_KEEP_PROJECT=1 — leaving ${ref} alive after provisioning failure`,
-        );
-      })
-    : deleteProject(api, ref);
+        )
+      : deleteProject(api, ref),
+  );
 }
 
 function combineCleanupExits(
@@ -578,57 +639,59 @@ export interface LiveCliProjectEnvironment {
 }
 
 /** Provision one project; the caller owns the outer Effect runtime boundary. */
-export function provisionLiveEnvironment(
+export const provisionLiveEnvironment: (
   api: LiveApi,
-): Effect.Effect<LiveCliProjectEnvironment, Error, never> {
-  return Effect.gen(function* () {
-    const password = databasePassword();
-    const ref = yield* createProject(api, uniqueProjectName(), password);
-    const setup = Effect.gen(function* () {
-      const project = yield* waitForProject(api, ref);
-      const projectHost = deriveLiveProjectHost(project.database.host, ref);
-      const keys = yield* resolveKeys(api, ref);
-      const dbUrl = yield* resolveDbUrl(api, ref, password);
-      const storageBucket = "supabase-cli-live-bucket";
-      yield* createStorageBucket(ref, projectHost, keys.serviceRoleKey, storageBucket);
-      const profilePath = yield* writeProfile(ref, projectHost, dbUrl);
-      return {
-        project: {
-          ref,
-          dbUrl,
-          dbPassword: password,
-          anonKey: keys.anonKey,
-          serviceRoleKey: keys.serviceRoleKey,
-          functionsUrl: `https://${ref}.${projectHost}/functions/v1`,
-          storageBucket,
-        },
-        profilePath,
-      } satisfies LiveCliProjectEnvironment;
-    });
-    const setupExit = yield* Effect.exit(setup);
-    if (Exit.isSuccess(setupExit)) return setupExit.value;
-
-    const cleanupExit = yield* Effect.exit(cleanupCreatedProject(api, ref));
-    if (Exit.isSuccess(cleanupExit)) return yield* Effect.failCause(setupExit.cause);
-    return yield* Effect.fail(
-      cleanupErrors(Cause.squash(setupExit.cause), [Cause.squash(cleanupExit.cause)]),
-    );
+) => Effect.Effect<
+  LiveCliProjectEnvironment,
+  Error,
+  FileSystem.FileSystem | Path.Path | HttpClient.HttpClient
+> = Effect.fn("LiveProject.provision")(function* (api: LiveApi) {
+  const password = databasePassword();
+  const ref = yield* createProject(api, yield* uniqueProjectName, password);
+  const setup = Effect.gen(function* () {
+    const project = yield* waitForProject(api, ref);
+    const projectHost = deriveLiveProjectHost(project.database.host, ref);
+    const keys = yield* resolveKeys(api, ref);
+    const dbUrl = yield* resolveDbUrl(api, ref, password);
+    const storageBucket = "supabase-cli-live-bucket";
+    yield* createStorageBucket(ref, projectHost, keys.serviceRoleKey, storageBucket);
+    const profilePath = yield* writeProfile(ref, projectHost, dbUrl);
+    return {
+      project: {
+        ref,
+        dbUrl,
+        dbPassword: password,
+        anonKey: keys.anonKey,
+        serviceRoleKey: keys.serviceRoleKey,
+        functionsUrl: `https://${ref}.${projectHost}/functions/v1`,
+        storageBucket,
+      },
+      profilePath,
+    } satisfies LiveCliProjectEnvironment;
   });
-}
+  const setupExit = yield* Effect.exit(setup);
+  if (Exit.isSuccess(setupExit)) return setupExit.value;
+
+  const cleanupExit = yield* Effect.exit(cleanupCreatedProject(api, ref));
+  if (Exit.isSuccess(cleanupExit)) return yield* Effect.failCause(setupExit.cause);
+  return yield* Effect.fail(
+    cleanupErrors(Cause.squash(setupExit.cause), [Cause.squash(cleanupExit.cause)]),
+  );
+});
 
 /** Delete the exact owned project and always remove its temporary profile. */
-export function cleanupLiveEnvironment(
+export const cleanupLiveEnvironment: (
   api: LiveApi,
   environment: LiveCliProjectEnvironment,
-): Effect.Effect<void, Error, never> {
-  return Effect.gen(function* () {
-    const [profileExit, projectExit] = yield* Effect.all(
-      [
-        Effect.exit(cleanupDirectory(environment.profilePath)),
-        Effect.exit(cleanupRemote(api, environment)),
-      ],
-      { concurrency: "unbounded" },
-    );
-    yield* combineCleanupExits([profileExit, projectExit]);
-  });
-}
+) => Effect.Effect<void, Error, FileSystem.FileSystem | Path.Path> = Effect.fn(
+  "LiveProject.cleanup",
+)(function* (api: LiveApi, environment: LiveCliProjectEnvironment) {
+  const [profileExit, projectExit] = yield* Effect.all(
+    [
+      Effect.exit(cleanupDirectory(environment.profilePath)),
+      Effect.exit(cleanupRemote(api, environment)),
+    ],
+    { concurrency: "unbounded" },
+  );
+  yield* combineCleanupExits([profileExit, projectExit]);
+});
