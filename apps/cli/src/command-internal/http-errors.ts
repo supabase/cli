@@ -157,7 +157,7 @@ export function mapHttpError<N, S>(opts: {
       if (cause instanceof SupabaseApiInputError || cause instanceof HttpBody.HttpBodyError) {
         // Client-side validation/build failures: keep their identity, since
         // this generic mapper can't safely reclassify them as response errors.
-        return yield* Effect.fail(cause);
+        return yield* cause;
       }
       if (HttpClientError.isHttpClientError(cause)) {
         if (RESPONSE_ERROR_TAGS.has(cause.reason._tag) && cause.response !== undefined) {

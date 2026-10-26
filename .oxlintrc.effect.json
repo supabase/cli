@@ -6,6 +6,7 @@
   },
   "ignorePatterns": [
     "**",
+    "!packages/api/src/**",
     "!packages/config/**",
     "!packages/stack/**",
     "!apps/cli/src/**",
@@ -16,6 +17,7 @@
     "apps/cli/src/shared/feedback/database.types.ts",
     "apps/cli/src/command-internal/db-bootstrap/local-db-running.integration.test.ts",
     "apps/cli/src/command-internal/db-bootstrap/local-db-running.ts",
+    "packages/api/src/generated/contracts.ts",
     "!apps/cli/tests/helpers/branches-live.ts",
     "!apps/cli/tests/helpers/compute.ts",
     "!apps/cli/tests/helpers/migration-live.ts",
