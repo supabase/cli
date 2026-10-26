@@ -1,7 +1,16 @@
-import { afterEach, describe, expect, test } from "vitest";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
+import { BunFileSystem, BunPath } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import {
+  Clock,
+  Config,
+  ConfigProvider,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Schema,
+} from "effect";
 import { fileURLToPath } from "node:url";
 import {
   createSpawnRun,
@@ -17,15 +26,13 @@ const asset = {
   path: "dist/supabase_1.0.0_darwin_arm64.tar.gz",
   name: "supabase_1.0.0_darwin_arm64.tar.gz",
 };
-const temporaryDirectories: string[] = [];
+const platformLayer = Layer.mergeAll(
+  BunFileSystem.layer,
+  BunPath.layer,
+  ConfigProvider.layer(ConfigProvider.fromEnvRecord(process.env, { preserveEmptyStrings: true })),
+);
 
-afterEach(async () => {
-  await Promise.all(
-    temporaryDirectories
-      .splice(0)
-      .map((directory) => rm(directory, { recursive: true, force: true })),
-  );
-});
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 // A stand-in `gh` that logs every call, fails or hangs once per marker file, and serves
 // `release view` from view.json.
@@ -54,18 +61,21 @@ fi
 exit 0
 `;
 
-async function fakeGhOnPath() {
-  const directory = await mkdtemp(path.join(tmpdir(), "upload-release-assets-"));
-  temporaryDirectories.push(directory);
+const fakeGhOnPath = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const directory = yield* fs.makeTempDirectoryScoped({ prefix: "upload-release-assets-" });
   const bin = path.join(directory, "bin");
-  await mkdir(bin);
-  await writeFile(path.join(bin, "gh"), fakeGh);
-  await chmod(path.join(bin, "gh"), 0o755);
-  const env = { ...process.env, FAKE_GH_DIR: directory, PATH: `${bin}:${process.env.PATH}` };
-  const calls = async () =>
-    (await readFile(path.join(directory, "calls.log"), "utf8")).trimEnd().split("\n");
+  yield* fs.makeDirectory(bin);
+  yield* fs.writeFileString(path.join(bin, "gh"), fakeGh);
+  yield* fs.chmod(path.join(bin, "gh"), 0o755);
+  const inheritedPath = Option.getOrUndefined(yield* Config.option(Config.String("PATH")));
+  const env = { ...process.env, FAKE_GH_DIR: directory, PATH: `${bin}:${inheritedPath}` };
+  const calls = fs
+    .readFileString(path.join(directory, "calls.log"))
+    .pipe(Effect.map((text) => text.trimEnd().split("\n")));
   return { directory, env, calls };
-}
+});
 
 function recordingIo(run: ReleaseIo["run"]): { io: ReleaseIo; logs: string[] } {
   const logs: string[] = [];
@@ -73,120 +83,153 @@ function recordingIo(run: ReleaseIo["run"]): { io: ReleaseIo; logs: string[] } {
     logs,
     io: {
       run,
-      fileExists: async () => true,
-      sleep: () => Promise.resolve(),
-      log: (line) => {
-        logs.push(line);
-      },
+      fileExists: () => Effect.succeed(true),
+      sleep: () => Effect.void,
+      log: (line) =>
+        Effect.sync(() => {
+          logs.push(line);
+        }),
     },
   };
 }
 
 describe("upload-release-assets against a fake gh", () => {
-  test("kills an upload that outlives the timeout and succeeds on the retry", async () => {
-    const { directory, env, calls } = await fakeGhOnPath();
-    await writeFile(path.join(directory, `hang-once-${asset.name}`), "");
-    const { io, logs } = recordingIo(createSpawnRun(env));
-    const startedAt = Date.now();
+  it.live(
+    "kills an upload that outlives the timeout and succeeds on the retry",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { directory, env, calls } = yield* fakeGhOnPath;
+        yield* fs.writeFileString(path.join(directory, `hang-once-${asset.name}`), "");
+        const { io, logs } = recordingIo(createSpawnRun(env));
+        const startedAt = yield* Clock.currentTimeMillis;
 
-    await uploadAssets("v1.0.0", [asset], io, {
-      maxAttempts: 2,
-      timeoutMs: 5_000,
-      backoffMs: () => 0,
-    });
+        yield* uploadAssets("v1.0.0", [asset], io, {
+          maxAttempts: 2,
+          timeoutMs: 5_000,
+          backoffMs: () => 0,
+        });
 
-    const elapsed = Date.now() - startedAt;
-    expect(elapsed).toBeGreaterThanOrEqual(5_000);
-    expect(elapsed).toBeLessThan(25_000);
-    expect(await calls()).toEqual([
-      `release upload v1.0.0 ${asset.path} --clobber`,
-      `release upload v1.0.0 ${asset.path} --clobber`,
-    ]);
-    expect(logs).toEqual([
-      `Upload of ${asset.name} failed on attempt 1 (timed out after 5s); retrying in 0s.`,
-      `Uploaded ${asset.name} (attempt 2).`,
-    ]);
-  }, 40_000);
+        const elapsed = (yield* Clock.currentTimeMillis) - startedAt;
+        expect(elapsed).toBeGreaterThanOrEqual(5_000);
+        expect(elapsed).toBeLessThan(25_000);
+        expect(yield* calls).toEqual([
+          `release upload v1.0.0 ${asset.path} --clobber`,
+          `release upload v1.0.0 ${asset.path} --clobber`,
+        ]);
+        expect(logs).toEqual([
+          `Upload of ${asset.name} failed on attempt 1 (timed out after 5s); retrying in 0s.`,
+          `Uploaded ${asset.name} (attempt 2).`,
+        ]);
+      }).pipe(Effect.provide(platformLayer)),
+    40_000,
+  );
 
-  test("kills an upload that ignores SIGTERM once the grace period passes", async () => {
-    const { directory, env, calls } = await fakeGhOnPath();
-    await writeFile(path.join(directory, `ignore-term-once-${asset.name}`), "");
-    const { io, logs } = recordingIo(createSpawnRun(env));
-    const startedAt = Date.now();
+  it.live(
+    "kills an upload that ignores SIGTERM once the grace period passes",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { directory, env, calls } = yield* fakeGhOnPath;
+        yield* fs.writeFileString(path.join(directory, `ignore-term-once-${asset.name}`), "");
+        const { io, logs } = recordingIo(createSpawnRun(env));
+        const startedAt = yield* Clock.currentTimeMillis;
 
-    await uploadAssets("v1.0.0", [asset], io, {
-      maxAttempts: 2,
-      timeoutMs: 5_000,
-      backoffMs: () => 0,
-    });
+        yield* uploadAssets("v1.0.0", [asset], io, {
+          maxAttempts: 2,
+          timeoutMs: 5_000,
+          backoffMs: () => 0,
+        });
 
-    const elapsed = Date.now() - startedAt;
-    expect(elapsed).toBeGreaterThanOrEqual(5_000 + KILL_GRACE_MS);
-    expect(elapsed).toBeLessThan(25_000);
-    expect(await calls()).toHaveLength(2);
-    expect(logs[0]).toBe(
-      `Upload of ${asset.name} failed on attempt 1 (timed out after 5s); retrying in 0s.`,
-    );
-  }, 40_000);
+        const elapsed = (yield* Clock.currentTimeMillis) - startedAt;
+        expect(elapsed).toBeGreaterThanOrEqual(5_000 + KILL_GRACE_MS);
+        expect(elapsed).toBeLessThan(25_000);
+        expect(yield* calls).toHaveLength(2);
+        expect(logs[0]).toBe(
+          `Upload of ${asset.name} failed on attempt 1 (timed out after 5s); retrying in 0s.`,
+        );
+      }).pipe(Effect.provide(platformLayer)),
+    40_000,
+  );
 
-  test("surfaces gh's stderr for a failed attempt and retries it", async () => {
-    const { directory, env, calls } = await fakeGhOnPath();
-    await writeFile(path.join(directory, `fail-once-${asset.name}`), "");
-    const { io, logs } = recordingIo(createSpawnRun(env));
+  it.live("surfaces gh's stderr for a failed attempt and retries it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { directory, env, calls } = yield* fakeGhOnPath;
+      yield* fs.writeFileString(path.join(directory, `fail-once-${asset.name}`), "");
+      const { io, logs } = recordingIo(createSpawnRun(env));
 
-    await uploadAssets("v1.0.0", [asset], io, {
-      maxAttempts: 2,
-      timeoutMs: 5_000,
-      backoffMs: () => 0,
-    });
+      yield* uploadAssets("v1.0.0", [asset], io, {
+        maxAttempts: 2,
+        timeoutMs: 5_000,
+        backoffMs: () => 0,
+      });
 
-    expect(await calls()).toHaveLength(2);
-    expect(logs[0]).toBe(
-      `Upload of ${asset.name} failed on attempt 1 (exit 1: HTTP 500: Error saving asset); retrying in 0s.`,
-    );
-  });
+      expect(yield* calls).toHaveLength(2);
+      expect(logs[0]).toBe(
+        `Upload of ${asset.name} failed on attempt 1 (exit 1: HTTP 500: Error saving asset); retrying in 0s.`,
+      );
+    }).pipe(Effect.provide(platformLayer)),
+  );
 
-  test("reads uploaded asset names from gh release view", async () => {
-    const { directory, env } = await fakeGhOnPath();
-    await writeFile(
-      path.join(directory, "view.json"),
-      JSON.stringify({
-        assets: [
-          { name: "install", state: "uploaded" },
-          { name: "checksums.txt", state: "starter" },
-        ],
-      }),
-    );
-    const { io } = recordingIo(createSpawnRun(env));
+  it.live("reads uploaded asset names from gh release view", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { directory, env } = yield* fakeGhOnPath;
+      yield* fs.writeFileString(
+        path.join(directory, "view.json"),
+        yield* encodeJson({
+          assets: [
+            { name: "install", state: "uploaded" },
+            { name: "checksums.txt", state: "starter" },
+          ],
+        }),
+      );
+      const { io } = recordingIo(createSpawnRun(env));
 
-    await expect(uploadedAssetNames("v1.0.0", io)).resolves.toEqual(["install"]);
-  });
+      expect(yield* uploadedAssetNames("v1.0.0", io)).toEqual(["install"]);
+    }).pipe(Effect.provide(platformLayer)),
+  );
 
-  test("runs as a command and uploads all 22 assets from the working directory", async () => {
-    const { directory, env, calls } = await fakeGhOnPath();
-    const workdir = path.join(directory, "work");
-    await mkdir(path.join(workdir, "dist"), { recursive: true });
-    for (const asset of releaseAssets("1.0.0")) {
-      await writeFile(path.join(workdir, asset.path), asset.name);
-    }
-    const bunExecutable = Bun.which("bun");
-    if (!bunExecutable) throw new Error("Bun executable not found");
+  it.live(
+    "runs as a command and uploads all 22 assets from the working directory",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { directory, env, calls } = yield* fakeGhOnPath;
+        const workdir = path.join(directory, "work");
+        yield* fs.makeDirectory(path.join(workdir, "dist"), { recursive: true });
+        for (const asset of releaseAssets("1.0.0")) {
+          yield* fs.writeFileString(path.join(workdir, asset.path), asset.name);
+        }
+        const bunExecutable = Bun.which("bun");
+        if (!bunExecutable) throw new Error("Bun executable not found");
 
-    const child = Bun.spawn([bunExecutable, scriptPath, "upload", "--version", "1.0.0"], {
-      cwd: workdir,
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [exitCode, stdout, stderr] = await Promise.all([
-      child.exited,
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-    ]);
+        const child = Bun.spawn([bunExecutable, scriptPath, "upload", "--version", "1.0.0"], {
+          cwd: workdir,
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [exitCode, stdout, stderr] = yield* Effect.all(
+          [
+            Effect.promise(() => child.exited),
+            Effect.promise(() => new Response(child.stdout).text()),
+            Effect.promise(() => new Response(child.stderr).text()),
+          ],
+          { concurrency: "unbounded" },
+        );
 
-    expect(exitCode, stderr).toBe(0);
-    expect(await calls()).toHaveLength(22);
-    expect(stdout.trim().split("\n")).toHaveLength(22);
-    expect(stdout).toContain("Uploaded install (attempt 1).");
-  }, 20_000);
+        expect(exitCode, stderr).toBe(0);
+        expect(yield* calls).toHaveLength(22);
+        expect(stdout.trim().split("\n")).toHaveLength(22);
+        expect(stdout).toContain("Uploaded install (attempt 1).");
+      }).pipe(Effect.provide(platformLayer)),
+    20_000,
+  );
 });

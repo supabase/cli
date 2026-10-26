@@ -27,7 +27,8 @@ const OtlpSpan = Schema.Struct({
   name: Schema.String,
   startTimeUnixNano: Schema.String,
   endTimeUnixNano: Schema.String,
-  status: Schema.Struct({ code: Schema.Number }),
+  /* Any JSON number, including `1e309` (parses to `Infinity`), which `Schema.Finite` rejects. */
+  status: Schema.Struct({ code: Schema.declare((u): u is number => typeof u === "number") }),
   attributes: Schema.optional(KeyValues),
   events: Schema.optional(
     Schema.Array(Schema.Struct({ name: Schema.String, attributes: KeyValues })),
@@ -43,6 +44,8 @@ const TraceBatch = Schema.fromJsonString(
     ),
   }),
 );
+
+const ReportJson = Schema.fromJsonString(Schema.Unknown, { space: 2 });
 
 export interface ReportSpan {
   readonly traceId: string;
@@ -180,7 +183,7 @@ export const readSpans = Effect.fnUntraced(function* (file: string) {
   let skippedLines = 0;
   for (const line of text.split("\n")) {
     if (line.trim().length === 0) continue;
-    const decoded = yield* Schema.decodeUnknownEffect(TraceBatch)(line).pipe(Effect.option);
+    const decoded = yield* Schema.decodeEffect(TraceBatch)(line).pipe(Effect.option);
     if (decoded._tag === "None") {
       skippedLines += 1;
       continue;
@@ -302,7 +305,11 @@ const main = Effect.gen(function* () {
   const header = `trace: ${trace.traceId}${trace.traceCount > 1 ? ` (latest of ${trace.traceCount}; choose one with --trace-id)` : ""}`;
   yield* Console.log(
     options.json
-      ? JSON.stringify({ traceId: trace.traceId, traceCount: trace.traceCount, ...report }, null, 2)
+      ? yield* Schema.encodeEffect(ReportJson)({
+          traceId: trace.traceId,
+          traceCount: trace.traceCount,
+          ...report,
+        })
       : `${header}\n${formatReport(report)}`,
   );
 });

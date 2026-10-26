@@ -1,11 +1,10 @@
 import { $ } from "bun";
-import { copyFile } from "node:fs/promises";
-import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
+import { BunFileSystem, BunPath } from "@effect/platform-bun";
+import { Console, Data, Effect, Fiber, FileSystem, Layer, Path, Predicate } from "effect";
+import { FetchHttpClient, HttpClient } from "effect/http";
 import { isPublishableNpmTag, PUBLISHABLE_NPM_TAGS_HINT } from "./release-channels.ts";
-
-const root = path.resolve(import.meta.dir, "../../..");
 
 const PLATFORM_PACKAGES = [
   "cli-darwin-arm64",
@@ -27,133 +26,195 @@ const { values } = parseArgs({
 
 const dryRun = values["dry-run"];
 const tag = values.tag;
-if (!isPublishableNpmTag(tag)) {
-  console.error(
-    `Invalid --tag value: ${String(tag)}. Expected one of: ${PUBLISHABLE_NPM_TAGS_HINT}.`,
-  );
-  process.exit(1);
-}
-
-const cliDir = path.join(root, "apps/cli");
-const cliPkgJson = await Bun.file(path.join(cliDir, "package.json")).json();
-const umbrellaName: string = cliPkgJson.name;
-const umbrellaVersion: string = cliPkgJson.version;
 
 const dryRunFlag = dryRun ? ["--dry-run"] : [];
 const tagFlag = ["--tag", tag];
 const provenanceFlag = ["--provenance"];
 const noGitChecksFlag = ["--no-git-checks"];
 
-// Uses `npm config get registry` instead of hard-coding registry.npmjs.org, so the probe and
-// publish target agree — needed for the local Verdaccio harness (`pnpm local-registry`).
-const registryUrl = (await $`npm config get registry`.quiet().text()).trim().replace(/\/$/, "");
+class PublishStepFailed extends Data.TaggedError("PublishStepFailed")<{
+  readonly cause: unknown;
+}> {}
+
+class RegistryProbeFailed extends Data.TaggedError("RegistryProbeFailed")<{
+  readonly message: string;
+}> {}
+
+const step = <A>(run: () => PromiseLike<A>) =>
+  Effect.tryPromise({ try: run, catch: (cause) => new PublishStepFailed({ cause }) });
 
 // Used as both a pre-flight skip check and post-failure reconciliation, since a publish can
 // fail with E403 when the registry CDN cache lags behind an already-succeeded publish.
-async function isAlreadyPublished(name: string, version: string): Promise<boolean> {
+const isAlreadyPublished = Effect.fnUntraced(function* (
+  registryUrl: string,
+  name: string,
+  version: string,
+) {
   const encodedName = name.replace("/", "%2F");
-  const res = await fetch(`${registryUrl}/${encodedName}/${version}`, { method: "GET" });
+  const res = yield* HttpClient.get(`${registryUrl}/${encodedName}/${version}`);
   if (res.status === 200) return true;
   if (res.status === 404) return false;
-  throw new Error(`npm registry probe for ${name}@${version} returned HTTP ${res.status}`);
-}
+  return yield* new RegistryProbeFailed({
+    message: `npm registry probe for ${name}@${version} returned HTTP ${res.status}`,
+  });
+});
 
 type PublishResult = "published" | "skipped";
 
 // Skips a version already on the registry — checked before publishing and again after a
 // publish-time conflict — and lets any other failure propagate.
-async function publishPackage(opts: {
+const publishPackage = Effect.fnUntraced(function* (opts: {
+  registryUrl: string;
   name: string;
   version: string;
   cwd: string;
   extraFlags?: string[];
-}): Promise<PublishResult> {
-  const { name, version, cwd, extraFlags = [] } = opts;
+}) {
+  const { registryUrl, name, version, cwd, extraFlags = [] } = opts;
   const label = `${name}@${version}`;
 
-  if (await isAlreadyPublished(name, version)) {
-    console.log(`  [skip] ${label} already published.`);
-    return "skipped";
+  if (yield* isAlreadyPublished(registryUrl, name, version)) {
+    yield* Console.log(`  [skip] ${label} already published.`);
+    return "skipped" satisfies PublishResult;
   }
 
-  console.log(`  Publishing ${label}...`);
-  try {
-    await $`pnpm publish ${extraFlags} ${provenanceFlag} ${tagFlag} ${noGitChecksFlag} ${dryRunFlag}`.cwd(
+  yield* Console.log(`  Publishing ${label}...`);
+  return yield* step(() =>
+    $`pnpm publish ${extraFlags} ${provenanceFlag} ${tagFlag} ${noGitChecksFlag} ${dryRunFlag}`.cwd(
       cwd,
-    );
-    console.log(`  ${label} published.`);
-    return "published";
-  } catch (error) {
-    if (await isAlreadyPublished(name, version)) {
-      console.log(
-        `  [skip] ${label} reported a conflict but is now present on the registry; treating as success.`,
-      );
-      return "skipped";
-    }
-    throw error;
-  }
-}
-
-console.log(
-  dryRun
-    ? `Publishing to npm with tag "${tag}" (dry run)...\n`
-    : `Publishing to npm with tag "${tag}"...\n`,
-);
-
-// Every platform package must already be at the umbrella version; `sync-versions.ts` runs
-// before this in the release workflow, so a mismatch means the script ran out of order.
-for (const pkg of PLATFORM_PACKAGES) {
-  const pkgJson = await Bun.file(path.join(root, "packages", pkg, "package.json")).json();
-  if (pkgJson.version !== umbrellaVersion) {
-    console.error(
-      `Version mismatch: @supabase/${pkg} is ${pkgJson.version}, expected ${umbrellaVersion}. Run sync-versions.ts first.`,
-    );
-    process.exit(1);
-  }
-}
-
-console.log("Publishing platform packages...");
-const platformResults = await Promise.all(
-  PLATFORM_PACKAGES.map((pkg) =>
-    publishPackage({
-      name: `@supabase/${pkg}`,
-      version: umbrellaVersion,
-      cwd: path.join(root, "packages", pkg),
-      extraFlags: ["--access", "public"],
-    }),
-  ),
-);
-
-console.log("\nBuilding umbrella package shim...");
-await $`pnpm build:shim`.cwd(cliDir);
-
-// npm renders the README from the package directory; apps/cli/README.md documents the source
-// layout for contributors, not what npm users should see, so copy the root README over it.
-console.log("\nStaging root README for umbrella package...");
-await copyFile(path.join(root, "README.md"), path.join(cliDir, "README.md"));
-
-console.log(`Publishing umbrella package ${umbrellaName}...`);
-const umbrellaResult = await publishPackage({
-  name: umbrellaName,
-  version: umbrellaVersion,
-  cwd: cliDir,
+    ),
+  ).pipe(
+    Effect.andThen(Console.log(`  ${label} published.`)),
+    Effect.as<PublishResult>("published"),
+    Effect.catchTag("PublishStepFailed", (error) =>
+      Effect.gen(function* () {
+        if (yield* isAlreadyPublished(registryUrl, name, version)) {
+          yield* Console.log(
+            `  [skip] ${label} reported a conflict but is now present on the registry; treating as success.`,
+          );
+          return "skipped" satisfies PublishResult;
+        }
+        return yield* error;
+      }),
+    ),
+  );
 });
 
-const results = [...platformResults, umbrellaResult];
-const publishedCount = results.filter((r) => r === "published").length;
-const skippedCount = results.filter((r) => r === "skipped").length;
+const main = Effect.gen(function* () {
+  if (!isPublishableNpmTag(tag)) {
+    yield* Console.error(
+      `Invalid --tag value: ${String(tag)}. Expected one of: ${PUBLISHABLE_NPM_TAGS_HINT}.`,
+    );
+    return yield* Effect.sync(() => process.exit(1));
+  }
 
-console.log(`\nPublished: ${publishedCount}, Skipped: ${skippedCount}.`);
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const root = path.resolve(import.meta.dir, "../../..");
+  const cliDir = path.join(root, "apps/cli");
+  const cliPkgJson = yield* step(() => Bun.file(path.join(cliDir, "package.json")).json());
+  const umbrellaName: string = cliPkgJson.name;
+  const umbrellaVersion: string = cliPkgJson.version;
 
-// All-skipped is ambiguous: it may mean a downstream-only retry (bytes already on npm) or that
-// today's commits silently didn't ship a new version. Warn loudly so a human can decide whether
-// to re-cut via workflow_dispatch.
-if (publishedCount === 0) {
-  console.warn(
-    `\n[warn] No packages were published — every package was already on the registry at ${umbrellaVersion}.\n` +
-      `       If today's commits were expected to ship, the version did not advance.\n` +
-      `       Re-cut as a fresh version via the Release workflow (workflow_dispatch).`,
+  // Uses `npm config get registry` instead of hard-coding registry.npmjs.org, so the probe and
+  // publish target agree — needed for the local Verdaccio harness (`pnpm local-registry`).
+  const registryUrl = (yield* step(() => $`npm config get registry`.quiet().text()))
+    .trim()
+    .replace(/\/$/, "");
+
+  yield* Console.log(
+    dryRun
+      ? `Publishing to npm with tag "${tag}" (dry run)...\n`
+      : `Publishing to npm with tag "${tag}"...\n`,
   );
+
+  // Every platform package must already be at the umbrella version; `sync-versions.ts` runs
+  // before this in the release workflow, so a mismatch means the script ran out of order.
+  for (const pkg of PLATFORM_PACKAGES) {
+    const pkgJson = yield* step(() =>
+      Bun.file(path.join(root, "packages", pkg, "package.json")).json(),
+    );
+    if (pkgJson.version !== umbrellaVersion) {
+      yield* Console.error(
+        `Version mismatch: @supabase/${pkg} is ${pkgJson.version}, expected ${umbrellaVersion}. Run sync-versions.ts first.`,
+      );
+      return yield* Effect.sync(() => process.exit(1));
+    }
+  }
+
+  yield* Console.log("Publishing platform packages...");
+  /* Detached so a failed job fails the run without cancelling its siblings; callers observe
+     completion with Fiber.joinAll. */
+  const platformResults = yield* Fiber.joinAll(
+    yield* Effect.forEach(PLATFORM_PACKAGES, (pkg) =>
+      publishPackage({
+        registryUrl,
+        name: `@supabase/${pkg}`,
+        version: umbrellaVersion,
+        cwd: path.join(root, "packages", pkg),
+        extraFlags: ["--access", "public"],
+      }).pipe(Effect.forkDetach({ startImmediately: true })),
+    ),
+  );
+
+  yield* Console.log("\nBuilding umbrella package shim...");
+  yield* step(() => $`pnpm build:shim`.cwd(cliDir));
+
+  // npm renders the README from the package directory; apps/cli/README.md documents the source
+  // layout for contributors, not what npm users should see, so copy the root README over it.
+  yield* Console.log("\nStaging root README for umbrella package...");
+  yield* fs.copyFile(path.join(root, "README.md"), path.join(cliDir, "README.md"));
+
+  yield* Console.log(`Publishing umbrella package ${umbrellaName}...`);
+  const umbrellaResult = yield* publishPackage({
+    registryUrl,
+    name: umbrellaName,
+    version: umbrellaVersion,
+    cwd: cliDir,
+  });
+
+  const results = [...platformResults, umbrellaResult];
+  const publishedCount = results.filter((r) => r === "published").length;
+  const skippedCount = results.filter((r) => r === "skipped").length;
+
+  yield* Console.log(`\nPublished: ${publishedCount}, Skipped: ${skippedCount}.`);
+
+  // All-skipped is ambiguous: it may mean a downstream-only retry (bytes already on npm) or that
+  // today's commits silently didn't ship a new version. Warn loudly so a human can decide whether
+  // to re-cut via workflow_dispatch.
+  if (publishedCount === 0) {
+    yield* Console.warn(
+      `\n[warn] No packages were published — every package was already on the registry at ${umbrellaVersion}.\n` +
+        `       If today's commits were expected to ship, the version did not advance.\n` +
+        `       Re-cut as a fresh version via the Release workflow (workflow_dispatch).`,
+    );
+  }
+
+  yield* Console.log("\nAll packages published successfully.");
+});
+
+/* A registry URL that cannot be parsed fails as `fetch` reports an invalid URL. */
+function thrownValue(error: { readonly message: string; readonly cause?: unknown }): unknown {
+  if (
+    Predicate.isTagged(error, "HttpClientError") &&
+    Predicate.hasProperty(error, "reason") &&
+    Predicate.isTagged(error.reason, "InvalidUrlError")
+  ) {
+    return Object.assign(new TypeError("fetch() URL is invalid"), { code: "ERR_INVALID_URL" });
+  }
+  return error.cause !== undefined ? error.cause : new Error(error.message);
 }
 
-console.log("\nAll packages published successfully.");
+await Effect.runPromise(
+  main.pipe(
+    Effect.catch((error) => Effect.die(thrownValue(error))),
+    Effect.provide(
+      Layer.mergeAll(
+        BunFileSystem.layer,
+        BunPath.layer,
+        FetchHttpClient.layer,
+        Layer.succeed(HttpClient.TracerPropagationEnabled, false),
+      ),
+    ),
+  ),
+);

@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util";
 import process from "node:process";
+import { Console, Data, Effect, Fiber } from "effect";
 
 export interface ReleaseAsset {
   path: string;
@@ -42,11 +43,25 @@ export interface RunResult {
   timedOut: boolean;
 }
 
+class ReleaseAssetsError extends Data.TaggedError("ReleaseAssetsError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
+
+const toReleaseAssetsError = (cause: unknown) =>
+  new ReleaseAssetsError({
+    message: cause instanceof Error ? cause.message : String(cause),
+    cause,
+  });
+
 export interface ReleaseIo {
-  run: (argv: string[], options: { timeoutMs: number }) => Promise<RunResult>;
-  fileExists: (path: string) => Promise<boolean>;
-  sleep: (ms: number) => Promise<void>;
-  log: (line: string) => void;
+  run: (
+    argv: string[],
+    options: { timeoutMs: number },
+  ) => Effect.Effect<RunResult, ReleaseAssetsError>;
+  fileExists: (path: string) => Effect.Effect<boolean, ReleaseAssetsError>;
+  sleep: (ms: number) => Effect.Effect<void>;
+  log: (line: string) => Effect.Effect<void>;
 }
 
 export interface RetryPolicy {
@@ -71,38 +86,40 @@ function describeFailure(result: RunResult, timeoutMs: number): string {
 }
 
 /** Uploads each asset in turn, retrying per asset, and throws on the first asset that never lands. */
-export async function uploadAssets(
+export const uploadAssets = Effect.fnUntraced(function* (
   tag: string,
   assets: ReleaseAsset[],
   io: ReleaseIo,
   policy: RetryPolicy = defaultRetryPolicy,
-): Promise<void> {
+) {
   for (const asset of assets) {
-    if (!(await io.fileExists(asset.path))) {
-      throw new Error(`Release asset ${asset.path} does not exist.`);
+    if (!(yield* io.fileExists(asset.path))) {
+      return yield* new ReleaseAssetsError({
+        message: `Release asset ${asset.path} does not exist.`,
+      });
     }
     for (let attempt = 1; ; attempt++) {
-      const result = await io.run(["gh", "release", "upload", tag, asset.path, "--clobber"], {
+      const result = yield* io.run(["gh", "release", "upload", tag, asset.path, "--clobber"], {
         timeoutMs: policy.timeoutMs,
       });
       if (result.exitCode === 0) {
-        io.log(`Uploaded ${asset.name} (attempt ${attempt}).`);
+        yield* io.log(`Uploaded ${asset.name} (attempt ${attempt}).`);
         break;
       }
       const failure = describeFailure(result, policy.timeoutMs);
       if (attempt >= policy.maxAttempts) {
-        throw new Error(
-          `Upload of ${asset.name} to ${tag} failed after ${attempt} attempts (${failure}).`,
-        );
+        return yield* new ReleaseAssetsError({
+          message: `Upload of ${asset.name} to ${tag} failed after ${attempt} attempts (${failure}).`,
+        });
       }
       const delayMs = policy.backoffMs(attempt);
-      io.log(
+      yield* io.log(
         `Upload of ${asset.name} failed on attempt ${attempt} (${failure}); retrying in ${delayMs / 1000}s.`,
       );
-      await io.sleep(delayMs);
+      yield* io.sleep(delayMs);
     }
   }
-}
+});
 
 interface ReleaseAssetView {
   name: string;
@@ -110,17 +127,22 @@ interface ReleaseAssetView {
 }
 
 /** Names of the release's assets that GitHub reports as fully uploaded. */
-export async function uploadedAssetNames(tag: string, io: ReleaseIo): Promise<string[]> {
-  const result = await io.run(["gh", "release", "view", tag, "--json", "assets"], {
+export const uploadedAssetNames = Effect.fnUntraced(function* (tag: string, io: ReleaseIo) {
+  const result = yield* io.run(["gh", "release", "view", tag, "--json", "assets"], {
     timeoutMs: 60_000,
   });
   if (result.exitCode !== 0) {
-    throw new Error(`Could not read assets of ${tag} (${describeFailure(result, 60_000)}).`);
+    return yield* new ReleaseAssetsError({
+      message: `Could not read assets of ${tag} (${describeFailure(result, 60_000)}).`,
+    });
   }
-  return parseAssetView(result.stdout, tag)
+  return (yield* Effect.try({
+    try: () => parseAssetView(result.stdout, tag),
+    catch: toReleaseAssetsError,
+  }))
     .filter((asset) => asset.state === "uploaded")
     .map((asset) => asset.name);
-}
+});
 
 function isAssetView(value: unknown): value is ReleaseAssetView {
   return (
@@ -158,37 +180,41 @@ const usage = `Usage: bun apps/cli/scripts/upload-release-assets.ts <upload|veri
   upload  Upload every release asset to the draft release v<version>, one at a time with retries.
   verify  Fail unless every expected asset is present on v<version> and reported as uploaded.`;
 
-export async function main(argv: string[], io: ReleaseIo): Promise<number> {
-  const { values, positionals } = parseArgs({
-    args: argv,
-    options: { version: { type: "string" } },
-    allowPositionals: true,
+export const main = Effect.fnUntraced(function* (argv: string[], io: ReleaseIo) {
+  const { values, positionals } = yield* Effect.try({
+    try: () =>
+      parseArgs({
+        args: argv,
+        options: { version: { type: "string" } },
+        allowPositionals: true,
+      }),
+    catch: toReleaseAssetsError,
   });
   const [command] = positionals;
   if (!values.version || (command !== "upload" && command !== "verify")) {
-    io.log(usage);
+    yield* io.log(usage);
     return 2;
   }
   const tag = `v${values.version}`;
   const assets = releaseAssets(values.version);
 
   if (command === "upload") {
-    await uploadAssets(tag, assets, io);
+    yield* uploadAssets(tag, assets, io);
     return 0;
   }
 
   const missing = missingAssets(
     assets.map((asset) => asset.name),
-    await uploadedAssetNames(tag, io),
+    yield* uploadedAssetNames(tag, io),
   );
   if (missing.length > 0) {
-    io.log(`::error::Release ${tag} is missing assets or has incomplete uploads:`);
-    for (const name of missing) io.log(`  ${name}`);
+    yield* io.log(`::error::Release ${tag} is missing assets or has incomplete uploads:`);
+    for (const name of missing) yield* io.log(`  ${name}`);
     return 1;
   }
-  io.log(`All ${assets.length} expected assets are present on ${tag}.`);
+  yield* io.log(`All ${assets.length} expected assets are present on ${tag}.`);
   return 0;
-}
+});
 
 /**
  * Time a timed-out command gets to exit on SIGTERM before it is killed outright, and the bound on
@@ -196,56 +222,67 @@ export async function main(argv: string[], io: ReleaseIo): Promise<number> {
  */
 export const KILL_GRACE_MS = 5_000;
 
-function within<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const expiry = new Promise<T>((resolve) => {
-    timer = setTimeout(() => resolve(fallback), ms);
-  });
-  return Promise.race([promise, expiry]).finally(() => clearTimeout(timer));
-}
+const within = (fiber: Fiber.Fiber<string, ReleaseAssetsError>, ms: number, fallback: string) =>
+  Fiber.join(fiber).pipe(
+    Effect.timeoutOrElse({ duration: ms, orElse: () => Effect.succeed(fallback) }),
+  );
 
 /** Runs a command with the given environment and terminates it once the timeout elapses. */
 export function createSpawnRun(
   env: Record<string, string | undefined> = process.env,
 ): ReleaseIo["run"] {
-  return async (argv, { timeoutMs }) => {
-    const child = Bun.spawn(argv, { env, stdout: "pipe", stderr: "pipe" });
+  return Effect.fnUntraced(function* (argv: string[], { timeoutMs }: { timeoutMs: number }) {
+    const child = yield* Effect.try({
+      try: () => Bun.spawn(argv, { env, stdout: "pipe", stderr: "pipe" }),
+      catch: toReleaseAssetsError,
+    });
     let timedOut = false;
-    let killTimer: ReturnType<typeof setTimeout> | undefined;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGTERM");
-      killTimer = setTimeout(() => child.kill("SIGKILL"), KILL_GRACE_MS);
-    }, timeoutMs);
+    yield* Effect.sleep(timeoutMs).pipe(
+      Effect.andThen(
+        Effect.sync(() => {
+          timedOut = true;
+          child.kill("SIGTERM");
+        }),
+      ),
+      Effect.andThen(Effect.sleep(KILL_GRACE_MS)),
+      Effect.andThen(Effect.sync(() => child.kill("SIGKILL"))),
+      Effect.forkScoped({ startImmediately: true }),
+    );
     // Start draining before the child exits so a chatty child never blocks on a full pipe.
-    const stdoutText = new Response(child.stdout).text();
-    const stderrText = new Response(child.stderr).text();
-    try {
-      const exitCode = await child.exited;
-      const [stdout, stderr] = await Promise.all([
-        within(stdoutText, KILL_GRACE_MS, ""),
-        within(stderrText, KILL_GRACE_MS, ""),
-      ]);
-      return { exitCode, stdout, stderr, timedOut };
-    } finally {
-      clearTimeout(timer);
-      clearTimeout(killTimer);
-    }
-  };
+    const stdoutText = yield* Effect.tryPromise({
+      try: () => new Response(child.stdout).text(),
+      catch: toReleaseAssetsError,
+    }).pipe(Effect.forkScoped({ startImmediately: true }));
+    const stderrText = yield* Effect.tryPromise({
+      try: () => new Response(child.stderr).text(),
+      catch: toReleaseAssetsError,
+    }).pipe(Effect.forkScoped({ startImmediately: true }));
+    const exitCode = yield* Effect.tryPromise({
+      try: () => child.exited,
+      catch: toReleaseAssetsError,
+    });
+    const [stdout, stderr] = yield* Effect.all(
+      [within(stdoutText, KILL_GRACE_MS, ""), within(stderrText, KILL_GRACE_MS, "")],
+      { concurrency: "unbounded" },
+    );
+    return { exitCode, stdout, stderr, timedOut };
+  }, Effect.scoped);
 }
 
 export const processIo: ReleaseIo = {
   run: createSpawnRun(),
-  fileExists: (path) => Bun.file(path).exists(),
-  sleep: (ms) => Bun.sleep(ms),
-  log: (line) => console.log(line),
+  fileExists: (path) =>
+    Effect.tryPromise({ try: () => Bun.file(path).exists(), catch: toReleaseAssetsError }),
+  sleep: (ms) => Effect.sleep(ms),
+  log: (line) => Console.log(line),
 };
 
 if (import.meta.main) {
-  try {
-    process.exit(await main(process.argv.slice(2), processIo));
-  } catch (cause) {
-    console.error(`::error::${cause instanceof Error ? cause.message : String(cause)}`);
-    process.exit(1);
-  }
+  process.exit(
+    await Effect.runPromise(
+      main(process.argv.slice(2), processIo).pipe(
+        Effect.catch((error) => Console.error(`::error::${error.message}`).pipe(Effect.as(1))),
+      ),
+    ),
+  );
 }
