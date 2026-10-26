@@ -189,23 +189,28 @@
         },
         "publishable_key": {
           "type": "string",
-          "description": "Publishable key override."
+          "description": "Publishable key override.",
+          "x-secret": true
         },
         "secret_key": {
           "type": "string",
-          "description": "Secret key override."
+          "description": "Secret key override.",
+          "x-secret": true
         },
         "jwt_secret": {
           "type": "string",
-          "description": "JWT secret override."
+          "description": "JWT secret override.",
+          "x-secret": true
         },
         "anon_key": {
           "type": "string",
-          "description": "Anon key override."
+          "description": "Anon key override.",
+          "x-secret": true
         },
         "service_role_key": {
           "type": "string",
-          "description": "Service role key override."
+          "description": "Service role key override.",
+          "x-secret": true
         },
         "rate_limit": {
           "type": "object",
@@ -263,7 +268,8 @@
             },
             "secret": {
               "type": "string",
-              "description": "Secret key for the CAPTCHA provider."
+              "description": "Secret key for the CAPTCHA provider.",
+              "x-secret": true
             }
           },
           "additionalProperties": false
@@ -285,7 +291,8 @@
                 },
                 "secrets": {
                   "type": "string",
-                  "description": "Secret value to pass to the function or endpoint."
+                  "description": "Secret value to pass to the function or endpoint.",
+                  "x-secret": true
                 }
               },
               "additionalProperties": false
@@ -304,7 +311,8 @@
                 },
                 "secrets": {
                   "type": "string",
-                  "description": "Secret value to pass to the function or endpoint."
+                  "description": "Secret value to pass to the function or endpoint.",
+                  "x-secret": true
                 }
               },
               "additionalProperties": false
@@ -323,7 +331,8 @@
                 },
                 "secrets": {
                   "type": "string",
-                  "description": "Secret value to pass to the function or endpoint."
+                  "description": "Secret value to pass to the function or endpoint.",
+                  "x-secret": true
                 }
               },
               "additionalProperties": false
@@ -342,7 +351,8 @@
                 },
                 "secrets": {
                   "type": "string",
-                  "description": "Secret value to pass to the function or endpoint."
+                  "description": "Secret value to pass to the function or endpoint.",
+                  "x-secret": true
                 }
               },
               "additionalProperties": false
@@ -361,7 +371,8 @@
                 },
                 "secrets": {
                   "type": "string",
-                  "description": "Secret value to pass to the function or endpoint."
+                  "description": "Secret value to pass to the function or endpoint.",
+                  "x-secret": true
                 }
               },
               "additionalProperties": false
@@ -380,7 +391,8 @@
                 },
                 "secrets": {
                   "type": "string",
-                  "description": "Secret value to pass to the function or endpoint."
+                  "description": "Secret value to pass to the function or endpoint.",
+                  "x-secret": true
                 }
               },
               "additionalProperties": false
@@ -537,7 +549,8 @@
                 },
                 "pass": {
                   "type": "string",
-                  "description": "Password for authenticating with the SMTP server."
+                  "description": "Password for authenticating with the SMTP server.",
+                  "x-secret": true
                 },
                 "admin_email": {
                   "type": "string",
@@ -686,7 +699,8 @@
                 "auth_token": {
                   "type": "string",
                   "description": "The auth token for the Twilio API.",
-                  "examples": ["env(SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN)"]
+                  "examples": ["env(SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN)"],
+                  "x-secret": true
                 }
               },
               "additionalProperties": false
@@ -709,7 +723,8 @@
                 },
                 "auth_token": {
                   "type": "string",
-                  "description": "The auth token for the Twilio API."
+                  "description": "The auth token for the Twilio API.",
+                  "x-secret": true
                 }
               },
               "additionalProperties": false
@@ -728,7 +743,8 @@
                 },
                 "access_key": {
                   "type": "string",
-                  "description": "The access key for the MessageBird API."
+                  "description": "The access key for the MessageBird API.",
+                  "x-secret": true
                 }
               },
               "additionalProperties": false
@@ -747,7 +763,8 @@
                 },
                 "api_key": {
                   "type": "string",
-                  "description": "The API key for the Textlocal API."
+                  "description": "The API key for the Textlocal API.",
+                  "x-secret": true
                 }
               },
               "additionalProperties": false
@@ -770,7 +787,8 @@
                 },
                 "api_secret": {
                   "type": "string",
-                  "description": "The API secret for the Vonage API."
+                  "description": "The API secret for the Vonage API.",
+                  "x-secret": true
                 }
               },
               "additionalProperties": false
@@ -804,7 +822,8 @@
                 "secret": {
                   "type": "string",
                   "description": "Client secret for the Apple OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_APPLE_SECRET)"]
+                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_APPLE_SECRET)"],
+                  "x-secret": true
                 },
                 "url": {
                   "type": "string",
@@ -845,7 +864,8 @@
                 "secret": {
                   "type": "string",
                   "description": "Client secret for the Azure OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_AZURE_SECRET)"]
+                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_AZURE_SECRET)"],
+                  "x-secret": true
                 },
                 "url": {
                   "type": "string",
@@ -886,7 +906,8 @@
                 "secret": {
                   "type": "string",
                   "description": "Client secret for the Bitbucket OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_BITBUCKET_SECRET)"]
+                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_BITBUCKET_SECRET)"],
+                  "x-secret": true
                 },
                 "url": {
                   "type": "string",
@@ -927,7 +948,8 @@
                 "secret": {
                   "type": "string",
                   "description": "Client secret for the Discord OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_DISCORD_SECRET)"]
+                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_DISCORD_SECRET)"],
+                  "x-secret": true
                 },
                 "url": {
                   "type": "string",
@@ -968,7 +990,8 @@
                 "secret": {
                   "type": "string",
                   "description": "Client secret for the Facebook OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_FACEBOOK_SECRET)"]
+                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_FACEBOOK_SECRET)"],
+                  "x-secret": true
                 },
                 "url": {
                   "type": "string",
@@ -1009,7 +1032,8 @@
                 "secret": {
                   "type": "string",
                   "description": "Client secret for the Figma OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_FIGMA_SECRET)"]
+                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_FIGMA_SECRET)"],
+                  "x-secret": true
                 },
                 "url": {
                   "type": "string",
@@ -1050,7 +1074,8 @@
                 "secret": {
                   "type": "string",
                   "description": "Client secret for the GitHub OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_GITHUB_SECRET)"]
+                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_GITHUB_SECRET)"],
+                  "x-secret": true
                 },
                 "url": {
                   "type": "string",
@@ -1091,7 +1116,8 @@
                 "secret": {
                   "type": "string",
                   "description": "Client secret for the GitLab OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_GITLAB_SECRET)"]
+                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_GITLAB_SECRET)"],
+                  "x-secret": true
                 },
                 "url": {
                   "type": "string",
@@ -1132,7 +1158,8 @@
                 "secret": {
                   "type": "string",
                   "description": "Client secret for the Google OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET)"]
+                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET)"],
+                  "x-secret": true
                 },
                 "url": {
                   "type": "string",
@@ -1173,7 +1200,8 @@
                 "secret": {
                   "type": "string",
                   "description": "Client secret for the Kakao OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_KAKAO_SECRET)"]
+                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_KAKAO_SECRET)"],
+                  "x-secret": true
                 },
                 "url": {
                   "type": "string",
@@ -1214,7 +1242,8 @@
                 "secret": {
                   "type": "string",
                   "description": "Client secret for the Keycloak OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_KEYCLOAK_SECRET)"]
+                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_KEYCLOAK_SECRET)"],
+                  "x-secret": true
                 },
                 "url": {
                   "type": "string",
@@ -1256,7 +1285,8 @@
                 "secret": {
                   "type": "string",
                   "description": "Client secret for the LinkedIn OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_LINKEDIN_OIDC_SECRET)"]
+                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_LINKEDIN_OIDC_SECRET)"],
+                  "x-secret": true
                 },
                 "url": {
                   "type": "string",
@@ -1297,7 +1327,8 @@
                 "secret": {
                   "type": "string",
                   "description": "Client secret for the Notion OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_NOTION_SECRET)"]
+                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_NOTION_SECRET)"],
+                  "x-secret": true
                 },
                 "url": {
                   "type": "string",
@@ -1338,7 +1369,8 @@
                 "secret": {
                   "type": "string",
                   "description": "Client secret for the Twitch OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_TWITCH_SECRET)"]
+                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_TWITCH_SECRET)"],
+                  "x-secret": true
                 },
                 "url": {
                   "type": "string",
@@ -1379,7 +1411,8 @@
                 "secret": {
                   "type": "string",
                   "description": "Client secret for the Twitter OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_TWITTER_SECRET)"]
+                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_TWITTER_SECRET)"],
+                  "x-secret": true
                 },
                 "url": {
                   "type": "string",
@@ -1420,7 +1453,8 @@
                 "secret": {
                   "type": "string",
                   "description": "Client secret for the X OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_X_SECRET)"]
+                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_X_SECRET)"],
+                  "x-secret": true
                 },
                 "url": {
                   "type": "string",
@@ -1461,7 +1495,8 @@
                 "secret": {
                   "type": "string",
                   "description": "Client secret for the Slack OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_SLACK_OIDC_SECRET)"]
+                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_SLACK_OIDC_SECRET)"],
+                  "x-secret": true
                 },
                 "url": {
                   "type": "string",
@@ -1502,7 +1537,8 @@
                 "secret": {
                   "type": "string",
                   "description": "Client secret for the Spotify OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_SPOTIFY_SECRET)"]
+                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_SPOTIFY_SECRET)"],
+                  "x-secret": true
                 },
                 "url": {
                   "type": "string",
@@ -1543,7 +1579,8 @@
                 "secret": {
                   "type": "string",
                   "description": "Client secret for the WorkOS OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_WORKOS_SECRET)"]
+                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_WORKOS_SECRET)"],
+                  "x-secret": true
                 },
                 "url": {
                   "type": "string",
@@ -1584,7 +1621,8 @@
                 "secret": {
                   "type": "string",
                   "description": "Client secret for the Zoom OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_ZOOM_SECRET)"]
+                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_ZOOM_SECRET)"],
+                  "x-secret": true
                 },
                 "url": {
                   "type": "string",
@@ -1971,7 +2009,8 @@
           "type": "object",
           "additionalProperties": {
             "type": "string",
-            "description": "Vault secret value."
+            "description": "Vault secret value.",
+            "x-secret": true
           },
           "description": "Vault secrets."
         }
@@ -2006,7 +2045,8 @@
           "type": "object",
           "additionalProperties": {
             "type": "string",
-            "description": "Secret value exposed to the edge runtime."
+            "description": "Secret value exposed to the edge runtime.",
+            "x-secret": true
           },
           "description": "Secrets exposed to the edge runtime."
         }
@@ -2350,7 +2390,8 @@
         "openai_api_key": {
           "type": "string",
           "description": "OpenAI API key to use for Supabase AI in the Supabase Studio.",
-          "examples": ["env(OPENAI_API_KEY)"]
+          "examples": ["env(OPENAI_API_KEY)"],
+          "x-secret": true
         }
       },
       "additionalProperties": false
@@ -2437,12 +2478,14 @@
         "s3_access_key": {
           "type": "string",
           "description": "S3 access key.",
-          "examples": ["env(S3_ACCESS_KEY)"]
+          "examples": ["env(S3_ACCESS_KEY)"],
+          "x-secret": true
         },
         "s3_secret_key": {
           "type": "string",
           "description": "S3 secret key.",
-          "examples": ["env(S3_SECRET_KEY)"]
+          "examples": ["env(S3_SECRET_KEY)"],
+          "x-secret": true
         },
         "webhooks": {
           "type": "object",
@@ -2878,23 +2921,28 @@
                       },
                       "publishable_key": {
                         "type": "string",
-                        "description": "Publishable key override."
+                        "description": "Publishable key override.",
+                        "x-secret": true
                       },
                       "secret_key": {
                         "type": "string",
-                        "description": "Secret key override."
+                        "description": "Secret key override.",
+                        "x-secret": true
                       },
                       "jwt_secret": {
                         "type": "string",
-                        "description": "JWT secret override."
+                        "description": "JWT secret override.",
+                        "x-secret": true
                       },
                       "anon_key": {
                         "type": "string",
-                        "description": "Anon key override."
+                        "description": "Anon key override.",
+                        "x-secret": true
                       },
                       "service_role_key": {
                         "type": "string",
-                        "description": "Service role key override."
+                        "description": "Service role key override.",
+                        "x-secret": true
                       },
                       "rate_limit": {
                         "type": "object",
@@ -2952,7 +3000,8 @@
                           },
                           "secret": {
                             "type": "string",
-                            "description": "Secret key for the CAPTCHA provider."
+                            "description": "Secret key for the CAPTCHA provider.",
+                            "x-secret": true
                           }
                         },
                         "additionalProperties": false
@@ -2974,7 +3023,8 @@
                               },
                               "secrets": {
                                 "type": "string",
-                                "description": "Secret value to pass to the function or endpoint."
+                                "description": "Secret value to pass to the function or endpoint.",
+                                "x-secret": true
                               }
                             },
                             "additionalProperties": false
@@ -2993,7 +3043,8 @@
                               },
                               "secrets": {
                                 "type": "string",
-                                "description": "Secret value to pass to the function or endpoint."
+                                "description": "Secret value to pass to the function or endpoint.",
+                                "x-secret": true
                               }
                             },
                             "additionalProperties": false
@@ -3012,7 +3063,8 @@
                               },
                               "secrets": {
                                 "type": "string",
-                                "description": "Secret value to pass to the function or endpoint."
+                                "description": "Secret value to pass to the function or endpoint.",
+                                "x-secret": true
                               }
                             },
                             "additionalProperties": false
@@ -3031,7 +3083,8 @@
                               },
                               "secrets": {
                                 "type": "string",
-                                "description": "Secret value to pass to the function or endpoint."
+                                "description": "Secret value to pass to the function or endpoint.",
+                                "x-secret": true
                               }
                             },
                             "additionalProperties": false
@@ -3050,7 +3103,8 @@
                               },
                               "secrets": {
                                 "type": "string",
-                                "description": "Secret value to pass to the function or endpoint."
+                                "description": "Secret value to pass to the function or endpoint.",
+                                "x-secret": true
                               }
                             },
                             "additionalProperties": false
@@ -3069,7 +3123,8 @@
                               },
                               "secrets": {
                                 "type": "string",
-                                "description": "Secret value to pass to the function or endpoint."
+                                "description": "Secret value to pass to the function or endpoint.",
+                                "x-secret": true
                               }
                             },
                             "additionalProperties": false
@@ -3226,7 +3281,8 @@
                               },
                               "pass": {
                                 "type": "string",
-                                "description": "Password for authenticating with the SMTP server."
+                                "description": "Password for authenticating with the SMTP server.",
+                                "x-secret": true
                               },
                               "admin_email": {
                                 "type": "string",
@@ -3375,7 +3431,8 @@
                               "auth_token": {
                                 "type": "string",
                                 "description": "The auth token for the Twilio API.",
-                                "examples": ["env(SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN)"]
+                                "examples": ["env(SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN)"],
+                                "x-secret": true
                               }
                             },
                             "additionalProperties": false
@@ -3398,7 +3455,8 @@
                               },
                               "auth_token": {
                                 "type": "string",
-                                "description": "The auth token for the Twilio API."
+                                "description": "The auth token for the Twilio API.",
+                                "x-secret": true
                               }
                             },
                             "additionalProperties": false
@@ -3417,7 +3475,8 @@
                               },
                               "access_key": {
                                 "type": "string",
-                                "description": "The access key for the MessageBird API."
+                                "description": "The access key for the MessageBird API.",
+                                "x-secret": true
                               }
                             },
                             "additionalProperties": false
@@ -3436,7 +3495,8 @@
                               },
                               "api_key": {
                                 "type": "string",
-                                "description": "The API key for the Textlocal API."
+                                "description": "The API key for the Textlocal API.",
+                                "x-secret": true
                               }
                             },
                             "additionalProperties": false
@@ -3459,7 +3519,8 @@
                               },
                               "api_secret": {
                                 "type": "string",
-                                "description": "The API secret for the Vonage API."
+                                "description": "The API secret for the Vonage API.",
+                                "x-secret": true
                               }
                             },
                             "additionalProperties": false
@@ -3493,7 +3554,8 @@
                               "secret": {
                                 "type": "string",
                                 "description": "Client secret for the Apple OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_APPLE_SECRET)"]
+                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_APPLE_SECRET)"],
+                                "x-secret": true
                               },
                               "url": {
                                 "type": "string",
@@ -3534,7 +3596,8 @@
                               "secret": {
                                 "type": "string",
                                 "description": "Client secret for the Azure OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_AZURE_SECRET)"]
+                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_AZURE_SECRET)"],
+                                "x-secret": true
                               },
                               "url": {
                                 "type": "string",
@@ -3575,7 +3638,8 @@
                               "secret": {
                                 "type": "string",
                                 "description": "Client secret for the Bitbucket OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_BITBUCKET_SECRET)"]
+                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_BITBUCKET_SECRET)"],
+                                "x-secret": true
                               },
                               "url": {
                                 "type": "string",
@@ -3616,7 +3680,8 @@
                               "secret": {
                                 "type": "string",
                                 "description": "Client secret for the Discord OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_DISCORD_SECRET)"]
+                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_DISCORD_SECRET)"],
+                                "x-secret": true
                               },
                               "url": {
                                 "type": "string",
@@ -3657,7 +3722,8 @@
                               "secret": {
                                 "type": "string",
                                 "description": "Client secret for the Facebook OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_FACEBOOK_SECRET)"]
+                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_FACEBOOK_SECRET)"],
+                                "x-secret": true
                               },
                               "url": {
                                 "type": "string",
@@ -3698,7 +3764,8 @@
                               "secret": {
                                 "type": "string",
                                 "description": "Client secret for the Figma OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_FIGMA_SECRET)"]
+                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_FIGMA_SECRET)"],
+                                "x-secret": true
                               },
                               "url": {
                                 "type": "string",
@@ -3739,7 +3806,8 @@
                               "secret": {
                                 "type": "string",
                                 "description": "Client secret for the GitHub OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_GITHUB_SECRET)"]
+                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_GITHUB_SECRET)"],
+                                "x-secret": true
                               },
                               "url": {
                                 "type": "string",
@@ -3780,7 +3848,8 @@
                               "secret": {
                                 "type": "string",
                                 "description": "Client secret for the GitLab OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_GITLAB_SECRET)"]
+                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_GITLAB_SECRET)"],
+                                "x-secret": true
                               },
                               "url": {
                                 "type": "string",
@@ -3821,7 +3890,8 @@
                               "secret": {
                                 "type": "string",
                                 "description": "Client secret for the Google OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET)"]
+                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET)"],
+                                "x-secret": true
                               },
                               "url": {
                                 "type": "string",
@@ -3862,7 +3932,8 @@
                               "secret": {
                                 "type": "string",
                                 "description": "Client secret for the Kakao OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_KAKAO_SECRET)"]
+                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_KAKAO_SECRET)"],
+                                "x-secret": true
                               },
                               "url": {
                                 "type": "string",
@@ -3903,7 +3974,8 @@
                               "secret": {
                                 "type": "string",
                                 "description": "Client secret for the Keycloak OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_KEYCLOAK_SECRET)"]
+                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_KEYCLOAK_SECRET)"],
+                                "x-secret": true
                               },
                               "url": {
                                 "type": "string",
@@ -3945,7 +4017,8 @@
                               "secret": {
                                 "type": "string",
                                 "description": "Client secret for the LinkedIn OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_LINKEDIN_OIDC_SECRET)"]
+                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_LINKEDIN_OIDC_SECRET)"],
+                                "x-secret": true
                               },
                               "url": {
                                 "type": "string",
@@ -3986,7 +4059,8 @@
                               "secret": {
                                 "type": "string",
                                 "description": "Client secret for the Notion OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_NOTION_SECRET)"]
+                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_NOTION_SECRET)"],
+                                "x-secret": true
                               },
                               "url": {
                                 "type": "string",
@@ -4027,7 +4101,8 @@
                               "secret": {
                                 "type": "string",
                                 "description": "Client secret for the Twitch OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_TWITCH_SECRET)"]
+                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_TWITCH_SECRET)"],
+                                "x-secret": true
                               },
                               "url": {
                                 "type": "string",
@@ -4068,7 +4143,8 @@
                               "secret": {
                                 "type": "string",
                                 "description": "Client secret for the Twitter OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_TWITTER_SECRET)"]
+                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_TWITTER_SECRET)"],
+                                "x-secret": true
                               },
                               "url": {
                                 "type": "string",
@@ -4109,7 +4185,8 @@
                               "secret": {
                                 "type": "string",
                                 "description": "Client secret for the X OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_X_SECRET)"]
+                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_X_SECRET)"],
+                                "x-secret": true
                               },
                               "url": {
                                 "type": "string",
@@ -4150,7 +4227,8 @@
                               "secret": {
                                 "type": "string",
                                 "description": "Client secret for the Slack OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_SLACK_OIDC_SECRET)"]
+                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_SLACK_OIDC_SECRET)"],
+                                "x-secret": true
                               },
                               "url": {
                                 "type": "string",
@@ -4191,7 +4269,8 @@
                               "secret": {
                                 "type": "string",
                                 "description": "Client secret for the Spotify OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_SPOTIFY_SECRET)"]
+                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_SPOTIFY_SECRET)"],
+                                "x-secret": true
                               },
                               "url": {
                                 "type": "string",
@@ -4232,7 +4311,8 @@
                               "secret": {
                                 "type": "string",
                                 "description": "Client secret for the WorkOS OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_WORKOS_SECRET)"]
+                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_WORKOS_SECRET)"],
+                                "x-secret": true
                               },
                               "url": {
                                 "type": "string",
@@ -4273,7 +4353,8 @@
                               "secret": {
                                 "type": "string",
                                 "description": "Client secret for the Zoom OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
-                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_ZOOM_SECRET)"]
+                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_ZOOM_SECRET)"],
+                                "x-secret": true
                               },
                               "url": {
                                 "type": "string",
@@ -4660,7 +4741,8 @@
                         "type": "object",
                         "additionalProperties": {
                           "type": "string",
-                          "description": "Vault secret value."
+                          "description": "Vault secret value.",
+                          "x-secret": true
                         },
                         "description": "Vault secrets."
                       }
@@ -4695,7 +4777,8 @@
                         "type": "object",
                         "additionalProperties": {
                           "type": "string",
-                          "description": "Secret value exposed to the edge runtime."
+                          "description": "Secret value exposed to the edge runtime.",
+                          "x-secret": true
                         },
                         "description": "Secrets exposed to the edge runtime."
                       }
@@ -5039,7 +5122,8 @@
                       "openai_api_key": {
                         "type": "string",
                         "description": "OpenAI API key to use for Supabase AI in the Supabase Studio.",
-                        "examples": ["env(OPENAI_API_KEY)"]
+                        "examples": ["env(OPENAI_API_KEY)"],
+                        "x-secret": true
                       }
                     },
                     "additionalProperties": false
@@ -5126,12 +5210,14 @@
                       "s3_access_key": {
                         "type": "string",
                         "description": "S3 access key.",
-                        "examples": ["env(S3_ACCESS_KEY)"]
+                        "examples": ["env(S3_ACCESS_KEY)"],
+                        "x-secret": true
                       },
                       "s3_secret_key": {
                         "type": "string",
                         "description": "S3 secret key.",
-                        "examples": ["env(S3_SECRET_KEY)"]
+                        "examples": ["env(S3_SECRET_KEY)"],
+                        "x-secret": true
                       },
                       "webhooks": {
                         "type": "object",
