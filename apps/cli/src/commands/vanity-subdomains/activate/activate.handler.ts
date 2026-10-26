@@ -79,6 +79,7 @@ export const vanitySubdomainsActivate = Effect.fn("vanity-subdomains.activate")(
                     body: mapped.body,
                     message: mapped.message,
                     upgradeSuggested,
+                    entitlement: mapped.entitlement,
                   });
                 }),
               ),

@@ -49,6 +49,7 @@ const handleRemoveError = (ref: string, providerId: string, cause: SupabaseApiEr
           body: mapped.body,
           message: mapped.message,
           upgradeSuggested,
+          entitlement: mapped.entitlement,
         });
       }),
     ),

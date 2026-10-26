@@ -160,6 +160,7 @@ const handleGetError = <R>(gate: GateContext<R>, providerId: string, cause: Supa
           body: mapped.body,
           message: mapped.message,
           upgradeSuggested,
+          entitlement: mapped.entitlement,
         });
       }),
     ),
@@ -175,6 +176,7 @@ const handlePutError = <R>(gate: GateContext<R>, cause: SupabaseApiError) =>
           body: mapped.body,
           message: mapped.message,
           upgradeSuggested,
+          entitlement: mapped.entitlement,
         });
       }),
     ),

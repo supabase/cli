@@ -5,7 +5,7 @@
 # a catalog update. Everything else in this file (this comment, kong, pg14, the one-shot job
 # images) is hand- or Dependabot-managed. Keep a line between image lines: git conflicts on edits to
 # adjacent lines, and catalog PRs for neighbouring aliases are often open at the same time.
-FROM supabase/postgres:17.11.0.006 AS pg
+FROM supabase/postgres:17.11.0.007 AS pg
 
 FROM supabase/postgres:15.19.0.007 AS pg15
 # Postgres 14 has no slim build; bumped by hand (Dependabot ignores supabase/postgres).
@@ -21,7 +21,7 @@ FROM postgrest/postgrest:v16.5 AS postgrest
 
 FROM supabase/postgres-meta:v0.100.0 AS pgmeta
 
-FROM supabase/studio:2026.10.19-sha-b375769 AS studio
+FROM supabase/studio:2026.10.26-sha-478bd88 AS studio
 
 FROM darthsim/imgproxy:v3.26.0 AS imgproxy
 
@@ -33,7 +33,7 @@ FROM supabase/supavisor:2.9.13 AS supavisor
 
 FROM supabase/gotrue:v2.197.0 AS gotrue
 
-FROM supabase/realtime:v2.147.3 AS realtime
+FROM supabase/realtime:v2.147.4 AS realtime
 
 FROM supabase/storage-api:v1.84.23 AS storage
 
