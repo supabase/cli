@@ -113,18 +113,16 @@ export const buildLocalDbContainerInputs = (
     const { config, projectEnvValues, loaded, hostname, projectId } = context;
     const experimental = yield* resolveExperimentalWithProjectEnv(projectEnvValues);
 
-    const values = yield* Effect.try({
-      try: () =>
-        resolveLocalConfigValues(
-          config,
-          hostname,
-          workdir,
-          projectEnvValues,
-          loaded?.document,
-          remoteOverrideKeys,
-        ),
-      catch: (cause) => mapError(cause instanceof Error ? cause.message : String(cause)),
-    });
+    const values = yield* resolveLocalConfigValues(
+      config,
+      hostname,
+      workdir,
+      projectEnvValues,
+      loaded?.document,
+      remoteOverrideKeys,
+    ).pipe(
+      Effect.mapError((cause) => mapError(cause instanceof Error ? cause.message : String(cause))),
+    );
 
     const bootstrapConfig = yield* resolveDbBootstrapConfig(
       fs,
@@ -160,11 +158,11 @@ export const buildLocalDbContainerInputs = (
         port: values.dbPort,
         major_version: bootstrapConfig.majorVersion,
         orioledb_version: bootstrapConfig.orioledbVersion,
-        settings: resolveDbSettingsEnvOverrides(
+        settings: yield* resolveDbSettingsEnvOverrides(
           config.db.settings,
           projectEnvValues,
           remoteOverrideKeys,
-        ),
+        ).pipe(Effect.orDie),
       },
       experimental: {
         ...config.experimental,
@@ -223,10 +221,12 @@ export const buildLocalDbContainerInputs = (
         remoteOverrideKeys,
       ).pipe(
         Effect.provideService(HttpClient.HttpClient, httpClient),
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
         Effect.mapError((cause) => mapError(cause.message)),
       ),
       apiUrl: values.apiUrl,
-      authExternalUrl: resolveAuthExternalUrl(
+      authExternalUrl: yield* resolveAuthExternalUrl(
         loaded?.document,
         projectEnvValues,
         remoteOverrideKeys,

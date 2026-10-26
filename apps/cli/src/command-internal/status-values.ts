@@ -1,4 +1,5 @@
 import type { CliConfig } from "@supabase/config";
+import { Effect } from "effect";
 
 import { dockerfileServiceImageRaw } from "../shared/services/dockerfile-images.ts";
 import { serviceContainerIds } from "./docker-ids.ts";
@@ -209,7 +210,7 @@ export interface StatusState {
 }
 
 /**
- * The validating half of {@link StatusState}: everything that can throw, and none of it
+ * The validating half of {@link StatusState}: everything that can fail, and none of it
  * depends on `excluded`/`containerIds`. Split out so `status.handler.ts` can resolve and
  * validate this before any Docker call — a bad `auth.jwt_secret` or malformed
  * `SUPABASE_*_PORT`/`SUPABASE_*_ENABLED` override must fail here, not be masked by a
@@ -228,21 +229,21 @@ export interface StatusLocalState {
 }
 
 /**
- * Resolves local config values (URLs, keys — can throw, see {@link resolveLocalConfigValues})
+ * Resolves local config values (URLs, keys — can fail, see {@link resolveLocalConfigValues})
  * and the per-service `.enabled` gates, with no reference to `excluded`/`containerIds` — see
  * {@link gateStatusState} for the Docker-dependent half this composes with. Each `.enabled`
  * gate is read through {@link envOverrideBool}, not the raw decoded `config.<section>.enabled`,
  * so an env-overridden stack's running services match what `status` reports.
  *
- * @throws {InvalidJwtSecretError} when `auth.jwt_secret` is set but too short.
- * @throws {InvalidPortEnvOverrideError} when a `SUPABASE_*_PORT` env/dotenv override doesn't
- * parse as a valid port.
- * @throws {InvalidBoolEnvOverrideError} when a `SUPABASE_*_ENABLED` env/dotenv override
- * doesn't parse as a valid bool.
- * @throws when `auth.signing_keys_path` is set but the file is missing, malformed, or its
+ * Fails with {@link InvalidJwtSecretError} when `auth.jwt_secret` is set but too short.
+ * Fails with {@link InvalidPortEnvOverrideError} when a `SUPABASE_*_PORT` env/dotenv
+ * override doesn't parse as a valid port.
+ * Fails with {@link InvalidBoolEnvOverrideError} when a `SUPABASE_*_ENABLED` env/dotenv
+ * override doesn't parse as a valid bool.
+ * Fails when `auth.signing_keys_path` is set but the file is missing, malformed, or its
  * first key is unsupported — see {@link generateAsymmetricGoJwt}.
  */
-export function resolveStatusLocalState(
+export const resolveStatusLocalState = Effect.fnUntraced(function* (
   config: CliConfig,
   hostname: string,
   workdir: string,
@@ -258,48 +259,48 @@ export function resolveStatusLocalState(
    * containers.
    */
   precomputedLocal?: LocalConfigValues,
-): StatusLocalState {
+) {
   const local =
     precomputedLocal ??
-    resolveLocalConfigValues(config, hostname, workdir, projectEnvValues, document);
+    (yield* resolveLocalConfigValues(config, hostname, workdir, projectEnvValues, document));
 
-  const apiEnabled = envOverrideBool(
+  const apiEnabled = yield* envOverrideBool(
     "SUPABASE_API_ENABLED",
     config.api.enabled,
     "api.enabled",
     projectEnvValues,
   );
-  const studioSectionEnabled = envOverrideBool(
+  const studioSectionEnabled = yield* envOverrideBool(
     "SUPABASE_STUDIO_ENABLED",
     config.studio.enabled,
     "studio.enabled",
     projectEnvValues,
   );
-  const authSectionEnabled = envOverrideBool(
+  const authSectionEnabled = yield* envOverrideBool(
     "SUPABASE_AUTH_ENABLED",
     config.auth.enabled,
     "auth.enabled",
     projectEnvValues,
   );
-  const inbucketSectionEnabled = envOverrideBool(
+  const inbucketSectionEnabled = yield* envOverrideBool(
     "SUPABASE_LOCAL_SMTP_ENABLED",
     config.local_smtp.enabled,
     "local_smtp.enabled",
     projectEnvValues,
   );
-  const storageSectionEnabled = envOverrideBool(
+  const storageSectionEnabled = yield* envOverrideBool(
     "SUPABASE_STORAGE_ENABLED",
     config.storage.enabled,
     "storage.enabled",
     projectEnvValues,
   );
-  const edgeRuntimeEnabled = envOverrideBool(
+  const edgeRuntimeEnabled = yield* envOverrideBool(
     "SUPABASE_EDGE_RUNTIME_ENABLED",
     config.edge_runtime.enabled,
     "edge_runtime.enabled",
     projectEnvValues,
   );
-  const storageS3ProtocolEnabled = envOverrideBool(
+  const storageS3ProtocolEnabled = yield* envOverrideBool(
     "SUPABASE_STORAGE_S3_PROTOCOL_ENABLED",
     config.storage.s3_protocol.enabled,
     "storage.s3_protocol.enabled",
@@ -316,14 +317,14 @@ export function resolveStatusLocalState(
     storageSectionEnabled,
     edgeRuntimeEnabled,
     storageS3ProtocolEnabled,
-  };
-}
+  } satisfies StatusLocalState;
+});
 
 /**
  * The Docker-dependent, non-throwing half of status resolution: applies `excluded`, matching
  * each gated service by its container id ({@link statusContainerIds}) or its default Docker
  * image short name ({@link shortContainerImageName}) — service images are never
- * user-overridable, so the default is always the one to check. Pure: every throwing concern
+ * user-overridable, so the default is always the one to check. Pure: every fallible concern
  * already ran in {@link resolveStatusLocalState}.
  */
 export function gateStatusState(
@@ -439,7 +440,7 @@ export function deprecatedStatusFieldWarning(
  * map. `status.handler.ts` calls the three separately so it can validate before any Docker
  * call and reuse the gated state for both the real and pretty-mode value maps.
  */
-export function statusValues(
+export const statusValues = Effect.fnUntraced(function* (
   config: CliConfig,
   containerIds: StatusContainerIds,
   hostname: string,
@@ -449,8 +450,14 @@ export function statusValues(
   projectEnvValues?: Readonly<Record<string, string>>,
   /** `LoadedCliConfig.document` — see {@link resolveLocalConfigValues}'s doc comment. */
   document?: Readonly<Record<string, unknown>>,
-): StatusValuesResult {
-  const localState = resolveStatusLocalState(config, hostname, workdir, projectEnvValues, document);
+) {
+  const localState = yield* resolveStatusLocalState(
+    config,
+    hostname,
+    workdir,
+    projectEnvValues,
+    document,
+  );
   const state = gateStatusState(localState, containerIds, excluded);
   return statusValuesFromState(state, overrides);
-}
+});

@@ -67,26 +67,24 @@ export interface DbBootstrapConfig {
   readonly storageTargetMigration: string;
 }
 
+const configOverrideMessage = (dottedFieldPath: string, cause: unknown) =>
+  `invalid config for ${dottedFieldPath}: ${cause instanceof Error ? cause.message : String(cause)}`;
+
 /**
- * Wraps a synchronous `envOverride*` read that throws on a malformed value into a typed failure
- * instead of an untyped Effect defect.
+ * Maps an `envOverride*` read's malformed-value failure into the caller's typed error instead of
+ * an untyped Effect defect.
  *
  * @param dottedFieldPath - Config path embedded in the error message (`invalid config for
  * <path>: <cause>`).
  */
-function wrapConfigOverride<T, E>(
+const wrapConfigOverride = <T, F, R, E>(
   dottedFieldPath: string,
-  thunk: () => T,
+  effect: Effect.Effect<T, F, R>,
   mapConfigError: (message: string) => E,
-): Effect.Effect<T, E> {
-  return Effect.try({
-    try: thunk,
-    catch: (cause) =>
-      mapConfigError(
-        `invalid config for ${dottedFieldPath}: ${cause instanceof Error ? cause.message : String(cause)}`,
-      ),
-  });
-}
+): Effect.Effect<T, E, R> =>
+  effect.pipe(
+    Effect.mapError((cause) => mapConfigError(configOverrideMessage(dottedFieldPath, cause))),
+  );
 
 /**
  * Resolves every field {@link startDatabase} needs from `config`/`projectEnvValues`: values
@@ -111,33 +109,39 @@ export const resolveDbBootstrapConfig = <E>(
     // wins over a conflicting SUPABASE_DB_MAJOR_VERSION.
     const majorVersion = remoteWins("db.major_version")
       ? config.db.major_version
-      : envOverrideMajorVersion(config.db.major_version, projectEnvValues);
+      : yield* envOverrideMajorVersion(config.db.major_version, projectEnvValues).pipe(
+          Effect.orDie,
+        );
     // orioledb_version and the four S3 fields feed the Postgres container's image/env directly.
-    // `envOverride` never throws, so these don't need `wrapConfigOverride`. Same remote-over-env
+    // `envOverride` never fails, so these don't need `wrapConfigOverride`. Same remote-over-env
     // precedence as `majorVersion` applies to each.
     const orioledbVersion = remoteWins("db.orioledb_version")
       ? config.db.orioledb_version
-      : envOverrideOrioleDBVersion(config.db.orioledb_version, projectEnvValues);
+      : yield* envOverrideOrioleDBVersion(config.db.orioledb_version, projectEnvValues);
     const s3Host = remoteWins("experimental.s3_host")
       ? config.experimental.s3_host
-      : envOverride("SUPABASE_EXPERIMENTAL_S3_HOST", config.experimental.s3_host, projectEnvValues);
+      : yield* envOverride(
+          "SUPABASE_EXPERIMENTAL_S3_HOST",
+          config.experimental.s3_host,
+          projectEnvValues,
+        );
     const s3Region = remoteWins("experimental.s3_region")
       ? config.experimental.s3_region
-      : envOverride(
+      : yield* envOverride(
           "SUPABASE_EXPERIMENTAL_S3_REGION",
           config.experimental.s3_region,
           projectEnvValues,
         );
     const s3AccessKey = remoteWins("experimental.s3_access_key")
       ? config.experimental.s3_access_key
-      : envOverride(
+      : yield* envOverride(
           "SUPABASE_EXPERIMENTAL_S3_ACCESS_KEY",
           config.experimental.s3_access_key,
           projectEnvValues,
         );
     const s3SecretKey = remoteWins("experimental.s3_secret_key")
       ? config.experimental.s3_secret_key
-      : envOverride(
+      : yield* envOverride(
           "SUPABASE_EXPERIMENTAL_S3_SECRET_KEY",
           config.experimental.s3_secret_key,
           projectEnvValues,
@@ -148,41 +152,38 @@ export const resolveDbBootstrapConfig = <E>(
     // malformed override; it has no `--exclude`/gates equivalent of its own.
     const realtimeEnabledForSetup = yield* wrapConfigOverride(
       "realtime.enabled",
-      () =>
-        remoteWins("realtime.enabled")
-          ? config.realtime.enabled
-          : envOverrideBool(
-              "SUPABASE_REALTIME_ENABLED",
-              config.realtime.enabled,
-              "realtime.enabled",
-              projectEnvValues,
-            ),
+      remoteWins("realtime.enabled")
+        ? Effect.succeed(config.realtime.enabled)
+        : envOverrideBool(
+            "SUPABASE_REALTIME_ENABLED",
+            config.realtime.enabled,
+            "realtime.enabled",
+            projectEnvValues,
+          ),
       mapConfigError,
     );
     const storageEnabledForSetup = yield* wrapConfigOverride(
       "storage.enabled",
-      () =>
-        remoteWins("storage.enabled")
-          ? config.storage.enabled
-          : envOverrideBool(
-              "SUPABASE_STORAGE_ENABLED",
-              config.storage.enabled,
-              "storage.enabled",
-              projectEnvValues,
-            ),
+      remoteWins("storage.enabled")
+        ? Effect.succeed(config.storage.enabled)
+        : envOverrideBool(
+            "SUPABASE_STORAGE_ENABLED",
+            config.storage.enabled,
+            "storage.enabled",
+            projectEnvValues,
+          ),
       mapConfigError,
     );
     const authEnabledForSetup = yield* wrapConfigOverride(
       "auth.enabled",
-      () =>
-        remoteWins("auth.enabled")
-          ? config.auth.enabled
-          : envOverrideBool(
-              "SUPABASE_AUTH_ENABLED",
-              config.auth.enabled,
-              "auth.enabled",
-              projectEnvValues,
-            ),
+      remoteWins("auth.enabled")
+        ? Effect.succeed(config.auth.enabled)
+        : envOverrideBool(
+            "SUPABASE_AUTH_ENABLED",
+            config.auth.enabled,
+            "auth.enabled",
+            projectEnvValues,
+          ),
       mapConfigError,
     );
 
@@ -190,27 +191,29 @@ export const resolveDbBootstrapConfig = <E>(
     // overridden value.
     const realtimeIpVersion = yield* wrapConfigOverride(
       "realtime.ip_version",
-      () => {
-        // `envOverrideRealtimeIpVersion` reads `process.env` unconditionally, so it can't be
+      Effect.gen(function* () {
+        // `envOverrideRealtimeIpVersion` reads the environment unconditionally, so it can't be
         // called at all when the remote block wins — a raw env var would still beat it. The
-        // throw below only narrows the type; the schema already guarantees one of these values.
+        // failure below only narrows the type; the schema already guarantees one of these values.
         if (remoteWins("realtime.ip_version")) {
           const value = config.realtime.ip_version;
           if (value !== "IPv4" && value !== "IPv6") {
-            throw new InvalidRealtimeIpVersionEnvOverrideError("realtime.ip_version", value);
+            return yield* new InvalidRealtimeIpVersionEnvOverrideError(
+              "realtime.ip_version",
+              value,
+            );
           }
           return value;
         }
-        return envOverrideRealtimeIpVersion(config.realtime.ip_version, projectEnvValues);
-      },
+        return yield* envOverrideRealtimeIpVersion(config.realtime.ip_version, projectEnvValues);
+      }),
       mapConfigError,
     );
     const realtimeMaxHeaderLength = yield* wrapConfigOverride(
       "realtime.max_header_length",
-      () =>
-        remoteWins("realtime.max_header_length")
-          ? config.realtime.max_header_length
-          : envOverrideRealtimeMaxHeaderLength(config.realtime.max_header_length, projectEnvValues),
+      remoteWins("realtime.max_header_length")
+        ? Effect.succeed(config.realtime.max_header_length)
+        : envOverrideRealtimeMaxHeaderLength(config.realtime.max_header_length, projectEnvValues),
       mapConfigError,
     );
 
@@ -219,16 +222,15 @@ export const resolveDbBootstrapConfig = <E>(
     // validated eagerly here rather than surfacing later inside a container env builder.
     const storageFileSizeLimit = remoteWins("storage.file_size_limit")
       ? config.storage.file_size_limit
-      : (envOverride(
+      : ((yield* envOverride(
           "SUPABASE_STORAGE_FILE_SIZE_LIMIT",
           config.storage.file_size_limit,
           projectEnvValues,
-        ) ?? config.storage.file_size_limit);
-    yield* wrapConfigOverride(
-      "storage.file_size_limit",
-      () => ramInBytes(storageFileSizeLimit),
-      mapConfigError,
-    );
+        )) ?? config.storage.file_size_limit);
+    yield* Effect.try({
+      try: () => ramInBytes(storageFileSizeLimit),
+      catch: (cause) => mapConfigError(configOverrideMessage("storage.file_size_limit", cause)),
+    });
 
     // Reads a `supabase/.temp/postgres-version` pin written by `supabase link`; a missing or
     // unreadable pin falls back to the embedded default, so this never fails.
@@ -250,7 +252,11 @@ export const resolveDbBootstrapConfig = <E>(
 
     const dbHealthTimeout = remoteWins("db.health_timeout")
       ? config.db.health_timeout
-      : envOverride("SUPABASE_DB_HEALTH_TIMEOUT", config.db.health_timeout, projectEnvValues);
+      : yield* envOverride(
+          "SUPABASE_DB_HEALTH_TIMEOUT",
+          config.db.health_timeout,
+          projectEnvValues,
+        );
     const dbHealthTimeoutSeconds = yield* Effect.try({
       try: () => resolveHealthTimeoutSeconds(dbHealthTimeout ?? config.db.health_timeout),
       catch: (cause) =>
