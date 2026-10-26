@@ -77,7 +77,7 @@ describe("published JSON Schema documents", () => {
   });
 
   test("the project config schema carries no secret markers", () => {
-    expect(collectSecretPaths(toProjectConfigJsonSchema())).toEqual([]);
+    expect(JSON.stringify(toProjectConfigJsonSchema())).not.toContain('"x-secret"');
   });
 
   test("custom annotations other than x-secret are not published", () => {
