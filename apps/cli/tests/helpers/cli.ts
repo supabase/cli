@@ -675,27 +675,53 @@ const spawnSupabaseProgram = Effect.fnUntraced(function* (
   const commandArgs = options?.closeStdout
     ? ["-e", closedStdoutRelay(yield* encodeArgv(shimArgs))]
     : shimArgs;
-  const handle = yield* spawner.spawn(
-    ChildProcess.make("node", commandArgs, {
-      cwd: options?.cwd,
-      env,
-      extendEnv: false,
-      stdin: usesStartWrapper || options?.stdin !== undefined ? "pipe" : "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-      // Own process group so tests can distinguish product cleanup from helper cleanup.
-      detached: true,
-      /* The harness owns every group kill. The spawner signals the group itself on a nonzero exit
-         and at release; SIGURG is ignored by default and leaves stopped processes stopped. */
-      killSignal: "SIGURG",
+  const command = ChildProcess.make("node", commandArgs, {
+    cwd: options?.cwd,
+    env,
+    extendEnv: false,
+    stdin: usesStartWrapper || options?.stdin !== undefined ? "pipe" : "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    // Own process group so tests can distinguish product cleanup from helper cleanup.
+    detached: true,
+    /* The harness owns every group kill. The spawner signals the group itself on a nonzero exit
+       and at release; SIGURG is ignored by default and leaves stopped processes stopped. */
+    killSignal: "SIGURG",
+  });
+
+  let closeResult: RunResult | undefined;
+  let cleanedUpProcessGroup = false;
+  const signalGroup = (handle: ChildProcessSpawner.ChildProcessHandle, name: NodeJS.Signals) =>
+    Effect.flatMap(
+      Effect.orElseSucceed(handle.isRunning, () => false),
+      (running) =>
+        Effect.sync(() => {
+          killProcessGroup(handle.pid, name);
+          if (running) killProcess(handle.pid, name);
+        }),
+    );
+
+  // Scope release owns the spawned group: a run that did not complete always kills it so the
+  // child is never orphaned, without re-signaling a group the close path already cleaned. On
+  // successful completion the caller's `cleanupProcessGroupOnClose: false` opt-out is honoured.
+  const handle = yield* Effect.acquireRelease(spawner.spawn(command), (handle, exit) =>
+    Effect.gen(function* () {
+      const successOptOut = Exit.isSuccess(exit) && options?.cleanupProcessGroupOnClose === false;
+      // `closeResult === undefined` is the honest liveness test: the pid is still owned,
+      // so signaling is safe and necessary; once the child has closed, signaling again
+      // would only race pid reuse.
+      if (successOptOut) {
+        yield* Effect.ignore(handle.unref);
+      } else if (closeResult === undefined) {
+        cleanedUpProcessGroup = true;
+        yield* signalGroup(handle, "SIGKILL");
+      }
     }),
   );
   const pid = handle.pid;
 
   let stdout = "";
   let stderr = "";
-  let closeResult: RunResult | undefined;
-  let cleanedUpProcessGroup = false;
   let stdinError: unknown;
   const closed = yield* Deferred.make<RunResult>();
   const stdoutChanged = yield* PubSub.unbounded<void>();
@@ -710,15 +736,7 @@ const spawnSupabaseProgram = Effect.fnUntraced(function* (
 
   const disposeOwnHome = ownHome === undefined ? Effect.void : disposeHome(ownHome);
 
-  const signal = (name: NodeJS.Signals) =>
-    Effect.flatMap(
-      Effect.orElseSucceed(handle.isRunning, () => false),
-      (running) =>
-        Effect.sync(() => {
-          killProcessGroup(pid, name);
-          if (running) killProcess(pid, name);
-        }),
-    );
+  const signal = (name: NodeJS.Signals) => signalGroup(handle, name);
 
   /* Each chunk is decoded on its own and keeps a byte order mark, like `Buffer#toString`. */
   const drain = (
@@ -773,24 +791,6 @@ const spawnSupabaseProgram = Effect.fnUntraced(function* (
       ),
     );
   }
-
-  // Scope release owns the spawned group: a run that did not complete always kills it so the
-  // child is never orphaned, without re-signaling a group the close path already cleaned. On
-  // successful completion the caller's `cleanupProcessGroupOnClose: false` opt-out is honoured.
-  yield* Effect.addFinalizer((exit) =>
-    Effect.gen(function* () {
-      const successOptOut = Exit.isSuccess(exit) && options?.cleanupProcessGroupOnClose === false;
-      // `closeResult === undefined` is the honest liveness test: the pid is still owned,
-      // so signaling is safe and necessary; once the child has closed, signaling again
-      // would only race pid reuse.
-      if (successOptOut) {
-        yield* Effect.ignore(handle.unref);
-      } else if (closeResult === undefined) {
-        cleanedUpProcessGroup = true;
-        yield* signal("SIGKILL");
-      }
-    }),
-  );
 
   const stdinFailure = (result: RunResult) =>
     new Error(
