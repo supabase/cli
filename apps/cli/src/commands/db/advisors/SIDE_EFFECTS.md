@@ -13,7 +13,7 @@ Management API.
 | `<workdir>/supabase/config.toml`       | TOML       | local / `--remote=<url>` — to resolve the DB connection config                                                                                             |
 | `~/.supabase/access-token`             | plain text | a remote project or branch only, when `SUPABASE_ACCESS_TOKEN` unset (keyring → file)                                                                       |
 | `<workdir>/supabase/.temp/project-ref` | plain text | bare `--remote` — to resolve the project ref, skipped when `SUPABASE_PROJECT_ID` is set; with no selector — only to name the project in the `Target:` hint |
-| `PGSSL*` PEM, `pg_service.conf`        | PEM, libpq | `--remote=<url>`, or local on the experimental stack (shell env only), when set; see `db push`                                                             |
+| `PGSSL*` PEM, `pg_service.conf`        | PEM, libpq | `--remote=<url>` or local on the experimental stack (shell env only), when set; client cert and key never for the local stack database; see `db push`      |
 
 ## Files Written
 
