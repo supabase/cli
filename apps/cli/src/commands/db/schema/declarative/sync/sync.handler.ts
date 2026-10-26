@@ -26,7 +26,7 @@ import { applyMigrationFile } from "../../../../../command-internal/migration-ap
 import { ENABLE_LOCAL_WEBHOOKS_SUGGESTION } from "../../../../../command-internal/pg-net-guidance.ts";
 import { TelemetryState } from "../../../../../telemetry/telemetry-state.service.ts";
 import { listLocalMigrations } from "../../../../../command-internal/migration-list.ts";
-import { pgDeltaTempPath } from "../../../../../command-internal/pgdelta.paths.ts";
+import { pgdeltaScratchDir } from "../../../../../command-internal/scratch-paths.ts";
 import { isPgDeltaDebugEnabled } from "../../../../../command-internal/pgdelta.ts";
 import { writePgDeltaMigrations } from "../../../shared/pgdelta-migrations.write.ts";
 import { prepareLocalTargetEndpoint } from "../declarative.smart-target.ts";
@@ -129,7 +129,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
     // a bare `extension.sql` is ambiguous in a tree with nested schema folders.
     const extensionSqlRel = path.join(declarativeDirRel, "extension.sql");
     const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
-    const tempDir = pgDeltaTempPath(path, cliSettings.workdir);
+    const tempDir = yield* pgdeltaScratchDir(cliSettings.workdir);
     const run: DeclarativeRunContext = {
       pgDelta: {
         projectId: toml.projectId,

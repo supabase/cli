@@ -1,3 +1,4 @@
+import { legacyProjectStateLayer } from "../shared/config/legacy-project-state.layer.ts";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer } from "effect";
@@ -76,7 +77,7 @@ describe("linkServicesCore", () => {
           api.layer,
           api.httpClientLayer,
           mockCommandSettings({ workdir: workdir.current }),
-        ).pipe(Layer.provideMerge(BunServices.layer)),
+        ).pipe(Layer.provideMerge(legacyProjectStateLayer), Layer.provideMerge(BunServices.layer)),
       ),
       Effect.as(api.requests),
     );

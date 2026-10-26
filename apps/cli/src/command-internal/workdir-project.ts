@@ -6,6 +6,7 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
+import { configParseCauseMessage } from "../shared/output/normalize-error.ts";
 import { sanitizeInlineName } from "./http-errors.ts";
 
 /** Renders a config-load path relative to `workdir` (e.g. `supabase/config.json`), regardless of invocation cwd. */
@@ -17,7 +18,7 @@ export function describeConfigParseError(
   workdir: string,
   error: { readonly path: string; readonly cause: unknown },
 ): string {
-  return `failed to parse ${relativeConfigPath(workdir, error.path)}: ${String(error.cause)}`;
+  return `failed to parse ${relativeConfigPath(workdir, error.path)}: ${configParseCauseMessage(error.cause)}`;
 }
 
 /**

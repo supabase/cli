@@ -73,6 +73,11 @@ import {
 } from "../../../../tests/helpers/config-values-layer.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
+import {
+  legacyStateAccesses,
+  recordingFileSystem,
+  seedLegacyStateDecoys,
+} from "../../../../tests/helpers/legacy-state-guard.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
@@ -92,6 +97,7 @@ import {
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { dockerRunLayer } from "../../../command-internal/docker-run.layer.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
+import { projectStateModeLayer } from "../../../shared/config/project-state-mode.ts";
 import { StackApi } from "../../../command-internal/stack-api.ts";
 import {
   StackCatalogSetup,
@@ -123,6 +129,10 @@ import {
 } from "../../../command-internal/db-connection.service.ts";
 import { dbReset } from "./reset.handler.ts";
 import type { DbResetFlags } from "./reset.command.ts";
+import { database15, selection } from "../../../../tests/helpers/pins.ts";
+import { seedLock, unbundled } from "../../../../tests/helpers/stack-lock.ts";
+import { classifyCliErrorActionability } from "../../../shared/telemetry/error-actionability.ts";
+import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
 
 const LIST_MIGRATIONS =
   "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version";
@@ -559,8 +569,8 @@ const serviceCreation = (
     case "database":
       return {
         service,
+        pin: database15,
         config: {
-          version: "15",
           databasePassword: Redacted.make("postgres"),
           jwtSecret: Redacted.make(RESET_JWT),
           jwtExpiry: 3600,
@@ -568,17 +578,33 @@ const serviceCreation = (
         endpoints: {},
       };
     case "auth":
-      return { service, config: { databaseUrl, jwtSecret: RESET_JWT }, endpoints: {} };
+      return {
+        service,
+        pin: selection.auth,
+        config: { databaseUrl, jwtSecret: RESET_JWT },
+        endpoints: {},
+      };
     case "storage":
       return {
         service,
+        pin: selection.storage,
         config: { databaseUrl, filePath: "/tmp/storage", jwtSecret: RESET_JWT },
         endpoints: {},
       };
     case "realtime":
-      return { service, config: { databaseUrl, jwtSecret: RESET_JWT }, endpoints: {} };
+      return {
+        service,
+        pin: selection.realtime,
+        config: { databaseUrl, jwtSecret: RESET_JWT },
+        endpoints: {},
+      };
     case "pooler":
-      return { service, config: { databaseUrl, jwtSecret: RESET_JWT }, endpoints: {} };
+      return {
+        service,
+        pin: selection.pooler,
+        config: { databaseUrl, jwtSecret: RESET_JWT },
+        endpoints: {},
+      };
   }
 };
 
@@ -860,7 +886,7 @@ function mockResetStackApi(opts: {
               runtime: "native" as const,
               instances: members.map((member) => ({
                 id: member.id,
-                creation: { service: "mail" as const, config: {} },
+                creation: { service: "mail" as const, pin: selection.mail, config: {} },
               })),
               lifetime: "detached" as const,
               composition: { members: [], dependencies: [] },
@@ -1033,6 +1059,7 @@ function setup(
           }),
         );
   const projectHttp = recordingProjectHttpClient(VALID_REF);
+  const recorder = recordingFileSystem();
   const seedFlagInputs = [
     ...(opts.noSeed === true ? [flagInput("db.seed.enabled", "no-seed", false)] : []),
     ...(opts.sqlPaths === undefined
@@ -1055,6 +1082,7 @@ function setup(
       : resolver.layer,
     mockCommandSettings({ workdir }),
     BunServices.layer,
+    recorder.layer,
     child.layer,
     mockLocalDockerEngineUnavailableLayer,
     mockRuntimeInfo({ platform: "linux" }),
@@ -1101,7 +1129,7 @@ function setup(
         })
       : linkedCache.layer,
     ...(opts.stackBackend === true && catalog !== undefined
-      ? [stackBackendLayer("stack"), stackApi.layer, catalog.layer]
+      ? [stackBackendLayer("stack"), projectStateModeLayer("stack"), stackApi.layer, catalog.layer]
       : []),
   ).pipe(Layer.provide(workdirLayer));
   return {
@@ -1117,6 +1145,7 @@ function setup(
     requests,
     projectHttp,
     platformApi,
+    accessed: recorder.accessed,
   };
 }
 
@@ -1367,6 +1396,98 @@ describe("db reset", () => {
         expect(out.stderrText).not.toContain("skipped seeding storage buckets");
       });
     });
+
+    it.effect("a stack reset never reads or writes supabase/.temp", () => {
+      seedLegacyStateDecoys(tmp.current);
+      const { layer, accessed } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset"],
+        isLocal: true,
+        stackBackend: true,
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(accessed.some((entry) => entry.endsWith("supabase.lock"))).toBe(true);
+        expect(legacyStateAccesses(accessed)).toEqual([]);
+      });
+    });
+
+    it.effect("runs the catalog one-shots of a postgres-only stack on the lock's pins", () => {
+      const toml = 'project_id = "test"\n';
+      const lockedAuth = unbundled(selection.auth);
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+        yield* fs.writeFileString(path.join(tmp.current, "supabase", "config.toml"), toml);
+        yield* seedLock(tmp.current, (services) => ({
+          ...services,
+          auth: { ...services.auth, resolved: lockedAuth },
+        })).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              runtimeInfoLayer,
+              mockCommandSettings({ workdir: tmp.current, supabaseHome: tmp.current }),
+            ),
+          ),
+        );
+        const { layer, catalogApplied } = setup(tmp.current, {
+          toml,
+          args: ["db", "reset"],
+          isLocal: true,
+          stackBackend: true,
+          stackPostgresOnly: true,
+        });
+
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+
+        expect(catalogApplied[0]?.target.selection.auth).toEqual(lockedAuth);
+      }).pipe(Effect.provide(BunServices.layer));
+    });
+
+    it.effect(
+      "tells a stale lock to run supabase start and classifies it as user-actionable",
+      () => {
+        const toml = 'project_id = "test"\n';
+        return Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+          yield* fs.writeFileString(path.join(tmp.current, "supabase", "config.toml"), toml);
+          yield* seedLock(tmp.current, (services) => ({
+            ...services,
+            rest: { ...services.rest, specifier: "v99.0.0" },
+          })).pipe(
+            Effect.provide(
+              Layer.mergeAll(
+                runtimeInfoLayer,
+                mockCommandSettings({ workdir: tmp.current, supabaseHome: tmp.current }),
+              ),
+            ),
+          );
+          const { layer } = setup(tmp.current, {
+            toml,
+            args: ["db", "reset"],
+            isLocal: true,
+            stackBackend: true,
+          });
+
+          const error = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
+
+          expect(error).toMatchObject({
+            message: expect.stringContaining(
+              "rest (specifier linked ≠ locked v99.0.0); run supabase start to refresh it",
+            ),
+          });
+          expect(error.message).not.toContain("commit");
+          expect(classifyCliErrorActionability(error)).toMatchObject({
+            error_kind: "user_actionable",
+            suggested_command: "supabase start",
+            error_fingerprint: "tag:ResetLocalDbFailedError:conflict",
+          });
+        }).pipe(Effect.provide(BunServices.layer));
+      },
+    );
 
     it.effect("preserves the existing stack composition while rebuilding the database", () => {
       const { layer, catalogApplied } = setup(tmp.current, {

@@ -40,7 +40,6 @@ const toml: DbTomlValues = {
   port: 54322,
   shadowPort: 54320,
   password: "postgres",
-  poolerConnectionString: Option.none(),
   projectId: "test",
   majorVersion: 17,
   orioledbVersion: Option.none(),

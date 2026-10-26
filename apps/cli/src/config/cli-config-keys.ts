@@ -1,5 +1,5 @@
 import { CliConfigSchema, type CliConfig } from "@supabase/config";
-import { Option, type SchemaAST } from "effect";
+import { Option, SchemaAST } from "effect";
 
 import {
   CLI_CONFIG_CODEC_OVERRIDES,
@@ -8,6 +8,7 @@ import {
   CLI_CONFIG_FAMILIES,
   CLI_CONFIG_FLAGS,
   CLI_CONFIG_LINKED_KEYS,
+  CLI_CONFIG_NO_ENV_SECTIONS,
   CLI_CONFIG_NORMALIZERS,
   CLI_CONFIG_SCHEMA_EXCLUDED,
   envRequiresSectionFor,
@@ -162,17 +163,23 @@ export const cliConfigSchemaKeyDefs = (root: SchemaAST.Objects): ReadonlyArray<C
       );
     }
     const defaultFrom = contextDefaults[path];
-    const configured = leaf.node.annotations?.["default"];
+    // A refined leaf such as `Schema.Finite` carries its annotations on its last check.
+    const annotations = SchemaAST.resolve(leaf.node);
+    const configured = annotations?.["default"];
+    const noEnv = leaf.segments[0] !== undefined && leaf.segments[0] in CLI_CONFIG_NO_ENV_SECTIONS;
+    // Every leaf of a no-env section sits under an optional table, so one with no default is absent.
+    const optional = leaf.optional || (noEnv && configured === undefined);
     return [
       {
         path,
         codec,
-        ...(leaf.optional && defaultFrom === undefined
+        ...(optional && defaultFrom === undefined
           ? { optional: true as const }
           : defaultFrom === undefined
             ? { default: configured }
             : { defaultFrom }),
-        ...(leaf.node.annotations?.["x-secret"] === true ? { secret: true as const } : {}),
+        ...(annotations?.["x-secret"] === true ? { secret: true as const } : {}),
+        ...(noEnv ? { noEnv: true as const } : {}),
       },
     ];
   });

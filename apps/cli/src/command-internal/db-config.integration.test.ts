@@ -18,11 +18,13 @@ import * as TestClock from "effect/testing/TestClock";
 import type { DatabaseInstance, Stack } from "@supabase/stack/effect";
 import { vi } from "vitest";
 
+const fixtureNet = vi.hoisted(() => ({ directHostReachable: false }));
+
 vi.mock("node:net", (importOriginal) =>
   Promise.all([
     import("../../tests/helpers/refuse-invalid-db-hosts.ts"),
     importOriginal<typeof import("node:net")>(),
-  ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net)),
+  ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net, fixtureNet)),
 );
 
 import {
@@ -32,9 +34,21 @@ import {
   mockTelemetryRuntime,
   mockTty,
 } from "../../tests/helpers/mocks.ts";
-import { VALID_TOKEN, mockCommandSettings } from "../../tests/helpers/command-mocks.ts";
+import { CommandPlatformApi } from "../auth/command-platform-api.service.ts";
+import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
+import {
+  VALID_TOKEN,
+  mockCommandPlatformApiService,
+  mockCommandSettings,
+  withConfigEnv,
+} from "../../tests/helpers/command-mocks.ts";
 import { pinnedConfigProvider } from "../../tests/helpers/config-env-pins.ts";
-import { flagInput, withHermeticShellTier } from "../../tests/helpers/config-values-layer.ts";
+import {
+  cliConfigValuesTestLayer,
+  flagInput,
+  withHermeticShellTier,
+} from "../../tests/helpers/config-values-layer.ts";
+import { withReachableDirectHost } from "../../tests/helpers/refuse-invalid-db-hosts.ts";
 import { unusedGateway } from "../../tests/helpers/unused-stack.ts";
 import { assertBlockDrift } from "../../tests/helpers/permission-drift.ts";
 import {
@@ -48,7 +62,9 @@ import {
   dbConfigLayer,
   dbConfigPoolerFallback,
   dbConfigResolverLayer,
+  resolveLinkedConn,
 } from "./db-config.layer.ts";
+import { DbConfigIpv6Error, DbConfigLibpqEnvError } from "./db-config.errors.ts";
 import {
   DebugFlag,
   DnsResolverFlag,
@@ -73,6 +89,7 @@ import { DbConnectError } from "./db-connection.errors.ts";
 import { DbConnection, type DbSession, type PgConnInput } from "./db-connection.service.ts";
 import { StackApi } from "./stack-api.ts";
 import { stackBackendLayer } from "./stack-backend.ts";
+import { selection } from "../../tests/helpers/pins.ts";
 
 // `--local` / `--db-url` never touch the Management API stack, so the resolver
 // builds with simple ambient stubs. The `--linked` sub-flow (login-role,
@@ -629,8 +646,8 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
             : [],
         config: {
           service: "database",
+          pin: selection.database,
           config: {
-            version: "17.6.1.173",
             databasePassword: Redacted.make("stack-password"),
             jwtSecret: Redacted.make("secret"),
             jwtExpiry: 3600,
@@ -919,13 +936,15 @@ describe("dbConfigResolver (linked config ordering)", () => {
       );
       yield* fs.makeDirectory(path.join(dir, "supabase", ".temp"), { recursive: true });
       yield* fs.writeFileString(path.join(dir, "supabase", ".temp", "project-ref"), linkedRef);
-      yield* fs.writeFileString(
-        path.join(dir, "supabase", ".temp", "pooler-url"),
-        `postgres://postgres.${linkedRef}:saved-workdir-password@stale.pooler.supabase.com:6543/postgres`,
-      );
       return yield* resolveConnection(
         dir,
-        inputFor(explicitRefTarget(adHocRef, { matchesLinkedRef: false })),
+        inputFor(
+          linkedTarget(adHocRef, {
+            source: "flag",
+            matchesLinkedRef: false,
+            poolerUrl: `postgres://postgres.${linkedRef}:saved-workdir-password@stale.pooler.supabase.com:6543/postgres`,
+          }),
+        ),
         {
           projectHost: "invalid",
           dbConnection,
@@ -1081,13 +1100,15 @@ describe("dbConfigResolver (linked config ordering)", () => {
         );
         yield* fs.makeDirectory(path.join(dir, "supabase", ".temp"), { recursive: true });
         yield* fs.writeFileString(path.join(dir, "supabase", ".temp", "project-ref"), linkedRef);
-        yield* fs.writeFileString(
-          path.join(dir, "supabase", ".temp", "pooler-url"),
-          `postgres://postgres.${linkedRef}:saved-workdir-password@stale.pooler.supabase.com:6543/postgres`,
-        );
         return yield* resolvePoolerFallback(
           dir,
-          inputFor(explicitRefTarget(adHocRef, { matchesLinkedRef: false })),
+          inputFor(
+            linkedTarget(adHocRef, {
+              source: "flag",
+              matchesLinkedRef: false,
+              poolerUrl: `postgres://postgres.${linkedRef}:saved-workdir-password@stale.pooler.supabase.com:6543/postgres`,
+            }),
+          ),
           {
             dbConnection,
             configEnv: {
@@ -1227,11 +1248,12 @@ describe("dbConfigResolver (linked config ordering)", () => {
       );
       yield* fs.makeDirectory(path.join(dir, "supabase", ".temp"), { recursive: true });
       yield* fs.writeFileString(path.join(dir, "supabase", ".temp", "project-ref"), linkedRef);
-      yield* fs.writeFileString(
-        path.join(dir, "supabase", ".temp", "pooler-url"),
-        "postgres://postgres.qrstabcdefghijklmnop:saved-workdir-password@aws-0-us-east-1.pooler.supabase.com:6543/postgres",
-      );
-      return yield* resolvePoolerFallback(dir, inputFor(explicitRefTarget(linkedRef)), {
+      const target = linkedTarget(linkedRef, {
+        source: "flag",
+        poolerUrl:
+          "postgres://postgres.qrstabcdefghijklmnop:saved-workdir-password@aws-0-us-east-1.pooler.supabase.com:6543/postgres",
+      });
+      return yield* resolvePoolerFallback(dir, inputFor(target), {
         projectHost: "supabase.co",
         dbConnection,
         configEnv: {
@@ -1450,13 +1472,15 @@ describe("dbConfigResolver (an explicit --project-ref fetches the pooler config)
         );
         yield* fs.makeDirectory(path.join(dir, "supabase", ".temp"), { recursive: true });
         yield* fs.writeFileString(path.join(dir, "supabase", ".temp", "project-ref"), linkedRef);
-        yield* fs.writeFileString(
-          path.join(dir, "supabase", ".temp", "pooler-url"),
-          `postgres://postgres.${linkedRef}:saved-workdir-password@stale.pooler.supabase.com:6543/postgres`,
-        );
         return yield* resolveConnection(
           dir,
-          inputFor(explicitRefTarget(targetRef, { matchesLinkedRef: false })),
+          inputFor(
+            linkedTarget(targetRef, {
+              source: "flag",
+              matchesLinkedRef: false,
+              poolerUrl: `postgres://postgres.${linkedRef}:saved-workdir-password@stale.pooler.supabase.com:6543/postgres`,
+            }),
+          ),
           {
             projectHost: "invalid",
             dbConnection,
@@ -1938,6 +1962,230 @@ describe("dbConfigResolver (container pooler fallback)", () => {
   });
 });
 
+describe("resolveLinkedConn libpq TLS", () => {
+  const ref = "cli2753tlsabcdefghij";
+  const directHost = `db.${ref}.invalid`;
+  const poolerHost = "aws-0-us-east-1.pooler.supabase.com";
+  const api = mockCommandPlatformApiService({
+    v1: {
+      getPoolerConfig: () => Effect.succeed(primaryPoolerConfigs(ref)),
+      createLoginRole: () =>
+        Effect.succeed({ role: "cli_login_x", password: "temp", ttl_seconds: 3600 }),
+    },
+  });
+  const linkedConnLayer = Layer.mergeAll(
+    BunServices.layer,
+    mockOutput().layer,
+    ConfigProvider.layer(ConfigProvider.fromEnvRecord({}, { preserveEmptyStrings: true })),
+    mockDebugLogger,
+    Layer.succeed(CommandPlatformApiFactory, {
+      make: CommandPlatformApi.pipe(Effect.provide(api.layer)),
+    }),
+    Layer.succeed(DbConnection, { connect: () => Effect.die("unexpected connect()") }),
+    cliConfigValuesTestLayer,
+  );
+
+  const projectWorkdir = (dotenv: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "cli-linked-tls-" });
+      yield* fs.makeDirectory(path.join(dir, "supabase"), { recursive: true });
+      yield* fs.writeFileString(path.join(dir, "supabase", ".env"), [...dotenv, ""].join("\n"));
+      return dir;
+    });
+
+  const linkedConn = (
+    shellEnv: Readonly<Record<string, string>>,
+    opts: {
+      readonly workdir?: string;
+      readonly reachable?: boolean;
+      readonly password?: Option.Option<string>;
+      readonly poolerUrl?: string;
+    } = {},
+  ) =>
+    withConfigEnv(
+      shellEnv,
+      Effect.gen(function* () {
+        if (opts.reachable ?? true) yield* withReachableDirectHost(fixtureNet);
+        return yield* resolveLinkedConn(
+          ref,
+          opts.workdir ?? (yield* projectWorkdir([])),
+          "invalid",
+          "supabase.com",
+          "native",
+          opts.password ?? Option.some("secret"),
+          { removeNetworkBans: false, poolerUrl: Option.fromNullishOr(opts.poolerUrl) },
+        );
+      }),
+    ).pipe(Effect.scoped);
+
+  const tlsOf = (conn: PgConnInput) => ({
+    sslmode: conn.sslmode,
+    sslrootcert: conn.sslrootcert,
+    sslcert: conn.sslcert,
+    sslkey: conn.sslkey,
+  });
+
+  it.effect(
+    "carries shell PGSSL*/PGCONNECT_TIMEOUT while PGHOST/PGUSER/PGPORT/PGDATABASE cannot retarget",
+    () =>
+      Effect.gen(function* () {
+        const conn = yield* linkedConn({
+          PGSSLMODE: "verify-full",
+          PGSSLROOTCERT: "/ca.pem",
+          PGSSLCERT: "/client.crt",
+          PGSSLKEY: "/client.key",
+          PGSSLPASSWORD: "keypass",
+          PGCONNECT_TIMEOUT: "7",
+          PGHOST: "evil.example",
+          PGUSER: "not-postgres",
+          PGPORT: "1",
+          PGDATABASE: "other",
+        });
+        expect(conn).toEqual({
+          host: directHost,
+          port: 5432,
+          user: "postgres",
+          password: "secret",
+          database: "postgres",
+          sslmode: "verify-full",
+          sslrootcert: "/ca.pem",
+          sslcert: "/client.crt",
+          sslkey: "/client.key",
+          sslpassword: "keypass",
+          connectTimeoutSeconds: 7,
+        });
+      }).pipe(Effect.provide(linkedConnLayer)),
+  );
+
+  it.effect("leaves TLS unset when no libpq TLS variable is set", () =>
+    Effect.gen(function* () {
+      const conn = yield* linkedConn({});
+      expect(conn).toEqual({
+        host: directHost,
+        port: 5432,
+        user: "postgres",
+        password: "secret",
+        database: "postgres",
+      });
+    }).pipe(Effect.provide(linkedConnLayer)),
+  );
+
+  it.effect("lets a service-file verify-full beat PGSSLMODE=disable on the direct host", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "cli-linked-service-" });
+      const serviceFile = path.join(dir, "pg_service.conf");
+      yield* fs.writeFileString(
+        serviceFile,
+        "[svc]\nsslmode=verify-full\nsslrootcert=/svc-ca.pem\n",
+      );
+      const conn = yield* linkedConn({
+        PGSERVICE: "svc",
+        PGSERVICEFILE: serviceFile,
+        PGSSLMODE: "disable",
+      });
+      expect(tlsOf(conn)).toEqual({
+        sslmode: "verify-full",
+        sslrootcert: "/svc-ca.pem",
+        sslcert: undefined,
+        sslkey: undefined,
+      });
+      expect(conn.host).toBe(directHost);
+    }).pipe(Effect.scoped, Effect.provide(linkedConnLayer)),
+  );
+
+  it.effect("names the libpq variables when PGSSLMODE is invalid on a reachable direct host", () =>
+    Effect.gen(function* () {
+      const error = yield* linkedConn({ PGSSLMODE: "verifyfull" }).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(DbConfigLibpqEnvError);
+      expect(error.message).toBe(
+        "invalid libpq environment: check PGSSLMODE, PGSSLCERT/PGSSLKEY, PGSERVICE/PGSERVICEFILE and PGCONNECT_TIMEOUT",
+      );
+    }).pipe(Effect.provide(linkedConnLayer)),
+  );
+
+  it.effect(
+    "still reports the IPv6 error for an invalid PGSSLMODE when the direct host is unreachable and no pooler URL is saved",
+    () =>
+      Effect.gen(function* () {
+        const error = yield* linkedConn({ PGSSLMODE: "verifyfull" }, { reachable: false }).pipe(
+          Effect.flip,
+        );
+        expect(error).toBeInstanceOf(DbConfigIpv6Error);
+      }).pipe(Effect.provide(linkedConnLayer)),
+  );
+
+  it.effect("reports an invalid PGSSLMODE, not IPv6, when the saved pooler URL is valid", () =>
+    Effect.gen(function* () {
+      const savedUrl = `postgres://postgres.${ref}:[YOUR-PASSWORD]@${poolerHost}:6543/postgres`;
+      const error = yield* linkedConn(
+        { PGSSLMODE: "verifyfull" },
+        { reachable: false, poolerUrl: savedUrl },
+      ).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(DbConfigLibpqEnvError);
+    }).pipe(Effect.scoped, Effect.provide(linkedConnLayer)),
+  );
+
+  it.effect("still reports the IPv6 error for a malformed saved pooler URL with a valid env", () =>
+    Effect.gen(function* () {
+      const error = yield* linkedConn(
+        { PGSSLMODE: "verify-full" },
+        {
+          reachable: false,
+          poolerUrl: `postgres://postgres.${ref}@${poolerHost}:notaport/postgres`,
+        },
+      ).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(DbConfigIpv6Error);
+    }).pipe(Effect.scoped, Effect.provide(linkedConnLayer)),
+  );
+
+  it.effect("ignores project .env TLS on the direct host and the saved pooler URL", () =>
+    Effect.gen(function* () {
+      const savedUrl = `postgres://postgres.${ref}:[YOUR-PASSWORD]@${poolerHost}:6543/postgres`;
+      const workdir = yield* projectWorkdir([
+        "PGSSLMODE=disable",
+        "PGSSLROOTCERT=/ca-from-dotenv.pem",
+      ]);
+      const shellTls = {
+        sslmode: "verify-full",
+        sslrootcert: undefined,
+        sslcert: undefined,
+        sslkey: undefined,
+      };
+      const direct = yield* linkedConn({ PGSSLMODE: "verify-full" }, { workdir });
+      expect(direct.host).toBe(directHost);
+      expect(tlsOf(direct)).toEqual(shellTls);
+      const pooler = yield* linkedConn(
+        { PGSSLMODE: "verify-full" },
+        { workdir, reachable: false, poolerUrl: savedUrl },
+      );
+      expect(pooler.host).toBe(poolerHost);
+      expect(tlsOf(pooler)).toEqual(shellTls);
+    }).pipe(Effect.scoped, Effect.provide(linkedConnLayer)),
+  );
+
+  it.effect("keeps shell TLS settings on the temp login role for a reachable direct host", () =>
+    Effect.gen(function* () {
+      const conn = yield* linkedConn(
+        { PGSSLMODE: "verify-full", PGSSLROOTCERT: "/ca.pem" },
+        { password: Option.none() },
+      );
+      expect(conn).toEqual({
+        host: directHost,
+        port: 5432,
+        user: "cli_login_x",
+        password: "temp",
+        database: "postgres",
+        sslmode: "verify-full",
+        sslrootcert: "/ca.pem",
+      });
+    }).pipe(Effect.provide(linkedConnLayer)),
+  );
+});
+
 describe("dbConfigResolver.resolveConnection", () => {
   const failureText = (exit: Exit.Exit<unknown, unknown>) =>
     Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "";
@@ -2023,12 +2271,10 @@ describe("dbConfigResolver.resolveConnection", () => {
       const path = yield* Path.Path;
       const dir = yield* withWorkdir();
       yield* fs.makeDirectory(path.join(dir, "supabase", ".temp"), { recursive: true });
-      yield* fs.writeFileString(
-        path.join(dir, "supabase", ".temp", "pooler-url"),
-        `postgres://postgres.${ref}:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres`,
-      );
       const output = mockOutput();
-      const target = linkedTarget(ref);
+      const target = linkedTarget(ref, {
+        poolerUrl: `postgres://postgres.${ref}:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres`,
+      });
       const r = yield* resolveConnection(dir, inputFor(target, { password: Option.some("pw") }), {
         projectHost: "invalid",
         output,
@@ -2129,15 +2375,16 @@ describe("dbConfigResolver.resolveConnection", () => {
       const path = yield* Path.Path;
       const dir = yield* withWorkdir();
       yield* fs.makeDirectory(path.join(dir, "supabase", ".temp"), { recursive: true });
-      yield* fs.writeFileString(
-        path.join(dir, "supabase", ".temp", "pooler-url"),
-        `postgres://postgres.${linkedRef}:[YOUR-PASSWORD]@stale.pooler.supabase.com:6543/postgres`,
-      );
       const r = yield* resolveConnection(
         dir,
-        inputFor(linkedTarget(ref, { source: "flag", matchesLinkedRef: false }), {
-          password: Option.some("pw"),
-        }),
+        inputFor(
+          linkedTarget(ref, {
+            source: "flag",
+            matchesLinkedRef: false,
+            poolerUrl: `postgres://postgres.${linkedRef}:[YOUR-PASSWORD]@stale.pooler.supabase.com:6543/postgres`,
+          }),
+          { password: Option.some("pw") },
+        ),
         { projectHost: "invalid", configEnv: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN } },
       );
       expect(r.conn).toMatchObject({

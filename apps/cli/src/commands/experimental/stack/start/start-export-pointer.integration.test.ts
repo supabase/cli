@@ -28,6 +28,7 @@ import { CommandSettings } from "../../../../config/command-settings.service.ts"
 import { StackApi, StackTargetResolver } from "../stack.shared.ts";
 import { stackStatusCommand } from "../status/status.command.ts";
 import { statusEnvPointer } from "./start-summary.format.ts";
+import { selection } from "../../../../../tests/helpers/pins.ts";
 
 /** Distinguishable credentials, keyed by a short tag, for one fake target stack. */
 const credentialsFor = (tag: string): StackCredentials => ({
@@ -47,8 +48,8 @@ const credentialsFor = (tag: string): StackCredentials => ({
 
 const databaseCreation = (sqlPort: number, credentials: StackCredentials): ServiceCreation => ({
   service: "database",
+  pin: selection.database,
   config: {
-    version: "17",
     databasePassword: Redacted.make(credentials.databasePassword),
     jwtSecret: Redacted.make(credentials.jwtSecret),
     jwtExpiry: 3600,

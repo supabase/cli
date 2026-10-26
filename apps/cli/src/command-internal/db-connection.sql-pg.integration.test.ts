@@ -7,7 +7,7 @@
 import * as net from "node:net";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Duration, Effect, Layer } from "effect";
+import { Deferred, Duration, Effect, FileSystem, Layer, Path } from "effect";
 
 import { SUGGEST_ENV_VAR, SUGGEST_LOCAL_STACK } from "./connect-errors.ts";
 import type { DbConnectError, DbExecError } from "./db-connection.errors.ts";
@@ -1028,6 +1028,38 @@ describe("a local target's explicit TLS request (CLI-2366: honor --db-url's own 
       expect(error.message).toBe(
         `failed to read sslrootcert ${missingPath}: Error: ENOENT: no such file or directory, open '${missingPath}'`,
       );
+    }),
+  );
+
+  it.live("skips missing CA and client-cert files when sslmode=disable on a remote target", () =>
+    Effect.gen(function* () {
+      const server = yield* fakeStartupServer();
+      yield* Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        /* Uncreated children of a fresh temp dir, so the cert files are guaranteed absent. */
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "cli-missing-tls-files-" });
+        const pool = yield* acquirePgPool(
+          {
+            host: "127.0.0.1",
+            port: server.port,
+            user: "postgres",
+            password: SENTINEL_PASSWORD,
+            database: "postgres",
+            sslmode: "disable",
+            sslrootcert: path.join(dir, "ca.pem"),
+            sslcert: path.join(dir, "client.crt"),
+            sslkey: path.join(dir, "client.key"),
+          },
+          { isLocal: false, dnsResolver: "native" },
+        );
+        yield* Effect.tryPromise(() => pool.query("select 1"));
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(BunServices.layer),
+        Effect.ensuring(Effect.sync(server.close)),
+      );
+      expect(server.sawSslRequest()).toBe(false);
     }),
   );
 });

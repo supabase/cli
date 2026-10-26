@@ -73,9 +73,9 @@ function printKeyValue(key: string, value: string): string {
  * Prompts for any missing project fields, creates the project via `POST /v1/projects`, and
  * echoes the result (`Created a new project at …` plus the `-o`/pretty render).
  *
- * Returns the created ref and the resolved db password. Does not validate required flags
- * (the standalone command's own pre-run does that) and does not write the linked-project
- * cache (the caller owns that via `Effect.ensuring`).
+ * Returns the created project's ref, name, organization, and the resolved db password. Does not
+ * validate required flags (the standalone command's own pre-run does that) and does not write the
+ * linked-project cache (the caller owns that via `Effect.ensuring`).
  */
 export const projectCreateCore = Effect.fn("ProjectCreate.run")(function* (
   input: ProjectCreateInput,
@@ -160,6 +160,13 @@ export const projectCreateCore = Effect.fn("ProjectCreate.run")(function* (
   yield* creating?.clear ?? Effect.void;
 
   const id = readProjectField(created, "id");
+  const result = {
+    ref: id,
+    name: readProjectField(created, "name"),
+    organizationId: readProjectField(created, "organization_id"),
+    organizationSlug: readProjectField(created, "organization_slug"),
+    dbPassword,
+  };
   yield* Effect.annotateCurrentSpan("project.ref", id);
 
   // Printed to stderr for every output format.
@@ -169,19 +176,19 @@ export const projectCreateCore = Effect.fn("ProjectCreate.run")(function* (
   const outputFlagFormat = Option.getOrUndefined(outputFlag);
   if (outputFlagFormat === "json") {
     yield* output.raw(encodeSortedJson(created));
-    return { ref: id, dbPassword };
+    return result;
   }
   if (outputFlagFormat === "yaml") {
     yield* output.raw(encodeStructYaml(created, PROJECT_RESPONSE_SHAPE));
-    return { ref: id, dbPassword };
+    return result;
   }
   if (outputFlagFormat === "toml") {
     yield* output.raw(encodeStructToml(created, PROJECT_RESPONSE_SHAPE));
-    return { ref: id, dbPassword };
+    return result;
   }
   if (outputFlagFormat === "env") {
     yield* output.raw(encodeEnv(created) + "\n");
-    return { ref: id, dbPassword };
+    return result;
   }
 
   if (output.format === "json" || output.format === "stream-json") {
@@ -189,9 +196,9 @@ export const projectCreateCore = Effect.fn("ProjectCreate.run")(function* (
       const data = typeof created === "object" && created !== null ? created : {};
       yield* output.success("Created project", { ...data });
     }
-    return { ref: id, dbPassword };
+    return result;
   }
 
   yield* output.raw(renderProjectCreateTable(created));
-  return { ref: id, dbPassword };
+  return result;
 });

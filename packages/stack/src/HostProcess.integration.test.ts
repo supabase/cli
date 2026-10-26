@@ -40,6 +40,7 @@ import type { ServiceCreationInput } from "./services/Catalog.ts";
 import { watchLeaseRelease } from "../tests/owner.ts";
 import { watchEntry } from "../tests/watch-entry.ts";
 import * as StackNamespace from "./StackNamespace.ts";
+import { selection } from "../tests/pins.ts";
 
 class ProcessTestError extends Data.TaggedError("ProcessTestError")<{ readonly message: string }> {}
 
@@ -71,8 +72,8 @@ const savedStack = (
             id: "database-1",
             creation: {
               service: "database",
+              pin: selection.database,
               config: {
-                version: "17",
                 databasePassword: Redacted.make(databasePassword),
                 jwtSecret: Redacted.make("argv-secrecy-jwt-secret-with-32-characters"),
                 jwtExpiry: 3600,
@@ -594,8 +595,8 @@ it.live(
         const requestedCreations: ReadonlyArray<ServiceCreationInput> = [
           {
             service: "database",
+            pin: selection.database,
             config: {
-              version: "17",
               databasePassword: Redacted.make(marker),
               jwtSecret: Redacted.make("argv-secrecy-jwt-secret-with-32-characters"),
               jwtExpiry: 3600,

@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Predicate, Schema } from "effect";
 
 /**
  * A lenient, hand-mirrored copy of the v2 project-config API's `data.attributes` shape (not
@@ -7,6 +7,9 @@ import { Schema } from "effect";
  * always decodes; `./registry.ts`/`./registry-auth.ts` narrow and map it. Unmapped fields stay
  * `Schema.Unknown`, not omitted, so drift detection and passthrough can still see them.
  */
+
+/** Any JS number, `±Infinity`/`NaN` included: the registry's own gates do the narrowing. */
+const ApiNumber = Schema.declare(Predicate.isNumber, { expected: "number" });
 
 // See `./registry.ts` for which of these fields are mapped; the rest are `Schema.Unknown`.
 const postgresSettingsAttributes = Schema.Struct({
@@ -26,20 +29,20 @@ const postgresSettingsAttributes = Schema.Struct({
   log_temp_files: Schema.optionalKey(Schema.Unknown),
   maintenance_work_mem: Schema.optionalKey(Schema.String),
   track_activity_query_size: Schema.optionalKey(Schema.String),
-  max_connections: Schema.optionalKey(Schema.Number),
-  max_locks_per_transaction: Schema.optionalKey(Schema.Number),
+  max_connections: Schema.optionalKey(ApiNumber),
+  max_locks_per_transaction: Schema.optionalKey(ApiNumber),
   max_logical_replication_workers: Schema.optionalKey(Schema.Unknown),
-  max_parallel_maintenance_workers: Schema.optionalKey(Schema.Number),
-  max_parallel_workers: Schema.optionalKey(Schema.Number),
-  max_parallel_workers_per_gather: Schema.optionalKey(Schema.Number),
-  max_replication_slots: Schema.optionalKey(Schema.Number),
+  max_parallel_maintenance_workers: Schema.optionalKey(ApiNumber),
+  max_parallel_workers: Schema.optionalKey(ApiNumber),
+  max_parallel_workers_per_gather: Schema.optionalKey(ApiNumber),
+  max_replication_slots: Schema.optionalKey(ApiNumber),
   max_slot_wal_keep_size: Schema.optionalKey(Schema.String),
   max_standby_archive_delay: Schema.optionalKey(Schema.String),
   max_standby_streaming_delay: Schema.optionalKey(Schema.String),
   max_sync_workers_per_subscription: Schema.optionalKey(Schema.Unknown),
   max_wal_size: Schema.optionalKey(Schema.String),
-  max_wal_senders: Schema.optionalKey(Schema.Number),
-  max_worker_processes: Schema.optionalKey(Schema.Number),
+  max_wal_senders: Schema.optionalKey(ApiNumber),
+  max_worker_processes: Schema.optionalKey(ApiNumber),
   session_replication_role: Schema.optionalKey(Schema.String),
   shared_buffers: Schema.optionalKey(Schema.String),
   statement_timeout: Schema.optionalKey(Schema.String),
@@ -71,7 +74,7 @@ const networkRestrictionsAttributes = Schema.Struct({
 });
 
 const databaseAttributes = Schema.Struct({
-  major_version: Schema.optionalKey(Schema.Number),
+  major_version: Schema.optionalKey(ApiNumber),
   ssl_enforced: Schema.optionalKey(Schema.Boolean),
   network_restrictions: Schema.optionalKey(networkRestrictionsAttributes),
   postgres_settings: Schema.optionalKey(postgresSettingsAttributes),
@@ -85,8 +88,8 @@ const poolerAttributes = Schema.Struct({
   server_lifetime: Schema.optionalKey(Schema.Unknown),
   query_wait_timeout: Schema.optionalKey(Schema.Unknown),
   reserve_pool_size: Schema.optionalKey(Schema.Unknown),
-  default_pool_size: Schema.optionalKey(Schema.Number),
-  max_client_conn: Schema.optionalKey(Schema.Number),
+  default_pool_size: Schema.optionalKey(ApiNumber),
+  max_client_conn: Schema.optionalKey(ApiNumber),
 });
 
 // `db_schema`/`db_extra_search_path`/`max_rows` are mapped (`./registry.ts`); the rest aren't.
@@ -95,7 +98,7 @@ const poolerAttributes = Schema.Struct({
 const apiAttributes = Schema.Struct({
   db_schema: Schema.optionalKey(Schema.String),
   db_extra_search_path: Schema.optionalKey(Schema.String),
-  max_rows: Schema.optionalKey(Schema.Number),
+  max_rows: Schema.optionalKey(ApiNumber),
   db_pool_acquisition_timeout: Schema.optionalKey(Schema.Unknown),
   db_pool: Schema.optionalKey(Schema.Unknown),
 });
@@ -128,16 +131,16 @@ const storageFeaturesAttributes = Schema.Struct({
   iceberg_catalog: Schema.optionalKey(
     Schema.Struct({
       enabled: Schema.optionalKey(Schema.Boolean),
-      max_namespaces: Schema.optionalKey(Schema.Number),
-      max_tables: Schema.optionalKey(Schema.Number),
-      max_catalogs: Schema.optionalKey(Schema.Number),
+      max_namespaces: Schema.optionalKey(ApiNumber),
+      max_tables: Schema.optionalKey(ApiNumber),
+      max_catalogs: Schema.optionalKey(ApiNumber),
     }),
   ),
   vector_buckets: Schema.optionalKey(
     Schema.Struct({
       enabled: Schema.optionalKey(Schema.Boolean),
-      max_buckets: Schema.optionalKey(Schema.Number),
-      max_indexes: Schema.optionalKey(Schema.Number),
+      max_buckets: Schema.optionalKey(ApiNumber),
+      max_indexes: Schema.optionalKey(ApiNumber),
     }),
   ),
 });
@@ -148,7 +151,7 @@ const storageCapabilitiesAttributes = Schema.Unknown;
 
 // `file_size_limit` is mapped; `capabilities`/`upstream_target`/`migration_version` aren't.
 const storageAttributes = Schema.Struct({
-  file_size_limit: Schema.optionalKey(Schema.Number),
+  file_size_limit: Schema.optionalKey(ApiNumber),
   features: Schema.optionalKey(storageFeaturesAttributes),
   capabilities: Schema.optionalKey(storageCapabilitiesAttributes),
   upstream_target: Schema.optionalKey(Schema.Unknown),

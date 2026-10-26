@@ -26,6 +26,7 @@ import { spawnSupabase } from "../../../../tests/helpers/cli.ts";
 import { generateLocalJwt } from "../../../command-internal/local-jwt.ts";
 import { destroyTestStack } from "../../../../tests/helpers/stack-cleanup.ts";
 import { stackArtifactCacheRoot } from "../../../../tests/helpers/stack-artifacts.ts";
+import { selection } from "../../../../tests/helpers/pins.ts";
 
 const jwtSecret = "functions-serve-stack-e2e-secret-at-least-32-characters";
 const nativeSupported =
@@ -85,8 +86,8 @@ const fixture = Effect.fn("FunctionsServeE2e.fixture")(function* (
   yield* stack.composition.supabase([
     {
       service: "database",
+      pin: selection.database,
       config: {
-        version: "17",
         databasePassword: Redacted.make("postgres"),
         jwtSecret: Redacted.make(jwtSecret),
         jwtExpiry: 3600,
@@ -95,6 +96,7 @@ const fixture = Effect.fn("FunctionsServeE2e.fixture")(function* (
     },
     {
       service: "rest",
+      pin: selection.rest,
       config: { jwtSecret },
       endpoints: { http: { port: "auto" } },
     },
@@ -102,6 +104,7 @@ const fixture = Effect.fn("FunctionsServeE2e.fixture")(function* (
       ? [
           {
             service: "functions" as const,
+            pin: selection.functions,
             config: {
               functionsRoot,
               jwtSecret,
@@ -112,6 +115,7 @@ const fixture = Effect.fn("FunctionsServeE2e.fixture")(function* (
           },
           {
             service: "studio" as const,
+            pin: selection.studio,
             config: { jwtSecret },
             endpoints: { http: { port: "auto" as const } },
           },
@@ -133,6 +137,7 @@ const fixture = Effect.fn("FunctionsServeE2e.fixture")(function* (
     if (httpPort === undefined) return yield* Effect.die("API port missing");
     yield* stack.services.create({
       service: "functions",
+      pin: selection.functions,
       config: {
         functionsRoot,
         jwtSecret,
@@ -228,7 +233,7 @@ const postmasterStartTime = Effect.fn("FunctionsServeE2e.postmasterStartTime")(f
 ) {
   const decoder = new TextDecoder();
   let stdout = "";
-  const result = yield* stack.commands.run(postgres.psql({ major: 17 }), {
+  const result = yield* stack.commands.run(postgres.psql({ pin: selection.database }), {
     args: ["--dbname", databaseUrl, "-tA", "--command", "SELECT pg_postmaster_start_time()"],
     stdout: (bytes) => Effect.sync(() => (stdout += decoder.decode(bytes))),
     stderr: () => Effect.void,

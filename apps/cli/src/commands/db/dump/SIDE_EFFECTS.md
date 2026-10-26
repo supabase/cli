@@ -13,10 +13,11 @@ image), to stdout or `--file`.
 | --------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `supabase/config.json` or `config.toml` | JSON / TOML | always, `config.json` preferred (db port/password/major_version, project_id)                                                                                           |
 | `supabase/.temp/postgres-version`       | plain text  | always (best-effort) — pins the pg image tag when present                                                                                                              |
-| `supabase/.temp/pooler-url`             | plain text  | a remote project or branch when the direct host is unreachable (pooler URL)                                                                                            |
+| `supabase/.temp/pooler-url`             | plain text  | a remote project or branch when the direct host is unreachable and the target ref is the linked ref (pooler URL)                                                       |
 | `~/.supabase/access-token`              | plain text  | a remote project or branch when `SUPABASE_ACCESS_TOKEN` unset                                                                                                          |
 | `supabase/.temp/project-ref`            | plain text  | bare `--remote` — ref resolution, skipped when `SUPABASE_PROJECT_ID`/config.toml `project_id` is set; with no selector, only to name the project in the `Target:` hint |
 | `supabase/.env*`                        | dotenv      | always (project env, feeds `SUPABASE_DB_PASSWORD` / `PG*`; shell values win)                                                                                           |
+| `PGSSL*` PEM, `pg_service.conf`         | PEM, libpq  | remote target, when set: `pg_service.conf`, plus the PEM files on the pooler temp-role probe and in `pg_dump`                                                          |
 
 ## Files Written
 
@@ -43,11 +44,13 @@ image), to stdout or `--file`.
 | `SUPABASE_DB_PASSWORD` (`--password`/`-p` overrides) | remote DB password; ignored for a target other than the linked project (see Notes)                                                                                                                                                                               |
 | `SUPABASE_ACCESS_TOKEN`                              | auth for a remote project or branch                                                                                                                                                                                                                              |
 | `SUPABASE_PROJECT_ID`                                | linked project ref override and the parent that `--remote=<branch>` is resolved against (superseded by `--remote=<ref>`)                                                                                                                                         |
-| `BITBUCKET_CLONE_DIR`                                | (no-op for dump — no `--security-opt` is set)                                                                                                                                                                                                                    |
+| `BITBUCKET_CLONE_DIR`                                | clears the `label:disable` security option that mounted TLS files add                                                                                                                                                                                            |
 | `SUPABASE_INTERNAL_IMAGE_REGISTRY`                   | rewrite the pg image registry for compose dumps; stack dumps use the catalog image pin unchanged                                                                                                                                                                 |
 | `SUPABASE_USE_SLIM_IMAGES`                           | resolve the current Postgres pin from the slim `ghcr.io/supabase/cli` builds (`true`/`1` enable); majors 13/15 use `15.14.1.167` when the flag is on; historical pins, PG14, OrioleDB tags the catalog does not pin, and flag-off `15.8.1.085` stay on docker.io |
 | `DOCKER_HOST`                                        | docker daemon endpoint                                                                                                                                                                                                                                           |
 | `MSYSTEM`, `TERM_PROGRAM`                            | suppress the piped-stdout non-ASCII warning in MSYS/mintty sessions                                                                                                                                                                                              |
+| `PG*` libpq                                          | remote TLS, timeout, service; see `db push`. An invalid value fails before `pg_dump` runs; a remote target also hands them to `pg_dump` (see Notes)                                                                                                              |
+| `SSL_CERT_FILE`, `SSL_CERT_DIR`                      | a native `pg_dump` on libpq 16+ keeps `sslrootcert=system` when either is set; libpq 15 uses only `SSL_CERT_FILE`                                                                                                                                                |
 
 ## Exit Codes
 
@@ -91,6 +94,9 @@ shell inherits the suppressing variables and is missed.
   (`config.json` over `config.toml`; a matched `[remotes.*]` block over the base document on
   a remote project or branch) > default. The linked-database password env is withheld when the target differs
   from `.temp/project-ref`: stderr gets `Not sending SUPABASE_DB_PASSWORD to <target>: this directory is linked to <linked>. Using a temporary login role instead (needs supabase login or SUPABASE_ACCESS_TOKEN). Pass --password to use a password for <target>.` and a temporary login role is minted.
+- The saved `.temp/pooler-url` applies only when the target ref is the linked ref; a
+  `--remote=<ref>` or `SUPABASE_PROJECT_ID` naming another project fetches that project's
+  pooler config from the Management API.
 - `--data-only` XOR `--role-only`; `--keep-comments` XOR `--data-only`;
   `--schema` XOR `--role-only`. `--use-copy` / `--exclude` require `--data-only`.
 - **Container-level pooler fallback.** When a remote dump reaches the direct host
@@ -103,6 +109,18 @@ shell inherits the suppressing variables and is missed.
     suggestion uses the generic `ipv6Suggestion()` text rather than one that
     prefills the project's specific pooler connection string. Surfacing that
     exact URL needs the pooler string exposed at this seam.
+- **TLS settings in `pg_dump`.** A remote target (a remote project or branch, or
+  `--remote=<url>`) gets the resolved `sslmode` and connect timeout, the root cert only under
+  `require`/`verify-ca`/`verify-full`, and the client cert and key unless the key needs
+  `sslpassword` (libpq reads no passphrase from the environment). `system` pins
+  `verify-full`. Verifying without a root cert, or with `system`, uses the image's trust
+  store in a container and the host's CA bundle for a native `pg_dump`, which keeps
+  libpq's `~/.postgresql/root.crt` when no root cert is set, keeps `system` on libpq 16+
+  when `SSL_CERT_FILE` or `SSL_CERT_DIR` is set (libpq 15 uses only `SSL_CERT_FILE`),
+  and also inherits the shell's `PG*`. A container mounts the PEM files read-only under
+  `/run/supabase/tls` (the Docker daemon must see the same paths) and copies the key to
+  a private file. A missing or non-file path, or one containing `:` past a Windows
+  drive, fails before the container starts.
 - **Stack backend host rewrite.** Stack dumps always use catalog `pg_dump` (native
   artifact or a one-shot of the same image). A native local dump rewrites loopback to
   `127.0.0.1`; a native remote or `--remote=<url>` dump keeps

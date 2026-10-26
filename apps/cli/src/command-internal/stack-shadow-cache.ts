@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect";
-import { resolveArtifact, postgresVersion } from "@supabase/stack/internal/artifacts";
+import type { ArtifactPin, ArtifactSelection } from "@supabase/stack/internal/artifacts";
 import type { ShadowSetupInput } from "./db-bootstrap/shadow-database.ts";
 import {
   SHADOW_CACHE_ENV,
@@ -9,14 +9,16 @@ import {
 import { resolveSetupWebhooksEnabled, type SetupDatabaseOptions } from "./db-bootstrap/db-setup.ts";
 import { supabaseEnvBoolWithProjectFallback } from "./supabase-env.ts";
 
-const encodePostgresImageKey = Schema.encodeEffect(
-  Schema.fromJsonString(Schema.Array(Schema.String)),
-);
+const encodeKeyParts = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema.String)));
 
 interface StackShadowCacheEntry {
   readonly key: string;
   readonly rolesSql: string;
 }
+
+/** Identifies the exact artifact build, so a version or revision bump never reuses a baseline. */
+const pinKey = (pin: ArtifactPin) =>
+  encodeKeyParts([pin.upstreamVersion, String(pin.revision), pin.image]);
 
 const readRoles = (input: ShadowSetupInput<unknown>) =>
   Effect.gen(function* () {
@@ -27,7 +29,7 @@ const readRoles = (input: ShadowSetupInput<unknown>) =>
 
 export const stackShadowCacheEntry = Effect.fn("StackShadowCache.entry")(function* (
   input: ShadowSetupInput<unknown>,
-  databaseVersion: string,
+  selection: ArtifactSelection,
   runtime: string,
   platform: string,
   arch: string,
@@ -46,24 +48,15 @@ export const stackShadowCacheEntry = Effect.fn("StackShadowCache.entry")(functio
   )
     return undefined;
   const rolesSql = yield* readRoles(input);
-  const postgres = yield* resolveArtifact({
-    service: "database",
-    version: postgresVersion(databaseVersion),
-  });
-  const image = (service: "auth" | "storage" | "realtime", enabled: boolean) =>
-    enabled ? resolveArtifact({ service }) : Effect.succeed({ image: "", version: "" });
-  const [auth, storage, realtime] = yield* Effect.all([
-    image("auth", input.setup.authEnabledForSetup),
-    image("storage", input.setup.storageEnabledForSetup),
-    image("realtime", input.setup.realtimeEnabledForSetup),
-  ]);
+  const serviceKey = (pin: ArtifactPin, enabled: boolean) =>
+    enabled ? pinKey(pin) : Effect.succeed("");
   const keyInputs: ShadowCacheKeyInputs = {
-    postgresImage: yield* encodePostgresImageKey([
-      "stack-v2",
+    postgresImage: yield* encodeKeyParts([
+      "stack-v3",
       runtime,
       platform,
       arch,
-      postgres.image,
+      yield* pinKey(selection.database),
     ]),
     majorVersion: input.setup.majorVersion,
     jwtSecret: input.jwtSecret,
@@ -78,9 +71,18 @@ export const stackShadowCacheEntry = Effect.fn("StackShadowCache.entry")(functio
     vault: input.setup.vault,
     jwks: "",
     services: {
-      auth: { enabled: input.setup.authEnabledForSetup, image: auth.image },
-      storage: { enabled: input.setup.storageEnabledForSetup, image: storage.image },
-      realtime: { enabled: input.setup.realtimeEnabledForSetup, image: realtime.image },
+      auth: {
+        enabled: input.setup.authEnabledForSetup,
+        image: yield* serviceKey(selection.auth, input.setup.authEnabledForSetup),
+      },
+      storage: {
+        enabled: input.setup.storageEnabledForSetup,
+        image: yield* serviceKey(selection.storage, input.setup.storageEnabledForSetup),
+      },
+      realtime: {
+        enabled: input.setup.realtimeEnabledForSetup,
+        image: yield* serviceKey(selection.realtime, input.setup.realtimeEnabledForSetup),
+      },
     },
   };
   const key = shadowCacheKey(keyInputs);

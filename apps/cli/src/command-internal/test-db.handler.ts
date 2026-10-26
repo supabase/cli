@@ -1,6 +1,11 @@
 import { Effect, FileSystem, Option, Path } from "effect";
 import { type DatabaseInstance, type Stack } from "@supabase/stack/effect";
 import { postgres } from "@supabase/stack/commands";
+import {
+  databaseArtifactPin,
+  isOrioledbVersion,
+  type ArtifactPin,
+} from "@supabase/stack/internal/artifacts";
 
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { TelemetryState } from "../telemetry/telemetry-state.service.ts";
@@ -50,7 +55,7 @@ type ManagedStack = {
   readonly stack: Stack;
   readonly database: DatabaseInstance;
   readonly connection: PgConnInput;
-  readonly major: 15 | 17;
+  readonly pin: ArtifactPin;
 };
 
 const managedStackFor = Effect.fn("test.db.managedStack")(function* () {
@@ -75,11 +80,18 @@ const managedStackFor = Effect.fn("test.db.managedStack")(function* () {
     return yield* new LocalDbRunningError({
       message: "The local stack primary service is not a database.",
     });
-  const major = pgProveMajor(status.config.config.version);
+  const savedPin = status.config.pin;
+  const major = pgProveMajor(savedPin.upstreamVersion);
   if (major === undefined)
     return yield* new LocalDbRunningError({
-      message: `The local database version ${status.config.config.version} is not supported by pg_prove.`,
+      message: `The local database version ${savedPin.upstreamVersion} is not supported by pg_prove.`,
     });
+  // An OrioleDB database runs pg_prove from the stock build of its major.
+  const pin = isOrioledbVersion(savedPin.upstreamVersion)
+    ? yield* databaseArtifactPin(String(major)).pipe(
+        Effect.mapError((cause) => new LocalDbRunningError({ message: cause.message })),
+      )
+    : savedPin;
   const credentials = yield* database.credentials({ from: "runtime" }).pipe(
     Effect.mapError(
       (cause) =>
@@ -98,7 +110,7 @@ const managedStackFor = Effect.fn("test.db.managedStack")(function* () {
     return yield* new LocalDbRunningError({
       message: "The local database returned malformed runtime credentials.",
     });
-  return { stack, database, connection, major } satisfies ManagedStack;
+  return { stack, database, connection, pin } satisfies ManagedStack;
 });
 
 export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
@@ -257,7 +269,7 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
                 ? path.dirname(hostPath)
                 : hostPath;
           return yield* managedStack.stack.commands
-            .run(postgres.pgProve({ major: managedStack.major }), {
+            .run(postgres.pgProve({ pin: managedStack.pin }), {
               args: args.cmd.slice(1),
               env: runEnv,
               pgProve: {
@@ -278,7 +290,9 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
         if (backend.kind === "stack") {
           const bundled = yield* BundledPostgresClient;
           const toml = yield* readDbToml(fs, path, cliSettings.workdir);
-          const version = String(toml.majorVersion);
+          const pin = yield* databaseArtifactPin(String(toml.majorVersion)).pipe(
+            Effect.mapError((cause) => new TestDbRunError({ message: cause.message, cause })),
+          );
           const hostPath = args.hostPaths[0];
           const hostWorkingDir =
             hostPath === undefined
@@ -289,7 +303,7 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
           const nativeArgs = ["pg_prove", "--ext", ".pg", "--ext", ".sql", "-r", ...args.hostPaths];
           if (debug) nativeArgs.push("--verbose");
           return yield* bundled.run({
-            version,
+            pin,
             runtime: proveRuntime,
             argv: useNativeProve ? nativeArgs : args.cmd,
             env: runEnv,

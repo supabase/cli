@@ -60,6 +60,8 @@ Managed stack documents and runtime artifacts are shared through the global CLI 
       state.json
       data/
         <instance-id>/
+      uploads/
+  tmp/
   artifacts/
 ```
 
@@ -68,7 +70,9 @@ context, and stack name that make up stack identity, together with sticky port i
 assignments, the runtime selection, the service definitions, and the composition needed to resume
 the stack. Runtime-only observations and active owner state are kept in memory. Service data lives
 under the stack's `data/<instance-id>/` directories, while downloaded native artifacts are shared
-under `artifacts/`.
+under `artifacts/`. Storage objects live in the stack's `uploads/` directory, which `stack destroy` removes, and scratch output of
+database and Functions commands (pgdelta debug bundles, Functions bundling) lives in `tmp/`.
+Stack mode reads and writes nothing under `supabase/.temp`.
 
 There is no project-local `stacks/<name>` directory or second state format.
 
@@ -121,12 +125,17 @@ Auth, telemetry, traces, and downloaded binaries remain machine-global under `SU
 Legacy installer artifacts may coexist under that root, but they are not part of managed stack
 coordination.
 
+In stack mode the post-run linked-project fill writes `<SUPABASE_HOME>/project-cache/<ref>.json`
+atomically after the first successful `GET /v1/projects/{ref}`. It is only a marker that the
+project's analytics groups were identified once per ref on this machine; nothing else reads it.
+Legacy mode keeps `supabase/.temp/linked-project.json`, which `RemoteTarget.parent` also reads.
+
 ## Release check cache
 
 After a successful command, the upgrade notice compares the running version with the latest
 GitHub release. The release tag is cached for ten hours in `supabase/.temp/cli-latest` when the
-project directory has a real `supabase/` directory, and in `<SUPABASE_HOME>/cli-latest`
-otherwise. `--version` and `--help` check only the current directory, so from a project
+project directory has a real `supabase/` directory and uses legacy project state, and in
+`<SUPABASE_HOME>/cli-latest` otherwise, including every stack-mode project. `--version` and `--help` check only the current directory, so from a project
 subdirectory they use `<SUPABASE_HOME>/cli-latest`. A failed fetch writes an empty file, which
 suppresses the notice and further fetches until it expires. The cache is skipped when the file,
 `supabase/.temp`, or `SUPABASE_HOME` is a symlink. `SUPABASE_NO_UPDATE_NOTIFIER=1` disables the check.

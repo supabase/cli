@@ -12,12 +12,13 @@ currently-linked parent project. `link` takes no `--remote`: the argument is its
 
 ## Files Read
 
-| Path                                 | Format              | When                                                                                                                                                                  |
-| ------------------------------------ | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `supabase/config.toml`               | TOML (`project_id`) | NOT read for ref resolution itself — read by `CommandSettings` for workdir/project-id discovery generally (`--workdir` resolution, `SUPABASE_PROJECT_ID` passthrough) |
-| `supabase/.temp/linked-project.json` | JSON (`ref` field)  | only when the given `[ref-or-branch]`/`--project-ref` value is not ref-shaped, as the 2nd parent-project candidate for branch-name resolution (CLI-2167)              |
-| `supabase/.temp/project-ref`         | plain text          | only when the given `[ref-or-branch]`/`--project-ref` value is not ref-shaped, as the 3rd (last) parent-project candidate for branch-name resolution (CLI-2167)       |
-| `~/.supabase/access-token`           | plain text          | when `SUPABASE_ACCESS_TOKEN` is unset and the keyring is unavailable                                                                                                  |
+| Path                                 | Format              | When                                                                                                                                                                                                                                                         |
+| ------------------------------------ | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `supabase/config.toml`               | TOML (`project_id`) | NOT read for ref resolution itself — read by `CommandSettings` for workdir/project-id discovery generally (`--workdir` resolution, `SUPABASE_PROJECT_ID` passthrough)                                                                                        |
+| `supabase/.temp/linked-project.json` | JSON (`ref` field)  | only when the given `[ref-or-branch]`/`--project-ref` value is not ref-shaped, as the 2nd parent-project candidate for branch-name resolution (CLI-2167)                                                                                                     |
+| `supabase/.temp/project-ref`         | plain text          | only when the given `[ref-or-branch]`/`--project-ref` value is not ref-shaped, as the 3rd (last) parent-project candidate for branch-name resolution (CLI-2167)                                                                                              |
+| `~/.supabase/access-token`           | plain text          | when `SUPABASE_ACCESS_TOKEN` is unset and the keyring is unavailable                                                                                                                                                                                         |
+| `$SUPABASE_HOME/stacks/<id>/`        | JSON                | stack mode only, when the lock is written and the lease is released: saved stack state and database data records, to warn about data a new pin would be refused by; nothing is created, locked or probed (see "Hosted versions in `supabase/supabase.lock`") |
 
 > For resolving the final linked ref, the on-disk `supabase/.temp/project-ref` file is **not**
 > read — `link` never falls back to it there. It **is** read for the branch-name lookup above, which resolves
@@ -87,7 +88,8 @@ Management API (base `CommandSettings.apiUrl`, `Authorization: Bearer <access-to
 | `GET`  | `/v1/projects/{parentRef}/branches`         | only when a non-ref-shaped `[ref-or-branch]`/`--project-ref` value is given (CLI-2167)                                                                            |
 | `GET`  | `/v1/projects/{cachedRef}/branches`         | 404-path stale-cache correlation only: a RAW ref-shaped branch link whose existing `linked-project.json` names a different project (PR #6168 review, best-effort) |
 
-Tenant service gateway (`https://<ref>.<projectHost>`, `apikey: <service-key>` + `Authorization: Bearer <service-key>`):
+Tenant service gateway (`https://<ref>.<projectHost>`, `apikey: <service-key>` + `Authorization: Bearer <service-key>`;
+a redirect is never followed and counts as a failed probe):
 
 | Method | Path                  | When        |
 | ------ | --------------------- | ----------- |
@@ -101,11 +103,12 @@ Tenant service gateway (`https://<ref>.<projectHost>`, `apikey: <service-key>` +
 
 ## Environment Variables
 
-| Variable                | Purpose                                                                                                                                                                                                                |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SUPABASE_PROJECT_ID`   | link-target resolution: `[ref-or-branch]` positional → `--project-ref` → env → TTY prompt (CLI-2167 adds the positional ahead of the flag). Also the 1st parent-project candidate for a branch-name lookup (CLI-2167). |
-| `SUPABASE_ACCESS_TOKEN` | Management API bearer auth (env → keyring → `~/.supabase/access-token`)                                                                                                                                                |
-| `SUPABASE_DB_PASSWORD`  | bound to the hidden `--password`; **accepted but ignored**: `link` never connects to the database, and an explicit `--password` prints a deprecation warning                                                           |
+| Variable                      | Purpose                                                                                                                                                                                                                |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SUPABASE_PROJECT_ID`         | link-target resolution: `[ref-or-branch]` positional → `--project-ref` → env → TTY prompt (CLI-2167 adds the positional ahead of the flag). Also the 1st parent-project candidate for a branch-name lookup (CLI-2167). |
+| `SUPABASE_ACCESS_TOKEN`       | Management API bearer auth (env → keyring → `~/.supabase/access-token`)                                                                                                                                                |
+| `SUPABASE_DB_PASSWORD`        | bound to the hidden `--password`; **accepted but ignored**: `link` never connects to the database, and an explicit `--password` prints a deprecation warning                                                           |
+| `SUPABASE_EXPERIMENTAL_STACK` | `1` or `0` selects stack project-state mode over `[experimental] stack`; unset or empty uses the config. Any other value fails the command (see Exit Codes)                                                            |
 
 ## Exit Codes
 
@@ -124,6 +127,7 @@ Tenant service gateway (`https://<ref>.<projectHost>`, `apikey: <service-key>` +
 | `1`  | branch name/UUID not found on the linked parent project (CLI-2167)                                                                                                                       |
 | `1`  | branch resolved but has no `project_ref` yet (still provisioning) (CLI-2167)                                                                                                             |
 | `1`  | branch listing failure (network/status) during branch-name resolution (CLI-2167)                                                                                                         |
+| `1`  | `SUPABASE_EXPERIMENTAL_STACK` is set to a non-empty value other than `0` or `1`; nothing is written                                                                                      |
 
 > Best-effort service-link and telemetry errors never affect the exit code.
 
@@ -152,6 +156,113 @@ name) and `parent_project_ref` (CLI-2167, purely additive — absent for a plain
 project-ref link). The `Resolved branch "<name>"...` line above still goes out via `output.info`
 in these modes (stderr in `json`; a structured `log` event in `stream-json`) rather than
 `output.raw`. Warnings still go to stderr.
+
+## Stack mode
+
+When stack project-state mode is active (`SUPABASE_EXPERIMENTAL_STACK=1`, or `[experimental] stack`
+in `config.toml` with the variable unset), the link target is one gitignored document,
+`<workdir>/supabase/.link.json`, and nothing is written under `supabase/.temp/`:
+
+```json
+{
+  "project": { "ref": "…", "name": "…", "organization_id": "…", "organization_slug": "…" },
+  "active_branch": { "ref": "…", "name": "…", "is_default": false, "pooler_url": "…" },
+  "fetchedAt": "<ISO-8601 timestamp>"
+}
+```
+
+- `project` is the parent project; `active_branch.ref` is the ref commands act on, which is the
+  project's own ref unless a branch was linked (`name` and `is_default` appear for a branch
+  resolved by name; a raw branch ref whose parent is unknown records only `is_default: false`). When the ref is a branch project that `getProject` does not return, the
+  parent comes from the branch resolution, else from the previous document's project when that
+  project still lists the ref as a branch, else the ref itself.
+- `pooler_url` uses the same normalization as `.temp/pooler-url`; it is omitted with
+  `--skip-pooler` or when the project reports no primary pooler.
+- The document is written atomically after `supabase/.gitignore` gains `.link.json`,
+  `..link.json.*.tmp` (the staged write), `.supabase.lock.lease`, and `.supabase.lock.*.tmp` (the
+  staged lock write). The Postgres version and `linked-project.json` are not written.
+- A document that does not decode fails reads with `ProjectLinkMalformedError`, which suggests
+  running `supabase link` again; a read or write failure other than absence is
+  `ProjectLinkIoError`.
+- The organization and project `groupIdentify` calls fire from `link` itself, since the post-run
+  linked-project cache fill is a no-op in this mode. For other commands the fill writes
+  `$SUPABASE_HOME/project-cache/<ref>.json` (atomic, once per ref; see `docs/supabase-home.md`)
+  instead of `.temp/linked-project.json`.
+
+### Hosted versions in `supabase/supabase.lock`
+
+When the project has a `supabase/config.toml`, stack-mode `link` also records what the linked
+project or branch runs in `supabase/supabase.lock`. The config is validated first, so an invalid
+`supabase/config.toml` fails the link before any probe or write. Without a `config.toml` there is no
+lock, only `.link.json` is written, under the same project lease, and nothing below runs. A lease that
+stays busy fails the link with `LockResolutionError` reason `lease-busy` before anything is written.
+`supabase link` always needs a login. Under the project lease `supabase/.supabase.lock.lease` it:
+
+- Probes the target (the `link.probe` span; `stack update` runs the same probe under `update.probe`):
+  the database version from `getProject` (`database.version`), or from `getABranchConfig`
+  (`postgres_version`) when the ref is a branch the project lookup does not return, and the `rest`, `auth` and `storage` versions from the target's
+  tenant host (`/rest/v1/`, `/auth/v1/health`, `/storage/v1/version`) with the service-role key.
+  The key is sent as `apikey`, and as a bearer token unless it is an `sb_` key; it is never logged
+  or recorded, and a redirect is never followed (the probe counts it as failed). Services without a
+  version endpoint are not probed.
+- Resolves the entries whose specifier is `linked` (the default) against the observations (the
+  `link.lock` span), looking each hosted version up on the slim-services release host
+  (`SUPABASE_INTERNAL_SLIM_RELEASES_URL` and `SUPABASE_INTERNAL_SLIM_REGISTRY_URL` redirect it), and
+  records every observation in its entry's `linked` field even when a specifier overrides it. The
+  lock's top-level `linked` gains the project, the branch (`ref`, `isDefault`; a project link
+  without a branch records the project ref as the branch ref, default) and `observedAt`. A branch
+  linked by ref or by name records the same identity; its name is kept only in `.link.json`.
+- A service the platform does not report, or a hosted version slim-services does not publish
+  (`resolution` `unobserved` or `unpublished`), takes the version bundled with the CLI. Services
+  with no version endpoint (`realtime`, `imgproxy`, `functions`, `studio`, `pgmeta`, `mail`,
+  `analytics`, `pooler`) are recorded as `unobserved` without a warning; one the probe should have
+  read (`database`, `rest`, `auth`, `storage`) warns. A database
+  whose hosted major differs from `db.major_version` does the same. A hosted or release-host
+  failure that is transient keeps the previous entry only when the remote, the specifier and
+  `db.major_version` are unchanged, else takes the bundled version as `unobserved`; both print a
+  warning with the cause. An entry that fell back and whose inputs are unchanged keeps its pin.
+  Linking to another project or branch keeps nothing observed on the old remote. An explicit
+  `<upstream>` or `<upstream>-r<N>` specifier that cannot be resolved fails the link, and a release
+  integrity mismatch always does.
+- Once every entry has resolved, writes `.link.json`, then the lock (sorted-key JSON, atomically)
+  only when it differs from the stored one, ignoring `linked.observedAt`, all while holding the
+  lease; `supabase/.gitignore` gains its entries when the lease is taken. A resolution failure
+  writes neither. The link goes first so a lock never observes a remote the checkout does not
+  target: if the lock write fails, `.link.json` already targets the new remote while the lock still
+  observes the previous one, the next `start` warns that the lock observed another remote, and
+  `supabase stack update` or running `supabase link` again repairs it. The command then prints the
+  hosted and locked version of each service and, when the lock changed,
+  `Updated supabase/supabase.lock[: now observing <remote>] (<n> version changes). Review and commit it.`,
+  else `supabase/supabase.lock is already up to date.`; the report is printed after both writes,
+  still under the lease. In JSON output it adds `lock` (`file`, `written`, `services` with
+  `service`, `hosted`, `locked`, `resolution`). When the lock was written, the lease is then
+  released and the new pins are checked against the database data of every saved stack of this
+  project (the `StackLock.dataConflicts` span, which records `lock.data_conflict_count`), by the
+  rules the next `supabase stack start` of that stack applies. Each refusal gets one
+  warning, `stack <id>: the next supabase start refuses these pins:` followed by
+  the failure that start reports: a database build other than a new `-rN` revision of the one that
+  initialized the data (on Docker and Podman, also the one an interrupted first start recorded), or a schema-owning service the stack runs against that database that is
+  older than one that already migrated it. The failure names the recorded and refused versions and
+  the remedies: pinning the recorded version in `supabase/config.toml`
+  (`[local.services.<service>] version`, with `[db] major_version` set back when the database major
+  differs and any `[db] orioledb_version` removed when an OrioleDB build is requested), or
+  `supabase stack destroy --stack-id <id>`, which permanently deletes the stack's local database
+  data (data with no recorded identity offers only the destroy). The lock stays written, the link
+  never fails on this check, and saved state that cannot be read is logged at debug level and
+  warns of nothing.
+
+`--frozen`, or `CI` set (not empty, `false` or `0`) with an existing lock, makes `link` write only
+`.link.json`: the lock is untouched, no data check runs, and a warning lists the services whose
+hosted versions differ from it, advising `supabase stack update`. A missing lock is created even under `CI`. The probes
+still run. In legacy mode the flag is accepted and does nothing. `supabase unlink` never touches the
+lock.
+
+Network by command: `supabase link` reaches the Management API, the target's tenant host and the
+release host. `supabase start` and `supabase stack install` reach only the release host, only when
+they resolve a release, and never need a login or the Management API; `supabase stack update`
+reaches the Management API and tenant host only when a `linked` entry is re-resolved and
+`supabase/.link.json` exists (it then needs a login), plus the release host; `supabase stack
+outdated` reaches only the release host.
 
 ## Notes
 

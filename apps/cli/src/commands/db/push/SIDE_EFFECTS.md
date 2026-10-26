@@ -19,6 +19,8 @@ is set. A hosted target asks one combined confirmation before the first write.
 | `<workdir>/supabase/migrations/*.sql`             | SQL         | for each pending migration, when applied (and not `--dry-run`)                                                                                    |
 | seed files from `[db.seed].sql_paths`             | SQL         | when `--include-seed` and `[db.seed].enabled` (paths under `supabase/`)                                                                           |
 | `<workdir>/supabase/roles.sql`                    | SQL         | when `--include-roles` (existence check + apply)                                                                                                  |
+| `PGSSL*` PEM, `pg_service.conf`                   | PEM, libpq  | `--remote=<db-url>` or a remote project, when the DSN or env sets them; no PEM file is read under `sslmode=disable` (see Notes)                   |
+| `.pgpass` (`pgpass.conf` on Windows)              | libpq       | `--remote=<db-url>` with no password, or a remote project's pooler route (password discarded); `PGPASSFILE` overrides the path (see Notes)        |
 
 ## Files Written
 
@@ -46,15 +48,16 @@ is set. A hosted target asks one combined confirmation before the first write.
 
 ## Environment Variables
 
-| Variable                      | Purpose                                                                                                                                               | Required?                                               |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN`       | auth token for a remote project or branch                                                                                                             | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_DB_PASSWORD`        | password for the remote connection; ignored for a target other than the linked project (see Notes)                                                    | no (`--password`/`-p` takes precedence)                 |
-| `SUPABASE_DB_SEED_ENABLED`    | overrides `[db.seed].enabled`, including a matched `[remotes.*]` block; lifts a `false` but does not make push seed without `--include-seed`          | no                                                      |
-| `SUPABASE_*` config overrides | any `config.toml` key an env name exists for (e.g. `SUPABASE_DB_MIGRATIONS_ENABLED`); see Notes                                                       | no                                                      |
-| `SUPABASE_YES`                | shell value confirms the hosted-mutation consent and lets the connection clear a network ban; a `SUPABASE_YES` in `supabase/.env` does not            | no (also `--yes`)                                       |
-| `SUPABASE_PROJECT_ID`         | linked-ref resolution override, superseded by `--remote=<ref>` when set, and the parent project that `--remote=<branch>` resolves against — see Notes | no                                                      |
-| `DOTENV_PRIVATE_KEY*`         | decrypts `encrypted:` config secrets; `[db.vault]` values are not decrypted with `--skip-vault`                                                       | no                                                      |
+| Variable                      | Purpose                                                                                                                                                                                                                                         | Required?                                               |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN`       | auth token for a remote project or branch                                                                                                                                                                                                       | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_DB_PASSWORD`        | password for the remote connection; ignored for a target other than the linked project (see Notes)                                                                                                                                              | no (`--password`/`-p` takes precedence)                 |
+| `SUPABASE_DB_SEED_ENABLED`    | overrides `[db.seed].enabled`, including a matched `[remotes.*]` block; lifts a `false` but does not make push seed without `--include-seed`                                                                                                    | no                                                      |
+| `SUPABASE_*` config overrides | any `config.toml` key an env name exists for (e.g. `SUPABASE_DB_MIGRATIONS_ENABLED`); see Notes                                                                                                                                                 | no                                                      |
+| `SUPABASE_YES`                | shell value confirms the hosted-mutation consent and lets the connection clear a network ban; a `SUPABASE_YES` in `supabase/.env` does not                                                                                                      | no (also `--yes`)                                       |
+| `SUPABASE_PROJECT_ID`         | linked-ref resolution override, superseded by `--remote=<ref>` when set, and the parent project that `--remote=<branch>` resolves against — see Notes                                                                                           | no                                                      |
+| `DOTENV_PRIVATE_KEY*`         | decrypts `encrypted:` config secrets; `[db.vault]` values are not decrypted with `--skip-vault`                                                                                                                                                 | no                                                      |
+| `PG*` libpq                   | remote project, shell only: `PGSSLMODE`, `PGSSLROOTCERT`, `PGSSLCERT`/`PGSSLKEY`/`PGSSLPASSWORD`, `PGCONNECT_TIMEOUT`, `PGSERVICE`/`PGSERVICEFILE`; `--remote=<db-url>`: any `PG*` the DSN omits, shell first, then project `.env*` (see Notes) | no                                                      |
 
 ## Exit Codes
 
@@ -139,3 +142,19 @@ project ref and its environment.
   Prefer idempotent forms (`CREATE INDEX CONCURRENTLY IF NOT EXISTS …`) and isolating
   such statements in their own migration file. Intentional fix for supabase/cli#5139,
   adopted into TS in PR supabase/cli#5671 (landed on develop as `b48fad60`).
+- **Remote-project libpq env.** On every remote-project database connection, `PGSSLMODE`, `PGSSLROOTCERT`,
+  `PGSSLCERT`/`PGSSLKEY`/`PGSSLPASSWORD`, `PGCONNECT_TIMEOUT`, and `PGSERVICE`/`PGSERVICEFILE` are
+  read from the shell only, never the project `.env*` (`gen types` keeps its pinned mode and CA,
+  except on the pooler temp-role probe), on the direct host and the IPv4 pooler alike; host, port,
+  role, and database stay pinned. As in libpq, a `PGSERVICE` entry's settings outrank these vars.
+  An invalid mode or `PGCONNECT_TIMEOUT`, an unknown `PGSERVICE`, or a lone `PGSSLCERT`/`PGSSLKEY`
+  outside `sslmode=disable` fails with `invalid libpq environment` on either route.
+  `sslmode=disable` dials plaintext and reads no CA or client-cert file; otherwise those PEM files
+  are read when set and a missing one fails the connection, and a `pg_service.conf` is read
+  whenever `PGSERVICE` names a service. The pooler route also reads `.pgpass` (`PGPASSFILE`, else
+  `~/.pgpass`, or `%APPDATA%\postgresql\pgpass.conf` on Windows) and discards that password, and
+  it keeps `PGAPPNAME` and a service's `options` and runtime keys, which the direct host drops.
+  `db dump` and the `pg_dump` seed of a first `db pull` also get them (see `db dump`). Other
+  tool containers get none of these `PG*` TLS settings (migra gets the CLI's own bundled CA
+  outside its OOM fallback); migra and pgadmin get the timeout as `connect_timeout` and the
+  pooler's `options` and runtime keys in their URL.

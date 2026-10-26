@@ -4,7 +4,6 @@ import { AccessTokenRequiredError, InvalidAccessTokenError } from "../../auth/er
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { ProjectRefResolver, type ResolvedProjectRef } from "../../config/project-ref.service.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
-import { readProjectRefFile } from "../../shared/config/temp-paths.ts";
 import { CommandTarget } from "../../shared/output/command-target.service.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import {
@@ -13,6 +12,7 @@ import {
 } from "../../shared/runtime/command-runtime.service.ts";
 import { yellow } from "../colors.ts";
 import { formatNamedRef, sanitizeInlineName } from "../http-errors.ts";
+import { readLinkSnapshotSoft } from "../../shared/config/link-snapshot.ts";
 import { readCachedLinkedProject, resolveLinkedParentRef } from "../parent-project-ref.ts";
 import { BRANCH_PROJECT_REF_PATTERN } from "../ref-patterns.ts";
 import {
@@ -239,6 +239,7 @@ const linkedTarget = (resolved: ResolvedProjectRef): LinkedTarget => ({
   ref: resolved.ref,
   source: resolved.source,
   matchesLinkedRef: resolved.matchesLinkedRef,
+  ...(resolved.poolerUrl === undefined ? {} : { poolerUrl: resolved.poolerUrl }),
 });
 
 const resolveRemoteBranch = Effect.fnUntraced(function* (name: string) {
@@ -274,14 +275,17 @@ export const resolveRemoteTarget = Effect.fn("Target.resolveRemote")(function* (
     const path = yield* Path.Path;
     const { workdir } = yield* CommandSettings;
     const found = yield* resolveRemoteBranch(remote.name);
-    const linkedRef = yield* readProjectRefFile(fs, path, workdir).pipe(
-      Effect.orElseSucceed(() => Option.none<string>()),
-    );
+    const link = yield* readLinkSnapshotSoft(fs, path, workdir);
+    const matchesLinkedRef = Option.contains(link.ref, found.projectRef);
+    const poolerUrl = matchesLinkedRef
+      ? Option.getOrUndefined(Option.filter(link.poolerUrl, (url) => url.length > 0))
+      : undefined;
     return {
       ...linkedTarget({
         ref: found.projectRef,
         source: "flag",
-        matchesLinkedRef: Option.contains(linkedRef, found.projectRef),
+        matchesLinkedRef,
+        ...(poolerUrl === undefined ? {} : { poolerUrl }),
       }),
       branch: remote.name,
       ...(found.parentRef === undefined ? {} : { parentRef: found.parentRef }),

@@ -29,24 +29,47 @@ export interface StackTarget {
   readonly hostRunning: boolean;
 }
 
+/** The target-resolution step that could not read the saved stack state or project root. */
+export type StackTargetIssue =
+  | "stack-discovery"
+  | "stack-lookup"
+  | "unreadable-stack"
+  | "project-root";
+
+const targetIssueSuffix = {
+  "stack-discovery": "stack_discovery",
+  "stack-lookup": "stack_lookup",
+  "unreadable-stack": "unreadable_stack",
+  "project-root": "project_root",
+} as const;
+
+export const stackTargetInvalidConfigActionability = (
+  targetIssue: StackTargetIssue | undefined,
+): CliErrorActionabilityDeclaration => ({
+  ...actionability.invalidConfig,
+  fingerprint_suffix: targetIssue === undefined ? "invalid_config" : targetIssueSuffix[targetIssue],
+});
+
 export class StackTargetError extends Data.TaggedError("ExperimentalStackTargetError")<{
   readonly message: string;
   readonly reason: "flags" | "invalid-config";
+  readonly targetIssue?: StackTargetIssue;
   readonly suggestion?: string;
   readonly cause?: unknown;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return this.reason === "flags"
       ? { ...actionability.provideFlags, fingerprint_suffix: "flags" }
-      : { ...actionability.invalidConfig, fingerprint_suffix: "invalid_config" };
+      : stackTargetInvalidConfigActionability(this.targetIssue);
   }
 }
 
-/** Rewraps a `StackTargetError` into a command's own error type, preserving reason, message, and suggestion. */
+/** Rewraps a `StackTargetError` into a command's own error type, preserving its fields. */
 export const mapTargetError =
   <E>(
     make: (props: {
       readonly reason: StackTargetError["reason"];
+      readonly targetIssue?: StackTargetIssue;
       readonly message: string;
       readonly suggestion?: string;
       readonly cause: StackTargetError;
@@ -55,6 +78,7 @@ export const mapTargetError =
   (error: StackTargetError): E =>
     make({
       reason: error.reason,
+      ...(error.targetIssue === undefined ? {} : { targetIssue: error.targetIssue }),
       message: error.message,
       ...(error.suggestion === undefined ? {} : { suggestion: error.suggestion }),
       cause: error,
@@ -116,8 +140,8 @@ export const rejectStackOutput = (
       )
     : Effect.void;
 
-const stateError = (cause: StackError) =>
-  new StackTargetError({ message: cause.message, reason: "invalid-config", cause });
+const stateError = (targetIssue: StackTargetIssue) => (cause: StackError) =>
+  new StackTargetError({ message: cause.message, reason: "invalid-config", targetIssue, cause });
 
 const runtimeForFlag = (runtime: "auto" | StackRuntime): StackTarget["runtime"] =>
   runtime === "auto" ? undefined : runtime;
@@ -135,6 +159,18 @@ export const stackTargetResolverLayer = Layer.effect(
     const stackApi = yield* StackApi;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const canonicalProjectRoot = (projectRoot: string) =>
+      fs.realPath(projectRoot).pipe(
+        Effect.mapError(
+          (cause) =>
+            new StackTargetError({
+              message: cause.message,
+              reason: "invalid-config",
+              targetIssue: "project-root",
+              cause,
+            }),
+        ),
+      );
     const findByIdPrefix = Effect.fn("StackTargetResolver.findByIdPrefix")(function* (
       stateRoot: string,
       prefix: string,
@@ -146,7 +182,7 @@ export const stackTargetResolverLayer = Layer.effect(
           idPrefix: prefix,
           onInvalidState: (id, error) => Effect.sync(() => unreadable.push({ id, error })),
         })
-        .pipe(Effect.mapError(stateError));
+        .pipe(Effect.mapError(stateError("stack-discovery")));
       const matchedIds = [
         ...matches.map(({ definition }) => definition.id),
         ...unreadable.map(({ id }) => id),
@@ -160,7 +196,9 @@ export const stackTargetResolverLayer = Layer.effect(
         });
       const [invalid] = unreadable;
       if (invalid !== undefined)
-        yield* stackApi.find({ stateRoot, id: invalid.id }).pipe(Effect.mapError(stateError));
+        yield* stackApi
+          .find({ stateRoot, id: invalid.id })
+          .pipe(Effect.mapError(stateError("unreadable-stack")));
       return matches[0];
     });
     const resolve = Effect.fn("StackTargetResolver.resolve")(function* (input: {
@@ -172,6 +210,9 @@ export const stackTargetResolverLayer = Layer.effect(
       const id = input.id === undefined ? undefined : yield* validateStackId(input.id);
       const requestedRuntime = runtimeForFlag(input.runtime);
       const stateRoot = path.join(settings.supabaseHome, "stacks");
+      // Canonicalized before the lookup so a missing project root is not reported as unreadable state.
+      const lookupRoot =
+        id === undefined ? yield* canonicalProjectRoot(input.projectRoot) : undefined;
       const found =
         id === undefined || isStackId(id)
           ? yield* stackApi
@@ -179,12 +220,12 @@ export const stackTargetResolverLayer = Layer.effect(
                 id === undefined
                   ? {
                       stateRoot,
-                      projectRoot: input.projectRoot,
+                      projectRoot: lookupRoot ?? input.projectRoot,
                       ...(input.name === undefined ? {} : { name: input.name }),
                     }
                   : { stateRoot, id },
               )
-              .pipe(Effect.map(Option.getOrUndefined), Effect.mapError(stateError))
+              .pipe(Effect.map(Option.getOrUndefined), Effect.mapError(stateError("stack-lookup")))
           : yield* findByIdPrefix(stateRoot, id);
       if (id !== undefined && found === undefined)
         return yield* new StackTargetError({
@@ -204,14 +245,8 @@ export const stackTargetResolverLayer = Layer.effect(
       // A new stack saves paths under the canonical root its identity derives from.
       const projectRoot =
         found?.definition.identity.projectRoot ??
-        (yield* fs
-          .realPath(input.projectRoot)
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new StackTargetError({ message: cause.message, reason: "invalid-config", cause }),
-            ),
-          ));
+        lookupRoot ??
+        (yield* canonicalProjectRoot(input.projectRoot));
       return {
         projectRoot,
         ...(found === undefined ? {} : { id: found.definition.id, definition: found.definition }),

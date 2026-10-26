@@ -2,6 +2,7 @@ import { Cause, Option } from "effect";
 import { CliError } from "effect/cli";
 import { unwrapNativeFailure } from "../telemetry/error-actionability.ts";
 import { formatInvalidValueMessage } from "../cli/invalid-value-message.ts";
+import { stripControlSequences } from "./strip-control-sequences.ts";
 import type { CliErrorSuggestionContext } from "../cli/subcommand-flag-suggestions.ts";
 import { formatCliErrorsForDisplay } from "../cli/subcommand-flag-suggestions.ts";
 
@@ -30,6 +31,17 @@ const readRawString = (value: ErrorRecord, key: string): string | undefined => {
   const field = value[key];
   return typeof field === "string" ? field : undefined;
 };
+
+/** A config parse failure's reason and position, without the source text it quotes, which can hold secrets. */
+export function configParseCauseMessage(cause: unknown): string {
+  const text = cause instanceof Error ? cause.message : String(cause);
+  const reason = (stripControlSequences(text).split("\n\n")[0] ?? "").trimEnd();
+  /* Only smol-toml's error carries a `codeblock`; Bun sets `line`/`column` on every `Error`. */
+  if (isErrorRecord(cause) && typeof cause["codeblock"] === "string") {
+    return `${reason} (line ${String(cause["line"])}, column ${String(cause["column"])})`;
+  }
+  return cause instanceof SyntaxError ? reason.replace(/"[\s\S]*"/u, '"<redacted>"') : reason;
+}
 
 const mappedError = (
   error: ErrorRecord,
@@ -71,6 +83,15 @@ const mappedError = (
         if (message !== undefined) return { code: tag, message };
       }
       return undefined;
+    }
+    case "CliConfigParseError": {
+      const path = readString(error, "path");
+      return path === undefined
+        ? undefined
+        : {
+            code: tag,
+            message: `failed to parse ${path}: ${configParseCauseMessage(error["cause"])}`,
+          };
     }
     case "UnknownSubcommand":
       return {

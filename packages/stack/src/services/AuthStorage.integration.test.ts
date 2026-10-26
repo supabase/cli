@@ -10,6 +10,7 @@ import { makeDockerHttpRelay, makeDockerTcpRelay } from "../../tests/docker-rela
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 import { httpHost } from "../../tests/helpers/endpoint.ts";
 import { engineTarget, testEngine } from "../../tests/engine-target.ts";
+import { selection } from "../../tests/pins.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-auth-storage",
@@ -44,8 +45,8 @@ describe("service catalog", () => {
           const databaseRecipe = yield* makeServiceRecipe(
             {
               service: "database",
+              pin: selection.database,
               config: {
-                version: "17",
                 databasePassword: Redacted.make("postgres"),
                 jwtSecret: Redacted.make(secret),
                 jwtExpiry: 3600,
@@ -64,6 +65,7 @@ describe("service catalog", () => {
           const authRecipe = yield* makeServiceRecipe(
             {
               service: "auth",
+              pin: selection.auth,
               config: { databaseUrl, jwtSecret: secret, jwtExpiry: 3600 },
             },
             dockerOptions(root),
@@ -106,7 +108,7 @@ describe("service catalog", () => {
           const storageRoot = `${callerRoot}/storage`;
           yield* fs.makeDirectory(storageRoot, { recursive: true });
           const imgproxyRecipe = yield* makeServiceRecipe(
-            { service: "imgproxy", config: { filePath: storageRoot } },
+            { service: "imgproxy", pin: selection.imgproxy, config: { filePath: storageRoot } },
             dockerOptions(root),
           );
           const imgproxy = yield* makeStandaloneService(imgproxyRecipe.definition, {
@@ -119,6 +121,7 @@ describe("service catalog", () => {
           const storageRecipe = yield* makeServiceRecipe(
             {
               service: "storage",
+              pin: selection.storage,
               config: {
                 databaseUrl,
                 filePath: storageRoot,
@@ -213,8 +216,8 @@ describe("service catalog", () => {
           const databaseRecipe = yield* makeServiceRecipe(
             {
               service: "database",
+              pin: selection.database,
               config: {
-                version: "17",
                 databasePassword: Redacted.make("postgres"),
                 jwtSecret: Redacted.make(secret),
                 jwtExpiry: 3600,
@@ -231,7 +234,11 @@ describe("service catalog", () => {
           const databaseRelay = yield* makeDockerTcpRelay(databaseRecipe.endpoint("sql"));
           const databaseUrl = `postgresql://supabase_admin:postgres@${databaseRelay.host}:${databaseRelay.port}/postgres`;
           const authRecipe = yield* makeServiceRecipe(
-            { service: "auth", config: { databaseUrl, jwtSecret: secret, jwtExpiry: 3600 } },
+            {
+              service: "auth",
+              pin: selection.auth,
+              config: { databaseUrl, jwtSecret: secret, jwtExpiry: 3600 },
+            },
             dockerOptions(root),
           );
           const auth = yield* makeStandaloneService(authRecipe.definition, {

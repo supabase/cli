@@ -103,6 +103,9 @@ import { PgDeltaSslProbe } from "../../../command-internal/pgdelta-ssl-probe.ser
 import { PgDeltaEngine, PgDeltaEngineError } from "../shared/pgdelta-engine.service.ts";
 import type { DbPullFlags } from "./pull.command.ts";
 import { dbPull } from "./pull.handler.ts";
+import { database15, selection } from "../../../../tests/helpers/pins.ts";
+import { seedLock, unbundled } from "../../../../tests/helpers/stack-lock.ts";
+import { projectStateModeLayer } from "../../../shared/config/project-state-mode.ts";
 
 const alwaysReadyHttpClientLayer = Layer.succeed(
   HttpClient.HttpClient,
@@ -194,6 +197,7 @@ interface SetupOpts {
   readonly historyUpdateFailWith?: string;
   // Runs the real resolver and linked-project cache; `workdir` must be a real directory.
   readonly realLayers?: boolean;
+  readonly remoteTls?: { readonly sslmode: string };
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -422,6 +426,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           user: "postgres",
           password: "x",
           database: "postgres",
+          ...opts.remoteTls,
         },
         isLocal,
         ref: input.target.kind === "linked" ? Option.some(input.target.ref) : Option.none(),
@@ -1162,6 +1167,20 @@ describe("db pull", () => {
     },
   );
 
+  it.effect("an initial pull hands the linked project's TLS settings to pg_dump", () => {
+    const s = setup(tmp.current, {
+      remoteVersions: [],
+      dumpStdout: "create table dumped ();\n",
+      edgeStdout: "create table diffed ();\n",
+      yes: true,
+      remoteTls: { sslmode: "verify-full" },
+    });
+    return Effect.gen(function* () {
+      yield* dbPull(flags({ remote: REMOTE_LINKED, diffEngine: Option.some("migra") }));
+      expect(s.dumpCalls[0]?.env).toMatchObject({ PGSSLMODE: "verify-full" });
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("an initial pull in json mode emits a native structured envelope", () => {
     const s = setup(tmp.current, {
       format: "json",
@@ -1612,6 +1631,72 @@ describe("db pull", () => {
       );
     },
   );
+
+  describe("in stack state mode", () => {
+    const remoteMajorConfig = [
+      "[db]",
+      "major_version = 15",
+      "[remotes.staging]",
+      `project_id = "${VALID_REF}"`,
+      "[remotes.staging.db]",
+      "major_version = 17",
+      "",
+    ].join("\n");
+
+    it.effect(
+      "dumps the initial remote pull with the image of the matching [remotes.<ref>] major",
+      () => {
+        const s = setup(tmp.current, {
+          files: { "supabase/config.toml": remoteMajorConfig },
+          remoteVersions: [],
+          dumpStdout: "create table dumped ();\n",
+          yes: true,
+        });
+        return Effect.gen(function* () {
+          yield* dbPull(flags({ remote: REMOTE_LINKED, diffEngine: Option.some("migra") }));
+          expect(s.dumpCalls[0]?.image).toBe(selection.database.image);
+          expect(s.dumpCalls[0]?.image).not.toBe(database15.image);
+        }).pipe(Effect.provide(Layer.merge(s.layer, projectStateModeLayer("stack"))));
+      },
+    );
+
+    it.effect(
+      "dumps with the remote major's bundled image when the project lock records the local major",
+      () => {
+        const s = setup(tmp.current, {
+          files: { "supabase/config.toml": remoteMajorConfig },
+          remoteVersions: [],
+          dumpStdout: "create table dumped ();\n",
+          yes: true,
+        });
+        return Effect.gen(function* () {
+          yield* seedLock(tmp.current, (services) => ({
+            ...services,
+            database: { ...services.database, resolved: unbundled(database15) },
+          }));
+          yield* dbPull(flags({ remote: REMOTE_LINKED, diffEngine: Option.some("migra") }));
+          expect(s.dumpCalls[0]?.image).toBe(selection.database.image);
+        }).pipe(Effect.provide(Layer.merge(s.layer, projectStateModeLayer("stack"))));
+      },
+    );
+
+    it.effect("dumps with the locked image when no remote block applies", () => {
+      const s = setup(tmp.current, {
+        files: { "supabase/config.toml": "[db]\nmajor_version = 15\n" },
+        remoteVersions: [],
+        dumpStdout: "create table dumped ();\n",
+        yes: true,
+      });
+      return Effect.gen(function* () {
+        yield* seedLock(tmp.current, (services) => ({
+          ...services,
+          database: { ...services.database, resolved: unbundled(database15) },
+        }));
+        yield* dbPull(flags({ remote: REMOTE_LINKED, diffEngine: Option.some("migra") }));
+        expect(s.dumpCalls[0]?.image).toBe(unbundled(database15).image);
+      }).pipe(Effect.provide(Layer.merge(s.layer, projectStateModeLayer("stack"))));
+    });
+  });
 
   it.effect(
     "resolves the pg_dump network via SUPABASE_NETWORK_ID from supabase/.env when neither the flag nor the ambient env is set",

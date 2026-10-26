@@ -2,7 +2,7 @@ import { Option } from "effect";
 
 import type { RenderedTarget } from "../../shared/output/command-target.service.ts";
 import { sanitizeInlineName } from "../http-errors.ts";
-import type { CachedLinkedProject } from "../parent-project-ref.ts";
+import type { CachedLinkedProject } from "../../shared/config/link-snapshot.ts";
 
 const hostWithPort = (host: string, port: number): string =>
   `${host.includes(":") ? `[${host}]` : host}:${port}`;
@@ -34,7 +34,7 @@ const productionTarget = (ref: string, name: string | undefined): RenderedTarget
 });
 
 /**
- * A linked project's identity from the `linked-project.json` cache alone, with no API call. Only a
+ * A linked project's identity from the link's recorded parent alone, with no API call. Only a
  * cache naming the resolved ref itself is evidence (a production project); a project that is
  * merely linked, or one the cache cannot vouch for, is shown as its ref and reported `unverified`,
  * because the cache can be stale or missing and never proves a branch. A ref that differs from
@@ -45,7 +45,7 @@ export const describeLinkedTarget = (input: {
   readonly cache: Option.Option<CachedLinkedProject>;
   /** The name the project picker showed for `ref`. */
   readonly name?: string;
-  /** The `project-ref` file's ref, when the caller compares against the linked project. */
+  /** The linked ref, when the caller compares against the linked project. */
   readonly linkedRef?: Option.Option<string>;
 }): RenderedTarget => {
   const { ref } = input;

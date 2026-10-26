@@ -1,6 +1,17 @@
 import * as net from "node:net";
 import { BunServices } from "@effect/platform-bun";
-import { Crypto, Duration, Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
+import {
+  Crypto,
+  Duration,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Predicate,
+  Redacted,
+  Struct,
+} from "effect";
 
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
@@ -32,6 +43,7 @@ import {
 import * as Errors from "./db-config.errors.ts";
 import {
   layeredParseEnv,
+  POOLER_URL_UNPARSABLE,
   poolerConfigFromConnectionString,
   parseConnectionString,
   redactConnectionString,
@@ -47,7 +59,7 @@ import { StackApi, stackApiLayer } from "./stack-api.ts";
 import { stackLocalDatabaseConn } from "./stack-local-database.ts";
 import { block, type OperationEntry } from "./command-permissions/model.ts";
 import { renderDbUrlTarget, renderLocalTarget } from "./target/target-identity.ts";
-import { isCheckoutLinked } from "../shared/config/temp-paths.ts";
+import { isCheckoutLinked } from "../shared/config/link-snapshot.ts";
 import { rejectTargetPassword } from "./target/target-password.ts";
 
 const loginRoleEntry = {
@@ -62,7 +74,7 @@ const poolerConfigEntry = {
   operationId: "v1-get-pooler-config",
   kind: "required",
   context:
-    "the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url",
+    "the direct database host is unreachable (IPv4-only network) and there is no usable saved pooler URL (supabase/.temp/pooler-url, or supabase/.link.json in stack mode) for the target ref",
 } as const satisfies Omit<OperationEntry, "source">;
 
 const networkBanEntries = [
@@ -122,7 +134,7 @@ const poolerFallbackEntries: ReadonlyArray<Omit<OperationEntry, "source">> = [
     operationId: "v1-get-pooler-config",
     kind: "required",
     context:
-      "the command's database work fails with an IPv6 connectivity error against the direct database host, and there is no usable saved supabase/.temp/pooler-url",
+      "the command's database work fails with an IPv6 connectivity error against the direct database host, and there is no usable saved pooler URL (supabase/.temp/pooler-url, or supabase/.link.json in stack mode) for the target ref",
   },
   {
     operationId: "v1-create-login-role",
@@ -365,9 +377,13 @@ const waitForTempRole = Effect.fn("DbConfig.waitForTempRole")(function* (
   return yield* attempt(1, NO_BANS);
 });
 
+const LIBPQ_ENV_MESSAGE =
+  "invalid libpq environment: check PGSSLMODE, PGSSLCERT/PGSSLKEY, PGSERVICE/PGSERVICEFILE and PGCONNECT_TIMEOUT";
+
 /**
  * Parse + validate the configured pooler connection string. Returns `None` (treated as "no
- * pooler" → IPv6 error) on any validation failure.
+ * pooler" → IPv6 error) on any validation failure, except an invalid libpq `PG*` environment,
+ * which fails with {@link Errors.DbConfigLibpqEnvError}.
  */
 const poolerConfigFrom = Effect.fnUntraced(function* (
   ref: string,
@@ -376,7 +392,15 @@ const poolerConfigFrom = Effect.fnUntraced(function* (
 ) {
   const debug = yield* DebugLogger;
   const result = yield* poolerConfigFromConnectionString(ref, connectionString, poolerHost);
-  if (result._tag === "ok") return Option.some(result.conn);
+  if (Predicate.isTagged(result, "ok")) return Option.some(result.conn);
+  /* An env-only parse tells an invalid `PG*` setting apart from a malformed pooler URL. */
+  if (
+    result.reason === POOLER_URL_UNPARSABLE &&
+    (yield* parseConnectionString("postgresql://postgres@localhost:5432/postgres?passfile=")) ===
+      undefined
+  ) {
+    return yield* new Errors.DbConfigLibpqEnvError({ message: LIBPQ_ENV_MESSAGE });
+  }
   yield* debug.debug(result.reason);
   return Option.none();
 });
@@ -475,8 +499,10 @@ const resolvePoolerConn = Effect.fn("DbConfig.resolvePoolerConn")(function* (
   poolerHost: string,
   dnsResolver: "native" | "https",
   password: string,
+  // The pooler URL the link recorded for `ref`.
+  savedPoolerUrl: Option.Option<string>,
   fetchFromApi = false,
-  // For an ad-hoc `--project-ref` the saved `.temp/pooler-url` belongs to the
+  // For an ad-hoc `--project-ref` the saved pooler URL belongs to the
   // (possibly different) linked workdir, so ignore it and resolve the pooler for
   // `ref` from the Management API instead.
   ignoreSavedUrl = false,
@@ -489,12 +515,10 @@ const resolvePoolerConn = Effect.fn("DbConfig.resolvePoolerConn")(function* (
   // on the main linked branch rather than validating base config. For an ad-hoc `--project-ref`,
   // skip the saved workdir pooler URL because it belongs to the linked project, not necessarily
   // the explicit ref.
-  const tomlValues = yield* readDbToml(fs, path, workdir, ref, {
+  yield* readDbToml(fs, path, workdir, ref, {
     resolveVaultSecrets,
   });
-  let connectionString = ignoreSavedUrl
-    ? undefined
-    : Option.getOrUndefined(tomlValues.poolerConnectionString);
+  let connectionString = ignoreSavedUrl ? undefined : Option.getOrUndefined(savedPoolerUrl);
   if (connectionString === undefined) {
     if (!fetchFromApi) return Option.none<PgConnInput>();
     connectionString = yield* fetchApiPoolerUrl(ref);
@@ -547,6 +571,8 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
     readonly removeNetworkBans: boolean;
     readonly adHocProjectRef?: boolean;
     readonly resolveVaultSecrets?: boolean;
+    /** The pooler URL the link recorded for `ref`, used when the direct host is unreachable. */
+    readonly poolerUrl?: Option.Option<string>;
     /**
      * Requests the Management API pooler-config fetch on an IPv4-only network independent of
      * `adHocProjectRef`'s saved-URL semantics, so a workdir with no usable saved pooler URL still
@@ -563,6 +589,7 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
     fetchPoolerFromApi = false,
     hasPasswordFlag = false,
     removeNetworkBans,
+    poolerUrl = Option.none<string>(),
   } = options;
   const dbPassword = yield* resolveLinkedPassword(ref, workdir, explicitPassword, hasPasswordFlag);
   const host = `db.${ref}.${projectHost}`;
@@ -577,8 +604,27 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
   const reachable = yield* tcpReachable(host, DIRECT_PORT);
   yield* Effect.annotateCurrentSpan("db.direct_reachable", reachable);
   if (reachable) {
-    if (base.password.length > 0) return base;
-    return yield* initLoginRole(ref, base);
+    /* Same libpq TLS and timeout precedence as the pooler URL; host, port, role and database stay
+       pinned. The empty `passfile=` skips a `.pgpass` read for a password that is discarded. */
+    const parsed = yield* parseConnectionString(
+      `postgresql://postgres@${host}:${DIRECT_PORT}/postgres?passfile=`,
+    );
+    if (parsed === undefined) {
+      return yield* new Errors.DbConfigLibpqEnvError({ message: LIBPQ_ENV_MESSAGE });
+    }
+    const direct = {
+      ...base,
+      ...Struct.pick(parsed, [
+        "sslmode",
+        "sslrootcert",
+        "sslcert",
+        "sslkey",
+        "sslpassword",
+        "connectTimeoutSeconds",
+      ]),
+    };
+    if (direct.password.length > 0) return direct;
+    return yield* initLoginRole(ref, direct);
   }
 
   // Direct host unreachable (IPv6-only network) → try the pooler. An ad-hoc ref skips the saved
@@ -590,6 +636,7 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
     poolerHost,
     dnsResolver,
     base.password,
+    poolerUrl,
     adHocProjectRef || fetchPoolerFromApi,
     adHocProjectRef,
     resolveVaultSecrets,
@@ -797,6 +844,7 @@ export const dbConfigResolverLayer = Layer.effect(
         readonly adHocProjectRef: boolean;
         readonly hasPasswordFlag: boolean;
         readonly removeNetworkBans: boolean;
+        readonly poolerUrl: Option.Option<string>;
       },
     ) =>
       Effect.gen(function* () {
@@ -816,6 +864,7 @@ export const dbConfigResolverLayer = Layer.effect(
             fetchPoolerFromApi: true,
             hasPasswordFlag: options.hasPasswordFlag,
             removeNetworkBans: options.removeNetworkBans,
+            poolerUrl: options.poolerUrl,
           },
         );
       });
@@ -851,6 +900,7 @@ export const dbConfigResolverLayer = Layer.effect(
               adHocProjectRef: !target.matchesLinkedRef,
               hasPasswordFlag: input.hasPasswordFlag ?? false,
               removeNetworkBans: canRemoveNetworkBans(input),
+              poolerUrl: Option.fromNullishOr(target.poolerUrl),
             }),
           );
           return { conn, isLocal: false, ref: Option.some(target.ref), target };
@@ -892,13 +942,14 @@ export const dbConfigResolverLayer = Layer.effect(
             input.hasPasswordFlag ?? false,
           );
           // Container-fallback: fetch the primary pooler config from the Management API when
-          // no `.temp/pooler-url` is saved.
+          // the link recorded no pooler URL.
           return yield* resolvePoolerConn(
             target.ref,
             cliSettings.workdir,
             cliSettings.poolerHost,
             input.dnsResolver,
             password,
+            Option.fromNullishOr(target.poolerUrl),
             true,
             !target.matchesLinkedRef,
             input.resolveVaultSecrets ?? true,

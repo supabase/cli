@@ -47,18 +47,17 @@ const computeEntry = Schema.Struct({
   instances: Schema.optionalKey(
     // Bounded to match the Management API's input schema; an out-of-range value would
     // be dropped rather than sent, deploying a different count than the config asked for.
-    Schema.Number.check(
-      Schema.isInt().annotate({ expected: "a whole number of instances" }),
-      Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "zero or more instances" }),
-    ).annotate({
-      description: dedent`
+    Schema.Int.annotate({ expected: "a whole number of instances" })
+      .check(Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "zero or more instances" }))
+      .annotate({
+        description: dedent`
         Number of instances to run. Every deploy sends a complete spec, so a count
         recorded here is what keeps a scaled compute scaled; \`--instances\` overrides
         it for one deploy. Defaults to 1.
       `,
-      examples: [3],
-      tags,
-    }),
+        examples: [3],
+        tags,
+      }),
   ),
   source: Schema.optionalKey(
     Schema.String.annotate({

@@ -11,6 +11,7 @@ Checks a database for PL/pgSQL typing errors via the `plpgsql_check` extension.
 | `<workdir>/supabase/config.toml`       | TOML       | always — to resolve the local / remote DB connection config                                                                                                    |
 | `~/.supabase/access-token`             | plain text | a remote project or branch only, when `SUPABASE_ACCESS_TOKEN` unset (keyring → file)                                                                           |
 | `<workdir>/supabase/.temp/project-ref` | plain text | bare `--remote` only, to resolve the project ref — skipped when `SUPABASE_PROJECT_ID` is set; with no selector, only to name the project in the `Target:` hint |
+| `PGSSL*` PEM, `pg_service.conf`        | PEM, libpq | remote project, when set; see `db push`                                                                                                                        |
 
 ## Files Written
 
@@ -61,6 +62,7 @@ container stacks can enable it. Compose uses the Compose Postgres image.
 | `SUPABASE_DB_PASSWORD`  | remote direct-DB password                                                                                                | no                                        |
 | `SUPABASE_PROFILE`      | API profile (built-in name or YAML path)                                                                                 | no                                        |
 | `PGHOST` / `PGPORT` / … | connection overrides                                                                                                     | no                                        |
+| `PG*` libpq             | remote project; see `db push`                                                                                            | no                                        |
 
 ## Exit Codes
 

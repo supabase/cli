@@ -2,7 +2,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, it } from "@effect/vitest";
 import { ConfigProvider, Effect, FileSystem, Layer, Path } from "effect";
 
-import { useTempWorkdir } from "../../tests/helpers/command-mocks.ts";
+import { mockCommandSettings, useTempWorkdir } from "../../tests/helpers/command-mocks.ts";
 import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
 import { ConfigEnvPins } from "../../tests/helpers/config-env-pins.ts";
 import { goldenJson, useShellEnvPin } from "../../tests/helpers/config-goldens.ts";
@@ -154,6 +154,7 @@ describe("stack config precedence goldens", () => {
         const layer = Layer.mergeAll(
           BunServices.layer,
           runtimeInfoLayer,
+          mockCommandSettings({ workdir, supabaseHome: workdir }),
           cliConfigValuesTestLayer,
           Layer.succeed(ConfigEnvPins, fixture.shellEnv ?? {}),
           Layer.succeed(
@@ -177,7 +178,8 @@ describe("stack config precedence goldens", () => {
         const creations = yield* config.creations(STACK_ID);
         const keys = yield* config.keys;
         const golden = {
-          creations,
+          // Pins come from the artifact catalog, not config precedence.
+          creations: creations.map(({ pin: _pin, ...creation }) => creation),
           keys,
           source: config.source,
           projectEnvValues: configEnvOnly(config.projectEnvValues),

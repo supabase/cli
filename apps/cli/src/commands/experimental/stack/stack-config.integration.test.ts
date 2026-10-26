@@ -7,8 +7,15 @@ import { importJWK, jwtVerify } from "jose";
 import { ServiceCreationInput } from "../../../../../../packages/stack/src/services/Catalog.ts";
 import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
 import { CLI_VERSION } from "../../../shared/cli/version.ts";
+import {
+  database15,
+  orioledb,
+  orioledbConfigVersion,
+  selection,
+} from "../../../../tests/helpers/pins.ts";
 import { renderCliConfigTemplate } from "../../../shared/init/project-init.templates.ts";
 
+import { mockCommandSettings } from "../../../../tests/helpers/command-mocks.ts";
 import { loadStackConfig } from "../../../command-internal/stack-config.ts";
 import { createStackConfigProject } from "../../../../tests/helpers/stack-config.ts";
 import {
@@ -20,7 +27,14 @@ import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-value
 
 const load = (projectRoot: string) =>
   loadStackConfig(projectRoot).pipe(
-    Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer, cliConfigValuesTestLayer)),
+    Effect.provide(
+      Layer.mergeAll(
+        BunServices.layer,
+        runtimeInfoLayer,
+        mockCommandSettings({ workdir: projectRoot }),
+        cliConfigValuesTestLayer,
+      ),
+    ),
   );
 
 const project = (contents: string, options: Parameters<typeof createStackConfigProject>[1] = {}) =>
@@ -51,6 +65,30 @@ describe("loadStackConfig", () => {
     vi.unstubAllEnvs();
   });
 
+  it.effect(
+    "pins the database to the line selected by [db] major_version or orioledb_version",
+    () =>
+      Effect.gen(function* () {
+        const databasePin = (contents: string, name: string) =>
+          Effect.gen(function* () {
+            const root = yield* project(contents);
+            const config = yield* load(root);
+            const creations = yield* config.creations(name);
+            return creations.find((creation) => creation.service === "database")?.pin;
+          });
+
+        expect(
+          yield* databasePin('project_id = "pin-15"\n[db]\nmajor_version = 15\n', "pin-15"),
+        ).toEqual(database15);
+        expect(
+          yield* databasePin(
+            `project_id = "pin-oriole"\n[db]\norioledb_version = "${orioledbConfigVersion}"\n`,
+            "pin-oriole",
+          ),
+        ).toEqual(orioledb);
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("decodes the default recipe and leaves listeners automatic", () =>
     Effect.gen(function* () {
       const root = yield* project(`project_id = "stack-config-defaults"
@@ -68,7 +106,7 @@ enabled = true
       expect(keys.gotrueJwtKeys).toBeUndefined();
       expect(keys.publicSigningKeys).toBeUndefined();
       const database = recipes.get("database");
-      expect(database?.service === "database" ? database.config.version : undefined).toBe("17");
+      for (const service of services) expect(service.pin).toEqual(selection[service.service]);
       expect(
         database?.service === "database" ? database.config.rootKey : undefined,
       ).toBeUndefined();

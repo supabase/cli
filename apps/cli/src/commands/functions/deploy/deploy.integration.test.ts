@@ -21,6 +21,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { TestClock } from "effect/testing";
 
 import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { projectStateModeLayer } from "../../../shared/config/project-state-mode.ts";
 import { HostedMutationDeclinedError } from "../../../command-internal/hosted-consent/hosted-consent.errors.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { rootCommandForFeatures } from "../../../cli/root.ts";
@@ -41,6 +42,7 @@ import {
 } from "../../../../tests/helpers/command-mocks.ts";
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { mockOutput, mockRuntimeInfo, mockTty } from "../../../../tests/helpers/mocks.ts";
+import { seedLegacyStateDecoys } from "../../../../tests/helpers/legacy-state-guard.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   projectResponse,
@@ -49,6 +51,8 @@ import {
 import { Output } from "../../../shared/output/output.service.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { mockChildProcessSpawner } from "../../../../tests/helpers/child-process-spawner.ts";
+import { seedLock } from "../../../../tests/helpers/stack-lock.ts";
+import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import {
@@ -1462,6 +1466,42 @@ describe("functions deploy", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
+  it.effect("uploads modules loaded by a dynamic import() split across lines", () => {
+    const { out, layer } = apiDeployHarness(deployedHelloWorld);
+
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* writeCliConfig(tempRoot.current);
+      yield* writeLocalFunction(
+        tempRoot.current,
+        "hello-world",
+        [
+          'await import(\n  "./multi.ts"\n);',
+          'await import(\n  "./comma.ts",\n);',
+          'await import(\n  "./data.json",\n  { with: { type: "json" } },\n);',
+          'await import(\n  "./locales/" + lang + ".json",\n  { with: { type: "json" } },\n);',
+          'await import("./it\'s.ts");',
+          "",
+        ].join("\n"),
+      );
+      const imported = ["multi.ts", "comma.ts", "data.json", "it's.ts"];
+      const functionDir = path.join(tempRoot.current, "supabase", "functions", "hello-world");
+      for (const file of imported) {
+        yield* fs.writeFileString(path.join(functionDir, file), "{}\n");
+      }
+
+      yield* functionsDeploy(baseFlags);
+
+      for (const file of imported) {
+        expect(out.stderrText).toContain(
+          `Uploading asset (hello-world): supabase/functions/hello-world/${file}\n`,
+        );
+      }
+      expect(out.stderrText).not.toContain("WARN:");
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+  });
+
   it.live("reports a bundle output directory that cannot be created as an unknown error", () => {
     const out = mockOutput({ format: "text" });
     const child = mockDockerBundleSpawner();
@@ -2575,6 +2615,128 @@ describe("functions deploy", () => {
           });
         }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot), (body) =>
           withEnvVar("SUPABASE_EDGE_RUNTIME_DENO_VERSION", "1", body),
+        );
+      },
+    );
+
+    it.live(
+      "bundles on the locked edge-runtime release in stack state mode even when the lock is stale",
+      () => {
+        const lockedImage = `ghcr.io/supabase/cli/edge-runtime:v1.99.0-r1@sha256:${"a".repeat(64)}`;
+        const out = mockOutput({ format: "text" });
+        const api = mockFunctionCreateApi();
+        const child = mockDockerBundleSpawner();
+        const layer = Layer.mergeAll(
+          cliConfigValuesTestLayer,
+          buildTestRuntime({
+            out,
+            api,
+            cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+            runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+          }),
+          projectStateModeLayer("stack"),
+          approvedHostedMutation,
+          child.layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
+          }),
+        );
+
+        return Effect.gen(function* () {
+          yield* writeCliConfig(tempRoot.current);
+          yield* writeLocalFunction(tempRoot.current, "hello-world");
+          // A stale lock fails the local stack commands; a hosted deploy only reads the pin.
+          yield* seedLock(tempRoot.current, (services) => ({
+            ...services,
+            rest: { ...services.rest, specifier: "v99.0.0" },
+            functions: {
+              ...services.functions,
+              resolved: {
+                ...services.functions.resolved,
+                upstreamVersion: "v1.99.0",
+                revision: 1,
+                image: lockedImage,
+                upstreamImage: "supabase/edge-runtime:v1.99.0",
+              },
+            },
+          })).pipe(
+            Effect.provide(
+              Layer.mergeAll(
+                runtimeInfoLayer,
+                mockCommandSettings({ workdir: tempRoot.current, supabaseHome: tempRoot.current }),
+              ),
+            ),
+          );
+          seedLegacyStateDecoys(tempRoot.current);
+
+          yield* functionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
+
+          expect(child.spawned[1]).toEqual({
+            command: "docker",
+            args: ["image", "inspect", "public.ecr.aws/supabase/edge-runtime:v1.99.0"],
+          });
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+      },
+    );
+
+    it.live(
+      "bundles on the locked slim image, revision and digest included, in stack state mode when slim images are on",
+      () => {
+        const lockedImage = `ghcr.io/supabase/cli/edge-runtime:v1.99.0-r1@sha256:${"a".repeat(64)}`;
+        const out = mockOutput({ format: "text" });
+        const api = mockFunctionCreateApi();
+        const child = mockDockerBundleSpawner();
+        const layer = Layer.mergeAll(
+          cliConfigValuesTestLayer,
+          buildTestRuntime({
+            out,
+            api,
+            cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+            runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+          }),
+          projectStateModeLayer("stack"),
+          approvedHostedMutation,
+          child.layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
+          }),
+        );
+
+        return Effect.gen(function* () {
+          yield* writeCliConfig(tempRoot.current);
+          yield* writeLocalFunction(tempRoot.current, "hello-world");
+          // A stale lock fails the local stack commands; a hosted deploy only reads the pin.
+          yield* seedLock(tempRoot.current, (services) => ({
+            ...services,
+            rest: { ...services.rest, specifier: "v99.0.0" },
+            functions: {
+              ...services.functions,
+              resolved: {
+                ...services.functions.resolved,
+                upstreamVersion: "v1.99.0",
+                revision: 1,
+                image: lockedImage,
+                upstreamImage: "supabase/edge-runtime:v1.99.0",
+              },
+            },
+          })).pipe(
+            Effect.provide(
+              Layer.mergeAll(
+                runtimeInfoLayer,
+                mockCommandSettings({ workdir: tempRoot.current, supabaseHome: tempRoot.current }),
+              ),
+            ),
+          );
+          seedLegacyStateDecoys(tempRoot.current);
+
+          yield* functionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
+
+          expect(child.spawned[1]).toEqual({
+            command: "docker",
+            args: ["image", "inspect", lockedImage],
+          });
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot), (body) =>
+          withEnvVar("SUPABASE_USE_SLIM_IMAGES", "true", body),
         );
       },
     );

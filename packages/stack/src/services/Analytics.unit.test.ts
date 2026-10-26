@@ -1,9 +1,11 @@
 import { expect, it } from "@effect/vitest";
 import { Effect } from "effect";
 import { makeSpec, type Creation } from "./Analytics.ts";
+import { selection } from "../../tests/pins.ts";
 
 const creation = (databaseUrl: string): Creation => ({
   service: "analytics",
+  pin: selection.analytics,
   config: { databaseUrl, apiKey: "analytics-key" },
 });
 

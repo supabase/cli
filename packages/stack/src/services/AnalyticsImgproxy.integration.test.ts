@@ -8,6 +8,7 @@ import { makeDockerTcpRelay } from "../../tests/docker-relay.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 import { httpHost } from "../../tests/helpers/endpoint.ts";
 import { engineTarget, testEngine } from "../../tests/engine-target.ts";
+import { selection } from "../../tests/pins.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-analytics",
@@ -42,8 +43,8 @@ describe("service catalog", () => {
           const databaseRecipe = yield* makeServiceRecipe(
             {
               service: "database",
+              pin: selection.database,
               config: {
-                version: "17",
                 databasePassword: Redacted.make("postgres"),
                 jwtSecret: Redacted.make(secret),
                 jwtExpiry: 3600,
@@ -63,6 +64,7 @@ describe("service catalog", () => {
           const analyticsRecipe = yield* makeServiceRecipe(
             {
               service: "analytics",
+              pin: selection.analytics,
               config: { databaseUrl, backend: "postgres", apiKey: "catalog-analytics" },
             },
             dockerOptions(root),
@@ -84,7 +86,7 @@ describe("service catalog", () => {
           const imageRoot = `${callerRoot}/images`;
           yield* fs.makeDirectory(imageRoot, { recursive: true });
           const imgproxyRecipe = yield* makeServiceRecipe(
-            { service: "imgproxy", config: { filePath: imageRoot } },
+            { service: "imgproxy", pin: selection.imgproxy, config: { filePath: imageRoot } },
             dockerOptions(root),
           );
           const imgproxy = yield* makeStandaloneService(imgproxyRecipe.definition, {

@@ -434,13 +434,13 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
       if (spec.prepare !== undefined) yield* spec.prepare(candidate);
       const resolved = yield* resolveArtifact({
         service: candidate.service,
-        version: candidate.version,
+        pin: candidate.pin,
       }).pipe(Effect.mapError((cause) => serviceError("prepare", cause)));
       if (options.runtime === "native") {
         // Ahead-of-time warm-up only: downloads and publishes the generation but pins nothing.
         // `launch` resolves (or prepares) and pins its own copy right before it spawns.
         yield* prepareNativeArtifact(
-          { service: candidate.service, version: candidate.version },
+          { service: candidate.service, pin: candidate.pin },
           options.cacheRoot,
           options.platform,
         ).pipe(
@@ -473,7 +473,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
         // `context.scope`), so closing it always runs their cleanup before releasing the pin.
         const launchScope = yield* Scope.fork(context.scope, "sequential");
         const artifact = yield* useNativeArtifact(
-          { service: context.config.service, version: context.config.version },
+          { service: context.config.service, pin: context.config.pin },
           options.cacheRoot,
           options.platform,
         ).pipe(
@@ -778,7 +778,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
         return yield* serviceError("launch", "Container runtime unavailable");
       const resolved = yield* resolveArtifact({
         service: context.config.service,
-        version: context.config.version,
+        pin: context.config.pin,
       }).pipe(Effect.mapError((cause) => serviceError("launch", cause)));
       const containerDesired = startupEndpointsFor(context.config, spec, { container: true });
       for (const process of spec.startupCommands) {

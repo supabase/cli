@@ -231,6 +231,7 @@
         "packages/stack/src/effect.integration.test.ts",
         "packages/stack/src/port-reservation.e2e.test.ts",
         "packages/stack/src/host/CommandRunner.ts",
+        "packages/stack/src/internal/schema-writers.ts",
         "packages/stack/src/preparation/ArtifactStore.ts",
         "packages/stack/src/preparation/artifacts.integration.test.ts",
         "packages/stack/src/runtime/Container.ts",
@@ -402,6 +403,8 @@
       // - NativeProcess.ts, native-process.integration.test.ts: need Environment.
       // - postgres-user.ts: needs the no-follow lstatPath.
       // - DockerDatabaseStorage.ts: needs Publication.
+      // - schema-writers.ts: needs namespace Lock and Publication; the facade reaches it through
+      //   Registry, Catalog and Database.
       "files": [
         "packages/stack/src/Network.ts",
         "packages/stack/src/Network.integration.test.ts",
@@ -411,6 +414,7 @@
         "packages/stack/src/Owner.integration.test.ts",
         "packages/stack/src/effect.integration.test.ts",
         "packages/stack/src/port-reservation.e2e.test.ts",
+        "packages/stack/src/internal/schema-writers.ts",
         "packages/stack/src/preparation/ArtifactStore.ts",
         "packages/stack/src/preparation/artifacts.integration.test.ts",
         "packages/stack/src/runtime/Container.ts",

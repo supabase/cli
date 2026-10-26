@@ -5,7 +5,7 @@ import { ProjectConfigParseError } from "../errors.ts";
 import { isSecretPath, secretPathPatterns } from "../lib/secret-paths.ts";
 import { getDefaultCliConfig, omitDefaultValues, subtractCliConfig } from "../sparse.ts";
 import type { EffectiveConfig } from "../sparse.ts";
-import { Schema } from "effect";
+import { DateTime, Schema } from "effect";
 import {
   attachApiResponse,
   comparableProjectConfigPaths,
@@ -594,6 +594,7 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
         inspect: { rules: [{ name: "r1" }] },
         webhooks: { enabled: true },
       },
+      local: { services: { auth: { version: "bundled" } } },
     });
 
     const projected = fromConfigDocument(document);
@@ -768,6 +769,13 @@ describe("fromApiProjectConfig — api section", () => {
     // default), not merely "not caller_misuse".
     expect((thrown as ProjectConfigParseError).reason ?? "api_response").toBe("api_response");
     expect((thrown as ProjectConfigParseError).apiPath).toEqual(["api", "max_rows"]);
+    expect(thrown).toHaveProperty(
+      "message",
+      expect.stringContaining(
+        "at data.attributes.api.max_rows: expected a finite number, got number",
+      ),
+    );
+    expect(thrown).not.toHaveProperty("detail");
   });
 });
 
@@ -2045,7 +2053,7 @@ describe("review round: absent anchors, exponent-free seconds, non-plain values 
   });
 
   test("non-plain structured-cloneable values are rejected before attach", () => {
-    for (const nonPlain of [new Map(), new Set(), new Date()]) {
+    for (const nonPlain of [new Map(), new Set(), DateTime.toDateUtc(DateTime.nowUnsafe())]) {
       let thrown: unknown;
       try {
         attachApiResponse({}, { x: nonPlain as unknown as ReadonlyJsonValue } as unknown as Record<
@@ -2737,9 +2745,9 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
     ["-0", -0],
     ["negative", -5],
     ["-Infinity", Number.NEGATIVE_INFINITY],
-    // TOML's `nan` literal is a real reachable document value (`smol-toml` parses
-    // `max_rows = nan` to `Number.NaN`); `NaN <= 0` is `false`, so a naive non-positive check
-    // would miss it, but `!(value > 0)` catches it since `NaN > 0` is also `false`.
+    // Config decode rejects TOML `nan`/`inf` (`Schema.Finite`), so `NaN` only reaches this arm
+    // through a caller-built `EffectiveConfig`; `NaN <= 0` is `false`, so a naive non-positive
+    // check would miss it, but `!(value > 0)` catches it since `NaN > 0` is also `false`.
     ["NaN", Number.NaN],
   ])("api.max_rows: %s is omitted on the document arm", (_description, value) => {
     const doc = fromConfigDocument({ api: { enabled: true, max_rows: value } });

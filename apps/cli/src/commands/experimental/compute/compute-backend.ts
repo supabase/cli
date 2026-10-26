@@ -3,7 +3,7 @@ import {
   ExperimentalFeatureFlagError,
   readExperimentalFeatureConfig,
   resolveExperimentalFeature,
-} from "../../../command-internal/experimental-feature.ts";
+} from "../../../shared/config/experimental-feature.ts";
 import { extractCommandPath, hasRootVersionFlag } from "../../../shared/cli/run.ts";
 
 export const resolveComputeEnabled = (input: {

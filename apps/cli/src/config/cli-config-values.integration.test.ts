@@ -4,7 +4,7 @@ import type { CliConfig } from "@supabase/config";
 import { loadCliConfig } from "@supabase/config/internal";
 import { ConfigProvider, Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
 
-import { withConfigEnv } from "../../tests/helpers/command-mocks.ts";
+import { mockCommandSettings, withConfigEnv } from "../../tests/helpers/command-mocks.ts";
 import { definedEnv } from "../../tests/helpers/config-env-pins.ts";
 import {
   cliConfigValuesTestLayer,
@@ -1190,7 +1190,14 @@ policy = "per_worker"
       return (yield* loadStackConfig(root, ref === undefined ? undefined : { projectRef: ref }))
         .source;
     }).pipe(
-      Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer, cliConfigValuesTestLayer)),
+      Effect.provide(
+        Layer.mergeAll(
+          BunServices.layer,
+          runtimeInfoLayer,
+          cliConfigValuesTestLayer,
+          mockCommandSettings({ workdir: root }),
+        ),
+      ),
     );
 
   const materialize = (

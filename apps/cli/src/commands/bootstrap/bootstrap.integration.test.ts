@@ -1,5 +1,8 @@
+import { legacyProjectStateLayer } from "../../shared/config/legacy-project-state.layer.ts";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
+import { holdLock } from "@supabase/stack/effect";
+import { TestClock } from "effect/testing";
 import {
   Cause,
   ConfigProvider,
@@ -47,6 +50,12 @@ import { describeHostedConsent } from "../../../tests/helpers/hosted-consent.ts"
 import { CliConfigFlagInputs, makeCliConfigFlagInputs } from "../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
+import { readProjectLink } from "../../shared/config/project-link.ts";
+import {
+  type ProjectStateMode,
+  softProjectStateMode,
+} from "../../shared/config/project-state-mode.ts";
+import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
 import { DbConnectError } from "../../command-internal/db-connection.errors.ts";
 import { DbConnection, type PgConnInput } from "../../command-internal/db-connection.service.ts";
 import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
@@ -254,6 +263,7 @@ function setup(path: Path.Path, opts: SetupOpts = {}) {
 
   const layer = Layer.mergeAll(
     BunServices.layer,
+    legacyProjectStateLayer.pipe(Layer.provide(BunServices.layer)),
     out.layer,
     api.layer,
     api.factoryLayer,
@@ -349,6 +359,95 @@ describe("bootstrap integration", () => {
         expect(content).toContain("stack = true");
         expect(content).not.toMatch(/^port = 54321$/m);
       }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live(
+    "links through supabase/.link.json instead of .temp when SUPABASE_EXPERIMENTAL_STACK=1",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const s = setup(path, { env: { SUPABASE_EXPERIMENTAL_STACK: "1" } });
+        const cacheModes: Array<ProjectStateMode> = [];
+        const modeRecordingCache = Layer.succeed(LinkedProjectCache, {
+          cache: () => softProjectStateMode.pipe(Effect.map((mode) => void cacheModes.push(mode))),
+        });
+        yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
+          Effect.provide(Layer.merge(s.layer, modeRecordingCache)),
+        );
+        expect(cacheModes).toEqual(["stack"]);
+        const link = yield* readProjectLink(s.workdir);
+        expect(Option.getOrThrow(link)).toMatchObject({
+          project: {
+            ref: VALID_REF,
+            name: CREATED.name,
+            organization_id: CREATED.organization_id,
+            organization_slug: CREATED.organization_slug,
+          },
+          active_branch: {
+            ref: VALID_REF,
+            pooler_url: expect.stringContaining("pooler.supabase.com"),
+          },
+        });
+        expect(yield* fs.exists(path.join(s.workdir, "supabase", ".temp"))).toBe(false);
+        expect(s.analytics.groupIdentified).toEqual([
+          {
+            groupType: "organization",
+            groupKey: CREATED.organization_id,
+            properties: { organization_slug: CREATED.organization_slug },
+          },
+          {
+            groupType: "project",
+            groupKey: VALID_REF,
+            properties: { name: CREATED.name, organization_slug: CREATED.organization_slug },
+          },
+        ]);
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("fails on a busy project lease without publishing supabase/.link.json", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const s = setup(path, { env: { SUPABASE_EXPERIMENTAL_STACK: "1" } });
+      yield* fs.makeDirectory(path.join(s.workdir, "supabase"), { recursive: true });
+      yield* holdLock(
+        path.join(s.workdir, "supabase", ".supabase.lock.lease"),
+        "1 hour",
+        "supabase.lock",
+      );
+
+      // The lease wait runs on the test clock; the lock stays held, so the outcome is fixed.
+      const error = yield* bootstrap(
+        flags({ template: Option.some("scratch") }),
+        FAST_BACKOFF,
+      ).pipe(
+        Effect.provide(s.layer),
+        Effect.flip,
+        Effect.raceFirst(
+          TestClock.adjust("61 seconds").pipe(Effect.andThen(Effect.yieldNow), Effect.forever),
+        ),
+      );
+
+      expect(error).toMatchObject({ _tag: "LockResolutionError", reason: "lease-busy" });
+      expect(Option.isNone(yield* readProjectLink(s.workdir))).toBe(true);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("a downloaded template fails closed on an invalid SUPABASE_EXPERIMENTAL_STACK", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const s = setup(path, {
+        env: { SUPABASE_EXPERIMENTAL_STACK: "yes" },
+        samples: [NEXTJS_TEMPLATE],
+      });
+      const error = yield* bootstrap(flags({ template: Option.some("nextjs") }), FAST_BACKOFF).pipe(
+        Effect.provide(s.layer),
+        Effect.flip,
+      );
+      expect(error._tag).toBe("ExperimentalFeatureFlagError");
+      expect(s.createBodies).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.effect(

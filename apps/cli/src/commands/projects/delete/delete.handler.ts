@@ -1,5 +1,5 @@
 import type { V1DeleteAProjectOutput } from "@supabase/api/effect";
-import { Effect, FileSystem, Option, Path, Ref } from "effect";
+import { Effect, Option, Ref } from "effect";
 import * as HttpClientError from "effect/http/HttpClientError";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
@@ -12,6 +12,10 @@ import {
 } from "../../../config/project-ref.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { LegacyProjectState } from "../../../shared/config/legacy-project-state.service.ts";
+import { currentProjectStateMode } from "../../../shared/config/project-state-mode.ts";
+import { readProjectLink, removeProjectLink } from "../../../shared/config/project-link.ts";
+import { withProjectLease } from "../../../command-internal/stack-lock.ts";
 import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
@@ -34,8 +38,7 @@ export const projectsDelete = Effect.fn("projects.delete")(function* (flags: Pro
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const tty = yield* Tty;
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
+  const legacyState = yield* LegacyProjectState;
 
   // Captured so the `Effect.ensuring` cache write below can use whichever ref resolved from
   // the arg or prompt.
@@ -59,6 +62,8 @@ export const projectsDelete = Effect.fn("projects.delete")(function* (flags: Pro
     if (!PROJECT_REF_PATTERN.test(ref)) {
       return yield* new InvalidProjectRefError({ ref, message: INVALID_PROJECT_REF_MESSAGE });
     }
+
+    const stackState = (yield* currentProjectStateMode) === "stack";
 
     yield* requireHostedMutationConsent({
       action: `Delete project ${ref}`,
@@ -93,17 +98,36 @@ export const projectsDelete = Effect.fn("projects.delete")(function* (flags: Pro
     // No per-ref keyring credential delete: the access token is stored under the profile
     // name, not the ref, so there is nothing to remove here.
 
-    // Best-effort: removes `supabase/.temp` only when the linked ref matches the deleted
-    // project.
-    const tempDir = path.join(cliSettings.workdir, "supabase", ".temp");
-    const refPath = path.join(tempDir, "project-ref");
+    // Best-effort: removes `supabase/.temp` (`supabase/.link.json` in stack mode) only when the
+    // linked ref matches the deleted project.
     // Compare trimmed content so a corrupt/multi-ref file can't trigger an unintended removal.
-    const matches = yield* fs.readFileString(refPath).pipe(
-      Effect.map((content) => content.trim() === ref),
-      Effect.orElseSucceed(() => false),
-    );
-    if (matches) {
-      yield* fs.remove(tempDir, { recursive: true }).pipe(Effect.ignore);
+    if (stackState) {
+      const linkedTo = readProjectLink(cliSettings.workdir).pipe(
+        Effect.map(
+          Option.filter((value) => value.project.ref === ref || value.active_branch.ref === ref),
+        ),
+        Effect.orElseSucceed(() => Option.none()),
+      );
+      // A concurrent `link` publishes under the project lease, so the match is checked again
+      // under it before the file is removed.
+      if (Option.isSome(yield* linkedTo)) {
+        yield* withProjectLease(
+          cliSettings.workdir,
+          Effect.gen(function* () {
+            if (Option.isSome(yield* linkedTo)) {
+              yield* removeProjectLink(cliSettings.workdir).pipe(Effect.ignore);
+            }
+          }),
+        );
+      }
+    } else {
+      const matches = yield* legacyState.read(cliSettings.workdir, "projectRef").pipe(
+        Effect.map((content) => content.trim() === ref),
+        Effect.orElseSucceed(() => false),
+      );
+      if (matches) {
+        yield* legacyState.removeAll(cliSettings.workdir).pipe(Effect.ignore);
+      }
     }
 
     if (output.format === "json" || output.format === "stream-json") {

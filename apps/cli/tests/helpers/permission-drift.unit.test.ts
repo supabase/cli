@@ -277,7 +277,7 @@ describe("assertDriftAgainst", () => {
     });
     const check = (
       lookup: DeclaredPermissionsLookup,
-      request: { method: string; url: string; urlParams?: string },
+      request: { method: string; url: string; urlParams?: string; body?: unknown },
       activeFlags: Record<string, boolean> = {},
     ) => assertDriftAgainst(lookup, { command: "keys", activeFlags, requests: [request] });
 
@@ -292,11 +292,61 @@ describe("assertDriftAgainst", () => {
 
     it("rejects a request sent without the declared qualifier or with another value", () => {
       expect(() => check(withReveal, { method: "GET", url: apiKeys })).toThrow(
-        /sent without the query qualifiers its declaration lists/,
+        /sent without the request qualifiers its declaration lists/,
       );
       expect(() =>
         check(withReveal, { method: "GET", url: apiKeys, urlParams: "reveal=false" }),
-      ).toThrow(/sent without the query qualifiers/);
+      ).toThrow(/sent without the request qualifiers/);
+    });
+
+    describe("in the body", () => {
+      const branches = `${API}/v1/projects/${REF}/branches`;
+      const withData = declared({
+        status: "mapped",
+        operations: [
+          { operationId: "v1-create-a-branch", kind: "required" },
+          {
+            operationId: "v1-create-a-branch",
+            kind: "required",
+            when: [{ flag: "with-data" }],
+            request: { body: { with_data: "true" } },
+          },
+        ],
+        noApiEffectFlags: [],
+      });
+      const create = (body: unknown, activeFlags: Record<string, boolean> = {}) =>
+        check(withData, { method: "POST", url: branches, body }, activeFlags);
+
+      it("accepts a body carrying the declared field under the flag that declares it", () => {
+        expect(() => create({ with_data: true }, { "with-data": true })).not.toThrow();
+        expect(() => create({ branch_name: "x" })).not.toThrow();
+      });
+
+      it("rejects a body field the run's flags do not declare", () => {
+        expect(() => create({ with_data: true })).toThrow(
+          /carries body with_data=true, which no applicable declaration entry lists/,
+        );
+      });
+
+      it("rejects a body without the field a declaration requires", () => {
+        const required = declared({
+          status: "mapped",
+          operations: [
+            {
+              operationId: "v1-create-a-branch",
+              kind: "required",
+              request: { body: { with_data: "true" } },
+            },
+          ],
+          noApiEffectFlags: [],
+        });
+        expect(() =>
+          check(required, { method: "POST", url: branches, body: { with_data: false } }),
+        ).toThrow(/sent without the request qualifiers/);
+        expect(() =>
+          check(required, { method: "POST", url: branches, body: { with_data: true } }),
+        ).not.toThrow();
+      });
     });
 
     it("rejects a qualifier the declaration lists only under a flag the run does not use", () => {

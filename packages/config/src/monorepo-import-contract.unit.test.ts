@@ -1,7 +1,15 @@
 import { describe, expect, test } from "vitest";
-import { readdirSync, readFileSync } from "node:fs";
-import { dirname, join, sep } from "node:path";
+import { BunServices } from "@effect/platform-bun";
+import { Effect, Exit, FileSystem, Option, Path, type PlatformError } from "effect";
 import { fileURLToPath } from "node:url";
+
+function runPlatform<A, E>(
+  effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>,
+): Promise<A> {
+  return Effect.runPromise(effect.pipe(Effect.provide(BunServices.layer)));
+}
+
+const { dirname, join, sep } = await runPlatform(Effect.service(Path.Path));
 
 // Enforces the import rules in `packages/config/AGENTS.md`'s "Monorepo import rule". Forbidden
 // specifiers are built by concatenation so this file's own source can't self-match the scan.
@@ -17,43 +25,83 @@ const allowedInternalConsumerPrefix = `${join(repoRoot, "apps", "cli")}${sep}`;
 const EXCLUDED_DIR_NAMES = new Set(["node_modules", "dist", ".repos"]);
 const thisPackageDir = join(srcDir, "..");
 
-function collectTsFiles(dir: string, into: string[]): void {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const fullPath = join(dir, entry.name);
+/* Entries deleted mid-walk by concurrently running tests are skipped, not failures. */
+const orNoneIfNotFound = <A, R>(effect: Effect.Effect<A, PlatformError.PlatformError, R>) =>
+  effect.pipe(
+    Effect.map(Option.some),
+    Effect.catchReason("PlatformError", "NotFound", () => Effect.succeedNone),
+  );
 
-    if (entry.isDirectory()) {
-      if (EXCLUDED_DIR_NAMES.has(entry.name) || fullPath === thisPackageDir) {
+const collectTsFiles: (
+  dir: string,
+  into: string[],
+) => Effect.Effect<void, PlatformError.PlatformError, FileSystem.FileSystem> = Effect.fnUntraced(
+  function* (dir, into) {
+    const fs = yield* FileSystem.FileSystem;
+    const names = yield* fs.readDirectory(dir);
+    for (const name of names) {
+      const fullPath = join(dir, name);
+      /* Matches `Dirent` semantics: a symlink is neither a directory nor a file. */
+      if (Exit.isSuccess(yield* Effect.exit(fs.readLink(fullPath)))) {
         continue;
       }
-      collectTsFiles(fullPath, into);
-    } else if (entry.isFile() && (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx"))) {
-      into.push(fullPath);
-    }
-  }
-}
+      const stat = yield* orNoneIfNotFound(fs.stat(fullPath));
+      if (Option.isNone(stat)) {
+        continue;
+      }
+      const info = stat.value;
 
-function findViolations(forbiddenSpecifier: string): string[] {
+      if (info.type === "Directory") {
+        if (EXCLUDED_DIR_NAMES.has(name) || fullPath === thisPackageDir) {
+          continue;
+        }
+        yield* orNoneIfNotFound(collectTsFiles(fullPath, into));
+      } else if (info.type === "File" && (name.endsWith(".ts") || name.endsWith(".tsx"))) {
+        into.push(fullPath);
+      }
+    }
+  },
+);
+
+const findViolations = Effect.fnUntraced(function* (forbiddenSpecifier: string) {
+  const fs = yield* FileSystem.FileSystem;
   const files: string[] = [];
   for (const workspaceRoot of ["apps", "packages"]) {
-    collectTsFiles(join(repoRoot, workspaceRoot), files);
+    yield* collectTsFiles(join(repoRoot, workspaceRoot), files);
   }
 
-  return files.filter((file) => readFileSync(file, "utf8").includes(forbiddenSpecifier)).sort();
-}
+  const violations: string[] = [];
+  for (const file of files) {
+    const source = yield* orNoneIfNotFound(fs.readFileString(file));
+    if (Option.isSome(source) && source.value.includes(forbiddenSpecifier)) {
+      violations.push(file);
+    }
+  }
+  return violations.sort();
+});
 
 describe("monorepo import contract for @supabase/config", () => {
-  test("no file outside this package imports the @supabase/config/io entrypoint", () => {
-    expect(findViolations(forbiddenIoSpecifier)).toEqual([]);
-  });
+  test("no file outside this package imports the @supabase/config/io entrypoint", () =>
+    runPlatform(
+      Effect.gen(function* () {
+        expect(yield* findViolations(forbiddenIoSpecifier)).toEqual([]);
+      }),
+    ));
 
-  test("no file outside this package deep-imports @supabase/config/src/*", () => {
-    expect(findViolations(forbiddenDeepImportPrefix)).toEqual([]);
-  });
+  test("no file outside this package deep-imports @supabase/config/src/*", () =>
+    runPlatform(
+      Effect.gen(function* () {
+        expect(yield* findViolations(forbiddenDeepImportPrefix)).toEqual([]);
+      }),
+    ));
 
-  test("every @supabase/config/internal import outside this package is under apps/cli/", () => {
-    const violations = findViolations(internalSpecifier).filter(
-      (file) => !file.startsWith(allowedInternalConsumerPrefix),
-    );
-    expect(violations).toEqual([]);
-  });
+  test("every @supabase/config/internal import outside this package is under apps/cli/", () =>
+    runPlatform(
+      Effect.gen(function* () {
+        const violations = (yield* findViolations(internalSpecifier)).filter(
+          (file) => !file.startsWith(allowedInternalConsumerPrefix),
+        );
+        expect(violations).toEqual([]);
+      }),
+    ));
 });

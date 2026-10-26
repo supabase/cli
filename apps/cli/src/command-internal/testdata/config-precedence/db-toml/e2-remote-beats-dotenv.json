@@ -22,7 +22,6 @@
       "enabled": false,
       "formatOptions": null
     },
-    "poolerConnectionString": null,
     "port": 57001,
     "projectEnv": {
       "SUPABASE_API_SCHEMAS": "public,dotenv_api",

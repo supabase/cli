@@ -1,15 +1,15 @@
 import { CliConfigSchema, findCliProjectPaths } from "@supabase/config/effect";
 import { Config, Data, Effect, FileSystem, Option, Path, Result, Schema } from "effect";
 import * as SmolToml from "smol-toml";
-import { pickCliConfigKey } from "../config/cli-config-key.ts";
-import { CliConfigKeys } from "../config/cli-config-keys.ts";
-import { resolveWorkdir } from "../config/command-settings.layer.ts";
-import { rootFlagTokens } from "../shared/cli/run.ts";
+import { pickCliConfigKey } from "../../config/cli-config-key.ts";
+import { CliConfigKeys } from "../../config/cli-config-keys.ts";
+import { resolveWorkdir } from "../../config/command-settings.layer.ts";
+import { rootFlagTokens } from "../cli/run.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
-} from "../shared/telemetry/error-actionability.ts";
+} from "../telemetry/error-actionability.ts";
 
 export class ExperimentalFeatureFlagError extends Data.TaggedError("ExperimentalFeatureFlagError")<{
   readonly envName: string;

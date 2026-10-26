@@ -1,4 +1,4 @@
-import { Effect, Layer } from "effect";
+import { Effect, type Exit, Layer } from "effect";
 import { Command } from "effect/cli";
 import { backupsCommand } from "../commands/backups/backups.command.ts";
 import { bootstrapCommand } from "../commands/bootstrap/bootstrap.command.ts";
@@ -18,6 +18,11 @@ import { stackStopCommand } from "../commands/experimental/stack/stop/stop.comma
 import { stackStatusCommand } from "../commands/experimental/stack/status/status.command.ts";
 import type { StackBackend } from "../command-internal/stack-backend.ts";
 import { isFunctionsServePath, stackBackendLayer } from "../command-internal/stack-backend.ts";
+import type { ExperimentalFeatureFlagError } from "../shared/config/experimental-feature.ts";
+import {
+  type ProjectStateMode,
+  projectStateModeLayer,
+} from "../shared/config/project-state-mode.ts";
 import { computeCommand } from "../commands/experimental/compute/compute.command.ts";
 import { feedbackCommand } from "../commands/feedback/feedback.command.ts";
 import { functionsCommand } from "../commands/functions/functions.command.ts";
@@ -65,7 +70,7 @@ import { extractCommandPath, type CliRootCommand } from "../shared/cli/run.ts";
 import { isBuiltInTextRequest, resolveAgentOutputFormat } from "../shared/cli/agent-output.ts";
 import type { OutputFormat } from "../shared/output/types.ts";
 import {
-  GLOBAL_FLAGS,
+  ROOT_GLOBAL_FLAGS,
   AgentFlag,
   OutputFlag,
   OutputFormatFlag,
@@ -138,6 +143,7 @@ export function rootDescription(version: string): string {
 }
 
 interface RootCommandFeatures {
+  readonly projectState?: Exit.Exit<ProjectStateMode, ExperimentalFeatureFlagError>;
   readonly stackBackend?: StackBackend;
   readonly computeEnabled?: boolean;
 }
@@ -227,6 +233,9 @@ export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
 
           // A command that provides its own `machineErrorContextLayer` shadows the default cell.
           return Layer.mergeAll(
+            options.projectState === undefined
+              ? Layer.empty
+              : projectStateModeLayer(options.projectState),
             options.stackBackend === undefined
               ? Layer.empty
               : stackBackendLayer(options.stackBackend),
@@ -237,7 +246,7 @@ export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
         }),
       ),
     ),
-    Command.withGlobalFlags([OutputFormatFlag, ...GLOBAL_FLAGS]),
+    Command.withGlobalFlags(ROOT_GLOBAL_FLAGS),
   ) satisfies CliRootCommand;
 
 /** Pairs the root with the agent default `runCli` applies before this root parses. */

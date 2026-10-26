@@ -1,3 +1,4 @@
+import { LEGACY_PROJECT_STATE_DIRNAME } from "../config/legacy-project-state.paths.ts";
 import { Effect, FileSystem, Option, Path } from "effect";
 import { InvalidComputeSourceError } from "./compute.errors.ts";
 
@@ -16,7 +17,7 @@ const COMPUTE_DIR = "compute";
  * may name one: `functions` and `migrations` belong to other parts of the CLI,
  * and `.temp` holds CLI state including the linked-project reference.
  */
-const RESERVED_SUPABASE_DIRS = ["functions", "migrations", ".temp"];
+const RESERVED_SUPABASE_DIRS = ["functions", "migrations", LEGACY_PROJECT_STATE_DIRNAME];
 
 /**
  * Files directly under `supabase/` that the CLI owns. Refused separately from the

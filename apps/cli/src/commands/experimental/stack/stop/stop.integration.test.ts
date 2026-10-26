@@ -10,6 +10,7 @@ import {
 import * as StackNamespace from "../../../../../../../packages/stack/src/StackNamespace.ts";
 import { StackApi, stackApiLayer, stackTargetResolverLayer } from "../stack.shared.ts";
 import { stackStop } from "./stop.handler.ts";
+import { selection } from "../../../../../tests/helpers/pins.ts";
 
 const flags = (id?: string) => ({
   all: Option.none<boolean>(),
@@ -42,7 +43,12 @@ describe("stack stop", () => {
       const f = yield* fixture();
       const stopped = yield* Ref.make(false);
       yield* Effect.acquireUseRelease(
-        f.stack.services.create({ service: "mail", config: {}, endpoints: {} }),
+        f.stack.services.create({
+          service: "mail",
+          pin: selection.mail,
+          config: {},
+          endpoints: {},
+        }),
         (mail) =>
           Effect.gen(function* () {
             expect((yield* f.api.discover(f.locations))[0]?.host).toBeDefined();

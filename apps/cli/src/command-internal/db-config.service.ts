@@ -8,12 +8,13 @@ import type {
   ProjectRefNotLinkedError,
 } from "../config/project-ref.errors.ts";
 import type { ProfileLoadError } from "./profile-load.ts";
-import type { ProjectRefReadError } from "../shared/config/temp-paths.ts";
+import type { LinkedProjectRefReadError } from "../shared/config/project-link.ts";
 import type { DbConnectError } from "./db-connection.errors.ts";
 import type { LocalDbRunningError } from "./db-bootstrap/local-db-running.ts";
 import type {
   DbConfigConnectTempRoleError,
   DbConfigIpv6Error,
+  DbConfigLibpqEnvError,
   DbConfigListBansNetworkError,
   DbConfigListBansStatusError,
   DbConfigLoadError,
@@ -36,15 +37,16 @@ import type { TargetPasswordConflictError } from "./target/target.errors.ts";
 export type DbConfigError =
   | Config.ConfigError
   | DbConfigParseUrlError
+  | DbConfigLibpqEnvError
   | DbConfigLoadError
   | CliConfigValueError
   | CliConfigFlagConflictError
   | LocalDbRunningError
   | ProjectRefNotLinkedError
   | InvalidProjectRefError
-  // A hard linked-ref load surfaces a real `.temp/project-ref` read error instead of masking it
+  // A hard linked-ref load surfaces a real link-state read error instead of masking it
   // as not-linked.
-  | ProjectRefReadError
+  | LinkedProjectRefReadError
   | DbConfigLoginRoleNetworkError
   | DbConfigLoginRoleStatusError
   | DbConfigListBansNetworkError

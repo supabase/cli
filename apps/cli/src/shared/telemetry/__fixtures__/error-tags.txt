@@ -128,6 +128,7 @@ DbAdvisorsSecurityStatusError
 DbAdvisorsSetupError
 DbConfigConnectTempRoleError
 DbConfigIpv6Error
+DbConfigLibpqEnvError
 DbConfigListBansNetworkError
 DbConfigListBansStatusError
 DbConfigLoadError
@@ -215,14 +216,16 @@ EncryptionUnexpectedStatusError
 ExperimentalFeatureFlagError
 ExperimentalRequiredError
 ExperimentalStackDestroyError
+ExperimentalStackInstallError
 ExperimentalStackListError
 ExperimentalStackLogsError
-ExperimentalStackPrepareError
+ExperimentalStackOutdatedError
 ExperimentalStackRestartError
 ExperimentalStackStartError
 ExperimentalStackStatusError
 ExperimentalStackStopError
 ExperimentalStackTargetError
+ExperimentalStackUpdateError
 FeedbackBackendError
 FeedbackEmptyMessageError
 FeedbackInvalidTokenError
@@ -310,6 +313,7 @@ LinkProjectStatusNetworkError
 LinkRefArgConflictError
 LinkedDbNetworkBannedError
 LocalDbRunningError
+LockResolutionError
 LoginCryptoError
 LoginDecryptError
 LoginFailedError
@@ -392,6 +396,8 @@ PostgresConfigUpdateUnmarshalError
 ProfileLoadError
 ProfileSaveError
 ProjectConfigParseError
+ProjectLinkIoError
+ProjectLinkMalformedError
 ProjectNotLinkedError
 ProjectPausedError
 ProjectRefNotLinkedError
@@ -485,6 +491,7 @@ SsoUpdateMetadataFileError
 SsoUpdateNetworkError
 SsoUpdateNotFoundError
 SsoUpdateUnexpectedStatusError
+StackArtifactSelectionError
 StackBootstrapError
 StackCatalogSetupError
 StackConfigError

@@ -61,6 +61,11 @@ export const CLI_CONFIG_SCHEMA_EXCLUDED: Readonly<Record<string, string>> = {
     "removed; only an empty value is accepted and the loader drops it",
 };
 
+/** Schema sections whose keys take no `SUPABASE_*` override, with the reason. */
+export const CLI_CONFIG_NO_ENV_SECTIONS: Readonly<Record<string, string>> = {
+  local: "local stack service versions are pinned in config.toml and supabase/supabase.lock only",
+};
+
 /** Removed `SUPABASE_*` config overrides with the key and variable that replace them; a non-empty value fails config resolution. */
 export const CLI_CONFIG_REMOVED_ENV_NAMES: Readonly<
   Record<string, { readonly path: string; readonly replacement: string }>

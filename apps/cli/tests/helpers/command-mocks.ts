@@ -1,3 +1,4 @@
+import { legacyProjectStateLayer } from "../../src/shared/config/legacy-project-state.layer.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1455,6 +1456,8 @@ export interface BuildTestRuntimeOpts {
   /** Raw argv seen by the handler (e.g. to exercise an explicit `--yes=false`). */
   readonly cliArgs?: ReadonlyArray<string>;
   readonly commandPath?: ReadonlyArray<string>;
+  /** Replaces the Bun `FileSystem` every service in the runtime reads and writes through. */
+  readonly fileSystem?: Layer.Layer<FileSystem.FileSystem>;
 }
 
 export function buildTestRuntime(opts: BuildTestRuntimeOpts) {
@@ -1467,6 +1470,10 @@ export function buildTestRuntime(opts: BuildTestRuntimeOpts) {
   const analytics = (opts.analytics ?? mockAnalytics()).layer;
   const outputFlag = opts.outputFlag ?? Option.none<OutputFlagValue>();
   const httpClient = opts.api.httpClientLayer;
+  const platform =
+    opts.fileSystem === undefined
+      ? BunServices.layer
+      : Layer.merge(BunServices.layer, opts.fileSystem);
 
   // When the caller doesn't expose an HttpClient layer, use a stub that fails
   // loudly if any code path tries to consume it. Always wiring HttpClient at
@@ -1504,9 +1511,10 @@ export function buildTestRuntime(opts: BuildTestRuntimeOpts) {
       Layer.provide(tty),
       Layer.provide(opts.out.layer),
       Layer.provide(commandTarget),
-      Layer.provide(BunServices.layer),
+      Layer.provide(platform),
     ),
-    BunServices.layer,
+    platform,
+    legacyProjectStateLayer.pipe(Layer.provide(platform)),
     Layer.succeed(OutputFlag, outputFlag),
     Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
     opts.commandPath === undefined

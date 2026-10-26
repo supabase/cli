@@ -10,6 +10,7 @@ Target: selectable, consent default No — see [Command target](../../../../docs
 | `<workdir>/supabase/config.toml`               | TOML       | always, for the `[db]` settings, with a matched `[remotes.<ref>]` block over the base for a remote project (flag > shell env > project `.env*` > config)                               |
 | `~/.supabase/access-token`                     | plain text | when `SUPABASE_ACCESS_TOKEN` unset and the target is a remote project (or a branch is looked up)                                                                                       |
 | `<workdir>/supabase/.temp/project-ref`         | plain text | a remote project: resolves the ref (bare `--remote` with no `SUPABASE_PROJECT_ID`) and tells whether it is the linked project; with no selector, only to word the linked-checkout hint |
+| `PGSSL*` PEM, `pg_service.conf`                | PEM, libpq | remote project, when set; see `db push`                                                                                                                                                |
 | `<workdir>/supabase/.temp/linked-project.json` | JSON       | to name the project in the `Target:` banner and the linked-checkout hint, and as the parent project for `--remote=<branch>`                                                            |
 
 ## Files Written
@@ -41,6 +42,7 @@ Local targets and database URLs make none.
 | `SUPABASE_PROJECT_ID`    | project ref for a bare `--remote`, and the parent project for `--remote=<branch>`    | no                                                      |
 | `SUPABASE_YES`           | confirms a hosted run when exported in the shell (the project `.env` does not count) | no                                                      |
 | `DOTENV_PRIVATE_KEY[_*]` | dotenvx private key(s) to decrypt `encrypted:` `[db.vault]` secrets before upsert    | no (required only if a `[db.vault]` value is encrypted) |
+| `PG*` libpq              | remote-project TLS, timeout, service; see `db push`                                  | no                                                      |
 
 ## Exit Codes
 

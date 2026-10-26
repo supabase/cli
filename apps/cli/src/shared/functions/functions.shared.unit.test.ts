@@ -1,8 +1,12 @@
 import { BunServices } from "@effect/platform-bun";
 import { afterEach, describe, expect, it } from "@effect/vitest";
-import { Effect } from "effect";
+import { Effect, FileSystem, Layer, Path } from "effect";
 import { vi } from "vitest";
 
+import { projectStateModeLayer } from "../config/project-state-mode.ts";
+import { mockCommandSettings } from "../../../tests/helpers/command-mocks.ts";
+import { seedLock } from "../../../tests/helpers/stack-lock.ts";
+import { runtimeInfoLayer } from "../runtime/runtime-info.layer.ts";
 import { dockerfileServiceImageRaw } from "../services/dockerfile-images.ts";
 import {
   expectedPinnedImage,
@@ -48,6 +52,76 @@ describe("resolveEdgeRuntimeVersionPin", () => {
         const tag = yield* resolveEdgeRuntimeVersionPin("/no-such-supabase-dir");
         expect(tag).toBe(currentEdgeRuntimeTag);
         expect(tag.includes("/")).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            BunServices.layer,
+            runtimeInfoLayer,
+            mockCommandSettings({ workdir: "/no-such-supabase-dir" }),
+          ),
+        ),
+      ),
+  );
+
+  it.effect("pins the locked slim image revision in stack mode only when slim images are on", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "edge-runtime-pin-" });
+      yield* fs.makeDirectory(path.join(root, "supabase"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(root, "supabase", "config.toml"),
+        'project_id = "test-project"\n',
+      );
+      const lockedImage = `ghcr.io/supabase/cli/edge-runtime:v1.99.0-r1@sha256:${"a".repeat(64)}`;
+      yield* seedLock(root, (services) => ({
+        ...services,
+        functions: {
+          ...services.functions,
+          resolved: {
+            ...services.functions.resolved,
+            upstreamVersion: "v1.99.0",
+            revision: 1,
+            image: lockedImage,
+            upstreamImage: "supabase/edge-runtime:v1.99.0",
+          },
+        },
+      })).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            runtimeInfoLayer,
+            mockCommandSettings({ workdir: root, supabaseHome: root }),
+          ),
+        ),
+      );
+
+      vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "");
+      const upstreamPin = yield* resolveEdgeRuntimeVersionPin(root);
+      expect(edgeRuntimeImage(upstreamPin, false)).toBe("supabase/edge-runtime:v1.99.0");
+
+      vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
+      const slimPin = yield* resolveEdgeRuntimeVersionPin(root);
+      expect(edgeRuntimeImage(slimPin, true)).toBe(lockedImage);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(BunServices.layer, projectStateModeLayer("stack"))),
+    ),
+  );
+
+  it.effect("fails with a typed error when the stack lock is unreadable", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "edge-runtime-pin-" });
+      yield* fs.makeDirectory(path.join(root, "supabase"), { recursive: true });
+      yield* fs.writeFileString(path.join(root, "supabase", "supabase.lock"), "not a lock");
+
+      const error = yield* resolveEdgeRuntimeVersionPin(root).pipe(Effect.flip);
+
+      expect(error).toMatchObject({ _tag: "LockResolutionError", reason: "invalid-lock" });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(BunServices.layer, projectStateModeLayer("stack"))),
+    ),
   );
 });

@@ -27,6 +27,7 @@ import { bindTcp, serveTcp } from "./Proxy.ts";
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
 import { engineTarget, testEngine } from "../tests/engine-target.ts";
 import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
+import { database15, selection } from "../tests/pins.ts";
 
 const cacheRoot = testArtifactCacheRoot;
 
@@ -99,7 +100,7 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
           const service = yield* makeStandaloneService(database.definition, {
             id: "database",
             config: {
-              version: "17",
+              pin: selection.database,
               databasePassword: Redacted.make("tool-password"),
               jwtSecret: Redacted.make("tool-jwt-secret-at-least-thirty-two-characters"),
               jwtExpiry: 3600,
@@ -135,7 +136,7 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
               Ref.update(stderr, (text) => text + new TextDecoder().decode(bytes)),
           };
           const sql = yield* runPostgres(runner, {
-            postgres: postgres.psql({ major: 17 }),
+            postgres: postgres.psql({ pin: selection.database }),
             args: ["-X", "-v", "ON_ERROR_STOP=1"],
             env,
             stdin: Stream.make(
@@ -149,7 +150,7 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
           expect(yield* Ref.get(stdout)).toContain("streamed-row");
           yield* Ref.set(stdout, "");
           const dump = yield* runPostgres(runner, {
-            postgres: postgres.pgDump({ major: 17 }),
+            postgres: postgres.pgDump({ pin: selection.database }),
             args: ["--data-only", "--table=tool_story"],
             env,
             ...output,
@@ -159,7 +160,7 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
           expect(yield* Ref.get(stdout)).toContain("COPY public.tool_story");
           expect(yield* Ref.get(stdout)).toContain("streamed-row");
           const failed = yield* runPostgres(runner, {
-            postgres: postgres.psql({ major: 17 }),
+            postgres: postgres.psql({ pin: selection.database }),
             args: ["-X", "-v", "ON_ERROR_STOP=1", "-c", "SELECT missing_column FROM tool_story"],
             env,
             ...output,
@@ -168,7 +169,7 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
           expect(yield* Ref.get(stderr)).toContain("missing_column");
           const rejected = yield* Effect.flip(
             runPostgres(runner, {
-              postgres: postgres.psql({ major: 17 }),
+              postgres: postgres.psql({ pin: selection.database }),
               args: [],
               env,
               pgProve: { mounts: [] },
@@ -178,7 +179,7 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
           expect(rejected.message).toContain("pgProve options require the pg_prove command");
           yield* Ref.set(stderr, "");
           const early = yield* runPostgres(runner, {
-            postgres: postgres.psql({ major: 17 }),
+            postgres: postgres.psql({ pin: selection.database }),
             args: ["-X", "-v", "ON_ERROR_STOP=1"],
             env,
             stdin: Stream.make(
@@ -192,7 +193,7 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
           expect(yield* Ref.get(stderr)).toContain("missing_column");
           const attached = yield* Deferred.make<void>();
           const job = yield* runPostgres(runner, {
-            postgres: postgres.psql({ major: 17 }),
+            postgres: postgres.psql({ pin: selection.database }),
             args: ["-X", "-q", "-t", "-A"],
             env: { ...env, PGAPPNAME: "attached-tool-story" },
             stdin: Stream.make(new TextEncoder().encode("SELECT 'attached-ready';\n")).pipe(
@@ -208,7 +209,7 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
           yield* Fiber.interrupt(job);
           yield* Ref.set(stdout, "");
           const remaining = yield* runPostgres(runner, {
-            postgres: postgres.psql({ major: 17 }),
+            postgres: postgres.psql({ pin: selection.database }),
             args: [
               "-X",
               "-t",
@@ -229,6 +230,7 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
   }
 
   for (const major of [15, 17] as const) {
+    const pin = major === 15 ? database15 : selection.database;
     for (const runtime of ["native", testEngine] as const) {
       it.live(`${runtime} runs bundled pg_prove for PostgreSQL ${major}`, () =>
         Effect.scoped(
@@ -250,7 +252,7 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
             const service = yield* makeStandaloneService(database.definition, {
               id: "database",
               config: {
-                version: String(major),
+                pin,
                 databasePassword: Redacted.make(`pgprove-${runtime}-${major}-password`),
                 jwtSecret: Redacted.make("tool-jwt-secret-at-least-thirty-two-characters"),
                 jwtExpiry: 3600,
@@ -298,7 +300,7 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
                 Ref.update(stderr, (text) => text + new TextDecoder().decode(bytes)),
             };
             const extension = yield* runPostgres(runner, {
-              postgres: postgres.psql({ major }),
+              postgres: postgres.psql({ pin }),
               args: ["-X", "-v", "ON_ERROR_STOP=1", "-c", "CREATE EXTENSION IF NOT EXISTS pgtap"],
               env,
               ...output,
@@ -306,7 +308,7 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
             expect(extension.exitCode).toBe(0);
             const pgProve = (file: string) =>
               runPostgres(runner, {
-                postgres: postgres.pgProve({ major }),
+                postgres: postgres.pgProve({ pin }),
                 args: ["--ext", ".sql", file, "--verbose"],
                 env,
                 pgProve: {
@@ -347,7 +349,7 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
                 );
                 const cancelOutput = yield* Ref.make("");
                 const running = yield* runPostgres(runner, {
-                  postgres: postgres.pgProve({ major }),
+                  postgres: postgres.pgProve({ pin }),
                   args: ["--ext", ".sql", "cancel-ready.sql", "cancel.sql", "--verbose"],
                   env: { ...env, PGAPPNAME: applicationName },
                   pgProve: {
@@ -371,7 +373,7 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
                 const idle = Effect.gen(function* () {
                   yield* Ref.set(idleOutput, "");
                   const probe = yield* runPostgres(runner, {
-                    postgres: postgres.psql({ major }),
+                    postgres: postgres.psql({ pin }),
                     args: [
                       "-X",
                       "-t",
@@ -397,7 +399,7 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
                 const remaining = Effect.gen(function* () {
                   yield* Ref.set(remainingOutput, "");
                   const probe = yield* runPostgres(runner, {
-                    postgres: postgres.psql({ major }),
+                    postgres: postgres.psql({ pin }),
                     args: [
                       "-X",
                       "-t",

@@ -127,7 +127,7 @@ const squashMigrations = Effect.fn("MigrationSquash.squashMigrations")(function*
             kind: "stack" as const,
             stack: handle.stack,
             command: "pg_dump" as const,
-            major: toml.majorVersion === 15 ? (15 as const) : (17 as const),
+            pin: handle.databasePin,
           };
           const session = yield* connectShadowDatabase(stackConn);
           const before = yield* squashDumpSchemaToString({

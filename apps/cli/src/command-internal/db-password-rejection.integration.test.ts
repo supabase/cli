@@ -5,6 +5,7 @@ import { CliOutput, Command } from "effect/cli";
 
 import { rootCommandForFeatures } from "../cli/root.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
+import { legacyProjectStateLayer } from "../shared/config/legacy-project-state.layer.ts";
 import { textCliOutputFormatter } from "../shared/output/text-formatter.ts";
 import { walkCommandTree, type WalkedCommand } from "../../tests/helpers/command-tree.ts";
 import {
@@ -98,6 +99,7 @@ const runCommand = (
           Layer.succeed(CliArgs, { args }),
           mockOutput({ format: "text" }).layer,
           BunServices.layer,
+          legacyProjectStateLayer.pipe(Layer.provide(BunServices.layer)),
           mockRuntimeInfo(),
           mockAnalytics().layer,
           mockTelemetryRuntime(),

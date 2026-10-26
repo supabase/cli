@@ -8,12 +8,18 @@ import { makeSpec as poolerSpec } from "../../../../../../packages/stack/src/ser
 import { makeSpec as realtimeSpec } from "../../../../../../packages/stack/src/services/Realtime.ts";
 import { makeSpec as storageSpec } from "../../../../../../packages/stack/src/services/Storage.ts";
 import { makeSpec as studioSpec } from "../../../../../../packages/stack/src/services/Studio.ts";
+import { mockCommandSettings } from "../../../../tests/helpers/command-mocks.ts";
 import { loadStackConfig } from "../../../command-internal/stack-config.ts";
 import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
 import { createStackConfigProject } from "../../../../tests/helpers/stack-config.ts";
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 
-const layer = Layer.mergeAll(BunServices.layer, runtimeInfoLayer, cliConfigValuesTestLayer);
+const layer = Layer.mergeAll(
+  BunServices.layer,
+  runtimeInfoLayer,
+  mockCommandSettings({ workdir: "/unused-stack-forwarding-workdir" }),
+  cliConfigValuesTestLayer,
+);
 
 describe("stack service configuration", () => {
   it.effect("carries editable TOML settings into native and container service environments", () =>

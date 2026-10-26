@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Path } from "effect";
 
-import { withConfigEnv } from "../../tests/helpers/command-mocks.ts";
+import { withConfigEnv } from "../../../tests/helpers/command-mocks.ts";
 import {
   ExperimentalFeatureFlagError,
   resolveExperimentalFeature,
@@ -10,7 +10,7 @@ import {
 const resolveStack = (value: string) =>
   withConfigEnv(
     { SUPABASE_EXPERIMENTAL_STACK: value },
-    resolveExperimentalFeature({ feature: "stack", configValue: Effect.succeed(undefined) }),
+    resolveExperimentalFeature({ feature: "stack", configValue: Effect.undefined }),
   ).pipe(Effect.provide(Path.layer));
 
 describe("resolveExperimentalFeature boolean spellings", () => {

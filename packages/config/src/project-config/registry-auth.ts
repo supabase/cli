@@ -641,7 +641,7 @@ const smtpRows: ReadonlyArray<ProjectConfigMappingRow> = [
       const port = parseUint16(expectString(value, smtpPortPath));
       return smtpExplicitlyDisabledInAttributes(attributes) ? undefined : port;
     },
-    // The config schema allows an unrestricted `Schema.Number` for port, but the push wrapper
+    // The config schema allows any finite number for port, but the push wrapper
     // stringifies it verbatim while this row's transform only ever produces what `parseUint16`
     // accepts. Replaying the same String→parseUint16 round trip here predicts that: a fractional
     // or out-of-range document port omits the field, matching what the API arm reports post-push.

@@ -6,6 +6,7 @@ import { Clock, DateTime, Effect, FileSystem, Layer, Path } from "effect";
 
 import { withConfigEnv } from "../../tests/helpers/command-mocks.ts";
 import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
+import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { upgradeNoticeHook } from "./upgrade-notice.ts";
 
 const captureStderr = <E, R>(body: Effect.Effect<void, E, R>) =>
@@ -34,7 +35,14 @@ describe("upgrade notice user-level cache", () => {
     const workdir = path.join(root, "outside-project");
     const supabaseHome = path.join(root, "supabase-home");
     yield* fs.makeDirectory(workdir);
-    return { fs, workdir, supabaseHome, cacheFile: path.join(supabaseHome, "cli-latest") };
+    return {
+      fs,
+      path,
+      root,
+      workdir,
+      supabaseHome,
+      cacheFile: path.join(supabaseHome, "cli-latest"),
+    };
   });
 
   /** Ages the cache against the live clock, which the hook's freshness check reads. */
@@ -53,16 +61,28 @@ describe("upgrade notice user-level cache", () => {
   const runHook = Effect.fnUntraced(function* (
     { workdir, supabaseHome }: Effect.Success<typeof userCache>,
     latestTag: string,
+    options: {
+      /** `"config"` leaves the env unset so the project's config decides the mode. */
+      readonly stack?: boolean | "config";
+      readonly args?: ReadonlyArray<string>;
+      readonly workingDirectory?: string;
+    } = {},
   ) {
     let fetchCalls = 0;
     const written = yield* captureStderr(
       withConfigEnv(
-        { SUPABASE_HOME: supabaseHome, SUPABASE_NO_UPDATE_NOTIFIER: "0" },
+        {
+          SUPABASE_HOME: supabaseHome,
+          SUPABASE_NO_UPDATE_NOTIFIER: "0",
+          ...(options.stack === "config"
+            ? {}
+            : { SUPABASE_EXPERIMENTAL_STACK: options.stack === true ? "1" : "0" }),
+        },
         upgradeNoticeHook(
-          ["projects", "list"],
+          [...(options.args ?? []), "projects", "list"],
           {
             cleanShowHelp: false,
-            workingDirectory: workdir,
+            workingDirectory: options.workingDirectory ?? workdir,
             isValueTakingFlagToken: () => false,
           },
           Effect.sync(() => {
@@ -98,4 +118,88 @@ describe("upgrade notice user-level cache", () => {
       expect(yield* ctx.fs.readFileString(ctx.cacheFile)).toBe("v99.99.100");
     }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer))),
   );
+
+  describe("inside a project", () => {
+    const withLegacyCache = Effect.gen(function* () {
+      const ctx = yield* userCache;
+      const tempDir = ctx.path.join(ctx.workdir, "supabase", ".temp");
+      yield* ctx.fs.makeDirectory(tempDir, { recursive: true });
+      const legacyCache = ctx.path.join(tempDir, "cli-latest");
+      yield* ctx.fs.writeFileString(legacyCache, "v99.99.99");
+      return { ...ctx, legacyCache };
+    });
+
+    it.live("serves the project's supabase/.temp cache in legacy mode", () =>
+      Effect.gen(function* () {
+        const ctx = yield* withLegacyCache;
+
+        const { fetchCalls, stderr } = yield* runHook(ctx, "v99.99.100");
+
+        expect(fetchCalls).toBe(0);
+        expect(stderr).toContain("A new version of Supabase CLI is available: v99.99.99");
+      }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer))),
+    );
+
+    it.live("keeps the cache in SUPABASE_HOME and leaves supabase/.temp alone in stack mode", () =>
+      Effect.gen(function* () {
+        const ctx = yield* withLegacyCache;
+
+        const { fetchCalls, stderr } = yield* runHook(ctx, "v99.99.100", { stack: true });
+
+        expect(fetchCalls).toBe(1);
+        expect(stderr).toContain("A new version of Supabase CLI is available: v99.99.100");
+        expect(yield* ctx.fs.readFileString(ctx.cacheFile)).toBe("v99.99.100");
+        expect(yield* ctx.fs.readFileString(ctx.legacyCache)).toBe("v99.99.99");
+      }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer))),
+    );
+
+    it.live("keeps a stack-mode project out of supabase/.temp when --workdir is relative", () =>
+      Effect.gen(function* () {
+        const ctx = yield* userCache;
+        const project = ctx.path.join(ctx.root, "stack-project");
+        yield* ctx.fs.makeDirectory(ctx.path.join(project, "supabase"), { recursive: true });
+        yield* ctx.fs.writeFileString(
+          ctx.path.join(project, "supabase", "config.toml"),
+          'project_id = "demo"\n\n[experimental]\nstack = true\n',
+        );
+        const runtime = yield* RuntimeInfo;
+
+        const { fetchCalls } = yield* runHook(ctx, "v99.99.100", {
+          stack: "config",
+          args: ["--workdir", "stack-project"],
+          workingDirectory: project,
+        }).pipe(Effect.provideService(RuntimeInfo, { ...runtime, cwd: ctx.root }));
+
+        expect(fetchCalls).toBe(1);
+        expect(yield* ctx.fs.readFileString(ctx.cacheFile)).toBe("v99.99.100");
+        expect(
+          yield* ctx.fs.exists(ctx.path.join(project, "supabase", ".temp", "cli-latest")),
+        ).toBe(false);
+      }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer))),
+    );
+
+    it.live(
+      "reads the mode from the success working directory, not the directory the command started in",
+      () =>
+        Effect.gen(function* () {
+          const ctx = yield* userCache;
+          const project = ctx.path.join(ctx.root, "bootstrapped-project");
+          yield* ctx.fs.makeDirectory(ctx.path.join(project, "supabase"), { recursive: true });
+          yield* ctx.fs.writeFileString(
+            ctx.path.join(project, "supabase", "config.toml"),
+            'project_id = "demo"\n\n[experimental]\nstack = true\n',
+          );
+          const runtime = yield* RuntimeInfo;
+
+          const { fetchCalls } = yield* runHook(ctx, "v99.99.100", {
+            stack: "config",
+            workingDirectory: project,
+          }).pipe(Effect.provideService(RuntimeInfo, { ...runtime, cwd: ctx.workdir }));
+
+          expect(fetchCalls).toBe(1);
+          expect(yield* ctx.fs.readFileString(ctx.cacheFile)).toBe("v99.99.100");
+          expect(yield* ctx.fs.exists(ctx.path.join(project, "supabase", ".temp"))).toBe(false);
+        }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer))),
+    );
+  });
 });

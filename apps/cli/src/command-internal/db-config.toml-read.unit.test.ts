@@ -33,7 +33,7 @@ import {
 
 const servicesLive = Layer.mergeAll(BunServices.layer, cliConfigValuesTestLayer);
 
-function withConfig(content: string | undefined, poolerUrl?: string) {
+function withConfig(content: string | undefined) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -41,10 +41,6 @@ function withConfig(content: string | undefined, poolerUrl?: string) {
     if (content !== undefined) {
       yield* fs.makeDirectory(path.join(dir, "supabase"), { recursive: true });
       yield* fs.writeFileString(path.join(dir, "supabase", "config.toml"), content);
-    }
-    if (poolerUrl !== undefined) {
-      yield* fs.makeDirectory(path.join(dir, "supabase", ".temp"), { recursive: true });
-      yield* fs.writeFileString(path.join(dir, "supabase", ".temp", "pooler-url"), poolerUrl);
     }
     return dir;
   }).pipe(Effect.provide(BunServices.layer));
@@ -195,7 +191,6 @@ describe("readDbToml", () => {
       expect(v.port).toBe(54322);
       expect(v.shadowPort).toBe(54320);
       expect(v.password).toBe("postgres");
-      expect(Option.isNone(v.poolerConnectionString)).toBe(true);
       expect(v.projectId).toBe(sanitizeProjectId(path.basename(dir)));
       expect(v.denoVersion).toBe(2);
     }).pipe(Effect.provide(BunServices.layer));
@@ -1446,13 +1441,12 @@ describe("readDbToml", () => {
         Effect.sync(() => {
           expect(v.port).toBe(5000);
           expect(v.password).toBe("postgres");
-          expect(Option.isNone(v.poolerConnectionString)).toBe(true);
         }),
       ),
     );
   });
 
-  it.effect("reads db + project_id from config.toml and pooler url from .temp", () => {
+  it.effect("reads db + project_id from config.toml", () => {
     return withConfig(
       [
         'project_id = "my-project"',
@@ -1462,7 +1456,6 @@ describe("readDbToml", () => {
         'password = "hunter2"',
         "",
       ].join("\n"),
-      "postgres://postgres.ref:[YOUR-PASSWORD]@pool:6543/postgres",
     ).pipe(
       Effect.flatMap(read),
       Effect.tap((v) =>
@@ -1471,7 +1464,6 @@ describe("readDbToml", () => {
           expect(v.shadowPort).toBe(55556);
           expect(v.password).toBe("hunter2");
           expect(v.projectId).toBe("my-project");
-          expect(Option.getOrNull(v.poolerConnectionString)).toContain("postgres.ref");
         }),
       ),
     );
@@ -2212,34 +2204,6 @@ describe("readDbToml", () => {
       );
     },
   );
-
-  it.effect("ignores a [db.pooler] connection_string in config.toml (only .temp is read)", () => {
-    return withConfig(
-      [
-        "[db.pooler]",
-        'connection_string = "postgres://postgres.ref:[YOUR-PASSWORD]@pool:6543/postgres"',
-        "",
-      ].join("\n"),
-    ).pipe(
-      Effect.flatMap(read),
-      Effect.tap((v) =>
-        Effect.sync(() => {
-          expect(Option.isNone(v.poolerConnectionString)).toBe(true);
-        }),
-      ),
-    );
-  });
-
-  it.effect("treats an empty .temp/pooler-url as no pooler configured", () => {
-    return withConfig(undefined, "").pipe(
-      Effect.flatMap(read),
-      Effect.tap((v) =>
-        Effect.sync(() => {
-          expect(Option.isNone(v.poolerConnectionString)).toBe(true);
-        }),
-      ),
-    );
-  });
 });
 
 describe("readDbToml [experimental.pgdelta]", () => {

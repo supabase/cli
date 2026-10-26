@@ -4,7 +4,6 @@ import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.
 import { CommandTarget } from "../shared/output/command-target.service.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { Tty } from "../shared/runtime/tty.service.ts";
-import { readProjectRefFile } from "../shared/config/temp-paths.ts";
 import { CommandSettings } from "./command-settings.service.ts";
 import {
   InvalidProjectRefError,
@@ -20,8 +19,15 @@ import {
   type ResolvedProjectRef,
 } from "./project-ref.service.ts";
 import { block } from "../command-internal/command-permissions/model.ts";
-import { readCachedLinkedProject } from "../command-internal/parent-project-ref.ts";
-import { describeLinkedTarget } from "../command-internal/target/target-identity.ts";
+import {
+  type LinkSnapshot,
+  readLinkSnapshot,
+  readLinkSnapshotSoft,
+} from "../shared/config/link-snapshot.ts";
+import {
+  describeLinkedTarget,
+  renderBranchTarget,
+} from "../command-internal/target/target-identity.ts";
 
 /** `ProjectRefResolver`'s interactive picker, reached only when no ref comes from a flag, env or the linked workdir. */
 export const projectRefPicker = block("project-ref", [
@@ -30,7 +36,7 @@ export const projectRefPicker = block("project-ref", [
     kind: "required",
     when: [{ selector: ["none", "bare"] }],
     context:
-      "an interactive terminal (stdin and stdout are TTYs, output format not json), no SUPABASE_PROJECT_ID and no supabase/.temp/project-ref (`link` ignores that file)",
+      "an interactive terminal (stdin and stdout are TTYs, output format not json), no SUPABASE_PROJECT_ID and no linked project in supabase/.link.json or supabase/.temp (`link` ignores the link)",
   },
 ]);
 
@@ -52,7 +58,8 @@ export const projectRefLayer = Layer.effect(
     const platformApi = yield* CommandPlatformApiFactory;
     const commandTarget = yield* CommandTarget;
 
-    const readRefFile = readProjectRefFile(fs, path, cliSettings.workdir);
+    const readSnapshot = readLinkSnapshot(fs, path, cliSettings.workdir);
+    const readSnapshotSoft = readLinkSnapshotSoft(fs, path, cliSettings.workdir);
 
     const pickProject = Effect.fnUntraced(function* (title: string) {
       const api = yield* platformApi.make.pipe(
@@ -99,27 +106,50 @@ export const projectRefLayer = Layer.effect(
 
     const announceLinked = Effect.fnUntraced(function* (
       ref: string,
-      identity: { readonly name?: string; readonly linkedRef?: Option.Option<string> } = {},
+      snapshot: LinkSnapshot,
+      identity: { readonly name?: string; readonly compareWithLink?: boolean } = {},
     ) {
-      const cache = yield* readCachedLinkedProject(fs, path, cliSettings.workdir);
-      yield* commandTarget.announce(describeLinkedTarget({ ref, cache, ...identity }));
+      const parent = Option.getOrUndefined(snapshot.parent);
+      const isLinkedBranch =
+        Option.contains(snapshot.ref, ref) &&
+        Option.isSome(snapshot.branchName) &&
+        parent !== undefined &&
+        parent.ref !== ref;
+      yield* commandTarget.announce(
+        isLinkedBranch
+          ? renderBranchTarget({
+              branch: snapshot.branchName,
+              ref,
+              parentRef: Option.some(parent.ref),
+              parentName: parent.name,
+              isDefault: false,
+            })
+          : describeLinkedTarget({
+              ref,
+              cache: snapshot.parent,
+              ...(identity.name === undefined ? {} : { name: identity.name }),
+              ...(identity.compareWithLink === true ? { linkedRef: snapshot.ref } : {}),
+            }),
+      );
     });
 
-    const resolveRef = Effect.fnUntraced(function* (flagValue: Option.Option<string>) {
+    const resolveRef = Effect.fn("ProjectRefResolver.resolveRef")(function* (
+      flagValue: Option.Option<string>,
+    ) {
       let resolved: {
         readonly ref: string;
         readonly source: ProjectRefSource;
         readonly name?: string;
       };
-      let linkedRef = Option.none<string>();
+      let snapshot: LinkSnapshot | undefined;
       if (Option.isSome(flagValue) && flagValue.value.length > 0) {
         resolved = { ref: yield* assertValid(flagValue.value), source: "flag" };
       } else if (Option.isSome(cliSettings.projectId)) {
         resolved = { ref: yield* assertValid(cliSettings.projectId.value), source: "env" };
       } else {
-        linkedRef = yield* readRefFile;
-        if (Option.isSome(linkedRef)) {
-          resolved = { ref: yield* assertValid(linkedRef.value), source: "file" };
+        snapshot = yield* readSnapshot;
+        if (Option.isSome(snapshot.ref)) {
+          resolved = { ref: yield* assertValid(snapshot.ref.value), source: "file" };
         } else if (tty.stdinIsTty && output.interactive) {
           const picked = yield* pickProject("Select a project:");
           resolved = {
@@ -131,17 +161,24 @@ export const projectRefLayer = Layer.effect(
           return yield* new ProjectRefNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE });
         }
       }
-      if (resolved.source === "flag" || resolved.source === "env") {
-        linkedRef = yield* readRefFile.pipe(Effect.orElseSucceed(() => Option.none<string>()));
-      }
-      yield* announceLinked(resolved.ref, {
-        linkedRef,
+      const linked = snapshot ?? (yield* readSnapshotSoft);
+      const matchesLinkedRef = Option.contains(linked.ref, resolved.ref);
+      const poolerUrl = matchesLinkedRef
+        ? Option.getOrUndefined(Option.filter(linked.poolerUrl, (url) => url.length > 0))
+        : undefined;
+      yield* Effect.annotateCurrentSpan({
+        "project_ref.source": resolved.source,
+        "project_ref.matches_linked": matchesLinkedRef,
+      });
+      yield* announceLinked(resolved.ref, linked, {
+        compareWithLink: true,
         ...(resolved.name === undefined ? {} : { name: resolved.name }),
       });
       return {
         ref: resolved.ref,
         source: resolved.source,
-        matchesLinkedRef: Option.isSome(linkedRef) && linkedRef.value === resolved.ref,
+        matchesLinkedRef,
+        ...(poolerUrl === undefined ? {} : { poolerUrl }),
       } satisfies ResolvedProjectRef;
     });
 
@@ -169,6 +206,7 @@ export const projectRefLayer = Layer.effect(
           }
           yield* announceLinked(
             resolved.ref,
+            yield* readSnapshotSoft,
             resolved.name === undefined ? {} : { name: resolved.name },
           );
           return resolved.ref;
@@ -181,9 +219,9 @@ export const projectRefLayer = Layer.effect(
           if (Option.isSome(cliSettings.projectId)) {
             return cliSettings.projectId;
           }
-          // A ref-file read error degrades to "not linked" here, unlike `resolve`,
+          // A link read error degrades to "not linked" here, unlike `resolve`,
           // since `projects list` only uses the value as a display marker.
-          return yield* readRefFile.pipe(Effect.orElseSucceed(() => Option.none<string>()));
+          return (yield* readSnapshotSoft).ref;
         }),
       promptProjectRef: promptForProjectRef,
     });

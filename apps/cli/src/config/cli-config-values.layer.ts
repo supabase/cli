@@ -19,7 +19,7 @@ import {
   Result,
 } from "effect";
 
-import { readProjectRefFile } from "../shared/config/temp-paths.ts";
+import { readLinkSnapshot, readLinkSnapshotSoft } from "../shared/config/link-snapshot.ts";
 import { collectDotenvPrivateKeys } from "../shared/config/vault-decrypt.ts";
 import { loadCliProjectEnvFiles, readShellEnvironment } from "../shared/config/cli-config-env.ts";
 import { CliConfigLoadError } from "../shared/config/cli-config-load.errors.ts";
@@ -244,10 +244,8 @@ export const cliConfigValuesLayer = Layer.effect(
       const linkedRef = Option.isNone(target.projectRef)
         ? Option.none<string>()
         : target.tolerateUnreadableLinkedRef
-          ? yield* readProjectRefFile(fs, path, target.workdir).pipe(
-              Effect.orElseSucceed(() => Option.none<string>()),
-            )
-          : yield* readProjectRefFile(fs, path, target.workdir);
+          ? (yield* readLinkSnapshotSoft(fs, path, target.workdir)).ref
+          : (yield* readLinkSnapshot(fs, path, target.workdir)).ref;
       const foreignLinkedRef = Option.filter(linkedRef, (linked) => linked !== targetRef);
       const scopedKeys = cliConfigRegistry.keys.filter((key) => key.envScope === "linkedTarget");
       const scopedNames = new Set(scopedKeys.flatMap((key) => key.env));

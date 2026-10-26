@@ -37,7 +37,7 @@ describe("describeConfigParseError", () => {
         path: "/repo/supabase/config.toml",
         cause: new Error("unexpected end of input"),
       }),
-    ).toBe("failed to parse supabase/config.toml: Error: unexpected end of input");
+    ).toBe("failed to parse supabase/config.toml: unexpected end of input");
   });
 
   it("keeps a path outside the workdir as given", () => {

@@ -47,7 +47,7 @@ The `Cli*` prefix names the local checkout side — what the CLI reads, writes, 
 itself on disk. A bare `Project*` name is reserved for the hosted Supabase project side. (Deliberate
 exceptions live in apps/cli: services that describe the hosted project itself or the CLI's link to
 it — `ProjectLinkRemote`, `ProjectLinkState` (both in `shared/config`), and
-`ProjectRefResolver` (in `apps/cli/src/config`) — keep the bare `Project*` root under this same
+`RemoteTarget` (in `apps/cli/src/config`) — keep the bare `Project*` root under this same
 rule.)
 
 ## The `/io` facade

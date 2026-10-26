@@ -31,6 +31,7 @@ vi.mock("node:net", (importOriginal) =>
 );
 
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
+import { selection } from "../../../../tests/helpers/pins.ts";
 import { describeDbTargetSelection } from "../../../../tests/helpers/db-target-selection.ts";
 import {
   BRANCH_PROJECT_REF,
@@ -257,8 +258,8 @@ const runningStackApi = (projectRoot: string) => {
       endpoints: [{ name: "sql", protocol: "tcp", host: "127.0.0.1", port: STACK_SQL_PORT }],
       config: {
         service: "database",
+        pin: selection.database,
         config: {
-          version: "17.6.1.173",
           databasePassword: Redacted.make("stack-password"),
           jwtSecret: Redacted.make("secret"),
           jwtExpiry: 3600,

@@ -28,6 +28,7 @@ formatting without disabling safe compaction.
 | `<workdir>/supabase/.temp/project-ref`         | plain text | bare `--remote` with no `SUPABASE_PROJECT_ID`; with no selector, only to name the project in the `Target:` hint |
 | `<workdir>/supabase/.temp/linked-project.json` | JSON       | a remote project, for the `Target:` banner (no API call)                                                        |
 | `~/.supabase/access-token`                     | plain text | a remote project or branch (token resolution)                                                                   |
+| `PGSSL*` PEM, `pg_service.conf`                | PEM, libpq | remote project, when set; see `db push`                                                                         |
 
 ## Files Written
 
@@ -55,6 +56,7 @@ formatting without disabling safe compaction.
 | `SUPABASE_SERVICES_HOSTNAME` | local DB host for a local target                                                                                                                                                                                                                                                                     | no        |
 | `DOCKER_HOST`                | tcp daemon host used as the local DB host fallback                                                                                                                                                                                                                                                   | no        |
 | `SUPABASE_USE_SLIM_IMAGES`   | resolves the expected local `db` image for the stale-container guard from the slim `ghcr.io/supabase/cli` builds (`true`/`1` enable); majors 13/15 use `15.14.1.167` when the flag is on; historical pins, PG14, OrioleDB tags the catalog does not pin, and flag-off `15.8.1.085` stay on docker.io | no        |
+| `PG*` libpq                  | remote-project TLS, timeout, service; see `db push`                                                                                                                                                                                                                                                  | no        |
 
 ## Exit Codes
 

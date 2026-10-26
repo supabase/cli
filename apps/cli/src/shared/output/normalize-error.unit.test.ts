@@ -27,16 +27,30 @@ describe("normalizeCliError", () => {
     });
   });
 
-  test("CliConfigParseError falls back to its bare tag as both code and message", () => {
+  test("CliConfigParseError keeps its tag as code and names the file and cause in its message", () => {
     const error = new CliConfigParseError({
       path: "supabase/config.toml",
       format: "toml",
-      cause: new Error("unexpected token"),
+      cause: new Error("unexpected \u001b[2Jtoken\n"),
     });
 
     expect(normalizeCliError(error)).toEqual({
       code: "CliConfigParseError",
-      message: "CliConfigParseError",
+      message: "failed to parse supabase/config.toml: unexpected token",
+    });
+  });
+
+  test("CliConfigParseError hides the token a JSON parse error quotes", () => {
+    const error = new CliConfigParseError({
+      path: "supabase/config.json",
+      format: "json",
+      cause: new SyntaxError('JSON Parse error: Unexpected identifier "sk_live_123"'),
+    });
+
+    expect(normalizeCliError(error)).toEqual({
+      code: "CliConfigParseError",
+      message:
+        'failed to parse supabase/config.json: JSON Parse error: Unexpected identifier "<redacted>"',
     });
   });
 

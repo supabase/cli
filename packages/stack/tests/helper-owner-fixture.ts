@@ -4,6 +4,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { makeContainerRuntime } from "../src/runtime/Container.ts";
 import { makeDockerDatabaseStorage } from "../src/storage/DockerDatabaseStorage.ts";
 import { makeDockerHelperRegistry } from "../src/storage/DockerHelperRegistry.ts";
+import { selection } from "./pins.ts";
 
 const stackId = process.argv[2];
 const root = process.argv[3];
@@ -67,8 +68,8 @@ const run = Effect.gen(function* () {
     spawner,
     helpers,
   });
-  yield* storage.prepare("17");
-  if (!shared) yield* storage.removeData("17");
+  yield* storage.prepare(selection.database);
+  if (!shared) yield* storage.removeData(selection.database);
   yield* Effect.sync(() => process.stdout.write("HELPER_READY\n"));
   return yield* Effect.never;
 });

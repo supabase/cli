@@ -89,12 +89,14 @@
         "!content/docs/commands/**",
         "!public/cli/config.schema.json",
         "!public/cli/project-config.schema.json",
+        "!public/cli/supabase-lock/v1.schema.json",
         "$TURBO_ROOT$/mise.lock"
       ],
       "outputs": [
         "content/docs/commands/**",
         "public/cli/config.schema.json",
-        "public/cli/project-config.schema.json"
+        "public/cli/project-config.schema.json",
+        "public/cli/supabase-lock/v1.schema.json"
       ]
     },
     "@supabase/docs#build": {
@@ -105,6 +107,7 @@
         "!content/docs/commands/**",
         "!public/cli/config.schema.json",
         "!public/cli/project-config.schema.json",
+        "!public/cli/supabase-lock/v1.schema.json",
         "$TURBO_ROOT$/mise.lock"
       ],
       "outputs": [".next/**"]

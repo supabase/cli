@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { Effect, FileSystem, Path, Predicate, Redacted } from "effect";
+import { Clock, Effect, FileSystem, Path, Predicate, Redacted } from "effect";
 import * as SmolToml from "smol-toml";
 import { CliConfigSchema, type CliConfig } from "./base.ts";
 import {
@@ -766,7 +766,8 @@ const DEFAULT_CLI_CONFIG_FILE_MODE = 0o644;
 
 const writeFileAtomic = Effect.fnUntraced(function* (filePath: string, content: string) {
   const fs = yield* FileSystem.FileSystem;
-  const tmpPath = `${filePath}.tmp.${Date.now()}.${randomBytes(3).toString("hex")}`;
+  const now = yield* Clock.currentTimeMillis;
+  const tmpPath = `${filePath}.tmp.${now}.${randomBytes(3).toString("hex")}`;
 
   yield* Effect.gen(function* () {
     const mode = yield* fs.stat(filePath).pipe(

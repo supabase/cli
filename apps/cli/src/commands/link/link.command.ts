@@ -40,6 +40,11 @@ const config = {
     Flag.withDescription("Use direct connection instead of pooler."),
     Flag.withDefault(false),
   ),
+  frozen: Flag.Boolean("frozen").pipe(
+    Flag.withDescription("Leave supabase/supabase.lock untouched (stack mode only)."),
+    Flag.withDefault(false),
+    Flag.withHidden,
+  ),
 } as const;
 
 export type LinkFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -88,13 +93,19 @@ export const linkCommand = Command.make("link", config).pipe(
             request: { query: { reveal: "true" } },
           },
           {
+            operationId: "v1-get-a-branch-config",
+            kind: "best-effort",
+            context:
+              "stack mode, supabase/config.toml exists, and the project lookup returns 404 (the ref is a branch)",
+          },
+          {
             operationId: "v1-list-all-branches",
             kind: "best-effort",
             context:
               "the project lookup returns 404 (the ref is a branch), the ref was not resolved from a branch name, and supabase/.temp/linked-project.json names a different project",
           },
         ],
-        noApiEffectFlags: ["password"],
+        noApiEffectFlags: ["password", "frozen"],
       },
       withContext(projectRefPicker, "no [ref-or-branch] argument"),
       linkServices,

@@ -6,10 +6,12 @@ import {
   ErrorActionabilityId,
   unclassifiedStackFailureActionability,
 } from "../../../../shared/telemetry/error-actionability.ts";
+import { type StackTargetIssue, stackTargetInvalidConfigActionability } from "../stack.shared.ts";
 
 export class StackCommandStatusError extends Data.TaggedError("ExperimentalStackStatusError")<{
   readonly message: string;
   readonly reason: "flags" | "not-found" | "invalid-config" | "lifecycle" | "output" | "stack";
+  readonly targetIssue?: StackTargetIssue;
   readonly suggestion?: string;
   readonly cause?: unknown;
 }> {
@@ -20,13 +22,13 @@ export class StackCommandStatusError extends Data.TaggedError("ExperimentalStack
       case "not-found":
         return { ...actionability.provideFlags, fingerprint_suffix: "not_found" };
       case "invalid-config":
-        return { ...actionability.invalidConfig, fingerprint_suffix: "invalid_config" };
+        return stackTargetInvalidConfigActionability(this.targetIssue);
       case "lifecycle":
         return { ...actionability.startStack, fingerprint_suffix: "lifecycle" };
       case "output":
         return { ...actionability.provideFlags, fingerprint_suffix: "output_format" };
       case "stack":
-        return causeDeclaration(this.cause) ?? unclassifiedStackFailureActionability;
+        return causeDeclaration(this.cause) ?? unclassifiedStackFailureActionability(this.cause);
     }
   }
 }

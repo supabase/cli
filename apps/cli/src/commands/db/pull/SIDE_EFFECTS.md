@@ -31,7 +31,7 @@ target; a remote or multi-host URL without an explicit `sslmode` still requires 
 
 Pg-delta runs in-process. Coverage gaps warn; `--strict-coverage` makes them
 fatal, while `PGDELTA_DEBUG` writes diagnostic JSON under
-`supabase/.temp/pgdelta/v2/debug/<id>/`. The engine may emit transaction-aware
+`supabase/.temp/pgdelta/v2/debug/<id>/` (`<SUPABASE_HOME>/tmp/pgdelta/v2/debug/<id>/` in stack mode). The engine may emit transaction-aware
 file splits; applicable, convergent SQL is the contract. Its formatter
 defaults to lowercase SQL at width 180; config overrides it, and JSON `null`
 disables formatting without disabling safe compaction.
@@ -50,6 +50,7 @@ disables formatting without disabling safe compaction.
 | `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar.<pid>.partial`               | tar         | abandoned-partial sweep on every cache-eligible acquire (warm hit and cold export) — enumerated and `stat`ed, and removed when older than 5 minutes (a crashed/SIGKILLed earlier export's leftover)                                                                                                                                                |
 | `~/.supabase/access-token`                                                                | plain text  | a remote project or branch with no `SUPABASE_ACCESS_TOKEN`                                                                                                                                                                                                                                                                                         |
 | `<workdir>/supabase/.temp/project-ref`                                                    | plain text  | bare `--remote`, ref resolution — skipped when `SUPABASE_PROJECT_ID` is set; with no selector, only to name the project in the `Target:` hint                                                                                                                                                                                                      |
+| `PGSSL*` PEM, `pg_service.conf`                                                           | PEM, libpq  | remote project, when set; see `db push`                                                                                                                                                                                                                                                                                                            |
 
 ## Files Written
 
@@ -144,6 +145,7 @@ at all, so nothing is cached for it.
 | `SUPABASE_SHADOW_CACHE`                                                               | shadow baseline cache; on by default, opt-out (`0`/`false`); the shadow's post-baseline state is saved under a managed snapshot key and restored into the next run's fresh stack database (see Notes)                                                                                                                                                                                                                         | no        |
 | `SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED`                                               | overrides `[experimental.pgdelta].enabled` (default true; `false` selects migra for the migration-style diff unless `--diff-engine` is passed, and lets a declarative export write `schema_paths`); a value that is not a boolean fails the command                                                                                                                                                                           | no        |
 | `SUPABASE_EXPERIMENTAL`                                                               | resolving true (shell, then project `.env`) without `--declarative` fails the command with the removed structured-dump error; `--experimental=false` overrides it for one invocation                                                                                                                                                                                                                                          | no        |
+| `PG*` libpq                                                                           | remote-project TLS, timeout, service; see `db push`. The `pg_dump` seed gets them (see `db dump`); the migra container gets none of these `PG*` TLS settings (migra gets the CLI's own bundled CA outside its OOM fallback)                                                                                                                                                                                                   | no        |
 
 ## Exit Codes
 

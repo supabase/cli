@@ -31,6 +31,7 @@ import { CONTAINER_ENV_DIRNAME } from "./namespace/Paths.ts";
 import * as PortReservations from "./namespace/PortReservations.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 import { ownerFor } from "../tests/owner-rpc.ts";
+import { selection } from "../tests/pins.ts";
 
 /**
  * Scenarios the public `effect.ts` facade cannot reach deterministically: forcing an
@@ -319,7 +320,14 @@ it.live(
         // mail), with no member ever started: a real reservation with no native artifact needed,
         // so this runs on every platform, Windows included.
         const definitions = yield* owner.rpc.supabaseComposition({
-          services: [{ service: "mail", config: {}, endpoints: { http: { port: "auto" } } }],
+          services: [
+            {
+              service: "mail",
+              pin: selection.mail,
+              config: {},
+              endpoints: { http: { port: "auto" } },
+            },
+          ],
         });
         const mail = definitions.find((entry) => entry.creation.service === "mail");
         if (mail === undefined) return yield* Effect.die("mail missing from the composition");
@@ -408,7 +416,14 @@ it.live("a destroy that cannot remove the registration keeps every reservation",
         }).pipe(Effect.ignore),
       );
       const definitions = yield* owner.rpc.supabaseComposition({
-        services: [{ service: "mail", config: {}, endpoints: { http: { port: "auto" } } }],
+        services: [
+          {
+            service: "mail",
+            pin: selection.mail,
+            config: {},
+            endpoints: { http: { port: "auto" } },
+          },
+        ],
       });
       const mail = definitions.find((entry) => entry.creation.service === "mail");
       if (mail === undefined) return yield* Effect.die("mail missing from the composition");

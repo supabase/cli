@@ -36,7 +36,8 @@ import { renderLocalTarget } from "../../../command-internal/target/target-ident
 import { parseTargetSelector } from "../../../command-internal/target/target-selector.ts";
 import type { DbConnectError } from "../../../command-internal/db-connection.errors.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
-import { isCheckoutLinked, tempPaths } from "../../../shared/config/temp-paths.ts";
+import { LegacyProjectState } from "../../../shared/config/legacy-project-state.service.ts";
+import { isCheckoutLinked } from "../../../shared/config/link-snapshot.ts";
 import {
   describeConfigParseError,
   missingProjectConfigMessageEffect,
@@ -231,6 +232,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
   const telemetryState = yield* TelemetryState;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const legacyState = yield* LegacyProjectState;
   const stdio = yield* Stdio.Stdio;
   const dnsResolver = yield* DnsResolverFlag;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -645,13 +647,13 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       const config = yield* readDbToml(fs, path, cliSettings.workdir);
       const projectId = config.projectId;
 
-      const paths = tempPaths(path, cliSettings.workdir);
       // Only forces v9 compat from the rest-version file's image tag when the database's
-      // major version is > 14, so older databases aren't forced into v9 mode.
+      // major version is > 14, so older databases aren't forced into v9 mode. A stack runs
+      // the PostgREST release it locked, so it has no pin file to consult.
       const restVersion =
-        config.majorVersion > 14
-          ? (yield* fs
-              .readFileString(paths.restVersion)
+        backend.kind === "legacy" && config.majorVersion > 14
+          ? (yield* legacyState
+              .read(cliSettings.workdir, "restVersion")
               .pipe(Effect.orElseSucceed(() => ""))).trim()
           : "";
       const forcedV9 = restVersion.length > 0 && restVersion.includes("v9");

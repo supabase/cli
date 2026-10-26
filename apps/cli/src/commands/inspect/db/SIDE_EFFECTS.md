@@ -17,6 +17,7 @@ the columns rendered (see the per-subcommand `<name>.query.ts`).
 | `~/.supabase/access-token`                     | plain text | when `SUPABASE_ACCESS_TOKEN` unset and the target is a remote project (or a branch is looked up)                                                                                       |
 | `.pgpass` / `pg_service.conf`                  | libpq      | only if referenced by a database URL (`--remote=<db-url>`)                                                                                                                             |
 | `$PGSSLROOTCERT` CA bundle                     | PEM        | only if a database URL sets `sslrootcert` / `PGSSLROOTCERT`                                                                                                                            |
+| `PGSSL*` PEM, `pg_service.conf`                | PEM, libpq | remote project, when set; see `db push`                                                                                                                                                |
 
 Connection resolution and all of the above are handled inside
 `DbConfigResolver` (`command-internal/db-config.layer.ts`); the command adds
@@ -51,6 +52,7 @@ Local targets and database URLs make none.
 | `SUPABASE_PROJECT_ID`                                | project ref for a bare `--remote`, and the parent project for `--remote=<branch>` | no (config resolution fallback)         |
 | `SUPABASE_YES`                                       | shell value lets a remote connection clear a network ban                          | no                                      |
 | libpq vars (`PGSSLROOTCERT`, `PGCONNECT_TIMEOUT`, …) | honored when a database URL is used                                               | no                                      |
+| `PG*` libpq                                          | remote-project TLS, timeout, service; see `db push`                               | no                                      |
 
 ## Database Queries
 

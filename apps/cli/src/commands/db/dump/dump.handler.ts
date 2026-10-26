@@ -44,10 +44,11 @@ import {
 } from "../../../command-internal/postgres-client.run.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
 import {
-  stackProjectDatabaseVersion,
+  stackProjectDatabasePin,
   stackOpenReadyProject,
   stackRequireProjectRuntime,
 } from "../../../command-internal/stack-local-database.ts";
+import { databaseArtifactPin } from "@supabase/stack/internal/artifacts";
 import { resolveBundledPostgresRuntime } from "../../../command-internal/bundled-postgres-client.ts";
 import { supabaseEnvStringWithProjectFallback } from "../../../command-internal/supabase-env.ts";
 import { orNoPoolerFallback, runWithPoolerFallback } from "../shared/pooler-fallback.ts";
@@ -212,27 +213,32 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
             }),
           }
         : conn;
-    const catalogVersion =
-      backend.kind === "stack" && target.kind === "local"
-        ? ((yield* stackProjectDatabaseVersion) ?? String(tomlValues.majorVersion))
-        : String(tomlValues.majorVersion);
+    // A local stack's client matches its saved database build; any other target uses the
+    // configured major's default pin.
+    const databasePin =
+      backend.kind === "stack"
+        ? yield* Effect.gen(function* () {
+            const saved = target.kind === "local" ? yield* stackProjectDatabasePin : undefined;
+            return saved ?? (yield* databaseArtifactPin(String(tomlValues.majorVersion)));
+          }).pipe(Effect.mapError((cause) => new DbDumpRunError({ message: cause.message, cause })))
+        : undefined;
     const dumpMajor = tomlValues.majorVersion;
     const dumpClient =
-      managedStack !== undefined
-        ? {
-            kind: "stack" as const,
-            stack: managedStack,
-            command: roleOnly ? ("pg_dumpall" as const) : ("pg_dump" as const),
-            major: Number(catalogVersion.split(".")[0]) === 15 ? (15 as const) : (17 as const),
-          }
-        : backend.kind === "stack"
+      databasePin === undefined
+        ? { kind: "container" as const }
+        : managedStack !== undefined
           ? {
+              kind: "stack" as const,
+              stack: managedStack,
+              command: roleOnly ? ("pg_dumpall" as const) : ("pg_dump" as const),
+              pin: databasePin,
+            }
+          : {
               kind: "bundled" as const,
               command: roleOnly ? ("pg_dumpall" as const) : ("pg_dump" as const),
-              version: catalogVersion,
+              pin: databasePin,
               runtime: bundledRuntime,
-            }
-          : { kind: "container" as const };
+            };
 
     // 4. Pick the mode-specific script + env. --schema/-s and --exclude/-x arrive here
     //    already CSV-parsed by `parseSchemaFlags`.
@@ -241,6 +247,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
       keepComments,
       excludeTable: flags.exclude,
       columnInsert: !flags.useCopy,
+      remote: !isLocal,
     };
     // The script + diagnostic verb are connection-independent; the env is rebuilt
     // per connection so the pooler-fallback retry can target a different host.

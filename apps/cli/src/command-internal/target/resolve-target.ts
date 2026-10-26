@@ -2,9 +2,8 @@ import { Effect, FileSystem, Option, Path, Redacted } from "effect";
 
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { PROJECT_REF_PATTERN, type ProjectRefSource } from "../../config/project-ref.service.ts";
-import { readProjectRefFile } from "../../shared/config/temp-paths.ts";
 import { CommandTarget } from "../../shared/output/command-target.service.ts";
-import { readCachedLinkedProject } from "../parent-project-ref.ts";
+import { readLinkSnapshotSoft } from "../../shared/config/link-snapshot.ts";
 import { resolveHostedRemote, selectTarget } from "./remote-resolution.ts";
 import type { TargetFlagValues } from "./target-flags.ts";
 import { linkedAlternativeHint } from "./target-identity.ts";
@@ -23,6 +22,8 @@ export type ResolvedTarget =
       readonly parentRef?: string | undefined;
       /** Whether the branch is the production branch, when its lookup said so. */
       readonly isDefault?: boolean | undefined;
+      /** The IPv4 pooler URL the link recorded, present only when `ref` is the linked ref. */
+      readonly poolerUrl?: string | undefined;
     }
   | { readonly kind: "db-url"; readonly url: Redacted.Redacted<string> };
 
@@ -34,18 +35,15 @@ const hintLinkedAlternative = Effect.fnUntraced(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const { workdir, projectId } = yield* CommandSettings;
-  const fileRef = yield* readProjectRefFile(fs, path, workdir).pipe(
-    Effect.orElseSucceed(() => Option.none<string>()),
-  );
+  const link = yield* readLinkSnapshotSoft(fs, path, workdir);
   const linkedRef = Option.filter(
-    Option.orElse(projectId, () => fileRef),
+    Option.orElse(projectId, () => link.ref),
     (ref) => PROJECT_REF_PATTERN.test(ref),
   );
   if (Option.isNone(linkedRef)) return;
   const cell = yield* Effect.serviceOption(CommandTarget);
   if (Option.isNone(cell)) return;
-  const cache = yield* readCachedLinkedProject(fs, path, workdir);
-  yield* cell.value.hintLocal(linkedAlternativeHint({ ref: linkedRef.value, cache }));
+  yield* cell.value.hintLocal(linkedAlternativeHint({ ref: linkedRef.value, cache: link.parent }));
 });
 
 /**

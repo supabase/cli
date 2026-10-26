@@ -42,6 +42,7 @@ import {
   mockTelemetryStateTracked,
 } from "./command-mocks.ts";
 import { projectResponse, realLinkedProjectCache } from "./permission-real-layers.ts";
+import { selection } from "./pins.ts";
 
 interface StorageRoute {
   readonly method: string;
@@ -129,8 +130,8 @@ const stackCredentials = {
 } satisfies StackCredentials;
 const databaseCreation: Extract<ServiceCreation, { service: "database" }> = {
   service: "database",
+  pin: selection.database,
   config: {
-    version: "17",
     databasePassword: Redacted.make("postgres"),
     jwtSecret: Redacted.make(STORAGE_TEST_JWT_SECRET),
     jwtExpiry: 3600,
@@ -139,6 +140,7 @@ const databaseCreation: Extract<ServiceCreation, { service: "database" }> = {
 };
 const storageCreation: Extract<ServiceCreation, { service: "storage" }> = {
   service: "storage",
+  pin: selection.storage,
   config: {
     jwtSecret: STORAGE_TEST_JWT_SECRET,
     serviceRoleKey: stackCredentials.serviceRoleKey,

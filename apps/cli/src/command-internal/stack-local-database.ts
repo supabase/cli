@@ -1,5 +1,6 @@
 import { Data, Effect, FileSystem, Option, Path, Redacted } from "effect";
 import type { DatabaseInstance, ServiceCreationInput, Stack } from "@supabase/stack/effect";
+import type { ArtifactPin } from "@supabase/stack/internal/artifacts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -12,6 +13,7 @@ import { LocalDbRunningError } from "./db-bootstrap/local-db-running.ts";
 import { currentStackBackend } from "./stack-backend.ts";
 import { StackApi } from "./stack-api.ts";
 import { loadStackConfig } from "./stack-config.ts";
+import { lockedSelection } from "./stack-lock.ts";
 import { readDbToml } from "./db-config.toml-read.ts";
 import { catalogDatabaseServices } from "./stack-catalog-setup.ts";
 import { resolveExperimentalWithProjectEnv } from "./global-flags.ts";
@@ -144,9 +146,9 @@ export const stackRequireProjectRuntime: Effect.Effect<
   ),
 );
 
-/** Reads the configured database version from the saved database definition. */
-export const stackProjectDatabaseVersion: Effect.Effect<
-  string | undefined,
+/** Reads the database artifact pin from the saved database definition. */
+export const stackProjectDatabasePin: Effect.Effect<
+  ArtifactPin | undefined,
   never,
   CommandSettings | StackApi | Path.Path
 > = Effect.gen(function* () {
@@ -161,7 +163,7 @@ export const stackProjectDatabaseVersion: Effect.Effect<
   );
   if (database === undefined) return undefined;
   const status = yield* database.status.pipe(Effect.option, Effect.map(Option.getOrUndefined));
-  return status?.config.service === "database" ? status.config.config.version : undefined;
+  return status?.config.service === "database" ? status.config.pin : undefined;
 }).pipe(Effect.scoped);
 
 export class StackNativeEngineError extends Data.TaggedError("StackNativeEngineError")<{
@@ -225,7 +227,9 @@ export const stackEnsurePostgresOnlyStarted = Effect.fn(
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
   const output = yield* Output;
-  const config = yield* loadStackConfig(settings.workdir).pipe(Effect.mapError(startFailed));
+  const config = yield* loadStackConfig(settings.workdir, {
+    selection: lockedSelection({ frozen: false, output }),
+  }).pipe(Effect.mapError(startFailed));
   const toml = yield* readDbToml(fs, path, settings.workdir).pipe(Effect.mapError(startFailed));
   const experimental = yield* resolveExperimentalWithProjectEnv({ ...toml.projectEnv });
   const existing = yield* stackForProject(api, settings, path).pipe(Effect.mapError(startFailed));
@@ -281,11 +285,11 @@ export const stackEnsurePostgresOnlyStarted = Effect.fn(
         (entry) =>
           entry.id === currentDatabase.id &&
           entry.change === "incompatible" &&
-          entry.paths.includes("config.version"),
+          entry.paths.includes("pin"),
       )
     )
       return yield* startFailed({
-        message: "The requested database version does not match the saved stack binding",
+        message: `The requested database version does not match the saved stack binding. Recreate the local database: supabase stack destroy --stack-id ${stack.id}`,
       });
     const savedCredentials = yield* stack.credentials.get.pipe(Effect.mapError(startFailed));
     if (
@@ -304,9 +308,28 @@ export const stackEnsurePostgresOnlyStarted = Effect.fn(
       );
       return "already-running" as const;
     }
-    yield* currentDatabase.start.pipe(Effect.mapError(startFailed));
-    yield* currentDatabase.ready.pipe(Effect.mapError(startFailed));
-    yield* applyStackWebhooksOnly(currentDatabase, toml.webhooksEnabled).pipe(
+    const pinChanged = planned.some(
+      (entry) =>
+        entry.id === currentDatabase.id &&
+        entry.change === "changed" &&
+        entry.paths.includes("pin"),
+    );
+    // A stopped database starts the selected pin; the instance id and its data stay.
+    const database = pinChanged
+      ? databaseFor(
+          yield* stack.composition
+            .supabase([databaseCreation], {
+              reuseIds: [currentDatabase.id],
+              retainMembers: true,
+            })
+            .pipe(Effect.mapError(startFailed)),
+        )
+      : currentDatabase;
+    if (database === undefined)
+      return yield* startFailed({ message: "stack did not rebind the database instance" });
+    yield* database.start.pipe(Effect.mapError(startFailed));
+    yield* database.ready.pipe(Effect.mapError(startFailed));
+    yield* applyStackWebhooksOnly(database, toml.webhooksEnabled).pipe(
       Effect.mapError(startFailed),
     );
     return "started" as const;
@@ -330,7 +353,12 @@ export const stackEnsurePostgresOnlyStarted = Effect.fn(
     if (credentials === undefined)
       return yield* startFailed({ message: "stack credentials were not saved" });
     yield* initializeStackDatabase({
-      target: { stack, database, databaseServices: catalogDatabaseServices(creations) },
+      target: {
+        stack,
+        database,
+        databaseServices: catalogDatabaseServices(creations),
+        selection: config.selection,
+      },
       overlay: projectCatalogOverlay(toml, settings.workdir),
       migrations: { workdir: settings.workdir, toml, experimental },
     }).pipe(Effect.mapError(startFailed));

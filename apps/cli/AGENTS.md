@@ -157,7 +157,7 @@ per-command exception without updating the ADR and the guard's exemption list to
 
 ## Experimental feature registration
 
-Resolve opt-in booleans with `command-internal/experimental-feature.ts`: a shell boolean
+Resolve opt-in booleans with `shared/config/experimental-feature.ts`: a shell boolean
 (`1`, `t`, `T`, `TRUE`, `true`, `True` / `0`, `f`, `F`, `FALSE`, `false`, `False`; other casings such as `tRue` fail) overrides the project setting, and an unset or empty value uses the config. Invalid environment
 values are typed failures on applicable command paths. Disabled families are absent from the
 command tree, help, and completion; enabled help is marked experimental and stays out of stable

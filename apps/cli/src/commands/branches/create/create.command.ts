@@ -98,8 +98,16 @@ export const branchesCreateCommand = Command.make("create", config).pipe(
   withPermissions(
     compose(
       {
-        operations: [{ operationId: "v1-create-a-branch", kind: "required" }],
-        noApiEffectFlags: ["region", "size", "persistent", "with-data", "notify-url", "git-branch"],
+        operations: [
+          { operationId: "v1-create-a-branch", kind: "required" },
+          {
+            operationId: "v1-create-a-branch",
+            kind: "required",
+            when: [{ flag: "with-data" }],
+            request: { body: { with_data: "true" } },
+          },
+        ],
+        noApiEffectFlags: ["region", "size", "persistent", "notify-url", "git-branch"],
       },
       branchesParentTarget,
       projectRefPicker,

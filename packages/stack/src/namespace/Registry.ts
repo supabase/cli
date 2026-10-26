@@ -1,4 +1,4 @@
-import { Clock, Effect, Exit, FileSystem, Option, Path, Schedule, Schema, Scope } from "effect";
+import { Clock, Effect, FileSystem, Option, Path, Schema, Scope } from "effect";
 import { CompositionConfig } from "../Orchestrator.ts";
 import { ServiceCreation } from "../services/Catalog.ts";
 import { SafeId } from "../identity/SafeId.ts";
@@ -8,7 +8,7 @@ import { OWNER_FILE, OWNER_LOG_FILE } from "./Lease.ts";
 import { stackLogsRoot } from "./Paths.ts";
 import * as Publication from "./Publication.ts";
 import { removeEmptyDirectory } from "./drivers/FileSystem.ts";
-import { acquireLock, isBusy, takeLock } from "./drivers/Sqlite.ts";
+import { holdLock } from "./Lock.ts";
 
 /** How long a destroyed stack's empty directories stay, so a same-id restart finds them. */
 const DESTROYED_RETENTION_MILLIS = 10 * 60 * 1000;
@@ -206,28 +206,6 @@ export const make = (
       return modified !== undefined && now - modified >= DESTROYED_RETENTION_MILLIS;
     });
     /**
-     * One attempt: forks `attemptScope` under `guardScope` before opening anything, so there is
-     * always a scope to close if the open or the `BEGIN IMMEDIATE` below fails or defects. Runs
-     * uninterruptibly as a single unit; the retry waiting on busy, and `effect` once this
-     * succeeds, both stay interruptible around it.
-     */
-    const acquireAttempt = (
-      guardScope: Scope.Scope,
-    ): Effect.Effect<Scope.Closeable, NamespaceError> =>
-      Effect.uninterruptible(
-        Effect.gen(function* () {
-          const attemptScope = yield* Scope.fork(guardScope, "sequential");
-          yield* acquireLock(lock, "create").pipe(
-            Scope.provide(attemptScope),
-            Effect.flatMap(takeLock),
-            Effect.onExit((exit) =>
-              Exit.isFailure(exit) ? Scope.close(attemptScope, exit) : Effect.void,
-            ),
-          );
-          return attemptScope;
-        }),
-      );
-    /**
      * Holds the lock in its own standalone scope, so `effect`'s ambient scope (for example a port
      * listener it binds) stays whatever the caller already had, not one this lock closes early.
      */
@@ -236,19 +214,8 @@ export const make = (
         Effect.acquireUseRelease(
           Scope.make(),
           (guardScope) =>
-            acquireAttempt(guardScope).pipe(
-              Effect.retry({
-                schedule: Schedule.spaced("50 millis").pipe(
-                  Schedule.upTo({ duration: "5 seconds" }),
-                ),
-                while: isBusy,
-              }),
-              Effect.catchIf(isBusy, () =>
-                namespaceError(
-                  "lock",
-                  "Stack registry is locked by another operation; retry shortly",
-                ),
-              ),
+            holdLock(lock, "5 seconds", "Stack registry").pipe(
+              Scope.provide(guardScope),
               Effect.andThen(effect),
             ),
           (guardScope, exit) => Scope.close(guardScope, exit),

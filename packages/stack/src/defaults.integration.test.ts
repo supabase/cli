@@ -5,18 +5,17 @@ import { DEFAULT_LOCAL_JWT_SECRET, DEFAULT_POSTGRES_ROOT_KEY } from "./Defaults.
 import { create as createEffect, StackError } from "./effect.ts";
 import { create as createPromise } from "./index.ts";
 import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
+import { selection } from "../tests/pins.ts";
 
 const artifactCacheRoot = testArtifactCacheRoot;
 const effectLayer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
 
 const effectDatabaseConfig = {
-  version: "17",
   databasePassword: Redacted.make("defaults-test-password"),
   jwtExpiry: 3600,
 } as const;
 
 const promiseDatabaseConfig = {
-  version: "17",
   databasePassword: "defaults-test-password",
   jwtExpiry: 3600,
 } as const;
@@ -43,6 +42,7 @@ describe("database configuration defaults", { timeout: 180_000 }, () => {
             Effect.gen(function* () {
               const database = yield* current.services.create({
                 service: "database",
+                pin: selection.database,
                 config: effectDatabaseConfig,
               });
               const initial = yield* database.status;
@@ -73,7 +73,7 @@ describe("database configuration defaults", { timeout: 180_000 }, () => {
               expect(conflict.message).toContain("conflicts with the saved stack value");
               yield* database.destroy;
               const composed = yield* current.composition.supabase([
-                { service: "database", config: effectDatabaseConfig },
+                { service: "database", pin: selection.database, config: effectDatabaseConfig },
               ]);
               const composedStatus = yield* composed[0]!.status;
               if (composedStatus.config.service !== "database")
@@ -119,6 +119,7 @@ describe("database configuration defaults", { timeout: 180_000 }, () => {
               const database = yield* promise(() =>
                 current.services.create({
                   service: "database",
+                  pin: selection.database,
                   config: promiseDatabaseConfig,
                 }),
               );
@@ -157,7 +158,7 @@ describe("database configuration defaults", { timeout: 180_000 }, () => {
               yield* promise(() => database.destroy());
               const composed = yield* promise(() =>
                 current.composition.supabase([
-                  { service: "database", config: promiseDatabaseConfig },
+                  { service: "database", pin: selection.database, config: promiseDatabaseConfig },
                 ]),
               );
               const composedStatus = yield* promise(() => composed[0]!.status());

@@ -1,4 +1,8 @@
 import { CliOutput } from "effect/cli";
+import {
+  permissionSectionForHelp,
+  renderPermissionsSection,
+} from "../../command-internal/command-permissions/help-section.ts";
 import type {
   CliErrorSuggestionContext,
   FormattedCliError,
@@ -28,7 +32,12 @@ export function textCliOutputFormatter(context?: CliErrorSuggestionContext): Cli
         withRemoteFlagUsage(labelSubcommands(doc, context?.rootCommand)),
       );
       const target = targetHelpFor(doc);
-      return target === undefined ? text : insertBeforeUsage(text, `TARGET\n  ${target.summary}`);
+      const withTarget =
+        target === undefined ? text : insertBeforeUsage(text, `TARGET\n  ${target.summary}`);
+      const section = permissionSectionForHelp(doc);
+      return section === undefined
+        ? withTarget
+        : `${withTarget}\n\n${renderPermissionsSection(section)}`;
     },
     formatErrors: (errors) => {
       const formatted = formatCliErrorsForDisplay(errors, context);

@@ -505,7 +505,9 @@ describe("config push integration", () => {
       const message = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
         Effect.catchTag("ConfigPushLoadConfigError", (error) => Effect.succeed(error.message)),
       );
-      expect(message).toContain("failed to parse supabase/config.toml:");
+      expect(message).toBe(
+        "failed to parse supabase/config.toml: Invalid TOML document: incomplete key-value: cannot find end of key (line 1, column 1)",
+      );
       expect(api.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
@@ -532,7 +534,7 @@ describe("config push integration", () => {
       const message = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
         Effect.catchTag("ConfigPushLoadConfigError", (error) => Effect.succeed(error.message)),
       );
-      expect(message).toContain("failed to parse supabase/config.json:");
+      expect(message).toBe("failed to parse supabase/config.json: JSON Parse error: Expected '}'");
       expect(api.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
@@ -3316,7 +3318,7 @@ describe("config push branch/project target detection (CLI-2168)", () => {
   it.effect(
     "a broken .temp/project-ref (a directory, not a file) degrades gracefully instead of failing",
     () => {
-      // Mirrors the established `readProjectRefFile` EISDIR regression
+      // Mirrors the established `readLegacyProjectRef` EISDIR regression
       // technique — the target-detection recovery's own best-effort read
       // must swallow a real read failure (not just a missing file), not
       // propagate it. A cache candidate (with a branch-list response that

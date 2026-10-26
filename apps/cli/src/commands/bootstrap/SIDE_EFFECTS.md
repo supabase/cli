@@ -22,6 +22,7 @@ command — see Notes).
 | `<workdir>/supabase/migrations/*.sql`                              | SQL        | native push step, for each pending migration applied                                                                                                                                                                                                                                                                                                                                                                               |
 | seed files from `[db.seed].sql_paths`                              | SQL        | native push step (`--include-seed` is always set; gated on `[db.seed].enabled`)                                                                                                                                                                                                                                                                                                                                                    |
 | `<workdir>/supabase/roles.sql`                                     | SQL        | native push step (`--include-roles` is always set; existence check + apply)                                                                                                                                                                                                                                                                                                                                                        |
+| `PGSSL*` PEM, `pg_service.conf`                                    | PEM, libpq | native push step, remote project, when set; see `db push`                                                                                                                                                                                                                                                                                                                                                                          |
 
 ## Files Written
 
@@ -64,15 +65,16 @@ neither branch ever reaches the temp-login-role/Management-API path a passwordle
 
 ## Environment Variables
 
-| Variable                      | Purpose                                                                                                                                                        | Required? |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| `SUPABASE_WORKDIR`            | target dir (`--workdir` flag → env → prompt → cwd)                                                                                                             | no        |
-| `SUPABASE_DB_PASSWORD`        | DB password (`-p` flag → env → prompt/generate)                                                                                                                | no        |
-| `GITHUB_TOKEN`                | raise the GitHub API rate limit for template fetch                                                                                                             | no        |
-| `SUPABASE_ACCESS_TOKEN`       | auth bypass for ensure-login                                                                                                                                   | no        |
-| `SUPABASE_PROFILE`            | profile name/path (env → `~/.supabase/profile` → `supabase`)                                                                                                   | no        |
-| `SUPABASE_YES`                | shell value confirms the hosted-mutation consent and the overwrite prompt; a `SUPABASE_YES` in the project `supabase/.env` does not confirm the consent        | no        |
-| `SUPABASE_EXPERIMENTAL_STACK` | blank/`scratch` path only; when `1`, persists `[experimental] stack = true` and omits Docker-era default ports. Empty is unset; non-boolean values fail closed | no        |
+| Variable                      | Purpose                                                                                                                                                                                                                | Required? |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `SUPABASE_WORKDIR`            | target dir (`--workdir` flag → env → prompt → cwd)                                                                                                                                                                     | no        |
+| `SUPABASE_DB_PASSWORD`        | DB password (`-p` flag → env → prompt/generate)                                                                                                                                                                        | no        |
+| `GITHUB_TOKEN`                | raise the GitHub API rate limit for template fetch                                                                                                                                                                     | no        |
+| `SUPABASE_ACCESS_TOKEN`       | auth bypass for ensure-login                                                                                                                                                                                           | no        |
+| `SUPABASE_PROFILE`            | profile name/path (env → `~/.supabase/profile` → `supabase`)                                                                                                                                                           | no        |
+| `SUPABASE_YES`                | shell value confirms the hosted-mutation consent and the overwrite prompt; a `SUPABASE_YES` in the project `supabase/.env` does not confirm the consent                                                                | no        |
+| `SUPABASE_EXPERIMENTAL_STACK` | blank/`scratch` path only; when `1`, persists `[experimental] stack = true` and omits Docker-era default ports. Empty is unset; non-boolean values fail closed                                                         | no        |
+| `PG*` libpq                   | native push step, remote-project TLS, timeout, service; see `db push`. An invalid value fails the push step, after project create, link, health poll, and `.env` write; the IPv6-error fallback takes none (see Notes) | no        |
 
 ## Exit Codes
 
@@ -125,6 +127,21 @@ suppressed; a single structured result is emitted for the whole command:
 }
 ```
 
+## Stack mode
+
+When the new project directory resolves to stack project-state mode (`SUPABASE_EXPERIMENTAL_STACK`
+or its `config.toml`), bootstrap writes `supabase/.link.json` (project ref, name and organization from the create
+response, active branch ref, normalized pooler URL when available), under the project lease
+`supabase/.supabase.lock.lease` that `link` and `unlink` hold, instead of the `supabase/.temp/`
+link files, and the push connection reads the pooler URL from that document. The organization and
+project `groupIdentify` calls fire from bootstrap, since the linked-project cache fill is a no-op
+in this mode. The mode comes from the new project directory and applies to every post-scaffold
+step, including the cache finalizer; an invalid `SUPABASE_EXPERIMENTAL_STACK` fails bootstrap
+before any project is created. A lease that stays busy fails bootstrap with `LockResolutionError`
+reason `lease-busy` and exit code `1`, with no link written. `supabase/.gitignore` gains the lease
+and staged-write entries (`.supabase.lock.lease`, `.supabase.lock.*.tmp`) whenever bootstrap takes
+the project lease. See `link`'s `SIDE_EFFECTS.md` for the format.
+
 ## Notes
 
 - **Hosted-mutation consent.** After the template is chosen and before anything is written, it asks once:
@@ -162,6 +179,7 @@ dryRun: false }` and the consent above as its `preapproved` proof.
   its best-effort direct-host config rather than aborting — falling back to the same direct-host
   shape already computed for `.env` (step K's `dbConfig`) so the retry-wrapped push below still
   gets real reconnect attempts across the backoff window instead of failing bootstrap immediately.
+  That fallback config takes no `PG*` libpq setting, so it neither applies nor validates them.
 - **Password**: bootstrap never forwards a password to its internal push call on a separate
   channel — it always reuses the create-resolved password (`created.dbPassword`). There is no
   flag-vs-env distinction to preserve once the call is in-process (unlike the former subprocess

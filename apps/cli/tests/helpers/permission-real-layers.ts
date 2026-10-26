@@ -64,7 +64,10 @@ export function realDbConfigResolver(opts: {
   readonly workdir: string;
   readonly dbConnection: Layer.Layer<DbConnection>;
   readonly env: Record<string, string | undefined>;
+  /** Replaces the platform services the resolver reads files through. */
+  readonly services?: typeof BunServices.layer;
 }): Layer.Layer<DbConfigResolver> {
+  const services = opts.services ?? BunServices.layer;
   const out = mockOutput();
   const deps = Layer.mergeAll(
     mockCommandSettings({
@@ -88,9 +91,9 @@ export function realDbConfigResolver(opts: {
     identityStitchLayer.pipe(
       Layer.provide(mockAnalytics().layer),
       Layer.provide(mockTelemetryRuntime()),
-      Layer.provide(BunServices.layer),
+      Layer.provide(services),
     ),
-    BunServices.layer,
+    services,
     ConfigProvider.layer(ConfigProvider.fromEnvRecord(opts.env, { preserveEmptyStrings: true })),
     configValuesLayer({ env: definedEnv(opts.env) }),
   );

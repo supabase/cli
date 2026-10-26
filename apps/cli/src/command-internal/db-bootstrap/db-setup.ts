@@ -28,7 +28,7 @@ import type {
   CliConfigFlagConflictError,
   CliConfigValueError,
 } from "../../config/cli-config.errors.ts";
-import type { ProjectRefReadError } from "../../shared/config/temp-paths.ts";
+import type { ProjectRefReadError } from "../../shared/config/legacy-project-state.service.ts";
 import { DbConfigLoadError } from "../db-config.errors.ts";
 import { checkDbToml } from "../db-config.toml-read.ts";
 import { CLI_PROJECT_LABEL, localDbContainerId } from "../docker-ids.ts";

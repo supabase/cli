@@ -1,5 +1,7 @@
 import { Effect, FileSystem, Path } from "effect";
 
+import { legacyProjectStatePaths } from "../shared/config/legacy-project-state.paths.ts";
+
 import type { ContainerIdName } from "./docker-lifecycle.ts";
 
 /**
@@ -22,7 +24,7 @@ export const cleanupStartSecrets = Effect.fnUntraced(function* (
     containers,
     (container) => {
       const workdir = container.workdir.length > 0 ? container.workdir : fallbackWorkdir;
-      const stagingRoot = path.resolve(workdir, "supabase", ".temp", "start-secrets");
+      const stagingRoot = legacyProjectStatePaths({ join: path.resolve }, workdir).startSecretsDir;
       const target = path.resolve(stagingRoot, container.name);
       if (target === stagingRoot || !target.startsWith(stagingRoot + path.sep)) {
         return Effect.void;

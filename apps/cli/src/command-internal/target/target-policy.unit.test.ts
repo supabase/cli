@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Effect, Layer, Option } from "effect";
+import { Context, Effect, Exit, Layer, Option } from "effect";
 import { CliOutput, Command } from "effect/cli";
 
 import { commandTreeFor } from "../../../tests/helpers/command-flags.ts";
@@ -15,9 +15,11 @@ const VARIANTS: ReadonlyArray<{ readonly name: string; readonly variant: Permiss
   { name: "default backend", variant: undefined },
   {
     name: "stack backend",
-    variant: { stackBackend: "stack", computeEnabled: true } satisfies Required<
-      NonNullable<PermissionVariant>
-    >,
+    variant: {
+      projectState: Exit.succeed("stack"),
+      stackBackend: "stack",
+      computeEnabled: true,
+    } satisfies Required<NonNullable<PermissionVariant>>,
   },
 ];
 

@@ -28,6 +28,11 @@ import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { mockCommandSettings } from "../../../../tests/helpers/command-mocks.ts";
 import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
 import {
+  legacyStateAccesses,
+  recordingFileSystem,
+  seedLegacyStateDecoys,
+} from "../../../../tests/helpers/legacy-state-guard.ts";
+import {
   mockOutput,
   mockProcessControl,
   mockRuntimeInfo,
@@ -35,6 +40,8 @@ import {
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { functionsServeStack } from "./serve.stack.handler.ts";
+import { database15, selection } from "../../../../tests/helpers/pins.ts";
+import { seedLock, unbundled } from "../../../../tests/helpers/stack-lock.ts";
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 
 type DatabaseInstance = Extract<
@@ -57,7 +64,6 @@ const functionsConfig = (): Extract<ServiceCreation, { service: "functions" }>["
 });
 
 const databaseConfig: Extract<ServiceCreation, { service: "database" }>["config"] = {
-  version: "15",
   databasePassword: Redacted.make("postgres"),
   jwtSecret: Redacted.make("jwt-secret"),
   jwtExpiry: 3600,
@@ -144,11 +150,13 @@ const fixture = (
     let destroyed = false;
     const databaseCreation: Extract<ServiceCreation, { service: "database" }> = {
       service: "database",
+      pin: database15,
       config: databaseConfig,
       endpoints: { sql: { port: 54322 } },
     };
     const functionsCreation = (): Extract<ServiceCreation, { service: "functions" }> => ({
       service: "functions",
+      pin: selection.functions,
       config: currentFunctions,
       endpoints: { http: { port: 54321 } },
     });
@@ -311,9 +319,11 @@ const fixture = (
       findDeleted: () => Effect.die("unused"),
     } satisfies StackApi["Service"];
     const api = Layer.succeed(StackApi, apiService);
+    const recorder = recordingFileSystem();
     const layer = Layer.mergeAll(
       cliConfigValuesTestLayer,
       BunServices.layer,
+      recorder.layer,
       api,
       mockCommandSettings({
         workdir: options.standaloneProjectRoot ?? "/project",
@@ -328,6 +338,7 @@ const fixture = (
     );
     return {
       layer,
+      accessed: recorder.accessed,
       signal,
       started,
       output,
@@ -385,6 +396,69 @@ describe("experimental Stack Functions serve", () => {
         yield* Deferred.succeed(state.signal, undefined);
         yield* Fiber.join(run);
         expect(state.destroyed).toBe(true);
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("runs standalone Functions on the pin the project lock selects", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-locked-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "functions-locked"\n\n[edge_runtime]\nenabled = true\n',
+      );
+      const lockedFunctions = unbundled(selection.functions);
+      yield* seedLock(root, (services) => ({
+        ...services,
+        functions: { ...services.functions, resolved: lockedFunctions },
+      })).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            mockCommandSettings({ workdir: root, supabaseHome: "/home" }),
+            mockRuntimeInfo({ cwd: root, homeDir: "/home" }),
+          ),
+        ),
+      );
+      const state = yield* fixture({ standaloneProjectRoot: root });
+      const run = yield* functionsServeStack(flags()).pipe(
+        Effect.provide(state.layer),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.await(state.started);
+
+      expect(state.createdFunctions?.pin).toEqual(lockedFunctions);
+
+      yield* Deferred.succeed(state.signal, undefined);
+      yield* Fiber.join(run);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live(
+    "serves on the bundled pin without reading supabase/.temp, whatever a legacy pin says",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-no-legacy-state-" });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          'project_id = "functions-no-legacy-state"\n\n[edge_runtime]\nenabled = true\n',
+        );
+        seedLegacyStateDecoys(root);
+        const state = yield* fixture({ standaloneProjectRoot: root });
+        const run = yield* functionsServeStack(flags()).pipe(
+          Effect.provide(state.layer),
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Deferred.await(state.started);
+
+        expect(state.createdFunctions?.pin).toEqual(selection.functions);
+        expect(state.accessed.some((entry) => entry.endsWith("supabase.lock"))).toBe(true);
+        expect(legacyStateAccesses(state.accessed)).toEqual([]);
+
+        yield* Deferred.succeed(state.signal, undefined);
+        yield* Fiber.join(run);
       }).pipe(Effect.provide(BunServices.layer)),
   );
 

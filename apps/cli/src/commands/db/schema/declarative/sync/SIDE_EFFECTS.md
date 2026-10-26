@@ -15,7 +15,7 @@ cache described below; `--no-cache` bypasses it as well as the legacy backend ca
 Pg-delta runs in-process and uses two scoped shadow databases. Coverage gaps
 warn; `--strict-coverage` makes
 them fatal, while `PGDELTA_DEBUG` writes diagnostic JSON under
-`supabase/.temp/pgdelta/v2/debug/<id>/`. The engine may emit ordered
+`supabase/.temp/pgdelta/v2/debug/<id>/` (`<SUPABASE_HOME>/tmp/pgdelta/v2/debug/<id>/` in stack mode). The engine may emit ordered
 transaction-aware files; applicable, convergent SQL is the contract. `--no-cache`
 bypasses the engine's shadow baseline cache. The bundled formatter defaults to
 lowercase SQL
@@ -33,6 +33,8 @@ disabling safe compaction.
 | `<workdir>/supabase/schemas/.pgdelta-export.json`                           | JSON   | export metadata, when present                                                                                                                                                                                                                                                                      |
 | `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar`               | tar    | warm shadow-cache hit (migrations/declarative shadows); every cache-eligible acquire (warm hit and successful cold export) also enumerates and `stat`s every `shadow-baseline-*.tar` for LRU keep-3 + 2-day mtime TTL and may delete other keys (`SUPABASE_HOME` overrides the `~/.supabase` root) |
 | `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar.<pid>.partial` | tar    | abandoned-partial sweep on every cache-eligible acquire (warm hit and cold export) — enumerated and `stat`ed, and removed when older than 5 minutes (a crashed/SIGKILLed earlier export's leftover)                                                                                                |
+| `PGSSL*` PEM files                                                          | PEM    | no-files bootstrap on **Linked project**, when set; see `db push`                                                                                                                                                                                                                                  |
+| `pg_service.conf`                                                           | libpq  | no-files bootstrap on **Linked project**, when set; see `db push`                                                                                                                                                                                                                                  |
 
 ## Files Written
 
@@ -61,6 +63,7 @@ disabling safe compaction.
 | `SUPABASE_SERVICES_HOSTNAME` | local DB host for the bootstrap generate                                                                                                                                                                                                                                                                                    | no        |
 | `DOCKER_HOST`                | tcp daemon host used as the local DB host fallback                                                                                                                                                                                                                                                                          | no        |
 | `SUPABASE_USE_SLIM_IMAGES`   | resolves the current-pin shadow Postgres and PG15+ realtime/storage/auth migrate-job images from the slim `ghcr.io/supabase/cli` builds (`true`/`1` enable); majors 13/15 use `15.14.1.167` when the flag is on; historical pins, PG14, OrioleDB tags the catalog does not pin, and flag-off `15.8.1.085` stay on docker.io | no        |
+| `PG*` libpq                  | no-files bootstrap only, when the target prompt picks **Linked project**: remote-project TLS, timeout, service; see `db push`. Sync itself has no target flag                                                                                                                                                               | no        |
 
 ## Exit Codes
 
@@ -136,7 +139,7 @@ existing SQL or creates an export manifest.
   codes (a non-interactive run still fails with "no declarative schema found").
 - The migration apply is native (connects to the local DB and records migration
   history). On apply failure a debug bundle is written under
-  `supabase/.temp/pgdelta/debug/` and, in a TTY, a reset-and-reapply is offered
+  `supabase/.temp/pgdelta/debug/` (`<SUPABASE_HOME>/tmp/pgdelta/debug/` in stack mode) and, in a TTY, a reset-and-reapply is offered
   (the reset itself is native too — `resetLocalDatabase` — run in-process,
   sharing this command's own telemetry finalizer cycle rather than firing a
   second one from a child process).

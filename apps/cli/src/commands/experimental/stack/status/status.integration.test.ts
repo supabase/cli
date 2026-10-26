@@ -18,6 +18,8 @@ import { runtimeInfoLayer } from "../../../../shared/runtime/runtime-info.layer.
 import { StackApi, StackTargetResolver } from "../stack.shared.ts";
 import type { StackStatusFlags } from "./status.command.ts";
 import { stackStatus } from "./status.handler.ts";
+import { selection } from "../../../../../tests/helpers/pins.ts";
+import { seedLock } from "../../../../../tests/helpers/stack-lock.ts";
 import { cliConfigValuesTestLayer } from "../../../../../tests/helpers/config-values-layer.ts";
 
 const stackId = "a".repeat(64);
@@ -41,8 +43,8 @@ const savedCredentials: StackCredentials = {
 };
 const database: ServiceCreation = {
   service: "database",
+  pin: selection.database,
   config: {
-    version: "17",
     databasePassword: Redacted.make("postgres"),
     jwtSecret: Redacted.make(jwtSecret),
     jwtExpiry: 3600,
@@ -51,21 +53,25 @@ const database: ServiceCreation = {
 };
 const rest: ServiceCreation = {
   service: "rest",
+  pin: selection.rest,
   config: {},
   endpoints: { http: { port: 54321 } },
 };
 const auth: ServiceCreation = {
   service: "auth",
+  pin: selection.auth,
   config: { jwtSecret },
   endpoints: { http: { port: 54321 } },
 };
 const studio: ServiceCreation = {
   service: "studio",
+  pin: selection.studio,
   config: {},
   endpoints: { http: { port: 54323 } },
 };
 const functions: ServiceCreation = {
   service: "functions",
+  pin: selection.functions,
   config: {
     functionsRoot: "/project/supabase/functions",
     bootstrap: "export default {};",
@@ -75,8 +81,9 @@ const functions: ServiceCreation = {
 };
 const storage = (s3ProtocolEnabled: boolean): ServiceCreation => ({
   service: "storage",
+  pin: selection.storage,
   config: {
-    filePath: "/project/supabase/.temp/stack-uploads",
+    filePath: "/home/stacks/stack-id/uploads",
     jwtSecret,
     s3ProtocolEnabled,
     s3AccessKeyId: "local-access-key",
@@ -274,6 +281,8 @@ const runStatus = (input: {
       BunServices.layer,
       runtimeInfoLayer,
     );
+    if (input.config === "explicit" || input.config === "multiline-functions-env")
+      yield* seedLock(root).pipe(Effect.provide(layer));
     const effect = stackStatus(input.flags ?? flags()).pipe(Effect.provide(layer));
     return { effect, out, root };
   }).pipe(Effect.provide(BunServices.layer));
@@ -670,7 +679,8 @@ it.effect("omits Storage S3 details for a Storage member saved without S3 keys",
     const env = yield* runStatus({
       services: storageServices({
         service: "storage",
-        config: { filePath: "/project/supabase/.temp/stack-uploads", jwtSecret },
+        pin: selection.storage,
+        config: { filePath: "/home/stacks/stack-id/uploads", jwtSecret },
         endpoints: { http: { port: 54321 } },
       }),
       reachable: true,
@@ -798,8 +808,8 @@ it.effect("derives DB_URL using the postgres role and a non-default saved passwo
     const password = "p@ss w/ord!";
     const customDatabase: ServiceCreation = {
       service: "database",
+      pin: selection.database,
       config: {
-        version: "17",
         databasePassword: Redacted.make(password),
         jwtSecret: Redacted.make(jwtSecret),
         jwtExpiry: 3600,

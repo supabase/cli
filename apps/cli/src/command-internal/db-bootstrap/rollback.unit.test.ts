@@ -71,7 +71,7 @@ describe("rollbackStart", () => {
         false,
         "/tmp/rollback-unit-test-workdir",
         false,
-      );
+      ).pipe(Effect.provide(BunServices.layer));
       expect(stderr).toHaveBeenCalledTimes(1);
       expect(stderr).toHaveBeenCalledWith("Stopping containers...\n");
       expect(mock.spawned.map((args) => args[0])).toEqual(["ps", "container", "network"]);
@@ -87,7 +87,7 @@ describe("rollbackStart", () => {
         true,
         "/tmp/rollback-unit-test-workdir",
         false,
-      );
+      ).pipe(Effect.provide(BunServices.layer));
       expect(mock.spawned.map((args) => args[0])).toEqual([
         "ps",
         "container",
@@ -108,7 +108,7 @@ describe("rollbackStart", () => {
         false,
         "/tmp/rollback-unit-test-workdir",
         false,
-      );
+      ).pipe(Effect.provide(BunServices.layer));
       expect(stderr).toHaveBeenCalledTimes(2);
       expect(stderr).toHaveBeenNthCalledWith(1, "Stopping containers...\n");
       expect(stderr).toHaveBeenNthCalledWith(2, "failed to list containers: permission denied\n");
@@ -125,7 +125,7 @@ describe("rollbackStart", () => {
         false,
         "/tmp/rollback-unit-test-workdir",
         false,
-      );
+      ).pipe(Effect.provide(BunServices.layer));
       expect(stderr).toHaveBeenCalledTimes(2);
       expect(stderr).toHaveBeenNthCalledWith(1, "Stopping containers...\n");
       expect(stderr).toHaveBeenNthCalledWith(2, "failed to list containers\n");

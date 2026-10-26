@@ -1,3 +1,4 @@
+import { scratchDir } from "../../command-internal/scratch-paths.ts";
 import { brotliCompressSync, constants as zlibConstants } from "node:zlib";
 import { URL } from "node:url";
 import {
@@ -76,7 +77,7 @@ const SUPABASE_FUNCTIONS_DIR = "supabase/functions";
 const IMPORT_MAP_GUIDE_URL = "https://supabase.com/docs/guides/functions/import-maps";
 const WINDOWS_ABSOLUTE_PATH = /^[A-Za-z]:\//;
 const importPathPattern =
-  /(?:import|export)\s+(?:type\s+)?(?:{[^{}]+}|.*?)\s*(?:from)?\s*['"](.*?)['"]|import\(\s*['"](.*?)['"]\)/gi;
+  /(?:import|export)\s+(?:type\s+)?(?:{[^{}]+}|.*?)\s*(?:from)?\s*['"](.*?)['"]|import\(\s*(?:"([^"\r\n]*)"|'([^'\r\n]*)')\s*[,)]/gi;
 
 export function shouldChmodBundleOutputDirectory(platform: NodeJS.Platform) {
   return platform !== "win32";
@@ -848,7 +849,7 @@ const walkImportPaths = Effect.fnUntraced(function* <
     const text = new TextDecoder().decode(contents.value);
     importPathPattern.lastIndex = 0;
     for (const match of text.matchAll(importPathPattern)) {
-      const raw = match[1] ?? match[2];
+      const raw = match[1] ?? match[2] ?? match[3];
       if (raw === undefined) {
         continue;
       }
@@ -1565,7 +1566,7 @@ const bundleFunctionWithDocker = Effect.fn("functions.deploy.bundleWithDocker")(
   const path = yield* Path.Path;
   yield* output.raw(`Bundling Function: ${styleEmphasis(config.slug)}\n`, "stderr");
 
-  const outputRoot = path.resolve(functionsDir, "..", ".temp");
+  const outputRoot = yield* scratchDir(path.resolve(functionsDir, "..", ".."));
   yield* fs
     .makeDirectory(outputRoot, { recursive: true })
     .pipe(Effect.mapError(unknownHostError(outputRoot)));

@@ -26,6 +26,7 @@ packages/stack/src/functions/generated/* text eol=lf linguist-generated=true
 apps/cli/src/shared/feedback/database.types.ts linguist-generated=true
 apps/docs/public/cli/config.schema.json linguist-generated=true
 apps/docs/public/cli/project-config.schema.json linguist-generated=true
+apps/docs/public/cli/supabase-lock/v1.schema.json linguist-generated=true
 
 # Lockfiles. Collapsed rather than hidden -- a dependency change is still one
 # click away in review, which is the same treatment GitHub gives package-lock.json.

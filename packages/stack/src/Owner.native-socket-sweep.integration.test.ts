@@ -19,11 +19,12 @@ import { NativeRuntimeRootBase, nativeRuntimeRootPath } from "./runtime/postgres
 import { ServiceCreation } from "./services/Catalog.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 import { reclaimStack } from "./Sweep.ts";
+import { selection } from "../tests/pins.ts";
 
 const databaseCreation = Schema.decodeEffect(ServiceCreation)({
   service: "database",
+  pin: selection.database,
   config: {
-    version: "17",
     databasePassword: Redacted.make("sweep-password"),
     jwtSecret: Redacted.make("sweep-integration-jwt-secret-long-enough"),
     jwtExpiry: 3600,

@@ -5,7 +5,7 @@ import type { ServiceCreationInput } from "@supabase/stack/effect";
 import { orioledbVersions } from "@supabase/stack/internal/artifacts";
 import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
 
-import { withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
+import { mockCommandSettings, withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
 import { loadStackConfig } from "../../../command-internal/stack-config.ts";
 import { createStackConfigProject } from "../../../../tests/helpers/stack-config.ts";
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
@@ -21,7 +21,14 @@ const project = (
 
 const load = (projectRoot: string) =>
   loadStackConfig(projectRoot).pipe(
-    Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer, cliConfigValuesTestLayer)),
+    Effect.provide(
+      Layer.mergeAll(
+        BunServices.layer,
+        runtimeInfoLayer,
+        mockCommandSettings({ workdir: projectRoot }),
+        cliConfigValuesTestLayer,
+      ),
+    ),
   );
 
 const withEnvironment = <A, E, R>(

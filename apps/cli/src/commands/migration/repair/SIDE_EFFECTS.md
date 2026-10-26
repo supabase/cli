@@ -9,6 +9,7 @@ Target: selectable, consent default No — see [Command target](../../../../docs
 | `<workdir>/supabase/config.toml`               | TOML       | always, for the `[db]` settings, with a matched `[remotes.<ref>]` block over the base for a remote project (flag > shell env > project `.env*` > config)                               |
 | `~/.supabase/access-token`                     | plain text | when `SUPABASE_ACCESS_TOKEN` unset and the target is a remote project (or a branch is looked up)                                                                                       |
 | `<workdir>/supabase/.temp/project-ref`         | plain text | a remote project: resolves the ref (bare `--remote` with no `SUPABASE_PROJECT_ID`) and tells whether it is the linked project; with no selector, only to word the linked-checkout hint |
+| `PGSSL*` PEM, `pg_service.conf`                | PEM, libpq | remote project, when set; see `db push`                                                                                                                                                |
 | `<workdir>/supabase/.temp/linked-project.json` | JSON       | to name the project in the `Target:` banner and the linked-checkout hint, and as the parent project for `--remote=<branch>`                                                            |
 | `<workdir>/supabase/migrations/`               | directory  | `--status applied` (the matching file per version) and repair-all (every local version), before connecting                                                                             |
 
@@ -41,6 +42,7 @@ Local targets and database URLs make none.
 | `SUPABASE_DB_PASSWORD`  | password for the remote project's database connection (`--password`/`-p` takes precedence) | no                                                      |
 | `SUPABASE_PROJECT_ID`   | project ref for a bare `--remote`, and the parent project for `--remote=<branch>`          | no                                                      |
 | `SUPABASE_YES`          | confirms a hosted repair when exported in the shell (the project `.env` does not count)    | no                                                      |
+| `PG*` libpq             | remote project; see `db push`                                                              | no                                                      |
 
 ## Exit Codes
 

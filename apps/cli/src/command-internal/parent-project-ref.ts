@@ -2,73 +2,25 @@ import { Effect, FileSystem, Option, Path } from "effect";
 
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { PROJECT_REF_PATTERN } from "../config/project-ref.service.ts";
-import { readProjectRefFile, tempPaths } from "../shared/config/temp-paths.ts";
+import { type CachedLinkedProject, readLinkSnapshotSoft } from "../shared/config/link-snapshot.ts";
 
 export type ParentRefResolution =
   | {
       readonly kind: "resolved";
       readonly ref: string;
-      /** The `project-ref` ref when it differs from the cached parent; the parent must list it. */
+      /** The linked ref when it differs from the recorded parent; the parent must list it. */
       readonly linkedRef?: string;
     }
   | { readonly kind: "invalid" }
   | { readonly kind: "absent" };
 
-/** The `linked-project.json` fields callers read; all but `ref` are present only when non-empty. */
-export interface CachedLinkedProject {
-  readonly ref: string;
-  readonly name?: string;
-  readonly organizationSlug?: string;
-  readonly organizationId?: string;
-}
-
-function readOptionalCacheString(record: Record<string, unknown>, key: string): string | undefined {
-  const value = record[key];
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-/** Parses `linked-project.json`; malformed JSON or a missing `ref` is `None`, never a failure. */
-export function parseCachedLinkedProject(content: string): Option.Option<CachedLinkedProject> {
-  try {
-    const parsed: unknown = JSON.parse(content);
-    if (isRecord(parsed)) {
-      const ref = parsed.ref;
-      if (typeof ref === "string" && ref.length > 0) {
-        const name = readOptionalCacheString(parsed, "name");
-        const organizationSlug = readOptionalCacheString(parsed, "organization_slug");
-        const organizationId = readOptionalCacheString(parsed, "organization_id");
-        return Option.some({
-          ref,
-          ...(name === undefined ? {} : { name }),
-          ...(organizationSlug === undefined ? {} : { organizationSlug }),
-          ...(organizationId === undefined ? {} : { organizationId }),
-        });
-      }
-    }
-  } catch {
-    // Malformed JSON degrades to "no candidate", same as a missing file.
-  }
-  return Option.none();
-}
-
-/** Reads and parses `<workdir>/supabase/.temp/linked-project.json`; any failure is `None`. */
+/** The parent project the checkout's link records; any read failure is `None`. */
 export const readCachedLinkedProject = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
 ): Effect.Effect<Option.Option<CachedLinkedProject>> =>
-  fs.readFileString(tempPaths(path, workdir).linkedProjectCache).pipe(
-    Effect.map(parseCachedLinkedProject),
-    Effect.orElseSucceed(() => Option.none<CachedLinkedProject>()),
-  );
-
-function parseCachedParentRef(content: string): Option.Option<string> {
-  return Option.map(parseCachedLinkedProject(content), (project) => project.ref);
-}
+  readLinkSnapshotSoft(fs, path, workdir).pipe(Effect.map((snapshot) => snapshot.parent));
 
 function classifyParentCandidates(
   candidates: ReadonlyArray<Option.Option<string>>,
@@ -87,44 +39,39 @@ function classifyParentCandidates(
 
 /**
  * The linked parent project ref, not the branch's own ref that `resolve` returns right after
- * `link <branch>`: `SUPABASE_PROJECT_ID`, then the `linked-project.json` cache, then `project-ref`.
+ * `link <branch>`: `SUPABASE_PROJECT_ID`, then the link's recorded parent, then the linked ref.
  */
-export const resolveLinkedParentRef = Effect.fnUntraced(function* () {
+export const resolveLinkedParentRef = Effect.fn("ParentProjectRef.resolveLinked")(function* () {
   const cliSettings = yield* CommandSettings;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const paths = tempPaths(path, cliSettings.workdir);
+  const snapshot = yield* readLinkSnapshotSoft(fs, path, cliSettings.workdir);
+  const linkedRef = snapshot.ref;
 
-  const fileRef = yield* readProjectRefFile(fs, path, cliSettings.workdir).pipe(
-    Effect.orElseSucceed(() => Option.none<string>()),
-  );
-  // The cache alone isn't proof a link completed — `link` writes it on both success and
-  // failure — so only read it as parent recovery when the temp file confirms a link happened.
-  const cachedRef = Option.isSome(fileRef)
-    ? yield* fs.readFileString(paths.linkedProjectCache).pipe(
-        Effect.map(parseCachedParentRef),
-        Effect.orElseSucceed(() => Option.none<string>()),
-      )
+  // The recorded parent alone isn't proof a link completed — legacy `link` writes it on both
+  // success and failure — so it counts only when the linked ref confirms the link.
+  const cachedRef = Option.isSome(linkedRef)
+    ? Option.map(snapshot.parent, (parent) => parent.ref)
     : Option.none<string>();
 
-  // An env ref equal to the file's valid ref adds no parent information; drop it so the cache wins.
-  // Pattern-valid only, so a garbage env equal to a garbage file stays invalid.
+  // An env ref equal to the valid linked ref adds no parent information; drop it so the recorded
+  // parent wins. Pattern-valid only, so a garbage env equal to a garbage link stays invalid.
   const envRef =
     Option.isSome(cliSettings.projectId) &&
-    Option.isSome(fileRef) &&
-    cliSettings.projectId.value === fileRef.value &&
+    Option.isSome(linkedRef) &&
+    cliSettings.projectId.value === linkedRef.value &&
     PROJECT_REF_PATTERN.test(cliSettings.projectId.value)
       ? Option.none<string>()
       : cliSettings.projectId;
 
-  const parent = classifyParentCandidates([envRef, cachedRef, fileRef]);
+  const parent = classifyParentCandidates([envRef, cachedRef, linkedRef]);
   if (parent.kind !== "resolved" || Option.isSome(envRef) || Option.isNone(cachedRef))
     return parent;
-  const linkedRef = Option.filter(
-    fileRef,
+  const branchRef = Option.filter(
+    linkedRef,
     (ref) => ref !== parent.ref && PROJECT_REF_PATTERN.test(ref),
   );
-  return Option.isSome(linkedRef) ? { ...parent, linkedRef: linkedRef.value } : parent;
+  return Option.isSome(branchRef) ? { ...parent, linkedRef: branchRef.value } : parent;
 });
 
 /** A hint for a value that looks like a mistyped project ref; empty otherwise. */

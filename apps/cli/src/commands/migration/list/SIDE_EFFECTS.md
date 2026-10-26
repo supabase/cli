@@ -11,6 +11,7 @@ Target: selectable, no consent — see [Command target](../../../../docs/command
 | `<workdir>/supabase/.temp/project-ref`         | plain text | a remote project: resolves the ref (bare `--remote` with no `SUPABASE_PROJECT_ID`) and tells whether it is the linked project; with no selector, only to word the linked-checkout hint |
 | `<workdir>/supabase/.temp/linked-project.json` | JSON       | to name the project in the `Target:` banner and the linked-checkout hint, and as the parent project for `--remote=<branch>`                                                            |
 | `<workdir>/supabase/migrations/`               | directory  | always, to list local migration files                                                                                                                                                  |
+| `PGSSL*` PEM, `pg_service.conf`                | PEM, libpq | remote project, when set; see `db push`                                                                                                                                                |
 
 ## Files Written
 
@@ -40,6 +41,7 @@ Local targets and database URLs make none.
 | `SUPABASE_ACCESS_TOKEN` | auth token for a remote project                                                   | no (falls back to keyring → `~/.supabase/access-token`) |
 | `SUPABASE_DB_PASSWORD`  | password for the remote project's database connection (`--password`/`-p` wins)    | no                                                      |
 | `SUPABASE_PROJECT_ID`   | project ref for a bare `--remote`, and the parent project for `--remote=<branch>` | no                                                      |
+| `PG*` libpq             | remote project; see `db push`                                                     | no                                                      |
 
 ## Exit Codes
 

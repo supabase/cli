@@ -194,6 +194,17 @@ service identities. Postgres-only first create skips analytics and
 pooler artifact downloads. If first initialization fails after the database is created, the
 new database is destroyed so the command can be retried after fixing the cause. If cleanup itself
 fails, stderr identifies the incomplete instance and recommends `supabase stack destroy`.
+Resuming a stopped database whose saved pin differs from the selected one in anything but a
+slim-services revision rebinds the same instance to the selected pin before starting; its id and
+data stay. Initialized data accepts only a revision of its own build, so another build, line or
+major fails with advice to run `supabase stack destroy`. Auth, Storage and Realtime must not be
+selected at an older upstream than one that already migrated the database (recorded in
+`schema-writers.json` in the instance data directory); such a start fails with the same advice.
+The database version comes from `supabase/supabase.lock`, resolved and written under the
+project lease exactly as `supabase start` does (see its `SIDE_EFFECTS.md`, "Service versions and
+the lock"), except that there is no `--frozen` flag: a missing or stale lock is resolved, unless
+`CI` is set and a lock exists, in which case a stale lock fails. The lock covers every service,
+not only the database.
 The resident owner process manages the database beyond the CLI invocation. Stack mode rejects
 `--from-backup` with exit code 1.
 

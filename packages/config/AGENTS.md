@@ -97,8 +97,7 @@ surface must update that test deliberately — it is not meant to be a silent pa
    every `dist`/`types`/`default` export condition points at.
 2. Renders both generated JSON Schema artifacts (`dist/schema.json`, `dist/project-schema.json`)
    from `toCliConfigJsonSchema()`/`toProjectConfigJsonSchema()`, post-processed (via
-   `scripts/json-schema-postprocess.ts`) to collapse Effect's non-finite-number `anyOf` encoding
-   back to a plain `number`/`integer` node and to add `$id`/`title`/`description`, then formatted
+   `scripts/json-schema-postprocess.ts`) to add `$id`/`title`/`description`, then formatted
    through `oxfmt`.
 3. Verifies every `types`/non-`bun` `default` target (plus both JSON artifacts) declared in
    package.json's `exports` map actually exists on disk.
@@ -148,8 +147,9 @@ own guarantees and must stay green after any entrypoint or type-surface change:
   directory.
 - `src/lib/resolve.unit.test.ts` — behavioral coverage of the public sync resolvers.
 - `scripts/json-schema-postprocess.unit.test.ts` / `scripts/build-artifacts.unit.test.ts` — the
-  JSON Schema post-processing `renderJsonSchema` applies (non-finite-number `anyOf` collapse,
-  `$id`/`title`/`description`), the second against the real generated documents.
+  `$id`/`title`/`description` metadata `withSchemaMetadata` adds, and, against the real generated
+  documents, that every config number schema is finite (no non-finite `anyOf` split reaches the
+  published artifacts).
 
 ## Releases (CLI-2233)
 

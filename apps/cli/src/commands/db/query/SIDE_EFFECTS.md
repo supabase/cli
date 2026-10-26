@@ -21,6 +21,7 @@ stack never prompts.
 | `~/.supabase/access-token`           | plain text | a remote project or branch when `SUPABASE_ACCESS_TOKEN` unset                                                                                 |
 | `supabase/.temp/project-ref`         | plain text | bare `--remote`, ref resolution — skipped when `SUPABASE_PROJECT_ID` is set; with no selector, only to name the project in the `Target:` hint |
 | `supabase/.temp/linked-project.json` | JSON       | a remote project or branch, existence check before the cache write (see below)                                                                |
+| `PGSSL*` PEM, `pg_service.conf`      | PEM, libpq | remote project, when set; see `db push`                                                                                                       |
 
 ## Files Written
 
@@ -45,6 +46,7 @@ stack never prompts.
 | `SUPABASE_PROJECT_ID`   | linked project ref override and the parent that `--remote=<branch>` is resolved against (superseded by `--remote=<ref>`) |
 | `SUPABASE_YES`          | grants the hosted-target confirmation (shell only; `supabase/.env` is ignored)                                           |
 | agent-detection signals | `--agent=auto` (e.g. `CURSOR_*`, `CLAUDECODE`, …) via `@vercel/detect-agent`                                             |
+| `PG*` libpq             | remote-project TLS, timeout, service; see `db push`                                                                      |
 
 ## Exit Codes
 

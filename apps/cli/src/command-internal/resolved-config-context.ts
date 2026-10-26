@@ -1,10 +1,11 @@
 import type { CliConfig } from "@supabase/config";
-import { Effect, Option } from "effect";
+import { Effect, Option, Predicate } from "effect";
 
 import { CliConfigKeys } from "../config/cli-config-keys.ts";
 import { CliConfigValues } from "../config/cli-config-values.service.ts";
 import type { ResolvedCliConfig } from "../config/cli-config-values.service.ts";
 import { CliConfigLoadError } from "../shared/config/cli-config-load.errors.ts";
+import { configParseCauseMessage } from "../shared/output/normalize-error.ts";
 import { getHostname } from "./hostname.ts";
 
 /** The resolved config with the materialized config, project env values and declared document its readers take. */
@@ -69,15 +70,17 @@ export const resolvePasskeyWebauthn = Effect.fn("ResolvedConfigContext.passkeyWe
 
 /** The failure text commands report when the resolved config cannot be loaded. */
 export const describeConfigLoadFailure = (cause: unknown): string =>
-  typeof cause === "object" &&
-  cause !== null &&
-  "_tag" in cause &&
-  (cause._tag === "CliConfigValueError" ||
-    cause._tag === "CliConfigFlagConflictError" ||
-    cause._tag === "CliConfigLoadError" ||
-    cause._tag === "CliConfigRemovedKeyError" ||
-    cause._tag === "CliConfigRemovedEnvError") &&
-  "message" in cause &&
-  typeof cause.message === "string"
-    ? cause.message
-    : `failed to read config: ${String(cause)}`;
+  Predicate.isTagged(cause, "CliConfigParseError") && "cause" in cause
+    ? `failed to read config: ${configParseCauseMessage(cause.cause)}`
+    : typeof cause === "object" &&
+        cause !== null &&
+        "_tag" in cause &&
+        (cause._tag === "CliConfigValueError" ||
+          cause._tag === "CliConfigFlagConflictError" ||
+          cause._tag === "CliConfigLoadError" ||
+          cause._tag === "CliConfigRemovedKeyError" ||
+          cause._tag === "CliConfigRemovedEnvError") &&
+        "message" in cause &&
+        typeof cause.message === "string"
+      ? cause.message
+      : `failed to read config: ${String(cause)}`;

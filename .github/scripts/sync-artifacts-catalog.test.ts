@@ -57,12 +57,6 @@ const manifestWithUpstreamImage =
   async () =>
     JSON.stringify({ upstream_image: image });
 
-/** A `fetchProvenance` returning a mirrored service's `source`. */
-const provenanceWithSource =
-  (source: string): RevisionIo["fetchProvenance"] =>
-  async () =>
-    JSON.stringify({ source });
-
 const unusedFetchManifest: RevisionIo["fetchManifest"] = async () => {
   throw new Error("fetchManifest should not be called for this service");
 };
@@ -1510,20 +1504,42 @@ describe("refreshCatalogPin backfills upstreamImage", () => {
     );
   });
 
-  test("resolves a mirrored service's upstreamImage from its oci-provenance source", async () => {
+  const mirroredIo = (provenanceLine: (provenance: string) => string | undefined): RevisionIo => {
     const digests = nativeDigests("ag");
-    const io: RevisionIo = {
+    const provenance = JSON.stringify({ source: "docker.io/timberio/vector:0.53.0-alpine" });
+    const line = provenanceLine(provenance);
+    return {
       listReleaseTags: async () => ["vector-0.53.0-r0"],
-      fetchChecksums: async () => checksumsFor("vector", "0.53.0-r0", digests),
+      fetchChecksums: async () =>
+        [checksumsFor("vector", "0.53.0-r0", digests), line]
+          .filter((entry) => entry !== undefined)
+          .join("\n"),
       imageDigest: async () => digest("ah"),
       s3Sha256: matchingS3("vector", "0.53.0-r0", digests),
       fetchManifest: unusedFetchManifest,
-      fetchProvenance: provenanceWithSource("docker.io/timberio/vector:0.53.0-alpine"),
+      fetchProvenance: async () => provenance,
     };
+  };
+
+  test("resolves a mirrored service's upstreamImage from its oci-provenance source", async () => {
+    const io = mirroredIo((provenance) => `${hex(provenance)}  vector-0.53.0.oci-provenance.json`);
 
     const result = await refreshCatalogPin({ catalog: vectorFixture, service: "vector", io });
 
     expect(result.source).toContain('upstreamImage: "timberio/vector:0.53.0-alpine"');
+  });
+
+  test.each([
+    ["has no SHA256SUMS line", () => undefined, /has no line for vector-0\.53\.0\.oci-provenance/],
+    [
+      "does not match SHA256SUMS",
+      () => `${hex("other")}  vector-0.53.0.oci-provenance.json`,
+      /does not match SHA256SUMS/,
+    ],
+  ])("rejects an oci-provenance file that %s", async (_name, line, message) => {
+    await expect(
+      refreshCatalogPin({ catalog: vectorFixture, service: "vector", io: mirroredIo(line) }),
+    ).rejects.toThrow(message);
   });
 
   test("rejects a manifest upstream_image carrying a quote or template expression, writing nothing", async () => {

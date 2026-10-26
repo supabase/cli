@@ -1,7 +1,7 @@
 import { Effect, FileSystem, Option, Path } from "effect";
 
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
-import { isCheckoutLinked } from "../../../../shared/config/temp-paths.ts";
+import { isCheckoutLinked } from "../../../../shared/config/link-snapshot.ts";
 import { DnsResolverFlag } from "../../../../command-internal/global-flags.ts";
 import { resetLocalDatabase } from "../../../../command-internal/db-bootstrap/reset-local-database.ts";
 import { DbConfigResolver } from "../../../../command-internal/db-config.service.ts";

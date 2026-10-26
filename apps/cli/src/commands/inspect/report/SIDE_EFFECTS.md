@@ -17,6 +17,7 @@ validating those CSVs.
 | `<workdir>/supabase/.temp/linked-project.json` | JSON       | to name the project in the `Target:` banner and the linked-checkout hint, and as the parent project for `--remote=<branch>`                                                            |
 | `~/.supabase/access-token`                     | plain text | when `SUPABASE_ACCESS_TOKEN` unset and the target is a remote project (or a branch is looked up)                                                                                       |
 | `<output-dir>/<YYYY-MM-DD>/<name>.csv` ×14     | CSV        | read back in-memory for rule evaluation                                                                                                                                                |
+| `PGSSL*` PEM, `pg_service.conf`                | PEM, libpq | remote project, when set; see `db push`                                                                                                                                                |
 
 A **missing** `config.toml` is fine (defaults apply); a
 **malformed** file, an invalid value (including a non-string rule field such as `query = 123` or
@@ -84,6 +85,7 @@ with that error instead.
 | `SUPABASE_PROFILE`      | built-in profile name or YAML file path                                           | no (falls back to `~/.supabase/profile` -> `supabase`) |
 | `SUPABASE_DB_*`         | override `[db]` port / shadow_port / password                                     | no                                                     |
 | `SUPABASE_ENV`          | selects which project `.env` files load                                           | no                                                     |
+| `PG*` libpq             | remote-project TLS, timeout, service; see `db push`                               | no                                                     |
 
 ## Exit Codes
 

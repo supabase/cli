@@ -4,12 +4,8 @@ import * as HttpClientError from "effect/http/HttpClientError";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { BRANCH_LOOKUP_TIMEOUT, findBranchName } from "../../../command-internal/branch-target.ts";
-import {
-  type CachedLinkedProject,
-  parseCachedLinkedProject,
-} from "../../../command-internal/parent-project-ref.ts";
 import { BRANCH_PROJECT_REF_PATTERN } from "../../../command-internal/ref-patterns.ts";
-import { readProjectRefFile, tempPaths } from "../../../shared/config/temp-paths.ts";
+import { readLinkSnapshotSoft } from "../../../shared/config/link-snapshot.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 
 /**
@@ -63,7 +59,7 @@ const ProbeOutcome = Data.taggedEnum<ProbeOutcome>();
  * Resolves what `ref` is so `config push` can tell a branch from the linked project. Never fails,
  * since this diagnostic must not abort a push: `GET /v1/projects/{ref}` (bounded at
  * {@link BRANCH_LOOKUP_TIMEOUT}) is a project on 200, `"unknown"` on any other failure, and on a
- * 404 recovers the parent and name from `.temp` when they can be trusted.
+ * 404 recovers the parent and name from the link when they can be trusted.
  */
 export function resolveConfigPushTarget(
   ref: string,
@@ -77,11 +73,8 @@ export function resolveConfigPushTarget(
     const cliSettings = yield* CommandSettings;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const linkedProjectCachePath = tempPaths(path, cliSettings.workdir).linkedProjectCache;
-    const readCachedParent = fs.readFileString(linkedProjectCachePath).pipe(
-      Effect.map(parseCachedLinkedProject),
-      Effect.orElseSucceed(() => Option.none<CachedLinkedProject>()),
-    );
+    const readSnapshot = readLinkSnapshotSoft(fs, path, cliSettings.workdir);
+    const readCachedParent = readSnapshot.pipe(Effect.map((snapshot) => snapshot.parent));
 
     if (opts.knownBranch?.kind === "name") {
       const { branchName, parentRef } = opts.knownBranch;
@@ -126,7 +119,7 @@ export function resolveConfigPushTarget(
     }
 
     // Shared recovery for a confirmed branch whose name/parent aren't known yet. Reads
-    // .temp/project-ref only once there's a cache candidate to correlate it against, so the
+    // the linked ref only once there's a cache candidate to correlate it against, so the
     // common cache-absent path skips a second filesystem read.
     const cached = yield* readCachedParent;
     const candidateParentRef =
@@ -139,9 +132,7 @@ export function resolveConfigPushTarget(
       return { kind: "branch", ref };
     }
 
-    const fileRef = yield* readProjectRefFile(fs, path, cliSettings.workdir).pipe(
-      Effect.orElseSucceed(() => Option.none<string>()),
-    );
+    const fileRef = (yield* readSnapshot).ref;
     const branchName = normalizeApiName(
       yield* findBranchName(candidateParentRef, ref, {
         spinnerLabel: "Checking branch name...",

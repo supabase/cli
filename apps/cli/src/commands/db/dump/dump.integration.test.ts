@@ -92,6 +92,7 @@ import type { DbDumpFlags } from "./dump.command.ts";
 import { dbDump } from "./dump.handler.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { StackApi } from "../../../command-internal/stack-api.ts";
+import { selection } from "../../../../tests/helpers/pins.ts";
 
 const LOCAL_CONN: PgConnInput = {
   host: "127.0.0.1",
@@ -112,8 +113,8 @@ const managedDumpStackApi = (runtime: "native" | "docker") => {
   const id = "m".repeat(64);
   const creation: Extract<ServiceCreation, { service: "database" }> = {
     service: "database",
+    pin: selection.database,
     config: {
-      version: "17.6.1.173",
       databasePassword: Redacted.make("secret"),
       jwtSecret: Redacted.make("secret"),
       jwtExpiry: 3600,
@@ -907,6 +908,254 @@ describe("db dump integration", () => {
     },
   );
 
+  const writePem = (name: string) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const file = path.join(tmp.current, name);
+      yield* fs.writeFileString(file, "-----BEGIN CERTIFICATE-----\n");
+      return file;
+    });
+
+  it.effect("hands the linked project's TLS settings to the pg_dump container", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const root = yield* writePem("root.crt");
+      const cert = yield* writePem("client.crt");
+      const key = yield* writePem("client.key");
+      const { layer, docker } = setup({
+        conn: {
+          ...REMOTE_CONN,
+          sslmode: "verify-full",
+          sslrootcert: root,
+          sslcert: path.relative(process.cwd(), cert),
+          sslkey: key,
+          connectTimeoutSeconds: 7,
+        },
+        isLocal: false,
+      });
+      yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(Effect.provide(layer));
+      expect(docker.lastOpts?.env).toMatchObject({
+        PGHOST: REMOTE_CONN.host,
+        PGSSLMODE: "verify-full",
+        PGSSLROOTCERT: "/run/supabase/tls/root.crt",
+        PGSSLCERT: "/run/supabase/tls/client.crt",
+        PGSSLKEY: "/tmp/supabase-client.key",
+        PGCONNECT_TIMEOUT: "7",
+      });
+      expect(docker.lastOpts?.cmd[2]).toContain(
+        "(umask 077 && cp /run/supabase/tls/client.key /tmp/supabase-client.key) || exit 1\n",
+      );
+      expect(docker.lastOpts?.binds).toEqual([
+        `${root}:/run/supabase/tls/root.crt:ro`,
+        `${cert}:/run/supabase/tls/client.crt:ro`,
+        `${key}:/run/supabase/tls/client.key:ro`,
+      ]);
+      expect(docker.lastOpts?.securityOpt).toEqual(["label:disable"]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("fails before pg_dump runs when a TLS file is missing", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const missing = path.join(tmp.current, "missing.crt");
+      const { layer, docker } = setup({
+        conn: { ...REMOTE_CONN, sslmode: "verify-full", sslrootcert: missing },
+        isLocal: false,
+      });
+      const exit = yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+      expect(failMessage(exit)).toContain(`failed to read sslrootcert ${missing}`);
+      expect(docker.allOpts).toHaveLength(0);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("uses the image CA bundle without a host root cert", () =>
+    Effect.forEach(["system", undefined], (sslrootcert) => {
+      const { layer, docker } = setup({
+        conn: { ...REMOTE_CONN, sslmode: "verify-full", sslrootcert },
+        isLocal: false,
+      });
+      return Effect.gen(function* () {
+        yield* dbDump(flags({ remote: REMOTE_LINKED }));
+        expect(docker.lastOpts?.env["PGSSLROOTCERT"]).toBe("/etc/ssl/certs/ca-certificates.crt");
+        expect(docker.lastOpts?.binds).toEqual([]);
+        expect(docker.lastOpts?.securityOpt).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("mounts the linked project's TLS files into a Windows tool container", () =>
+    Effect.gen(function* () {
+      const root = yield* writePem("root.crt");
+      const { layer, bundled } = setup({
+        conn: { ...REMOTE_CONN, sslmode: "verify-full", sslrootcert: root },
+        isLocal: false,
+        platform: "win32",
+        stdout: "",
+      });
+      yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(
+        Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))),
+      );
+      expect(bundled.lastOpts?.runtime).toEqual({ kind: "container", engine: "docker" });
+      expect(bundled.lastOpts?.env).toMatchObject({
+        PGSSLMODE: "verify-full",
+        PGSSLROOTCERT: "/run/supabase/tls/root.crt",
+      });
+      expect(bundled.lastOpts?.mounts).toEqual([
+        { source: root, target: "/run/supabase/tls/root.crt", readOnly: true },
+      ]);
+      expect(bundled.lastOpts?.securityOpt).toEqual(["label:disable"]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("rejects a TLS file path that a Docker bind mount cannot carry", () => {
+    const { layer, docker } = setup({
+      conn: { ...REMOTE_CONN, sslmode: "verify-full", sslrootcert: "/certs/a:b/root.crt" },
+      isLocal: false,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(Effect.exit);
+      expect(failMessage(exit)).toBe(
+        "failed to read sslrootcert /certs/a:b/root.crt: a Docker bind mount cannot contain ':'",
+      );
+      expect(docker.allOpts).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  const withHostCaBundles = (present: ReadonlyArray<string>) =>
+    Layer.effect(
+      FileSystem.FileSystem,
+      Effect.map(FileSystem.FileSystem, (fs) => ({
+        ...fs,
+        exists: (path: string) =>
+          path.startsWith("/etc/") || path.startsWith("/home/user/")
+            ? Effect.succeed(present.includes(path))
+            : fs.exists(path),
+      })),
+    );
+
+  it.effect("keeps host paths and falls back to the host's CA bundle for a native pg_dump", () =>
+    Effect.forEach(
+      [
+        { sslrootcert: "/certs/root.crt", present: [], expected: "/certs/root.crt" },
+        {
+          sslrootcert: undefined,
+          present: ["/etc/ssl/certs/ca-certificates.crt"],
+          expected: "/etc/ssl/certs/ca-certificates.crt",
+        },
+        { sslrootcert: undefined, present: [], expected: undefined },
+        {
+          sslrootcert: undefined,
+          present: ["/home/user/.postgresql/root.crt", "/etc/ssl/cert.pem"],
+          expected: undefined,
+        },
+      ],
+      ({ sslrootcert, present, expected }) => {
+        const { layer, bundled } = setup({
+          conn: { ...REMOTE_CONN, sslmode: "verify-full", sslrootcert },
+          isLocal: false,
+          platform: "darwin",
+          stdout: "",
+        });
+        return Effect.gen(function* () {
+          yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(
+            Effect.provide(withHostCaBundles(present)),
+          );
+          expect(bundled.lastOpts?.runtime).toEqual({ kind: "native" });
+          expect(bundled.lastOpts?.env["PGSSLROOTCERT"]).toBe(expected);
+          expect(bundled.lastOpts?.mounts).toEqual([]);
+        }).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
+      },
+    ),
+  );
+
+  it.effect(
+    "follows OpenSSL's trust store overrides for sslrootcert=system in a native pg_dump",
+    () => {
+      const cases: ReadonlyArray<{
+        sslrootcert: string | undefined;
+        env: Readonly<Record<string, string>>;
+        major?: 15;
+        expected: string;
+      }> = [
+        { sslrootcert: "system", env: {}, expected: "/etc/ssl/cert.pem" },
+        { sslrootcert: "system", env: { SSL_CERT_FILE: "/certs/ca.pem" }, expected: "system" },
+        { sslrootcert: "system", env: { SSL_CERT_DIR: "/certs" }, expected: "system" },
+        {
+          sslrootcert: "system",
+          env: { SSL_CERT_FILE: "/certs/ca.pem", SSL_CERT_DIR: "/certs" },
+          expected: "system",
+        },
+        {
+          sslrootcert: "system",
+          env: { SSL_CERT_FILE: "/certs/ca.pem" },
+          major: 15,
+          expected: "/certs/ca.pem",
+        },
+        {
+          sslrootcert: "system",
+          env: { SSL_CERT_DIR: "/certs" },
+          major: 15,
+          expected: "/etc/ssl/cert.pem",
+        },
+        {
+          sslrootcert: undefined,
+          env: { SSL_CERT_FILE: "/certs/ca.pem" },
+          expected: "/etc/ssl/cert.pem",
+        },
+      ];
+      return Effect.forEach(cases, ({ sslrootcert, env, major, expected }) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          if (major !== undefined) {
+            yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+            yield* fs.writeFileString(
+              path.join(tmp.current, "supabase", "config.toml"),
+              `[db]\nmajor_version = ${major}\n`,
+            );
+          }
+          const { layer, bundled } = setup({
+            conn: { ...REMOTE_CONN, sslmode: "verify-full", sslrootcert },
+            isLocal: false,
+            platform: "darwin",
+            stdout: "",
+            env,
+            ...(major === undefined ? {} : { workdir: tmp.current }),
+          });
+          yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(
+            Effect.provide(
+              withHostCaBundles(["/etc/ssl/cert.pem"]).pipe(
+                Layer.provideMerge(Layer.mergeAll(layer, stackBackendLayer("stack"))),
+              ),
+            ),
+          );
+          expect(bundled.lastOpts?.pin.upstreamVersion.startsWith(String(major ?? 17))).toBe(true);
+          expect(bundled.lastOpts?.env).toMatchObject({
+            PGSSLMODE: "verify-full",
+            PGSSLROOTCERT: expected,
+          });
+        }).pipe(Effect.provide(BunServices.layer)),
+      );
+    },
+  );
+
+  it.effect("never hands TLS settings to a local pg_dump", () => {
+    const { layer, docker } = setup({
+      conn: { ...LOCAL_CONN, sslmode: "verify-full", sslrootcert: "/certs/root.crt" },
+      isLocal: true,
+    });
+    return Effect.gen(function* () {
+      yield* dbDump(flags());
+      expect(docker.lastOpts?.env["PGSSLMODE"]).toBeUndefined();
+      expect(docker.lastOpts?.env["PGSSLROOTCERT"]).toBeUndefined();
+      expect(docker.lastOpts?.binds).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("caches the linked project even when connection resolution fails", () => {
     // The cache is refreshed unconditionally, so an IPv6/pooler/login-role failure
     // during resolution still refreshes it, because the ref was already resolved.
@@ -1025,6 +1274,25 @@ describe("db dump integration", () => {
       expect(out.stderrText).toContain("does not support IPv6");
       expect(out.stderrText).toContain("Retrying via the IPv4 connection pooler.");
       expect(out.stdoutText).toBe("CREATE SCHEMA x;\n");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("linked: keeps the pooler's TLS settings on the IPv4 retry", () => {
+    const { layer, docker } = setup({
+      conn: REMOTE_CONN,
+      isLocal: false,
+      poolerFallback: Option.some({ ...POOLER_CONN, sslmode: "verify-full" }),
+      results: [
+        { exitCode: 1, stderr: IPV6_STDERR },
+        { exitCode: 0, stdout: "CREATE SCHEMA x;\n" },
+      ],
+    });
+    return Effect.gen(function* () {
+      yield* dbDump(flags({ remote: REMOTE_LINKED }));
+      expect(docker.allOpts[1]?.env).toMatchObject({
+        PGHOST: POOLER_CONN.host,
+        PGSSLMODE: "verify-full",
+      });
     }).pipe(Effect.provide(layer));
   });
 

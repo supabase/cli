@@ -1,3 +1,4 @@
+import { CommandSettings } from "../config/command-settings.service.ts";
 import { getDefaultCliConfig, type CliConfig } from "@supabase/config";
 import {
   DEFAULT_LOCAL_S3_ACCESS_KEY_ID,
@@ -6,6 +7,7 @@ import {
   DEFAULT_SIGNING_KEY,
 } from "@supabase/stack/defaults";
 import { type ServiceCreationInput as ServiceCreationType } from "@supabase/stack/effect";
+import { type ArtifactSelection } from "@supabase/stack/internal/artifacts";
 import { Crypto, Effect, Data, FileSystem, Option, Path, Redacted, Schema } from "effect";
 import { FetchHttpClient } from "effect/http";
 
@@ -27,7 +29,12 @@ import { resolveAuthConfig } from "./stack-auth-config.ts";
 import { resolveSmtpEnabled } from "./smtp-enabled.ts";
 import { parseDuration } from "./duration.ts";
 import { parseFileSizeLimit } from "./storage-bucket-config.ts";
-import { stackDatabaseVersion } from "./stack-database-version.ts";
+import { stackArtifactSelection } from "./stack-artifact-selection.ts";
+import {
+  type LockRequest,
+  type LockResolutionError,
+  rejectFrozenWithoutConfig,
+} from "./stack-lock.ts";
 
 import {
   resolveJwtSecret,
@@ -58,6 +65,8 @@ export class StackConfigError extends Data.TaggedError("StackConfigError")<{
 }
 
 interface StackStartConfig {
+  /** The artifact pins every creation of this command carries. */
+  readonly selection: ArtifactSelection;
   readonly creations: (
     stackId: string,
   ) => Effect.Effect<ReadonlyArray<ServiceCreationType>, StackConfigError>;
@@ -81,11 +90,41 @@ interface StackStartConfig {
   >;
 }
 
-type StackConfigEffect = Effect.Effect<
+type StackConfigEffect<E, R> = Effect.Effect<
   StackStartConfig,
-  StackConfigError,
-  FileSystem.FileSystem | Path.Path | RuntimeInfo | Crypto.Crypto | CliConfigValues
+  StackConfigError | LockResolutionError | E,
+  | FileSystem.FileSystem
+  | Path.Path
+  | RuntimeInfo
+  | Crypto.Crypto
+  | CommandSettings
+  | CliConfigValues
+  | R
 >;
+
+/** Host directory holding a stack's Storage objects, beside its runtime state. */
+export const stackUploadsDir = (
+  path: Pick<Path.Path, "join">,
+  supabaseHome: string,
+  stackId: string,
+): string => path.join(supabaseHome, "stacks", stackId, "uploads");
+
+interface StackConfigOptions<E, R> {
+  /** The hosted project whose `[remotes.*]` block applies. */
+  readonly projectRef?: string;
+  /** Chooses the artifact pins instead of the bundled ones; without a `supabase/config.toml` the bundled pins apply, or a frozen run fails. */
+  readonly selection?: (
+    request: LockRequest,
+  ) => Effect.Effect<
+    ArtifactSelection,
+    StackConfigError | LockResolutionError | E,
+    FileSystem.FileSystem | Path.Path | Crypto.Crypto | R
+  >;
+  /** Fails with `frozen-missing` when there is no `supabase/config.toml` to lock. */
+  readonly frozen?: boolean;
+  /** Marks `selection` as publishing the lock, so the local auth keys must validate before it runs. */
+  readonly publishesLock?: boolean;
+}
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -230,7 +269,10 @@ const endpoint = (port: number | undefined): { readonly port: number | "auto" } 
 
 /** Loads and translates the effective project config for all stack commands. */
 export const loadStackConfig = Effect.fn("StackConfig.load")(
-  (projectRoot: string, opts?: { readonly projectRef?: string }): StackConfigEffect =>
+  <E = never, R = never>(
+    projectRoot: string,
+    opts?: StackConfigOptions<E, R>,
+  ): StackConfigEffect<E, R> =>
     Effect.gen(function* () {
       const {
         resolvedConfig,
@@ -253,10 +295,8 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       const validationError = configValidationError(validatedConfig);
       if (validationError !== undefined)
         return yield* new StackConfigError({ message: validationError });
-      const databaseVersion = yield* Effect.fromResult(
-        stackDatabaseVersion(validatedConfig.db),
-      ).pipe(Effect.mapError((message) => new StackConfigError({ message })));
-
+      if (!resolvedConfig.hasConfigFile)
+        yield* rejectFrozenWithoutConfig(projectRoot, opts?.frozen === true);
       const externalProviders = yield* Effect.try({
         try: () =>
           resolveAuthExternalProviders(section(document, "auth"), validatedConfig.auth.external),
@@ -284,6 +324,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
         },
       );
       const path = yield* Path.Path;
+      const { supabaseHome } = yield* CommandSettings;
       const auth = validatedConfig.auth;
       const issuer = yield* Effect.try({
         try: () => {
@@ -297,49 +338,54 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
             message: cause instanceof Error ? cause.message : String(cause),
           }),
       });
-      const localKeys = Effect.try({
-        try: () => {
-          const configured = (value: string | undefined) =>
-            value === undefined || value === "" ? undefined : value;
-          const publishableKey = configured(auth.publishable_key);
-          const secretKey = configured(auth.secret_key);
-          const configuredAnonKey = configured(auth.anon_key);
-          const configuredServiceRoleKey = configured(auth.service_role_key);
-          const configuredSigningKeys = resolveConfiguredSigningKeys(validatedConfig, projectRoot);
-          const signingKeys =
-            configuredSigningKeys ??
-            (auth.signing_keys_path === undefined || auth.signing_keys_path.length === 0
-              ? undefined
-              : [DEFAULT_SIGNING_KEY]);
-          const signingKey = signingKeys?.[0];
-          return {
-            ...(publishableKey === undefined ? {} : { publishableKey }),
-            ...(secretKey === undefined ? {} : { secretKey }),
-            ...(configuredAnonKey === undefined
-              ? signingKey === undefined
+      const localKeys = yield* Effect.cached(
+        Effect.try({
+          try: () => {
+            const configured = (value: string | undefined) =>
+              value === undefined || value === "" ? undefined : value;
+            const publishableKey = configured(auth.publishable_key);
+            const secretKey = configured(auth.secret_key);
+            const configuredAnonKey = configured(auth.anon_key);
+            const configuredServiceRoleKey = configured(auth.service_role_key);
+            const configuredSigningKeys = resolveConfiguredSigningKeys(
+              validatedConfig,
+              projectRoot,
+            );
+            const signingKeys =
+              configuredSigningKeys ??
+              (auth.signing_keys_path === undefined || auth.signing_keys_path.length === 0
+                ? undefined
+                : [DEFAULT_SIGNING_KEY]);
+            const signingKey = signingKeys?.[0];
+            return {
+              ...(publishableKey === undefined ? {} : { publishableKey }),
+              ...(secretKey === undefined ? {} : { secretKey }),
+              ...(configuredAnonKey === undefined
+                ? signingKey === undefined
+                  ? {}
+                  : { anonKey: generateAsymmetricLocalJwt(signingKey, "anon") }
+                : { anonKey: configuredAnonKey }),
+              ...(configuredServiceRoleKey === undefined
+                ? signingKey === undefined
+                  ? {}
+                  : { serviceRoleKey: generateAsymmetricLocalJwt(signingKey, "service_role") }
+                : { serviceRoleKey: configuredServiceRoleKey }),
+              anonKeyIsOverride: configuredAnonKey !== undefined,
+              serviceRoleKeyIsOverride: configuredServiceRoleKey !== undefined,
+              ...(signingKeys === undefined
                 ? {}
-                : { anonKey: generateAsymmetricLocalJwt(signingKey, "anon") }
-              : { anonKey: configuredAnonKey }),
-            ...(configuredServiceRoleKey === undefined
-              ? signingKey === undefined
-                ? {}
-                : { serviceRoleKey: generateAsymmetricLocalJwt(signingKey, "service_role") }
-              : { serviceRoleKey: configuredServiceRoleKey }),
-            anonKeyIsOverride: configuredAnonKey !== undefined,
-            serviceRoleKeyIsOverride: configuredServiceRoleKey !== undefined,
-            ...(signingKeys === undefined
-              ? {}
-              : {
-                  gotrueJwtKeys: encodeJwkArray(signingKeys),
-                  publicSigningKeys: encodeJwkArray(signingKeys.map(toPublicJwk)),
-                }),
-          };
-        },
-        catch: (cause) =>
-          new StackConfigError({
-            message: cause instanceof Error ? cause.message : String(cause),
-          }),
-      });
+                : {
+                    gotrueJwtKeys: encodeJwkArray(signingKeys),
+                    publicSigningKeys: encodeJwkArray(signingKeys.map(toPublicJwk)),
+                  }),
+            };
+          },
+          catch: (cause) =>
+            new StackConfigError({
+              message: cause instanceof Error ? cause.message : String(cause),
+            }),
+        }),
+      );
       const remoteJwks = Effect.gen(function* () {
         return issuer === undefined
           ? undefined
@@ -471,9 +517,23 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       const analyticsPort = configuredPort("analytics.port", validatedConfig.analytics.port);
       const poolMode =
         validatedConfig.db.pooler.pool_mode === "session" ? ("session" as const) : "transaction";
-      const storagePath = `${projectRoot}/supabase/.temp/stack-uploads`;
+      const selection = yield* resolvedConfig.hasConfigFile && opts?.selection !== undefined
+        ? (opts.publishesLock === true ? localKeys : Effect.void).pipe(
+            Effect.andThen(
+              opts.selection({
+                projectRoot,
+                majorVersion: validatedConfig.db.major_version,
+                orioledbVersion: validatedConfig.db.orioledb_version,
+                services: validatedConfig.local?.services,
+              }),
+            ),
+          )
+        : stackArtifactSelection(validatedConfig.db).pipe(
+            Effect.mapError((error) => new StackConfigError({ message: error.message })),
+          );
       const pgmetaCreation: ServiceCreationType = {
         service: "pgmeta",
+        pin: selection.pgmeta,
         config: {},
         endpoints: { http: endpoint(undefined) },
       };
@@ -484,8 +544,8 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
           return [
             {
               service: "database",
+              pin: selection.database,
               config: {
-                version: databaseVersion,
                 ...(jwtSecret === undefined ? {} : { jwtSecret }),
                 jwtExpiry: validatedConfig.auth.jwt_expiry,
                 settings: validatedConfig.db.settings,
@@ -498,6 +558,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ? [
                   {
                     service: "analytics" as const,
+                    pin: selection.analytics,
                     config: {
                       backend: "postgres" as const,
                       apiKey: "api-key",
@@ -510,6 +571,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ? [
                   {
                     service: "pooler" as const,
+                    pin: selection.pooler,
                     config: {
                       ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
                       poolMode,
@@ -526,6 +588,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ? [
                   {
                     service: "rest" as const,
+                    pin: selection.rest,
                     config: {
                       schemas: validatedConfig.api.schemas.join(","),
                       extraSearchPath: validatedConfig.api.extra_search_path.join(","),
@@ -543,6 +606,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ? [
                   {
                     service: "auth" as const,
+                    pin: selection.auth,
                     config: {
                       ...authConfig,
                       ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
@@ -555,6 +619,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ? [
                   {
                     service: "realtime" as const,
+                    pin: selection.realtime,
                     config: {
                       ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
                       ipVersion:
@@ -574,9 +639,10 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ? [
                   {
                     service: "storage" as const,
+                    pin: selection.storage,
                     config: {
                       ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
-                      filePath: `${storagePath}/${stackId}`,
+                      filePath: stackUploadsDir(path, supabaseHome, stackId),
                       fileSizeLimit: storageFileSizeLimit,
                       s3ProtocolEnabled: validatedConfig.storage.s3_protocol.enabled,
                       s3AccessKeyId: DEFAULT_LOCAL_S3_ACCESS_KEY_ID,
@@ -594,7 +660,8 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ? [
                   {
                     service: "imgproxy" as const,
-                    config: { filePath: `${storagePath}/${stackId}` },
+                    pin: selection.imgproxy,
+                    config: { filePath: stackUploadsDir(path, supabaseHome, stackId) },
                     endpoints: { http: endpoint(undefined) },
                   } satisfies ServiceCreationType,
                 ]
@@ -603,6 +670,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ? [
                   {
                     service: "functions" as const,
+                    pin: selection.functions,
                     config: {
                       functionsRoot: `${projectRoot}/supabase/functions`,
                       filesRoot: projectRoot,
@@ -628,6 +696,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ? [
                   {
                     service: "studio" as const,
+                    pin: selection.studio,
                     config: {
                       snippetsRoot: `${projectRoot}/supabase/snippets`,
                       apiSchemas: validatedConfig.api.schemas.join(","),
@@ -650,6 +719,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ? [
                   {
                     service: "mail" as const,
+                    pin: selection.mail,
                     config: {},
                     endpoints: {
                       http: endpoint(mailPort),
@@ -662,6 +732,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
           ];
         });
       return {
+        selection,
         creations: createCreations,
         source: validatedConfig,
         projectEnvValues,

@@ -131,6 +131,9 @@ export const GLOBAL_FLAGS = [
   AgentFlag,
 ] as const;
 
+/** The flags the root command registers: every global flag plus `--output-format`. */
+export const ROOT_GLOBAL_FLAGS = [OutputFormatFlag, ...GLOBAL_FLAGS] as const;
+
 /**
  * Every global flag's current value by name, as telemetry's fallback for a flag missing from a
  * handler's `flags`; empty when `serviceOption` finds no global-flag context.

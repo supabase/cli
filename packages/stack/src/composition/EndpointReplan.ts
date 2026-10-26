@@ -33,8 +33,9 @@ export const applyEndpointReplan = Effect.fn("EndpointReplan.apply")(function* (
   ports: Ports,
   saved: StackNamespace.SavedStack,
   requested: ReadonlyArray<ServiceCreationInput>,
+  initializedDatabases: ReadonlySet<string>,
 ) {
-  const plan = planEndpointReplan(saved, requested);
+  const plan = planEndpointReplan(saved, requested, initializedDatabases);
   if (plan === undefined) return undefined;
 
   const changed = yield* Effect.forEach(plan.changes, (change) =>

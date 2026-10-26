@@ -36,9 +36,9 @@ import { decryptSecret, isEncryptedSecret } from "../shared/config/vault-decrypt
 type EnvLookup = (name: string) => string | undefined;
 
 /**
- * Subset of `supabase/config.toml` (plus the linked pooler URL) the db-config
- * resolver needs. A missing config file yields defaults; a malformed one aborts
- * the command instead of running against the default local database.
+ * Subset of `supabase/config.toml` the db-config resolver needs. A missing config file yields
+ * defaults; a malformed one aborts the command instead of running against the default local
+ * database.
  */
 export interface DbTomlValues {
   readonly projectEnv: Readonly<Record<string, string>>;
@@ -49,12 +49,6 @@ export interface DbTomlValues {
   readonly shadowPort: number;
   /** `[db] password`, runtime default `"postgres"` (not in the config schema). */
   readonly password: string;
-  /**
-   * Linked pooler connection string, used by the `--linked` pooler fallback.
-   * Read from `supabase/.temp/pooler-url` (written by `supabase link`); not
-   * part of the config schema.
-   */
-  readonly poolerConnectionString: Option.Option<string>;
   /** The resolved, sanitized `project_id` (flag, env, config, then the workdir name). */
   readonly projectId: string;
   /** `[db] major_version`, default 17. */
@@ -360,11 +354,11 @@ const loadDbTomlResolvedConfig = (
 
 /**
  * Projects the `CliConfigValues` resolved config of `<workdir>/supabase/config.{toml,json}` (flags aside)
- * and the linked `<workdir>/supabase/.temp/pooler-url` onto {@link DbTomlValues}. `fs`/`path` are
- * passed in so the resolver can capture them once and keep its own `R` at `never`.
+ * onto {@link DbTomlValues}. `fs`/`path` are passed in so the resolver can capture them once and
+ * keep its own `R` at `never`.
  *
  * Fails with `DbConfigLoadError` when the config is present but unreadable, undecodable or invalid;
- * an absent file (and an absent/empty pooler-url file) is not an error.
+ * an absent file is not an error.
  */
 const readDbTomlCore = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
@@ -379,7 +373,6 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   warnOnUnresolvedEnv = true,
   resolveVaultSecrets = true,
 ) {
-  const supabaseDir = path.join(workdir, "supabase");
   const resolvedConfig = yield* loadDbTomlResolvedConfig(workdir, ref, ignoreConfigFile);
   const projectEnv = resolvedConfig.projectEnvValues;
   const { config } = resolvedConfig.materialized;
@@ -404,11 +397,6 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     },
   );
   if (secretError !== undefined) return yield* fail(secretError);
-
-  const poolerUrlPath = path.join(supabaseDir, ".temp", "pooler-url");
-  const poolerConnectionString = yield* fs
-    .readFileString(poolerUrlPath)
-    .pipe(Effect.map(nonEmptyString), Effect.orElseSucceed(Option.none<string>));
 
   const configuredProjectId = yield* getKey(CliConfigKeys.projectId);
   if (
@@ -697,7 +685,6 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     port,
     shadowPort,
     password: (yield* getKey(CliConfigKeys.db.password)).value,
-    poolerConnectionString,
     projectId,
     majorVersion,
     orioledbVersion,

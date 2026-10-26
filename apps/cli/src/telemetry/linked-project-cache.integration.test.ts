@@ -14,6 +14,7 @@ import { assertBlockDrift } from "../../tests/helpers/permission-drift.ts";
 import { linkedProjectCache, linkedProjectCacheLayer } from "./linked-project-cache.layer.ts";
 import { identityStitchLayer } from "../command-internal/identity-stitch.ts";
 import { LinkedProjectCache } from "./linked-project-cache.service.ts";
+import { projectStateModeLayer } from "../shared/config/project-state-mode.ts";
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
@@ -238,6 +239,65 @@ describe("linkedProjectCacheLayer", () => {
         ).toBe(false);
         expect(analytics.groupIdentified).toEqual([]);
       }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("keeps the stack-mode cache under SUPABASE_HOME and leaves supabase/.temp alone", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workdir = yield* fs.makeTempDirectoryScoped({ prefix: "linked-cache-stack-" });
+      const analytics = mockAnalytics();
+      const api = mockCommandPlatformApi({
+        response: {
+          status: 200,
+          body: {
+            ref: VALID_REF,
+            id: VALID_REF,
+            name: "proj",
+            organization_id: "org-1",
+            organization_slug: "acme",
+            region: "us-east-1",
+            created_at: "2026-01-01T00:00:00Z",
+            status: "ACTIVE_HEALTHY",
+            database: {
+              host: "db.example.com",
+              version: "15",
+              postgres_engine: "15",
+              release_channel: "ga",
+            },
+          },
+        },
+      });
+      const identityStitch = identityStitchLayer.pipe(
+        Layer.provide(analytics.layer),
+        Layer.provide(
+          mockTelemetryRuntime({ configDir: path.join(workdir, ".supabase"), consent: "granted" }),
+        ),
+        Layer.provide(BunServices.layer),
+      );
+      const layer = linkedProjectCacheLayer.pipe(
+        Layer.provide(api.httpClientLayer),
+        Layer.provide(mockCommandSettings({ workdir, supabaseHome: path.join(workdir, "home") })),
+        Layer.provide(mockCommandCredentialsLayer),
+        Layer.provide(identityStitch),
+        Layer.provide(analytics.layer),
+        Layer.provide(BunServices.layer),
+      );
+      yield* Effect.gen(function* () {
+        const cache = yield* LinkedProjectCache;
+        yield* cache.cache(VALID_REF, workdir);
+        yield* cache.cache(VALID_REF, workdir);
+        expect(
+          yield* fs.readFileString(
+            path.join(workdir, "home", "project-cache", `${VALID_REF}.json`),
+          ),
+        ).toBe(
+          `{"ref":"${VALID_REF}","name":"proj","organization_id":"org-1","organization_slug":"acme"}`,
+        );
+        expect(api.requests).toHaveLength(1);
+        expect(yield* fs.exists(path.join(workdir, "supabase", ".temp"))).toBe(false);
+      }).pipe(Effect.provide(layer.pipe(Layer.provideMerge(projectStateModeLayer("stack")))));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 });

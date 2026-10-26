@@ -7,6 +7,7 @@ import { machineErrorContextLayer } from "../../../../shared/output/machine-erro
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { stringSliceFlag } from "../../../../command-internal/string-slice-flag.ts";
 import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
+import { frozenFlag } from "../stack.flags.ts";
 import { stackStart } from "./start.handler.ts";
 import { STACK_START_EXCLUDABLE_CAPABILITIES } from "./start.options.ts";
 import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
@@ -36,6 +37,7 @@ const config = {
     Flag.withDescription("Artifact preparation policy."),
     Flag.withDefault("background" as const),
   ),
+  frozen: frozenFlag,
   eager: Flag.Boolean("eager").pipe(
     Flag.withDescription(
       "Activate all enabled capabilities before returning and disable automatic idle stops.",
@@ -66,7 +68,7 @@ export const stackStartCommand = Command.make("start", config).pipe(
   ]),
   withPermissions({
     operations: [],
-    noApiEffectFlags: ["exclude", "stack", "stack-id", "runtime", "preparation", "eager"],
+    noApiEffectFlags: ["exclude", "stack", "stack-id", "runtime", "preparation", "frozen", "eager"],
   }),
   Command.withHandler((flags) =>
     stackStart(flags).pipe(

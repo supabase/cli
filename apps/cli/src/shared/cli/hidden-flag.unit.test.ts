@@ -1,4 +1,5 @@
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Schema, Stdio } from "effect";
+import { legacyProjectStateLayer } from "../config/legacy-project-state.layer.ts";
 import { BunServices } from "@effect/platform-bun";
 import { CliOutput, Command, type HelpDoc } from "effect/cli";
 import { describe, expect, it } from "@effect/vitest";
@@ -50,6 +51,7 @@ const testRootLayer = (formatter: CliOutput.Formatter, args: ReadonlyArray<strin
     out.layer,
     commandTargetLayer.pipe(Layer.provide(out.layer)),
     BunServices.layer,
+    legacyProjectStateLayer.pipe(Layer.provide(BunServices.layer)),
     mockRuntimeInfo(),
     mockAnalytics().layer,
     mockTelemetryRuntime(),

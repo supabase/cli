@@ -56,7 +56,8 @@ import {
 } from "../commands/db/shared/pgdelta-engine.service.ts";
 import { type PgDeltaContext, isPgDeltaDebugEnabled } from "./pgdelta.ts";
 import { prepareShadowSource } from "../commands/db/shared/shadow-source.ts";
-import { currentStackBackend } from "./stack-backend.ts";
+import { currentStackBackend, usesStackState } from "./stack-backend.ts";
+import { selectionForRequest } from "./stack-project-selection.ts";
 import { stackRejectNativeDockerDiffEngine } from "./stack-local-database.ts";
 import { stackPrepareShadowSource, stackWithShadowDatabase } from "./stack-shadow.ts";
 import type { DbPullFlags as DbPullCommandFlags } from "../commands/db/pull/pull.command.ts";
@@ -350,13 +351,21 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
           yield* makeDir(fs, path.dirname(migrationPath)).pipe(
             Effect.mapError((cause) => new DbPullWriteError({ message: cause.message })),
           );
-          const image = (yield* resolveDbImage(
-            fs,
-            path,
-            cliSettings.workdir,
-            toml.majorVersion,
-            Option.getOrUndefined(toml.orioledbVersion),
-          )).image;
+          const image = (yield* usesStackState)
+            ? (yield* selectionForRequest({
+                projectRoot: cliSettings.workdir,
+                majorVersion: toml.majorVersion,
+                orioledbVersion: Option.getOrUndefined(toml.orioledbVersion),
+                services: localInputs.context.config.local?.services,
+                appliedRemote: toml.appliedRemote,
+              })).database.image
+            : (yield* resolveDbImage(
+                fs,
+                path,
+                cliSettings.workdir,
+                toml.majorVersion,
+                Option.getOrUndefined(toml.orioledbVersion),
+              )).image;
           // Default dump options: no schema filter (so the internal-schema exclude
           // list applies) and comments stripped.
           const dumpEnvOpt: DumpOptions = {
@@ -364,6 +373,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
             keepComments: false,
             excludeTable: [],
             columnInsert: false,
+            remote: !resolved.isLocal,
           };
           const toDumpOpenError = (cause: { readonly message: string }) =>
             new DbPullDumpError({

@@ -6,6 +6,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option, Predicate, type Scope } from "effect";
 import { CliOutput, Command } from "effect/cli";
 
+import { legacyProjectStateLayer } from "../../src/shared/config/legacy-project-state.layer.ts";
 import type { RemoteValue } from "../../src/command-internal/target/remote-value.ts";
 import type { TargetFlagValuesWithDbUrl } from "../../src/command-internal/target/target-flags.ts";
 import { renderLocalTarget } from "../../src/command-internal/target/target-identity.ts";
@@ -336,6 +337,7 @@ export function describeDbTargetSelection<R>(
             Effect.provide(
               Layer.mergeAll(
                 BunServices.layer,
+                legacyProjectStateLayer.pipe(Layer.provide(BunServices.layer)),
                 CliOutput.layer(textCliOutputFormatter()),
                 Layer.succeed(CliArgs, { args }),
                 mockOutput({ format: "text" }).layer,

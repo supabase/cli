@@ -5,7 +5,7 @@ import { respondToComplete } from "../../../cli/complete.ts";
 import { rootCommandForFeatures } from "../../../cli/root.ts";
 import { resolveComputeEnabled } from "./compute-backend.ts";
 import { withConfigEnv } from "../../../../tests/helpers/command-mocks.ts";
-import { ExperimentalFeatureFlagError } from "../../../command-internal/experimental-feature.ts";
+import { ExperimentalFeatureFlagError } from "../../../shared/config/experimental-feature.ts";
 
 const resolve = ({
   env,

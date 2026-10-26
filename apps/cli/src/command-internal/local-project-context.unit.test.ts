@@ -174,4 +174,19 @@ describe("loadLocalProjectContext", () => {
       expect(context.projectEnvValues).toEqual({ FROM_FILE: "file-value" });
     }).pipe(Effect.provide(layerWithShellEnv({ FROM_SHELL: "shell-value" })));
   });
+
+  it.effect("reports a TOML syntax error's position without quoting the file", () => {
+    const workdir = tempRoot.current;
+    return Effect.gen(function* () {
+      yield* writeConfigToml(
+        workdir,
+        '[edge_runtime.secrets]\nAPI_KEY = "sk_live_123"\nbroken =\n',
+      );
+
+      const error = yield* loadContext(workdir).pipe(Effect.flip);
+      expect(error.message).toBe(
+        "failed to read config: Invalid TOML document: incomplete declaration: value expected (line 3, column 9)",
+      );
+    }).pipe(Effect.provide(layerWithShellEnv()));
+  });
 });

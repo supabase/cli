@@ -169,7 +169,9 @@ flags.noBackup`. `--backup=false` alone does **not** delete volumes; only
   v4.3 through the current v5.7) accepts that flag, and Podman already prunes every unused
   volume by default, so dropping it there is lossless. Podman is a fallback runtime reached by
   shelling out to the `podman` binary.
-- Containers are stopped concurrently (`Effect.all(..., { concurrency: "unbounded" })`).
+- Containers are stopped concurrently, at most `CONTAINER_CLI_CONCURRENCY` in flight on Docker and
+  Podman alike (shared with start image prepull), so stopping more than that many containers that
+  ignore their stop signal can take more than one 10 s grace period.
   Every container's failure is checked before failing the command (rather than stopping
   at the first failure) — though the surfaced message is a single fixed string rather
   than a joined list of per-container errors, since Docker CLI subprocess stderr isn't

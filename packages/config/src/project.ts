@@ -120,14 +120,14 @@ function parseDotEnv(
       const match = dotEnvLinePattern.exec(candidate);
 
       if (match === null) {
-        return yield* Effect.fail(new CliProjectEnvParseError({ path, line: index + 1 }));
+        return yield* new CliProjectEnvParseError({ path, line: index + 1 });
       }
 
       const key = match[1];
       const rawValue = match[2] ?? "";
 
       if (key === undefined) {
-        return yield* Effect.fail(new CliProjectEnvParseError({ path, line: index + 1 }));
+        return yield* new CliProjectEnvParseError({ path, line: index + 1 });
       }
 
       values[key] = parseDotEnvValue(rawValue);

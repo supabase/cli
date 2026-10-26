@@ -1,3 +1,4 @@
+import { legacyProjectStateLayer } from "../../shared/config/legacy-project-state.layer.ts";
 import { describe, expect, it } from "@effect/vitest";
 import { catalogPins, orioledbVersions } from "@supabase/stack/internal/artifacts";
 import { BunServices } from "@effect/platform-bun";
@@ -104,6 +105,7 @@ function setup(
     layer: Layer.mergeAll(
       cliConfigValuesTestLayer,
       BunServices.layer,
+      legacyProjectStateLayer.pipe(Layer.provide(BunServices.layer)),
       FetchHttpClient.layer,
       mockRuntimeInfo({
         cwd: opts.workdir ?? defaultWorkdir.current,
@@ -268,6 +270,7 @@ describe("services", () => {
       const layer = Layer.mergeAll(
         cliConfigValuesTestLayer,
         BunServices.layer,
+        legacyProjectStateLayer.pipe(Layer.provide(BunServices.layer)),
         processControlLayer,
         CliOutput.layer(textCliOutputFormatter()),
         out.layer,
@@ -474,6 +477,27 @@ describe("services", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
+  it.effect("reports an invalid supabase.lock before falling back to the bundled versions", () =>
+    Effect.gen(function* () {
+      const workdir = yield* makeProjectWithDbMajorVersion(17);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.writeFileString(path.join(workdir, "supabase", "supabase.lock"), "{ not json");
+      const { layer, out } = setup({ outputFlag: Option.some("json"), workdir });
+
+      yield* services({}).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
+
+      expect(yield* decodeServiceRows(out.stdoutText)).toContainEqual(
+        expect.objectContaining({
+          name: "ghcr.io/supabase/cli/postgres",
+          local: catalogUpstreamVersion("postgres"),
+        }),
+      );
+      expect(out.stderrText).toContain("supabase/supabase.lock");
+      expect(out.stderrText).toContain("using default stack catalog versions");
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
   it.effect("reads config.json over config.toml for local image selection", () =>
     Effect.gen(function* () {
       const workdir = yield* makeProjectWithConfigFiles({
@@ -672,7 +696,9 @@ major_version = 15
           remote: "17.6.1.200",
         }),
       );
-      expect(stack.out.stderrText).toContain("cannot be changed with supabase link");
+      expect(stack.out.stderrText).toContain(
+        "Run supabase link to update services set to linked (the default) in supabase/supabase.lock",
+      );
       expect(stack.out.stderrText).not.toContain("You are running different service versions");
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );

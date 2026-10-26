@@ -269,8 +269,9 @@ template = "Your code is {{ .Code }}"
 max_frequency = "5s"
 
 # Use pre-defined map of phone number to OTP for testing.
+# Keys are the phone number with country code and without the + prefix.
 # [auth.sms.test_otp]
-# 4152127777 = "123456"
+# 14152127777 = "123456"
 
 # Configure logged in session timeouts.
 # [auth.sessions]
