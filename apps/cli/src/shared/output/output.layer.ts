@@ -30,6 +30,7 @@ import {
 import { Tty } from "../runtime/tty.service.ts";
 import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError, StdoutClosedError } from "./errors.ts";
 import { MachineErrorContext } from "./machine-error-context.service.ts";
+import type { PlanGateEntitlement } from "./normalize-error.ts";
 import { Output } from "./output.service.ts";
 import type { OutputFormat, StreamEvent } from "./types.ts";
 
@@ -498,7 +499,13 @@ export const textOutputLayer = Layer.effect(
         }),
       result: () => Effect.void,
       success: (message: string) => logAround(log.success, message),
-      fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
+      fail: (err: {
+        code: string;
+        message: string;
+        detail?: string;
+        suggestion?: string;
+        entitlement?: PlanGateEntitlement;
+      }) =>
         Effect.sync(() => {
           // A command failure is terminal, so a still-shown task spinner is dropped.
           if (activeSpinner !== undefined) {
@@ -593,7 +600,13 @@ export const jsonOutputLayer = Layer.effect(
         }),
       result,
       success: (message: string, data?: Record<string, unknown>) => result({ ...data, message }),
-      fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
+      fail: (err: {
+        code: string;
+        message: string;
+        detail?: string;
+        suggestion?: string;
+        entitlement?: PlanGateEntitlement;
+      }) =>
         Effect.gen(function* () {
           const extra = yield* readMachineErrorContext();
           // `extra` spreads first so the envelope's own `_tag`/`error` can't
@@ -682,7 +695,13 @@ export const streamJsonOutputLayer = Layer.effect(
         }),
       result,
       success: (message: string, data?: Record<string, unknown>) => result({ ...data, message }),
-      fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
+      fail: (err: {
+        code: string;
+        message: string;
+        detail?: string;
+        suggestion?: string;
+        entitlement?: PlanGateEntitlement;
+      }) =>
         Effect.gen(function* () {
           const extra = yield* readMachineErrorContext();
           // `extra` spreads first so the event's own `type`/`error`/`timestamp`
