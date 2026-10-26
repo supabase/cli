@@ -5,6 +5,7 @@ import { block } from "../../command-internal/command-permissions/model.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { notebooksMachineOutputRequested } from "./notebooks.output.ts";
 import { sanitizeInlineName, mapHttpError } from "../../command-internal/http-errors.ts";
+import { fsErrorCause } from "../../command-internal/config-validate.ts";
 import {
   canonicalPathForContainment,
   isPathContainedInRoot,
@@ -130,18 +131,20 @@ const notebookFilePath = Effect.fnUntraced(function* (workdir: string, name: str
  * (`resolveEmailTemplateContentPath`).
  */
 const ensureNotebookPathContained = Effect.fnUntraced(function* (workdir: string, path: string) {
-  const contained = yield* Effect.try({
-    try: () =>
-      isPathContainedInRoot(
-        canonicalPathForContainment(workdir),
-        canonicalPathForContainment(path),
-      ),
-    catch: (cause) =>
-      new NotebookFileError({
+  const pathService = yield* Path.Path;
+  const contained = yield* Effect.all([
+    canonicalPathForContainment(workdir),
+    canonicalPathForContainment(path),
+  ]).pipe(
+    Effect.map(([root, candidate]) => isPathContainedInRoot(pathService, root, candidate)),
+    Effect.mapError((error) => {
+      const cause = fsErrorCause(error);
+      return new NotebookFileError({
         detail: `Cannot resolve ${path}: ${cause instanceof Error ? cause.message : String(cause)}`,
         suggestion: "Check the notebooks path is a readable directory.",
-      }),
-  });
+      });
+    }),
+  );
   if (!contained) {
     // Echoes the declared path rather than what it resolves to, so a hostile checkout cannot
     // use the error to probe where its symlink lands.

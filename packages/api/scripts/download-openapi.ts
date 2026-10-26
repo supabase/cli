@@ -1,13 +1,14 @@
 #!/usr/bin/env bun
-import { readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { NodeServices } from "@effect/platform-node";
+import { Config, ConfigProvider, Console, Effect, FileSystem, Layer, Option, Schema } from "effect";
+import { FetchHttpClient, HttpClient } from "effect/http";
+
 const DEFAULT_SUPABASE_API_URL = "https://api.supabase.com";
-const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const OPENAPI_SPEC_PATH = path.join(scriptDir, "../src/generated/openapi.json");
-const OPENAPI_OVERRIDES_PATH = path.join(scriptDir, "openapi-overrides.json");
-const OPENAPI_SOURCE_PATH = path.join(scriptDir, "openapi-source.json");
+const OPENAPI_SPEC_PATH = fileURLToPath(new URL("../src/generated/openapi.json", import.meta.url));
+const OPENAPI_OVERRIDES_PATH = fileURLToPath(new URL("openapi-overrides.json", import.meta.url));
+const OPENAPI_SOURCE_PATH = fileURLToPath(new URL("openapi-source.json", import.meta.url));
 
 const OPENAPI_DOCUMENT_VERSIONS = ["v1", "v2"] as const;
 type OpenApiDocumentVersion = (typeof OPENAPI_DOCUMENT_VERSIONS)[number];
@@ -39,6 +40,25 @@ type JsonPatchOperation = (
 ) & {
   readonly $comment?: unknown;
 };
+
+class OpenApiDownloadError extends Schema.TaggedError<OpenApiDownloadError>()(
+  "OpenApiDownloadError",
+  { message: Schema.String, cause: Schema.optional(Schema.Defect()) },
+) {}
+
+const downloadStep = <A>(step: () => A) =>
+  Effect.try({
+    try: step,
+    catch: (cause) =>
+      new OpenApiDownloadError({
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      }),
+  });
+
+const utf8 = new TextDecoder("utf-8", { ignoreBOM: true });
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const encodePrettyJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }));
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -267,9 +287,11 @@ export function parseOpenApiOverrides(parsed: unknown): ReadonlyArray<JsonPatchO
   return entries;
 }
 
-export async function loadOpenApiOverrides(): Promise<ReadonlyArray<JsonPatchOperation>> {
-  return parseOpenApiOverrides(JSON.parse(await readFile(OPENAPI_OVERRIDES_PATH, "utf8")));
-}
+export const loadOpenApiOverrides = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const source = utf8.decode(yield* fs.readFile(OPENAPI_OVERRIDES_PATH));
+  return yield* downloadStep(() => parseOpenApiOverrides(JSON.parse(source)));
+});
 
 function assertOpenApiSource(value: unknown): asserts value is OpenApiSource {
   if (!isRecord(value) || typeof value.baseUrl !== "string") {
@@ -277,27 +299,30 @@ function assertOpenApiSource(value: unknown): asserts value is OpenApiSource {
   }
 }
 
-async function loadPinnedBaseUrl(): Promise<string | undefined> {
-  let raw: string;
-  try {
-    raw = await readFile(OPENAPI_SOURCE_PATH, "utf8");
-  } catch (error) {
+const loadPinnedBaseUrl = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const raw = yield* fs.readFile(OPENAPI_SOURCE_PATH).pipe(
+    Effect.map((bytes) => Option.some(utf8.decode(bytes))),
     // A missing pin falls through to the default base URL; only a present
     // but malformed pin is an error worth stopping for.
-    if (isRecord(error) && error.code === "ENOENT") {
-      return undefined;
-    }
-    throw error;
+    Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(Option.none<string>())),
+  );
+  if (Option.isNone(raw)) {
+    return undefined;
   }
-  const parsed = JSON.parse(raw);
-  assertOpenApiSource(parsed);
-  return parsed.baseUrl;
-}
+  return yield* downloadStep(() => {
+    const parsed = JSON.parse(raw.value);
+    assertOpenApiSource(parsed);
+    return parsed.baseUrl;
+  });
+});
 
-async function writeOpenApiSource(baseUrl: string): Promise<void> {
-  const source: OpenApiSource = { baseUrl };
-  await writeFile(OPENAPI_SOURCE_PATH, `${JSON.stringify(source, null, 2)}\n`);
-}
+const writeOpenApiSource = (baseUrl: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const source: OpenApiSource = { baseUrl };
+    yield* fs.writeFileString(OPENAPI_SOURCE_PATH, `${yield* encodePrettyJson(source)}\n`);
+  });
 
 export function resolveOpenApiBaseUrl({
   envBaseUrl,
@@ -311,7 +336,7 @@ export function resolveOpenApiBaseUrl({
 }
 
 export function resolveOpenApiSpecUrl(
-  baseUrl = process.env.SUPABASE_API_URL,
+  baseUrl: string | undefined,
   version: OpenApiDocumentVersion = "v1",
 ): string {
   const normalizedBaseUrl = resolveOpenApiBaseUrl({ envBaseUrl: baseUrl });
@@ -432,7 +457,7 @@ export function mergeOpenApiDocuments(
   };
 }
 
-export function assertMergedOpenApiDocument(document: OpenApiDocument): void {
+export const assertMergedOpenApiDocument = Effect.fnUntraced(function* (document: OpenApiDocument) {
   const operationClaims = new Map<string, Array<string>>();
 
   for (const [pathKey, pathValue] of Object.entries(document.paths)) {
@@ -450,7 +475,9 @@ export function assertMergedOpenApiDocument(document: OpenApiDocument): void {
       if (typeof operationId !== "string" || operationId.length === 0) {
         // generate.ts silently skips operations without an operationId; the
         // documented escape hatch is adding a "remove" override for the path.
-        console.warn(`OpenAPI operation ${label} has no operationId; generate.ts will skip it.`);
+        yield* Console.warn(
+          `OpenAPI operation ${label} has no operationId; generate.ts will skip it.`,
+        );
         continue;
       }
 
@@ -466,9 +493,9 @@ export function assertMergedOpenApiDocument(document: OpenApiDocument): void {
         const prefix = versionPrefixMatch[1]!.toLowerCase();
         const leadingSegment = pathKey.split("/")[1]?.toLowerCase();
         if (leadingSegment !== prefix) {
-          throw new Error(
-            `OpenAPI operationId ${JSON.stringify(operationId)} for ${label} has version prefix ${JSON.stringify(prefix)} that does not match the path's leading segment ${JSON.stringify(leadingSegment ?? "")}.`,
-          );
+          return yield* new OpenApiDownloadError({
+            message: `OpenAPI operationId ${yield* encodeJson(operationId)} for ${label} has version prefix ${yield* encodeJson(prefix)} that does not match the path's leading segment ${yield* encodeJson(leadingSegment ?? "")}.`,
+          });
         }
       }
     }
@@ -476,49 +503,74 @@ export function assertMergedOpenApiDocument(document: OpenApiDocument): void {
 
   for (const [operationId, claims] of operationClaims) {
     if (claims.length > 1) {
-      throw new Error(
-        `Duplicate OpenAPI operationId ${JSON.stringify(operationId)} claimed by: ${claims.join(", ")}.`,
-      );
+      return yield* new OpenApiDownloadError({
+        message: `Duplicate OpenAPI operationId ${yield* encodeJson(operationId)} claimed by: ${claims.join(", ")}.`,
+      });
     }
   }
-}
+});
 
-export async function downloadOpenApiSpec(): Promise<void> {
-  const envBaseUrl = process.env.SUPABASE_API_URL;
+export const downloadOpenApiSpec = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const client = yield* HttpClient.HttpClient;
+  const envBaseUrl = Option.getOrUndefined(yield* Config.option(Config.String("SUPABASE_API_URL")));
   // The pin is consulted only when the environment doesn't override it, so an
   // explicit SUPABASE_API_URL works even when the pin is absent or malformed.
-  const pinnedBaseUrl = envBaseUrl === undefined ? await loadPinnedBaseUrl() : undefined;
+  const pinnedBaseUrl = envBaseUrl === undefined ? yield* loadPinnedBaseUrl : undefined;
   const baseUrl = resolveOpenApiBaseUrl({ envBaseUrl, pinnedBaseUrl });
-  console.log(`Resolved OpenAPI base URL: ${baseUrl}`);
+  yield* Console.log(`Resolved OpenAPI base URL: ${baseUrl}`);
 
   const documents: Array<{
     readonly version: OpenApiDocumentVersion;
     readonly document: OpenApiDocument;
   }> = [];
   for (const { version, url } of resolveOpenApiSpecUrls(baseUrl)) {
-    console.log(`Fetching ${version} OpenAPI document from ${url}`);
-    const response = await fetch(url);
+    yield* Console.log(`Fetching ${version} OpenAPI document from ${url}`);
+    const response = yield* client.get(url);
 
     // Hard-fails on a missing document instead of tolerating it: a 404 would
     // silently drop the whole v2 namespace, and the hourly regeneration sync
     // would auto-merge that deletion unnoticed.
-    if (!response.ok) {
-      throw new Error(`Failed to download OpenAPI spec from ${url}: ${response.status}`);
+    if (response.status < 200 || response.status > 299) {
+      return yield* new OpenApiDownloadError({
+        message: `Failed to download OpenAPI spec from ${url}: ${response.status}`,
+      });
     }
 
-    const document = await response.json();
-    assertOpenApiDocument(document);
+    const body = yield* response.json;
+    const document = yield* downloadStep(() => {
+      assertOpenApiDocument(body);
+      return body;
+    });
     documents.push({ version, document });
   }
 
-  const mergedDocument = mergeOpenApiDocuments(documents);
-  applyOpenApiOverrides(mergedDocument, await loadOpenApiOverrides());
-  assertMergedOpenApiDocument(mergedDocument);
+  const mergedDocument = yield* downloadStep(() => mergeOpenApiDocuments(documents));
+  const overrides = yield* loadOpenApiOverrides;
+  yield* downloadStep(() => applyOpenApiOverrides(mergedDocument, overrides));
+  yield* assertMergedOpenApiDocument(mergedDocument);
 
-  await writeFile(OPENAPI_SPEC_PATH, `${JSON.stringify(mergedDocument, null, 2)}\n`);
-  await writeOpenApiSource(baseUrl);
-}
+  yield* fs.writeFileString(OPENAPI_SPEC_PATH, `${yield* encodePrettyJson(mergedDocument)}\n`);
+  yield* writeOpenApiSource(baseUrl);
+});
 
 if (import.meta.main) {
-  await downloadOpenApiSpec();
+  await Effect.runPromise(
+    downloadOpenApiSpec.pipe(
+      /* Crash with the step's original error so the uncaught report names it, not the wrapper. */
+      Effect.catchTags({
+        OpenApiDownloadError: (error) => Effect.die(error.cause ?? error),
+        HttpClientError: (error) => Effect.die(error.cause ?? error),
+        PlatformError: (error) => Effect.die(error.cause ?? error),
+      }),
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          FetchHttpClient.layer,
+          Layer.succeed(HttpClient.TracerPropagationEnabled, false),
+          ConfigProvider.layer(ConfigProvider.fromEnv({ preserveEmptyStrings: true })),
+        ),
+      ),
+    ),
+  );
 }

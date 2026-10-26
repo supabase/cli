@@ -6,6 +6,7 @@ import {
   planLimitGatedActionability,
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
+import type { PlanGateEntitlement } from "../../shared/output/normalize-error.ts";
 import type { SsoFileErrorReason } from "./sso.saml.ts";
 
 function ssoFileActionability(reason: SsoFileErrorReason): CliErrorActionabilityDeclaration {
@@ -85,6 +86,7 @@ export class SsoListUnexpectedStatusError extends Data.TaggedError("SsoListUnexp
   readonly body: string;
   readonly message: string;
   readonly upgradeSuggested?: boolean;
+  readonly entitlement?: PlanGateEntitlement;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, { upgradeSuggested: this.upgradeSuggested });
@@ -116,6 +118,7 @@ export class SsoAddUnexpectedStatusError extends Data.TaggedError("SsoAddUnexpec
   readonly body: string;
   readonly message: string;
   readonly upgradeSuggested?: boolean;
+  readonly entitlement?: PlanGateEntitlement;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, { upgradeSuggested: this.upgradeSuggested });
@@ -287,6 +290,7 @@ export class SsoUpdateUnexpectedStatusError extends Data.TaggedError(
   readonly body: string;
   readonly message: string;
   readonly upgradeSuggested?: boolean;
+  readonly entitlement?: PlanGateEntitlement;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, {
@@ -343,6 +347,7 @@ export class SsoRemoveUnexpectedStatusError extends Data.TaggedError(
   readonly body: string;
   readonly message: string;
   readonly upgradeSuggested?: boolean;
+  readonly entitlement?: PlanGateEntitlement;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, { upgradeSuggested: this.upgradeSuggested });

@@ -1,5 +1,5 @@
 import { CliConfigSchema, type CliConfig } from "@supabase/config";
-import { Predicate, Schema } from "effect";
+import { Effect, Predicate, Schema } from "effect";
 import { assert, describe, expect, it } from "vitest";
 
 import { dockerfileServiceImageRaw } from "../../shared/services/dockerfile-images.ts";
@@ -180,12 +180,14 @@ describe("START_SERVICES enabledGate cross-check against start.gates.ts", () => 
 
   /** Real gates for `config`, with the exclusion factor neutralized (nothing excluded). */
   function realGatesFor(config: CliConfig): StartGates {
-    return resolveStartGates({
-      config,
-      projectEnvValues: undefined,
-      excludedKeys: new Set(),
-      document: undefined,
-    });
+    return Effect.runSync(
+      resolveStartGates({
+        config,
+        projectEnvValues: undefined,
+        excludedKeys: new Set(),
+        document: undefined,
+      }),
+    );
   }
 
   function expectGatesMatchMetadata(config: CliConfig, label: string) {

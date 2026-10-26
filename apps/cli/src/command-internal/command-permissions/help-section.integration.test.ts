@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Console, Effect, Layer, Option } from "effect";
+import { Console, Effect, Layer, Option, Schema } from "effect";
 import { CliOutput, Command } from "effect/cli";
 
 import { emptyEnv, fakeConsole, mockOutput } from "../../../tests/helpers/mocks.ts";
@@ -16,6 +16,33 @@ import {
   WorkdirFlag,
   YesFlag,
 } from "../global-flags.ts";
+
+/* The slice of a command's JSON help that the section assertions read. */
+const HelpJson = Schema.Struct({
+  doc: Schema.Unknown,
+  permissions: Schema.Struct({
+    schemes: Schema.Array(
+      Schema.Struct({
+        groups: Schema.Array(
+          Schema.Struct({
+            heading: Schema.String,
+            rows: Schema.Array(
+              Schema.Union([
+                Schema.Struct({ anyOf: Schema.Array(Schema.Array(Schema.String)) }),
+                Schema.Struct({
+                  cases: Schema.Array(
+                    Schema.Struct({ for: Schema.String, allOf: Schema.Array(Schema.String) }),
+                  ),
+                }),
+                Schema.Struct({ note: Schema.String }),
+              ]),
+            ),
+          }),
+        ),
+      }),
+    ),
+  }),
+});
 
 const layerFor = (
   args: ReadonlyArray<string>,
@@ -77,9 +104,12 @@ describe("token permissions in command help", () => {
     Effect.gen(function* () {
       const text = yield* helpFor(["api-keys", "--help"]);
       const printed = yield* helpFor(["api-keys", "--help"], jsonCliOutputFormatter());
-      const json = JSON.parse(printed.replace(/^log:/, ""));
+      const raw = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+        printed.replace(/^log:/, ""),
+      );
+      const json = yield* Schema.decodeUnknownEffect(HelpJson)(raw);
 
-      expect(json.permissions).toEqual({
+      expect(raw).toHaveProperty("permissions", {
         status: "mapped",
         schemes: [
           {
@@ -113,7 +143,9 @@ describe("token permissions in command help", () => {
           },
         ],
       });
-      expect(JSON.stringify(json.doc)).not.toContain("supabase/Command");
+      expect(
+        yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(json.doc),
+      ).not.toContain("supabase/Command");
 
       const block = text.slice(text.indexOf("PERMISSIONS"));
       for (const scheme of json.permissions.schemes) {
@@ -122,12 +154,9 @@ describe("token permissions in command help", () => {
           for (const row of group.rows) {
             const shown: ReadonlyArray<string> =
               "anyOf" in row
-                ? row.anyOf.map((alternative: ReadonlyArray<string>) => alternative.join(" + "))
+                ? row.anyOf.map((alternative) => alternative.join(" + "))
                 : "cases" in row
-                  ? row.cases.map(
-                      (item: { for: string; allOf: ReadonlyArray<string> }) =>
-                        `${item.allOf.join(" + ")} for ${item.for}`,
-                    )
+                  ? row.cases.map((item) => `${item.allOf.join(" + ")} for ${item.for}`)
                   : [row.note];
             for (const text of shown) expect(block).toContain(text);
           }

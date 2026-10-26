@@ -52,6 +52,7 @@ const handleListError = (ref: string, cause: SupabaseApiError) =>
           body: mapped.body,
           message: mapped.message,
           upgradeSuggested,
+          entitlement: mapped.entitlement,
         });
       }),
     ),

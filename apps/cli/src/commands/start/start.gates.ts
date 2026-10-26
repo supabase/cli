@@ -1,5 +1,5 @@
 import type { CliConfig } from "@supabase/config";
-import { Predicate } from "effect";
+import { Effect, Predicate } from "effect";
 
 import { dockerfileServiceImage } from "../../shared/services/dockerfile-images.ts";
 import type {
@@ -53,41 +53,41 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
  * Evaluates every excludable start gate in one pass. Postgres and Edge Runtime are handled
  * separately by the caller (see this module's header).
  */
-export function resolveStartGates(inputs: StartGateInputs): StartGates {
+export const resolveStartGates = Effect.fnUntraced(function* (inputs: StartGateInputs) {
   const { config, projectEnvValues, excludedKeys, document } = inputs;
   const isExcluded = (key: string) => excludedKeys.has(key);
 
-  const analyticsEnabled = envOverrideBool(
+  const analyticsEnabled = yield* envOverrideBool(
     "SUPABASE_ANALYTICS_ENABLED",
     config.analytics.enabled,
     "analytics.enabled",
     projectEnvValues,
   );
-  const apiEnabled = envOverrideBool(
+  const apiEnabled = yield* envOverrideBool(
     "SUPABASE_API_ENABLED",
     config.api.enabled,
     "api.enabled",
     projectEnvValues,
   );
-  const authEnabled = envOverrideBool(
+  const authEnabled = yield* envOverrideBool(
     "SUPABASE_AUTH_ENABLED",
     config.auth.enabled,
     "auth.enabled",
     projectEnvValues,
   );
-  const inbucketEnabled = envOverrideBool(
+  const inbucketEnabled = yield* envOverrideBool(
     "SUPABASE_LOCAL_SMTP_ENABLED",
     config.local_smtp.enabled,
     "local_smtp.enabled",
     projectEnvValues,
   );
-  const realtimeEnabled = envOverrideBool(
+  const realtimeEnabled = yield* envOverrideBool(
     "SUPABASE_REALTIME_ENABLED",
     config.realtime.enabled,
     "realtime.enabled",
     projectEnvValues,
   );
-  const storageEnabled = envOverrideBool(
+  const storageEnabled = yield* envOverrideBool(
     "SUPABASE_STORAGE_ENABLED",
     config.storage.enabled,
     "storage.enabled",
@@ -101,26 +101,26 @@ export function resolveStartGates(inputs: StartGateInputs): StartGates {
   const configuredImageTransformationEnabled =
     config.storage.image_transformation?.enabled ?? false;
   const imageTransformationEnabled = imageTransformationSectionPresent
-    ? envOverrideBool(
+    ? yield* envOverrideBool(
         "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED",
         configuredImageTransformationEnabled,
         "storage.image_transformation.enabled",
         projectEnvValues,
       )
     : configuredImageTransformationEnabled;
-  const studioEnabled = envOverrideBool(
+  const studioEnabled = yield* envOverrideBool(
     "SUPABASE_STUDIO_ENABLED",
     config.studio.enabled,
     "studio.enabled",
     projectEnvValues,
   );
-  const poolerEnabled = envOverrideBool(
+  const poolerEnabled = yield* envOverrideBool(
     "SUPABASE_DB_POOLER_ENABLED",
     config.db.pooler.enabled,
     "db.pooler.enabled",
     projectEnvValues,
   );
-  const edgeRuntimeEnabled = envOverrideBool(
+  const edgeRuntimeEnabled = yield* envOverrideBool(
     "SUPABASE_EDGE_RUNTIME_ENABLED",
     config.edge_runtime.enabled,
     "edge_runtime.enabled",
@@ -143,8 +143,8 @@ export function resolveStartGates(inputs: StartGateInputs): StartGates {
     studio: studioEnabled && !isExcluded("studio"),
     supavisor: poolerEnabled && !isExcluded("supavisor"),
     edgeRuntime: edgeRuntimeEnabled && !isExcluded("edge-runtime"),
-  };
-}
+  } satisfies StartGates;
+});
 
 const GATE_KEY_BY_SERVICE: Readonly<Record<string, keyof StartGates>> = {
   logflare: "logflare",

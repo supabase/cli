@@ -1,6 +1,3 @@
-import { readFileSync } from "node:fs";
-import { basename } from "node:path";
-
 import type { CliConfig } from "@supabase/config";
 import { ENV_CAPTURE_REGEX } from "@supabase/config/internal";
 import {
@@ -15,7 +12,7 @@ import {
   defaultPublishableKey,
   defaultSecretKey,
 } from "../shared/stack-constants.ts";
-import { Context, Effect, Option, Ref, Schema } from "effect";
+import { Context, Data, Effect, FileSystem, Option, Path, Ref, Schema } from "effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 
 import {
@@ -46,6 +43,7 @@ import {
   type DbInput,
   emailContentPathReadErrorMessage,
   type ExperimentalInput,
+  fsErrorCause,
   type HookInput,
   type LocalSmtpInput,
   type MfaFactorInput,
@@ -63,6 +61,7 @@ import {
 } from "./config-validate.ts";
 import { DEFAULT_SIGNING_KEY, generateAsymmetricGoJwt, generateGoJwt, type Jwk } from "./go-jwt.ts";
 import { collectDotenvPrivateKeys, decryptSecret, isEncryptedSecret } from "./vault-decrypt.ts";
+import { shellEnv } from "./viper-env.ts";
 
 /**
  * Resolves local-dev config values (URLs, ports, keys) for `status`/`stop`, filling in
@@ -147,13 +146,13 @@ function apiUrlWithPath(apiExternalUrl: string, path: string): string {
 }
 
 /**
- * Thrown by {@link resolveLocalConfigValues} when `auth.jwt_secret` is configured but too
+ * Raised by {@link resolveLocalConfigValues} when `auth.jwt_secret` is configured but too
  * short to sign with. Validated at config-load time, before any command renders output.
  */
-export class InvalidJwtSecretError extends Error {
+export class InvalidJwtSecretError extends Data.Error<{ readonly message: string }> {
   static readonly [ErrorActionabilityFingerprintId] = "InvalidJwtSecretError";
   constructor() {
-    super("Invalid config for auth.jwt_secret. Must be at least 16 characters");
+    super({ message: "Invalid config for auth.jwt_secret. Must be at least 16 characters" });
     this.name = "InvalidJwtSecretError";
   }
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -165,14 +164,31 @@ export class InvalidJwtSecretError extends Error {
 const MIN_JWT_SECRET_LENGTH = 16;
 
 /**
- * Thrown by {@link envOverridePort} when a `SUPABASE_*_PORT` env/dotenv override doesn't
+ * A failure that is not one of this module's config errors (a malformed uint override, a
+ * signing-key error), keeping the original error's name and message and no actionability.
+ */
+class LocalConfigValuesError extends Data.Error<{ readonly message: string }> {
+  constructor(message: string, name = "Error") {
+    super({ message });
+    /* Keeps the wrapped error's name (as a non-enumerable own property) and message. */
+    if (name !== "Error") Reflect.defineProperty(this, "name", { value: name, writable: true });
+  }
+}
+
+const thrownError = (cause: unknown) =>
+  cause instanceof Error
+    ? new LocalConfigValuesError(cause.message, cause.name)
+    : new LocalConfigValuesError(String(cause));
+
+/**
+ * Raised by {@link envOverridePort} when a `SUPABASE_*_PORT` env/dotenv override doesn't
  * parse as a valid port. A malformed port override always hard-fails config loading; there's
  * no path that reaches `status`/`stop` with one.
  */
-export class InvalidPortEnvOverrideError extends Error {
+export class InvalidPortEnvOverrideError extends Data.Error<{ readonly message: string }> {
   static readonly [ErrorActionabilityFingerprintId] = "InvalidPortEnvOverrideError";
   constructor(dottedFieldPath: string, value: string) {
-    super(`Invalid config for ${dottedFieldPath}: cannot parse "${value}" as a port`);
+    super({ message: `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as a port` });
     this.name = "InvalidPortEnvOverrideError";
   }
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -186,63 +202,61 @@ const MAX_PORT = 65535;
 /**
  * Port-flavored sibling of {@link envOverride}/{@link envOverrideBool}. Unlike the boolean
  * sibling, which falls back to the configured value on a malformed override, a bad port
- * override throws {@link InvalidPortEnvOverrideError} instead.
+ * override fails with {@link InvalidPortEnvOverrideError} instead.
  */
-export function envOverridePort(
+export const envOverridePort = Effect.fnUntraced(function* (
   name: string,
   configuredPort: number,
   dottedFieldPath: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
-): number {
-  const value = envOverride(name, undefined, projectEnvValues);
+) {
+  const value = yield* envOverride(name, undefined, projectEnvValues);
   if (value === undefined) return configuredPort;
   const parsed = parseGoBaseZeroUint(value);
   if (parsed === undefined || parsed > BigInt(MAX_PORT)) {
-    throw new InvalidPortEnvOverrideError(dottedFieldPath, value);
+    return yield* new InvalidPortEnvOverrideError(dottedFieldPath, value);
   }
   return Number(parsed);
-}
+});
+
+/** `projectEnvValues` first, then the ambient environment. */
+const lookupEnv = Effect.fnUntraced(function* (
+  name: string,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+) {
+  return projectEnvValues?.[name] ?? (yield* shellEnv(name));
+});
 
 /**
  * Resolves a `SUPABASE_<DOTTED_KEY>` override for a config field: checks `projectEnvValues`
- * (the project's already-resolved dotenv values) before falling back to `process.env`,
- * treating an empty value as unset.
+ * (the project's already-resolved dotenv values) before falling back to the ambient `Config`
+ * environment, treating an empty value as unset.
  *
  * The resolved value can itself be an `env(VAR)` indirection (e.g. `env(API_ENABLED)`),
  * resolved with the same precedence; an unresolved indirection is returned as-is.
  */
-export function envOverride(
+export const envOverride = Effect.fnUntraced(function* <Configured extends string | undefined>(
   name: string,
-  configured: string,
+  configured: Configured,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
-): string;
-export function envOverride(
-  name: string,
-  configured: string | undefined,
-  projectEnvValues: Readonly<Record<string, string>> | undefined,
-): string | undefined;
-export function envOverride(
-  name: string,
-  configured: string | undefined,
-  projectEnvValues: Readonly<Record<string, string>> | undefined,
-): string | undefined {
-  const value = projectEnvValues?.[name] ?? process.env[name];
+) {
+  const value = yield* lookupEnv(name, projectEnvValues);
   if (value === undefined || value.length === 0) return configured;
   const indirection = ENV_CAPTURE_REGEX.exec(value)?.[1];
   if (indirection === undefined) return value;
-  const resolved = projectEnvValues?.[indirection] ?? process.env[indirection];
+  const resolved = yield* lookupEnv(indirection, projectEnvValues);
   return resolved !== undefined && resolved.length > 0 ? resolved : value;
-}
+});
 
 /**
- * Thrown by {@link envOverrideBool} when a `SUPABASE_*_ENABLED` (or other bool-typed)
+ * Raised by {@link envOverrideBool} when a `SUPABASE_*_ENABLED` (or other bool-typed)
  * env/dotenv override doesn't parse as an accepted bool spelling. A malformed bool override
  * always hard-fails config loading, same as {@link InvalidPortEnvOverrideError}.
  */
-export class InvalidBoolEnvOverrideError extends Error {
+export class InvalidBoolEnvOverrideError extends Data.Error<{ readonly message: string }> {
   static readonly [ErrorActionabilityFingerprintId] = "InvalidBoolEnvOverrideError";
   constructor(dottedFieldPath: string, value: string) {
-    super(`Invalid config for ${dottedFieldPath}: cannot parse "${value}" as a bool`);
+    super({ message: `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as a bool` });
     this.name = "InvalidBoolEnvOverrideError";
   }
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -253,31 +267,33 @@ export class InvalidBoolEnvOverrideError extends Error {
 /**
  * Boolean-flavored sibling of {@link envOverride} for `SUPABASE_*` fields decoded as a
  * native bool (`api.tls.enabled`, `auth.enabled`, and other `<section>.enabled` gates). A
- * malformed override throws {@link InvalidBoolEnvOverrideError} rather than falling back
+ * malformed override fails with {@link InvalidBoolEnvOverrideError} rather than falling back
  * to `configured`.
  */
-export function envOverrideBool(
+export const envOverrideBool = Effect.fnUntraced(function* (
   name: string,
   configured: boolean,
   dottedFieldPath: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
-): boolean {
-  const value = envOverride(name, undefined, projectEnvValues);
+) {
+  const value = yield* envOverride(name, undefined, projectEnvValues);
   if (value === undefined) return configured;
   const parsed = parseGoBool(value);
   if (parsed === undefined) {
-    throw new InvalidBoolEnvOverrideError(dottedFieldPath, value);
+    return yield* new InvalidBoolEnvOverrideError(dottedFieldPath, value);
   }
   return parsed;
-}
+});
 
-/** Thrown by {@link envOverrideAnalyticsBackend} when `SUPABASE_ANALYTICS_BACKEND` isn't `"postgres"` or `"bigquery"`. */
-export class InvalidAnalyticsBackendEnvOverrideError extends Error {
+/** Raised by {@link envOverrideAnalyticsBackend} when `SUPABASE_ANALYTICS_BACKEND` isn't `"postgres"` or `"bigquery"`. */
+export class InvalidAnalyticsBackendEnvOverrideError extends Data.Error<{
+  readonly message: string;
+}> {
   static readonly [ErrorActionabilityFingerprintId] = "InvalidAnalyticsBackendEnvOverrideError";
   constructor(dottedFieldPath: string, value: string) {
-    super(
-      `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as one of "postgres", "bigquery"`,
-    );
+    super({
+      message: `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as one of "postgres", "bigquery"`,
+    });
     this.name = "InvalidAnalyticsBackendEnvOverrideError";
   }
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -291,27 +307,30 @@ export class InvalidAnalyticsBackendEnvOverrideError extends Error {
  * `skipEnvOverride` lets a matched remote-config value win over a conflicting
  * `SUPABASE_ANALYTICS_BACKEND`.
  */
-export function envOverrideAnalyticsBackend(
+export const envOverrideAnalyticsBackend = Effect.fnUntraced(function* (
   configured: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   skipEnvOverride = false,
-): "postgres" | "bigquery" {
+) {
   const value = skipEnvOverride
     ? configured
-    : (envOverride("SUPABASE_ANALYTICS_BACKEND", undefined, projectEnvValues) ?? configured);
+    : ((yield* envOverride("SUPABASE_ANALYTICS_BACKEND", undefined, projectEnvValues)) ??
+      configured);
   if (value !== "postgres" && value !== "bigquery") {
-    throw new InvalidAnalyticsBackendEnvOverrideError("analytics.backend", value);
+    return yield* new InvalidAnalyticsBackendEnvOverrideError("analytics.backend", value);
   }
   return value;
-}
+});
 
-/** Thrown by {@link envOverrideRealtimeIpVersion} when `SUPABASE_REALTIME_IP_VERSION` isn't `"IPv4"` or `"IPv6"`. */
-export class InvalidRealtimeIpVersionEnvOverrideError extends Error {
+/** Raised by {@link envOverrideRealtimeIpVersion} when `SUPABASE_REALTIME_IP_VERSION` isn't `"IPv4"` or `"IPv6"`. */
+export class InvalidRealtimeIpVersionEnvOverrideError extends Data.Error<{
+  readonly message: string;
+}> {
   static readonly [ErrorActionabilityFingerprintId] = "InvalidRealtimeIpVersionEnvOverrideError";
   constructor(dottedFieldPath: string, value: string) {
-    super(
-      `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as one of "IPv4", "IPv6"`,
-    );
+    super({
+      message: `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as one of "IPv4", "IPv6"`,
+    });
     this.name = "InvalidRealtimeIpVersionEnvOverrideError";
   }
 
@@ -320,46 +339,51 @@ export class InvalidRealtimeIpVersionEnvOverrideError extends Error {
   }
 }
 
-export function envOverrideRealtimeIpVersion(
+export const envOverrideRealtimeIpVersion = Effect.fnUntraced(function* (
   configured: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
-): "IPv4" | "IPv6" {
+) {
   const value =
-    envOverride("SUPABASE_REALTIME_IP_VERSION", undefined, projectEnvValues) ?? configured;
+    (yield* envOverride("SUPABASE_REALTIME_IP_VERSION", undefined, projectEnvValues)) ?? configured;
   if (value !== "IPv4" && value !== "IPv6") {
-    throw new InvalidRealtimeIpVersionEnvOverrideError("realtime.ip_version", value);
+    return yield* new InvalidRealtimeIpVersionEnvOverrideError("realtime.ip_version", value);
   }
   return value;
-}
+});
 
 /** `SUPABASE_REALTIME_MAX_HEADER_LENGTH` — see {@link envOverrideUint}. */
-export function envOverrideRealtimeMaxHeaderLength(
+export const envOverrideRealtimeMaxHeaderLength = Effect.fnUntraced(function* (
   configured: number,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
-): number {
-  return envOverrideUint(
+) {
+  return yield* envOverrideUint(
     "SUPABASE_REALTIME_MAX_HEADER_LENGTH",
     "realtime.max_header_length",
     configured,
     projectEnvValues,
   );
-}
+});
 
 /** `SUPABASE_API_MAX_ROWS` — see {@link envOverrideUint}. */
-export function envOverrideApiMaxRows(
+export const envOverrideApiMaxRows = Effect.fnUntraced(function* (
   configured: number,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
-): number {
-  return envOverrideUint("SUPABASE_API_MAX_ROWS", "api.max_rows", configured, projectEnvValues);
-}
+) {
+  return yield* envOverrideUint(
+    "SUPABASE_API_MAX_ROWS",
+    "api.max_rows",
+    configured,
+    projectEnvValues,
+  );
+});
 
-/** Thrown by {@link envOverridePoolMode} when `SUPABASE_DB_POOLER_POOL_MODE` isn't `"transaction"` or `"session"`. */
-export class InvalidPoolModeEnvOverrideError extends Error {
+/** Raised by {@link envOverridePoolMode} when `SUPABASE_DB_POOLER_POOL_MODE` isn't `"transaction"` or `"session"`. */
+export class InvalidPoolModeEnvOverrideError extends Data.Error<{ readonly message: string }> {
   static readonly [ErrorActionabilityFingerprintId] = "InvalidPoolModeEnvOverrideError";
   constructor(dottedFieldPath: string, value: string) {
-    super(
-      `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as one of "transaction", "session"`,
-    );
+    super({
+      message: `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as one of "transaction", "session"`,
+    });
     this.name = "InvalidPoolModeEnvOverrideError";
   }
 
@@ -368,25 +392,27 @@ export class InvalidPoolModeEnvOverrideError extends Error {
   }
 }
 
-export function envOverridePoolMode(
+export const envOverridePoolMode = Effect.fnUntraced(function* (
   configured: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
-): "transaction" | "session" {
+) {
   const value =
-    envOverride("SUPABASE_DB_POOLER_POOL_MODE", undefined, projectEnvValues) ?? configured;
+    (yield* envOverride("SUPABASE_DB_POOLER_POOL_MODE", undefined, projectEnvValues)) ?? configured;
   if (value !== "transaction" && value !== "session") {
-    throw new InvalidPoolModeEnvOverrideError("db.pooler.pool_mode", value);
+    return yield* new InvalidPoolModeEnvOverrideError("db.pooler.pool_mode", value);
   }
   return value;
-}
+});
 
-/** Thrown by {@link envOverrideEdgeRuntimePolicy} when `SUPABASE_EDGE_RUNTIME_POLICY` isn't `"per_worker"` or `"oneshot"`. */
-export class InvalidEdgeRuntimePolicyEnvOverrideError extends Error {
+/** Raised by {@link envOverrideEdgeRuntimePolicy} when `SUPABASE_EDGE_RUNTIME_POLICY` isn't `"per_worker"` or `"oneshot"`. */
+export class InvalidEdgeRuntimePolicyEnvOverrideError extends Data.Error<{
+  readonly message: string;
+}> {
   static readonly [ErrorActionabilityFingerprintId] = "InvalidEdgeRuntimePolicyEnvOverrideError";
   constructor(dottedFieldPath: string, value: string) {
-    super(
-      `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as one of "per_worker", "oneshot"`,
-    );
+    super({
+      message: `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as one of "per_worker", "oneshot"`,
+    });
     this.name = "InvalidEdgeRuntimePolicyEnvOverrideError";
   }
 
@@ -395,43 +421,43 @@ export class InvalidEdgeRuntimePolicyEnvOverrideError extends Error {
   }
 }
 
-export function envOverrideEdgeRuntimePolicy(
+export const envOverrideEdgeRuntimePolicy = Effect.fnUntraced(function* (
   configured: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
-): "per_worker" | "oneshot" {
+) {
   const value =
-    envOverride("SUPABASE_EDGE_RUNTIME_POLICY", undefined, projectEnvValues) ?? configured;
+    (yield* envOverride("SUPABASE_EDGE_RUNTIME_POLICY", undefined, projectEnvValues)) ?? configured;
   if (value !== "per_worker" && value !== "oneshot") {
-    throw new InvalidEdgeRuntimePolicyEnvOverrideError("edge_runtime.policy", value);
+    return yield* new InvalidEdgeRuntimePolicyEnvOverrideError("edge_runtime.policy", value);
   }
   return value;
-}
+});
 
 /** `SUPABASE_DB_POOLER_DEFAULT_POOL_SIZE` — see {@link envOverrideUint}. */
-export function envOverrideDefaultPoolSize(
+export const envOverrideDefaultPoolSize = Effect.fnUntraced(function* (
   configured: number,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
-): number {
-  return envOverrideUint(
+) {
+  return yield* envOverrideUint(
     "SUPABASE_DB_POOLER_DEFAULT_POOL_SIZE",
     "db.pooler.default_pool_size",
     configured,
     projectEnvValues,
   );
-}
+});
 
 /** `SUPABASE_DB_POOLER_MAX_CLIENT_CONN` — see {@link envOverrideUint}. */
-export function envOverrideMaxClientConn(
+export const envOverrideMaxClientConn = Effect.fnUntraced(function* (
   configured: number,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
-): number {
-  return envOverrideUint(
+) {
+  return yield* envOverrideUint(
     "SUPABASE_DB_POOLER_MAX_CLIENT_CONN",
     "db.pooler.max_client_conn",
     configured,
     projectEnvValues,
   );
-}
+});
 
 /**
  * Decrypts a resolved auth identity-key field when it's a dotenvx `encrypted:` value; an
@@ -439,18 +465,18 @@ export function envOverrideMaxClientConn(
  * Applied after {@link envOverride} so an env-sourced override is decrypted too, not just
  * the config.toml value.
  */
-export function decryptAuthSecret(
+export const decryptAuthSecret = Effect.fnUntraced(function* (
   value: string | undefined,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
-): string | undefined {
+) {
   if (value === undefined || !isEncryptedSecret(value)) return value;
   const dotenvPrivateKeys = collectDotenvPrivateKeys({ ...projectEnvValues, ...process.env });
   const decrypted = decryptSecret(value, dotenvPrivateKeys);
   if (!decrypted.ok) {
-    throw new ConfigValidateError(`failed to parse config: ${decrypted.error}`);
+    return yield* new ConfigValidateError(`failed to parse config: ${decrypted.error}`);
   }
   return decrypted.value;
-}
+});
 
 /**
  * Resolves `[auth.email.smtp]`'s full field set, including a presence-based `enabled`
@@ -458,17 +484,17 @@ export function decryptAuthSecret(
  * when the key is absent from a present table). Exported so `start.handler.ts`'s GoTrue env
  * resolution reuses this instead of re-deriving it.
  */
-export function resolveAuthEmailSmtp(
+export const resolveAuthEmailSmtp = Effect.fnUntraced(function* (
   authDocument: Readonly<Record<string, unknown>> | undefined,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   /**
-   * Fields whose `envOverride`/`envOverrideBool`/`envOverridePort` calls below can throw on
+   * Fields whose `envOverride`/`envOverrideBool`/`envOverridePort` calls below can fail on
    * a malformed value (directly, or via {@link decryptAuthSecret}) belong in this set so a
    * matched remote block's value wins instead of aborting on an unrelated bad env var.
    * Defaults to empty for callers with no `[remotes.<ref>]` block to match against.
    */
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
-): (SmtpInput & { readonly senderName: string | undefined }) | undefined {
+) {
   const remoteWins = makeRemoteWins(remoteOverrideKeys);
   const smtpDoc = asRecord(asRecord(authDocument?.["email"])?.["smtp"]);
   if (smtpDoc === undefined) return undefined;
@@ -477,7 +503,7 @@ export function resolveAuthEmailSmtp(
       ? smtpDoc["enabled"] === undefined
         ? true
         : smtpDoc["enabled"] === true
-      : envOverrideBool(
+      : yield* envOverrideBool(
           "SUPABASE_AUTH_EMAIL_SMTP_ENABLED",
           smtpDoc["enabled"] === undefined ? true : smtpDoc["enabled"] === true,
           "auth.email.smtp.enabled",
@@ -487,16 +513,16 @@ export function resolveAuthEmailSmtp(
       ? typeof smtpDoc["host"] === "string"
         ? smtpDoc["host"]
         : ""
-      : (envOverride(
+      : ((yield* envOverride(
           "SUPABASE_AUTH_EMAIL_SMTP_HOST",
           typeof smtpDoc["host"] === "string" ? smtpDoc["host"] : "",
           projectEnvValues,
-        ) ?? ""),
+        )) ?? ""),
     port: remoteWins("auth.email.smtp.port")
       ? typeof smtpDoc["port"] === "number"
         ? smtpDoc["port"]
         : 0
-      : envOverridePort(
+      : yield* envOverridePort(
           "SUPABASE_AUTH_EMAIL_SMTP_PORT",
           typeof smtpDoc["port"] === "number" ? smtpDoc["port"] : 0,
           "auth.email.smtp.port",
@@ -506,46 +532,46 @@ export function resolveAuthEmailSmtp(
       ? typeof smtpDoc["user"] === "string"
         ? smtpDoc["user"]
         : ""
-      : (envOverride(
+      : ((yield* envOverride(
           "SUPABASE_AUTH_EMAIL_SMTP_USER",
           typeof smtpDoc["user"] === "string" ? smtpDoc["user"] : "",
           projectEnvValues,
-        ) ?? ""),
+        )) ?? ""),
     // Decrypted like other secrets. `auth.email.smtp.pass` is in `ENV_OVERRIDABLE_KEYS` so a
     // malformed ambient override can't abort decryption when a remote block already set it.
     pass: remoteWins("auth.email.smtp.pass")
-      ? (decryptAuthSecret(
+      ? ((yield* decryptAuthSecret(
           typeof smtpDoc["pass"] === "string" ? smtpDoc["pass"] : "",
           projectEnvValues,
-        ) ?? "")
-      : (decryptAuthSecret(
-          envOverride(
+        )) ?? "")
+      : ((yield* decryptAuthSecret(
+          (yield* envOverride(
             "SUPABASE_AUTH_EMAIL_SMTP_PASS",
             typeof smtpDoc["pass"] === "string" ? smtpDoc["pass"] : "",
             projectEnvValues,
-          ) ?? "",
+          )) ?? "",
           projectEnvValues,
-        ) ?? ""),
+        )) ?? ""),
     adminEmail: remoteWins("auth.email.smtp.admin_email")
       ? typeof smtpDoc["admin_email"] === "string"
         ? smtpDoc["admin_email"]
         : ""
-      : (envOverride(
+      : ((yield* envOverride(
           "SUPABASE_AUTH_EMAIL_SMTP_ADMIN_EMAIL",
           typeof smtpDoc["admin_email"] === "string" ? smtpDoc["admin_email"] : "",
           projectEnvValues,
-        ) ?? ""),
+        )) ?? ""),
     senderName: remoteWins("auth.email.smtp.sender_name")
       ? typeof smtpDoc["sender_name"] === "string"
         ? smtpDoc["sender_name"]
         : undefined
-      : envOverride(
+      : yield* envOverride(
           "SUPABASE_AUTH_EMAIL_SMTP_SENDER_NAME",
           typeof smtpDoc["sender_name"] === "string" ? smtpDoc["sender_name"] : undefined,
           projectEnvValues,
         ),
-  };
-}
+  } satisfies SmtpInput & { readonly senderName: string | undefined };
+});
 
 /**
  * `auth.captcha` validation requires both `provider` and `secret` when the section is
@@ -554,26 +580,26 @@ export function resolveAuthEmailSmtp(
  * `authDocument` instead. Hoisted so `start.handler.ts`'s GoTrue env resolution shares this
  * same resolved value.
  */
-export function resolveAuthCaptcha(
+export const resolveAuthCaptcha = Effect.fnUntraced(function* (
   authDocument: Readonly<Record<string, unknown>> | undefined,
   captcha: CliConfig["auth"]["captcha"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   /**
-   * Fields whose `envOverride`/`envOverrideBool` calls below can throw on a malformed value
+   * Fields whose `envOverride`/`envOverrideBool` calls below can fail on a malformed value
    * (directly, or via {@link decryptAuthSecret}) belong in this set so a matched remote
    * block's value wins instead of aborting on an unrelated bad env var. Defaults to empty for
    * callers with no `[remotes.<ref>]` block to match against.
    */
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
-): CaptchaInput | undefined {
+) {
   const remoteWins = makeRemoteWins(remoteOverrideKeys);
   const captchaDoc = asRecord(authDocument?.["captcha"]);
   return captcha
-    ? {
+    ? ({
         enabled: remoteWins("auth.captcha.enabled")
           ? (captcha.enabled ?? false)
           : captchaDoc !== undefined
-            ? envOverrideBool(
+            ? yield* envOverrideBool(
                 "SUPABASE_AUTH_CAPTCHA_ENABLED",
                 captcha.enabled ?? false,
                 "auth.captcha.enabled",
@@ -583,51 +609,59 @@ export function resolveAuthCaptcha(
         provider: remoteWins("auth.captcha.provider")
           ? captcha.provider
           : captchaDoc !== undefined
-            ? envOverride("SUPABASE_AUTH_CAPTCHA_PROVIDER", captcha.provider, projectEnvValues)
+            ? yield* envOverride(
+                "SUPABASE_AUTH_CAPTCHA_PROVIDER",
+                captcha.provider,
+                projectEnvValues,
+              )
             : captcha.provider,
         // Decrypted like `auth.email.smtp.pass`. `auth.captcha.secret` is in
         // `ENV_OVERRIDABLE_KEYS` so a malformed ambient override can't abort decryption when a
         // remote block already set it.
-        secret: decryptAuthSecret(
+        secret: yield* decryptAuthSecret(
           remoteWins("auth.captcha.secret")
             ? captcha.secret
             : captchaDoc !== undefined
-              ? envOverride("SUPABASE_AUTH_CAPTCHA_SECRET", captcha.secret, projectEnvValues)
+              ? yield* envOverride("SUPABASE_AUTH_CAPTCHA_SECRET", captcha.secret, projectEnvValues)
               : captcha.secret,
           projectEnvValues,
         ),
-      }
+      } satisfies CaptchaInput)
     : undefined;
-}
+});
 
 /**
  * Resolves the signing secret from the already-resolved `auth.jwt_secret`: empty falls back
- * to {@link defaultJwtSecret}, shorter than {@link MIN_JWT_SECRET_LENGTH} throws
+ * to {@link defaultJwtSecret}, shorter than {@link MIN_JWT_SECRET_LENGTH} fails with
  * {@link InvalidJwtSecretError}.
  */
-export function resolveJwtSecret(configured: string | undefined): string {
+export const resolveJwtSecret = Effect.fnUntraced(function* (configured: string | undefined) {
   if (configured === undefined || configured.length === 0) return defaultJwtSecret;
   if (configured.length < MIN_JWT_SECRET_LENGTH) {
-    throw new InvalidJwtSecretError();
+    return yield* new InvalidJwtSecretError();
   }
   return configured;
-}
+});
 
 function resolveOpaqueKey(configured: string | undefined, fallback: string): string {
   return configured !== undefined && configured.length > 0 ? configured : fallback;
 }
 
-function resolveSignedKey(
+const resolveSignedKey = Effect.fnUntraced(function* (
   configured: string | undefined,
   jwtSecret: string,
   signingKey: Jwk | undefined,
   role: "anon" | "service_role",
-): string {
+) {
   if (configured !== undefined && configured.length > 0) return configured;
-  return signingKey !== undefined
-    ? generateAsymmetricGoJwt(signingKey, role)
-    : generateGoJwt(jwtSecret, role);
-}
+  return yield* Effect.try({
+    try: () =>
+      signingKey !== undefined
+        ? generateAsymmetricGoJwt(signingKey, role)
+        : generateGoJwt(jwtSecret, role),
+    catch: thrownError,
+  });
+});
 
 /** JWK fields, matching {@link Jwk}. */
 const JwkSchema = Schema.Struct({
@@ -649,41 +683,44 @@ const JwkSchema = Schema.Struct({
   x: Schema.optionalKey(Schema.String),
   y: Schema.optionalKey(Schema.String),
 });
-const decodeJwks = Schema.decodeUnknownSync(Schema.Array(JwkSchema));
+const decodeJwks = Schema.decodeUnknownEffect(Schema.Array(JwkSchema));
 
 /**
- * Reads and JSON-decodes `signingKeysPath` into an array of {@link Jwk}, using `node:fs`
- * directly (not the `FileSystem` Effect service) to keep this a plain synchronous resolver
- * for a rarely-configured field. Callers must only invoke this when auth is enabled.
+ * Reads and JSON-decodes `signingKeysPath` into an array of {@link Jwk}, keeping a leading BOM
+ * (no BOM stripping). Callers must only invoke this when auth is enabled.
  */
-function readSigningKeysFile(workdir: string, signingKeysPath: string): ReadonlyArray<Jwk> {
-  const absolutePath = resolveSigningKeysPath(workdir, signingKeysPath);
+const readSigningKeysFile = Effect.fnUntraced(function* (workdir: string, signingKeysPath: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const absolutePath = resolveSigningKeysPath(path, workdir, signingKeysPath);
 
-  let contents: string;
-  try {
-    contents = readFileSync(absolutePath, "utf8");
-  } catch (cause) {
-    throw new ConfigValidateError(signingKeysReadErrorMessage(cause));
-  }
+  const contents = yield* fs.readFile(absolutePath).pipe(
+    Effect.map((bytes) => new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes)),
+    Effect.mapError(
+      (cause) => new ConfigValidateError(signingKeysReadErrorMessage(fsErrorCause(cause))),
+    ),
+  );
 
-  try {
+  const parsed = yield* Effect.try({
     // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- Native parser errors are CLI output; schema decoding discards their messages.
-    const parsed: unknown = JSON.parse(contents);
-    // `Jwk.key_ops` is mutable (required for Node's `createPrivateKey`/`JsonWebKey` input), so
-    // it's copied into a fresh array rather than widening the schema's readonly output type.
-    return decodeJwks(parsed).map((jwk) => ({
-      ...jwk,
-      key_ops: jwk.key_ops === undefined ? undefined : [...jwk.key_ops],
-    }));
-  } catch (cause) {
-    throw new ConfigValidateError(signingKeysDecodeErrorMessage(cause));
-  }
-}
+    try: (): unknown => JSON.parse(contents),
+    catch: (cause) => new ConfigValidateError(signingKeysDecodeErrorMessage(cause)),
+  });
+  const jwks = yield* decodeJwks(parsed).pipe(
+    Effect.mapError((cause) => new ConfigValidateError(signingKeysDecodeErrorMessage(cause))),
+  );
+  // `Jwk.key_ops` is mutable (required for Node's `createPrivateKey`/`JsonWebKey` input), so
+  // it's copied into a fresh array rather than widening the schema's readonly output type.
+  return jwks.map((jwk) => ({
+    ...jwk,
+    key_ops: jwk.key_ops === undefined ? undefined : [...jwk.key_ops],
+  })) satisfies ReadonlyArray<Jwk>;
+});
 
 /** See {@link readSigningKeysFile}. */
-function loadSigningKeys(workdir: string, signingKeysPath: string): ReadonlyArray<Jwk> {
-  return readSigningKeysFile(workdir, signingKeysPath);
-}
+const loadSigningKeys = Effect.fnUntraced(function* (workdir: string, signingKeysPath: string) {
+  return yield* readSigningKeysFile(workdir, signingKeysPath);
+});
 
 /**
  * Returns the parsed signing keys only when auth is enabled and a path is configured;
@@ -692,16 +729,16 @@ function loadSigningKeys(workdir: string, signingKeysPath: string): ReadonlyArra
  * on which key(s) apply. `remoteOverrideKeys` lets a matched remote block win over a
  * conflicting env override on `auth.enabled`/`auth.signing_keys_path`.
  */
-export function resolveConfiguredSigningKeys(
+export const resolveConfiguredSigningKeys = Effect.fnUntraced(function* (
   config: CliConfig,
   workdir: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
-): ReadonlyArray<Jwk> | undefined {
+) {
   const remoteWins = makeRemoteWins(remoteOverrideKeys);
   const authEnabled = remoteWins("auth.enabled")
     ? config.auth.enabled
-    : envOverrideBool(
+    : yield* envOverrideBool(
         "SUPABASE_AUTH_ENABLED",
         config.auth.enabled,
         "auth.enabled",
@@ -709,40 +746,46 @@ export function resolveConfiguredSigningKeys(
       );
   const signingKeysPath = remoteWins("auth.signing_keys_path")
     ? config.auth.signing_keys_path
-    : envOverride(
+    : yield* envOverride(
         "SUPABASE_AUTH_SIGNING_KEYS_PATH",
         config.auth.signing_keys_path,
         projectEnvValues,
       );
   return authEnabled && signingKeysPath !== undefined && signingKeysPath.length > 0
-    ? loadSigningKeys(workdir, signingKeysPath)
+    ? yield* loadSigningKeys(workdir, signingKeysPath)
     : undefined;
-}
+});
 
 /**
  * Confirms `api.tls.cert`/`.key` are readable when both are configured; the "exactly one set"
  * check lives in `validateResolvedConfig`. Unlike {@link readSigningKeysFile}'s
  * `signing_keys_path`, both paths join with the `supabase/` dir without an absolute-path guard.
  */
-function readApiTlsFiles(
+const readApiTlsFiles = Effect.fnUntraced(function* (
   workdir: string,
   certPath: string | undefined,
   keyPath: string | undefined,
-): void {
+) {
   if (certPath === undefined || certPath.length === 0) return;
   if (keyPath === undefined || keyPath.length === 0) return;
 
-  try {
-    readFileSync(resolveApiTlsPath(workdir, certPath), "utf8");
-  } catch (cause) {
-    throw new ConfigValidateError(apiTlsCertReadErrorMessage(cause));
-  }
-  try {
-    readFileSync(resolveApiTlsPath(workdir, keyPath), "utf8");
-  } catch (cause) {
-    throw new ConfigValidateError(apiTlsKeyReadErrorMessage(cause));
-  }
-}
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* fs
+    .readFile(resolveApiTlsPath(path, workdir, certPath))
+    .pipe(
+      Effect.mapError(
+        (cause) => new ConfigValidateError(apiTlsCertReadErrorMessage(fsErrorCause(cause))),
+      ),
+    );
+  yield* fs
+    .readFile(resolveApiTlsPath(path, workdir, keyPath))
+    .pipe(
+      Effect.mapError(
+        (cause) => new ConfigValidateError(apiTlsKeyReadErrorMessage(fsErrorCause(cause))),
+      ),
+    );
+});
 
 /**
  * One `[auth.email.template.<name>]` entry, already env-override-resolved. `subject` is
@@ -780,18 +823,18 @@ export type ResolvedAuthEmail = Omit<CliConfig["auth"]["email"], "template" | "n
  * either case. Shared by `start.handler.ts`'s GoTrue env builder and its email-template
  * content read.
  */
-export function resolveAuthEmail(
+export const resolveAuthEmail = Effect.fnUntraced(function* (
   email: CliConfig["auth"]["email"],
   authDocument: Record<string, unknown> | undefined,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   /**
    * Fields whose `envOverride`/`envOverrideBool` calls (here or in the caller-side file read
-   * for `content_path`) can throw on a malformed value belong in this set so a matched remote
+   * for `content_path`) can fail on a malformed value belong in this set so a matched remote
    * block's value wins instead of aborting on an unrelated bad env var. Covers top-level
    * `auth.email.*` leaves as well as each `template.<name>.*`/`notification.<name>.*` leaf.
    */
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
-): ResolvedAuthEmail {
+) {
   const remoteWins = makeRemoteWins(remoteOverrideKeys);
   const emailDoc = asRecord(authDocument?.["email"]);
   const templateDoc = asRecord(emailDoc?.["template"]);
@@ -803,12 +846,12 @@ export function resolveAuthEmail(
     const rawSubjectPresent = asRecord(templateDoc?.[name])?.["subject"] !== undefined;
     const envSubject = remoteWins(`auth.email.template.${name}.subject`)
       ? undefined
-      : envOverride(`${envPrefix}_SUBJECT`, undefined, projectEnvValues);
+      : yield* envOverride(`${envPrefix}_SUBJECT`, undefined, projectEnvValues);
     template[name] = {
       subject: envSubject ?? (rawSubjectPresent ? tmpl.subject : undefined),
       content_path: remoteWins(`auth.email.template.${name}.content_path`)
         ? tmpl.content_path
-        : (envOverride(`${envPrefix}_CONTENT_PATH`, tmpl.content_path, projectEnvValues) ??
+        : ((yield* envOverride(`${envPrefix}_CONTENT_PATH`, tmpl.content_path, projectEnvValues)) ??
           tmpl.content_path),
       // `content` counts as present when set via TOML or the `_CONTENT` env override;
       // {@link readAuthEmailTemplateContent} rejects it below unless `content_path` is also set.
@@ -816,7 +859,8 @@ export function resolveAuthEmail(
         asRecord(templateDoc?.[name])?.["content"] !== undefined ||
         (remoteWins(`auth.email.template.${name}.content`)
           ? false
-          : envOverride(`${envPrefix}_CONTENT`, undefined, projectEnvValues) !== undefined),
+          : (yield* envOverride(`${envPrefix}_CONTENT`, undefined, projectEnvValues)) !==
+            undefined),
     };
   }
 
@@ -826,11 +870,11 @@ export function resolveAuthEmail(
     const rawSubjectPresent = asRecord(notificationDoc?.[name])?.["subject"] !== undefined;
     const envSubject = remoteWins(`auth.email.notification.${name}.subject`)
       ? undefined
-      : envOverride(`${envPrefix}_SUBJECT`, undefined, projectEnvValues);
+      : yield* envOverride(`${envPrefix}_SUBJECT`, undefined, projectEnvValues);
     notification[name] = {
       enabled: remoteWins(`auth.email.notification.${name}.enabled`)
         ? tmpl.enabled
-        : envOverrideBool(
+        : yield* envOverrideBool(
             `${envPrefix}_ENABLED`,
             tmpl.enabled,
             `auth.email.notification.${name}.enabled`,
@@ -839,14 +883,15 @@ export function resolveAuthEmail(
       subject: envSubject ?? (rawSubjectPresent ? tmpl.subject : undefined),
       content_path: remoteWins(`auth.email.notification.${name}.content_path`)
         ? tmpl.content_path
-        : (envOverride(`${envPrefix}_CONTENT_PATH`, tmpl.content_path, projectEnvValues) ??
+        : ((yield* envOverride(`${envPrefix}_CONTENT_PATH`, tmpl.content_path, projectEnvValues)) ??
           tmpl.content_path),
       // Same `_CONTENT` env-presence fold as the template loop above.
       content_present:
         asRecord(notificationDoc?.[name])?.["content"] !== undefined ||
         (remoteWins(`auth.email.notification.${name}.content`)
           ? false
-          : envOverride(`${envPrefix}_CONTENT`, undefined, projectEnvValues) !== undefined),
+          : (yield* envOverride(`${envPrefix}_CONTENT`, undefined, projectEnvValues)) !==
+            undefined),
     };
   }
 
@@ -854,7 +899,7 @@ export function resolveAuthEmail(
     ...email,
     enable_signup: remoteWins("auth.email.enable_signup")
       ? email.enable_signup
-      : envOverrideBool(
+      : yield* envOverrideBool(
           "SUPABASE_AUTH_EMAIL_ENABLE_SIGNUP",
           email.enable_signup,
           "auth.email.enable_signup",
@@ -862,7 +907,7 @@ export function resolveAuthEmail(
         ),
     double_confirm_changes: remoteWins("auth.email.double_confirm_changes")
       ? email.double_confirm_changes
-      : envOverrideBool(
+      : yield* envOverrideBool(
           "SUPABASE_AUTH_EMAIL_DOUBLE_CONFIRM_CHANGES",
           email.double_confirm_changes,
           "auth.email.double_confirm_changes",
@@ -870,7 +915,7 @@ export function resolveAuthEmail(
         ),
     enable_confirmations: remoteWins("auth.email.enable_confirmations")
       ? email.enable_confirmations
-      : envOverrideBool(
+      : yield* envOverrideBool(
           "SUPABASE_AUTH_EMAIL_ENABLE_CONFIRMATIONS",
           email.enable_confirmations,
           "auth.email.enable_confirmations",
@@ -878,7 +923,7 @@ export function resolveAuthEmail(
         ),
     secure_password_change: remoteWins("auth.email.secure_password_change")
       ? email.secure_password_change
-      : envOverrideBool(
+      : yield* envOverrideBool(
           "SUPABASE_AUTH_EMAIL_SECURE_PASSWORD_CHANGE",
           email.secure_password_change,
           "auth.email.secure_password_change",
@@ -886,11 +931,14 @@ export function resolveAuthEmail(
         ),
     max_frequency: remoteWins("auth.email.max_frequency")
       ? email.max_frequency
-      : (envOverride("SUPABASE_AUTH_EMAIL_MAX_FREQUENCY", email.max_frequency, projectEnvValues) ??
-        email.max_frequency),
+      : ((yield* envOverride(
+          "SUPABASE_AUTH_EMAIL_MAX_FREQUENCY",
+          email.max_frequency,
+          projectEnvValues,
+        )) ?? email.max_frequency),
     otp_length: remoteWins("auth.email.otp_length")
       ? email.otp_length
-      : envOverrideUint(
+      : yield* envOverrideUint(
           "SUPABASE_AUTH_EMAIL_OTP_LENGTH",
           "auth.email.otp_length",
           email.otp_length,
@@ -898,7 +946,7 @@ export function resolveAuthEmail(
         ),
     otp_expiry: remoteWins("auth.email.otp_expiry")
       ? email.otp_expiry
-      : envOverrideUint(
+      : yield* envOverrideUint(
           "SUPABASE_AUTH_EMAIL_OTP_EXPIRY",
           "auth.email.otp_expiry",
           email.otp_expiry,
@@ -906,8 +954,8 @@ export function resolveAuthEmail(
         ),
     template,
     notification,
-  };
-}
+  } satisfies ResolvedAuthEmail;
+});
 
 /**
  * Reads each template/notification's content file, run only when auth is enabled. Every
@@ -915,39 +963,61 @@ export function resolveAuthEmail(
  * `content`-vs-`content_path` exclusivity and path resolution live in
  * `resolveEmailTemplateContentPath`; this only performs the read once a path comes back.
  */
-function readAuthEmailTemplateContent(email: ResolvedAuthEmail, workdir: string): void {
+const readAuthEmailTemplateContent = Effect.fnUntraced(function* (
+  email: ResolvedAuthEmail,
+  workdir: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
   for (const [name, tmpl] of Object.entries(email.template)) {
-    const path = resolveEmailTemplateContentPath({
+    const path = yield* resolveEmailTemplateContentPath({
       section: "template",
       name,
       contentPath: tmpl.content_path,
       contentPresent: tmpl.content_present,
       base: workdir,
-    });
+    }).pipe(
+      Effect.mapError((cause) =>
+        cause instanceof ConfigValidateError ? cause : thrownError(fsErrorCause(cause)),
+      ),
+    );
     if (path === undefined) continue;
-    try {
-      readFileSync(path, "utf8");
-    } catch (cause) {
-      throw new ConfigValidateError(emailContentPathReadErrorMessage("template", name, cause));
-    }
+    yield* fs
+      .readFile(path)
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new ConfigValidateError(
+              emailContentPathReadErrorMessage("template", name, fsErrorCause(cause)),
+            ),
+        ),
+      );
   }
   for (const [name, tmpl] of Object.entries(email.notification)) {
     if (!tmpl.enabled) continue;
-    const path = resolveEmailTemplateContentPath({
+    const path = yield* resolveEmailTemplateContentPath({
       section: "notification",
       name,
       contentPath: tmpl.content_path,
       contentPresent: tmpl.content_present,
       base: workdir,
-    });
+    }).pipe(
+      Effect.mapError((cause) =>
+        cause instanceof ConfigValidateError ? cause : thrownError(fsErrorCause(cause)),
+      ),
+    );
     if (path === undefined) continue;
-    try {
-      readFileSync(path, "utf8");
-    } catch (cause) {
-      throw new ConfigValidateError(emailContentPathReadErrorMessage("notification", name, cause));
-    }
+    yield* fs
+      .readFile(path)
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new ConfigValidateError(
+              emailContentPathReadErrorMessage("notification", name, fsErrorCause(cause)),
+            ),
+        ),
+      );
   }
-}
+});
 
 // Every field routed through {@link envOverrideUint} is an unsigned 64-bit value; comparing
 // as `BigInt` (not `Number`) avoids precision loss near `2^64`.
@@ -992,33 +1062,35 @@ function parseGoBaseZeroUint(value: string): bigint | undefined {
  * folds an invalid or out-of-{@link UINT_MAX} override into the generic "Invalid <field>"
  * error message.
  */
-export function envOverrideUint(
+export const envOverrideUint = Effect.fnUntraced(function* (
   name: string,
   dottedFieldPath: string,
   configured: number,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
-): number {
-  const value = envOverride(name, undefined, projectEnvValues);
+) {
+  const value = yield* envOverride(name, undefined, projectEnvValues);
   if (value === undefined) return configured;
   const parsed = parseGoBaseZeroUint(value);
   if (parsed === undefined || parsed > UINT_MAX) {
-    throw new Error(`Failed reading config: Invalid ${dottedFieldPath}: ${value}.`);
+    return yield* new LocalConfigValuesError(
+      `Failed reading config: Invalid ${dottedFieldPath}: ${value}.`,
+    );
   }
   return Number(parsed);
-}
+});
 
 /** `SUPABASE_DB_MAJOR_VERSION` — see {@link envOverrideUint}. */
-export function envOverrideMajorVersion(
+export const envOverrideMajorVersion = Effect.fnUntraced(function* (
   configured: number,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
-): number {
-  return envOverrideUint(
+) {
+  return yield* envOverrideUint(
     "SUPABASE_DB_MAJOR_VERSION",
     "db.major_version",
     configured,
     projectEnvValues,
   );
-}
+});
 
 const ORIOLEDB_VERSION_ENV = "SUPABASE_DB_ORIOLEDB_VERSION";
 const DEPRECATED_ORIOLEDB_VERSION_ENV = "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION";
@@ -1027,22 +1099,25 @@ const DEPRECATED_ORIOLEDB_VERSION_ENV = "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION"
  * Reads the `db.orioledb_version` override through `read`, falling back to the deprecated
  * `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` alias while `SUPABASE_DB_ORIOLEDB_VERSION` is unset.
  */
-export const readOrioleDBVersionEnvOverride = (
+export const readOrioleDBVersionEnvOverride = Effect.fnUntraced(function* <E, R>(
   read: (
     name: typeof ORIOLEDB_VERSION_ENV | typeof DEPRECATED_ORIOLEDB_VERSION_ENV,
-  ) => string | undefined,
-): string | undefined => read(ORIOLEDB_VERSION_ENV) ?? read(DEPRECATED_ORIOLEDB_VERSION_ENV);
+  ) => Effect.Effect<string | undefined, E, R>,
+) {
+  return (yield* read(ORIOLEDB_VERSION_ENV)) ?? (yield* read(DEPRECATED_ORIOLEDB_VERSION_ENV));
+});
 
 /** `SUPABASE_DB_ORIOLEDB_VERSION` or its deprecated alias — see {@link envOverride}. */
-export function envOverrideOrioleDBVersion(
+export const envOverrideOrioleDBVersion = Effect.fnUntraced(function* (
   configured: string | undefined,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
-): string | undefined {
+) {
   return (
-    readOrioleDBVersionEnvOverride((name) => envOverride(name, undefined, projectEnvValues)) ??
-    configured
+    (yield* readOrioleDBVersionEnvOverride((name) =>
+      envOverride(name, undefined, projectEnvValues),
+    )) ?? configured
   );
-}
+});
 
 /**
  * Set by {@link withSingleOrioleDBVersionEnvWarning}; while unset, every config read that finds the
@@ -1063,27 +1138,27 @@ export const withSingleOrioleDBVersionEnvWarning = <A, E, R>(effect: Effect.Effe
  * The deprecation warning to print when `read` finds `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` set,
  * unless an enclosing {@link withSingleOrioleDBVersionEnvWarning} already printed it.
  */
-export const deprecatedOrioleDBVersionEnvWarning = Effect.fnUntraced(function* (
-  read: (name: typeof DEPRECATED_ORIOLEDB_VERSION_ENV) => string | undefined,
+export const deprecatedOrioleDBVersionEnvWarning = Effect.fnUntraced(function* <E, R>(
+  read: (name: typeof DEPRECATED_ORIOLEDB_VERSION_ENV) => Effect.Effect<string | undefined, E, R>,
 ) {
-  if (read(DEPRECATED_ORIOLEDB_VERSION_ENV) === undefined) return undefined;
+  if ((yield* read(DEPRECATED_ORIOLEDB_VERSION_ENV)) === undefined) return undefined;
   const printed = yield* OrioleDBVersionEnvWarningPrinted;
   if (Option.isSome(printed) && (yield* Ref.getAndSet(printed.value, true))) return undefined;
   return `WARN: ${DEPRECATED_ORIOLEDB_VERSION_ENV} is deprecated and will be removed in v3, use ${ORIOLEDB_VERSION_ENV} instead.`;
 });
 
 /** `SUPABASE_EDGE_RUNTIME_DENO_VERSION` — see {@link envOverrideUint}. */
-export function envOverrideDenoVersion(
+export const envOverrideDenoVersion = Effect.fnUntraced(function* (
   configured: number,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
-): number {
-  return envOverrideUint(
+) {
+  return yield* envOverrideUint(
     "SUPABASE_EDGE_RUNTIME_DENO_VERSION",
     "edge_runtime.deno_version",
     configured,
     projectEnvValues,
   );
-}
+});
 
 /**
  * Optional-uint sibling of {@link envOverrideUint} for `db.settings.*` fields
@@ -1091,48 +1166,52 @@ export function envOverrideDenoVersion(
  * absent from config.toml. `configured`/the return value stay `number | undefined` to
  * preserve that state through an override miss.
  */
-function envOverrideOptionalUint(
+const envOverrideOptionalUint = Effect.fnUntraced(function* (
   name: string,
   dottedFieldPath: string,
   configured: number | undefined,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
-): number | undefined {
-  const value = envOverride(name, undefined, projectEnvValues);
+) {
+  const value = yield* envOverride(name, undefined, projectEnvValues);
   if (value === undefined) return configured;
   const parsed = parseGoBaseZeroUint(value);
   if (parsed === undefined || parsed > UINT_MAX) {
-    throw new Error(`Failed reading config: Invalid ${dottedFieldPath}: ${value}.`);
+    return yield* new LocalConfigValuesError(
+      `Failed reading config: Invalid ${dottedFieldPath}: ${value}.`,
+    );
   }
   return Number(parsed);
-}
+});
 
 /**
  * Optional-bool sibling of {@link envOverrideBool} for `db.settings.track_commit_timestamp`,
  * the only bool field in this file left unset (not defaulted) when absent.
  */
-function envOverrideOptionalBool(
+const envOverrideOptionalBool = Effect.fnUntraced(function* (
   name: string,
   configured: boolean | undefined,
   dottedFieldPath: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
-): boolean | undefined {
-  const value = envOverride(name, undefined, projectEnvValues);
+) {
+  const value = yield* envOverride(name, undefined, projectEnvValues);
   if (value === undefined) return configured;
   const parsed = parseGoBool(value);
   if (parsed === undefined) {
-    throw new InvalidBoolEnvOverrideError(dottedFieldPath, value);
+    return yield* new InvalidBoolEnvOverrideError(dottedFieldPath, value);
   }
   return parsed;
-}
+});
 
-/** Thrown by {@link resolveDbSettingsEnvOverrides} when `SUPABASE_DB_SETTINGS_SESSION_REPLICATION_ROLE` isn't `"origin"`, `"replica"`, or `"local"`. */
-export class InvalidSessionReplicationRoleEnvOverrideError extends Error {
+/** Raised by {@link resolveDbSettingsEnvOverrides} when `SUPABASE_DB_SETTINGS_SESSION_REPLICATION_ROLE` isn't `"origin"`, `"replica"`, or `"local"`. */
+export class InvalidSessionReplicationRoleEnvOverrideError extends Data.Error<{
+  readonly message: string;
+}> {
   static readonly [ErrorActionabilityFingerprintId] =
     "InvalidSessionReplicationRoleEnvOverrideError";
   constructor(dottedFieldPath: string, value: string) {
-    super(
-      `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as one of "origin", "replica", "local"`,
-    );
+    super({
+      message: `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as one of "origin", "replica", "local"`,
+    });
     this.name = "InvalidSessionReplicationRoleEnvOverrideError";
   }
 
@@ -1146,24 +1225,24 @@ export class InvalidSessionReplicationRoleEnvOverrideError extends Error {
  * Unlike {@link envOverrideAnalyticsBackend}, `configured` (and the return value) may
  * be `undefined` — validation only runs once a value is actually present.
  */
-function envOverrideSessionReplicationRole(
+const envOverrideSessionReplicationRole = Effect.fnUntraced(function* (
   configured: string | undefined,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
-): "origin" | "replica" | "local" | undefined {
-  const value = envOverride(
+) {
+  const value = yield* envOverride(
     "SUPABASE_DB_SETTINGS_SESSION_REPLICATION_ROLE",
     configured,
     projectEnvValues,
   );
   if (value === undefined) return undefined;
   if (value !== "origin" && value !== "replica" && value !== "local") {
-    throw new InvalidSessionReplicationRoleEnvOverrideError(
+    return yield* new InvalidSessionReplicationRoleEnvOverrideError(
       "db.settings.session_replication_role",
       value,
     );
   }
   return value;
-}
+});
 
 /**
  * Resolves every `db.settings.*` sub-field to its env-overridden value before
@@ -1171,37 +1250,37 @@ function envOverrideSessionReplicationRole(
  * lets a matched remote block's value win over a conflicting `SUPABASE_DB_SETTINGS_*` var,
  * same as elsewhere in this file.
  */
-export function resolveDbSettingsEnvOverrides(
+export const resolveDbSettingsEnvOverrides = Effect.fnUntraced(function* (
   settings: CliConfig["db"]["settings"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
-): NonNullable<CliConfig["db"]["settings"]> {
+) {
   const remoteWins = makeRemoteWins(remoteOverrideKeys);
   return {
     effective_cache_size: remoteWins("db.settings.effective_cache_size")
       ? settings?.effective_cache_size
-      : envOverride(
+      : yield* envOverride(
           "SUPABASE_DB_SETTINGS_EFFECTIVE_CACHE_SIZE",
           settings?.effective_cache_size,
           projectEnvValues,
         ),
     logical_decoding_work_mem: remoteWins("db.settings.logical_decoding_work_mem")
       ? settings?.logical_decoding_work_mem
-      : envOverride(
+      : yield* envOverride(
           "SUPABASE_DB_SETTINGS_LOGICAL_DECODING_WORK_MEM",
           settings?.logical_decoding_work_mem,
           projectEnvValues,
         ),
     maintenance_work_mem: remoteWins("db.settings.maintenance_work_mem")
       ? settings?.maintenance_work_mem
-      : envOverride(
+      : yield* envOverride(
           "SUPABASE_DB_SETTINGS_MAINTENANCE_WORK_MEM",
           settings?.maintenance_work_mem,
           projectEnvValues,
         ),
     max_connections: remoteWins("db.settings.max_connections")
       ? settings?.max_connections
-      : envOverrideOptionalUint(
+      : yield* envOverrideOptionalUint(
           "SUPABASE_DB_SETTINGS_MAX_CONNECTIONS",
           "db.settings.max_connections",
           settings?.max_connections,
@@ -1209,7 +1288,7 @@ export function resolveDbSettingsEnvOverrides(
         ),
     max_locks_per_transaction: remoteWins("db.settings.max_locks_per_transaction")
       ? settings?.max_locks_per_transaction
-      : envOverrideOptionalUint(
+      : yield* envOverrideOptionalUint(
           "SUPABASE_DB_SETTINGS_MAX_LOCKS_PER_TRANSACTION",
           "db.settings.max_locks_per_transaction",
           settings?.max_locks_per_transaction,
@@ -1217,7 +1296,7 @@ export function resolveDbSettingsEnvOverrides(
         ),
     max_parallel_maintenance_workers: remoteWins("db.settings.max_parallel_maintenance_workers")
       ? settings?.max_parallel_maintenance_workers
-      : envOverrideOptionalUint(
+      : yield* envOverrideOptionalUint(
           "SUPABASE_DB_SETTINGS_MAX_PARALLEL_MAINTENANCE_WORKERS",
           "db.settings.max_parallel_maintenance_workers",
           settings?.max_parallel_maintenance_workers,
@@ -1225,7 +1304,7 @@ export function resolveDbSettingsEnvOverrides(
         ),
     max_parallel_workers: remoteWins("db.settings.max_parallel_workers")
       ? settings?.max_parallel_workers
-      : envOverrideOptionalUint(
+      : yield* envOverrideOptionalUint(
           "SUPABASE_DB_SETTINGS_MAX_PARALLEL_WORKERS",
           "db.settings.max_parallel_workers",
           settings?.max_parallel_workers,
@@ -1233,7 +1312,7 @@ export function resolveDbSettingsEnvOverrides(
         ),
     max_parallel_workers_per_gather: remoteWins("db.settings.max_parallel_workers_per_gather")
       ? settings?.max_parallel_workers_per_gather
-      : envOverrideOptionalUint(
+      : yield* envOverrideOptionalUint(
           "SUPABASE_DB_SETTINGS_MAX_PARALLEL_WORKERS_PER_GATHER",
           "db.settings.max_parallel_workers_per_gather",
           settings?.max_parallel_workers_per_gather,
@@ -1241,7 +1320,7 @@ export function resolveDbSettingsEnvOverrides(
         ),
     max_replication_slots: remoteWins("db.settings.max_replication_slots")
       ? settings?.max_replication_slots
-      : envOverrideOptionalUint(
+      : yield* envOverrideOptionalUint(
           "SUPABASE_DB_SETTINGS_MAX_REPLICATION_SLOTS",
           "db.settings.max_replication_slots",
           settings?.max_replication_slots,
@@ -1249,31 +1328,35 @@ export function resolveDbSettingsEnvOverrides(
         ),
     max_slot_wal_keep_size: remoteWins("db.settings.max_slot_wal_keep_size")
       ? settings?.max_slot_wal_keep_size
-      : envOverride(
+      : yield* envOverride(
           "SUPABASE_DB_SETTINGS_MAX_SLOT_WAL_KEEP_SIZE",
           settings?.max_slot_wal_keep_size,
           projectEnvValues,
         ),
     max_standby_archive_delay: remoteWins("db.settings.max_standby_archive_delay")
       ? settings?.max_standby_archive_delay
-      : envOverride(
+      : yield* envOverride(
           "SUPABASE_DB_SETTINGS_MAX_STANDBY_ARCHIVE_DELAY",
           settings?.max_standby_archive_delay,
           projectEnvValues,
         ),
     max_standby_streaming_delay: remoteWins("db.settings.max_standby_streaming_delay")
       ? settings?.max_standby_streaming_delay
-      : envOverride(
+      : yield* envOverride(
           "SUPABASE_DB_SETTINGS_MAX_STANDBY_STREAMING_DELAY",
           settings?.max_standby_streaming_delay,
           projectEnvValues,
         ),
     max_wal_size: remoteWins("db.settings.max_wal_size")
       ? settings?.max_wal_size
-      : envOverride("SUPABASE_DB_SETTINGS_MAX_WAL_SIZE", settings?.max_wal_size, projectEnvValues),
+      : yield* envOverride(
+          "SUPABASE_DB_SETTINGS_MAX_WAL_SIZE",
+          settings?.max_wal_size,
+          projectEnvValues,
+        ),
     max_wal_senders: remoteWins("db.settings.max_wal_senders")
       ? settings?.max_wal_senders
-      : envOverrideOptionalUint(
+      : yield* envOverrideOptionalUint(
           "SUPABASE_DB_SETTINGS_MAX_WAL_SENDERS",
           "db.settings.max_wal_senders",
           settings?.max_wal_senders,
@@ -1281,7 +1364,7 @@ export function resolveDbSettingsEnvOverrides(
         ),
     max_worker_processes: remoteWins("db.settings.max_worker_processes")
       ? settings?.max_worker_processes
-      : envOverrideOptionalUint(
+      : yield* envOverrideOptionalUint(
           "SUPABASE_DB_SETTINGS_MAX_WORKER_PROCESSES",
           "db.settings.max_worker_processes",
           settings?.max_worker_processes,
@@ -1289,31 +1372,34 @@ export function resolveDbSettingsEnvOverrides(
         ),
     session_replication_role: remoteWins("db.settings.session_replication_role")
       ? settings?.session_replication_role
-      : envOverrideSessionReplicationRole(settings?.session_replication_role, projectEnvValues),
+      : yield* envOverrideSessionReplicationRole(
+          settings?.session_replication_role,
+          projectEnvValues,
+        ),
     shared_buffers: remoteWins("db.settings.shared_buffers")
       ? settings?.shared_buffers
-      : envOverride(
+      : yield* envOverride(
           "SUPABASE_DB_SETTINGS_SHARED_BUFFERS",
           settings?.shared_buffers,
           projectEnvValues,
         ),
     statement_timeout: remoteWins("db.settings.statement_timeout")
       ? settings?.statement_timeout
-      : envOverride(
+      : yield* envOverride(
           "SUPABASE_DB_SETTINGS_STATEMENT_TIMEOUT",
           settings?.statement_timeout,
           projectEnvValues,
         ),
     track_activity_query_size: remoteWins("db.settings.track_activity_query_size")
       ? settings?.track_activity_query_size
-      : envOverride(
+      : yield* envOverride(
           "SUPABASE_DB_SETTINGS_TRACK_ACTIVITY_QUERY_SIZE",
           settings?.track_activity_query_size,
           projectEnvValues,
         ),
     track_commit_timestamp: remoteWins("db.settings.track_commit_timestamp")
       ? settings?.track_commit_timestamp
-      : envOverrideOptionalBool(
+      : yield* envOverrideOptionalBool(
           "SUPABASE_DB_SETTINGS_TRACK_COMMIT_TIMESTAMP",
           settings?.track_commit_timestamp,
           "db.settings.track_commit_timestamp",
@@ -1321,23 +1407,23 @@ export function resolveDbSettingsEnvOverrides(
         ),
     wal_keep_size: remoteWins("db.settings.wal_keep_size")
       ? settings?.wal_keep_size
-      : envOverride(
+      : yield* envOverride(
           "SUPABASE_DB_SETTINGS_WAL_KEEP_SIZE",
           settings?.wal_keep_size,
           projectEnvValues,
         ),
     wal_sender_timeout: remoteWins("db.settings.wal_sender_timeout")
       ? settings?.wal_sender_timeout
-      : envOverride(
+      : yield* envOverride(
           "SUPABASE_DB_SETTINGS_WAL_SENDER_TIMEOUT",
           settings?.wal_sender_timeout,
           projectEnvValues,
         ),
     work_mem: remoteWins("db.settings.work_mem")
       ? settings?.work_mem
-      : envOverride("SUPABASE_DB_SETTINGS_WORK_MEM", settings?.work_mem, projectEnvValues),
-  };
-}
+      : yield* envOverride("SUPABASE_DB_SETTINGS_WORK_MEM", settings?.work_mem, projectEnvValues),
+  } satisfies NonNullable<CliConfig["db"]["settings"]>;
+});
 
 /** `password_requirements` fixed enum (`@supabase/config`'s `packages/config/src/auth/index.ts`). */
 const PASSWORD_REQUIREMENTS_VALUES = new Set([
@@ -1352,16 +1438,22 @@ const PASSWORD_REQUIREMENTS_VALUES = new Set([
  * `db start`'s own eager-validation battery can call it directly instead of duplicating the
  * check.
  */
-export function envOverrideAuthPasswordRequirements(
+export const envOverrideAuthPasswordRequirements = Effect.fnUntraced(function* (
   configured: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
-): string {
-  const override = envOverride("SUPABASE_AUTH_PASSWORD_REQUIREMENTS", undefined, projectEnvValues);
+) {
+  const override = yield* envOverride(
+    "SUPABASE_AUTH_PASSWORD_REQUIREMENTS",
+    undefined,
+    projectEnvValues,
+  );
   if (override !== undefined && !PASSWORD_REQUIREMENTS_VALUES.has(override)) {
-    throw new Error(`Failed reading config: Invalid auth.password_requirements: ${override}.`);
+    return yield* new LocalConfigValuesError(
+      `Failed reading config: Invalid auth.password_requirements: ${override}.`,
+    );
   }
   return override ?? configured;
-}
+});
 
 /** Narrows an unknown value to a plain object. */
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -1376,18 +1468,22 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
  * one-shot auth migration job so both resolve the same value. `remoteOverrideKeys` lets a
  * matched remote block win over a conflicting `SUPABASE_AUTH_EXTERNAL_URL`.
  */
-export function resolveAuthExternalUrl(
+export const resolveAuthExternalUrl = Effect.fnUntraced(function* (
   document: Readonly<Record<string, unknown>> | undefined,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
-): string | undefined {
+) {
   const remoteWins = makeRemoteWins(remoteOverrideKeys);
   const rawAuthExternalUrl = asRecord(document?.["auth"])?.["external_url"];
   const configuredAuthExternalUrl =
     typeof rawAuthExternalUrl === "string" ? rawAuthExternalUrl : undefined;
   if (remoteWins("auth.external_url")) return configuredAuthExternalUrl;
-  return envOverride("SUPABASE_AUTH_EXTERNAL_URL", configuredAuthExternalUrl, projectEnvValues);
-}
+  return yield* envOverride(
+    "SUPABASE_AUTH_EXTERNAL_URL",
+    configuredAuthExternalUrl,
+    projectEnvValues,
+  );
+});
 
 /** Hook-type iteration order for {@link resolveAuthHooks}'s output. */
 const HOOK_TYPE_ORDER = [
@@ -1415,7 +1511,7 @@ interface ResolvedAuthHook {
   readonly secrets: string;
 }
 
-export type ResolvedAuthHooks = {
+type ResolvedAuthHooks = {
   readonly [K in (typeof HOOK_TYPE_TO_CAMEL)[keyof typeof HOOK_TYPE_TO_CAMEL]]: ResolvedAuthHook;
 };
 
@@ -1426,18 +1522,18 @@ export type ResolvedAuthHooks = {
  * `resolveLocalConfigValues` and `start.handler.ts`'s GoTrue env resolution share this same
  * result.
  */
-export function resolveAuthHooks(
+export const resolveAuthHooks = Effect.fnUntraced(function* (
   authDocument: Readonly<Record<string, unknown>> | undefined,
   hook: CliConfig["auth"]["hook"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   /**
-   * Fields whose overrides below can throw or otherwise cause a downstream rejection on a
+   * Fields whose overrides below can fail or otherwise cause a downstream rejection on a
    * malformed value belong in this set so a matched remote block's value wins instead. A
    * matched remote flattens the whole `auth.hook.<type>` block, so every leaf
    * (`enabled`/`uri`/`secrets`) is included, not just `enabled`.
    */
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
-): ResolvedAuthHooks {
+) {
   const remoteWins = makeRemoteWins(remoteOverrideKeys);
   const hookDocument = asRecord(authDocument?.["hook"]);
   const result = {} as Record<string, ResolvedAuthHook>;
@@ -1448,7 +1544,7 @@ export function resolveAuthHooks(
     const enabled = remoteWins(`auth.hook.${hookType}.enabled`)
       ? h.enabled
       : hookSectionPresent
-        ? envOverrideBool(
+        ? yield* envOverrideBool(
             `${envPrefix}_ENABLED`,
             h.enabled,
             `auth.hook.${hookType}.enabled`,
@@ -1459,18 +1555,18 @@ export function resolveAuthHooks(
       (remoteWins(`auth.hook.${hookType}.uri`)
         ? h.uri
         : hookSectionPresent
-          ? envOverride(`${envPrefix}_URI`, h.uri, projectEnvValues)
+          ? yield* envOverride(`${envPrefix}_URI`, h.uri, projectEnvValues)
           : h.uri) ?? "";
     const secrets =
       (remoteWins(`auth.hook.${hookType}.secrets`)
         ? h.secrets
         : hookSectionPresent
-          ? envOverride(`${envPrefix}_SECRETS`, h.secrets, projectEnvValues)
+          ? yield* envOverride(`${envPrefix}_SECRETS`, h.secrets, projectEnvValues)
           : h.secrets) ?? "";
     result[HOOK_TYPE_TO_CAMEL[hookType]] = { enabled, uri, secrets };
   }
   return result as ResolvedAuthHooks;
-}
+});
 
 /**
  * Resolves `auth.mfa`'s per-factor fields. Unlike hooks/smtp, `auth.mfa.<factor>` is always
@@ -1478,22 +1574,22 @@ export function resolveAuthHooks(
  * `resolveLocalConfigValues` and `start.handler.ts`'s GoTrue env resolution share this same
  * result.
  */
-export function resolveAuthMfa(
+export const resolveAuthMfa = Effect.fnUntraced(function* (
   mfa: CliConfig["auth"]["mfa"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   /**
-   * Fields whose `envOverrideBool`/`envOverrideUint`/`envOverride` calls below can throw or
+   * Fields whose `envOverrideBool`/`envOverrideUint`/`envOverride` calls below can fail or
    * otherwise cause a downstream rejection on a malformed value belong in this set so a
    * matched remote block's value wins instead of aborting on an unrelated bad env var.
    */
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
-): CliConfig["auth"]["mfa"] {
+) {
   const remoteWins = makeRemoteWins(remoteOverrideKeys);
   return {
     totp: {
       enroll_enabled: remoteWins("auth.mfa.totp.enroll_enabled")
         ? mfa.totp.enroll_enabled
-        : envOverrideBool(
+        : yield* envOverrideBool(
             "SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED",
             mfa.totp.enroll_enabled,
             "auth.mfa.totp.enroll_enabled",
@@ -1501,7 +1597,7 @@ export function resolveAuthMfa(
           ),
       verify_enabled: remoteWins("auth.mfa.totp.verify_enabled")
         ? mfa.totp.verify_enabled
-        : envOverrideBool(
+        : yield* envOverrideBool(
             "SUPABASE_AUTH_MFA_TOTP_VERIFY_ENABLED",
             mfa.totp.verify_enabled,
             "auth.mfa.totp.verify_enabled",
@@ -1511,7 +1607,7 @@ export function resolveAuthMfa(
     phone: {
       enroll_enabled: remoteWins("auth.mfa.phone.enroll_enabled")
         ? mfa.phone.enroll_enabled
-        : envOverrideBool(
+        : yield* envOverrideBool(
             "SUPABASE_AUTH_MFA_PHONE_ENROLL_ENABLED",
             mfa.phone.enroll_enabled,
             "auth.mfa.phone.enroll_enabled",
@@ -1519,7 +1615,7 @@ export function resolveAuthMfa(
           ),
       verify_enabled: remoteWins("auth.mfa.phone.verify_enabled")
         ? mfa.phone.verify_enabled
-        : envOverrideBool(
+        : yield* envOverrideBool(
             "SUPABASE_AUTH_MFA_PHONE_VERIFY_ENABLED",
             mfa.phone.verify_enabled,
             "auth.mfa.phone.verify_enabled",
@@ -1527,7 +1623,7 @@ export function resolveAuthMfa(
           ),
       otp_length: remoteWins("auth.mfa.phone.otp_length")
         ? mfa.phone.otp_length
-        : envOverrideUint(
+        : yield* envOverrideUint(
             "SUPABASE_AUTH_MFA_PHONE_OTP_LENGTH",
             "auth.mfa.phone.otp_length",
             mfa.phone.otp_length,
@@ -1535,20 +1631,23 @@ export function resolveAuthMfa(
           ),
       template: remoteWins("auth.mfa.phone.template")
         ? mfa.phone.template
-        : (envOverride("SUPABASE_AUTH_MFA_PHONE_TEMPLATE", mfa.phone.template, projectEnvValues) ??
-          mfa.phone.template),
+        : ((yield* envOverride(
+            "SUPABASE_AUTH_MFA_PHONE_TEMPLATE",
+            mfa.phone.template,
+            projectEnvValues,
+          )) ?? mfa.phone.template),
       max_frequency: remoteWins("auth.mfa.phone.max_frequency")
         ? mfa.phone.max_frequency
-        : (envOverride(
+        : ((yield* envOverride(
             "SUPABASE_AUTH_MFA_PHONE_MAX_FREQUENCY",
             mfa.phone.max_frequency,
             projectEnvValues,
-          ) ?? mfa.phone.max_frequency),
+          )) ?? mfa.phone.max_frequency),
     },
     web_authn: {
       enroll_enabled: remoteWins("auth.mfa.web_authn.enroll_enabled")
         ? mfa.web_authn.enroll_enabled
-        : envOverrideBool(
+        : yield* envOverrideBool(
             "SUPABASE_AUTH_MFA_WEB_AUTHN_ENROLL_ENABLED",
             mfa.web_authn.enroll_enabled,
             "auth.mfa.web_authn.enroll_enabled",
@@ -1556,7 +1655,7 @@ export function resolveAuthMfa(
           ),
       verify_enabled: remoteWins("auth.mfa.web_authn.verify_enabled")
         ? mfa.web_authn.verify_enabled
-        : envOverrideBool(
+        : yield* envOverrideBool(
             "SUPABASE_AUTH_MFA_WEB_AUTHN_VERIFY_ENABLED",
             mfa.web_authn.verify_enabled,
             "auth.mfa.web_authn.verify_enabled",
@@ -1565,143 +1664,134 @@ export function resolveAuthMfa(
     },
     max_enrolled_factors: remoteWins("auth.mfa.max_enrolled_factors")
       ? mfa.max_enrolled_factors
-      : envOverrideUint(
+      : yield* envOverrideUint(
           "SUPABASE_AUTH_MFA_MAX_ENROLLED_FACTORS",
           "auth.mfa.max_enrolled_factors",
           mfa.max_enrolled_factors,
           projectEnvValues,
         ),
-  };
-}
+  } satisfies CliConfig["auth"]["mfa"];
+});
 
 /**
  * Resolves `auth.rate_limit.*`, all plain `uint`s with no presence gate: every
  * `SUPABASE_AUTH_RATE_LIMIT_*` override applies unconditionally.
  */
-export function resolveGotrueRateLimit(
+export const resolveGotrueRateLimit = Effect.fnUntraced(function* (
   rateLimit: CliConfig["auth"]["rate_limit"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
-): CliConfig["auth"]["rate_limit"] {
+) {
   return {
-    anonymous_users: envOverrideUint(
+    anonymous_users: yield* envOverrideUint(
       "SUPABASE_AUTH_RATE_LIMIT_ANONYMOUS_USERS",
       "auth.rate_limit.anonymous_users",
       rateLimit.anonymous_users,
       projectEnvValues,
     ),
-    token_refresh: envOverrideUint(
+    token_refresh: yield* envOverrideUint(
       "SUPABASE_AUTH_RATE_LIMIT_TOKEN_REFRESH",
       "auth.rate_limit.token_refresh",
       rateLimit.token_refresh,
       projectEnvValues,
     ),
-    sign_in_sign_ups: envOverrideUint(
+    sign_in_sign_ups: yield* envOverrideUint(
       "SUPABASE_AUTH_RATE_LIMIT_SIGN_IN_SIGN_UPS",
       "auth.rate_limit.sign_in_sign_ups",
       rateLimit.sign_in_sign_ups,
       projectEnvValues,
     ),
-    token_verifications: envOverrideUint(
+    token_verifications: yield* envOverrideUint(
       "SUPABASE_AUTH_RATE_LIMIT_TOKEN_VERIFICATIONS",
       "auth.rate_limit.token_verifications",
       rateLimit.token_verifications,
       projectEnvValues,
     ),
-    email_sent: envOverrideUint(
+    email_sent: yield* envOverrideUint(
       "SUPABASE_AUTH_RATE_LIMIT_EMAIL_SENT",
       "auth.rate_limit.email_sent",
       rateLimit.email_sent,
       projectEnvValues,
     ),
-    sms_sent: envOverrideUint(
+    sms_sent: yield* envOverrideUint(
       "SUPABASE_AUTH_RATE_LIMIT_SMS_SENT",
       "auth.rate_limit.sms_sent",
       rateLimit.sms_sent,
       projectEnvValues,
     ),
-    web3: envOverrideUint(
+    web3: yield* envOverrideUint(
       "SUPABASE_AUTH_RATE_LIMIT_WEB3",
       "auth.rate_limit.web3",
       rateLimit.web3,
       projectEnvValues,
     ),
-  };
-}
+  } satisfies CliConfig["auth"]["rate_limit"];
+});
 
 /**
  * Resolves `auth.sessions.{timebox,inactivity_timeout}`. An env override can introduce a
  * value even when `[auth.sessions]` was never in config.toml, since `config.auth.sessions`
  * can be `undefined` here unlike other always-bound sections.
  */
-export function resolveGotrueSessions(
+export const resolveGotrueSessions = Effect.fnUntraced(function* (
   sessions: CliConfig["auth"]["sessions"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
-): CliConfig["auth"]["sessions"] {
-  const timebox = envOverride(
+) {
+  const timebox = yield* envOverride(
     "SUPABASE_AUTH_SESSIONS_TIMEBOX",
     sessions?.timebox,
     projectEnvValues,
   );
-  const inactivityTimeout = envOverride(
+  const inactivityTimeout = yield* envOverride(
     "SUPABASE_AUTH_SESSIONS_INACTIVITY_TIMEOUT",
     sessions?.inactivity_timeout,
     projectEnvValues,
   );
   if (timebox === undefined && inactivityTimeout === undefined) return sessions;
-  return { timebox, inactivity_timeout: inactivityTimeout };
-}
+  return { timebox, inactivity_timeout: inactivityTimeout } satisfies CliConfig["auth"]["sessions"];
+});
 
 /**
  * Resolves `auth.passkey`/`auth.webauthn`, which have no `@supabase/config` schema fields at
  * all: presence and every field come from the raw TOML document. An absent section is never
  * synthesized from an env override alone.
  */
-export function resolveGotruePasskeyWebauthn(
+export const resolveGotruePasskeyWebauthn = Effect.fnUntraced(function* (
   document: Readonly<Record<string, unknown>> | undefined,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
-): {
-  readonly passkeyEnabled: boolean | undefined;
-  readonly webauthn:
-    | {
-        readonly rpId: string;
-        readonly rpDisplayName: string;
-        readonly rpOrigins: ReadonlyArray<string>;
-      }
-    | undefined;
-} {
+) {
   const authDoc = asRecord(document?.["auth"]);
   const passkeyDoc = asRecord(authDoc?.["passkey"]);
   const webauthnDoc = asRecord(authDoc?.["webauthn"]);
   const passkeyEnabled =
     passkeyDoc !== undefined
-      ? envOverrideBool(
+      ? yield* envOverrideBool(
           "SUPABASE_AUTH_PASSKEY_ENABLED",
-          rawUnmodeledBool(passkeyDoc["enabled"], "auth.passkey.enabled"),
+          yield* rawUnmodeledBool(passkeyDoc["enabled"], "auth.passkey.enabled"),
           "auth.passkey.enabled",
           projectEnvValues,
         )
       : undefined;
   const rpOriginsOverride =
     webauthnDoc !== undefined
-      ? envOverride("SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS", undefined, projectEnvValues)
+      ? yield* envOverride("SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS", undefined, projectEnvValues)
       : undefined;
   const webauthn =
     webauthnDoc !== undefined
       ? {
           rpId:
-            envOverride(
+            (yield* envOverride(
               "SUPABASE_AUTH_WEBAUTHN_RP_ID",
               typeof webauthnDoc["rp_id"] === "string" ? webauthnDoc["rp_id"] : "",
               projectEnvValues,
-            ) ?? "",
+            )) ?? "",
           rpDisplayName:
-            envOverride(
+            (yield* envOverride(
               "SUPABASE_AUTH_WEBAUTHN_RP_DISPLAY_NAME",
               typeof webauthnDoc["rp_display_name"] === "string"
                 ? webauthnDoc["rp_display_name"]
                 : "",
               projectEnvValues,
-            ) ?? "",
+            )) ?? "",
           // A raw or `env(...)`-resolved `rp_origins` string is comma-split, not dropped.
           rpOrigins: (() => {
             if (rpOriginsOverride !== undefined) return strToArr(rpOriginsOverride);
@@ -1714,16 +1804,16 @@ export function resolveGotruePasskeyWebauthn(
         }
       : undefined;
   return { passkeyEnabled, webauthn };
-}
+});
 
 /** Resolves `auth.web3.*.enabled`, both value-typed with no presence gate — overrides always apply. */
-export function resolveGotrueWeb3(
+export const resolveGotrueWeb3 = Effect.fnUntraced(function* (
   web3: CliConfig["auth"]["web3"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
-): CliConfig["auth"]["web3"] {
+) {
   return {
     solana: {
-      enabled: envOverrideBool(
+      enabled: yield* envOverrideBool(
         "SUPABASE_AUTH_WEB3_SOLANA_ENABLED",
         web3.solana.enabled,
         "auth.web3.solana.enabled",
@@ -1731,60 +1821,60 @@ export function resolveGotrueWeb3(
       ),
     },
     ethereum: {
-      enabled: envOverrideBool(
+      enabled: yield* envOverrideBool(
         "SUPABASE_AUTH_WEB3_ETHEREUM_ENABLED",
         web3.ethereum.enabled,
         "auth.web3.ethereum.enabled",
         projectEnvValues,
       ),
     },
-  };
-}
+  } satisfies CliConfig["auth"]["web3"];
+});
 
 /** Resolves `auth.oauth_server.*`, value-typed with no presence gate — overrides always apply. */
-export function resolveGotrueOAuthServer(
+export const resolveGotrueOAuthServer = Effect.fnUntraced(function* (
   oauthServer: CliConfig["auth"]["oauth_server"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
-): CliConfig["auth"]["oauth_server"] {
+) {
   return {
-    enabled: envOverrideBool(
+    enabled: yield* envOverrideBool(
       "SUPABASE_AUTH_OAUTH_SERVER_ENABLED",
       oauthServer.enabled,
       "auth.oauth_server.enabled",
       projectEnvValues,
     ),
     authorization_url_path:
-      envOverride(
+      (yield* envOverride(
         "SUPABASE_AUTH_OAUTH_SERVER_AUTHORIZATION_URL_PATH",
         oauthServer.authorization_url_path,
         projectEnvValues,
-      ) ?? oauthServer.authorization_url_path,
-    allow_dynamic_registration: envOverrideBool(
+      )) ?? oauthServer.authorization_url_path,
+    allow_dynamic_registration: yield* envOverrideBool(
       "SUPABASE_AUTH_OAUTH_SERVER_ALLOW_DYNAMIC_REGISTRATION",
       oauthServer.allow_dynamic_registration,
       "auth.oauth_server.allow_dynamic_registration",
       projectEnvValues,
     ),
-  };
-}
+  } satisfies CliConfig["auth"]["oauth_server"];
+});
 
 /**
  * Resolves enabled `auth.third_party.<provider>` entries in a fixed order, forwarding only
  * the enabled ones. `remoteOverrideKeys` lets a matched remote block's value win over a
  * conflicting `SUPABASE_AUTH_THIRD_PARTY_*_ENABLED`, since `envOverrideBool` would otherwise
- * throw and abort the whole call.
+ * fail and abort the whole call.
  */
-export function resolveThirdPartyProviders(
+export const resolveThirdPartyProviders = Effect.fnUntraced(function* (
   thirdParty: CliConfig["auth"]["third_party"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
-): ReadonlyArray<ThirdPartyInput> {
+) {
   const remoteWins = makeRemoteWins(remoteOverrideKeys);
   const resolved: Array<ThirdPartyInput> = [];
   if (
     remoteWins("auth.third_party.firebase.enabled")
       ? thirdParty.firebase.enabled
-      : envOverrideBool(
+      : yield* envOverrideBool(
           "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED",
           thirdParty.firebase.enabled,
           "auth.third_party.firebase.enabled",
@@ -1796,7 +1886,7 @@ export function resolveThirdPartyProviders(
       requiredField:
         (remoteWins("auth.third_party.firebase.project_id")
           ? thirdParty.firebase.project_id
-          : envOverride(
+          : yield* envOverride(
               "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_PROJECT_ID",
               thirdParty.firebase.project_id,
               projectEnvValues,
@@ -1806,7 +1896,7 @@ export function resolveThirdPartyProviders(
   if (
     remoteWins("auth.third_party.auth0.enabled")
       ? thirdParty.auth0.enabled
-      : envOverrideBool(
+      : yield* envOverrideBool(
           "SUPABASE_AUTH_THIRD_PARTY_AUTH0_ENABLED",
           thirdParty.auth0.enabled,
           "auth.third_party.auth0.enabled",
@@ -1818,7 +1908,7 @@ export function resolveThirdPartyProviders(
       requiredField:
         (remoteWins("auth.third_party.auth0.tenant")
           ? thirdParty.auth0.tenant
-          : envOverride(
+          : yield* envOverride(
               "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT",
               thirdParty.auth0.tenant,
               projectEnvValues,
@@ -1828,7 +1918,7 @@ export function resolveThirdPartyProviders(
   if (
     remoteWins("auth.third_party.aws_cognito.enabled")
       ? thirdParty.aws_cognito.enabled
-      : envOverrideBool(
+      : yield* envOverrideBool(
           "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_ENABLED",
           thirdParty.aws_cognito.enabled,
           "auth.third_party.aws_cognito.enabled",
@@ -1840,14 +1930,14 @@ export function resolveThirdPartyProviders(
       requiredField:
         (remoteWins("auth.third_party.aws_cognito.user_pool_id")
           ? thirdParty.aws_cognito.user_pool_id
-          : envOverride(
+          : yield* envOverride(
               "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_ID",
               thirdParty.aws_cognito.user_pool_id,
               projectEnvValues,
             )) ?? "",
       cognitoUserPoolRegion: remoteWins("auth.third_party.aws_cognito.user_pool_region")
         ? thirdParty.aws_cognito.user_pool_region
-        : envOverride(
+        : yield* envOverride(
             "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_REGION",
             thirdParty.aws_cognito.user_pool_region,
             projectEnvValues,
@@ -1857,7 +1947,7 @@ export function resolveThirdPartyProviders(
   if (
     remoteWins("auth.third_party.clerk.enabled")
       ? thirdParty.clerk.enabled
-      : envOverrideBool(
+      : yield* envOverrideBool(
           "SUPABASE_AUTH_THIRD_PARTY_CLERK_ENABLED",
           thirdParty.clerk.enabled,
           "auth.third_party.clerk.enabled",
@@ -1869,7 +1959,7 @@ export function resolveThirdPartyProviders(
       requiredField:
         (remoteWins("auth.third_party.clerk.domain")
           ? thirdParty.clerk.domain
-          : envOverride(
+          : yield* envOverride(
               "SUPABASE_AUTH_THIRD_PARTY_CLERK_DOMAIN",
               thirdParty.clerk.domain,
               projectEnvValues,
@@ -1879,7 +1969,7 @@ export function resolveThirdPartyProviders(
   if (
     remoteWins("auth.third_party.workos.enabled")
       ? thirdParty.workos.enabled
-      : envOverrideBool(
+      : yield* envOverrideBool(
           "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ENABLED",
           thirdParty.workos.enabled,
           "auth.third_party.workos.enabled",
@@ -1891,7 +1981,7 @@ export function resolveThirdPartyProviders(
       requiredField:
         (remoteWins("auth.third_party.workos.issuer_url")
           ? thirdParty.workos.issuer_url
-          : envOverride(
+          : yield* envOverride(
               "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ISSUER_URL",
               thirdParty.workos.issuer_url,
               projectEnvValues,
@@ -1899,7 +1989,7 @@ export function resolveThirdPartyProviders(
     });
   }
   return resolved;
-}
+});
 
 /** Fixed SMS provider priority — validation stops at the first enabled provider. */
 const SMS_PROVIDER_ORDER = [
@@ -1916,18 +2006,18 @@ const SMS_PROVIDER_ORDER = [
  * always includes an uncommented `[auth.sms.twilio]` table; the 4 top-level scalars have no
  * gate for the same reason. `test_otp` (a map) is left unresolved: it has no env var.
  */
-export function resolveAuthSms(
+export const resolveAuthSms = Effect.fnUntraced(function* (
   authDocument: Readonly<Record<string, unknown>> | undefined,
   sms: CliConfig["auth"]["sms"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   /**
-   * Fields whose `envOverrideBool`/`decryptAuthSecret` calls below can throw on a malformed
+   * Fields whose `envOverrideBool`/`decryptAuthSecret` calls below can fail on a malformed
    * value belong in this set so a matched remote block's value wins instead of aborting on an
    * unrelated bad env var. Reachable from the `db diff --linked`/`db pull` shadow path via
    * `validateAuthSmsProviders`, not just this function's direct callers.
    */
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
-): CliConfig["auth"]["sms"] {
+) {
   const smsDoc = asRecord(authDocument?.["sms"]);
   const remoteWins = makeRemoteWins(remoteOverrideKeys);
 
@@ -1937,62 +2027,62 @@ export function resolveAuthSms(
     return smsDoc !== undefined && asRecord(smsDoc[providerName]) !== undefined;
   }
 
-  function resolveEnabled(
+  const resolveEnabled = Effect.fnUntraced(function* (
     providerName: (typeof SMS_PROVIDER_ORDER)[number],
     configured: boolean,
-  ): boolean {
+  ) {
     if (remoteWins(`auth.sms.${providerName}.enabled`)) return configured;
     if (!providerPresent(providerName)) return configured;
-    return envOverrideBool(
+    return yield* envOverrideBool(
       `SUPABASE_AUTH_SMS_${providerName.toUpperCase()}_ENABLED`,
       configured,
       `auth.sms.${providerName}.enabled`,
       projectEnvValues,
     );
-  }
+  });
 
   // `remoteOverrideKey` is explicit (not reconstructed from `providerName`/`field`) since
   // `field`'s shape differs per provider, and not every combination is a real config key.
-  function resolveField(
+  const resolveField = Effect.fnUntraced(function* (
     providerName: (typeof SMS_PROVIDER_ORDER)[number],
     field: string,
     remoteOverrideKey: RemoteOverridableKey,
     configured: string | undefined,
-  ): string | undefined {
+  ) {
     if (remoteWins(remoteOverrideKey)) return configured;
     if (!providerPresent(providerName)) return configured;
-    return envOverride(
+    return yield* envOverride(
       `SUPABASE_AUTH_SMS_${providerName.toUpperCase()}_${field.toUpperCase()}`,
       configured,
       projectEnvValues,
     );
-  }
+  });
 
   /** Resolves a provider's Secret-typed field, gated the same way `auth.email.smtp.pass` is. */
-  function resolveSecretField(
+  const resolveSecretField = Effect.fnUntraced(function* (
     providerName: (typeof SMS_PROVIDER_ORDER)[number],
     field: string,
     remoteOverrideKey: RemoteOverridableKey,
     configured: string | undefined,
-  ): string | undefined {
+  ) {
     return remoteWins(remoteOverrideKey)
-      ? decryptAuthSecret(configured, projectEnvValues)
-      : decryptAuthSecret(
-          resolveField(providerName, field, remoteOverrideKey, configured),
+      ? yield* decryptAuthSecret(configured, projectEnvValues)
+      : yield* decryptAuthSecret(
+          yield* resolveField(providerName, field, remoteOverrideKey, configured),
           projectEnvValues,
         );
-  }
+  });
 
-  const twilioEnabled = resolveEnabled("twilio", sms.twilio.enabled);
-  const twilioVerifyEnabled = resolveEnabled("twilio_verify", sms.twilio_verify.enabled);
-  const messagebirdEnabled = resolveEnabled("messagebird", sms.messagebird.enabled);
-  const textlocalEnabled = resolveEnabled("textlocal", sms.textlocal.enabled);
-  const vonageEnabled = resolveEnabled("vonage", sms.vonage.enabled);
+  const twilioEnabled = yield* resolveEnabled("twilio", sms.twilio.enabled);
+  const twilioVerifyEnabled = yield* resolveEnabled("twilio_verify", sms.twilio_verify.enabled);
+  const messagebirdEnabled = yield* resolveEnabled("messagebird", sms.messagebird.enabled);
+  const textlocalEnabled = yield* resolveEnabled("textlocal", sms.textlocal.enabled);
+  const vonageEnabled = yield* resolveEnabled("vonage", sms.vonage.enabled);
   const anyProviderEnabled =
     twilioEnabled || twilioVerifyEnabled || messagebirdEnabled || textlocalEnabled || vonageEnabled;
   const enableSignupConfigured = remoteWins("auth.sms.enable_signup")
     ? sms.enable_signup
-    : envOverrideBool(
+    : yield* envOverrideBool(
         "SUPABASE_AUTH_SMS_ENABLE_SIGNUP",
         sms.enable_signup,
         "auth.sms.enable_signup",
@@ -2005,7 +2095,7 @@ export function resolveAuthSms(
     enable_signup: anyProviderEnabled ? enableSignupConfigured : false,
     enable_confirmations: remoteWins("auth.sms.enable_confirmations")
       ? sms.enable_confirmations
-      : envOverrideBool(
+      : yield* envOverrideBool(
           "SUPABASE_AUTH_SMS_ENABLE_CONFIRMATIONS",
           sms.enable_confirmations,
           "auth.sms.enable_confirmations",
@@ -2013,28 +2103,32 @@ export function resolveAuthSms(
         ),
     template: remoteWins("auth.sms.template")
       ? sms.template
-      : (envOverride("SUPABASE_AUTH_SMS_TEMPLATE", sms.template, projectEnvValues) ?? sms.template),
+      : ((yield* envOverride("SUPABASE_AUTH_SMS_TEMPLATE", sms.template, projectEnvValues)) ??
+        sms.template),
     max_frequency: remoteWins("auth.sms.max_frequency")
       ? sms.max_frequency
-      : (envOverride("SUPABASE_AUTH_SMS_MAX_FREQUENCY", sms.max_frequency, projectEnvValues) ??
-        sms.max_frequency),
+      : ((yield* envOverride(
+          "SUPABASE_AUTH_SMS_MAX_FREQUENCY",
+          sms.max_frequency,
+          projectEnvValues,
+        )) ?? sms.max_frequency),
     twilio: {
       enabled: twilioEnabled,
       account_sid:
-        resolveField(
+        (yield* resolveField(
           "twilio",
           "account_sid",
           "auth.sms.twilio.account_sid",
           sms.twilio.account_sid,
-        ) ?? "",
+        )) ?? "",
       message_service_sid:
-        resolveField(
+        (yield* resolveField(
           "twilio",
           "message_service_sid",
           "auth.sms.twilio.message_service_sid",
           sms.twilio.message_service_sid,
-        ) ?? "",
-      auth_token: resolveSecretField(
+        )) ?? "",
+      auth_token: yield* resolveSecretField(
         "twilio",
         "auth_token",
         "auth.sms.twilio.auth_token",
@@ -2043,19 +2137,19 @@ export function resolveAuthSms(
     },
     twilio_verify: {
       enabled: twilioVerifyEnabled,
-      account_sid: resolveField(
+      account_sid: yield* resolveField(
         "twilio_verify",
         "account_sid",
         "auth.sms.twilio_verify.account_sid",
         sms.twilio_verify.account_sid,
       ),
-      message_service_sid: resolveField(
+      message_service_sid: yield* resolveField(
         "twilio_verify",
         "message_service_sid",
         "auth.sms.twilio_verify.message_service_sid",
         sms.twilio_verify.message_service_sid,
       ),
-      auth_token: resolveSecretField(
+      auth_token: yield* resolveSecretField(
         "twilio_verify",
         "auth_token",
         "auth.sms.twilio_verify.auth_token",
@@ -2064,13 +2158,13 @@ export function resolveAuthSms(
     },
     messagebird: {
       enabled: messagebirdEnabled,
-      originator: resolveField(
+      originator: yield* resolveField(
         "messagebird",
         "originator",
         "auth.sms.messagebird.originator",
         sms.messagebird.originator,
       ),
-      access_key: resolveSecretField(
+      access_key: yield* resolveSecretField(
         "messagebird",
         "access_key",
         "auth.sms.messagebird.access_key",
@@ -2079,13 +2173,13 @@ export function resolveAuthSms(
     },
     textlocal: {
       enabled: textlocalEnabled,
-      sender: resolveField(
+      sender: yield* resolveField(
         "textlocal",
         "sender",
         "auth.sms.textlocal.sender",
         sms.textlocal.sender,
       ),
-      api_key: resolveSecretField(
+      api_key: yield* resolveSecretField(
         "textlocal",
         "api_key",
         "auth.sms.textlocal.api_key",
@@ -2094,72 +2188,81 @@ export function resolveAuthSms(
     },
     vonage: {
       enabled: vonageEnabled,
-      from: resolveField("vonage", "from", "auth.sms.vonage.from", sms.vonage.from),
-      api_key: resolveField("vonage", "api_key", "auth.sms.vonage.api_key", sms.vonage.api_key),
-      api_secret: resolveSecretField(
+      from: yield* resolveField("vonage", "from", "auth.sms.vonage.from", sms.vonage.from),
+      api_key: yield* resolveField(
+        "vonage",
+        "api_key",
+        "auth.sms.vonage.api_key",
+        sms.vonage.api_key,
+      ),
+      api_secret: yield* resolveSecretField(
         "vonage",
         "api_secret",
         "auth.sms.vonage.api_secret",
         sms.vonage.api_secret,
       ),
     },
-  };
-}
+  } satisfies CliConfig["auth"]["sms"];
+});
 
 /**
  * Validates only the first enabled provider in {@link SMS_PROVIDER_ORDER}; a later
  * enabled-but-incomplete provider is never checked. Runs against {@link resolveAuthSms}'s
  * env-override-aware result.
  */
-function validateAuthSmsProviders(
+const validateAuthSmsProviders = Effect.fnUntraced(function* (
   authDocument: Record<string, unknown> | undefined,
   sms: CliConfig["auth"]["sms"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
-): void {
-  const resolved = resolveAuthSms(authDocument, sms, projectEnvValues, remoteOverrideKeys);
+) {
+  const resolved = yield* resolveAuthSms(authDocument, sms, projectEnvValues, remoteOverrideKeys);
 
-  function requireField(provider: string, field: string, value: string | undefined): void {
+  const requireField = Effect.fnUntraced(function* (
+    provider: string,
+    field: string,
+    value: string | undefined,
+  ) {
     if (value === undefined || value.length === 0) {
-      throw new ConfigValidateError(
+      return yield* new ConfigValidateError(
         `Missing required field in config: auth.sms.${provider}.${field}`,
       );
     }
-  }
+  });
 
   if (resolved.twilio.enabled) {
-    requireField("twilio", "account_sid", resolved.twilio.account_sid);
-    requireField("twilio", "message_service_sid", resolved.twilio.message_service_sid);
-    requireField("twilio", "auth_token", resolved.twilio.auth_token);
+    yield* requireField("twilio", "account_sid", resolved.twilio.account_sid);
+    yield* requireField("twilio", "message_service_sid", resolved.twilio.message_service_sid);
+    yield* requireField("twilio", "auth_token", resolved.twilio.auth_token);
     return;
   }
   if (resolved.twilio_verify.enabled) {
-    requireField("twilio_verify", "account_sid", resolved.twilio_verify.account_sid);
-    requireField(
+    yield* requireField("twilio_verify", "account_sid", resolved.twilio_verify.account_sid);
+    yield* requireField(
       "twilio_verify",
       "message_service_sid",
       resolved.twilio_verify.message_service_sid,
     );
-    requireField("twilio_verify", "auth_token", resolved.twilio_verify.auth_token);
+    yield* requireField("twilio_verify", "auth_token", resolved.twilio_verify.auth_token);
     return;
   }
   if (resolved.messagebird.enabled) {
-    requireField("messagebird", "originator", resolved.messagebird.originator);
-    requireField("messagebird", "access_key", resolved.messagebird.access_key);
+    yield* requireField("messagebird", "originator", resolved.messagebird.originator);
+    yield* requireField("messagebird", "access_key", resolved.messagebird.access_key);
     return;
   }
   if (resolved.textlocal.enabled) {
-    requireField("textlocal", "sender", resolved.textlocal.sender);
-    requireField("textlocal", "api_key", resolved.textlocal.api_key);
+    yield* requireField("textlocal", "sender", resolved.textlocal.sender);
+    yield* requireField("textlocal", "api_key", resolved.textlocal.api_key);
     return;
   }
   if (resolved.vonage.enabled) {
-    requireField("vonage", "from", resolved.vonage.from);
-    requireField("vonage", "api_key", resolved.vonage.api_key);
-    requireField("vonage", "api_secret", resolved.vonage.api_secret);
+    yield* requireField("vonage", "from", resolved.vonage.from);
+    yield* requireField("vonage", "api_key", resolved.vonage.api_key);
+    yield* requireField("vonage", "api_secret", resolved.vonage.api_secret);
     return;
   }
-}
+});
 
 /** Deleted external providers, warned on if still enabled, never validated. */
 const DEPRECATED_EXTERNAL_PROVIDERS = new Set(["linkedin", "slack"]);
@@ -2180,21 +2283,24 @@ export interface ResolvedAuthExternalProvider {
  * `auth.external` providers, `auth.passkey`/`auth.webauthn`) to a bool, since an `env(VAR)`
  * substitution there skips normal type coercion and leaves a literal `"true"`/`"false"`
  * string. A number coerces via truthiness (`!= 0`); an unparsable string or any other type
- * throws rather than silently defaulting to `false`.
+ * fails rather than silently defaulting to `false`.
  */
-export function rawUnmodeledBool(value: unknown, dottedFieldPath: string): boolean {
+export const rawUnmodeledBool = Effect.fnUntraced(function* (
+  value: unknown,
+  dottedFieldPath: string,
+) {
   if (value === undefined) return false;
   if (typeof value === "boolean") return value;
   if (typeof value === "number") return value !== 0;
   if (typeof value === "string") {
     const parsed = parseGoBool(value);
     if (parsed === undefined) {
-      throw new InvalidBoolEnvOverrideError(dottedFieldPath, value);
+      return yield* new InvalidBoolEnvOverrideError(dottedFieldPath, value);
     }
     return parsed;
   }
-  throw new InvalidBoolEnvOverrideError(dottedFieldPath, String(value));
-}
+  return yield* new InvalidBoolEnvOverrideError(dottedFieldPath, String(value));
+});
 
 /**
  * Comma-splits a string into an array (empty string → `[]`), the same rule config decode
@@ -2212,18 +2318,18 @@ export function strToArr(value: string): Array<string> {
  * uncommented. Hoisted so both {@link validateAuthExternalProviders} and `start.handler.ts`'s
  * GoTrue env resolution share this same result.
  */
-export function resolveAuthExternalProviders(
+export const resolveAuthExternalProviders = Effect.fnUntraced(function* (
   authDocument: Readonly<Record<string, unknown>> | undefined,
   external: CliConfig["auth"]["external"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   /**
-   * Fields whose `envOverrideBool`/`decryptAuthSecret` calls below can throw on a malformed
+   * Fields whose `envOverrideBool`/`decryptAuthSecret` calls below can fail on a malformed
    * value belong in this set so a matched remote block's value wins instead of aborting on an
    * unrelated bad env var. Provider names are dynamic, so these keys are tracked via
    * `applyRemoteOverride` rather than a fixed `ENV_OVERRIDABLE_KEYS` entry.
    */
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
-): Record<string, ResolvedAuthExternalProvider> {
+) {
   const remoteWins = makeRemoteWins(remoteOverrideKeys);
   const externalDoc = asRecord(authDocument?.["external"]);
 
@@ -2240,7 +2346,7 @@ export function resolveAuthExternalProviders(
     if (provider === undefined && rawProvider === undefined) continue;
     const configuredEnabled =
       provider?.enabled ??
-      rawUnmodeledBool(rawProvider?.["enabled"], `auth.external.${name}.enabled`);
+      (yield* rawUnmodeledBool(rawProvider?.["enabled"], `auth.external.${name}.enabled`));
     const configuredClientId =
       provider?.client_id ??
       (typeof rawProvider?.["client_id"] === "string" ? rawProvider["client_id"] : undefined);
@@ -2254,15 +2360,21 @@ export function resolveAuthExternalProviders(
       (typeof rawProvider?.["redirect_uri"] === "string" ? rawProvider["redirect_uri"] : undefined);
     const configuredSkipNonceCheck =
       provider?.skip_nonce_check ??
-      rawUnmodeledBool(rawProvider?.["skip_nonce_check"], `auth.external.${name}.skip_nonce_check`);
+      (yield* rawUnmodeledBool(
+        rawProvider?.["skip_nonce_check"],
+        `auth.external.${name}.skip_nonce_check`,
+      ));
     const configuredEmailOptional =
       provider?.email_optional ??
-      rawUnmodeledBool(rawProvider?.["email_optional"], `auth.external.${name}.email_optional`);
+      (yield* rawUnmodeledBool(
+        rawProvider?.["email_optional"],
+        `auth.external.${name}.email_optional`,
+      ));
 
     result[name] = {
       enabled: remoteWins(`auth.external.${name}.enabled`)
         ? configuredEnabled
-        : envOverrideBool(
+        : yield* envOverrideBool(
             `${envPrefix}_ENABLED`,
             configuredEnabled,
             `auth.external.${name}.enabled`,
@@ -2271,23 +2383,24 @@ export function resolveAuthExternalProviders(
       clientId:
         (remoteWins(`auth.external.${name}.client_id`)
           ? configuredClientId
-          : envOverride(`${envPrefix}_CLIENT_ID`, configuredClientId, projectEnvValues)) ?? "",
+          : yield* envOverride(`${envPrefix}_CLIENT_ID`, configuredClientId, projectEnvValues)) ??
+        "",
       secret: remoteWins(`auth.external.${name}.secret`)
-        ? decryptAuthSecret(configuredSecret, projectEnvValues)
-        : decryptAuthSecret(
-            envOverride(`${envPrefix}_SECRET`, configuredSecret, projectEnvValues),
+        ? yield* decryptAuthSecret(configuredSecret, projectEnvValues)
+        : yield* decryptAuthSecret(
+            yield* envOverride(`${envPrefix}_SECRET`, configuredSecret, projectEnvValues),
             projectEnvValues,
           ),
       url:
         (remoteWins(`auth.external.${name}.url`)
           ? configuredUrl
-          : envOverride(`${envPrefix}_URL`, configuredUrl, projectEnvValues)) ?? "",
+          : yield* envOverride(`${envPrefix}_URL`, configuredUrl, projectEnvValues)) ?? "",
       redirectUri: remoteWins(`auth.external.${name}.redirect_uri`)
         ? configuredRedirectUri
-        : envOverride(`${envPrefix}_REDIRECT_URI`, configuredRedirectUri, projectEnvValues),
+        : yield* envOverride(`${envPrefix}_REDIRECT_URI`, configuredRedirectUri, projectEnvValues),
       skipNonceCheck: remoteWins(`auth.external.${name}.skip_nonce_check`)
         ? configuredSkipNonceCheck
-        : envOverrideBool(
+        : yield* envOverrideBool(
             `${envPrefix}_SKIP_NONCE_CHECK`,
             configuredSkipNonceCheck,
             `auth.external.${name}.skip_nonce_check`,
@@ -2295,7 +2408,7 @@ export function resolveAuthExternalProviders(
           ),
       emailOptional: remoteWins(`auth.external.${name}.email_optional`)
         ? configuredEmailOptional
-        : envOverrideBool(
+        : yield* envOverrideBool(
             `${envPrefix}_EMAIL_OPTIONAL`,
             configuredEmailOptional,
             `auth.external.${name}.email_optional`,
@@ -2304,7 +2417,7 @@ export function resolveAuthExternalProviders(
     };
   }
   return result;
-}
+});
 
 /**
  * Validates required fields for every enabled `auth.external.<name>` provider, including
@@ -2312,13 +2425,13 @@ export function resolveAuthExternalProviders(
  * {@link resolveAuthExternalProviders}'s env-override-aware result, since the schema's own
  * `requiredWhenEnabled` check only sees the pre-override, known-providers-only value.
  */
-function validateAuthExternalProviders(
+const validateAuthExternalProviders = Effect.fnUntraced(function* (
   authDocument: Record<string, unknown> | undefined,
   external: CliConfig["auth"]["external"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
-): void {
-  const resolved = resolveAuthExternalProviders(
+) {
+  const resolved = yield* resolveAuthExternalProviders(
     authDocument,
     external,
     projectEnvValues,
@@ -2327,7 +2440,7 @@ function validateAuthExternalProviders(
   for (const [name, provider] of Object.entries(resolved)) {
     if (!provider.enabled) continue;
     if (provider.clientId.length === 0) {
-      throw new ConfigValidateError(
+      return yield* new ConfigValidateError(
         `Missing required field in config: auth.external.${name}.client_id`,
       );
     }
@@ -2336,36 +2449,36 @@ function validateAuthExternalProviders(
       name !== "google" &&
       (provider.secret === undefined || provider.secret.length === 0)
     ) {
-      throw new ConfigValidateError(
+      return yield* new ConfigValidateError(
         `Missing required field in config: auth.external.${name}.secret`,
       );
     }
   }
-}
+});
 
 /**
- * @throws when `project_id` (post-override, post-workdir-basename-fallback) is an explicit
+ * Fails when `project_id` (post-override, post-workdir-basename-fallback) is an explicit
  * empty string. Checked first: the sanitized workdir basename is merged in as a default
  * before `config.toml`, so `project_id` is never empty by the time validation runs — a
  * workdir whose basename sanitizes to `""` fails even with no `project_id` key at all.
- * @throws {InvalidJwtSecretError} when `auth.jwt_secret` is set but too short.
- * @throws {InvalidPortEnvOverrideError} when a `SUPABASE_*_PORT` env/dotenv override doesn't
- * parse as a valid port.
- * @throws {InvalidBoolEnvOverrideError} when a `SUPABASE_*_ENABLED` env/dotenv override
- * doesn't parse as a valid bool.
- * @throws when a configured `api.tls` cert/key file can't be read — see
+ * Fails with {@link InvalidJwtSecretError} when `auth.jwt_secret` is set but too short.
+ * Fails with {@link InvalidPortEnvOverrideError} when a `SUPABASE_*_PORT` env/dotenv
+ * override doesn't parse as a valid port.
+ * Fails with {@link InvalidBoolEnvOverrideError} when a `SUPABASE_*_ENABLED` env/dotenv
+ * override doesn't parse as a valid bool.
+ * Fails when a configured `api.tls` cert/key file can't be read — see
  * {@link readApiTlsFiles}.
- * @throws when `auth.signing_keys_path` is set, auth is enabled, and the file is missing,
+ * Fails when `auth.signing_keys_path` is set, auth is enabled, and the file is missing,
  * malformed, or its first key uses an unsupported algorithm — see
  * {@link resolveConfiguredSigningKeys} and {@link generateAsymmetricGoJwt}.
- * @throws when an email template's `content` is present without `content_path`, or a
+ * Fails when an email template's `content` is present without `content_path`, or a
  * configured `content_path` file can't be read — see {@link readAuthEmailTemplateContent}.
- * @throws {InvalidAnalyticsBackendEnvOverrideError} when `SUPABASE_ANALYTICS_BACKEND` doesn't
- * parse as one of its accepted values.
- * @throws {ConfigValidateError} for every other validation branch, deferred to a single call
- * to {@link validateResolvedConfig} at the end of this function.
+ * Fails with {@link InvalidAnalyticsBackendEnvOverrideError} when `SUPABASE_ANALYTICS_BACKEND`
+ * doesn't parse as one of its accepted values.
+ * Fails with {@link ConfigValidateError} for every other validation branch, deferred to a
+ * single call to {@link validateResolvedConfig} at the end of this function.
  */
-export function resolveLocalConfigValues(
+export const resolveLocalConfigValues = Effect.fnUntraced(function* (
   config: CliConfig,
   hostname: string,
   workdir: string,
@@ -2378,9 +2491,9 @@ export function resolveLocalConfigValues(
   document?: Readonly<Record<string, unknown>>,
   /**
    * Config keys a matched `[remotes.<ref>]` block set at override tier. Every field whose
-   * `envOverride*` call (or a downstream {@link validateResolvedConfig} check) can throw on a
-   * malformed value belongs in this set — this function returns its whole object or throws, so
-   * an unconditional throw anywhere aborts the whole call, even for a field not part of the
+   * `envOverride*` call (or a downstream {@link validateResolvedConfig} check) can fail on a
+   * malformed value belongs in this set — this function returns its whole object or fails, so
+   * an unconditional failure anywhere aborts the whole call, even for a field not part of the
    * returned `LocalConfigValues`. Defaults to empty for callers with no `[remotes.<ref>]` block.
    */
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
@@ -2389,7 +2502,8 @@ export function resolveLocalConfigValues(
    * basename fallback applies. `undefined` for `status`/`stop`, which have no such flag.
    */
   projectIdFallback?: string,
-): LocalConfigValues {
+) {
+  const path = yield* Path.Path;
   const remoteWins = makeRemoteWins(remoteOverrideKeys);
   // Checked first, before every other field: `config.project_id` is `undefined` only when the
   // key is absent, in which case the sanitized workdir basename (or
@@ -2398,18 +2512,18 @@ export function resolveLocalConfigValues(
   // Not gated by `remoteWins("project_id")` like the fields below: `envOverride` never turns
   // an already non-empty remote-merged value empty or vice versa, so gating here couldn't
   // change the accept/reject outcome.
-  const resolvedProjectId = envOverride(
+  const resolvedProjectId = yield* envOverride(
     "SUPABASE_PROJECT_ID",
     config.project_id ??
       (projectIdFallback !== undefined && projectIdFallback.length > 0
         ? projectIdFallback
-        : sanitizeProjectId(basename(workdir))),
+        : sanitizeProjectId(path.basename(workdir))),
     projectEnvValues,
   );
 
   const apiTlsEnabled = remoteWins("api.tls.enabled")
     ? config.api.tls.enabled
-    : envOverrideBool(
+    : yield* envOverrideBool(
         "SUPABASE_API_TLS_ENABLED",
         config.api.tls.enabled,
         "api.tls.enabled",
@@ -2419,26 +2533,35 @@ export function resolveLocalConfigValues(
   // value, not raw `config.api.enabled`.
   const apiEnabled = remoteWins("api.enabled")
     ? config.api.enabled
-    : envOverrideBool("SUPABASE_API_ENABLED", config.api.enabled, "api.enabled", projectEnvValues);
+    : yield* envOverrideBool(
+        "SUPABASE_API_ENABLED",
+        config.api.enabled,
+        "api.enabled",
+        projectEnvValues,
+      );
   const apiTlsCertPath = remoteWins("api.tls.cert_path")
     ? config.api.tls.cert_path
-    : envOverride("SUPABASE_API_TLS_CERT_PATH", config.api.tls.cert_path, projectEnvValues);
+    : yield* envOverride("SUPABASE_API_TLS_CERT_PATH", config.api.tls.cert_path, projectEnvValues);
   const apiTlsKeyPath = remoteWins("api.tls.key_path")
     ? config.api.tls.key_path
-    : envOverride("SUPABASE_API_TLS_KEY_PATH", config.api.tls.key_path, projectEnvValues);
+    : yield* envOverride("SUPABASE_API_TLS_KEY_PATH", config.api.tls.key_path, projectEnvValues);
   if (apiEnabled && apiTlsEnabled) {
-    readApiTlsFiles(workdir, apiTlsCertPath, apiTlsKeyPath);
+    yield* readApiTlsFiles(workdir, apiTlsCertPath, apiTlsKeyPath);
   }
   // `api.port === 0` is rejected only when `api.enabled`, unlike `db.port` below. Resolved once
   // so the check and the URL derivation below share the same overridden value.
   const apiPort = remoteWins("api.port")
     ? config.api.port
-    : envOverridePort("SUPABASE_API_PORT", config.api.port, "api.port", projectEnvValues);
+    : yield* envOverridePort("SUPABASE_API_PORT", config.api.port, "api.port", projectEnvValues);
   const apiExternalUrl = resolveApiExternalUrl(
     {
       external_url: remoteWins("api.external_url")
         ? config.api.external_url
-        : envOverride("SUPABASE_API_EXTERNAL_URL", config.api.external_url, projectEnvValues),
+        : yield* envOverride(
+            "SUPABASE_API_EXTERNAL_URL",
+            config.api.external_url,
+            projectEnvValues,
+          ),
       port: apiPort,
       tls: { enabled: apiTlsEnabled },
     },
@@ -2448,19 +2571,19 @@ export function resolveLocalConfigValues(
   // it's unconditionally required, and a decoded `0` fails validation.
   const dbPort = remoteWins("db.port")
     ? config.db.port
-    : envOverridePort("SUPABASE_DB_PORT", config.db.port, "db.port", projectEnvValues);
+    : yield* envOverridePort("SUPABASE_DB_PORT", config.db.port, "db.port", projectEnvValues);
   // Validate-only: the shadow's own resolved `majorVersion` comes from
   // `resolveDbBootstrapConfig`, which gates it separately.
   const majorVersion = remoteWins("db.major_version")
     ? config.db.major_version
-    : envOverrideMajorVersion(config.db.major_version, projectEnvValues);
+    : yield* envOverrideMajorVersion(config.db.major_version, projectEnvValues);
   // Validate-only: the actual resolved settings `start` needs are recomputed at their own call
   // site.
-  resolveDbSettingsEnvOverrides(config.db.settings, projectEnvValues, remoteOverrideKeys);
+  yield* resolveDbSettingsEnvOverrides(config.db.settings, projectEnvValues, remoteOverrideKeys);
   // Validate-only: `start` doesn't otherwise consume `db.network_restrictions.enabled` (only
   // `config push` does).
   if (!remoteWins("db.network_restrictions.enabled")) {
-    envOverrideBool(
+    yield* envOverrideBool(
       "SUPABASE_DB_NETWORK_RESTRICTIONS_ENABLED",
       config.db.network_restrictions.enabled,
       "db.network_restrictions.enabled",
@@ -2472,24 +2595,24 @@ export function resolveLocalConfigValues(
   // `/etc/postgresql-custom/pgsodium_root.key` on every start.
   const rawRootKeyValue = asRecord(document?.["db"])?.["root_key"];
   if (rawRootKeyValue !== undefined && typeof rawRootKeyValue !== "string") {
-    throw new ConfigValidateError(
+    return yield* new ConfigValidateError(
       "failed to parse config: decoding failed due to the following error(s):\n\n'db.root_key' expected a map or struct",
     );
   }
   const rawRootKey = remoteWins("db.root_key")
     ? rawRootKeyValue
-    : envOverride("SUPABASE_DB_ROOT_KEY", rawRootKeyValue, projectEnvValues);
+    : yield* envOverride("SUPABASE_DB_ROOT_KEY", rawRootKeyValue, projectEnvValues);
   const rootKey =
     rawRootKey === undefined || rawRootKey.length === 0
       ? POSTGRES_DEFAULT_ROOT_KEY
-      : (decryptAuthSecret(rawRootKey, projectEnvValues) ?? POSTGRES_DEFAULT_ROOT_KEY);
+      : ((yield* decryptAuthSecret(rawRootKey, projectEnvValues)) ?? POSTGRES_DEFAULT_ROOT_KEY);
   const storageBucketNames =
     config.storage.buckets !== undefined ? Object.keys(config.storage.buckets) : [];
   // `studio.port === 0` is rejected only when `studio.enabled`, same enabled-gated pattern as
   // `api.port` above.
   const studioEnabled = remoteWins("studio.enabled")
     ? config.studio.enabled
-    : envOverrideBool(
+    : yield* envOverrideBool(
         "SUPABASE_STUDIO_ENABLED",
         config.studio.enabled,
         "studio.enabled",
@@ -2497,19 +2620,24 @@ export function resolveLocalConfigValues(
       );
   const studioPort = remoteWins("studio.port")
     ? config.studio.port
-    : envOverridePort("SUPABASE_STUDIO_PORT", config.studio.port, "studio.port", projectEnvValues);
-  // `envOverride` itself never throws, but `studio.api_url` feeds `validateResolvedConfig`'s
+    : yield* envOverridePort(
+        "SUPABASE_STUDIO_PORT",
+        config.studio.port,
+        "studio.port",
+        projectEnvValues,
+      );
+  // `envOverride` itself never fails, but `studio.api_url` feeds `validateResolvedConfig`'s
   // URL-parse check below, which does throw on a malformed URL, so this is gated the same way
   // as `studio.enabled`/`studio.port` above.
   const studioApiUrl = remoteWins("studio.api_url")
     ? config.studio.api_url
-    : (envOverride("SUPABASE_STUDIO_API_URL", config.studio.api_url, projectEnvValues) ??
+    : ((yield* envOverride("SUPABASE_STUDIO_API_URL", config.studio.api_url, projectEnvValues)) ??
       config.studio.api_url);
   // `local_smtp.port === 0` is rejected only when `local_smtp.enabled`; the deprecated
   // `inbucket.enabled` alias is the same underlying flag, not a second one.
   const mailpitEnabled = remoteWins("local_smtp.enabled")
     ? config.local_smtp.enabled
-    : envOverrideBool(
+    : yield* envOverrideBool(
         "SUPABASE_LOCAL_SMTP_ENABLED",
         config.local_smtp.enabled,
         "local_smtp.enabled",
@@ -2517,23 +2645,23 @@ export function resolveLocalConfigValues(
       );
   const mailpitPort = remoteWins("local_smtp.port")
     ? config.local_smtp.port
-    : envOverridePort(
+    : yield* envOverridePort(
         "SUPABASE_LOCAL_SMTP_PORT",
         config.local_smtp.port,
         "local_smtp.port",
         projectEnvValues,
       );
-  const jwtSecret = resolveJwtSecret(
-    decryptAuthSecret(
+  const jwtSecret = yield* resolveJwtSecret(
+    yield* decryptAuthSecret(
       remoteWins("auth.jwt_secret")
         ? config.auth.jwt_secret
-        : envOverride("SUPABASE_AUTH_JWT_SECRET", config.auth.jwt_secret, projectEnvValues),
+        : yield* envOverride("SUPABASE_AUTH_JWT_SECRET", config.auth.jwt_secret, projectEnvValues),
       projectEnvValues,
     ),
   );
   const signingKeysPath = remoteWins("auth.signing_keys_path")
     ? config.auth.signing_keys_path
-    : envOverride(
+    : yield* envOverride(
         "SUPABASE_AUTH_SIGNING_KEYS_PATH",
         config.auth.signing_keys_path,
         projectEnvValues,
@@ -2543,7 +2671,7 @@ export function resolveLocalConfigValues(
   // and anon/service_role key generation run unconditionally either way.
   const authEnabled = remoteWins("auth.enabled")
     ? config.auth.enabled
-    : envOverrideBool(
+    : yield* envOverrideBool(
         "SUPABASE_AUTH_ENABLED",
         config.auth.enabled,
         "auth.enabled",
@@ -2554,14 +2682,14 @@ export function resolveLocalConfigValues(
   // `db.port === 0` above.
   const siteUrl = remoteWins("auth.site_url")
     ? config.auth.site_url
-    : (envOverride("SUPABASE_AUTH_SITE_URL", config.auth.site_url, projectEnvValues) ??
+    : ((yield* envOverride("SUPABASE_AUTH_SITE_URL", config.auth.site_url, projectEnvValues)) ??
       config.auth.site_url);
   const jwtIssuer = remoteWins("auth.jwt_issuer")
     ? config.auth.jwt_issuer
-    : envOverride("SUPABASE_AUTH_JWT_ISSUER", config.auth.jwt_issuer, projectEnvValues);
+    : yield* envOverride("SUPABASE_AUTH_JWT_ISSUER", config.auth.jwt_issuer, projectEnvValues);
   const jwtExpiry = remoteWins("auth.jwt_expiry")
     ? config.auth.jwt_expiry
-    : envOverrideUint(
+    : yield* envOverrideUint(
         "SUPABASE_AUTH_JWT_EXPIRY",
         "auth.jwt_expiry",
         config.auth.jwt_expiry,
@@ -2569,14 +2697,14 @@ export function resolveLocalConfigValues(
       );
   const additionalRedirectUrlsOverride = remoteWins("auth.additional_redirect_urls")
     ? undefined
-    : envOverride("SUPABASE_AUTH_ADDITIONAL_REDIRECT_URLS", undefined, projectEnvValues);
+    : yield* envOverride("SUPABASE_AUTH_ADDITIONAL_REDIRECT_URLS", undefined, projectEnvValues);
   const additionalRedirectUrls =
     additionalRedirectUrlsOverride !== undefined
       ? additionalRedirectUrlsOverride.split(",")
       : config.auth.additional_redirect_urls;
   const enableSignup = remoteWins("auth.enable_signup")
     ? config.auth.enable_signup
-    : envOverrideBool(
+    : yield* envOverrideBool(
         "SUPABASE_AUTH_ENABLE_SIGNUP",
         config.auth.enable_signup,
         "auth.enable_signup",
@@ -2584,7 +2712,7 @@ export function resolveLocalConfigValues(
       );
   const enableAnonymousSignIns = remoteWins("auth.enable_anonymous_sign_ins")
     ? config.auth.enable_anonymous_sign_ins
-    : envOverrideBool(
+    : yield* envOverrideBool(
         "SUPABASE_AUTH_ENABLE_ANONYMOUS_SIGN_INS",
         config.auth.enable_anonymous_sign_ins,
         "auth.enable_anonymous_sign_ins",
@@ -2592,7 +2720,7 @@ export function resolveLocalConfigValues(
       );
   const enableRefreshTokenRotation = remoteWins("auth.enable_refresh_token_rotation")
     ? config.auth.enable_refresh_token_rotation
-    : envOverrideBool(
+    : yield* envOverrideBool(
         "SUPABASE_AUTH_ENABLE_REFRESH_TOKEN_ROTATION",
         config.auth.enable_refresh_token_rotation,
         "auth.enable_refresh_token_rotation",
@@ -2600,7 +2728,7 @@ export function resolveLocalConfigValues(
       );
   const refreshTokenReuseInterval = remoteWins("auth.refresh_token_reuse_interval")
     ? config.auth.refresh_token_reuse_interval
-    : envOverrideUint(
+    : yield* envOverrideUint(
         "SUPABASE_AUTH_REFRESH_TOKEN_REUSE_INTERVAL",
         "auth.refresh_token_reuse_interval",
         config.auth.refresh_token_reuse_interval,
@@ -2608,7 +2736,7 @@ export function resolveLocalConfigValues(
       );
   const enableManualLinking = remoteWins("auth.enable_manual_linking")
     ? config.auth.enable_manual_linking
-    : envOverrideBool(
+    : yield* envOverrideBool(
         "SUPABASE_AUTH_ENABLE_MANUAL_LINKING",
         config.auth.enable_manual_linking,
         "auth.enable_manual_linking",
@@ -2616,7 +2744,7 @@ export function resolveLocalConfigValues(
       );
   const minimumPasswordLength = remoteWins("auth.minimum_password_length")
     ? config.auth.minimum_password_length
-    : envOverrideUint(
+    : yield* envOverrideUint(
         "SUPABASE_AUTH_MINIMUM_PASSWORD_LENGTH",
         "auth.minimum_password_length",
         config.auth.minimum_password_length,
@@ -2624,9 +2752,12 @@ export function resolveLocalConfigValues(
       );
   const passwordRequirements = remoteWins("auth.password_requirements")
     ? config.auth.password_requirements
-    : envOverrideAuthPasswordRequirements(config.auth.password_requirements, projectEnvValues);
+    : yield* envOverrideAuthPasswordRequirements(
+        config.auth.password_requirements,
+        projectEnvValues,
+      );
   const authDocument = asRecord(document?.["auth"]);
-  const captchaInput = resolveAuthCaptcha(
+  const captchaInput = yield* resolveAuthCaptcha(
     authDocument,
     config.auth.captcha,
     projectEnvValues,
@@ -2638,9 +2769,12 @@ export function resolveLocalConfigValues(
   // to symmetric HS256.
   const signingKey =
     signingKeysPath !== undefined && signingKeysPath.length > 0
-      ? (resolveConfiguredSigningKeys(config, workdir, projectEnvValues, remoteOverrideKeys) ?? [
-          DEFAULT_SIGNING_KEY,
-        ])[0]
+      ? ((yield* resolveConfiguredSigningKeys(
+          config,
+          workdir,
+          projectEnvValues,
+          remoteOverrideKeys,
+        )) ?? [DEFAULT_SIGNING_KEY])[0]
       : undefined;
   // This block only accumulates the inputs passkey/webauthn/hook/mfa/email/smtp/third_party
   // validation needs; the checks themselves run once, later, in the single
@@ -2657,11 +2791,11 @@ export function resolveLocalConfigValues(
     // config are env-bindable, so an absent `[auth.passkey]`/`[auth.webauthn]` section is never
     // synthesized from an env override alone.
     const passkeyEnabled = remoteWins("auth.passkey.enabled")
-      ? rawUnmodeledBool(passkeyDoc?.["enabled"], "auth.passkey.enabled")
+      ? yield* rawUnmodeledBool(passkeyDoc?.["enabled"], "auth.passkey.enabled")
       : passkeyDoc !== undefined
-        ? envOverrideBool(
+        ? yield* envOverrideBool(
             "SUPABASE_AUTH_PASSKEY_ENABLED",
-            rawUnmodeledBool(passkeyDoc["enabled"], "auth.passkey.enabled"),
+            yield* rawUnmodeledBool(passkeyDoc["enabled"], "auth.passkey.enabled"),
             "auth.passkey.enabled",
             projectEnvValues,
           )
@@ -2671,12 +2805,12 @@ export function resolveLocalConfigValues(
     const rpId = remoteWins("auth.webauthn.rp_id")
       ? configuredRpId
       : webauthnDoc !== undefined
-        ? envOverride("SUPABASE_AUTH_WEBAUTHN_RP_ID", configuredRpId, projectEnvValues)
+        ? yield* envOverride("SUPABASE_AUTH_WEBAUTHN_RP_ID", configuredRpId, projectEnvValues)
         : undefined;
     const rpOriginsOverride = remoteWins("auth.webauthn.rp_origins")
       ? undefined
       : webauthnDoc !== undefined
-        ? envOverride("SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS", undefined, projectEnvValues)
+        ? yield* envOverride("SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS", undefined, projectEnvValues)
         : undefined;
     // A raw or `env(...)`-resolved `rp_origins` string is comma-split, not dropped.
     const rawRpOrigins = webauthnDoc?.["rp_origins"];
@@ -2693,7 +2827,7 @@ export function resolveLocalConfigValues(
       : undefined;
 
     // Only enabled hooks are forwarded, in {@link HOOK_TYPE_ORDER}.
-    const resolvedHooks = resolveAuthHooks(
+    const resolvedHooks = yield* resolveAuthHooks(
       authDocument,
       config.auth.hook,
       projectEnvValues,
@@ -2706,7 +2840,11 @@ export function resolveLocalConfigValues(
       return { type: hookType, uri: resolved.uri, secrets: resolved.secrets };
     });
 
-    const resolvedMfa = resolveAuthMfa(config.auth.mfa, projectEnvValues, remoteOverrideKeys);
+    const resolvedMfa = yield* resolveAuthMfa(
+      config.auth.mfa,
+      projectEnvValues,
+      remoteOverrideKeys,
+    );
     const mfa: ReadonlyArray<MfaFactorInput> = [
       {
         label: "totp",
@@ -2725,12 +2863,21 @@ export function resolveLocalConfigValues(
       },
     ];
 
-    readAuthEmailTemplateContent(
-      resolveAuthEmail(config.auth.email, authDocument, projectEnvValues, remoteOverrideKeys),
+    yield* readAuthEmailTemplateContent(
+      yield* resolveAuthEmail(
+        config.auth.email,
+        authDocument,
+        projectEnvValues,
+        remoteOverrideKeys,
+      ),
       workdir,
     );
 
-    const resolvedSmtp = resolveAuthEmailSmtp(authDocument, projectEnvValues, remoteOverrideKeys);
+    const resolvedSmtp = yield* resolveAuthEmailSmtp(
+      authDocument,
+      projectEnvValues,
+      remoteOverrideKeys,
+    );
     const smtp: SmtpInput | undefined =
       resolvedSmtp === undefined
         ? undefined
@@ -2743,7 +2890,7 @@ export function resolveLocalConfigValues(
             adminEmail: resolvedSmtp.adminEmail,
           };
 
-    const thirdParty = resolveThirdPartyProviders(
+    const thirdParty = yield* resolveThirdPartyProviders(
       config.auth.third_party,
       projectEnvValues,
       remoteOverrideKeys,
@@ -2764,7 +2911,7 @@ export function resolveLocalConfigValues(
   // gate, unlike `studio.port`/`local_smtp.port` above.
   const denoVersion = remoteWins("edge_runtime.deno_version")
     ? config.edge_runtime.deno_version
-    : envOverrideDenoVersion(config.edge_runtime.deno_version, projectEnvValues);
+    : yield* envOverrideDenoVersion(config.edge_runtime.deno_version, projectEnvValues);
 
   // When `analytics.enabled` and `analytics.backend == "bigquery"`, all three GCP fields are
   // required. Backend-enum validation is covered at decode time for the config.toml-sourced
@@ -2772,34 +2919,34 @@ export function resolveLocalConfigValues(
   // env-override path — see {@link envOverrideAnalyticsBackend} for that case.
   const analyticsEnabled = remoteWins("analytics.enabled")
     ? config.analytics.enabled
-    : envOverrideBool(
+    : yield* envOverrideBool(
         "SUPABASE_ANALYTICS_ENABLED",
         config.analytics.enabled,
         "analytics.enabled",
         projectEnvValues,
       );
-  const analyticsBackend = envOverrideAnalyticsBackend(
+  const analyticsBackend = yield* envOverrideAnalyticsBackend(
     config.analytics.backend,
     projectEnvValues,
     remoteWins("analytics.backend"),
   );
   const gcpProjectId = remoteWins("analytics.gcp_project_id")
     ? config.analytics.gcp_project_id
-    : envOverride(
+    : yield* envOverride(
         "SUPABASE_ANALYTICS_GCP_PROJECT_ID",
         config.analytics.gcp_project_id,
         projectEnvValues,
       );
   const gcpProjectNumber = remoteWins("analytics.gcp_project_number")
     ? config.analytics.gcp_project_number
-    : envOverride(
+    : yield* envOverride(
         "SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER",
         config.analytics.gcp_project_number,
         projectEnvValues,
       );
   const gcpJwtPath = remoteWins("analytics.gcp_jwt_path")
     ? config.analytics.gcp_jwt_path
-    : envOverride(
+    : yield* envOverride(
         "SUPABASE_ANALYTICS_GCP_JWT_PATH",
         config.analytics.gcp_jwt_path,
         projectEnvValues,
@@ -2816,7 +2963,7 @@ export function resolveLocalConfigValues(
   // `validateResolvedConfig`'s existing JSON-validity check reports it.
   const webhooksEnabled = remoteWins("experimental.webhooks.enabled")
     ? config.experimental.webhooks?.enabled === true
-    : envOverrideBool(
+    : yield* envOverrideBool(
         "SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED",
         config.experimental.webhooks?.enabled === true,
         "experimental.webhooks.enabled",
@@ -2824,11 +2971,11 @@ export function resolveLocalConfigValues(
       );
   const pgdeltaFormatOptions = remoteWins("experimental.pgdelta.format_options")
     ? (config.experimental.pgdelta?.format_options ?? "")
-    : (envOverride(
+    : ((yield* envOverride(
         "SUPABASE_EXPERIMENTAL_PGDELTA_FORMAT_OPTIONS",
         config.experimental.pgdelta?.format_options,
         projectEnvValues,
-      ) ?? "");
+      )) ?? "");
 
   // Every pure validation check runs in one place, here, rather than interleaved with this
   // function's 3 I/O reads (signing keys, api.tls cert/key, email content) at their original
@@ -2872,12 +3019,20 @@ export function resolveLocalConfigValues(
     analytics: analyticsInput,
     experimental: experimentalInput,
   };
-  validateResolvedConfig(input);
+  yield* Effect.try({
+    try: () => validateResolvedConfig(input),
+    catch: (cause) => (cause instanceof ConfigValidateError ? cause : thrownError(cause)),
+  });
   // sms/external run after the shared validation call, since both need the env-override-aware
   // resolved value rather than the raw decoded config it validates.
   if (authEnabled) {
-    validateAuthSmsProviders(authDocument, config.auth.sms, projectEnvValues, remoteOverrideKeys);
-    validateAuthExternalProviders(
+    yield* validateAuthSmsProviders(
+      authDocument,
+      config.auth.sms,
+      projectEnvValues,
+      remoteOverrideKeys,
+    );
+    yield* validateAuthExternalProviders(
       authDocument,
       config.auth.external,
       projectEnvValues,
@@ -2887,9 +3042,9 @@ export function resolveLocalConfigValues(
 
   // Decrypted like `auth.email.smtp.pass`/`auth.captcha.secret`.
   const openaiApiKey = remoteWins("studio.openai_api_key")
-    ? decryptAuthSecret(config.studio.openai_api_key, projectEnvValues)
-    : decryptAuthSecret(
-        envOverride(
+    ? yield* decryptAuthSecret(config.studio.openai_api_key, projectEnvValues)
+    : yield* decryptAuthSecret(
+        yield* envOverride(
           "SUPABASE_STUDIO_OPENAI_API_KEY",
           config.studio.openai_api_key,
           projectEnvValues,
@@ -2925,9 +3080,9 @@ export function resolveLocalConfigValues(
     // Decrypted like `anon_key`/`service_role_key` below.
     publishableKey: resolveOpaqueKey(
       remoteWins("auth.publishable_key")
-        ? decryptAuthSecret(config.auth.publishable_key, projectEnvValues)
-        : decryptAuthSecret(
-            envOverride(
+        ? yield* decryptAuthSecret(config.auth.publishable_key, projectEnvValues)
+        : yield* decryptAuthSecret(
+            yield* envOverride(
               "SUPABASE_AUTH_PUBLISHABLE_KEY",
               config.auth.publishable_key,
               projectEnvValues,
@@ -2938,30 +3093,34 @@ export function resolveLocalConfigValues(
     ),
     secretKey: resolveOpaqueKey(
       remoteWins("auth.secret_key")
-        ? decryptAuthSecret(config.auth.secret_key, projectEnvValues)
-        : decryptAuthSecret(
-            envOverride("SUPABASE_AUTH_SECRET_KEY", config.auth.secret_key, projectEnvValues),
+        ? yield* decryptAuthSecret(config.auth.secret_key, projectEnvValues)
+        : yield* decryptAuthSecret(
+            yield* envOverride(
+              "SUPABASE_AUTH_SECRET_KEY",
+              config.auth.secret_key,
+              projectEnvValues,
+            ),
             projectEnvValues,
           ),
       defaultSecretKey,
     ),
     jwtSecret,
-    anonKey: resolveSignedKey(
-      decryptAuthSecret(
+    anonKey: yield* resolveSignedKey(
+      yield* decryptAuthSecret(
         remoteWins("auth.anon_key")
           ? config.auth.anon_key
-          : envOverride("SUPABASE_AUTH_ANON_KEY", config.auth.anon_key, projectEnvValues),
+          : yield* envOverride("SUPABASE_AUTH_ANON_KEY", config.auth.anon_key, projectEnvValues),
         projectEnvValues,
       ),
       jwtSecret,
       signingKey,
       "anon",
     ),
-    serviceRoleKey: resolveSignedKey(
-      decryptAuthSecret(
+    serviceRoleKey: yield* resolveSignedKey(
+      yield* decryptAuthSecret(
         remoteWins("auth.service_role_key")
           ? config.auth.service_role_key
-          : envOverride(
+          : yield* envOverride(
               "SUPABASE_AUTH_SERVICE_ROLE_KEY",
               config.auth.service_role_key,
               projectEnvValues,
@@ -2985,8 +3144,13 @@ export function resolveLocalConfigValues(
     // presence-only and must see the raw value to reject an explicit `project_id = ""`.
     projectId: sanitizeProjectId(resolvedProjectId ?? ""),
     edgeRuntimeDenoVersion: denoVersion,
-  };
-}
+  } satisfies LocalConfigValues;
+});
+
+const asConfigValidateError = (cause: unknown) =>
+  cause instanceof ConfigValidateError
+    ? cause
+    : new ConfigValidateError(cause instanceof Error ? cause.message : String(cause));
 
 /** Resolves local and remote signing keys for services that consume the local JWKS document. */
 export const resolveLocalJwks = Effect.fnUntraced(function* (
@@ -2996,158 +3160,156 @@ export const resolveLocalJwks = Effect.fnUntraced(function* (
   projectEnvValues?: Readonly<Record<string, string>>,
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ) {
-  const { issuerUrl, signingKeys, signingKeysPath } = yield* Effect.try({
-    try: () => {
-      const remoteWins = makeRemoteWins(remoteOverrideKeys);
-      const signingKeysPath = remoteWins("auth.signing_keys_path")
-        ? config.auth.signing_keys_path
-        : envOverride(
-            "SUPABASE_AUTH_SIGNING_KEYS_PATH",
-            config.auth.signing_keys_path,
-            projectEnvValues,
-          );
-      // Every resolved config carries the default ES256 key, regardless of `auth.enabled`. It's
-      // only ever replaced by a configured `signing_keys_path` file, and only when that file is
-      // actually read (gated on `auth.enabled` — see {@link resolveConfiguredSigningKeys}). So JWKS
-      // resolution always publishes either the file's keys or this default, never neither —
-      // `GOTRUE_JWT_KEYS` signs with the same default, so the two must never disagree.
-      const signingKeys: ReadonlyArray<Jwk> = resolveConfiguredSigningKeys(
-        config,
-        workdir,
-        projectEnvValues,
-        remoteOverrideKeys,
-      ) ?? [DEFAULT_SIGNING_KEY];
+  const { issuerUrl, signingKeys, signingKeysPath } = yield* Effect.gen(function* () {
+    const remoteWins = makeRemoteWins(remoteOverrideKeys);
+    const signingKeysPath = remoteWins("auth.signing_keys_path")
+      ? config.auth.signing_keys_path
+      : yield* envOverride(
+          "SUPABASE_AUTH_SIGNING_KEYS_PATH",
+          config.auth.signing_keys_path,
+          projectEnvValues,
+        );
+    // Every resolved config carries the default ES256 key, regardless of `auth.enabled`. It's
+    // only ever replaced by a configured `signing_keys_path` file, and only when that file is
+    // actually read (gated on `auth.enabled` — see {@link resolveConfiguredSigningKeys}). So JWKS
+    // resolution always publishes either the file's keys or this default, never neither —
+    // `GOTRUE_JWT_KEYS` signs with the same default, so the two must never disagree.
+    const signingKeys: ReadonlyArray<Jwk> = (yield* resolveConfiguredSigningKeys(
+      config,
+      workdir,
+      projectEnvValues,
+      remoteOverrideKeys,
+    )) ?? [DEFAULT_SIGNING_KEY];
 
-      // Built as a `ThirdPartyProvidersLike` (every provider's full field set, including auth0's
-      // `tenant_region`) rather than the validation-only `ThirdPartyInput`, since
-      // {@link resolveThirdPartyIssuerUrl} needs the full set to build the issuer URL.
-      const thirdParty: ThirdPartyProvidersLike = {
-        firebase: {
-          enabled: remoteWins("auth.third_party.firebase.enabled")
-            ? config.auth.third_party.firebase.enabled
-            : envOverrideBool(
-                "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED",
-                config.auth.third_party.firebase.enabled,
-                "auth.third_party.firebase.enabled",
-                projectEnvValues,
-              ),
-          project_id: remoteWins("auth.third_party.firebase.project_id")
-            ? config.auth.third_party.firebase.project_id
-            : envOverride(
-                "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_PROJECT_ID",
-                config.auth.third_party.firebase.project_id,
-                projectEnvValues,
-              ),
-        },
-        auth0: {
-          enabled: remoteWins("auth.third_party.auth0.enabled")
-            ? config.auth.third_party.auth0.enabled
-            : envOverrideBool(
-                "SUPABASE_AUTH_THIRD_PARTY_AUTH0_ENABLED",
-                config.auth.third_party.auth0.enabled,
-                "auth.third_party.auth0.enabled",
-                projectEnvValues,
-              ),
-          tenant: remoteWins("auth.third_party.auth0.tenant")
-            ? config.auth.third_party.auth0.tenant
-            : envOverride(
-                "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT",
-                config.auth.third_party.auth0.tenant,
-                projectEnvValues,
-              ),
-          tenant_region: remoteWins("auth.third_party.auth0.tenant_region")
-            ? config.auth.third_party.auth0.tenant_region
-            : envOverride(
-                "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT_REGION",
-                config.auth.third_party.auth0.tenant_region,
-                projectEnvValues,
-              ),
-        },
-        aws_cognito: {
-          enabled: remoteWins("auth.third_party.aws_cognito.enabled")
-            ? config.auth.third_party.aws_cognito.enabled
-            : envOverrideBool(
-                "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_ENABLED",
-                config.auth.third_party.aws_cognito.enabled,
-                "auth.third_party.aws_cognito.enabled",
-                projectEnvValues,
-              ),
-          user_pool_id: remoteWins("auth.third_party.aws_cognito.user_pool_id")
-            ? config.auth.third_party.aws_cognito.user_pool_id
-            : envOverride(
-                "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_ID",
-                config.auth.third_party.aws_cognito.user_pool_id,
-                projectEnvValues,
-              ),
-          user_pool_region: remoteWins("auth.third_party.aws_cognito.user_pool_region")
-            ? config.auth.third_party.aws_cognito.user_pool_region
-            : envOverride(
-                "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_REGION",
-                config.auth.third_party.aws_cognito.user_pool_region,
-                projectEnvValues,
-              ),
-        },
-        clerk: {
-          enabled: remoteWins("auth.third_party.clerk.enabled")
-            ? config.auth.third_party.clerk.enabled
-            : envOverrideBool(
-                "SUPABASE_AUTH_THIRD_PARTY_CLERK_ENABLED",
-                config.auth.third_party.clerk.enabled,
-                "auth.third_party.clerk.enabled",
-                projectEnvValues,
-              ),
-          domain: remoteWins("auth.third_party.clerk.domain")
-            ? config.auth.third_party.clerk.domain
-            : envOverride(
-                "SUPABASE_AUTH_THIRD_PARTY_CLERK_DOMAIN",
-                config.auth.third_party.clerk.domain,
-                projectEnvValues,
-              ),
-        },
-        workos: {
-          enabled: remoteWins("auth.third_party.workos.enabled")
-            ? config.auth.third_party.workos.enabled
-            : envOverrideBool(
-                "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ENABLED",
-                config.auth.third_party.workos.enabled,
-                "auth.third_party.workos.enabled",
-                projectEnvValues,
-              ),
-          issuer_url: remoteWins("auth.third_party.workos.issuer_url")
-            ? config.auth.third_party.workos.issuer_url
-            : envOverride(
-                "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ISSUER_URL",
-                config.auth.third_party.workos.issuer_url,
-                projectEnvValues,
-              ),
-        },
-      };
+    // Built as a `ThirdPartyProvidersLike` (every provider's full field set, including auth0's
+    // `tenant_region`) rather than the validation-only `ThirdPartyInput`, since
+    // {@link resolveThirdPartyIssuerUrl} needs the full set to build the issuer URL.
+    const thirdParty: ThirdPartyProvidersLike = {
+      firebase: {
+        enabled: remoteWins("auth.third_party.firebase.enabled")
+          ? config.auth.third_party.firebase.enabled
+          : yield* envOverrideBool(
+              "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED",
+              config.auth.third_party.firebase.enabled,
+              "auth.third_party.firebase.enabled",
+              projectEnvValues,
+            ),
+        project_id: remoteWins("auth.third_party.firebase.project_id")
+          ? config.auth.third_party.firebase.project_id
+          : yield* envOverride(
+              "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_PROJECT_ID",
+              config.auth.third_party.firebase.project_id,
+              projectEnvValues,
+            ),
+      },
+      auth0: {
+        enabled: remoteWins("auth.third_party.auth0.enabled")
+          ? config.auth.third_party.auth0.enabled
+          : yield* envOverrideBool(
+              "SUPABASE_AUTH_THIRD_PARTY_AUTH0_ENABLED",
+              config.auth.third_party.auth0.enabled,
+              "auth.third_party.auth0.enabled",
+              projectEnvValues,
+            ),
+        tenant: remoteWins("auth.third_party.auth0.tenant")
+          ? config.auth.third_party.auth0.tenant
+          : yield* envOverride(
+              "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT",
+              config.auth.third_party.auth0.tenant,
+              projectEnvValues,
+            ),
+        tenant_region: remoteWins("auth.third_party.auth0.tenant_region")
+          ? config.auth.third_party.auth0.tenant_region
+          : yield* envOverride(
+              "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT_REGION",
+              config.auth.third_party.auth0.tenant_region,
+              projectEnvValues,
+            ),
+      },
+      aws_cognito: {
+        enabled: remoteWins("auth.third_party.aws_cognito.enabled")
+          ? config.auth.third_party.aws_cognito.enabled
+          : yield* envOverrideBool(
+              "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_ENABLED",
+              config.auth.third_party.aws_cognito.enabled,
+              "auth.third_party.aws_cognito.enabled",
+              projectEnvValues,
+            ),
+        user_pool_id: remoteWins("auth.third_party.aws_cognito.user_pool_id")
+          ? config.auth.third_party.aws_cognito.user_pool_id
+          : yield* envOverride(
+              "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_ID",
+              config.auth.third_party.aws_cognito.user_pool_id,
+              projectEnvValues,
+            ),
+        user_pool_region: remoteWins("auth.third_party.aws_cognito.user_pool_region")
+          ? config.auth.third_party.aws_cognito.user_pool_region
+          : yield* envOverride(
+              "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_REGION",
+              config.auth.third_party.aws_cognito.user_pool_region,
+              projectEnvValues,
+            ),
+      },
+      clerk: {
+        enabled: remoteWins("auth.third_party.clerk.enabled")
+          ? config.auth.third_party.clerk.enabled
+          : yield* envOverrideBool(
+              "SUPABASE_AUTH_THIRD_PARTY_CLERK_ENABLED",
+              config.auth.third_party.clerk.enabled,
+              "auth.third_party.clerk.enabled",
+              projectEnvValues,
+            ),
+        domain: remoteWins("auth.third_party.clerk.domain")
+          ? config.auth.third_party.clerk.domain
+          : yield* envOverride(
+              "SUPABASE_AUTH_THIRD_PARTY_CLERK_DOMAIN",
+              config.auth.third_party.clerk.domain,
+              projectEnvValues,
+            ),
+      },
+      workos: {
+        enabled: remoteWins("auth.third_party.workos.enabled")
+          ? config.auth.third_party.workos.enabled
+          : yield* envOverrideBool(
+              "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ENABLED",
+              config.auth.third_party.workos.enabled,
+              "auth.third_party.workos.enabled",
+              projectEnvValues,
+            ),
+        issuer_url: remoteWins("auth.third_party.workos.issuer_url")
+          ? config.auth.third_party.workos.issuer_url
+          : yield* envOverride(
+              "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ISSUER_URL",
+              config.auth.third_party.workos.issuer_url,
+              projectEnvValues,
+            ),
+      },
+    };
 
-      // This function is called unconditionally, regardless of `auth.enabled`, but
-      // `resolveThirdPartyIssuerUrl`'s "at most one enabled" + required-field checks are only
-      // meaningful while auth is enabled — `resolveLocalConfigValues` already ran the equivalent
-      // check in that case. When auth is disabled, that validation is (correctly) skipped, so this
-      // uses the unchecked, no-throw issuer-url builder instead.
-      const authEnabled = remoteWins("auth.enabled")
-        ? config.auth.enabled
-        : envOverrideBool(
-            "SUPABASE_AUTH_ENABLED",
-            config.auth.enabled,
-            "auth.enabled",
-            projectEnvValues,
-          );
-      const issuerUrl = Option.fromNullishOr(
-        authEnabled
-          ? resolveThirdPartyIssuerUrl(thirdParty)
-          : thirdPartyIssuerUrlUnchecked(thirdParty),
-      ).pipe(Option.filter((value) => value.length > 0));
-      return { issuerUrl, signingKeys, signingKeysPath };
-    },
-    catch: (cause) =>
-      cause instanceof ConfigValidateError
-        ? cause
-        : new ConfigValidateError(cause instanceof Error ? cause.message : String(cause)),
-  });
+    // This function is called unconditionally, regardless of `auth.enabled`, but
+    // `resolveThirdPartyIssuerUrl`'s "at most one enabled" + required-field checks are only
+    // meaningful while auth is enabled — `resolveLocalConfigValues` already ran the equivalent
+    // check in that case. When auth is disabled, that validation is (correctly) skipped, so this
+    // uses the unchecked, no-throw issuer-url builder instead.
+    const authEnabled = remoteWins("auth.enabled")
+      ? config.auth.enabled
+      : yield* envOverrideBool(
+          "SUPABASE_AUTH_ENABLED",
+          config.auth.enabled,
+          "auth.enabled",
+          projectEnvValues,
+        );
+    const issuerUrl = Option.fromNullishOr(
+      yield* Effect.try({
+        try: () =>
+          authEnabled
+            ? resolveThirdPartyIssuerUrl(thirdParty)
+            : thirdPartyIssuerUrlUnchecked(thirdParty),
+        catch: asConfigValidateError,
+      }),
+    ).pipe(Option.filter((value) => value.length > 0));
+    return { issuerUrl, signingKeys, signingKeysPath };
+  }).pipe(Effect.mapError(asConfigValidateError));
   const keys: unknown[] = [];
   if (Option.isSome(issuerUrl)) {
     keys.push(

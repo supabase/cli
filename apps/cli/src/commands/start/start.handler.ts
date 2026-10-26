@@ -33,7 +33,9 @@ import { aqua, yellow } from "../../command-internal/colors.ts";
 import {
   apiTlsCertReadErrorMessage,
   apiTlsKeyReadErrorMessage,
+  ConfigValidateError,
   emailContentPathReadErrorMessage,
+  fsErrorCause,
   resolveApiTlsPath,
   resolveEmailTemplateContentPath,
 } from "../../command-internal/config-validate.ts";
@@ -191,33 +193,27 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return Predicate.isObject(value) ? value : undefined;
 }
 
-function tryStartConfig<T>(thunk: () => T): Effect.Effect<T, StartInvalidConfigError> {
-  return Effect.try({
-    try: thunk,
-    catch: (cause) =>
-      new StartInvalidConfigError({
-        message: cause instanceof Error ? cause.message : String(cause),
-      }),
+const startConfigError = (cause: unknown) =>
+  new StartInvalidConfigError({
+    message: cause instanceof Error ? cause.message : String(cause),
   });
-}
+
+const configOverrideError = (dottedFieldPath: string) => (cause: unknown) =>
+  new StartInvalidConfigError({
+    message: `invalid config for ${dottedFieldPath}: ${cause instanceof Error ? cause.message : String(cause)}`,
+  });
 
 /**
- * Wraps a synchronous `envOverride*` config read that throws on a malformed value into a typed
+ * Maps an `envOverride*` config read's malformed-value failure into a typed
  * `StartInvalidConfigError`, so a bad override fails the command through the normal error path
  * instead of surfacing as an untyped Effect defect.
  */
-function wrapConfigOverride<T>(
-  dottedFieldPath: string,
-  thunk: () => T,
-): Effect.Effect<T, StartInvalidConfigError> {
-  return Effect.try({
-    try: thunk,
-    catch: (cause) =>
-      new StartInvalidConfigError({
-        message: `invalid config for ${dottedFieldPath}: ${cause instanceof Error ? cause.message : String(cause)}`,
-      }),
-  });
-}
+const wrapConfigOverride = <T, E, R>(dottedFieldPath: string, effect: Effect.Effect<T, E, R>) =>
+  effect.pipe(Effect.mapError(configOverrideError(dottedFieldPath)));
+
+/** {@link wrapConfigOverride} for a synchronous parser that throws on a malformed value. */
+const wrapConfigParse = <T>(dottedFieldPath: string, thunk: () => T) =>
+  Effect.try({ try: thunk, catch: configOverrideError(dottedFieldPath) });
 
 /**
  * Every value {@link buildGotrueContainerSpec} needs from `config`/`values`, minus
@@ -230,20 +226,20 @@ function wrapConfigOverride<T>(
  * or auth is disabled.
  */
 
-function resolveGotrueEnvInput(params: {
+const resolveGotrueEnvInput = Effect.fnUntraced(function* (params: {
   readonly context: LocalProjectContext;
   readonly values: LocalConfigValues;
   readonly workdir: string;
   readonly kongContainerName: string;
   readonly mailpitContainerName: string;
   readonly resolvedEmail: ResolvedAuthEmail;
-}): Omit<BuildGotrueEnvInput, "dbHost" | "dbPassword"> {
+}) {
   const { context, values, workdir, kongContainerName, mailpitContainerName, resolvedEmail } =
     params;
   const { config, projectEnvValues, loaded } = context;
   const document = loaded?.document;
 
-  const inbucketEnabled = envOverrideBool(
+  const inbucketEnabled = yield* envOverrideBool(
     "SUPABASE_LOCAL_SMTP_ENABLED",
     config.local_smtp.enabled,
     "local_smtp.enabled",
@@ -253,7 +249,7 @@ function resolveGotrueEnvInput(params: {
   // when the key is merely absent from the TOML table, silently falling back to Mailpit even when
   // a real SMTP server is configured. `resolveAuthEmailSmtp` resolves this correctly off the raw
   // document.
-  const resolvedSmtp = resolveAuthEmailSmtp(asRecord(document?.["auth"]), projectEnvValues);
+  const resolvedSmtp = yield* resolveAuthEmailSmtp(asRecord(document?.["auth"]), projectEnvValues);
   const smtp =
     resolvedSmtp?.enabled === true
       ? {
@@ -267,12 +263,12 @@ function resolveGotrueEnvInput(params: {
       : undefined;
   // Same override gap as `inbucketEnabled` above; these are value-typed fields, so no
   // raw-document presence gate is needed.
-  const mailpitAdminEmail = envOverride(
+  const mailpitAdminEmail = yield* envOverride(
     "SUPABASE_LOCAL_SMTP_ADMIN_EMAIL",
     config.local_smtp.admin_email,
     projectEnvValues,
   );
-  const mailpitSenderName = envOverride(
+  const mailpitSenderName = yield* envOverride(
     "SUPABASE_LOCAL_SMTP_SENDER_NAME",
     config.local_smtp.sender_name,
     projectEnvValues,
@@ -286,13 +282,16 @@ function resolveGotrueEnvInput(params: {
         }
       : undefined;
 
-  const { passkeyEnabled, webauthn } = resolveGotruePasskeyWebauthn(document, projectEnvValues);
-  const externalProviders = resolveAuthExternalProviders(
+  const { passkeyEnabled, webauthn } = yield* resolveGotruePasskeyWebauthn(
+    document,
+    projectEnvValues,
+  );
+  const externalProviders = yield* resolveAuthExternalProviders(
     asRecord(document?.["auth"]),
     config.auth.external,
     projectEnvValues,
   );
-  const authExternalUrl = resolveAuthExternalUrl(document, projectEnvValues);
+  const authExternalUrl = yield* resolveAuthExternalUrl(document, projectEnvValues);
 
   return {
     apiUrl: values.apiUrl,
@@ -313,14 +312,18 @@ function resolveGotrueEnvInput(params: {
     kongContainerName,
     smtp,
     mailpit,
-    sms: resolveAuthSms(asRecord(document?.["auth"]), config.auth.sms, projectEnvValues),
-    sessions: resolveGotrueSessions(config.auth.sessions, projectEnvValues),
-    mfa: resolveAuthMfa(config.auth.mfa, projectEnvValues),
-    rateLimit: resolveGotrueRateLimit(config.auth.rate_limit, projectEnvValues),
-    web3: resolveGotrueWeb3(config.auth.web3, projectEnvValues),
-    oauthServer: resolveGotrueOAuthServer(config.auth.oauth_server, projectEnvValues),
-    hooks: resolveAuthHooks(asRecord(document?.["auth"]), config.auth.hook, projectEnvValues),
-    captcha: resolveAuthCaptcha(
+    sms: yield* resolveAuthSms(asRecord(document?.["auth"]), config.auth.sms, projectEnvValues),
+    sessions: yield* resolveGotrueSessions(config.auth.sessions, projectEnvValues),
+    mfa: yield* resolveAuthMfa(config.auth.mfa, projectEnvValues),
+    rateLimit: yield* resolveGotrueRateLimit(config.auth.rate_limit, projectEnvValues),
+    web3: yield* resolveGotrueWeb3(config.auth.web3, projectEnvValues),
+    oauthServer: yield* resolveGotrueOAuthServer(config.auth.oauth_server, projectEnvValues),
+    hooks: yield* resolveAuthHooks(
+      asRecord(document?.["auth"]),
+      config.auth.hook,
+      projectEnvValues,
+    ),
+    captcha: yield* resolveAuthCaptcha(
       asRecord(document?.["auth"]),
       config.auth.captcha,
       projectEnvValues,
@@ -328,9 +331,9 @@ function resolveGotrueEnvInput(params: {
     passkeyEnabled,
     webauthn,
     externalProviders,
-    signingKeys: resolveConfiguredSigningKeys(config, workdir, projectEnvValues),
-  };
-}
+    signingKeys: yield* resolveConfiguredSigningKeys(config, workdir, projectEnvValues),
+  } satisfies Omit<BuildGotrueEnvInput, "dbHost" | "dbPassword">;
+});
 
 /**
  * Existence/readability check for one already-resolved `content_path`. Without it, a
@@ -378,14 +381,16 @@ const resolveKongEmailTemplateMounts = Effect.fn("start.resolveEmailTemplateMoun
     name: string,
     contentPath: string,
   ) =>
-    tryStartConfig(() =>
-      resolveEmailTemplateContentPath({
-        section,
-        name,
-        contentPath,
-        contentPresent: false,
-        base: workdir,
-      }),
+    resolveEmailTemplateContentPath({
+      section,
+      name,
+      contentPath,
+      contentPresent: false,
+      base: workdir,
+    }).pipe(
+      Effect.mapError((error) =>
+        startConfigError(error instanceof ConfigValidateError ? error : fsErrorCause(error)),
+      ),
     );
   const mounts: Array<KongEmailTemplateMount> = [];
   for (const [id, template] of Object.entries(email.template)) {
@@ -454,28 +459,24 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       cliSettings.workdir,
       (message) => new StartConfigLoadError({ message }),
     );
-    const values = yield* tryStartConfig(() =>
-      resolveLocalConfigValues(
-        context.config,
-        context.hostname,
-        cliSettings.workdir,
-        context.projectEnvValues,
-        context.loaded?.document,
-      ),
-    );
+    const values = yield* resolveLocalConfigValues(
+      context.config,
+      context.hostname,
+      cliSettings.workdir,
+      context.projectEnvValues,
+      context.loaded?.document,
+    ).pipe(Effect.mapError(startConfigError));
     const { config, projectId, projectEnvValues } = context;
     // Resolved here (project `.env` aware) so it can be threaded through to `startDatabase`'s
     // own `setup.experimental` below.
     const experimental = yield* resolveExperimentalWithProjectEnv(projectEnvValues);
     // Single source resolved once, fed to both Kong's template mounts and GoTrue's env builder —
     // see {@link resolveAuthEmail}'s doc comment.
-    const resolvedEmail = yield* tryStartConfig(() =>
-      resolveAuthEmail(
-        config.auth.email,
-        asRecord(context.loaded?.document?.["auth"]),
-        projectEnvValues,
-      ),
-    );
+    const resolvedEmail = yield* resolveAuthEmail(
+      config.auth.email,
+      asRecord(context.loaded?.document?.["auth"]),
+      projectEnvValues,
+    ).pipe(Effect.mapError(startConfigError));
     // Kong mounts every configured template and every enabled notification's `content_path`,
     // regardless of `auth.enabled` — see {@link resolveKongEmailTemplateMounts} for why this
     // resolves and verifies each path once, here, rather than re-deriving it before Kong's
@@ -488,23 +489,21 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     // Duration fields (Go duration syntax) are otherwise only parsed inside GoTrue's own env
     // builder, which never runs when auth is disabled or `gotrue` is excluded — so a malformed
     // value must be validated eagerly here or it would be silently accepted.
-    const gotrueSessionsForValidation = resolveGotrueSessions(
+    const gotrueSessionsForValidation = yield* resolveGotrueSessions(
       config.auth.sessions,
       projectEnvValues,
     );
-    yield* wrapConfigOverride("auth.email.max_frequency", () =>
+    yield* wrapConfigParse("auth.email.max_frequency", () =>
       parseGoDuration(resolvedEmail.max_frequency),
     );
     // `resolveLocalConfigValues`'s own SMS validation only runs when auth is enabled, so this is
     // the only place a malformed `auth.sms.*` override is caught when auth is disabled.
-    const smsForValidation = yield* tryStartConfig(() =>
-      resolveAuthSms(
-        asRecord(context.loaded?.document?.["auth"]),
-        config.auth.sms,
-        projectEnvValues,
-      ),
-    );
-    yield* wrapConfigOverride("auth.sms.max_frequency", () =>
+    const smsForValidation = yield* resolveAuthSms(
+      asRecord(context.loaded?.document?.["auth"]),
+      config.auth.sms,
+      projectEnvValues,
+    ).pipe(Effect.mapError(startConfigError));
+    yield* wrapConfigParse("auth.sms.max_frequency", () =>
       parseGoDuration(smsForValidation.max_frequency),
     );
     // `resolveAuthSms` already downgrades `enable_signup` when no provider is enabled; this only
@@ -515,47 +514,53 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       !smsForValidation.messagebird.enabled &&
       !smsForValidation.textlocal.enabled &&
       !smsForValidation.vonage.enabled &&
-      envOverrideBool(
+      (yield* envOverrideBool(
         "SUPABASE_AUTH_SMS_ENABLE_SIGNUP",
         config.auth.sms.enable_signup,
         "auth.sms.enable_signup",
         projectEnvValues,
-      )
+      ).pipe(Effect.orDie))
     ) {
       yield* output.raw("WARN: no SMS provider is enabled. Disabling phone login\n", "stderr");
     }
     const sessionsTimebox = gotrueSessionsForValidation?.timebox;
     if (sessionsTimebox !== undefined) {
-      yield* wrapConfigOverride("auth.sessions.timebox", () => parseGoDuration(sessionsTimebox));
+      yield* wrapConfigParse("auth.sessions.timebox", () => parseGoDuration(sessionsTimebox));
     }
     const sessionsInactivityTimeout = gotrueSessionsForValidation?.inactivity_timeout;
     if (sessionsInactivityTimeout !== undefined) {
-      yield* wrapConfigOverride("auth.sessions.inactivity_timeout", () =>
+      yield* wrapConfigParse("auth.sessions.inactivity_timeout", () =>
         parseGoDuration(sessionsInactivityTimeout),
       );
     }
-    yield* wrapConfigOverride("auth.mfa.phone.max_frequency", () =>
-      parseGoDuration(resolveAuthMfa(config.auth.mfa, projectEnvValues).phone.max_frequency),
+    const mfaForValidation = yield* wrapConfigOverride(
+      "auth.mfa.phone.max_frequency",
+      resolveAuthMfa(config.auth.mfa, projectEnvValues),
+    );
+    yield* wrapConfigParse("auth.mfa.phone.max_frequency", () =>
+      parseGoDuration(mfaForValidation.phone.max_frequency),
     );
     // These GoTrue overrides must validate unconditionally too, regardless of
-    // `auth.enabled`/`--exclude gotrue`. The resolvers already throw internally on a bad
+    // `auth.enabled`/`--exclude gotrue`. The resolvers already fail internally on a bad
     // override, so calling each once here is simpler than re-deriving every field individually.
-    yield* wrapConfigOverride("auth.rate_limit", () =>
+    yield* wrapConfigOverride(
+      "auth.rate_limit",
       resolveGotrueRateLimit(config.auth.rate_limit, projectEnvValues),
     );
-    yield* wrapConfigOverride("auth.web3", () =>
-      resolveGotrueWeb3(config.auth.web3, projectEnvValues),
-    );
-    yield* wrapConfigOverride("auth.oauth_server", () =>
+    yield* wrapConfigOverride("auth.web3", resolveGotrueWeb3(config.auth.web3, projectEnvValues));
+    yield* wrapConfigOverride(
+      "auth.oauth_server",
       resolveGotrueOAuthServer(config.auth.oauth_server, projectEnvValues),
     );
     // Same gap for the raw (unmodeled by `@supabase/config`) `auth.passkey`/`auth.webauthn`/
     // `auth.external.<name>` booleans, which are otherwise only reached once auth is enabled and
     // gotrue isn't excluded.
-    yield* wrapConfigOverride("auth.passkey", () =>
+    yield* wrapConfigOverride(
+      "auth.passkey",
       resolveGotruePasskeyWebauthn(context.loaded?.document, projectEnvValues),
     );
-    yield* wrapConfigOverride("auth.external", () =>
+    yield* wrapConfigOverride(
+      "auth.external",
       resolveAuthExternalProviders(
         asRecord(context.loaded?.document?.["auth"]),
         config.auth.external,
@@ -564,7 +569,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     );
     // Same gap for `auth.third_party.<provider>.*` — `resolveThirdPartyProviders` is otherwise
     // never called by this handler at all, so a malformed override would never fail the command.
-    yield* wrapConfigOverride("auth.third_party", () =>
+    yield* wrapConfigOverride(
+      "auth.third_party",
       resolveThirdPartyProviders(config.auth.third_party, projectEnvValues),
     );
     // `[functions.<slug>.env]` has no supported meaning for `start`, so any key here must be
@@ -599,21 +605,21 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       excluded: ReadonlyArray<string>,
       precomputedLocal?: LocalConfigValues,
     ) {
-      const localState = yield* Effect.try({
-        try: () =>
-          resolveStatusLocalState(
-            context.config,
-            context.hostname,
-            cliSettings.workdir,
-            context.projectEnvValues,
-            context.loaded?.document,
-            precomputedLocal,
-          ),
-        catch: (cause) =>
-          new StatusInvalidConfigError({
-            message: cause instanceof Error ? cause.message : String(cause),
-          }),
-      });
+      const localState = yield* resolveStatusLocalState(
+        context.config,
+        context.hostname,
+        cliSettings.workdir,
+        context.projectEnvValues,
+        context.loaded?.document,
+        precomputedLocal,
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new StatusInvalidConfigError({
+              message: cause instanceof Error ? cause.message : String(cause),
+            }),
+        ),
+      );
       const containerIds = statusContainerIds(projectId);
       const state = gateStatusState(localState, containerIds, excluded);
       return statusValuesFromState(state, new Map());
@@ -707,16 +713,14 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
 
     // 4. No update-suggestion check: `start` has no Management API dependency by design.
 
-    // 5. Gate evaluation — see `start.gates.ts`. Wrapped because `envOverrideBool` throws
-    // synchronously on an unparsable value, and this handler surfaces that as a typed error.
-    const gates = yield* tryStartConfig(() =>
-      resolveStartGates({
-        config,
-        projectEnvValues,
-        excludedKeys,
-        document: context.loaded?.document,
-      }),
-    );
+    // 5. Gate evaluation — see `start.gates.ts`. Mapped because `envOverrideBool` fails on
+    // an unparsable value, and this handler surfaces that as a `StartInvalidConfigError`.
+    const gates = yield* resolveStartGates({
+      config,
+      projectEnvValues,
+      excludedKeys,
+      document: context.loaded?.document,
+    }).pipe(Effect.mapError(startConfigError));
 
     // 6. JWKS resolution runs unconditionally, before any image pull, regardless of which
     // services end up enabled.
@@ -729,7 +733,10 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
 
     // The `edge_runtime.deno_version` -> image switch is start-only (no `db start` equivalent),
     // so it's resolved here rather than inside the shared bootstrap-config derivation below.
-    const denoVersion = envOverrideDenoVersion(config.edge_runtime.deno_version, projectEnvValues);
+    const denoVersion = yield* envOverrideDenoVersion(
+      config.edge_runtime.deno_version,
+      projectEnvValues,
+    ).pipe(Effect.orDie);
 
     // Every field the fresh-DB bootstrap needs, shared with `db start`'s own native bootstrap —
     // see `bootstrap-config.ts`'s header for why this is one shared derivation.
@@ -875,13 +882,15 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     // The TLS cert/key disk read is gated on `api.enabled` itself, not just `api.tls.enabled`.
     // Resolved separately from `gates.postgrest`'s own `apiEnabled`, which is additionally
     // combined with `--exclude postgrest` — a distinction config validation has no equivalent for.
-    const apiEnabled = yield* wrapConfigOverride("api.enabled", () =>
+    const apiEnabled = yield* wrapConfigOverride(
+      "api.enabled",
       envOverrideBool("SUPABASE_API_ENABLED", config.api.enabled, "api.enabled", projectEnvValues),
     );
     // The post-bring-up health-probe CA-trust lookup needs this same env-overridden value, not
     // the raw `config.api.tls.enabled` — both the trust pool and its target URL must read one
     // source of truth.
-    const apiTlsEnabled = yield* wrapConfigOverride("api.tls.enabled", () =>
+    const apiTlsEnabled = yield* wrapConfigOverride(
+      "api.tls.enabled",
       envOverrideBool(
         "SUPABASE_API_TLS_ENABLED",
         config.api.tls.enabled,
@@ -891,12 +900,12 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     );
     // Same override gap as `apiTlsEnabled` above: the env overrides must apply before reading
     // the cert/key paths from disk.
-    const apiTlsCertPath = envOverride(
+    const apiTlsCertPath = yield* envOverride(
       "SUPABASE_API_TLS_CERT_PATH",
       config.api.tls.cert_path,
       projectEnvValues,
     );
-    const apiTlsKeyPath = envOverride(
+    const apiTlsKeyPath = yield* envOverride(
       "SUPABASE_API_TLS_KEY_PATH",
       config.api.tls.key_path,
       projectEnvValues,
@@ -914,7 +923,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       apiTlsKeyPath.length > 0
     ) {
       tlsCertContent = yield* fs
-        .readFileString(resolveApiTlsPath(cliSettings.workdir, apiTlsCertPath))
+        .readFileString(resolveApiTlsPath(path, cliSettings.workdir, apiTlsCertPath))
         .pipe(
           Effect.mapError(
             (cause) =>
@@ -924,7 +933,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           ),
         );
       tlsKeyContent = yield* fs
-        .readFileString(resolveApiTlsPath(cliSettings.workdir, apiTlsKeyPath))
+        .readFileString(resolveApiTlsPath(path, cliSettings.workdir, apiTlsKeyPath))
         .pipe(
           Effect.mapError(
             (cause) =>
@@ -937,7 +946,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
 
     // Same gap for `storage.vector.enabled` — both the Storage container and `seedBucketsRun`'s
     // config splice further down must see the same already-overridden value.
-    const storageVectorEnabled = yield* wrapConfigOverride("storage.vector.enabled", () =>
+    const storageVectorEnabled = yield* wrapConfigOverride(
+      "storage.vector.enabled",
       envOverrideBool(
         "SUPABASE_STORAGE_VECTOR_ENABLED",
         config.storage.vector.enabled,
@@ -947,7 +957,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     );
     // Same gap for `storage.s3_protocol.enabled`: the Storage spec builder only parsed this
     // lazily, so a malformed override was silently accepted whenever Storage is excluded/disabled.
-    const storageS3ProtocolEnabled = yield* wrapConfigOverride("storage.s3_protocol.enabled", () =>
+    const storageS3ProtocolEnabled = yield* wrapConfigOverride(
+      "storage.s3_protocol.enabled",
       envOverrideBool(
         "SUPABASE_STORAGE_S3_PROTOCOL_ENABLED",
         config.storage.s3_protocol.enabled,
@@ -958,7 +969,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     // Same gap for `storage.analytics.enabled`. `start` never reads this field itself (only
     // `seed buckets --linked` does), so it's validated here purely for fail-fast parity and the
     // result discarded.
-    yield* wrapConfigOverride("storage.analytics.enabled", () =>
+    yield* wrapConfigOverride(
+      "storage.analytics.enabled",
       envOverrideBool(
         "SUPABASE_STORAGE_ANALYTICS_ENABLED",
         config.storage.analytics.enabled,
@@ -968,7 +980,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     );
     // These plain `uint` fields must validate unconditionally too. `start` never reads them
     // itself (only `config push`/`pull` do), so they're validated purely for fail-fast parity.
-    yield* wrapConfigOverride("storage.analytics.max_namespaces", () =>
+    yield* wrapConfigOverride(
+      "storage.analytics.max_namespaces",
       envOverrideUint(
         "SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES",
         "storage.analytics.max_namespaces",
@@ -976,7 +989,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         projectEnvValues,
       ),
     );
-    yield* wrapConfigOverride("storage.analytics.max_tables", () =>
+    yield* wrapConfigOverride(
+      "storage.analytics.max_tables",
       envOverrideUint(
         "SUPABASE_STORAGE_ANALYTICS_MAX_TABLES",
         "storage.analytics.max_tables",
@@ -984,7 +998,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         projectEnvValues,
       ),
     );
-    yield* wrapConfigOverride("storage.analytics.max_catalogs", () =>
+    yield* wrapConfigOverride(
+      "storage.analytics.max_catalogs",
       envOverrideUint(
         "SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS",
         "storage.analytics.max_catalogs",
@@ -992,7 +1007,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         projectEnvValues,
       ),
     );
-    yield* wrapConfigOverride("storage.vector.max_buckets", () =>
+    yield* wrapConfigOverride(
+      "storage.vector.max_buckets",
       envOverrideUint(
         "SUPABASE_STORAGE_VECTOR_MAX_BUCKETS",
         "storage.vector.max_buckets",
@@ -1000,7 +1016,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         projectEnvValues,
       ),
     );
-    yield* wrapConfigOverride("storage.vector.max_indexes", () =>
+    yield* wrapConfigOverride(
+      "storage.vector.max_indexes",
       envOverrideUint(
         "SUPABASE_STORAGE_VECTOR_MAX_INDEXES",
         "storage.vector.max_indexes",
@@ -1011,10 +1028,14 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
 
     // Same gap for `api.schemas`/`api.extra_search_path`/`api.max_rows` — both PostgREST's own
     // container and Studio's copy of the same `PGRST_DB_*` env must see the overridden values.
-    const apiSchemasOverride = envOverride("SUPABASE_API_SCHEMAS", undefined, projectEnvValues);
+    const apiSchemasOverride = yield* envOverride(
+      "SUPABASE_API_SCHEMAS",
+      undefined,
+      projectEnvValues,
+    );
     const apiSchemas =
       apiSchemasOverride !== undefined ? apiSchemasOverride.split(",") : config.api.schemas;
-    const apiExtraSearchPathOverride = envOverride(
+    const apiExtraSearchPathOverride = yield* envOverride(
       "SUPABASE_API_EXTRA_SEARCH_PATH",
       undefined,
       projectEnvValues,
@@ -1023,13 +1044,15 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       apiExtraSearchPathOverride !== undefined
         ? apiExtraSearchPathOverride.split(",")
         : config.api.extra_search_path;
-    const apiMaxRows = yield* wrapConfigOverride("api.max_rows", () =>
+    const apiMaxRows = yield* wrapConfigOverride(
+      "api.max_rows",
       envOverrideApiMaxRows(config.api.max_rows, projectEnvValues),
     );
 
     // Same gap for Mailpit's three ports. `smtp_port`/`pop3_port` have no TOML default, so `?? 0`
     // here preserves the "unconfigured" signal `mailpit.service.ts`'s `!== 0` publish guard checks.
-    const mailpitPort = yield* wrapConfigOverride("local_smtp.port", () =>
+    const mailpitPort = yield* wrapConfigOverride(
+      "local_smtp.port",
       envOverridePort(
         "SUPABASE_LOCAL_SMTP_PORT",
         config.local_smtp.port,
@@ -1037,7 +1060,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         projectEnvValues,
       ),
     );
-    const mailpitSmtpPort = yield* wrapConfigOverride("local_smtp.smtp_port", () =>
+    const mailpitSmtpPort = yield* wrapConfigOverride(
+      "local_smtp.smtp_port",
       envOverridePort(
         "SUPABASE_LOCAL_SMTP_SMTP_PORT",
         config.local_smtp.smtp_port ?? 0,
@@ -1045,7 +1069,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         projectEnvValues,
       ),
     );
-    const mailpitPop3Port = yield* wrapConfigOverride("local_smtp.pop3_port", () =>
+    const mailpitPop3Port = yield* wrapConfigOverride(
+      "local_smtp.pop3_port",
       envOverridePort(
         "SUPABASE_LOCAL_SMTP_POP3_PORT",
         config.local_smtp.pop3_port ?? 0,
@@ -1056,7 +1081,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
 
     // Same gap for Logflare's port — `SUPABASE_ANALYTICS_PORT` must apply
     // before building Logflare's host port binding.
-    const analyticsPort = yield* wrapConfigOverride("analytics.port", () =>
+    const analyticsPort = yield* wrapConfigOverride(
+      "analytics.port",
       envOverridePort(
         "SUPABASE_ANALYTICS_PORT",
         config.analytics.port,
@@ -1066,7 +1092,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     );
     // Same gap for Logflare's deprecated `analytics.vector_port`: nothing downstream reads the
     // resolved value, but a malformed override must still fail before any Docker work.
-    yield* wrapConfigOverride("analytics.vector_port", () =>
+    yield* wrapConfigOverride(
+      "analytics.vector_port",
       envOverridePort(
         "SUPABASE_ANALYTICS_VECTOR_PORT",
         config.analytics.vector_port ?? 0,
@@ -1078,7 +1105,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     // Same gap for Supavisor's pooler fields — `pool_mode` specifically decides the published
     // host port (5432 session vs 6543 transaction). Wrapped via `wrapConfigOverride` so a bad
     // value fails as a typed error instead of an untyped Effect defect.
-    const poolerPort = yield* wrapConfigOverride("db.pooler.port", () =>
+    const poolerPort = yield* wrapConfigOverride(
+      "db.pooler.port",
       envOverridePort(
         "SUPABASE_DB_POOLER_PORT",
         config.db.pooler.port,
@@ -1086,13 +1114,16 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         projectEnvValues,
       ),
     );
-    const poolMode = yield* wrapConfigOverride("db.pooler.pool_mode", () =>
+    const poolMode = yield* wrapConfigOverride(
+      "db.pooler.pool_mode",
       envOverridePoolMode(config.db.pooler.pool_mode, projectEnvValues),
     );
-    const poolerDefaultPoolSize = yield* wrapConfigOverride("db.pooler.default_pool_size", () =>
+    const poolerDefaultPoolSize = yield* wrapConfigOverride(
+      "db.pooler.default_pool_size",
       envOverrideDefaultPoolSize(config.db.pooler.default_pool_size, projectEnvValues),
     );
-    const poolerMaxClientConn = yield* wrapConfigOverride("db.pooler.max_client_conn", () =>
+    const poolerMaxClientConn = yield* wrapConfigOverride(
+      "db.pooler.max_client_conn",
       envOverrideMaxClientConn(config.db.pooler.max_client_conn, projectEnvValues),
     );
 
@@ -1100,10 +1131,12 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     // regardless of `--exclude edge-runtime`. The Edge Runtime branch below re-resolves both
     // against the env-interpolated subtree for the real container build; this eager call only
     // needs the raw config value to prove it parses.
-    const edgeRuntimePolicy = yield* wrapConfigOverride("edge_runtime.policy", () =>
+    const edgeRuntimePolicy = yield* wrapConfigOverride(
+      "edge_runtime.policy",
       envOverrideEdgeRuntimePolicy(config.edge_runtime.policy, projectEnvValues),
     );
-    const edgeRuntimeInspectorPort = yield* wrapConfigOverride("edge_runtime.inspector_port", () =>
+    const edgeRuntimeInspectorPort = yield* wrapConfigOverride(
+      "edge_runtime.inspector_port",
       envOverridePort(
         "SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT",
         config.edge_runtime.inspector_port,
@@ -1220,14 +1253,14 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
               projectId,
               networkId,
               dbUrl: values.dbUrl,
-              env: resolveGotrueEnvInput({
+              env: yield* resolveGotrueEnvInput({
                 context,
                 values,
                 workdir: cliSettings.workdir,
                 kongContainerName,
                 mailpitContainerName,
                 resolvedEmail,
-              }),
+              }).pipe(Effect.orDie),
             }),
           };
 
@@ -1332,11 +1365,11 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
                   kongContainerName,
                   logflareContainerName,
                   studioApiUrl: resolveStudioApiUrl(
-                    envOverride(
+                    (yield* envOverride(
                       "SUPABASE_STUDIO_API_URL",
                       config.studio.api_url,
                       projectEnvValues,
-                    ) ?? config.studio.api_url,
+                    )) ?? config.studio.api_url,
                     context.hostname,
                     values.apiUrl,
                   ),
@@ -1430,7 +1463,10 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
             // `postgresExtraEnv` reads this and its sibling S3 fields for its
             // `POSTGRES_INITDB_ARGS` branch.
             orioledb_version: orioledbVersion,
-            settings: resolveDbSettingsEnvOverrides(config.db.settings, projectEnvValues),
+            settings: yield* resolveDbSettingsEnvOverrides(
+              config.db.settings,
+              projectEnvValues,
+            ).pipe(Effect.orDie),
           },
           experimental: {
             ...config.experimental,
@@ -1486,7 +1522,10 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           // long-running Realtime/GoTrue/PostgREST containers too), so it's reused, not re-resolved.
           jwks: Effect.succeed(jwks),
           apiUrl: values.apiUrl,
-          authExternalUrl: resolveAuthExternalUrl(context.loaded?.document, projectEnvValues),
+          authExternalUrl: yield* resolveAuthExternalUrl(
+            context.loaded?.document,
+            projectEnvValues,
+          ),
           siteUrl: values.authSiteUrl,
           anonKey: values.anonKey,
           serviceRoleKey: values.serviceRoleKey,
@@ -1812,7 +1851,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
                 if (Result.isFailure(seedResult)) {
                   // No manual `rollbackStart` here — the outer
                   // `Effect.onError` below rolls back on this failure too.
-                  return yield* Effect.fail(seedResult.failure);
+                  return yield* seedResult.failure;
                 }
               }
             }

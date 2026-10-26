@@ -1,5 +1,4 @@
-import { statSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { Data, Effect, FileSystem, Path, type PlatformError } from "effect";
 
 import {
   actionability,
@@ -16,8 +15,8 @@ import { goUrlParse } from "./storage-url.ts";
  *
  * - **D** = `db-config.toml-read.ts`: raw TOML document, Effect-based, fails with
  *   `DbConfigLoadError`.
- * - **L** = `local-config-values.ts`: decoded `@supabase/config` `CliConfig`, synchronous,
- *   throws `Error`.
+ * - **L** = `local-config-values.ts`: decoded `@supabase/config` `CliConfig`, Effect-based,
+ *   fails with an `Error`.
  *
  * Per-command reimplementations of any branch {@link validateResolvedConfig} owns are forbidden;
  * hoist here instead. A few branches stay caller-only: `remotes[*].project_id` and
@@ -62,12 +61,16 @@ export function parseGoBool(value: string): boolean | undefined {
 }
 
 /**
- * Thrown by {@link validateResolvedConfig}. Does not override `.name` — it stays the inherited
+ * Raised by {@link validateResolvedConfig} (thrown) and by the `content_path`/secret resolvers
+ * (failed). Does not override `.name` — it stays the inherited
  * `"Error"` — so `instanceof Error` and `.name` checks can't distinguish it from a plain
  * `Error`; only `.message` is meant to be observed.
  */
-export class ConfigValidateError extends Error {
+export class ConfigValidateError extends Data.Error<{ readonly message: string }> {
   static readonly [ErrorActionabilityFingerprintId] = "ConfigValidateError";
+  constructor(message: string) {
+    super({ message });
+  }
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidConfig;
   }
@@ -228,6 +231,10 @@ export interface ConfigValidationInput {
 function messageOf(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
+
+/** The `node:fs` error behind a `FileSystem` failure, whose message the config errors quote. */
+export const fsErrorCause = (error: PlatformError.PlatformError): unknown =>
+  error.reason.cause ?? error.reason.description;
 
 /**
  * The canonical `api.port` branch: an enabled API with a port of `0` is
@@ -581,8 +588,14 @@ function isValidJson(value: string): boolean {
 }
 
 /** Absolute → verbatim; relative → join(workdir, "supabase", p). */
-export function resolveSigningKeysPath(workdir: string, signingKeysPath: string): string {
-  return isAbsolute(signingKeysPath) ? signingKeysPath : join(workdir, "supabase", signingKeysPath);
+export function resolveSigningKeysPath(
+  path: Path.Path,
+  workdir: string,
+  signingKeysPath: string,
+): string {
+  return path.isAbsolute(signingKeysPath)
+    ? signingKeysPath
+    : path.join(workdir, "supabase", signingKeysPath);
 }
 
 /** `failed to read signing keys: ${msg(cause)}` */
@@ -598,7 +611,7 @@ export function signingKeysDecodeErrorMessage(cause: unknown): string {
 // with the first key — that JWK-specific decode/signing logic stays in L.
 
 /**
- * Pure exclusivity decision plus the path to read for one template/notification entry. Throws
+ * Exclusivity decision plus the path to read for one template/notification entry. Fails with
  * {@link ConfigValidateError} when `contentPath === ""` and `contentPresent` (`content_path`
  * is required instead of `content`). Returns the absolute, canonicalized path to read, or
  * `undefined` when there's nothing to read; a set `contentPath` always wins over `content`
@@ -606,10 +619,10 @@ export function signingKeysDecodeErrorMessage(cause: unknown): string {
  *
  * The resolved candidate and `base` are both canonicalized and the candidate must resolve
  * inside `base` — an absolute path, a `..` escape, or an in-root symlink pointing outside the
- * project root all throw. This applies unconditionally to every caller (config validation,
+ * project root all fail. This applies unconditionally to every caller (config validation,
  * `config push` content loading, `start`'s pre-Docker containment pass) — there is no opt-out.
  */
-export function resolveEmailTemplateContentPath(args: {
+export const resolveEmailTemplateContentPath = Effect.fnUntraced(function* (args: {
   readonly section: "template" | "notification";
   readonly name: string;
   /** Post-env-expand; `""` = absent. */
@@ -617,35 +630,36 @@ export function resolveEmailTemplateContentPath(args: {
   /** Raw `content` key present in the TOML document. */
   readonly contentPresent: boolean;
   readonly base: string;
-}): string | undefined {
+}) {
   if (args.contentPath.length === 0) {
     if (args.contentPresent) {
-      throw new ConfigValidateError(
+      return yield* new ConfigValidateError(
         `Invalid config for auth.email.${args.section}.${args.name}.content: please use content_path instead`,
       );
     }
     return undefined;
   }
+  const path = yield* Path.Path;
   const candidate =
     args.section === "notification"
-      ? resolveNotificationContentPath(args.base, args.contentPath)
-      : isAbsolute(args.contentPath)
+      ? yield* resolveNotificationContentPath(args.base, args.contentPath)
+      : path.isAbsolute(args.contentPath)
         ? args.contentPath
-        : join(args.base, args.contentPath);
-  const resolvedCanonical = canonicalPathForContainment(candidate);
-  const canonicalBase = canonicalPathForContainment(args.base);
-  if (!isPathContainedInRoot(canonicalBase, resolvedCanonical)) {
+        : path.join(args.base, args.contentPath);
+  const resolvedCanonical = yield* canonicalPathForContainment(candidate);
+  const canonicalBase = yield* canonicalPathForContainment(args.base);
+  if (!isPathContainedInRoot(path, canonicalBase, resolvedCanonical)) {
     // Echoes the declared value, not `resolvedCanonical` — the declared value is already known
     // to the user (it's literally in config.toml or an env override they set), while echoing
     // the symlink-dereferenced target back would let a hostile config probe where it resolves.
-    throw new ConfigValidateError(
+    return yield* new ConfigValidateError(
       `Invalid config for auth.email.${args.section}.${args.name}.content_path: ` +
         `"${args.contentPath}" resolves outside the project root ${args.base} — ` +
         `move the file inside the project, or use a relative path that stays inside it.`,
     );
   }
   return resolvedCanonical;
-}
+});
 
 /**
  * Notification `content_path` resolution with a legacy fallback: older scaffolds documented
@@ -656,15 +670,19 @@ export function resolveEmailTemplateContentPath(args: {
  * {@link probeFile}). Shared by config validation, `config push` content loading, and the Kong
  * template mount builder so every consumer sees the same file.
  */
-function resolveNotificationContentPath(base: string, contentPath: string): string {
-  if (isAbsolute(contentPath)) return contentPath;
-  const resolved = join(base, contentPath);
-  if (probeFile(resolved) === "missing") {
-    const fallbackResolved = join(base, "supabase", contentPath);
-    if (probeFile(fallbackResolved) === "exists") return fallbackResolved;
+const resolveNotificationContentPath = Effect.fnUntraced(function* (
+  base: string,
+  contentPath: string,
+) {
+  const path = yield* Path.Path;
+  if (path.isAbsolute(contentPath)) return contentPath;
+  const resolved = path.join(base, contentPath);
+  if ((yield* probeFile(resolved)) === "missing") {
+    const fallbackResolved = path.join(base, "supabase", contentPath);
+    if ((yield* probeFile(fallbackResolved)) === "exists") return fallbackResolved;
   }
   return resolved;
-}
+});
 
 /**
  * Tri-state existence probe for the notification legacy-fallback decision above: `"exists"`
@@ -675,15 +693,20 @@ function resolveNotificationContentPath(base: string, contentPath: string): stri
  * must only be selected on a confirmed `"exists"`. A single boolean can't express both
  * defaults, so the tri-state lets each caller choose.
  */
-function probeFile(path: string): "exists" | "missing" | "unknown" {
-  try {
-    const stats = statSync(path, { throwIfNoEntry: false });
-    if (stats === undefined) return "missing";
-    return stats.isFile() ? "exists" : "missing";
-  } catch {
-    return "unknown";
-  }
-}
+const probeFile = Effect.fnUntraced(function* (path: string) {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs.stat(path).pipe(
+    Effect.map((info): "exists" | "missing" | "unknown" =>
+      info.type === "File" ? "exists" : "missing",
+    ),
+    Effect.catchReason(
+      "PlatformError",
+      "NotFound",
+      () => Effect.succeed("missing" as const),
+      () => Effect.succeed("unknown" as const),
+    ),
+  );
+});
 
 /** `Invalid config for auth.email.${section}.${name}.content_path: ${msg(cause)}` */
 export function emailContentPathReadErrorMessage(
@@ -697,8 +720,8 @@ export function emailContentPathReadErrorMessage(
 // ── api.tls cert/key (path rule: NO isAbsolute guard) ──
 
 /** Unconditional join(workdir, "supabase", p) — `path.Join` absorbs a leading "/" too. */
-export function resolveApiTlsPath(workdir: string, p: string): string {
-  return join(workdir, "supabase", p);
+export function resolveApiTlsPath(path: Path.Path, workdir: string, p: string): string {
+  return path.join(workdir, "supabase", p);
 }
 
 /** `failed to read TLS cert: ${msg(cause)}` */

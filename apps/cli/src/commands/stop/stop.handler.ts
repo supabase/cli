@@ -60,22 +60,22 @@ const resolveSearchProjectIdFilter = Effect.fn("stop.resolveSearchProjectIdFilte
 
   // Runs full config validation before touching Docker, unlike the `--all`/`--project-id`
   // branches above which bypass config loading. `resolveLocalConfigValues` is reused purely for
-  // its throwing side effects — its resolved URLs/keys are discarded — giving `stop` the same
+  // its validation failures — its resolved URLs/keys are discarded — giving `stop` the same
   // config-validation coverage `status` already has.
-  yield* Effect.try({
-    try: () =>
-      resolveLocalConfigValues(
-        context.config,
-        context.hostname,
-        cliSettings.workdir,
-        context.projectEnvValues,
-        context.loaded?.document,
-      ),
-    catch: (cause) =>
-      new StopConfigLoadError({
-        message: cause instanceof Error ? cause.message : String(cause),
-      }),
-  });
+  yield* resolveLocalConfigValues(
+    context.config,
+    context.hostname,
+    cliSettings.workdir,
+    context.projectEnvValues,
+    context.loaded?.document,
+  ).pipe(
+    Effect.mapError(
+      (cause) =>
+        new StopConfigLoadError({
+          message: cause instanceof Error ? cause.message : String(cause),
+        }),
+    ),
+  );
 
   return context.projectId;
 });
