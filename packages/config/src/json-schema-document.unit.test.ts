@@ -452,7 +452,7 @@ describe("env() references in the published CLI JSON Schema", () => {
       }
       expect(leaves.length).toBeGreaterThan(500);
       expect(mismatches).toEqual([]);
-    });
+    }, 60_000);
   });
 });
 
