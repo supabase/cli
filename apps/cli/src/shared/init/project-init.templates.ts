@@ -67,6 +67,25 @@ enabled = true
 # Supports paths relative to supabase directory: "./schemas/*.sql", "./database".
 schema_paths = []
 
+[db.migrations.checks]
+# Security checks run on each migration. Severity: "error" blocks and rolls back,
+# "warn" applies and reports, "off" skips. Everything starts at "warn" while we
+# measure false positives; set the rules you care about to "error".
+rls_disabled_in_public = "warn"
+rls_enabled_no_policy = "warn"
+policy_exists_rls_disabled = "warn"
+security_definer_view = "warn"
+rls_policy_always_true = "warn"
+sensitive_columns_exposed = "warn"
+auth_users_exposed = "warn"
+function_search_path_mutable = "warn"
+rls_references_user_metadata = "warn"
+
+# Skip specific objects for one rule. Names are "schema.name" (tables, views, functions).
+# \`supabase db advisors --baseline\` fills this in.
+# [db.migrations.checks.exclude]
+# rls_disabled_in_public = ["public.countries"]
+
 [db.seed]
 # If enabled, seeds the database after migrations during a db reset.
 enabled = true
