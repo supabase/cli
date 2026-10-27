@@ -2,7 +2,11 @@ import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { BunServices } from "@effect/platform-bun";
 import { Clock, Crypto, Data, Effect, FileSystem, Layer, Path, Schema } from "effect";
 import { beforeAll, describe, expect, it } from "@effect/vitest";
-import { catalogPins, type ArtifactKind } from "@supabase/stack/internal/artifacts";
+import {
+  catalogPins,
+  slimImageMirrors,
+  type ArtifactKind,
+} from "@supabase/stack/internal/artifacts";
 
 import { dockerfileServiceImageRaw } from "../../shared/services/dockerfile-images.ts";
 import { isSlimImageRef, toSlimImage } from "../../shared/services/slim-images.ts";
@@ -113,6 +117,11 @@ function readSectionPort(config: string, section: string): number {
 const containerImage = Effect.fnUntraced(function* (name: string) {
   const { stdout } = yield* runDockerEffect(["inspect", name, "--format", "{{.Config.Image}}"]);
   return stdout.trim();
+});
+
+/* A slim image GHCR cannot serve comes from the ECR Public mirror at the same tag and digest. */
+const expectSlimContainerImage = Effect.fnUntraced(function* (name: string, expected: string) {
+  expect([expected, ...slimImageMirrors(expected)]).toContain(yield* containerImage(name));
 });
 
 /** `kong` has no slim build at all, so this stays fallback-tolerant for the pull-ahead list. */
@@ -307,7 +316,11 @@ describe("supabase start slim images (e2e)", () => {
       Effect.gen(function* () {
         for (const entry of catalogPins()) {
           if (!WGET_PROBE_SERVICES.includes(entry.service)) continue;
-          const image = entry.pin.image;
+          const image = yield* Effect.tryPromise({
+            try: () => ensureImage(entry.pin.image),
+            catch: (cause) =>
+              new StartE2eSetupError({ message: "failed to ensure Docker image", cause }),
+          });
           const probe =
             entry.service === "realtime"
               ? slimWgetHealthcheck("http://127.0.0.1:9/", {
@@ -380,15 +393,17 @@ describe("supabase start slim images (e2e)", () => {
           expect(image).toMatch(GHCR_SLIM_IMAGE_PATTERN);
         }
 
-        expect(yield* containerImage(dbContainer)).toBe(
+        yield* expectSlimContainerImage(
+          dbContainer,
           expectedPinnedImage("pg", dockerfileServiceImageRaw("pg")),
         );
-        expect(yield* containerImage(storageContainer)).toBe(storageImage);
-        expect(yield* containerImage(edgeRuntimeContainer)).toBe(
+        yield* expectSlimContainerImage(storageContainer, storageImage);
+        yield* expectSlimContainerImage(
+          edgeRuntimeContainer,
           expectedPinnedImage("edgeruntime", dockerfileServiceImageRaw("edgeruntime")),
         );
-        expect(yield* containerImage(authContainer)).toBe(authImage);
-        expect(yield* containerImage(realtimeContainer)).toBe(realtimeImage);
+        yield* expectSlimContainerImage(authContainer, authImage);
+        yield* expectSlimContainerImage(realtimeContainer, realtimeImage);
 
         expect(yield* containerHealthcheckTest(authContainer)).toEqual([
           "CMD-SHELL",

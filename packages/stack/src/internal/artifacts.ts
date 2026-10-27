@@ -12,6 +12,8 @@ export {
   postgresMajor,
   prepareNativeArtifact,
   resolveArtifact,
+  SLIM_IMAGE_SUPABASE_ECR_MIRROR,
+  slimImageMirrors,
   useNativeArtifact,
   type ArtifactKind,
   type ArtifactPin,
@@ -19,6 +21,7 @@ export {
   type NativePin,
   type ServiceKind,
 } from "../Artifacts.ts";
+export { SLIM_IMAGE_GHCR_REGISTRY } from "../preparation/SlimEndpoints.ts";
 export {
   ReleaseIntegrity,
   ReleaseTransient,

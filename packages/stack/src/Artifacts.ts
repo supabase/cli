@@ -602,7 +602,8 @@ const errorMessage = (cause: unknown): string =>
  */
 const SLIM_NATIVE_SUPABASE_S3_MIRROR = "https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com";
 
-const SLIM_IMAGE_SUPABASE_ECR_MIRROR = "public.ecr.aws/supabase/cli/";
+/** ECR Public mirror of every slim image, under the same tags and digests. */
+export const SLIM_IMAGE_SUPABASE_ECR_MIRROR = "public.ecr.aws/supabase/cli/";
 
 /** Mirrors carrying a catalog slim image under the same tag and digest, in fallback order. */
 export const slimImageMirrors = (image: string): ReadonlyArray<string> =>

@@ -52,28 +52,31 @@ const pgTag = vi.hoisted(() => {
   return match[1];
 });
 
-vi.mock("@supabase/stack/internal/artifacts", () => {
-  const digest = "d348483ad1141c54bfb4eaae801f5385fe1c2970fc106f95f531b5247092d52c";
-  const nativePin = { archive: digest, manifest: digest };
-  return {
-    catalogPins: () => [
-      {
-        service: "database",
-        sourceService: "postgres",
-        pin: {
-          upstreamVersion: pgTag,
-          revision: 0,
-          image: `ghcr.io/supabase/cli/postgres:${pgTag}-r0@sha256:${digest}`,
-          natives: {
-            "darwin-arm64": nativePin,
-            "linux-amd64": nativePin,
-            "linux-arm64": nativePin,
+vi.mock("@supabase/stack/internal/artifacts", (importOriginal) =>
+  importOriginal<typeof import("@supabase/stack/internal/artifacts")>().then((actual) => {
+    const digest = "d348483ad1141c54bfb4eaae801f5385fe1c2970fc106f95f531b5247092d52c";
+    const nativePin = { archive: digest, manifest: digest };
+    return {
+      ...actual,
+      catalogPins: () => [
+        {
+          service: "database",
+          sourceService: "postgres",
+          pin: {
+            upstreamVersion: pgTag,
+            revision: 0,
+            image: `ghcr.io/supabase/cli/postgres:${pgTag}-r0@sha256:${digest}`,
+            natives: {
+              "darwin-arm64": nativePin,
+              "linux-amd64": nativePin,
+              "linux-arm64": nativePin,
+            },
           },
         },
-      },
-    ],
-  };
-});
+      ],
+    };
+  }),
+);
 
 /**
  * Integration coverage for the fully-native `declarativeSeamLayer`: `generate`/`sync`'s own
@@ -262,6 +265,19 @@ describe("declarativeSeamLayer.ensureLocalPostgresImageCurrent", () => {
     // The exact image (release version and digest) the fixture catalog pins at r0.
     const { layer } = setup(dir, {
       dbInspectImage: `ghcr.io/supabase/cli/postgres:${pgTag}-r0@sha256:d348483ad1141c54bfb4eaae801f5385fe1c2970fc106f95f531b5247092d52c`,
+    });
+    return Effect.gen(function* () {
+      const seam = yield* DeclarativeSeam;
+      const exit = yield* seam.ensureLocalPostgresImageCurrent.pipe(Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("passes when a slim container was pulled from the ECR Public mirror", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
+    const dir = tmp.current;
+    const { layer } = setup(dir, {
+      dbInspectImage: `public.ecr.aws/supabase/cli/postgres:${pgTag}-r0@sha256:d348483ad1141c54bfb4eaae801f5385fe1c2970fc106f95f531b5247092d52c`,
     });
     return Effect.gen(function* () {
       const seam = yield* DeclarativeSeam;
