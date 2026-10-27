@@ -7,13 +7,23 @@
 // Usage: bun apps/cli/scripts/propose-release-notes.ts --tag v2.101.0 [--dry-run] [--apply]
 //        [--render-only] [--model <name>]
 import { query, type Options } from "@anthropic-ai/claude-agent-sdk";
+import { BunFileSystem, BunPath } from "@effect/platform-bun";
 import { $ } from "bun";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import path from "node:path";
+import { Console, Data, Effect, FileSystem, Layer, Path, Stream } from "effect";
 import process from "node:process";
 import { parseArgs } from "node:util";
 import aiModels from "../../../.github/ai-models.json";
+
+class ShellCommandFailed extends Data.TaggedError("ShellCommandFailed")<{
+  readonly cause: unknown;
+}> {}
+
+class AgentQueryFailed extends Data.TaggedError("AgentQueryFailed")<{ readonly cause: unknown }> {}
+
+const shell = <A>(command: () => Promise<A>) =>
+  Effect.tryPromise({ try: command, catch: (cause) => new ShellCommandFailed({ cause }) });
+
+const utf8 = new TextDecoder("utf-8", { ignoreBOM: true });
 
 const { values } = parseArgs({
   options: {
@@ -26,129 +36,147 @@ const { values } = parseArgs({
   strict: true,
 });
 
-const tag = values.tag;
-if (!tag) {
-  console.error("--tag is required (e.g. --tag v2.101.0)");
-  process.exit(2);
-}
-const version = tag.replace(/^v/, "");
-const apply = values.apply === true && values["dry-run"] !== true;
+const main = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
 
-const repoRoot = (await $`git rev-parse --show-toplevel`.text()).trim();
-const promptPath = path.join(repoRoot, "tools/release/release-notes-prompt.md");
-const backfillScript = path.join(repoRoot, "apps/cli/scripts/backfill-release-notes.ts");
-const notesDir = path.join(repoRoot, "release-notes");
-const notesPath = path.join(notesDir, `v${version}.md`);
-
-console.error(`==> Re-deriving raw semantic-release notes for ${tag}`);
-const rawNotes = (await $`bun ${backfillScript} --tag ${tag}`.cwd(repoRoot).text()).trim();
-if (!rawNotes) {
-  console.error(`backfill-release-notes produced no output for ${tag}`);
-  process.exit(1);
-}
-
-const promptTemplate = await readFile(promptPath, "utf8");
-const placeholder = "{{PASTE_SEMANTIC_RELEASE_BLOCK_HERE}}";
-if (!promptTemplate.includes(placeholder)) {
-  console.error(`Prompt template at ${promptPath} is missing ${placeholder}`);
-  process.exit(1);
-}
-const rendered = promptTemplate.replace(placeholder, rawNotes);
-
-if (values["render-only"]) {
-  process.stdout.write(rendered);
-  process.exit(0);
-}
-
-console.error(`==> Running Claude Agent SDK (model=${values.model})`);
-const options: Options = {
-  model: values.model,
-  // WebFetch/WebSearch investigate PR bodies and linked issues; Bash uses `gh` for
-  // authenticated GitHub queries instead of HTML scraping. Edit/Write are excluded — the
-  // script owns the final file output.
-  allowedTools: ["WebFetch", "WebSearch", "Bash"],
-  // Skips the repo's CLAUDE.md and settings.json — the prompt is self-contained.
-  settingSources: [],
-  cwd: repoRoot,
-  effort: "low",
-};
-
-let finalText = "";
-let cost = 0;
-const stream = query({ prompt: rendered, options });
-for await (const msg of stream) {
-  if (msg.type === "result") {
-    if (msg.subtype === "success") {
-      finalText = msg.result;
-      cost = msg.total_cost_usd;
-    } else {
-      console.error(`Agent failed: ${msg.subtype}`);
-      if (msg.errors?.length) console.error(msg.errors.join("\n"));
-      process.exit(1);
-    }
+  const tag = values.tag;
+  if (!tag) {
+    yield* Console.error("--tag is required (e.g. --tag v2.101.0)");
+    return yield* Effect.sync(() => process.exit(2));
   }
-}
+  const version = tag.replace(/^v/, "");
+  const apply = values.apply === true && values["dry-run"] !== true;
 
-if (!finalText.trim()) {
-  console.error("Agent returned no result text");
-  process.exit(1);
-}
+  const repoRoot = (yield* shell(() => $`git rev-parse --show-toplevel`.text())).trim();
+  const promptPath = path.join(repoRoot, "tools/release/release-notes-prompt.md");
+  const backfillScript = path.join(repoRoot, "apps/cli/scripts/backfill-release-notes.ts");
+  const notesDir = path.join(repoRoot, "release-notes");
+  const notesPath = path.join(notesDir, `v${version}.md`);
 
-const normalized = finalText.endsWith("\n") ? finalText : `${finalText}\n`;
-console.error(`==> Agent finished (cost ~$${cost.toFixed(4)})`);
+  yield* Console.error(`==> Re-deriving raw semantic-release notes for ${tag}`);
+  const rawNotes = (yield* shell(() =>
+    $`bun ${backfillScript} --tag ${tag}`.cwd(repoRoot).text(),
+  )).trim();
+  if (!rawNotes) {
+    yield* Console.error(`backfill-release-notes produced no output for ${tag}`);
+    return yield* Effect.sync(() => process.exit(1));
+  }
 
-if (!apply) {
-  process.stdout.write(normalized);
-  process.exit(0);
-}
+  const promptTemplate = utf8.decode(yield* fs.readFile(promptPath));
+  const placeholder = "{{PASTE_SEMANTIC_RELEASE_BLOCK_HERE}}";
+  if (!promptTemplate.includes(placeholder)) {
+    yield* Console.error(`Prompt template at ${promptPath} is missing ${placeholder}`);
+    return yield* Effect.sync(() => process.exit(1));
+  }
+  const rendered = promptTemplate.replace(placeholder, rawNotes);
 
-await mkdir(notesDir, { recursive: true });
-if (existsSync(notesPath)) {
-  console.error(
-    `Refusing to overwrite existing ${path.relative(repoRoot, notesPath)}. ` +
-      `Delete it or rerun with --dry-run to preview.`,
+  if (values["render-only"]) {
+    return yield* Effect.sync(() => {
+      process.stdout.write(rendered);
+      process.exit(0);
+    });
+  }
+
+  yield* Console.error(`==> Running Claude Agent SDK (model=${values.model})`);
+  const options: Options = {
+    model: values.model,
+    // WebFetch/WebSearch investigate PR bodies and linked issues; Bash uses `gh` for
+    // authenticated GitHub queries instead of HTML scraping. Edit/Write are excluded — the
+    // script owns the final file output.
+    allowedTools: ["WebFetch", "WebSearch", "Bash"],
+    // Skips the repo's CLAUDE.md and settings.json — the prompt is self-contained.
+    settingSources: [],
+    cwd: repoRoot,
+    effort: "low",
+  };
+
+  let finalText = "";
+  let cost = 0;
+  yield* Stream.fromAsyncIterable(
+    query({ prompt: rendered, options }),
+    (cause) => new AgentQueryFailed({ cause }),
+  ).pipe(
+    Stream.runForEach((msg) =>
+      Effect.gen(function* () {
+        if (msg.type === "result") {
+          if (msg.subtype === "success") {
+            finalText = msg.result;
+            cost = msg.total_cost_usd;
+          } else {
+            yield* Console.error(`Agent failed: ${msg.subtype}`);
+            if (msg.errors?.length) yield* Console.error(msg.errors.join("\n"));
+            return yield* Effect.sync(() => process.exit(1));
+          }
+        }
+      }),
+    ),
   );
-  process.exit(1);
-}
-await writeFile(notesPath, normalized);
-console.error(`==> Wrote ${path.relative(repoRoot, notesPath)}`);
 
-const branch = `release-notes/v${version}`;
-// Branches from origin/develop, not the checked-out ref, so a feature branch that has diverged
-// doesn't drag its commits into the PR; the notes file is untracked, so this leaves it in place.
-// Targets develop rather than main so an accidental merge can't rewrite main's history.
-await $`git fetch --no-tags origin develop`.cwd(repoRoot).nothrow();
-await $`git checkout -B ${branch} origin/develop`.cwd(repoRoot);
-await $`git add ${notesPath}`.cwd(repoRoot);
-const commitMessage = `docs(release): propose user-facing notes for ${tag}`;
-await $`git commit -m ${commitMessage}`.cwd(repoRoot);
-
-console.error(`==> Pushing ${branch}`);
-let pushed = false;
-for (let attempt = 0; attempt < 4; attempt++) {
-  const result = await $`git push -u origin ${branch}`.cwd(repoRoot).nothrow();
-  if (result.exitCode === 0) {
-    pushed = true;
-    break;
+  if (!finalText.trim()) {
+    yield* Console.error("Agent returned no result text");
+    return yield* Effect.sync(() => process.exit(1));
   }
-  const wait = 2 ** (attempt + 1) * 1000;
-  console.error(`Push failed (attempt ${attempt + 1}/4); retrying in ${wait / 1000}s`);
-  await new Promise((r) => setTimeout(r, wait));
-}
-if (!pushed) {
-  console.error("git push failed after 4 attempts");
-  process.exit(1);
-}
 
-// Ensures the `do not merge` label exists before attaching it — a reminder for reviewers; the
-// approval workflow never actually merges.
-const labelName = "do not merge";
-await $`gh label create ${labelName} --color B60205 --description ${"Approve to apply; do not merge."} --force`
-  .cwd(repoRoot)
-  .nothrow();
+  const normalized = finalText.endsWith("\n") ? finalText : `${finalText}\n`;
+  yield* Console.error(`==> Agent finished (cost ~$${cost.toFixed(4)})`);
 
-const releaseUrl = `https://github.com/supabase/cli/releases/tag/${tag}`;
-const prBody = `Proposed user-facing release notes for \`${tag}\`, generated by \`apps/cli/scripts/propose-release-notes.ts\` against \`tools/release/release-notes-prompt.md\`.
+  if (!apply) {
+    return yield* Effect.sync(() => {
+      process.stdout.write(normalized);
+      process.exit(0);
+    });
+  }
+
+  yield* fs.makeDirectory(notesDir, { recursive: true });
+  if (yield* fs.exists(notesPath).pipe(Effect.orElseSucceed(() => false))) {
+    yield* Console.error(
+      `Refusing to overwrite existing ${path.relative(repoRoot, notesPath)}. ` +
+        `Delete it or rerun with --dry-run to preview.`,
+    );
+    return yield* Effect.sync(() => process.exit(1));
+  }
+  yield* fs.writeFileString(notesPath, normalized);
+  yield* Console.error(`==> Wrote ${path.relative(repoRoot, notesPath)}`);
+
+  const branch = `release-notes/v${version}`;
+  // Branches from origin/develop, not the checked-out ref, so a feature branch that has diverged
+  // doesn't drag its commits into the PR; the notes file is untracked, so this leaves it in place.
+  // Targets develop rather than main so an accidental merge can't rewrite main's history.
+  yield* shell(() => $`git fetch --no-tags origin develop`.cwd(repoRoot).nothrow());
+  yield* shell(() => $`git checkout -B ${branch} origin/develop`.cwd(repoRoot));
+  yield* shell(() => $`git add ${notesPath}`.cwd(repoRoot));
+  const commitMessage = `docs(release): propose user-facing notes for ${tag}`;
+  yield* shell(() => $`git commit -m ${commitMessage}`.cwd(repoRoot));
+
+  yield* Console.error(`==> Pushing ${branch}`);
+  let pushed = false;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const result = yield* shell(() => $`git push -u origin ${branch}`.cwd(repoRoot).nothrow());
+    if (result.exitCode === 0) {
+      pushed = true;
+      break;
+    }
+    const wait = 2 ** (attempt + 1) * 1000;
+    yield* Console.error(`Push failed (attempt ${attempt + 1}/4); retrying in ${wait / 1000}s`);
+    yield* Effect.sleep(wait);
+  }
+  if (!pushed) {
+    yield* Console.error("git push failed after 4 attempts");
+    return yield* Effect.sync(() => process.exit(1));
+  }
+
+  // Ensures the `do not merge` label exists before attaching it — a reminder for reviewers; the
+  // approval workflow never actually merges.
+  const labelName = "do not merge";
+  yield* shell(() =>
+    $`gh label create ${labelName} --color B60205 --description ${"Approve to apply; do not merge."} --force`
+      .cwd(repoRoot)
+      .nothrow(),
+  );
+
+  const releaseUrl = `https://github.com/supabase/cli/releases/tag/${tag}`;
+  const prBody = `Proposed user-facing release notes for \`${tag}\`, generated by \`apps/cli/scripts/propose-release-notes.ts\` against \`tools/release/release-notes-prompt.md\`.
 
 ## How to update the notes
 
@@ -175,7 +203,21 @@ Close the PR without approving. The auto-generated semantic-release body for \`$
 After this PR is closed, rerun the **Propose release notes** workflow from the Actions tab against \`${tag}\` to get a fresh proposal.
 `;
 
-await $`gh pr create --title ${`docs(release): notes for ${tag}`} --body ${prBody} --base develop --head ${branch} --label ${labelName}`.cwd(
-  repoRoot,
+  yield* shell(() =>
+    $`gh pr create --title ${`docs(release): notes for ${tag}`} --body ${prBody} --base develop --head ${branch} --label ${labelName}`.cwd(
+      repoRoot,
+    ),
+  );
+  yield* Console.error(`==> PR opened for ${branch}`);
+});
+
+function thrownValue(error: { readonly message: string; readonly cause?: unknown }): unknown {
+  return error.cause !== undefined ? error.cause : new Error(error.message);
+}
+
+await Effect.runPromise(
+  main.pipe(
+    Effect.provide(Layer.mergeAll(BunFileSystem.layer, BunPath.layer)),
+    Effect.catch((error) => Effect.die(thrownValue(error))),
+  ),
 );
-console.error(`==> PR opened for ${branch}`);

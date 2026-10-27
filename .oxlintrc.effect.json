@@ -9,9 +9,7 @@
     "!packages/api/**",
     "!packages/config/**",
     "!packages/stack/**",
-    "!apps/cli/src/**",
-    "!apps/cli/tests/**",
-    "!apps/cli/vitest.config.ts",
+    "!apps/cli/**",
     // Last match wins across the whole list: keep bare re-exclusions after every
     // `!` entry that would otherwise re-include them.
     "apps/cli/src/shared/cli/bin.ts",

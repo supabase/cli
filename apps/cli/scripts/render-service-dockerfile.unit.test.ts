@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 
 import {
@@ -7,9 +6,15 @@ import {
   renderDockerfile,
 } from "./render-service-dockerfile.ts";
 
+/* Decoded as UTF-8 with a leading byte order mark kept (`.text()` would drop it). */
+const readDockerfile = (path: string) =>
+  Bun.file(path)
+    .bytes()
+    .then((bytes) => new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes));
+
 // Both against the real, checked-in Dockerfile and the real catalog — no hardcoded version
 // literal, so a catalog bump never makes this drift-detection test itself go stale.
-const currentTsDockerfile = readFileSync(TS_DOCKERFILE_PATH, "utf8");
+const currentTsDockerfile = await readDockerfile(TS_DOCKERFILE_PATH);
 
 describe("renderDockerfile against the real catalog and Dockerfile", () => {
   test("round-trips: rewriting the checked-in Dockerfile reproduces it byte for byte (no drift)", () => {
@@ -22,10 +27,10 @@ describe("renderDockerfile against the real catalog and Dockerfile", () => {
 
   // The Go tree still `go:embed`s its own copy for a dependency that hasn't been removed yet;
   // this is the single place that keeps the two copies in sync until apps/cli-go is deleted.
-  test("the Go tree's embedded Dockerfile is a byte copy of the TS-owned one", () => {
-    const goDockerfile = readFileSync(GO_DOCKERFILE_PATH, "utf8");
-    expect(goDockerfile).toBe(currentTsDockerfile);
-  });
+  test("the Go tree's embedded Dockerfile is a byte copy of the TS-owned one", () =>
+    readDockerfile(GO_DOCKERFILE_PATH).then((goDockerfile) => {
+      expect(goDockerfile).toBe(currentTsDockerfile);
+    }));
 
   test("detects drift when a generated line is hand-edited", () => {
     // A hand-edit to a generated tag (bumping gotrue without touching the catalog) must not

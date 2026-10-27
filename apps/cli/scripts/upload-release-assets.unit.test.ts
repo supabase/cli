@@ -1,3 +1,5 @@
+import { it } from "@effect/vitest";
+import { Effect, Schema } from "effect";
 import { describe, expect, test } from "vitest";
 import {
   main,
@@ -19,6 +21,8 @@ const failed: RunResult = {
 };
 const timedOut: RunResult = { exitCode: null, stdout: "", stderr: "", timedOut: true };
 
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+
 const fastPolicy: RetryPolicy = {
   maxAttempts: 3,
   timeoutMs: 1_000,
@@ -32,18 +36,21 @@ function fakeIo(
 ) {
   const state = { runs: [] as string[][], sleeps: [] as number[], logs: [] as string[] };
   const io: ReleaseIo = {
-    run: async (argv) => {
-      state.runs.push(argv);
-      const target = (argv[2] === "upload" ? argv[4] : argv[3]) ?? "";
-      return script[target]?.shift() ?? ok;
-    },
-    fileExists: async (path) => !options.missingFiles?.includes(path),
-    sleep: async (ms) => {
-      state.sleeps.push(ms);
-    },
-    log: (line) => {
-      state.logs.push(line);
-    },
+    run: (argv) =>
+      Effect.sync(() => {
+        state.runs.push(argv);
+        const target = (argv[2] === "upload" ? argv[4] : argv[3]) ?? "";
+        return script[target]?.shift() ?? ok;
+      }),
+    fileExists: (path) => Effect.sync(() => !options.missingFiles?.includes(path)),
+    sleep: (ms) =>
+      Effect.sync(() => {
+        state.sleeps.push(ms);
+      }),
+    log: (line) =>
+      Effect.sync(() => {
+        state.logs.push(line);
+      }),
   };
   return { io, state };
 }
@@ -76,104 +83,123 @@ describe("uploadAssets", () => {
   const third = { path: "install", name: "install" };
   const assets = [first, second, third];
 
-  test("uploads every asset once with --clobber when nothing fails", async () => {
-    const { io, state } = fakeIo();
+  it.effect("uploads every asset once with --clobber when nothing fails", () =>
+    Effect.gen(function* () {
+      const { io, state } = fakeIo();
 
-    await uploadAssets("v1.0.0", assets, io, fastPolicy);
+      yield* uploadAssets("v1.0.0", assets, io, fastPolicy);
 
-    expect(state.runs).toEqual(
-      assets.map((asset) => ["gh", "release", "upload", "v1.0.0", asset.path, "--clobber"]),
-    );
-    expect(state.sleeps).toEqual([]);
-    expect(state.logs.filter((line) => line.startsWith("Uploaded "))).toHaveLength(3);
-  });
+      expect(state.runs).toEqual(
+        assets.map((asset) => ["gh", "release", "upload", "v1.0.0", asset.path, "--clobber"]),
+      );
+      expect(state.sleeps).toEqual([]);
+      expect(state.logs.filter((line) => line.startsWith("Uploaded "))).toHaveLength(3);
+    }),
+  );
 
-  test("retries a failed asset with growing pauses and moves on once it lands", async () => {
-    const { io, state } = fakeIo({ [second.path]: [failed, failed] });
+  it.effect("retries a failed asset with growing pauses and moves on once it lands", () =>
+    Effect.gen(function* () {
+      const { io, state } = fakeIo({ [second.path]: [failed, failed] });
 
-    await uploadAssets("v1.0.0", assets, io, fastPolicy);
+      yield* uploadAssets("v1.0.0", assets, io, fastPolicy);
 
-    const secondAttempts = state.runs.filter((argv) => argv[4] === second.path);
-    expect(secondAttempts).toHaveLength(3);
-    expect(state.sleeps).toEqual([10, 20]);
-    expect(state.logs).toContain(
-      `Upload of ${second.name} failed on attempt 1 (exit 1: HTTP 500: Error saving asset); retrying in 0.01s.`,
-    );
-    expect(state.logs).toContain(`Uploaded ${first.name} (attempt 1).`);
-    expect(state.logs).toContain(`Uploaded ${second.name} (attempt 3).`);
-  });
+      const secondAttempts = state.runs.filter((argv) => argv[4] === second.path);
+      expect(secondAttempts).toHaveLength(3);
+      expect(state.sleeps).toEqual([10, 20]);
+      expect(state.logs).toContain(
+        `Upload of ${second.name} failed on attempt 1 (exit 1: HTTP 500: Error saving asset); retrying in 0.01s.`,
+      );
+      expect(state.logs).toContain(`Uploaded ${first.name} (attempt 1).`);
+      expect(state.logs).toContain(`Uploaded ${second.name} (attempt 3).`);
+    }),
+  );
 
-  test("gives up on an asset after the last attempt and does not touch later assets", async () => {
-    const { io, state } = fakeIo({ [second.path]: [failed, failed, failed] });
+  it.effect("gives up on an asset after the last attempt and does not touch later assets", () =>
+    Effect.gen(function* () {
+      const { io, state } = fakeIo({ [second.path]: [failed, failed, failed] });
 
-    await expect(uploadAssets("v1.0.0", assets, io, fastPolicy)).rejects.toThrow(
-      `Upload of ${second.name} to v1.0.0 failed after 3 attempts (exit 1: HTTP 500: Error saving asset).`,
-    );
+      const error = yield* Effect.flip(uploadAssets("v1.0.0", assets, io, fastPolicy));
+      expect(error.message).toContain(
+        `Upload of ${second.name} to v1.0.0 failed after 3 attempts (exit 1: HTTP 500: Error saving asset).`,
+      );
 
-    expect(state.runs.filter((argv) => argv[4] === third.path)).toHaveLength(0);
-    expect(state.sleeps).toEqual([10, 20]);
-  });
+      expect(state.runs.filter((argv) => argv[4] === third.path)).toHaveLength(0);
+      expect(state.sleeps).toEqual([10, 20]);
+    }),
+  );
 
-  test("treats a timed-out upload as a failed attempt", async () => {
-    const { io, state } = fakeIo({ [first.path]: [timedOut] });
+  it.effect("treats a timed-out upload as a failed attempt", () =>
+    Effect.gen(function* () {
+      const { io, state } = fakeIo({ [first.path]: [timedOut] });
 
-    await uploadAssets("v1.0.0", [first], io, fastPolicy);
+      yield* uploadAssets("v1.0.0", [first], io, fastPolicy);
 
-    expect(state.runs).toHaveLength(2);
-    expect(state.logs[0]).toBe(
-      `Upload of ${first.name} failed on attempt 1 (timed out after 1s); retrying in 0.01s.`,
-    );
-  });
+      expect(state.runs).toHaveLength(2);
+      expect(state.logs[0]).toBe(
+        `Upload of ${first.name} failed on attempt 1 (timed out after 1s); retrying in 0.01s.`,
+      );
+    }),
+  );
 
-  test("fails before calling gh when an asset file is missing", async () => {
-    const { io, state } = fakeIo({}, { missingFiles: [first.path] });
+  it.effect("fails before calling gh when an asset file is missing", () =>
+    Effect.gen(function* () {
+      const { io, state } = fakeIo({}, { missingFiles: [first.path] });
 
-    await expect(uploadAssets("v1.0.0", [first], io, fastPolicy)).rejects.toThrow(
-      `Release asset ${first.path} does not exist.`,
-    );
-    expect(state.runs).toEqual([]);
-  });
+      const error = yield* Effect.flip(uploadAssets("v1.0.0", [first], io, fastPolicy));
+      expect(error.message).toContain(`Release asset ${first.path} does not exist.`);
+      expect(state.runs).toEqual([]);
+    }),
+  );
 });
 
 describe("uploadedAssetNames", () => {
-  test("keeps only assets GitHub reports as uploaded", async () => {
-    const view = {
-      assets: [
-        { name: "checksums.txt", state: "uploaded" },
-        { name: "install", state: "starter" },
-      ],
-    };
-    const { io, state } = fakeIo({ "v1.0.0": [{ ...ok, stdout: JSON.stringify(view) }] });
+  it.effect("keeps only assets GitHub reports as uploaded", () =>
+    Effect.gen(function* () {
+      const view = {
+        assets: [
+          { name: "checksums.txt", state: "uploaded" },
+          { name: "install", state: "starter" },
+        ],
+      };
+      const { io, state } = fakeIo({ "v1.0.0": [{ ...ok, stdout: yield* encodeJson(view) }] });
 
-    await expect(uploadedAssetNames("v1.0.0", io)).resolves.toEqual(["checksums.txt"]);
-    expect(state.runs).toEqual([["gh", "release", "view", "v1.0.0", "--json", "assets"]]);
-  });
+      expect(yield* uploadedAssetNames("v1.0.0", io)).toEqual(["checksums.txt"]);
+      expect(state.runs).toEqual([["gh", "release", "view", "v1.0.0", "--json", "assets"]]);
+    }),
+  );
 
-  test("fails when the release cannot be read", async () => {
-    const { io } = fakeIo({ "v1.0.0": [{ ...failed, stderr: "release not found\n" }] });
+  it.effect("fails when the release cannot be read", () =>
+    Effect.gen(function* () {
+      const { io } = fakeIo({ "v1.0.0": [{ ...failed, stderr: "release not found\n" }] });
 
-    await expect(uploadedAssetNames("v1.0.0", io)).rejects.toThrow(
-      "Could not read assets of v1.0.0 (exit 1: release not found).",
-    );
-  });
+      const error = yield* Effect.flip(uploadedAssetNames("v1.0.0", io));
+      expect(error.message).toContain(
+        "Could not read assets of v1.0.0 (exit 1: release not found).",
+      );
+    }),
+  );
 
-  test("names the release when gh prints something other than JSON", async () => {
-    const { io } = fakeIo({ "v1.0.0": [{ ...ok, stdout: "gh: rate limited\n" }] });
+  it.effect("names the release when gh prints something other than JSON", () =>
+    Effect.gen(function* () {
+      const { io } = fakeIo({ "v1.0.0": [{ ...ok, stdout: "gh: rate limited\n" }] });
 
-    await expect(uploadedAssetNames("v1.0.0", io)).rejects.toThrow(
-      "Could not read assets of v1.0.0: gh returned invalid JSON.",
-    );
-  });
+      const error = yield* Effect.flip(uploadedAssetNames("v1.0.0", io));
+      expect(error.message).toContain("Could not read assets of v1.0.0: gh returned invalid JSON.");
+    }),
+  );
 
-  test("names the release when the JSON has no usable assets array", async () => {
-    const { io } = fakeIo({
-      "v1.0.0": [{ ...ok, stdout: JSON.stringify({ assets: [{ name: "install" }] }) }],
-    });
+  it.effect("names the release when the JSON has no usable assets array", () =>
+    Effect.gen(function* () {
+      const { io } = fakeIo({
+        "v1.0.0": [{ ...ok, stdout: yield* encodeJson({ assets: [{ name: "install" }] }) }],
+      });
 
-    await expect(uploadedAssetNames("v1.0.0", io)).rejects.toThrow(
-      "Could not read assets of v1.0.0: gh output has no assets array with name and state.",
-    );
-  });
+      const error = yield* Effect.flip(uploadedAssetNames("v1.0.0", io));
+      expect(error.message).toContain(
+        "Could not read assets of v1.0.0: gh output has no assets array with name and state.",
+      );
+    }),
+  );
 });
 
 describe("missingAssets", () => {
@@ -189,34 +215,40 @@ describe("main", () => {
     stdout: JSON.stringify({ assets: names.map((name) => ({ name, state: "uploaded" })) }),
   });
 
-  test("prints usage for an unknown command or a missing version", async () => {
-    const { io, state } = fakeIo();
+  it.effect("prints usage for an unknown command or a missing version", () =>
+    Effect.gen(function* () {
+      const { io, state } = fakeIo();
 
-    await expect(main(["publish", "--version", "1.0.0"], io)).resolves.toBe(2);
-    await expect(main(["upload"], io)).resolves.toBe(2);
-    expect(state.runs).toEqual([]);
-    expect(state.logs[0]).toContain("Usage:");
-  });
+      expect(yield* main(["publish", "--version", "1.0.0"], io)).toBe(2);
+      expect(yield* main(["upload"], io)).toBe(2);
+      expect(state.runs).toEqual([]);
+      expect(state.logs[0]).toContain("Usage:");
+    }),
+  );
 
-  test("verify succeeds when every expected asset is uploaded", async () => {
-    const names = releaseAssets("1.0.0").map((asset) => asset.name);
-    const { io, state } = fakeIo({ "v1.0.0": [view(names)] });
+  it.effect("verify succeeds when every expected asset is uploaded", () =>
+    Effect.gen(function* () {
+      const names = releaseAssets("1.0.0").map((asset) => asset.name);
+      const { io, state } = fakeIo({ "v1.0.0": [view(names)] });
 
-    await expect(main(["verify", "--version", "1.0.0"], io)).resolves.toBe(0);
-    expect(state.logs).toEqual(["All 22 expected assets are present on v1.0.0."]);
-  });
+      expect(yield* main(["verify", "--version", "1.0.0"], io)).toBe(0);
+      expect(state.logs).toEqual(["All 22 expected assets are present on v1.0.0."]);
+    }),
+  );
 
-  test("verify fails and names each missing asset", async () => {
-    const names = releaseAssets("1.0.0")
-      .map((asset) => asset.name)
-      .filter((name) => name !== "checksums.txt" && name !== "install");
-    const { io, state } = fakeIo({ "v1.0.0": [view(names)] });
+  it.effect("verify fails and names each missing asset", () =>
+    Effect.gen(function* () {
+      const names = releaseAssets("1.0.0")
+        .map((asset) => asset.name)
+        .filter((name) => name !== "checksums.txt" && name !== "install");
+      const { io, state } = fakeIo({ "v1.0.0": [view(names)] });
 
-    await expect(main(["verify", "--version", "1.0.0"], io)).resolves.toBe(1);
-    expect(state.logs).toEqual([
-      "::error::Release v1.0.0 is missing assets or has incomplete uploads:",
-      "  checksums.txt",
-      "  install",
-    ]);
-  });
+      expect(yield* main(["verify", "--version", "1.0.0"], io)).toBe(1);
+      expect(state.logs).toEqual([
+        "::error::Release v1.0.0 is missing assets or has incomplete uploads:",
+        "  checksums.txt",
+        "  install",
+      ]);
+    }),
+  );
 });
