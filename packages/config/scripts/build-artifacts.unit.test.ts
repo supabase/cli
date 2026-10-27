@@ -75,7 +75,11 @@ describe("published JSON Schema artifacts", () => {
       throw new Error("expected properties.api.properties.max_rows to be an object");
     }
     const maxRows = apiProperties["max_rows"];
-    expect(maxRows["type"]).toBe("number");
+    const anyOf = maxRows["anyOf"];
+    if (!Array.isArray(anyOf) || !isRecord(anyOf[0])) {
+      throw new Error("expected max_rows to be an anyOf of the number and an env() string");
+    }
+    expect(anyOf[0]["type"]).toBe("number");
     expect(typeof maxRows["description"]).toBe("string");
     expect(maxRows["default"]).toBe(1000);
   });

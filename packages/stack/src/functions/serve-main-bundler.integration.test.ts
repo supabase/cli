@@ -245,7 +245,7 @@ describe("stack-owned functions bootstrap", () => {
       expect(received?.url).toBe("http://forwarded.example/hello");
       expect(createOptions).toMatchObject({
         memoryLimitMb: 256,
-        noModuleCache: true,
+        noModuleCache: false,
         noNpm: true,
         forceCreate: true,
         staticPatterns: [],

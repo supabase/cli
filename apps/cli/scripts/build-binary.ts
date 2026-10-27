@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Console, Effect } from "effect";
 import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
 import { compileOptions, stackReleaseDefine } from "./compile-options.ts";
 
@@ -32,5 +32,5 @@ const result = await Bun.build({
   },
 });
 for (const log of result.logs) {
-  console.warn(log);
+  Effect.runSync(Console.warn(log));
 }

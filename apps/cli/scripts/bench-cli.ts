@@ -6,11 +6,10 @@
  */
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
-import { resolve as resolvePath } from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
-import { BunRuntime, BunServices } from "@effect/platform-bun";
-import { Clock, Console, Effect, FileSystem, Path, Ref, Stdio } from "effect";
+import { BunPath, BunRuntime, BunServices } from "@effect/platform-bun";
+import { Clock, Console, Effect, FileSystem, Path, Ref, Schema, Stdio } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { readSpans, type ReportSpan } from "./trace-report.ts";
 
@@ -34,6 +33,8 @@ export interface BenchOptions {
   readonly cpuProf: boolean;
   readonly updateCheck: boolean;
 }
+
+const ReportJson = Schema.fromJsonString(Schema.Unknown, { space: 2 });
 
 const DEFAULT_COMMANDS: ReadonlyArray<ReadonlyArray<string>> = [["--version"], ["--help"]];
 
@@ -90,11 +91,15 @@ export function parseBenchArgs(argv: ReadonlyArray<string>): BenchOptions {
     throw new Error('--cwd-setup only supports "init"');
   }
 
+  /* The host `Path` service (`node:path` itself), read synchronously for this sync parser. */
+  const hostPath = Effect.runSync(
+    Path.Path.useSync((path) => path).pipe(Effect.provide(BunPath.layer)),
+  );
   return {
     // Each launch spawns with a per-run `cwd`, which also resolves a relative command path; a
     // path given relative to the invocation directory must become absolute before that happens.
-    base: resolvePath(values.base),
-    branch: resolvePath(values.branch),
+    base: hostPath.resolve(values.base),
+    branch: hostPath.resolve(values.branch),
     runs,
     warmup,
     commands:
@@ -590,10 +595,15 @@ const main = Effect.gen(function* () {
 
   if (options.out !== undefined) {
     const fs = yield* FileSystem.FileSystem;
-    yield* fs.writeFileString(options.out, JSON.stringify({ report, samples }, null, 2));
+    yield* fs.writeFileString(
+      options.out,
+      yield* Schema.encodeEffect(ReportJson)({ report, samples }),
+    );
   }
 
-  yield* Console.log(options.json ? JSON.stringify(report, null, 2) : formatReport(report));
+  yield* Console.log(
+    options.json ? yield* Schema.encodeEffect(ReportJson)(report) : formatReport(report),
+  );
 });
 
 if (import.meta.main) {
