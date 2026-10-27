@@ -35,9 +35,11 @@
   "devDependencies": {
     "@commitlint/cli": "^21.2.2",
     "@commitlint/config-conventional": "^21.2.2",
+    "@effect/platform-bun": "catalog:",
     "@effect/tsgo": "catalog:",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
+    "effect": "catalog:",
     "husky": "^9.1.7",
     "knip": "catalog:",
     "oxfmt": "catalog:",

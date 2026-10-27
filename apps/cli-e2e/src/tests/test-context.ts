@@ -59,7 +59,7 @@ export const testBehaviour = test.extend<BehaviourFixtures>({
     const serverUrl = inject("replayServerUrl");
     const slug = scenarioSlug(task);
     // Truncate to 40 chars to keep temp dir names manageable.
-    const dir = makeTempDir(`cli-e2e-${slug.slice(0, 40)}-`);
+    const dir = await makeTempDir(`cli-e2e-${slug.slice(0, 40)}-`);
 
     const res = await fetch(`${serverUrl}/_ctrl/scenario`, {
       method: "POST",
@@ -67,14 +67,14 @@ export const testBehaviour = test.extend<BehaviourFixtures>({
       body: JSON.stringify({ name: slug }),
     });
     if (!res.ok) {
-      dir[Symbol.dispose]();
+      await dir[Symbol.asyncDispose]();
       const { message } = (await res.json()) as { message: string };
       throw new Error(message);
     }
 
     await use(dir);
 
-    dir[Symbol.dispose]();
+    await dir[Symbol.asyncDispose]();
     await Promise.all([
       fetch(`${serverUrl}/_ctrl/requests`, { method: "DELETE" }),
       fetch(`${serverUrl}/_ctrl/overrides`, { method: "DELETE" }),

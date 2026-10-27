@@ -67,8 +67,8 @@ describe("link", () => {
   // requires the --project-ref flag.
   test("exits non-zero without --project-ref in non-TTY", async () => {
     const serverUrl = inject("replayServerUrl") as string;
-    const dir = makeTempDir("cli-e2e-link-no-ref-");
-    using _ = dir;
+    const dir = await makeTempDir("cli-e2e-link-no-ref-");
+    await using _ = dir;
     const harness = createHarness({
       apiUrl: serverUrl,
       accessToken: ACCESS_TOKEN,
