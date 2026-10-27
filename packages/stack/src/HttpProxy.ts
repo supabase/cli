@@ -129,11 +129,21 @@ const bearerValueFor = (headers: IncomingMessage["headers"], keys: HttpRouteKeyR
   return apiKey;
 };
 
-const upstreamHeadersFor = (headers: IncomingMessage["headers"], route: HttpRoute) => {
+/* Like Kong: append the client to any incoming X-Forwarded-For chain; X-Real-IP is the client. */
+const upstreamHeadersFor = (request: IncomingMessage, route: HttpRoute) => {
+  const headers = request.headers;
+  const client = request.socket.remoteAddress;
+  const forwardedFor = headerValue(headers["x-forwarded-for"]);
   const result: Record<string, string | string[]> = {
     ...headersFor(headers),
     ...(route.upstreamHost === undefined ? {} : { host: route.upstreamHost }),
   };
+  /* Without a peer address, a client-sent X-Real-IP is still dropped rather than passed through. */
+  if (client === undefined) delete result["x-real-ip"];
+  else {
+    result["x-forwarded-for"] = forwardedFor === undefined ? client : `${forwardedFor}, ${client}`;
+    result["x-real-ip"] = client;
+  }
   const keyRewrite = route.keyRewrite;
   if (keyRewrite?.policy === "bearer") {
     const value = bearerValueFor(headers, keyRewrite.keys);
@@ -393,7 +403,7 @@ const forward = Effect.fn("HttpProxy.forward")(function* (
         // Bun ends a streamed upstream response early when the request says Connection: close,
         // and sends a GET or DELETE body unframed unless the request says it is chunked.
         headers: {
-          ...upstreamHeadersFor(request.headers, route),
+          ...upstreamHeadersFor(request, route),
           ...(request.headers["transfer-encoding"] === undefined
             ? {}
             : { "transfer-encoding": "chunked" }),
@@ -565,7 +575,7 @@ const upgrade = Effect.fn("HttpProxy.upgrade")(
         client.once("end", onClientEnd);
         upstream.once("end", onUpstreamEnd);
         const lines = [`${request.method ?? "GET"} ${pathFor(request, route)} HTTP/1.1`];
-        for (const [name, value] of Object.entries(upstreamHeadersFor(request.headers, route))) {
+        for (const [name, value] of Object.entries(upstreamHeadersFor(request, route))) {
           if (value !== undefined)
             lines.push(`${name}: ${Array.isArray(value) ? value.join(", ") : value}`);
         }

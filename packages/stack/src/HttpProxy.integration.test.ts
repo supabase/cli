@@ -545,6 +545,69 @@ it.live("rewrites only the apikey query value on opted-in WebSocket routes", () 
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.live("tells upstreams the client address", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const backend = createServer((incoming, response) => {
+        response.end(
+          JSON.stringify({
+            forwardedFor: incoming.headers["x-forwarded-for"],
+            realIp: incoming.headers["x-real-ip"],
+          }),
+        );
+      });
+      const sockets = new WebSocketServer({ server: backend });
+      const upgraded = yield* Deferred.make<
+        { forwardedFor?: string; realIp?: string },
+        HttpProxyTestError
+      >();
+      sockets.on("connection", (socket, incoming) => {
+        Deferred.doneUnsafe(
+          upgraded,
+          Effect.succeed({
+            forwardedFor: headerOf(incoming.headers["x-forwarded-for"]),
+            realIp: headerOf(incoming.headers["x-real-ip"]),
+          }),
+        );
+        socket.close();
+      });
+      const backendAddress = yield* listen(backend, { beforeClose: () => sockets.close() });
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      yield* proxy.setRoutes([
+        { id: "functions", prefix: "/functions", target: Effect.succeed(backendAddress) },
+      ]);
+      const send = (headers: Readonly<Record<string, string>>) =>
+        request(proxy.port, "/functions/v1/hello", new Uint8Array(), headers, "GET").pipe(
+          Effect.provide(NodeHttpClient.layerNodeHttp),
+          Effect.map(({ body }) => JSON.parse(new TextDecoder().decode(body))),
+        );
+
+      expect(yield* send({})).toEqual({ forwardedFor: "127.0.0.1", realIp: "127.0.0.1" });
+      expect(yield* send({ "x-forwarded-for": "203.0.113.7", "x-real-ip": "203.0.113.7" })).toEqual(
+        { forwardedFor: "203.0.113.7, 127.0.0.1", realIp: "127.0.0.1" },
+      );
+
+      const client = new WebSocket(`ws://127.0.0.1:${proxy.port}/functions/v1/socket`, {
+        headers: { "x-forwarded-for": "203.0.113.7", "x-real-ip": "203.0.113.7" },
+      });
+      client.on("error", (cause) =>
+        Deferred.doneUnsafe(
+          upgraded,
+          Effect.fail(new HttpProxyTestError({ message: cause.message, cause })),
+        ),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(() => client.terminate()));
+      expect(yield* Deferred.await(upgraded).pipe(Effect.timeout("10 seconds"))).toEqual({
+        forwardedFor: "203.0.113.7, 127.0.0.1",
+        realIp: "127.0.0.1",
+      });
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+const headerOf = (value: string | ReadonlyArray<string> | undefined) =>
+  value === undefined || typeof value === "string" ? value : value.join(", ");
+
 it.live("returns a gateway error naming the route and cause when a target cannot wake", () => {
   const logs: Array<string> = [];
   return Effect.scoped(
