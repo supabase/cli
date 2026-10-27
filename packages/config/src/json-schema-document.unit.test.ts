@@ -577,8 +577,17 @@ describe("toPublishedJsonSchemaDocument acceptEnvReferences", () => {
   });
 
   test("does not add a second env branch to a union that already has one", () => {
-    const document = publish(Schema.Struct({ count: Schema.Union([Schema.Finite, env()]) }), true);
+    const document = publish(
+      Schema.Struct({
+        count: Schema.Union([Schema.Finite, env()]),
+        token: Schema.Union([Schema.Finite, env({ description: "Token", secret: true })]),
+      }),
+      true,
+    );
     expect(at(document, "properties", "count").anyOf).toEqual([{ type: "number" }, envBranch]);
+    const token = at(document, "properties", "token").anyOf as Array<Node>;
+    expect(token).toHaveLength(2);
+    expect(token[0]).toEqual({ type: "number" });
   });
 
   test("wraps numbers and booleans inside arrays and record values", () => {

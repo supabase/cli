@@ -96,12 +96,9 @@ function envReferenceBranch(): Node {
 }
 
 function isEnvReferenceBranch(node: unknown): boolean {
-  return (
-    isNode(node) &&
-    Object.keys(node).length === 2 &&
-    node["type"] === "string" &&
-    node["pattern"] === ENV_PATTERN
-  );
+  if (!isNode(node) || node["type"] !== "string") return false;
+  const checks = Array.isArray(node["allOf"]) ? [node, ...node["allOf"]] : [node];
+  return checks.some((check) => isNode(check) && check["pattern"] === ENV_PATTERN);
 }
 
 function isEnvReferenceTarget(node: unknown): node is Node {
