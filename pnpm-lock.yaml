@@ -248,6 +248,9 @@ importers:
       '@commitlint/config-conventional':
         specifier: ^21.2.2
         version: 21.2.2
+      '@effect/platform-bun':
+        specifier: 'catalog:'
+        version: 4.0.2(effect@4.0.2)
       '@effect/tsgo':
         specifier: 'catalog:'
         version: 0.37.0
@@ -257,6 +260,9 @@ importers:
       '@types/bun':
         specifier: 'catalog:'
         version: 1.4.2
+      effect:
+        specifier: 'catalog:'
+        version: 4.0.2
       husky:
         specifier: ^9.1.7
         version: 9.1.7
@@ -530,6 +536,13 @@ importers:
   packages/cli-linux-x64-musl: {}
 
   packages/cli-test-helpers:
+    dependencies:
+      '@effect/platform-bun':
+        specifier: 'catalog:'
+        version: 4.0.2(effect@4.0.2)
+      effect:
+        specifier: 'catalog:'
+        version: 4.0.2
     devDependencies:
       '@tsconfig/bun':
         specifier: 'catalog:'

@@ -10,18 +10,27 @@
  * Requires Go in PATH to build the `supabase-go` sidecar.
  */
 
+import { BunFileSystem, BunPath } from "@effect/platform-bun";
 import { $ } from "bun";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
+import { Clock, Console, Effect, FileSystem, Layer, Path, Schema } from "effect";
+import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 import process from "node:process";
 import { parseArgs } from "node:util";
 import { compileOptions, stackReleaseDefine } from "../../apps/cli/scripts/compile-options.ts";
 
 const PORT = 4873;
 const REGISTRY = `http://localhost:${PORT}`;
-const root = path.resolve(import.meta.dir, "../..");
-const tokenPath = path.join(root, "tmp", "verdaccio-token");
+
+class LocalReleaseError extends Schema.TaggedError<LocalReleaseError>()("LocalReleaseError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
+
+const foreignFailure = (cause: unknown) =>
+  new LocalReleaseError({ message: cause instanceof Error ? cause.message : String(cause), cause });
+
+const tryAsync = <A>(evaluate: () => PromiseLike<A>) =>
+  Effect.tryPromise({ try: evaluate, catch: foreignFailure });
 
 // Every platform package that appears in optionalDependencies.
 const PLATFORM_PACKAGES = [
@@ -88,144 +97,184 @@ const PLATFORM_MAP: Record<string, PlatformInfo> = {
   },
 };
 
-function getPlatformInfo(): PlatformInfo {
+const getPlatformInfo = Effect.fnUntraced(function* () {
   const key = `${process.platform}-${process.arch}`;
   const info = PLATFORM_MAP[key];
   if (!info) {
-    console.error(`\nError: Unsupported platform: ${key}`);
-    console.error("Supported: darwin-arm64, darwin-x64, linux-arm64, linux-x64, win32-x64\n");
+    yield* Console.error(`\nError: Unsupported platform: ${key}`);
+    yield* Console.error(
+      "Supported: darwin-arm64, darwin-x64, linux-arm64, linux-x64, win32-x64\n",
+    );
     process.exit(1);
   }
   return info;
-}
+});
 
-async function checkRegistry(): Promise<void> {
-  try {
-    const res = await fetch(`${REGISTRY}/-/ping`, {
-      signal: AbortSignal.timeout(3000),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  } catch {
-    console.error(`\nError: Local registry not responding at ${REGISTRY}`);
-    console.error("Start it first with: pnpm local-registry\n");
-    process.exit(1);
-  }
-}
+/* Only `AbortSignal.timeout`, so the deadline alone bounds the request and its unread response body. */
+const abortAfter = (ms: number) =>
+  Effect.updateService(FetchHttpClient.Fetch, (fetch) =>
+    Object.assign(
+      (input: string | URL | Request, init?: RequestInit) =>
+        fetch(input, { ...init, signal: AbortSignal.timeout(ms) }),
+      { preconnect: fetch.preconnect },
+    ),
+  );
 
-async function readToken(): Promise<string> {
-  try {
-    return (await Bun.file(tokenPath).text()).trim();
-  } catch {
-    console.error(`\nError: Auth token not found at ${tokenPath}`);
-    console.error("The local registry must be running before you release: pnpm local-registry\n");
-    process.exit(1);
-  }
-}
+const checkRegistry = Effect.fnUntraced(function* () {
+  const client = yield* HttpClient.HttpClient;
+  yield* client.get(`${REGISTRY}/-/ping`).pipe(
+    abortAfter(3000),
+    Effect.flatMap(HttpClientResponse.filterStatusOk),
+    Effect.catch(() =>
+      Effect.gen(function* () {
+        yield* Console.error(`\nError: Local registry not responding at ${REGISTRY}`);
+        yield* Console.error("Start it first with: pnpm local-registry\n");
+        return process.exit(1);
+      }),
+    ),
+  );
+});
 
-async function checkGo(): Promise<void> {
-  try {
-    await $`go version`.quiet();
-  } catch {
-    console.error("\nError: `go` not found in PATH.");
-    console.error("Install Go from https://go.dev/dl/ to build the CLI.\n");
-    process.exit(1);
-  }
-}
+const readToken = Effect.fnUntraced(function* (tokenPath: string) {
+  return yield* tryAsync(() => Bun.file(tokenPath).text()).pipe(
+    Effect.map((token) => token.trim()),
+    Effect.catch(() =>
+      Effect.gen(function* () {
+        yield* Console.error(`\nError: Auth token not found at ${tokenPath}`);
+        yield* Console.error(
+          "The local registry must be running before you release: pnpm local-registry\n",
+        );
+        return process.exit(1);
+      }),
+    ),
+  );
+});
 
-async function checkGoSource(): Promise<string> {
+const checkGo = Effect.fnUntraced(function* () {
+  yield* tryAsync(() => $`go version`.quiet()).pipe(
+    Effect.catch(() =>
+      Effect.gen(function* () {
+        yield* Console.error("\nError: `go` not found in PATH.");
+        yield* Console.error("Install Go from https://go.dev/dl/ to build the CLI.\n");
+        return process.exit(1);
+      }),
+    ),
+  );
+});
+
+const checkGoSource = Effect.fnUntraced(function* (path: Path.Path, root: string) {
   const goSource = path.join(root, "apps", "cli-go");
   const goMod = Bun.file(path.join(goSource, "go.mod"));
-  if (!(await goMod.exists())) {
-    console.error("\nError: Go CLI source not found at apps/cli-go");
-    console.error("Run: pnpm repos:install\n");
+  if (!(yield* tryAsync(() => goMod.exists()))) {
+    yield* Console.error("\nError: Go CLI source not found at apps/cli-go");
+    yield* Console.error("Run: pnpm repos:install\n");
     process.exit(1);
   }
   return goSource;
-}
+});
 
-async function main() {
-  const { values } = parseArgs({
-    options: {
-      version: { type: "string" },
-    },
+const main = Effect.fnUntraced(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const root = path.resolve(import.meta.dir, "../..");
+  const tokenPath = path.join(root, "tmp", "verdaccio-token");
+
+  const { values } = yield* Effect.try({
+    try: () =>
+      parseArgs({
+        options: {
+          version: { type: "string" },
+        },
+      }),
+    catch: foreignFailure,
   });
 
-  const version = values.version ?? `0.0.0-local.${Math.floor(Date.now() / 1000)}`;
+  const version =
+    values.version ?? `0.0.0-local.${Math.floor((yield* Clock.currentTimeMillis) / 1000)}`;
 
-  await checkRegistry();
-  const token = await readToken();
-  const platform = getPlatformInfo();
+  yield* checkRegistry();
+  const token = yield* readToken(tokenPath);
+  const platform = yield* getPlatformInfo();
 
-  await checkGo();
-  const goSource = await checkGoSource();
+  yield* checkGo();
+  const goSource = yield* checkGoSource(path, root);
 
   if (process.platform === "linux") {
-    console.warn(
+    yield* Console.warn(
       "Note: local-release builds the glibc variant only (cli-linux-*). " +
         "The musl variant is skipped for local dev.\n",
     );
   }
 
-  const tmpDir = await mkdtemp(path.join(tmpdir(), "supabase-local-release-"));
+  const tmpDir = yield* fs.makeTempDirectory({ prefix: "supabase-local-release-" });
 
-  try {
+  const exit = yield* Effect.gen(function* () {
     // Read once up front so log lines and the published package.json agree.
-    const cliPkgJson = await Bun.file(path.join(root, "apps", "cli", "package.json")).json();
+    const cliPkgJson = yield* tryAsync(() =>
+      Bun.file(path.join(root, "apps", "cli", "package.json")).json(),
+    );
     const umbrellaName: string = cliPkgJson.name;
 
-    console.log(`\nBuilding ${umbrellaName}@${version} (${platform.platformPkg})...\n`);
+    yield* Console.log(`\nBuilding ${umbrellaName}@${version} (${platform.platformPkg})...\n`);
 
     const tmpPlatformDir = path.join(tmpDir, platform.platformPkg);
     const tmpPlatformBinDir = path.join(tmpPlatformDir, "bin");
-    await mkdir(tmpPlatformBinDir, { recursive: true });
+    yield* fs.makeDirectory(tmpPlatformBinDir, { recursive: true });
 
     const entrypoint = path.join(root, "apps", "cli", "src", "main.ts");
     const bunBinary = path.join(tmpPlatformBinDir, `supabase${platform.ext}`);
 
-    console.log("[1/3] Compiling CLI binary...");
-    const buildResult = await Bun.build({
-      entrypoints: [entrypoint],
-      compile: { target: platform.bunTarget, outfile: bunBinary },
-      ...compileOptions,
-      define: await stackReleaseDefine(),
-    });
+    yield* Console.log("[1/3] Compiling CLI binary...");
+    const define = yield* tryAsync(() => stackReleaseDefine());
+    const buildResult = yield* tryAsync(() =>
+      Bun.build({
+        entrypoints: [entrypoint],
+        compile: { target: platform.bunTarget, outfile: bunBinary },
+        ...compileOptions,
+        define,
+      }),
+    );
     for (const log of buildResult.logs) {
-      console.warn(log);
+      yield* Console.warn(log);
     }
     if (!buildResult.success) {
-      throw new Error("failed to compile the CLI binary");
+      return yield* new LocalReleaseError({ message: "failed to compile the CLI binary" });
     }
 
     {
       const goBinary = path.join(tmpPlatformBinDir, `supabase-go${platform.ext}`);
-      console.log(`[2/3] Compiling Go CLI binary (${platform.goos}/${platform.goarch})...`);
+      yield* Console.log(`[2/3] Compiling Go CLI binary (${platform.goos}/${platform.goarch})...`);
       // go build must run from the Go source directory: passing an absolute path as a positional
       // arg makes Go resolve the module from CWD instead, which fails because the repo root has
       // no go.mod.
-      await $`go build -trimpath -ldflags="-s -w" -o ${goBinary} .`.cwd(goSource).env({
-        ...process.env,
-        GOOS: platform.goos,
-        GOARCH: platform.goarch,
-        CGO_ENABLED: "0",
-      });
+      yield* tryAsync(() =>
+        $`go build -trimpath -ldflags="-s -w" -o ${goBinary} .`.cwd(goSource).env({
+          ...process.env,
+          GOOS: platform.goos,
+          GOARCH: platform.goarch,
+          CGO_ENABLED: "0",
+        }),
+      );
     }
 
     const tmpCliDir = path.join(tmpDir, "cli");
     const tmpCliDistDir = path.join(tmpCliDir, "dist");
-    await mkdir(tmpCliDistDir, { recursive: true });
+    yield* fs.makeDirectory(tmpCliDistDir, { recursive: true });
 
     const shimSrc = path.join(root, "apps", "cli", "src", "shared", "cli", "bin.ts");
     const shimOut = path.join(tmpCliDistDir, "supabase.js");
-    console.log("[3/3] Building Node.js shim...");
-    await $`bun build ${shimSrc} --outfile=${shimOut} --target=node`;
+    yield* Console.log("[3/3] Building Node.js shim...");
+    yield* tryAsync(() => $`bun build ${shimSrc} --outfile=${shimOut} --target=node`);
 
-    const platformPkgJson = await Bun.file(
-      path.join(root, "packages", platform.platformPkg, "package.json"),
-    ).json();
+    const platformPkgJson = yield* tryAsync(() =>
+      Bun.file(path.join(root, "packages", platform.platformPkg, "package.json")).json(),
+    );
     platformPkgJson.version = version;
-    await Bun.write(
-      path.join(tmpPlatformDir, "package.json"),
-      `${JSON.stringify(platformPkgJson, null, "\t")}\n`,
+    yield* tryAsync(() =>
+      Bun.write(
+        path.join(tmpPlatformDir, "package.json"),
+        `${JSON.stringify(platformPkgJson, null, "\t")}\n`,
+      ),
     );
 
     // The shim only uses Node built-ins; @supabase/* and catalog: deps are bundled in the platform
@@ -244,31 +293,39 @@ async function main() {
       publishConfig: cliPkgJson.publishConfig,
       optionalDependencies: resolvedOptionalDeps,
     };
-    await Bun.write(
-      path.join(tmpCliDir, "package.json"),
-      `${JSON.stringify(publishPkgJson, null, "\t")}\n`,
+    yield* tryAsync(() =>
+      Bun.write(
+        path.join(tmpCliDir, "package.json"),
+        `${JSON.stringify(publishPkgJson, null, "\t")}\n`,
+      ),
     );
 
     const npmrc = [`registry=${REGISTRY}`, `//localhost:${PORT}/:_authToken=${token}`, ""].join(
       "\n",
     );
-    await Bun.write(path.join(tmpPlatformDir, ".npmrc"), npmrc);
-    await Bun.write(path.join(tmpCliDir, ".npmrc"), npmrc);
+    yield* tryAsync(() => Bun.write(path.join(tmpPlatformDir, ".npmrc"), npmrc));
+    yield* tryAsync(() => Bun.write(path.join(tmpCliDir, ".npmrc"), npmrc));
 
-    console.log(`\nPublishing @supabase/${platform.platformPkg}@${version} to local registry...`);
+    yield* Console.log(
+      `\nPublishing @supabase/${platform.platformPkg}@${version} to local registry...`,
+    );
     // bun publish (not pnpm) for the platform binary package: pnpm normalizes tarball file modes
     // and strips the execute bit from files outside the package's `bin` field; bun publish
     // preserves modes, matching production.
-    await $`bun publish --access public --tag local --registry ${REGISTRY} --no-git-checks`.cwd(
-      tmpPlatformDir,
+    yield* tryAsync(() =>
+      $`bun publish --access public --tag local --registry ${REGISTRY} --no-git-checks`.cwd(
+        tmpPlatformDir,
+      ),
     );
 
-    console.log(`Publishing ${umbrellaName}@${version} to local registry...`);
-    await $`pnpm publish --access public --tag local --registry ${REGISTRY} --no-git-checks`.cwd(
-      tmpCliDir,
+    yield* Console.log(`Publishing ${umbrellaName}@${version} to local registry...`);
+    yield* tryAsync(() =>
+      $`pnpm publish --access public --tag local --registry ${REGISTRY} --no-git-checks`.cwd(
+        tmpCliDir,
+      ),
     );
 
-    console.log(`
+    yield* Console.log(`
 ✓ Published ${umbrellaName}@${version}
 
 Test with npx:
@@ -278,9 +335,25 @@ Or install globally:
   npm install -g --registry ${REGISTRY} ${umbrellaName}@${version}
   supabase --version
 `);
-  } finally {
-    await rm(tmpDir, { recursive: true, force: true });
-  }
-}
+  }).pipe(Effect.exit);
+  yield* fs.remove(tmpDir, { recursive: true, force: true });
+  return yield* exit;
+});
 
-await main();
+await Effect.runPromise(
+  main().pipe(
+    /* Dies with the step's own cause, or a plain Error with its message, so the uncaught report has no `_tag` line. */
+    Effect.catchTags({
+      LocalReleaseError: (error) => Effect.die(error.cause ?? new Error(error.message)),
+      PlatformError: (error) => Effect.die(error.cause ?? error),
+    }),
+    Effect.provide(
+      Layer.mergeAll(
+        BunFileSystem.layer,
+        BunPath.layer,
+        FetchHttpClient.layer,
+        Layer.succeed(HttpClient.TracerPropagationEnabled, false),
+      ),
+    ),
+  ),
+);

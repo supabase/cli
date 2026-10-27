@@ -12,114 +12,167 @@
  * crash or hard kill cannot leave the developer's machine pointed at localhost.
  */
 
+import { BunFileSystem, BunPath } from "@effect/platform-bun";
+import { Console, Effect, FileSystem, Layer, Path, Schema } from "effect";
+import { FetchHttpClient, HttpClient } from "effect/http";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Effect ChildProcess cannot hand Verdaccio one log descriptor shared by stdout and stderr.
 import { openSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import path from "node:path";
 
 const PORT = 4873;
 const REGISTRY = `http://localhost:${PORT}`;
 const LOCAL_USER = "local-dev";
 const LOCAL_PASS = "local-dev-password";
 
-const root = path.resolve(import.meta.dir, "../..");
-const tmpDir = path.join(root, "tmp", "verdaccio");
-const configPath = path.join(root, "tmp", "verdaccio.yaml");
-const tokenPath = path.join(root, "tmp", "verdaccio-token");
-const logPath = path.join(root, "tmp", "verdaccio.log");
+class LocalRegistryError extends Schema.TaggedError<LocalRegistryError>()("LocalRegistryError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
 
-async function isPortInUse(): Promise<boolean> {
-  try {
-    const res = await fetch(`${REGISTRY}/-/ping`, {
-      signal: AbortSignal.timeout(1000),
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
+/* Only `AbortSignal.timeout`, so the deadline alone bounds the request and its unread response body. */
+const abortAfter = (ms: number) =>
+  Effect.updateService(FetchHttpClient.Fetch, (fetch) =>
+    Object.assign(
+      (input: string | URL | Request, init?: RequestInit) =>
+        fetch(input, { ...init, signal: AbortSignal.timeout(ms) }),
+      { preconnect: fetch.preconnect },
+    ),
+  );
 
-async function waitForRegistry(maxAttempts = 30, intervalMs = 500): Promise<void> {
+const isPortInUse = Effect.fnUntraced(function* () {
+  const client = yield* HttpClient.HttpClient;
+  return yield* client.get(`${REGISTRY}/-/ping`).pipe(
+    abortAfter(1000),
+    Effect.map((res) => res.status >= 200 && res.status < 300),
+    Effect.orElseSucceed(() => false),
+  );
+});
+
+const waitForRegistry = Effect.fnUntraced(function* (
+  logPath: string,
+  maxAttempts = 30,
+  intervalMs = 500,
+) {
+  const client = yield* HttpClient.HttpClient;
   for (let i = 0; i < maxAttempts; i++) {
-    try {
-      const res = await fetch(`${REGISTRY}/-/ping`, {
-        signal: AbortSignal.timeout(1000),
-      });
-      if (res.ok) return;
-    } catch {
+    const ready = yield* client.get(`${REGISTRY}/-/ping`).pipe(
+      abortAfter(1000),
+      Effect.map((res) => res.status >= 200 && res.status < 300),
       // not ready yet
-    }
-    await Bun.sleep(intervalMs);
+      Effect.orElseSucceed(() => false),
+    );
+    if (ready) return;
+    yield* Effect.sleep(intervalMs);
   }
   const totalSeconds = (maxAttempts * intervalMs) / 1000;
-  throw new Error(`Verdaccio did not become ready within ${totalSeconds}s. Check logs: ${logPath}`);
-}
+  return yield* new LocalRegistryError({
+    message: `Verdaccio did not become ready within ${totalSeconds}s. Check logs: ${logPath}`,
+  });
+});
 
-async function createUser(): Promise<string> {
-  const res = await fetch(`${REGISTRY}/-/user/org.couchdb.user:${LOCAL_USER}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      name: LOCAL_USER,
-      password: LOCAL_PASS,
-      email: "local@local.dev",
-      _id: `org.couchdb.user:${LOCAL_USER}`,
-      type: "user",
-      roles: [],
-    }),
+const foreignFailure = (cause: unknown) =>
+  new LocalRegistryError({
+    message: cause instanceof Error ? cause.message : String(cause),
+    cause,
   });
 
+const tryAsync = <A>(evaluate: () => PromiseLike<A>) =>
+  Effect.tryPromise({ try: evaluate, catch: foreignFailure });
+
+/* Native `fetch` and `Response.json`, whose empty and null body handling `HttpClientResponse` cannot reproduce. */
+const createUser = Effect.fnUntraced(function* () {
+  const fetch = yield* FetchHttpClient.Fetch;
+  const res = yield* tryAsync(() =>
+    fetch(`${REGISTRY}/-/user/org.couchdb.user:${LOCAL_USER}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: LOCAL_USER,
+        password: LOCAL_PASS,
+        email: "local@local.dev",
+        _id: `org.couchdb.user:${LOCAL_USER}`,
+        type: "user",
+        roles: [],
+      }),
+    }),
+  );
+
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Failed to create Verdaccio user (HTTP ${res.status}): ${body}`);
+    const body = yield* tryAsync(() => res.text());
+    return yield* new LocalRegistryError({
+      message: `Failed to create Verdaccio user (HTTP ${res.status}): ${body}`,
+    });
   }
 
-  const body = (await res.json()) as { token?: string };
+  const body = (yield* tryAsync(() => res.json())) as { token?: string };
   if (!body.token) {
-    throw new Error("Verdaccio did not return an auth token after user creation.");
+    return yield* new LocalRegistryError({
+      message: "Verdaccio did not return an auth token after user creation.",
+    });
   }
   return body.token;
-}
+});
 
-async function main() {
-  if (await isPortInUse()) {
-    console.error(`\nError: Something is already running on port ${PORT}.`);
-    console.error("If it's a leftover Verdaccio process, kill it first and retry.\n");
+const main = Effect.fnUntraced(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+
+  const root = path.resolve(import.meta.dir, "../..");
+  const tmpDir = path.join(root, "tmp", "verdaccio");
+  const configPath = path.join(root, "tmp", "verdaccio.yaml");
+  const tokenPath = path.join(root, "tmp", "verdaccio-token");
+  const logPath = path.join(root, "tmp", "verdaccio.log");
+
+  if (yield* isPortInUse()) {
+    yield* Console.error(`\nError: Something is already running on port ${PORT}.`);
+    yield* Console.error("If it's a leftover Verdaccio process, kill it first and retry.\n");
     process.exit(1);
   }
 
   // Fresh storage each run to avoid stale auth or package conflicts.
-  await rm(tmpDir, { recursive: true, force: true });
-  await mkdir(tmpDir, { recursive: true });
+  yield* fs.remove(tmpDir, { recursive: true, force: true });
+  yield* fs.makeDirectory(tmpDir, { recursive: true });
 
-  const template = await Bun.file(path.join(root, "verdaccio.yaml")).text();
+  const template = yield* tryAsync(() => Bun.file(path.join(root, "verdaccio.yaml")).text());
   const resolved = template.replaceAll("{root}", root);
-  await writeFile(configPath, resolved, "utf-8");
+  yield* fs.writeFileString(configPath, resolved);
 
-  const logFd = openSync(logPath, "w");
+  const logFd = yield* Effect.try({
+    try: () => openSync(logPath, "w"),
+    catch: foreignFailure,
+  });
   const verdaccioBin = path.join(root, "node_modules", ".bin", "verdaccio");
-  const proc = Bun.spawn([verdaccioBin, "--config", configPath], {
-    cwd: root,
-    stdout: logFd,
-    stderr: logFd,
+  const proc = yield* Effect.try({
+    try: () =>
+      Bun.spawn([verdaccioBin, "--config", configPath], {
+        cwd: root,
+        stdout: logFd,
+        stderr: logFd,
+      }),
+    catch: foreignFailure,
   });
 
   // Handle unexpected Verdaccio crash.
-  void proc.exited.then((code) => {
-    if (code !== 0 && code !== null) {
-      console.error(`\nVerdaccio exited unexpectedly (code ${code}). Check logs: ${logPath}\n`);
-      process.exit(1);
-    }
-  });
+  yield* Effect.forkChild(
+    Effect.gen(function* () {
+      const code = yield* Effect.promise(() => proc.exited);
+      if (code !== 0 && code !== null) {
+        yield* Console.error(
+          `\nVerdaccio exited unexpectedly (code ${code}). Check logs: ${logPath}\n`,
+        );
+        process.exit(1);
+      }
+    }),
+  );
 
   process.stdout.write(`Starting local registry at ${REGISTRY}...`);
-  await waitForRegistry();
+  yield* waitForRegistry(logPath);
   process.stdout.write(" ready.\n");
 
   // Persisted so local-release.ts can read it.
-  const token = await createUser();
-  await writeFile(tokenPath, token, "utf-8");
+  const token = yield* createUser();
+  yield* fs.writeFileString(tokenPath, token);
 
-  console.log(`
+  yield* Console.log(`
   Registry : ${REGISTRY}
   Token    : ${tokenPath}
   Logs     : ${logPath}
@@ -144,7 +197,23 @@ async function main() {
   process.on("SIGHUP", cleanup);
 
   // Block until a signal is received.
-  await new Promise<never>(() => {});
-}
+  return yield* Effect.never;
+});
 
-await main();
+await Effect.runPromise(
+  main().pipe(
+    /* Dies with the step's own cause, or a plain Error with its message, so the uncaught report has no `_tag` line. */
+    Effect.catchTags({
+      LocalRegistryError: (error) => Effect.die(error.cause ?? new Error(error.message)),
+      PlatformError: (error) => Effect.die(error.cause ?? error),
+    }),
+    Effect.provide(
+      Layer.mergeAll(
+        BunFileSystem.layer,
+        BunPath.layer,
+        FetchHttpClient.layer,
+        Layer.succeed(HttpClient.TracerPropagationEnabled, false),
+      ),
+    ),
+  ),
+);
