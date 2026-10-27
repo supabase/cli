@@ -442,6 +442,9 @@ importers:
       '@effect/platform-bun':
         specifier: 'catalog:'
         version: 4.0.2(effect@4.0.2)
+      '@effect/platform-node':
+        specifier: 'catalog:'
+        version: 4.0.2(effect@4.0.2)(redis@6.2.1)
       '@supabase/cli-test-helpers':
         specifier: workspace:*
         version: link:../../packages/cli-test-helpers

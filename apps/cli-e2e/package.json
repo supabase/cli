@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
     "@supabase/cli-test-helpers": "workspace:*",
     "effect": "catalog:"
   },
