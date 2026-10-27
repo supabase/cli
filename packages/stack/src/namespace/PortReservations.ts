@@ -94,6 +94,9 @@ const connectionFor = (file: string): Effect.Effect<DatabaseSync, NamespaceError
     // before the schema statement, so even first-time table creation waits out a racing peer
     // instead of surfacing a spurious busy error.
     connection.exec("PRAGMA busy_timeout = 2000");
+    // WAL lets reads and opens proceed while a peer commits; under the rollback journal a peer
+    // that commits back to back can lock new readers out past the busy timeout.
+    connection.exec("PRAGMA journal_mode = WAL");
     connection.exec(schema);
   });
 
