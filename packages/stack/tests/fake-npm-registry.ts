@@ -84,6 +84,7 @@ export const makeFakeNpmRegistry = (pkg: {
           response.end();
         }
       });
+      server.once("error", (error) => resume(Effect.die(error)));
       server.listen(0, "127.0.0.1", () => {
         const address = server.address();
         if (address === null || typeof address === "string")
