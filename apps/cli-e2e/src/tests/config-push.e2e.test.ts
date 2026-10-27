@@ -1,18 +1,19 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { Effect, FileSystem, Path } from "effect";
 import { describe, expect } from "vitest";
 import { PROJECT_REF } from "./env.ts";
-import { testBehaviour } from "./test-context.ts";
+import { postControl, runE2e, testBehaviour } from "./test-context.ts";
 
 /**
  * Writes a supabase/config.toml covering every section `config push`
  * reconciles, each with a small diff against the recorded test project — a
  * section without a diff sends no PATCH/POST to the management API.
  */
-function writeConfigToml(dir: string): void {
-  mkdirSync(join(dir, "supabase"), { recursive: true });
-  writeFileSync(
-    join(dir, "supabase", "config.toml"),
+const writeConfigToml = Effect.fnUntraced(function* (dir: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* fs.makeDirectory(path.join(dir, "supabase"), { recursive: true });
+  yield* fs.writeFileString(
+    path.join(dir, "supabase", "config.toml"),
     `
 project_id = "test-project"
 
@@ -53,150 +54,180 @@ file_size_limit = "50MiB"
 enabled = true
 `.trimStart(),
   );
-}
+});
 
 // `--yes` skips the per-section y/n prompt, since the test process runs with stdin closed.
 describe("config push", () => {
-  testBehaviour("reconciles every section against the remote", async ({ run, workspace }) => {
-    writeConfigToml(workspace.path);
-    const result = await run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
-    expect(result.exitCode).toBe(0);
-  });
-
-  testBehaviour("emits HTTP trace with --debug", async ({ run, workspace }) => {
-    writeConfigToml(workspace.path);
-    const result = await run(["config", "push", "--yes", "--project-ref", PROJECT_REF, "--debug"]);
-    expect(result.exitCode).toBe(0);
-    expect(result.stderr).toMatch(/HTTP.*GET:/);
-  });
-
-  testBehaviour("exits non-zero on 401 with token guidance", async ({ run, apiUrl, workspace }) => {
-    await fetch(`${apiUrl}/_ctrl/error-all`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        status: 401,
-        body: { message: "Invalid token" },
+  testBehaviour("reconciles every section against the remote", ({ run, workspace, signal }) =>
+    runE2e(
+      Effect.gen(function* () {
+        yield* writeConfigToml(workspace.path);
+        const result = yield* run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
+        expect(result.exitCode).toBe(0);
       }),
-    });
+      signal,
+    ),
+  );
 
-    writeConfigToml(workspace.path);
-    const result = await run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
-    expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toContain("401");
-  });
+  testBehaviour("emits HTTP trace with --debug", ({ run, workspace, signal }) =>
+    runE2e(
+      Effect.gen(function* () {
+        yield* writeConfigToml(workspace.path);
+        const result = yield* run([
+          "config",
+          "push",
+          "--yes",
+          "--project-ref",
+          PROJECT_REF,
+          "--debug",
+        ]);
+        expect(result.exitCode).toBe(0);
+        expect(result.stderr).toMatch(/HTTP.*GET:/);
+      }),
+      signal,
+    ),
+  );
+
+  testBehaviour("exits non-zero on 401 with token guidance", ({ run, apiUrl, workspace, signal }) =>
+    runE2e(
+      Effect.gen(function* () {
+        yield* postControl(`${apiUrl}/_ctrl/error-all`, {
+          status: 401,
+          body: { message: "Invalid token" },
+        });
+
+        yield* writeConfigToml(workspace.path);
+        const result = yield* run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
+        expect(result.exitCode).not.toBe(0);
+        expect(result.stderr).toContain("401");
+      }),
+      signal,
+    ),
+  );
 
   testBehaviour(
     "exits non-zero on 403 with resource context",
-    async ({ run, apiUrl, workspace }) => {
-      await fetch(`${apiUrl}/_ctrl/error-all`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          status: 403,
-          body: {
-            message: `Forbidden: you do not have access to project ${PROJECT_REF}`,
-          },
-        }),
-      });
+    ({ run, apiUrl, workspace, signal }) =>
+      runE2e(
+        Effect.gen(function* () {
+          yield* postControl(`${apiUrl}/_ctrl/error-all`, {
+            status: 403,
+            body: {
+              message: `Forbidden: you do not have access to project ${PROJECT_REF}`,
+            },
+          });
 
-      writeConfigToml(workspace.path);
-      const result = await run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
-      expect(result.exitCode).not.toBe(0);
-      expect(result.stderr).toContain("403");
-    },
+          yield* writeConfigToml(workspace.path);
+          const result = yield* run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
+          expect(result.exitCode).not.toBe(0);
+          expect(result.stderr).toContain("403");
+        }),
+        signal,
+      ),
   );
 
-  testBehaviour("exits non-zero on 404", async ({ run, apiUrl, workspace }) => {
-    await fetch(`${apiUrl}/_ctrl/error-all`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        status: 404,
-        body: { message: "Project not found" },
+  testBehaviour("exits non-zero on 404", ({ run, apiUrl, workspace, signal }) =>
+    runE2e(
+      Effect.gen(function* () {
+        yield* postControl(`${apiUrl}/_ctrl/error-all`, {
+          status: 404,
+          body: { message: "Project not found" },
+        });
+
+        yield* writeConfigToml(workspace.path);
+        const result = yield* run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
+        expect(result.exitCode).not.toBe(0);
+        expect(result.stderr).toContain("404");
       }),
-    });
+      signal,
+    ),
+  );
 
-    writeConfigToml(workspace.path);
-    const result = await run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
-    expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toContain("404");
-  });
+  testBehaviour("exits non-zero on 409", ({ run, apiUrl, workspace, signal }) =>
+    runE2e(
+      Effect.gen(function* () {
+        yield* postControl(`${apiUrl}/_ctrl/error-all`, {
+          status: 409,
+          body: { message: "Conflict" },
+        });
 
-  testBehaviour("exits non-zero on 409", async ({ run, apiUrl, workspace }) => {
-    await fetch(`${apiUrl}/_ctrl/error-all`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: 409, body: { message: "Conflict" } }),
-    });
-
-    writeConfigToml(workspace.path);
-    const result = await run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
-    expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toContain("409");
-  });
-
-  testBehaviour("exits non-zero on 422 with field detail", async ({ run, apiUrl, workspace }) => {
-    await fetch(`${apiUrl}/_ctrl/error-all`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        status: 422,
-        body: {
-          message: "Invalid config: max_rows must be a positive integer",
-        },
+        yield* writeConfigToml(workspace.path);
+        const result = yield* run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
+        expect(result.exitCode).not.toBe(0);
+        expect(result.stderr).toContain("409");
       }),
-    });
+      signal,
+    ),
+  );
 
-    writeConfigToml(workspace.path);
-    const result = await run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
-    expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toContain("422");
-    expect(result.stderr).toContain("max_rows");
-  });
+  testBehaviour("exits non-zero on 422 with field detail", ({ run, apiUrl, workspace, signal }) =>
+    runE2e(
+      Effect.gen(function* () {
+        yield* postControl(`${apiUrl}/_ctrl/error-all`, {
+          status: 422,
+          body: {
+            message: "Invalid config: max_rows must be a positive integer",
+          },
+        });
 
-  testBehaviour("exits non-zero on 429 after retrying", async ({ run, apiUrl, workspace }) => {
-    await fetch(`${apiUrl}/_ctrl/error-all`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        status: 429,
-        body: { message: "Too Many Requests" },
+        yield* writeConfigToml(workspace.path);
+        const result = yield* run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
+        expect(result.exitCode).not.toBe(0);
+        expect(result.stderr).toContain("422");
+        expect(result.stderr).toContain("max_rows");
       }),
-    });
+      signal,
+    ),
+  );
 
-    writeConfigToml(workspace.path);
-    const result = await run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
-    expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toContain("429");
-  });
+  testBehaviour("exits non-zero on 429 after retrying", ({ run, apiUrl, workspace, signal }) =>
+    runE2e(
+      Effect.gen(function* () {
+        yield* postControl(`${apiUrl}/_ctrl/error-all`, {
+          status: 429,
+          body: { message: "Too Many Requests" },
+        });
 
-  testBehaviour("exits non-zero on 500", async ({ run, apiUrl, workspace }) => {
-    await fetch(`${apiUrl}/_ctrl/error-all`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        status: 500,
-        body: { message: "Internal Server Error" },
+        yield* writeConfigToml(workspace.path);
+        const result = yield* run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
+        expect(result.exitCode).not.toBe(0);
+        expect(result.stderr).toContain("429");
       }),
-    });
+      signal,
+    ),
+  );
 
-    writeConfigToml(workspace.path);
-    const result = await run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
-    expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toContain("500");
-  });
+  testBehaviour("exits non-zero on 500", ({ run, apiUrl, workspace, signal }) =>
+    runE2e(
+      Effect.gen(function* () {
+        yield* postControl(`${apiUrl}/_ctrl/error-all`, {
+          status: 500,
+          body: { message: "Internal Server Error" },
+        });
 
-  testBehaviour("exits non-zero on 502", async ({ run, apiUrl, workspace }) => {
-    await fetch(`${apiUrl}/_ctrl/error-all`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: 502, body: { message: "Bad Gateway" } }),
-    });
+        yield* writeConfigToml(workspace.path);
+        const result = yield* run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
+        expect(result.exitCode).not.toBe(0);
+        expect(result.stderr).toContain("500");
+      }),
+      signal,
+    ),
+  );
 
-    writeConfigToml(workspace.path);
-    const result = await run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
-    expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toContain("502");
-  });
+  testBehaviour("exits non-zero on 502", ({ run, apiUrl, workspace, signal }) =>
+    runE2e(
+      Effect.gen(function* () {
+        yield* postControl(`${apiUrl}/_ctrl/error-all`, {
+          status: 502,
+          body: { message: "Bad Gateway" },
+        });
+
+        yield* writeConfigToml(workspace.path);
+        const result = yield* run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
+        expect(result.exitCode).not.toBe(0);
+        expect(result.stderr).toContain("502");
+      }),
+      signal,
+    ),
+  );
 });

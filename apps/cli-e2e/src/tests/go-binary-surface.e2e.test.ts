@@ -1,7 +1,7 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { Effect, FileSystem, Path } from "effect";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { readEnv } from "./env.ts";
+import { runE2e } from "./test-context.ts";
 
 // The bundled `supabase-go` binary retains only the commands the TypeScript
 // CLI's `GoProxy` can spawn; every other Go command was deleted. TS
@@ -15,7 +15,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 //
 // `SUPABASE_GO_BINARY` is only set to a freshly built binary in CI (see
 // `.github/workflows/test.yml`); locally this whole suite no-ops.
-const GO_BINARY = process.env["SUPABASE_GO_BINARY"];
+const GO_BINARY = readEnv("SUPABASE_GO_BINARY");
 
 describe.skipIf(GO_BINARY === undefined)("go binary spawn surface (CLI-1970)", () => {
   const binary = GO_BINARY as string;
@@ -23,41 +23,55 @@ describe.skipIf(GO_BINARY === undefined)("go binary spawn surface (CLI-1970)", (
   let workspaceDir: string;
   let bogusProfilePath: string;
 
-  beforeAll(() => {
-    workspaceDir = mkdtempSync(join(tmpdir(), "cli-e2e-go-binary-surface-"));
+  beforeAll(() =>
+    runE2e(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        workspaceDir = yield* fs.makeTempDirectory({ prefix: "cli-e2e-go-binary-surface-" });
 
-    // The upgrade check hits the real GitHub releases API on every invocation
-    // that returns a nil error (e.g. every `--help` call below), unless a
-    // `supabase/.temp/cli-latest` cache file already exists and is less than
-    // 10h old. Pre-seeding it here keeps this suite hermetic.
-    mkdirSync(join(workspaceDir, "supabase", ".temp"), { recursive: true });
-    writeFileSync(join(workspaceDir, "supabase", ".temp", "cli-latest"), "v0.0.0");
+        // The upgrade check hits the real GitHub releases API on every invocation
+        // that returns a nil error (e.g. every `--help` call below), unless a
+        // `supabase/.temp/cli-latest` cache file already exists and is less than
+        // 10h old. Pre-seeding it here keeps this suite hermetic.
+        yield* fs.makeDirectory(path.join(workspaceDir, "supabase", ".temp"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(workspaceDir, "supabase", ".temp", "cli-latest"),
+          "v0.0.0",
+        );
 
-    // A bogus `--profile` for the two Management-API-gated delegates (`gen
-    // keys`, `functions download --legacy-bundle`): the unique profile name
-    // can never match a real stored credential, and the unreachable api_url
-    // means even a stray match still fails at connect.
-    bogusProfilePath = join(workspaceDir, "profile.yaml");
-    writeFileSync(
-      bogusProfilePath,
-      [
-        "name: cli-e2e-go-binary-surface-guard",
-        'api_url: "http://127.0.0.1:1"',
-        'dashboard_url: "http://127.0.0.1:1"',
-        "project_host: localhost",
-      ].join("\n"),
-    );
-  });
+        // A bogus `--profile` for the two Management-API-gated delegates (`gen
+        // keys`, `functions download --legacy-bundle`): the unique profile name
+        // can never match a real stored credential, and the unreachable api_url
+        // means even a stray match still fails at connect.
+        bogusProfilePath = path.join(workspaceDir, "profile.yaml");
+        yield* fs.writeFileString(
+          bogusProfilePath,
+          [
+            "name: cli-e2e-go-binary-surface-guard",
+            'api_url: "http://127.0.0.1:1"',
+            'dashboard_url: "http://127.0.0.1:1"',
+            "project_host: localhost",
+          ].join("\n"),
+        );
+      }),
+    ),
+  );
 
-  afterAll(() => {
-    rmSync(workspaceDir, { recursive: true, force: true });
-  });
+  afterAll(() =>
+    runE2e(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.remove(workspaceDir, { recursive: true, force: true });
+      }),
+    ),
+  );
 
   function runGo(args: ReadonlyArray<string>, envOverrides: Record<string, string> = {}) {
     const result = Bun.spawnSync([binary, ...args], {
       cwd: workspaceDir,
       env: {
-        PATH: process.env["PATH"] ?? "",
+        PATH: readEnv("PATH") ?? "",
         HOME: workspaceDir,
         SUPABASE_HOME: workspaceDir,
         // Belt-and-braces: no command exercised here should ever reach a

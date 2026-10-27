@@ -2,7 +2,7 @@ import { Config, ConfigProvider, Effect, Option } from "effect";
 import { REPLAY_PROJECT_REF } from "../server/placeholder.ts";
 
 /** Reads an environment variable through `Config`, keeping empty values as set. */
-const readEnv = (name: string): string | undefined =>
+export const readEnv = (name: string): string | undefined =>
   Effect.runSync(
     Config.option(Config.String(name))
       .parse(ConfigProvider.fromEnv({ preserveEmptyStrings: true }))

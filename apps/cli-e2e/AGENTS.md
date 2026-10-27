@@ -61,20 +61,30 @@ the running tests exercise. The implications:
 ### `testBehaviour` — the default for all success and error tests
 
 ```typescript
-import { testBehaviour } from "./test-context.ts";
+import { Effect } from "effect";
+import { runE2e, testBehaviour } from "./test-context.ts";
 
-testBehaviour("does the thing", async ({ run, projectRef, orgId, apiUrl, workspace }) => {
-  const result = await run(["command", "--project-ref", projectRef]);
-  expect(result.exitCode).toBe(0);
-  expect(result.stdout).toContain("Expected output");
-});
+testBehaviour("does the thing", ({ run, projectRef, orgId, apiUrl, workspace, signal }) =>
+  runE2e(
+    Effect.gen(function* () {
+      const result = yield* run(["command", "--project-ref", projectRef]);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("Expected output");
+    }),
+    signal,
+  ),
+);
 ```
 
 The `workspace` fixture is what triggers scenario setup — if you destructure `workspace` or `run` (which depends on `workspace`), the scenario is automatically started before the test and cleaned up after.
 
+Always return `runE2e(...)` from the body: Vitest does not run a returned Effect, so the harness fails a test that requests `run` or `runNoProjectId` and passes without executing it. A custom runner added with `testBehaviour.extend` gets the same check by wrapping its CLI Effect in `runGuard.track(...)`, as `stackRun` does. Pass the test's `signal` so a Vitest timeout interrupts the body.
+
+This workspace is under the Effect lint (`.oxlintrc.effect.json`, warnings are errors), which rejects `async` test bodies, global `fetch`, `process.env` and `JSON.parse` in Effect code. Decode JSON stdout with `decodeJsonOutput(schema)(result.stdout)`, which reports a stdout excerpt on failure.
+
 Available fixtures:
 
-- `run(cmd)` — executes the CLI via the relay server
+- `run(cmd)` — returns an Effect that executes the CLI via the relay server
 - `projectRef` — 20-char project ref (real in record mode, default in replay)
 - `orgId` — org slug (real in record mode, default in replay)
 - `apiUrl` — the relay server base URL, for direct `/_ctrl/` calls
@@ -85,15 +95,23 @@ Available fixtures:
 Inject errors via `/_ctrl/error-all` before the `run` call:
 
 ```typescript
-testBehaviour("exits non-zero on 401", async ({ run, apiUrl }) => {
-  await fetch(`${apiUrl}/_ctrl/error-all`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ status: 401, body: { message: "Invalid token" } }),
-  });
-  const result = await run(["command", "--project-ref", PROJECT_REF]);
-  expect(result.exitCode).not.toBe(0);
-});
+import { Effect } from "effect";
+import { PROJECT_REF } from "./env.ts";
+import { postControl, runE2e, testBehaviour } from "./test-context.ts";
+
+testBehaviour("exits non-zero on 401", ({ run, apiUrl, signal }) =>
+  runE2e(
+    Effect.gen(function* () {
+      yield* postControl(`${apiUrl}/_ctrl/error-all`, {
+        status: 401,
+        body: { message: "Invalid token" },
+      });
+      const result = yield* run(["command", "--project-ref", PROJECT_REF]);
+      expect(result.exitCode).not.toBe(0);
+    }),
+    signal,
+  ),
+);
 ```
 
 Error injection tests can use `PROJECT_REF` directly (not `projectRef`) because no real API call reaches staging — the error is injected before the relay server checks the fixture. Their scenario fixture is always `[]` (empty).
@@ -103,15 +121,21 @@ Error injection tests can use `PROJECT_REF` directly (not `projectRef`) because 
 If a test depends on timing (e.g. deleting a project that was just created won't work because it's not yet provisioned), use `skipIf(isRecording)` and write a static fixture instead:
 
 ```typescript
+import { Effect } from "effect";
 import { isRecording } from "./env.ts";
+import { runE2e, testBehaviour } from "./test-context.ts";
 
 testBehaviour.skipIf(isRecording)(
   "deletes project with --yes flag",
-  async ({ run, projectRef }) => {
-    const result = await run(["projects", "delete", projectRef, "--yes"]);
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("Deleted project");
-  },
+  ({ run, projectRef, signal }) =>
+    runE2e(
+      Effect.gen(function* () {
+        const result = yield* run(["projects", "delete", projectRef, "--yes"]);
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toContain("Deleted project");
+      }),
+      signal,
+    ),
 );
 ```
 
