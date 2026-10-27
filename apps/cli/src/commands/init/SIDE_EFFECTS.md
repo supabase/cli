@@ -28,10 +28,11 @@
 
 ## Environment Variables
 
-| Variable                      | Purpose                                                                                                                                                                            | Required? |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| `SUPABASE_YES`                | auto-accepts `-i` IDE prompts with the established stderr echo, same as `--yes`                                                                                                    | no        |
-| `SUPABASE_EXPERIMENTAL_STACK` | when true (`1`, `t`, `T`, `TRUE`, `true`, `True`), persist `[experimental] stack = true` and omit Docker-era default ports; false, unset, or empty writes the established template | no        |
+| Variable                                 | Purpose                                                                                                                                                                            | Required? |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `SUPABASE_YES`                           | auto-accepts `-i` IDE prompts with the established stderr echo, same as `--yes`                                                                                                    | no        |
+| `SUPABASE_EXPERIMENTAL_STACK`            | when true (`1`, `t`, `T`, `TRUE`, `true`, `True`), persist `[experimental] stack = true` and omit Docker-era default ports; false, unset, or empty writes the established template | no        |
+| `SUPABASE_EXPERIMENTAL_MIGRATION_CHECKS` | when true (`1`, `t`, `T`, `TRUE`, `true`, `True`), write `[db.migrations.checks]` with every rule at `warn`; any other value or unset omits the section                            | no        |
 
 ## Exit Codes
 

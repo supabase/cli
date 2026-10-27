@@ -46,7 +46,7 @@ import { LegacyProjectState } from "../../shared/config/legacy-project-state.ser
 import { extractServiceKeys } from "../../command-internal/tenant-keys.ts";
 import { parseDotEnv } from "../../shared/config/dotenv.ts";
 import { resolveExperimentalFeature } from "../../shared/config/experimental-feature.ts";
-import { initProject } from "../../shared/init/project-init.ts";
+import { initProject, resolveInitMigrationChecks } from "../../shared/init/project-init.ts";
 import { buildDotEnv, marshalDotEnv } from "./bootstrap.dotenv.ts";
 import {
   BootstrapDotEnvParseError,
@@ -200,6 +200,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
           withVscodeSettings: false,
           withIntellijSettings: false,
           experimentalStack,
+          migrationChecks: yield* resolveInitMigrationChecks,
         }).pipe(Effect.withSpan("bootstrap.initProject")),
       );
     }

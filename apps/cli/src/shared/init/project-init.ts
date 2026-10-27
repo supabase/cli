@@ -1,5 +1,6 @@
 import { Effect, FileSystem, Path, Schema } from "effect";
 import { promptYesNo } from "../../command-internal/prompt-yes-no.ts";
+import { supabaseEnvBool } from "../../command-internal/supabase-env.ts";
 import { sanitizeProjectId } from "../config/project-id.ts";
 import { Output } from "../output/output.service.ts";
 import { Tty } from "../runtime/tty.service.ts";
@@ -128,7 +129,15 @@ export interface ProjectInitOptions {
   readonly withIntellijSettings: boolean;
   /** Persist `experimental.stack` and omit default stack listener ports. */
   readonly experimentalStack?: boolean;
+  /** Write `[db.migrations.checks]`; see {@link resolveInitMigrationChecks}. */
+  readonly migrationChecks?: boolean;
 }
+
+/**
+ * Shell-only opt-in that writes migration checks into new projects while the feature is
+ * dogfooded; it has no config key.
+ */
+export const resolveInitMigrationChecks = supabaseEnvBool("SUPABASE_EXPERIMENTAL_MIGRATION_CHECKS");
 
 // Files/directories are pinned to 0644/0755 explicitly rather than relying
 // on Node's umask-masked defaults, which only coincide under the common 022.
@@ -295,7 +304,10 @@ export const initProject = Effect.fnUntraced(function* (options: ProjectInitOpti
   yield* fs.makeDirectory(supabaseDir, { recursive: true, mode: INIT_DIR_MODE });
   yield* fs.writeFileString(
     configTomlPath,
-    renderCliConfigTemplate(projectId, options.useOrioledb, options.experimentalStack === true),
+    renderCliConfigTemplate(projectId, options.useOrioledb, {
+      experimentalStack: options.experimentalStack,
+      migrationChecks: options.migrationChecks,
+    }),
     { mode: INIT_FILE_MODE },
   );
   yield* ensureSupabaseGitignore(options.cwd);
