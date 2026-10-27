@@ -584,6 +584,9 @@ importers:
       '@vitest/coverage-v8':
         specifier: 'catalog:'
         version: 5.0.0(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))(vitest@5.0.0)
+      ajv:
+        specifier: ^8.20.0
+        version: 8.20.0
       effect:
         specifier: 'catalog:'
         version: 4.0.2

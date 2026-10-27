@@ -343,23 +343,23 @@ const definitions: Readonly<Record<ArtifactKind, ArtifactDefinition>> = {
   storage: definition(
     "storage",
     {
-      upstreamVersion: "v1.84.25",
+      upstreamVersion: "v1.84.28",
       revision: 0,
       image:
-        "ghcr.io/supabase/cli/storage:v1.84.25-r0@sha256:c28d1ad8c63ce0b487754227f1eb97ca83dc2ccab58c34050fcc46f4ec2198d7",
-      upstreamImage: "supabase/storage-api:v1.84.25",
+        "ghcr.io/supabase/cli/storage:v1.84.28-r0@sha256:5a09c78a62bdf99724af5926a15c4621bd284bc8e53db1cb44173998477e596f",
+      upstreamImage: "supabase/storage-api:v1.84.28",
       natives: {
         "darwin-arm64": {
-          archive: "b7709c1f9d8f494e774313d82651d218cf7cb6833c7598823230289dcfe9a03f",
-          manifest: "bad18030ee947d49dd1c21350bea7a8f1d58370a6f1a837246266e7f254cf861",
+          archive: "39a3700203b093a75a47daaf68f6cc8594df0fb507efeeed0b2072549f48447f",
+          manifest: "732fa4b12d22f7438d0e1b31b55f313be467c8509b50201e8c29b4fd64a1c67b",
         },
         "linux-amd64": {
-          archive: "07bb85a098b3712947759dbeffd37323c0a1e1856e46313c613d2e0e8068170f",
-          manifest: "aac9b81078b7f45588a9fb5ed4e3f473b4fc3c95d844258f367df06279e14bf7",
+          archive: "6d92818489d0d0df814b327a1916017bd4c55abeeb8aa12fc79e0d698c56d712",
+          manifest: "26a52234fbf2c78c6f0f81de0d9766ceb3482299513990fac2a46d2411e958fc",
         },
         "linux-arm64": {
-          archive: "58bbaf780f131d4d59da13e25360881846d2dbdca6dbca1973019793192b84bd",
-          manifest: "47a61a0c93b977ee846f5bedf6969c85af546cc9f485cc03dd7cd441a12c0dc1",
+          archive: "1428aff9a0a413a4cdfaf0a7c3e3dfbfdf3cdf886dc1807bc5366fa8a5fc8871",
+          manifest: "4549f3345d65f5f4f6f5ecfa426a8c0bd1677decb524c92437fdd3aed2b8e18c",
         },
       },
     },
@@ -602,7 +602,8 @@ const errorMessage = (cause: unknown): string =>
  */
 const SLIM_NATIVE_SUPABASE_S3_MIRROR = "https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com";
 
-const SLIM_IMAGE_SUPABASE_ECR_MIRROR = "public.ecr.aws/supabase/cli/";
+/** ECR Public mirror of every slim image, under the same tags and digests. */
+export const SLIM_IMAGE_SUPABASE_ECR_MIRROR = "public.ecr.aws/supabase/cli/";
 
 /** Mirrors carrying a catalog slim image under the same tag and digest, in fallback order. */
 export const slimImageMirrors = (image: string): ReadonlyArray<string> =>

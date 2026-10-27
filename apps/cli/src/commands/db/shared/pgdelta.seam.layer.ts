@@ -247,7 +247,7 @@ export const declarativeSeamLayer = Layer.effect(
             if (actual.length === 0 || actualTag === undefined || expectedTag === undefined) {
               return;
             }
-            // Slim refs never go through a registry mirror, so a family mismatch
+            // A slim ref's ECR Public mirror is the same family; any other family mismatch
             // (e.g. a docker.io container satisfying a ghcr.io/supabase/cli
             // expectation) is stale even when the upstream versions happen to match.
             const familyMismatch = isSlimImageRef(expected) !== isSlimImageRef(actual);
