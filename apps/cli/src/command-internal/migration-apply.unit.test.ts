@@ -836,9 +836,21 @@ describe("markError", () => {
     expect(markError("abcde", 5)).toBe("abcde\n    ^");
   });
 
-  it("consumes the position in UTF-8 bytes like Go, not characters", () => {
-    expect(markError("héllo\nworld", 8)).toBe("héllo\nworld\n^");
+  it("consumes the position in characters, not UTF-8 bytes", () => {
+    expect(markError("héllo\nworld", 7)).toBe("héllo\nworld\n^");
     expect(markError("sélect 1", 3)).toBe("sélect 1\n  ^");
+  });
+
+  it("places the caret under the error after multibyte text on an earlier line", () => {
+    expect(markError("insert into notes (body) values ('éééééééé'),\n  (foo bar);", 54)).toBe(
+      "insert into notes (body) values ('éééééééé'),\n  (foo bar);\n       ^",
+    );
+  });
+
+  it("counts astral characters as one code point, not two UTF-16 units", () => {
+    expect(markError("insert into notes (body) values ('😀😀'),\n  (foo bar);", 48)).toBe(
+      "insert into notes (body) values ('😀😀'),\n  (foo bar);\n       ^",
+    );
   });
 });
 
