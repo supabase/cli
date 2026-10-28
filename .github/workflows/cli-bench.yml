@@ -27,8 +27,8 @@ on:
       - ".github/workflows/cli-bench.yml"
       - ".github/scripts/cli-bench/**"
   # A `/bench` comment on a pull request starts a run. The resolve job checks who commented and
-  # which commit it applies to; the jobs that run pull request code hold no write permission, and
-  # the one job that writes comments never checks out or runs pull request code.
+  # which commit it applies to; for `/bench` the resolve and comment jobs run default branch code,
+  # and the job that builds and runs pull request code holds no write permission.
   # jactionlint ignore=dangerous-triggers
   issue_comment:
     types:
@@ -59,7 +59,9 @@ jobs:
         contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # Reacts to the accepted command; runs only code from the default branch.
+    # Reacts to the accepted command. Checkout uses `github.sha`: default branch code for
+    # `issue_comment`, the pull request merge commit for `pull_request`, where a fork's token is
+    # read-only whatever is declared here.
     permissions:
       contents: read
       pull-requests: write
@@ -74,7 +76,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -251,15 +252,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     continue-on-error: true
-    # The only job that can write to the pull request. It runs scripts from the default branch and
-    # reads the rendered markdown as data; it never checks out or runs pull request code.
+    # The only job that can write to the pull request. Checkout uses `github.sha`: default branch
+    # code for `/bench`, and for same-repository `pull_request` runs the merge commit, which its
+    # author can already run with this token by editing the workflow. It never builds or runs the
+    # benchmarked binaries and reads the rendered markdown as data.
     permissions:
       contents: read
       pull-requests: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:

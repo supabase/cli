@@ -112,8 +112,11 @@ they do not save a package cache under the default branch's scope. The toolchain
 before any pull request code runs. A `/bench` run's pull request code could still write a cache
 entry under the default branch's scope through the runner's own cache token; this is accepted
 because only same-repository branches from people with write access can be run this way. `resolve`
-and `comment` run scripts from the default branch. `comment` is the only job with write permission
-and never runs pull request code: it downloads the rendered markdown, sanitizes it, and posts it.
+and `comment` check out `github.sha`: for `/bench` that is the default branch, so they run default
+branch scripts. On `pull_request` runs it is the merge commit, which is the workflow's own code; a
+fork's token is read-only there (this assumes the repository setting that sends write tokens to fork pull request workflows stays off) and same-repository authors can already edit the workflow. `comment`
+is the only job with write permission and never builds or runs the benchmarked binaries: it downloads
+the rendered markdown, sanitizes it, and posts it.
 
 To run it locally with two binaries (for example builds from two commits):
 
