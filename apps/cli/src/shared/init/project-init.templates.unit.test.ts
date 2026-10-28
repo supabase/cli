@@ -65,31 +65,6 @@ const NATIVE_AUTO_EXPOSE_COMMENT = `# without explicit GRANTs, matching the clou
 # instead. Left unset, a fresh project falls back to \`true\`.
 # auto_expose_new_tables = true`;
 
-// The vendored scaffold predates migration checks; the native template writes every rule at
-// "warn" (RFC §5).
-const NATIVE_MIGRATION_CHECKS_SECTION = `schema_paths = []
-
-[db.migrations.checks]
-# Security checks for migrations, one severity per rule. "error" blocks the
-# migration, "warn" reports the finding, "off" skips the rule. New projects
-# start every rule at "warn".
-rls_disabled_in_public = "warn"
-rls_enabled_no_policy = "warn"
-policy_exists_rls_disabled = "warn"
-security_definer_view = "warn"
-rls_policy_always_true = "warn"
-sensitive_columns_exposed = "warn"
-auth_users_exposed = "warn"
-function_search_path_mutable = "warn"
-rls_references_user_metadata = "warn"
-
-# To skip specific objects for one rule, add a [db.migrations.checks.exclude] table with
-# "schema.name" entries (tables, views, functions), or run supabase db advisors --baseline
-# to exclude every current finding. For example: rls_disabled_in_public = ["public.countries"]
-
-[db.seed]
-`;
-
 const renderExpectedNativeEject = renderExpectedInitOutput.pipe(
   Effect.map((eject) =>
     eject
@@ -97,8 +72,7 @@ const renderExpectedNativeEject = renderExpectedInitOutput.pipe(
         '# content_path = "./templates/password_changed_notification.html"',
         '# content_path = "./supabase/templates/password_changed_notification.html"',
       )
-      .replace(SCAFFOLD_AUTO_EXPOSE_COMMENT, NATIVE_AUTO_EXPOSE_COMMENT)
-      .replace("schema_paths = []\n\n[db.seed]\n", NATIVE_MIGRATION_CHECKS_SECTION),
+      .replace(SCAFFOLD_AUTO_EXPOSE_COMMENT, NATIVE_AUTO_EXPOSE_COMMENT),
   ),
 );
 
@@ -133,7 +107,7 @@ describe("project init templates", () => {
   it("pins init's OrioleDB version to the newest OrioleDB 17 build the catalog publishes", () => {
     const pinned = orioledbVersions().filter((version) => postgresMajor(version) === "17");
     for (const experimentalStack of [false, true]) {
-      const rendered = renderCliConfigTemplate("demo-project", true, experimentalStack);
+      const rendered = renderCliConfigTemplate("demo-project", true, { experimentalStack });
       const version = /^orioledb_version = "(.+)"$/m.exec(rendered)?.[1] ?? "";
       expect(pinned).toContain(version);
       for (const other of pinned)
@@ -147,7 +121,7 @@ describe("project init templates", () => {
   });
 
   it("opts the experimental stack template into stack=true without default listener ports", () => {
-    const rendered = renderCliConfigTemplate("demo-project", false, true);
+    const rendered = renderCliConfigTemplate("demo-project", false, { experimentalStack: true });
     expect(rendered).toMatch(
       /\[experimental\]\n# Use the new local stack backend for start, stop, and status, and for --local targets of db, migration, test db, gen types, inspect, and pull.\nstack = true\n/,
     );

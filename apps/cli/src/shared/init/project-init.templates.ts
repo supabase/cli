@@ -67,24 +67,6 @@ enabled = true
 # Supports paths relative to supabase directory: "./schemas/*.sql", "./database".
 schema_paths = []
 
-[db.migrations.checks]
-# Security checks for migrations, one severity per rule. "error" blocks the
-# migration, "warn" reports the finding, "off" skips the rule. New projects
-# start every rule at "warn".
-rls_disabled_in_public = "warn"
-rls_enabled_no_policy = "warn"
-policy_exists_rls_disabled = "warn"
-security_definer_view = "warn"
-rls_policy_always_true = "warn"
-sensitive_columns_exposed = "warn"
-auth_users_exposed = "warn"
-function_search_path_mutable = "warn"
-rls_references_user_metadata = "warn"
-
-# To skip specific objects for one rule, add a [db.migrations.checks.exclude] table with
-# "schema.name" entries (tables, views, functions), or run supabase db advisors --baseline
-# to exclude every current finding. For example: rls_disabled_in_public = ["public.countries"]
-
 [db.seed]
 # If enabled, seeds the database after migrations during a db reset.
 enabled = true
@@ -535,14 +517,46 @@ function applyExperimentalStackInitTemplate(source: string): string {
   );
 }
 
+const MIGRATION_CHECKS_INIT_SECTION = `[db.migrations.checks]
+# Security checks for migrations, one severity per rule. "error" blocks the
+# migration, "warn" reports the finding, "off" skips the rule. New projects
+# start every rule at "warn".
+rls_disabled_in_public = "warn"
+rls_enabled_no_policy = "warn"
+policy_exists_rls_disabled = "warn"
+security_definer_view = "warn"
+rls_policy_always_true = "warn"
+sensitive_columns_exposed = "warn"
+auth_users_exposed = "warn"
+function_search_path_mutable = "warn"
+rls_references_user_metadata = "warn"
+
+# To skip specific objects for one rule, add a [db.migrations.checks.exclude] table with
+# "schema.name" entries (tables, views, functions), or run supabase db advisors --baseline
+# to exclude every current finding. For example: rls_disabled_in_public = ["public.countries"]
+
+`;
+
+export interface CliConfigTemplateOptions {
+  /** Persist `experimental.stack` and omit default stack listener ports. */
+  readonly experimentalStack?: boolean;
+  /** Write `[db.migrations.checks]` with every rule at `warn`. */
+  readonly migrationChecks?: boolean;
+}
+
 export function renderCliConfigTemplate(
   projectId: string,
   useOrioledb: boolean,
-  experimentalStack = false,
+  options: CliConfigTemplateOptions = {},
 ): string {
-  const rendered = CONFIG_TEMPLATE_RAW.replace("__PROJECT_ID__", projectId).replace(
+  let rendered = CONFIG_TEMPLATE_RAW.replace("__PROJECT_ID__", projectId).replace(
     "__ORIOLEDB_VERSION__",
     useOrioledb ? initOrioledbVersion() : "",
   );
-  return experimentalStack ? applyExperimentalStackInitTemplate(rendered) : rendered;
+  if (options.migrationChecks === true) {
+    rendered = rendered.replace("\n[db.seed]\n", `\n${MIGRATION_CHECKS_INIT_SECTION}[db.seed]\n`);
+  }
+  return options.experimentalStack === true
+    ? applyExperimentalStackInitTemplate(rendered)
+    : rendered;
 }
