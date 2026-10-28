@@ -1,9 +1,14 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Ref } from "effect";
+import { Duration, Effect, FileSystem, Layer, Ref } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { startReplayServer } from "../../cli-e2e/src/server/replay-server.ts";
-import { runWorkloadBench, type BenchOptions } from "./bench-cli.ts";
+import {
+  LAUNCH_TIMEOUT_EXIT_CODE,
+  runLaunch,
+  runWorkloadBench,
+  type BenchOptions,
+} from "./bench-cli.ts";
 
 const fixturesDir = new URL("../../cli-e2e/fixtures", import.meta.url).pathname;
 
@@ -68,5 +73,37 @@ describe("runWorkloadBench", () => {
         }
       }),
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer))),
+  );
+});
+
+describe("runLaunch", () => {
+  it.live("kills a launch that outlives the timeout and records a failing exit code", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "bench-hung-cli-" });
+        const pidFile = `${dir}/pid`;
+        const binary = `${dir}/supabase`;
+        yield* fs.writeFileString(
+          binary,
+          `#!/bin/sh\necho $$ > "${pidFile}"\nexec /bin/sleep 60\n`,
+        );
+        yield* fs.chmod(binary, 0o755);
+
+        const result = yield* runLaunch({
+          binary,
+          args: [],
+          cwd: dir,
+          env: {},
+          timeout: Duration.millis(500),
+        });
+
+        expect(result.exitCode).toBe(LAUNCH_TIMEOUT_EXIT_CODE);
+        expect(result.wallMs).toBeLessThan(30_000);
+        const pid = Number((yield* fs.readFileString(pidFile)).trim());
+        expect(Number.isInteger(pid)).toBe(true);
+        expect(() => process.kill(pid, 0)).toThrow();
+      }),
+    ).pipe(Effect.provide(BunServices.layer)),
   );
 });

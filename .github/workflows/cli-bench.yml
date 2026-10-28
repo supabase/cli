@@ -5,10 +5,14 @@ run-name: "CLI benchmark #${{ github.event.pull_request.number || github.event.i
 # workload runs against the replay server, so no Docker, database, or network is involved. The
 # job never blocks a pull request and is not a required check.
 #
-# Each run writes a job summary. The first run on a pull request from this repository also posts
-# one comment tagged `<!-- cli-bench:pr -->`; later pushes leave it alone. A maintainer commenting
-# exactly `/bench` re-runs the benchmark on the pull request's current head and updates that
-# comment. See apps/cli/docs/tracing-monitoring.md.
+# The first push to a pull request from this repository benchmarks and posts one comment tagged
+# `<!-- cli-bench:pr -->`; later pushes skip while that comment reports a result. A maintainer
+# commenting exactly `/bench` re-runs the run for the pull request's current head commit, as does
+# "Re-run all jobs" in the Actions UI: a re-run benchmarks again and updates the comment, keeping
+# earlier runs in a collapsed list. Pull requests from forks benchmark every push and write a job
+# summary only. A pull request that changes no benchmarked path, or more than the 300 files
+# GitHub's path filter inspects, has no run to re-run, and `/bench` says so.
+# See apps/cli/docs/tracing-monitoring.md.
 on:
   pull_request:
     types:
@@ -26,9 +30,7 @@ on:
       - "turbo.json"
       - ".github/workflows/cli-bench.yml"
       - ".github/scripts/cli-bench/**"
-  # A `/bench` comment on a pull request starts a run. The resolve job checks who commented and
-  # which commit it applies to; for `/bench` the resolve and comment jobs run default branch code,
-  # and the job that builds and runs pull request code holds no write permission.
+  # `/bench` runs default branch code only: it never checks out or runs pull request code.
   # jactionlint ignore=dangerous-triggers
   issue_comment:
     types:
@@ -36,43 +38,26 @@ on:
 
 permissions: {}
 
-# Comments that are not a `/bench` from a maintainer get a per-run group, so they cannot cancel an
-# in-flight benchmark; `/bench full` is one of them.
+# Comment runs get a group of their own, so a comment can never cancel a pull request's benchmark
+# nor be cancelled by one.
 concurrency:
   group: >-
-    cli-bench-${{ github.event.pull_request.number || github.event.issue.number }}-${{
-      (github.event_name == 'issue_comment' && (github.event.comment.body != '/bench' ||
-        !contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)))
-        && github.run_id || 'run' }}
+    cli-bench-${{ github.event.pull_request.number || github.event.issue.number }}${{
+      github.event_name == 'issue_comment' && format('-comment-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 jobs:
+  # Decides whether this push benchmarks. Read-only: it only lists the pull request's comments.
   resolve:
     name: Resolve
-    # Cheap, non-authoritative pre-filter; resolve.ts does the exact command match and the
-    # effective-permission lookup.
-    if: >
-      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
-      (github.event_name == 'issue_comment' &&
-        github.event.issue.pull_request != null &&
-        startsWith(github.event.comment.body, '/bench') &&
-        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # Reacts to the accepted command. Checkout uses `github.sha`: default branch code for
-    # `issue_comment`, the pull request merge commit for `pull_request`, where a fork's token is
-    # read-only whatever is declared here.
     permissions:
       contents: read
-      pull-requests: write
+      pull-requests: read
     outputs:
       should_run: ${{ steps.resolve.outputs.should_run }}
-      pr_number: ${{ steps.resolve.outputs.pr_number }}
-      # Every job benchmarks this commit, so a push during the run is never reported as measured.
-      head_sha: ${{ steps.resolve.outputs.head_sha }}
-      base_ref: ${{ steps.resolve.outputs.base_ref }}
-      is_fork: ${{ steps.resolve.outputs.is_fork }}
-      trigger: ${{ steps.resolve.outputs.trigger }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -86,16 +71,46 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          EVENT_NAME: ${{ github.event_name }}
-          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: bun .github/scripts/cli-bench/resolve.ts
+
+  # `/bench`: re-runs this workflow's run for the pull request's current head commit. The only job
+  # with `actions: write`; it runs default branch code and no pull request code.
+  rerun:
+    name: Re-run benchmark
+    # Cheap, non-authoritative pre-filter; rerun.ts does the exact command match and the
+    # effective-permission lookup.
+    if: >
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request != null &&
+      startsWith(github.event.comment.body, '/bench') &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: ".bun-version"
+          no-cache: true
+      - name: Re-run
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
           COMMENT_ID: ${{ github.event.comment.id }}
           COMMENT_AUTHOR_LOGIN: ${{ github.event.comment.user.login }}
           COMMENT_AUTHOR_ASSOCIATION: ${{ github.event.comment.author_association }}
           COMMENT_BODY: ${{ github.event.comment.body }}
-        run: bun .github/scripts/cli-bench/resolve.ts
+        run: bun .github/scripts/cli-bench/rerun.ts
 
   bench:
     name: Benchmark CLI against merge base
@@ -109,17 +124,14 @@ jobs:
       - name: Checkout pull request head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.resolve.outputs.head_sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
 
-      # `/bench` runs only for same-repository branches. It skips the dependency cache so it saves
-      # no package cache under the default branch's scope.
       - name: Setup
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
-          dependency-cache: ${{ needs.resolve.outputs.trigger == 'auto' && 'true' || 'false' }}
 
       - name: Prepare benchmark directory
         shell: bash
@@ -142,7 +154,7 @@ jobs:
         if: steps.branch_build.outcome == 'success'
         env:
           HUSKY: "0"
-          BASE_REF: ${{ needs.resolve.outputs.base_ref }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
         shell: bash
         run: |
           merge_base="$(git merge-base HEAD "origin/$BASE_REF")"
@@ -150,7 +162,7 @@ jobs:
           echo "merge_base=$merge_base" >> "$GITHUB_OUTPUT"
           git worktree add "$RUNNER_TEMP/base-src" "$merge_base"
           cd "$RUNNER_TEMP/base-src"
-            # The setup action writes this file only when the Dependency Firewall token is available.
+          # The setup action writes this file only when the Dependency Firewall token is available.
           if [ -f "$RUNNER_TEMP/dependency-firewall.npmrc" ]; then
             export NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/dependency-firewall.npmrc"
           fi
@@ -205,8 +217,8 @@ jobs:
           BASE_BUILD: ${{ steps.base_build.outcome == 'success' && 'ok' || 'failed' }}
           REPLAY: ${{ steps.replay.outcome == 'success' && 'ok' || 'failed' }}
           MERGE_BASE: ${{ steps.base_build.outputs.merge_base }}
-          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
-          BASE_REF: ${{ needs.resolve.outputs.base_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
         shell: bash
         run: |
           bun apps/cli/scripts/bench-summary.ts \
@@ -248,14 +260,13 @@ jobs:
     # post never fails the workflow.
     if: >-
       ${{ !cancelled() && needs.resolve.outputs.should_run == 'true' && needs.bench.result == 'success' &&
-      (needs.resolve.outputs.trigger == 'command' || needs.resolve.outputs.is_fork == 'false') }}
+      github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     continue-on-error: true
-    # The only job that can write to the pull request. Checkout uses `github.sha`: default branch
-    # code for `/bench`, and for same-repository `pull_request` runs the merge commit, which its
-    # author can already run with this token by editing the workflow. It never builds or runs the
-    # benchmarked binaries and reads the rendered markdown as data.
+    # The only pull_request job that can write to the pull request. It checks out the merge commit,
+    # which its author can already run with this token by editing the workflow. It never builds or
+    # runs the benchmarked binaries and reads the rendered markdown as data.
     permissions:
       contents: read
       pull-requests: write
@@ -277,10 +288,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
-          MODE: ${{ needs.resolve.outputs.trigger == 'command' && 'upsert' || 'create-if-missing' }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MODE: ${{ github.run_attempt > 1 && 'upsert' || 'create-if-missing' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           BODY_FILE: ${{ runner.temp }}/bench-comment/comment.md
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
         run: |
           if [ ! -f "$BODY_FILE" ]; then
             echo "The benchmark job produced no comment."

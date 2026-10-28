@@ -7,6 +7,7 @@ import {
   prepareBody,
   sanitize,
 } from "./post-comment.ts";
+import { decodeHistory, type RunEntry } from "./history.ts";
 
 const BOT = "github-actions[bot]";
 
@@ -30,13 +31,21 @@ describe("planComment", () => {
       authorLogin: BOT,
     };
 
-    expect(planComment("create-if-missing", [failed])).toEqual({ kind: "update", id: 5 });
+    expect(planComment("create-if-missing", [failed])).toEqual({
+      kind: "update",
+      id: 5,
+      previousBody: failed.body,
+    });
   });
 
-  test("updates the marker comment in place for /bench", () => {
+  test("updates the marker comment in place for a re-run", () => {
     const existing = { id: 5, body: `${BENCH_MARKER}\nold`, authorLogin: BOT };
 
-    expect(planComment("upsert", [existing])).toEqual({ kind: "update", id: 5 });
+    expect(planComment("upsert", [existing])).toEqual({
+      kind: "update",
+      id: 5,
+      previousBody: existing.body,
+    });
   });
 
   test("ignores a marker pasted by someone else", () => {
@@ -59,6 +68,45 @@ describe("prepareBody", () => {
 
     expect(body.length).toBeLessThanOrEqual(MAX_BODY_CHARS);
     expect(body).toContain("truncated");
+  });
+});
+
+describe("prepareBody history", () => {
+  const run = (n: number): RunEntry => ({
+    sha: n.toString(16).padStart(7, "0"),
+    at: "2026-10-28T09:05Z",
+    headline: "no changes found",
+    url: `https://github.com/o/r/actions/runs/${n}`,
+  });
+
+  test("lists earlier runs after the run link and carries them in the marker", () => {
+    const body = prepareBody("report", "https://github.com/o/r/actions/runs/3", [run(3), run(2)]);
+
+    expect(body.indexOf("[Workflow run]")).toBeLessThan(body.indexOf("Previous runs"));
+    expect(decodeHistory(body)).toEqual([run(3), run(2)]);
+  });
+
+  test("drops the oldest runs before cutting the report when the body is too long", () => {
+    const history = Array.from({ length: 21 }, (_, i) => run(21 - i));
+    const report = "x".repeat(MAX_BODY_CHARS - 4_000);
+
+    const body = prepareBody(report, "https://github.com/o/r/actions/runs/21", history);
+
+    expect(body.length).toBeLessThanOrEqual(MAX_BODY_CHARS);
+    expect(body).not.toContain("truncated");
+    const kept = decodeHistory(body);
+    expect(kept.length).toBeGreaterThan(0);
+    expect(kept.length).toBeLessThan(history.length);
+    expect(kept[0]).toEqual(history[0]);
+  });
+
+  test("renders an earlier run's headline through the sanitizer", () => {
+    const hostile = { ...run(1), headline: "@team <img src=x>" };
+
+    const body = prepareBody("report", undefined, [run(2), hostile]);
+
+    expect(body).not.toContain("<img");
+    expect(body).not.toMatch(/@(?!\u200b)/u);
   });
 });
 

@@ -13,6 +13,7 @@ import { BunPath, BunRuntime, BunServices } from "@effect/platform-bun";
 import {
   Clock,
   Console,
+  Duration,
   Effect,
   FileSystem,
   Layer,
@@ -230,16 +231,22 @@ interface LaunchResult {
   readonly exitCode: number;
 }
 
-const runLaunch = (params: {
+/** Longest a single launch may run before it is killed and counted as a failed launch. */
+export const LAUNCH_TIMEOUT = Duration.seconds(60);
+/** Exit code recorded for a launch that hit {@link LAUNCH_TIMEOUT}. */
+export const LAUNCH_TIMEOUT_EXIT_CODE = 124;
+
+export const runLaunch = Effect.fn("BenchCli.runLaunch")(function* (params: {
   readonly binary: string;
   readonly args: ReadonlyArray<string>;
   readonly cwd: string;
   readonly env: Record<string, string | undefined>;
-}) =>
-  Effect.gen(function* () {
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const start = yield* Clock.currentTimeNanos;
-    const exitCode = yield* spawner.exitCode(
+  readonly timeout?: Duration.Duration;
+}) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const start = yield* Clock.currentTimeNanos;
+  const exit = yield* spawner
+    .exitCode(
       ChildProcess.make(params.binary, params.args, {
         cwd: params.cwd,
         env: params.env,
@@ -248,13 +255,19 @@ const runLaunch = (params: {
         stdout: "ignore",
         stderr: "ignore",
       }),
+    )
+    .pipe(Effect.timeoutOption(params.timeout ?? LAUNCH_TIMEOUT));
+  const end = yield* Clock.currentTimeNanos;
+  if (Option.isNone(exit)) {
+    yield* Console.error(
+      `warning: ${params.binary} ${params.args.join(" ")} did not exit within ${Duration.format(params.timeout ?? LAUNCH_TIMEOUT)}; it was killed`,
     );
-    const end = yield* Clock.currentTimeNanos;
-    return {
-      wallMs: Number(end - start) / 1_000_000,
-      exitCode: Number(exitCode),
-    } satisfies LaunchResult;
-  });
+  }
+  return {
+    wallMs: Number(end - start) / 1_000_000,
+    exitCode: Option.isSome(exit) ? Number(exit.value) : LAUNCH_TIMEOUT_EXIT_CODE,
+  } satisfies LaunchResult;
+});
 
 const PROFILE_FILE = "bench-profile.yaml";
 

@@ -94,29 +94,36 @@ summary instead of failing the job: a failed branch or base build or a replay se
 start replaces the comparison with a notice naming the step. The workloads use no Docker, database, or network, and no
 prompts.
 
-The first run on a pull request from this repository also posts one comment, tagged with the hidden
-marker `<!-- cli-bench:pr -->`. Later pushes leave that comment alone. Pull requests from forks get
-the job summary only, because their token is read-only.
+The first push to a pull request from this repository benchmarks and posts one comment, tagged with
+the hidden marker `<!-- cli-bench:pr -->`. Later pushes skip the benchmark, and the job summary says
+so, while that comment reports a result; a comment that reports a failed run is benchmarked again
+on the next push. Pull requests from forks have a read-only token, so they get the job summary only
+and benchmark every push.
 
-A maintainer can comment exactly `/bench` on a pull request to run the benchmark again on its
-current head commit against the merge base with its base branch, `develop`. The comment
-is updated in place, or created if it is missing. Only the repository owner and people with write
-access can run it, and only on pull requests into `develop` from this repository; the command must be the whole comment, so `/bench full` (reserved for a future
-heavier tier) and anything else is ignored. The commenter's request is acknowledged with an eyes
-reaction. Workflows triggered by comments run from the default branch, so `/bench` works only once
-the workflow is on `develop`.
-`/bench` works only on pull requests from this repository. Those branches come from people with
-write access, who already get repository secrets on a normal pull request run, so `/bench` uses the
-same job, setup action, and dependency firewall token. `/bench` runs turn off the dependency cache so
-they do not save a package cache under the default branch's scope. The toolchain cache is saved
-before any pull request code runs. A `/bench` run's pull request code could still write a cache
-entry under the default branch's scope through the runner's own cache token; this is accepted
-because only same-repository branches from people with write access can be run this way. `resolve`
-and `comment` check out `github.sha`: for `/bench` that is the default branch, so they run default
-branch scripts. On `pull_request` runs it is the merge commit, which is the workflow's own code; a
-fork's token is read-only there (this assumes the repository setting that sends write tokens to fork pull request workflows stays off) and same-repository authors can already edit the workflow. `comment`
-is the only job with write permission and never builds or runs the benchmarked binaries: it downloads
-the rendered markdown, sanitizes it, and posts it.
+A maintainer can comment exactly `/bench` to run the benchmark again on the pull request's current
+head commit. The command re-runs that commit's `pull_request` workflow run, as "Re-run all jobs" in
+the Actions UI does, and the re-run updates the comment in place, or creates it if it is missing.
+The comment keeps a collapsed "Previous runs" list below the report with the commit, time (UTC),
+headline, and link of each earlier run, newest first and up to 20, stored in a hidden marker in the
+comment. Only the repository owner and people with write access can run it, and only on open,
+non-draft pull requests into `develop` from this repository; the command must be the whole comment,
+so `/bench full` and anything else is ignored. An eyes reaction on the comment means GitHub accepted
+the re-run and a benchmark is running; the result arrives as the updated benchmark comment, whether
+it succeeded or failed. When no re-run can start, the pull request gets a reply saying why: a
+benchmark is already running for the commit, the run is older than 30 days, GitHub refused the
+re-run (the reply includes the status and message), or there is no run for the commit.
+
+Known gap: a pull request whose changes match none of the workflow's path filters, or that changes
+more files than GitHub's path filter inspects (300), gets no run, so there is nothing for `/bench`
+to re-run and it replies that there is none.
+
+Workflows triggered by comments run from the default branch, so `/bench` works only once the
+workflow is on `develop`. The `/bench` job runs default branch code only: it never checks out or
+runs pull request code, because a comment-triggered run shares the default branch's cache scope.
+Benchmarks always run in the `pull_request` run. `resolve` (read-only) decides whether a push
+benchmarks; `rerun` is the only job with `actions: write`. `bench` has read-only permissions, and
+`comment` is the only `pull_request` job that can write to the pull request. It never builds or
+runs the benchmarked binaries: it downloads the rendered markdown, sanitizes it, and posts it.
 
 To run it locally with two binaries (for example builds from two commits):
 
@@ -139,7 +146,8 @@ Management API client sends requests, so it is never set. Every launch gets the 
 `--version` and `init`, so an unexpected new API call reaches the server and is counted. Before each
 launch the harness clears the server's request log and scenario, then selects the workload's
 scenario, so scenarios that are used up as they are served start fresh every time. A failing control
-call aborts the benchmark.
+call aborts the benchmark. A launch that runs longer than 60 seconds is killed and counted as a
+failed launch (exit code 124), so that workload is reported as not compared and the rest finish.
 
 API calls are counted from the traced launch's HTTP client spans: spans to the `--api-url` host and
 port are API calls, and spans to any other host are `externalCalls`. The count is cross-checked
@@ -166,7 +174,7 @@ the timing ranges, API calls per command, and the slowest phases. It reports:
 - Phase deltas: the three largest span deltas for each workload with a slower or faster verdict.
 - Binary size of `dist/supabase`.
 
-The baseline API calls per workload on both `develop` and `next` builds (a project-scoped command
+The baseline API calls per workload on `develop` (a project-scoped command
 also refreshes the linked-project cache, so it makes two calls):
 
 | Workload                                   | API calls                                                              |
@@ -205,15 +213,10 @@ GROUP BY cmd ORDER BY users DESC LIMIT 40
 
 Caveats:
 
-- Flags differ between branches. The manifest uses the `develop` form (`--project-ref`,
-  `--project-id`). `next` accepts these as deprecated aliases until v4 and prints a warning in both
-  builds. After the v3 cut, switch the manifest to `--remote[=<ref>]`.
-- `db query` is not benchmarked yet, although it is one of the most used commands. `next` requires
-  `db query --remote --read-only`, whose request the `develop` replay scenario does not match, so one
-  manifest cannot run it on both branches. Add it after the v3 cut with the `db-query-remote-*`
-  scenario.
-- Telemetry records the command path but no flags or arguments, so `bench` and the
-  TypeScript target only approximate real use.
+- Telemetry records the command path and the flags set on the command line, with values redacted
+  unless the flag is boolean, a choice, or listed in the command's `safeFlags` (see
+  [analytics.md](analytics.md)); positional arguments and free-form values are not recorded, so
+  `bench` and the TypeScript target only approximate real use.
 - `device_id` counts machines, not people, short-lived CI runners inflate it, and a large share of
   runs come from agents. Telemetry durations include network, Docker, and wait time, so they guided
   the choice but are not what the benchmark measures.
