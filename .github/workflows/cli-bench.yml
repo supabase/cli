@@ -26,7 +26,6 @@ on:
       - "pnpm-lock.yaml"
       - "turbo.json"
       - ".github/workflows/cli-bench.yml"
-      - ".github/actions/cli-bench-run/**"
       - ".github/scripts/cli-bench/**"
   # A `/bench` comment on a pull request starts a run. The resolve job checks who commented and
   # which commit it applies to; the jobs that run pull request code hold no write permission, and
@@ -98,12 +97,10 @@ jobs:
           COMMENT_BODY: ${{ github.event.comment.body }}
         run: bun .github/scripts/cli-bench/resolve.ts
 
-  # Two jobs, chosen by trigger, so the job that runs a `/bench` head never references a secret:
-  # secrets referenced anywhere in a job are sent to its runner.
-  bench-pr:
+  bench:
     name: Benchmark CLI against merge base
     needs: resolve
-    if: needs.resolve.outputs.should_run == 'true' && needs.resolve.outputs.trigger == 'auto'
+    if: needs.resolve.outputs.should_run == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     permissions:
@@ -116,64 +113,141 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      # GitHub withholds secrets from fork pull requests, so the token is empty for them.
+      # `/bench` runs only for same-repository branches. It skips the dependency cache so it saves
+      # no package cache under the default branch's scope.
       - name: Setup
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          dependency-cache: ${{ needs.resolve.outputs.trigger == 'auto' && 'true' || 'false' }}
 
-      - name: Benchmark
-        uses: ./.github/actions/cli-bench-run
-        with:
-          head-sha: ${{ needs.resolve.outputs.head_sha }}
-          base-ref: ${{ needs.resolve.outputs.base_ref }}
+      - name: Prepare benchmark directory
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/bench"
+          echo "BENCH_DIR=$RUNNER_TEMP/bench" >> "$GITHUB_ENV"
 
-  # Runs in the default branch's context, so it takes no secrets and writes no cache: the toolchain
-  # comes from `mise-action` with its cache off, and dependencies install from the public registry
-  # with no store cache.
-  bench-command:
-    name: Benchmark CLI against merge base (command)
-    needs: resolve
-    if: needs.resolve.outputs.should_run == 'true' && needs.resolve.outputs.trigger == 'command'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout pull request head
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.resolve.outputs.head_sha }}
-          fetch-depth: 0
-          persist-credentials: false
+      - name: Build branch binary
+        id: branch_build
+        continue-on-error: true
+        shell: bash
+        run: |
+          pnpm --filter supabase run build:binary
+          mkdir -p "$BENCH_DIR/branch"
+          cp apps/cli/dist/supabase "$BENCH_DIR/branch/supabase"
 
-      - name: Install toolchains
-        uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
-        with:
-          version: 2026.10.17
-          cache: false
-
-      - name: Install dependencies
+      - name: Build merge-base binary
+        id: base_build
+        continue-on-error: true
+        if: steps.branch_build.outcome == 'success'
         env:
           HUSKY: "0"
-        run: pnpm install --frozen-lockfile
+          BASE_REF: ${{ needs.resolve.outputs.base_ref }}
+        shell: bash
+        run: |
+          merge_base="$(git merge-base HEAD "origin/$BASE_REF")"
+          echo "Merge base: $merge_base"
+          echo "merge_base=$merge_base" >> "$GITHUB_OUTPUT"
+          git worktree add "$RUNNER_TEMP/base-src" "$merge_base"
+          cd "$RUNNER_TEMP/base-src"
+            # The setup action writes this file only when the Dependency Firewall token is available.
+          if [ -f "$RUNNER_TEMP/dependency-firewall.npmrc" ]; then
+            export NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/dependency-firewall.npmrc"
+          fi
+          pnpm install --frozen-lockfile
+          pnpm --filter supabase run build:binary
+          mkdir -p "$BENCH_DIR/base"
+          cp apps/cli/dist/supabase "$BENCH_DIR/base/supabase"
 
-      - name: Benchmark
-        uses: ./.github/actions/cli-bench-run
+      - name: Start replay server
+        id: replay
+        continue-on-error: true
+        if: steps.branch_build.outcome == 'success' && steps.base_build.outcome == 'success'
+        shell: bash
+        run: |
+          bun apps/cli-e2e/scripts/replay-serve.ts > "$BENCH_DIR/replay.log" 2>&1 &
+          echo "REPLAY_PID=$!" >> "$GITHUB_ENV"
+          for _ in $(seq 1 60); do
+            url="$(grep -o 'http://[^"]*' "$BENCH_DIR/replay.log" | head -n 1 || true)"
+            if [ -n "$url" ]; then
+              echo "REPLAY_URL=$url" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 0.5
+          done
+          echo "replay server did not report a URL" >&2
+          cat "$BENCH_DIR/replay.log" >&2
+          exit 1
+
+      - name: Run benchmark
+        id: bench
+        continue-on-error: true
+        if: steps.replay.outcome == 'success'
+        shell: bash
+        run: |
+          bun apps/cli/scripts/bench-cli.ts \
+            --base "$BENCH_DIR/base/supabase" \
+            --branch "$BENCH_DIR/branch/supabase" \
+            --workloads apps/cli/bench/workloads.pr.json \
+            --api-url "$REPLAY_URL" \
+            --trace \
+            --out "$BENCH_DIR/report.json" | tee "$BENCH_DIR/report.txt"
+
+      - name: Stop replay server
+        if: always() && env.REPLAY_PID != ''
+        shell: bash
+        run: kill "$REPLAY_PID" || true
+
+      - name: Write job summary
+        if: always()
+        env:
+          BRANCH_BUILD: ${{ steps.branch_build.outcome == 'success' && 'ok' || 'failed' }}
+          BASE_BUILD: ${{ steps.base_build.outcome == 'success' && 'ok' || 'failed' }}
+          REPLAY: ${{ steps.replay.outcome == 'success' && 'ok' || 'failed' }}
+          MERGE_BASE: ${{ steps.base_build.outputs.merge_base }}
+          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
+          BASE_REF: ${{ needs.resolve.outputs.base_ref }}
+        shell: bash
+        run: |
+          bun apps/cli/scripts/bench-summary.ts \
+            --report "$BENCH_DIR/report.json" \
+            --branch-build "$BRANCH_BUILD" \
+            --base-build "$BASE_BUILD" \
+            --replay "$REPLAY" \
+            --head-sha "$HEAD_SHA" \
+            --base-ref "$BASE_REF" \
+            --merge-base "$MERGE_BASE" \
+            --comment-out "$BENCH_DIR/comment.md"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          head-sha: ${{ needs.resolve.outputs.head_sha }}
-          base-ref: ${{ needs.resolve.outputs.base_ref }}
+          name: cli-bench-report
+          path: |
+            ${{ runner.temp }}/bench/report.json
+            ${{ runner.temp }}/bench/report.txt
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Upload comment
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cli-bench-comment
+          path: ${{ runner.temp }}/bench/comment.md
+          retention-days: 1
+          if-no-files-found: ignore
 
   comment:
     name: Post pull request comment
     needs:
       - resolve
-      - bench-pr
-      - bench-command
-    # A pull_request run from a fork has a read-only token, so only `/bench` comments a fork's
-    # result. Failing to post never fails the workflow.
+      - bench
+    # A pull_request run from a fork has a read-only token, so it posts no comment. Failing to
+    # post never fails the workflow.
     if: >-
-      ${{ !cancelled() && needs.resolve.outputs.should_run == 'true' && (needs.bench-pr.result == 'success' || needs.bench-command.result == 'success') &&
+      ${{ !cancelled() && needs.resolve.outputs.should_run == 'true' && needs.bench.result == 'success' &&
       (needs.resolve.outputs.trigger == 'command' || needs.resolve.outputs.is_fork == 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5

@@ -3,7 +3,7 @@
  *
  * Two triggers:
  *   - `pull_request`: runs for the event's head commit; the event payload is the only input.
- *   - a maintainer's `/bench` comment on a pull request: runs for the pull request's head commit
+ *   - a maintainer's `/bench` comment on a pull request from this repository: runs for the pull request's head commit
  *     when this workflow accepts the command. The comment must be exactly `/bench`, and the
  *     commenter must be the repository owner or hold write access.
  *
@@ -92,6 +92,10 @@ export async function resolveBench(input: ResolveInput, io: ResolveIo): Promise<
   }
   const pr = await io.fetchPr(input.prNumber);
   if (pr.state === "closed") return skipped("command", `PR #${input.prNumber} is closed.`);
+  // Only same-repository branches run: their authors already get repository secrets on a pull request.
+  if (pr.headRepoFullName !== pr.baseRepoFullName) {
+    return skipped("command", `${BENCH_COMMAND} runs only on pull requests from this repository.`);
+  }
 
   // Cosmetic: a failed reaction must never fail an authorized run.
   try {

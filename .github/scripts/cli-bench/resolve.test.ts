@@ -105,11 +105,16 @@ describe("resolveBench", () => {
     expect(result.shouldRun).toBe(false);
   });
 
-  test("flags a fork head so the workflow can withhold secrets", async () => {
-    const { impl } = io({ maintainer: "write" }, pr({ headRepoFullName: "someone/cli" }));
+  test.each([
+    ["a fork", "someone/cli"],
+    ["a deleted head repository", ""],
+  ])("does not run /bench on %s and does not react", async (_name, headRepo) => {
+    const { impl, reactions } = io({ maintainer: "write" }, pr({ headRepoFullName: headRepo }));
 
     const result = await resolveBench(command("/bench"), impl);
 
-    expect(result).toMatchObject({ shouldRun: true, isFork: true });
+    expect(result.shouldRun).toBe(false);
+    expect(result.skipReason).toContain("from this repository");
+    expect(reactions).toEqual([]);
   });
 });

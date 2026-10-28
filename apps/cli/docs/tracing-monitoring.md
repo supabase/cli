@@ -101,20 +101,19 @@ the job summary only, because their token is read-only.
 A maintainer can comment exactly `/bench` on a pull request to run the benchmark again on its
 current head commit against the merge base with its base branch (`develop` or `next`). The comment
 is updated in place, or created if it is missing. Only the repository owner and people with write
-access can run it; the command must be the whole comment, so `/bench full` (reserved for a future
+access can run it, and only on pull requests from this repository; the command must be the whole comment, so `/bench full` (reserved for a future
 heavier tier) and anything else is ignored. The commenter's request is acknowledged with an eyes
 reaction. Workflows triggered by comments run from the default branch, so `/bench` works only once
-the workflow is on `develop`. Against a fork's head the run still installs and builds the fork's code, so it needs a maintainer's
-judgment about the change.
-
-The work is split by trigger so a `/bench` run is safe. `resolve` and `comment` run scripts from the
-default branch. `bench-pr` (pull requests) uses the shared setup action with the dependency firewall
-token and normal caches; GitHub withholds secrets from fork pull requests. `bench-command` (`/bench`)
-references no secrets, installs the toolchain with its cache off, installs dependencies from the
-public registry, and writes no caches, because it checks out pull request code, possibly from a
-fork, in a context where repository secrets exist. Both call `.github/actions/cli-bench-run`. Only
-`comment` can write to the pull request; it downloads the rendered markdown and never runs pull
-request code.
+the workflow is on `develop`.
+`/bench` works only on pull requests from this repository. Those branches come from people with
+write access, who already get repository secrets on a normal pull request run, so `/bench` uses the
+same job, setup action, and dependency firewall token. `/bench` runs turn off the dependency cache so
+they do not save a package cache under the default branch's scope. The toolchain cache is saved
+before any pull request code runs. A `/bench` run's pull request code could still write a cache
+entry under the default branch's scope through the runner's own cache token; this is accepted
+because only same-repository branches from people with write access can be run this way. `resolve`
+and `comment` run scripts from the default branch. `comment` is the only job with write permission
+and never runs pull request code: it downloads the rendered markdown, sanitizes it, and posts it.
 
 To run it locally with two binaries (for example builds from two commits):
 
