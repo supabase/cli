@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Data, Effect, Layer, Redacted, Ref, Stream } from "effect";
+import { Data, Effect, Fiber, Layer, Redacted, Ref, Stream } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
@@ -32,15 +32,18 @@ class CatalogStallError extends Data.TaggedError("CatalogStallError")<{
 
 /** Tracks the current launch phase and each service's output so a stall names both. */
 const makeLaunchTrace = Effect.gen(function* () {
-  const phase = yield* Ref.make({ service: "database", step: "recipe" });
+  const phase = yield* Ref.make({ service: "database", step: "setup" });
   const outputs = yield* Ref.make<ReadonlyMap<string, string>>(new Map());
   const capture = Effect.fnUntraced(function* (service: string, logs: CatalogLogs) {
+    const decoders = { stdout: new TextDecoder(), stderr: new TextDecoder() };
     yield* Stream.fromSubscription(yield* logs).pipe(
-      Stream.runForEach(({ bytes }) =>
+      Stream.runForEach(({ stream, bytes }) =>
         Ref.update(outputs, (current) =>
           new Map(current).set(
             service,
-            ((current.get(service) ?? "") + new TextDecoder().decode(bytes)).slice(-4_000),
+            ((current.get(service) ?? "") + decoders[stream].decode(bytes, { stream: true })).slice(
+              -4_000,
+            ),
           ),
         ),
       ),
@@ -48,23 +51,27 @@ const makeLaunchTrace = Effect.gen(function* () {
     );
   });
   const enter = (service: string, step: string) => Ref.set(phase, { service, step });
+  /** Reports a stall without waiting for the stalled scope's finalizers, which may hang too. */
   const guard =
     (duration: `${number} seconds`) =>
     <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-      effect.pipe(
-        Effect.timeoutOrElse({
-          duration,
-          orElse: () =>
-            Effect.all([Ref.get(phase), Ref.get(outputs)]).pipe(
-              Effect.flatMap(([{ service, step }, output]) =>
-                Effect.fail(
-                  new CatalogStallError({
-                    message: `${service} ${step} did not finish within ${duration}; ${service} output:\n${output.get(service) || "(none)"}`,
-                  }),
+      Effect.flatMap(Effect.forkDetach(effect), (fiber) =>
+        Fiber.join(fiber).pipe(
+          Effect.onInterrupt(() => Effect.forkDetach(Fiber.interrupt(fiber))),
+          Effect.timeoutOrElse({
+            duration,
+            orElse: () =>
+              Effect.all([Ref.get(phase), Ref.get(outputs)]).pipe(
+                Effect.flatMap(([{ service, step }, output]) =>
+                  Effect.fail(
+                    new CatalogStallError({
+                      message: `${service} ${step} did not finish within ${duration}; ${service} output:\n${output.get(service) || "(none)"}`,
+                    }),
+                  ),
                 ),
               ),
-            ),
-        }),
+          }),
+        ),
       );
   return { capture, enter, guard };
 });
@@ -146,9 +153,10 @@ describe("service catalog", () => {
             yield* pgmeta.start;
             yield* trace.enter("pgmeta", "readiness");
             yield* pgmeta.ready;
-            yield* trace.enter("pgmeta", "/schemas request");
+            yield* trace.enter("pgmeta", "relay");
             const pgmetaEndpoint = yield* pgmetaRecipe.endpoint("http");
             const pgmetaRelay = yield* makeDockerHttpRelay(pgmetaRecipe.endpoint("http"));
+            yield* trace.enter("pgmeta", "/schemas request");
             const schemasResponse = yield* client.execute(
               HttpClientRequest.get(
                 `http://${httpHost(pgmetaEndpoint)}:${pgmetaEndpoint.port}/schemas`,
@@ -206,7 +214,7 @@ describe("service catalog", () => {
             yield* realtime.stop;
             yield* trace.enter("database", "stop");
             yield* database.stop;
-            yield* trace.enter("database", "root cleanup");
+            yield* trace.enter("database", "scope teardown");
           }),
         ).pipe(trace.guard("110 seconds"));
       }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
