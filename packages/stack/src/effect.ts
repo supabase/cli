@@ -84,6 +84,10 @@ export { StackError } from "./Rpc.ts";
 export { NamespaceError, publish } from "./StackNamespace.ts";
 /** Holds an exclusive cross-process lock on a file for the enclosing scope, waiting up to a budget. */
 export { holdLock } from "./StackNamespace.ts";
+/** Holds a cross-process lock shared with other shared holders, excluding `holdExclusiveLock`. */
+export { holdSharedLock } from "./StackNamespace.ts";
+/** Holds a cross-process lock that excludes every `holdSharedLock` holder. */
+export { holdExclusiveLock } from "./StackNamespace.ts";
 /** Whether a `holdLock` failure means another holder kept the lock for the whole budget. */
 export { isLockBusy } from "./StackNamespace.ts";
 export {

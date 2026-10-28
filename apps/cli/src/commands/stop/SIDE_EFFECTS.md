@@ -25,10 +25,12 @@ model (see the CLI-1324 plan's "Critical architectural finding" for why).
 
 ## Files Written
 
-| Path                                                                | Format              | When                                                                                    |
-| ------------------------------------------------------------------- | ------------------- | --------------------------------------------------------------------------------------- |
-| `~/.supabase/telemetry.json`                                        | JSON                | always (in `Effect.ensuring`) at end of command                                         |
-| `<workdir>/supabase/.temp/start-secrets/<container-name>` (removed) | plaintext, per-file | after teardown succeeds, for every container name torn down that had a staged directory |
+| Path                                                                | Format              | When                                                                                                                         |
+| ------------------------------------------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `~/.supabase/telemetry.json`                                        | JSON                | always (in `Effect.ensuring`) at end of command                                                                              |
+| `<workdir>/supabase/.temp/start-secrets/<container-name>` (removed) | plaintext, per-file | after teardown succeeds, for every container name torn down that had a staged directory                                      |
+| `$SUPABASE_HOME/locks/docker-lifecycle.lock`                        | SQLite lock file    | held for the whole run: shared for one project, exclusive for `stop --all`; waits up to 10 minutes for a conflicting command |
+| `$SUPABASE_HOME/locks/docker-project-<sha256(project label)>.lock`  | SQLite lock file    | held for the whole run: serializes lifecycle commands for the same project (not taken by `--all`); waits up to 10 minutes    |
 
 The `start-secrets` removal is a TS-port-only hygiene step (`cleanupStartSecrets`,
 `command-internal/start-secrets-cleanup.ts`) — the old Go CLI never staged secrets on
@@ -89,17 +91,18 @@ and ensure it is on PATH") rather than a generic "failed to ..." string.
 
 ## Exit Codes
 
-| Code | Condition                                                                                          |
-| ---- | -------------------------------------------------------------------------------------------------- |
-| `0`  | success — containers/volumes/networks pruned                                                       |
-| `1`  | `--project-id` and `--all` both set (`StopMutuallyExclusiveError`)                                 |
-| `1`  | `config.toml` present but malformed (`StopConfigLoadError`) — an **absent** file is not an error   |
-| `1`  | listing containers failed (`StopListError`)                                                        |
-| `1`  | stopping one or more containers failed (`StopContainerError`)                                      |
-| `1`  | `docker container prune` failed (`StopContainerPruneError`)                                        |
-| `1`  | `docker volume prune` failed, only reached when volumes are being deleted (`StopVolumePruneError`) |
-| `1`  | `docker network prune` failed (`StopNetworkPruneError`)                                            |
-| `1`  | `docker`/`podman` both absent from `PATH` (surfaces as one of the errors above)                    |
+| Code | Condition                                                                                                                                          |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — containers/volumes/networks pruned                                                                                                       |
+| `1`  | `--project-id` and `--all` both set (`StopMutuallyExclusiveError`)                                                                                 |
+| `1`  | another lifecycle command still holds the lock after 10 minutes (`ProjectLifecycleLockBusyError`); `--all` waits for every other lifecycle command |
+| `1`  | `config.toml` present but malformed (`StopConfigLoadError`) — an **absent** file is not an error                                                   |
+| `1`  | listing containers failed (`StopListError`)                                                                                                        |
+| `1`  | stopping one or more containers failed (`StopContainerError`)                                                                                      |
+| `1`  | `docker container prune` failed (`StopContainerPruneError`)                                                                                        |
+| `1`  | `docker volume prune` failed, only reached when volumes are being deleted (`StopVolumePruneError`)                                                 |
+| `1`  | `docker network prune` failed (`StopNetworkPruneError`)                                                                                            |
+| `1`  | `docker`/`podman` both absent from `PATH` (surfaces as one of the errors above)                                                                    |
 
 ## Telemetry Events Fired
 

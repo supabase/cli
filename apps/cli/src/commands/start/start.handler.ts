@@ -67,6 +67,7 @@ import {
   type ContainerIdName,
 } from "../../command-internal/docker-lifecycle.ts";
 import { dockerRemoveAll } from "../../command-internal/docker-remove-all.ts";
+import { holdProjectLifecycleLock } from "../../command-internal/project-lifecycle-lock.ts";
 import {
   envOverride,
   envOverrideApiMaxRows,
@@ -593,6 +594,9 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
 
     const dbContainerId = localDbContainerId(projectId);
     const filterValue = cliProjectFilterValue(projectId);
+
+    // Held until the handler scope closes, after recovery, bring-up, and any rollback have run.
+    yield* holdProjectLifecycleLock(projectId);
 
     // Shared by the already-running branch (full status pipeline, re-health-checked) and the
     // success path (a direct pretty-print, no re-health-check).
@@ -1919,5 +1923,5 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       const { values: statusValues } = yield* buildStatusValues(statusExcluded, values);
       yield* output.success("", statusValues);
     }
-  }).pipe(Effect.ensuring(telemetryState.flush));
+  }).pipe(Effect.scoped, Effect.ensuring(telemetryState.flush));
 });

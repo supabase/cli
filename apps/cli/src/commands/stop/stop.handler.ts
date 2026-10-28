@@ -13,6 +13,7 @@ import {
   type ContainerIdName,
 } from "../../command-internal/docker-lifecycle.ts";
 import { dockerRemoveAll } from "../../command-internal/docker-remove-all.ts";
+import { holdProjectLifecycleLock } from "../../command-internal/project-lifecycle-lock.ts";
 import { cleanupStartSecrets } from "../../command-internal/start-secrets-cleanup.ts";
 import { resolveLocalConfigValues } from "../../command-internal/local-config-values.ts";
 import {
@@ -114,6 +115,9 @@ export const stop = Effect.fn("stop")(function* (flags: StopFlags) {
     const deleteVolumes = flags.noBackup;
     const filterValue = cliProjectFilterValue(searchProjectIdFilter);
 
+    // Held through the prune and its secret cleanup; `--all` excludes every other lifecycle command.
+    yield* holdProjectLifecycleLock(searchProjectIdFilter);
+
     // Printed directly (not via `output.task`'s debounced spinner) so it always appears — the
     // spinner's delay drops the message when Docker calls resolve faster than the threshold, as
     // they do against mocked/replayed Docker.
@@ -192,5 +196,5 @@ export const stop = Effect.fn("stop")(function* (flags: StopFlags) {
         );
       }
     }
-  }).pipe(Effect.ensuring(telemetryState.flush));
+  }).pipe(Effect.scoped, Effect.ensuring(telemetryState.flush));
 });

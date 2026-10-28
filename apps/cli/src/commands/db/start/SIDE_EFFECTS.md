@@ -85,13 +85,15 @@ volume was confirmed fresh this run).
 
 ## Files Written
 
-| Path                                                                  | Format | When                                                                                               |
-| --------------------------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/.branches/_current_branch`                        | text   | only if absent — writes `"main"` (see the step-by-step sequence above for exactly when)            |
-| local Docker volume `supabase_db_<project>`                           | —      | the Postgres data volume, created on first start (or first `--from-backup` restore)                |
-| local Docker network `supabase_network_<project>` (or `--network-id`) | —      | created if it doesn't already exist                                                                |
-| `$SUPABASE_HOME/stacks/<stackId>/`                                    | JSON   | the stack definition, service identities, selected runtime, and service state on the stack backend |
-| `~/.supabase/telemetry.json`                                          | JSON   | always — telemetry flush (`Effect.ensuring(telemetryState.flush)`), success and failure            |
+| Path                                                                  | Format           | When                                                                                                                         |
+| --------------------------------------------------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/.branches/_current_branch`                        | text             | only if absent — writes `"main"` (see the step-by-step sequence above for exactly when)                                      |
+| local Docker volume `supabase_db_<project>`                           | —                | the Postgres data volume, created on first start (or first `--from-backup` restore)                                          |
+| local Docker network `supabase_network_<project>` (or `--network-id`) | —                | created if it doesn't already exist                                                                                          |
+| `$SUPABASE_HOME/stacks/<stackId>/`                                    | JSON             | the stack definition, service identities, selected runtime, and service state on the stack backend                           |
+| `~/.supabase/telemetry.json`                                          | JSON             | always — telemetry flush (`Effect.ensuring(telemetryState.flush)`), success and failure                                      |
+| `$SUPABASE_HOME/locks/docker-lifecycle.lock`                          | SQLite lock file | held for the whole run: shared for one project, exclusive for `stop --all`; waits up to 10 minutes for a conflicting command |
+| `$SUPABASE_HOME/locks/docker-project-<sha256(project label)>.lock`    | SQLite lock file | held for the whole run: serializes lifecycle commands for the same project; waits up to 10 minutes                           |
 
 ## Subprocesses
 
@@ -155,15 +157,16 @@ code is surfaced on failure.
 
 ## Exit Codes
 
-| Code | Condition                                                                   |
-| ---- | --------------------------------------------------------------------------- |
-| `0`  | success — database started, or already running                              |
-| `0`  | `--from-backup` set and the health-check timed out (swallowed)              |
-| `1`  | malformed `supabase/config.toml`                                            |
-| `1`  | Docker daemon unreachable / inspect failure                                 |
-| `1`  | `backup volume already exists` (`--from-backup` against a non-fresh volume) |
-| `1`  | a health-check timeout with `--from-backup` unset                           |
-| `1`  | any other container-bootstrap failure (network/volume/create/start/setup)   |
+| Code | Condition                                                                                                                                                                                                       |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — database started, or already running                                                                                                                                                                  |
+| `0`  | `--from-backup` set and the health-check timed out (swallowed)                                                                                                                                                  |
+| `1`  | malformed `supabase/config.toml`                                                                                                                                                                                |
+| `1`  | another lifecycle command still holds this project's lock after 10 minutes — prints `Waiting for another Supabase CLI command to finish with project <id>...` to stderr first (`ProjectLifecycleLockBusyError`) |
+| `1`  | Docker daemon unreachable / inspect failure                                                                                                                                                                     |
+| `1`  | `backup volume already exists` (`--from-backup` against a non-fresh volume)                                                                                                                                     |
+| `1`  | a health-check timeout with `--from-backup` unset                                                                                                                                                               |
+| `1`  | any other container-bootstrap failure (network/volume/create/start/setup)                                                                                                                                       |
 
 ## Output
 

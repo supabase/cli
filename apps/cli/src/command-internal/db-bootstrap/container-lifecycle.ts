@@ -189,10 +189,10 @@ function portConflictSuggestion(hostPort: string, serviceLabel: string): string 
  * Creates the shared docker network for this project via `docker network create --label ...`,
  * treating "already exists" as success.
  *
- * Called once per `start` run rather than once per container: the network can't be deleted
- * externally mid-run, so it's guaranteed to still exist for every later {@link createContainer}
- * call. Returns immediately for a built-in network name (`default`, `bridge`, `host`, `none`),
- * which already exists and cannot be created.
+ * Called once per `start` run rather than once per container: callers holding the project lifecycle
+ * lock keep other lifecycle commands from pruning it before every {@link createContainer} call has run.
+ * Returns immediately for a built-in network name (`default`, `bridge`, `host`, `none`), which
+ * already exists and cannot be created.
  */
 export function ensureNetwork(
   spawner: Spawner,

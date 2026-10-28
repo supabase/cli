@@ -50,6 +50,7 @@ import { ramInBytes } from "../size-units.ts";
 import { goUrlParse } from "../storage-url.ts";
 import { loadLocalProjectContext } from "../local-project-context.ts";
 import { cliProjectFilterValue } from "../docker-ids.ts";
+import { holdProjectLifecycleLock } from "../project-lifecycle-lock.ts";
 import { buildLocalDbContainerInputs } from "./local-container-inputs.ts";
 import { isLocalDbRunning } from "./local-db-running.ts";
 import { rollbackStart } from "./rollback.ts";
@@ -84,15 +85,8 @@ interface StartLocalDatabaseResult {
   readonly status: StartLocalDatabaseStatus;
 }
 
-/**
- * Starts the local Postgres database, or no-ops when it is already running. See this module's
- * own header for the full design rationale.
- *
- * `fromBackupFlag` is `db start`'s own `--from-backup` value, resolved against the caller's cwd
- * before being passed in; the declarative seam's `ensureLocalDatabaseStarted` always calls with
- * no argument.
- */
-export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(function* (
+/** Takes the project lifecycle lock into its scope; {@link startLocalDatabase} closes that scope after rollback. */
+const startLocalDatabaseInScope = Effect.fn("DbBootstrap.startLocalDatabase")(function* (
   fromBackupFlag?: string,
 ) {
   const output = yield* Output;
@@ -634,6 +628,9 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
     ),
   );
 
+  // Held until this call returns, after any rollback has run.
+  yield* holdProjectLifecycleLock(context.projectId);
+
   // If the db container is already up, tell the caller and stop here. Runs after the config
   // load/validation above.
   const running = yield* isLocalDbRunning(
@@ -724,3 +721,14 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
 
   return { status: "started" } satisfies StartLocalDatabaseResult;
 });
+
+/**
+ * Starts the local Postgres database, or no-ops when it is already running. See this module's
+ * own header for the full design rationale.
+ *
+ * `fromBackupFlag` is `db start`'s own `--from-backup` value, resolved against the caller's cwd
+ * before being passed in; the declarative seam's `ensureLocalDatabaseStarted` always calls with
+ * no argument.
+ */
+export const startLocalDatabase = (fromBackupFlag?: string) =>
+  Effect.scoped(startLocalDatabaseInScope(fromBackupFlag));
