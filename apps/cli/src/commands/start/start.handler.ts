@@ -109,9 +109,9 @@ import { seedBucketsRun } from "../../command-internal/seed-buckets.ts";
 import { holdLocalStackStartLock } from "../../command-internal/local-stack-start-lock.ts";
 import { cleanupStartSecrets } from "../../command-internal/start-secrets-cleanup.ts";
 import {
+  dbNotRunningError,
   StatusDbInspectError,
   StatusDbNotReadyError,
-  StatusDbNotRunningError,
   StatusInvalidConfigError,
   StatusListError,
 } from "../../command-internal/status-errors.ts";
@@ -599,11 +599,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
 
     const dbContainerId = localDbContainerId(projectId);
     const filterValue = cliProjectFilterValue(projectId);
-    const dbNotRunning = (status: string) =>
-      new StatusDbNotRunningError({
-        message: `${dbContainerId} container is not running: ${status || "unknown"}`,
-        suggestion: `Run ${aqua("supabase stop")} to remove this project's stopped containers, then run ${aqua("supabase start")} again.`,
-      });
+    const dbNotRunning = (status: string) => dbNotRunningError(dbContainerId, status);
 
     // Shared by the already-running branch (full status pipeline, re-health-checked) and the
     // success path (a direct pretty-print, no re-health-check).

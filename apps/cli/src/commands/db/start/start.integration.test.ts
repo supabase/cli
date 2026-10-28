@@ -272,6 +272,75 @@ function alreadyRunningRoute(
   };
 }
 
+const DB_PROJECT_ID = Option.some("test");
+const DB_CONTAINER = "supabase_db_test";
+const BITBUCKET_ENV = "BITBUCKET_CLONE_DIR=/opt/atlassian/pipelines/agent/build\n";
+
+interface DbContainerState {
+  readonly Running: boolean;
+  readonly Status: string;
+}
+
+/**
+ * A db container left behind in `state`: `container inspect` reports it as a real `docker
+ * container inspect` array payload until `container rm` removes it, and a same-name `create`
+ * conflicts until then, as Docker's name uniqueness would.
+ */
+function leftBehindDbRoute(
+  state: DbContainerState,
+  base: (args: ReadonlyArray<string>) => RouteResult,
+): (args: ReadonlyArray<string>) => RouteResult {
+  let removed = false;
+  return (args) => {
+    if (args[0] === "container" && args[1] === "rm" && args.includes(DB_CONTAINER)) {
+      removed = true;
+      return { exitCode: 0 };
+    }
+    if (!removed && args[0] === "container" && args[1] === "inspect" && args[2] === DB_CONTAINER) {
+      return { stdout: [JSON.stringify([{ State: state }])] };
+    }
+    if (!removed && args[0] === "create" && containerNameFromCreateArgs(args) === DB_CONTAINER) {
+      return {
+        exitCode: 125,
+        stderr: [`Conflict. The container name "/${DB_CONTAINER}" is already in use`],
+      };
+    }
+    return base(args);
+  };
+}
+
+function containerRemovals(
+  spawned: ReadonlyArray<SpawnRecord>,
+): ReadonlyArray<ReadonlyArray<string>> {
+  return spawned.filter((s) => s.args[0] === "container" && s.args[1] === "rm").map((s) => s.args);
+}
+
+function volumeRemovalWasAttempted(spawned: ReadonlyArray<SpawnRecord>): boolean {
+  return spawned.some(
+    (s) => s.args[0] === "volume" && (s.args[1] === "rm" || s.args[1] === "prune"),
+  );
+}
+
+type DbProbePath = "Engine API" | "container CLI";
+
+/**
+ * Makes the chosen probe path the only one that can see the left-behind container: the Engine
+ * row leaves the container CLI answering "no such container", so only the Engine answer can
+ * trigger the stopped-container handling.
+ */
+function leftBehindDbProbe(probe: DbProbePath, status: string) {
+  const state = { Running: false, Status: status };
+  return probe === "Engine API"
+    ? {
+        route: defaultRoute(),
+        engine: Layer.succeed(LocalDockerEngine, {
+          inspectContainer: () =>
+            Effect.succeed(Option.some({ exists: true, running: false, status })),
+        }),
+      }
+    : { route: leftBehindDbRoute(state, defaultRoute()), engine: undefined };
+}
+
 /**
  * Makes `isLocalDbRunning`'s pre-bring-up `container inspect` fail for a reason other than
  * "no such container" — simulates an unreachable Docker daemon during the running-check, which
@@ -345,6 +414,8 @@ interface SetupOpts {
   readonly projectEnvContents?: string;
   readonly skipConfig?: boolean;
   readonly workdir?: string;
+  /** The `SUPABASE_PROJECT_ID` the db state probe resolves; defaults to `mockCommandSettings`' own. */
+  readonly projectId?: Option.Option<string>;
   readonly cwd?: string;
   readonly platform?: NodeJS.Platform;
   readonly networkId?: string;
@@ -383,7 +454,7 @@ function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const http = alwaysReadyHttpClient();
   const telemetry = mockTelemetryStateTracked();
-  const cliSettings = mockCommandSettings({ workdir });
+  const cliSettings = mockCommandSettings({ workdir, projectId: opts.projectId });
   const baseRoute = opts.route ?? defaultRoute();
   const route =
     opts.running === true
@@ -514,7 +585,8 @@ describe("db start", () => {
             Layer.mergeAll(
               layer,
               Layer.succeed(LocalDockerEngine, {
-                containerExists: () => Effect.succeed(Option.some(true)),
+                inspectContainer: () =>
+                  Effect.succeed(Option.some({ exists: true, running: true, status: "running" })),
               }),
             ),
           ),
@@ -524,6 +596,112 @@ describe("db start", () => {
       });
     },
   );
+
+  it.effect(
+    "leaves a running db container alone when docker inspect reports State.Running true",
+    () => {
+      const { layer, out, child } = setup({
+        route: leftBehindDbRoute({ Running: true, Status: "running" }, defaultRoute()),
+        projectId: DB_PROJECT_ID,
+      });
+      return Effect.gen(function* () {
+        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(out.stderrText).toContain("Postgres database is already running.");
+        expect(containerRemovals(child.spawned)).toEqual([]);
+        expect(createArgs(child.spawned)).toBeUndefined();
+      });
+    },
+  );
+
+  describe("a db container that exists but is not running", () => {
+    beforeEach(() => {
+      vi.stubEnv("BITBUCKET_CLONE_DIR", undefined);
+    });
+
+    it.effect.each([
+      ["Engine API", "exited"],
+      ["container CLI", "exited"],
+      ["Engine API", "created"],
+      ["container CLI", "created"],
+    ] as const)(
+      "removes only the %s-reported %s db container and brings it back up",
+      ([probe, status]) => {
+        const { route, engine } = leftBehindDbProbe(probe, status);
+        const { layer, out, child } = setup({ route, projectId: DB_PROJECT_ID });
+        return Effect.gen(function* () {
+          yield* dbStart(DEFAULT_FLAGS).pipe(
+            Effect.provide(engine === undefined ? layer : Layer.mergeAll(layer, engine)),
+          );
+          expect(out.stderrText).not.toContain("already running");
+          expect(out.stderrText).toContain("Starting database");
+          expect(containerRemovals(child.spawned)).toEqual([
+            ["container", "rm", "-f", DB_CONTAINER],
+          ]);
+          expect(volumeRemovalWasAttempted(child.spawned)).toBe(false);
+          expect(rollbackWasAttempted(child.spawned)).toBe(false);
+          expect(containerNameFromCreateArgs(createArgs(child.spawned) ?? [])).toBe(DB_CONTAINER);
+          expect(dbSetupJobCalls(child.spawned)).toHaveLength(0);
+          expect(yield* readCurrentBranch(tempRoot.current)).toBe("main");
+        }).pipe(withEmptyConfigEnv);
+      },
+    );
+
+    it.effect.each(["Engine API", "container CLI"] as const)(
+      "inside Bitbucket Pipelines the %s-reported stopped container fails with a supabase stop suggestion and is left in place",
+      (probe) => {
+        const { route, engine } = leftBehindDbProbe(probe, "exited");
+        const { layer, out, child } = setup({
+          route,
+          projectId: DB_PROJECT_ID,
+          projectEnvContents: BITBUCKET_ENV,
+        });
+        return Effect.gen(function* () {
+          const error = yield* dbStart(DEFAULT_FLAGS).pipe(
+            Effect.provide(engine === undefined ? layer : Layer.mergeAll(layer, engine)),
+            Effect.flip,
+          );
+          expect(error).toMatchObject({
+            _tag: "StatusDbNotRunningError",
+            message: `${DB_CONTAINER} container is not running: exited`,
+            suggestion: expect.stringContaining("supabase stop"),
+          });
+          expect(out.stderrText).not.toContain("already running");
+          expect(containerRemovals(child.spawned)).toEqual([]);
+          expect(volumeRemovalWasAttempted(child.spawned)).toBe(false);
+          expect(createArgs(child.spawned)).toBeUndefined();
+          expect(yield* currentBranchExists(tempRoot.current)).toBe(false);
+        });
+      },
+    );
+
+    it.effect("an empty BITBUCKET_CLONE_DIR does not count as Bitbucket Pipelines", () => {
+      const { route } = leftBehindDbProbe("container CLI", "exited");
+      const { layer, child } = setup({
+        route,
+        projectId: DB_PROJECT_ID,
+        projectEnvContents: "BITBUCKET_CLONE_DIR=\n",
+      });
+      return Effect.gen(function* () {
+        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(containerRemovals(child.spawned)).toEqual([["container", "rm", "-f", DB_CONTAINER]]);
+        expect(createArgs(child.spawned)).not.toBeUndefined();
+      }).pipe(withEmptyConfigEnv);
+    });
+
+    it.effect("starts normally inside Bitbucket Pipelines when no db container exists", () => {
+      const { layer, out, child } = setup({
+        route: freshVolumeRoute(defaultRoute()),
+        projectEnvContents: BITBUCKET_ENV,
+      });
+      return Effect.gen(function* () {
+        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(out.stderrText).toContain("Starting database");
+        expect(containerRemovals(child.spawned)).toEqual([]);
+        expect(createArgs(child.spawned)).not.toBeUndefined();
+        expect(yield* readCurrentBranch(tempRoot.current)).toBe("main");
+      });
+    });
+  });
 
   it.effect(
     "starts the database on a fresh volume: creates the container, runs the SetupLocalDatabase-equivalent pipeline, and writes _current_branch",

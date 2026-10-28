@@ -4,6 +4,7 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
+import { aqua } from "./colors.ts";
 
 /**
  * An explicit `--workdir`/`SUPABASE_WORKDIR` path doesn't exist or isn't a directory. Checked
@@ -57,6 +58,13 @@ export class StatusDbNotRunningError extends Data.TaggedError("StatusDbNotRunnin
     return this.suggestion === undefined ? actionability.startStack : actionability.stopStack;
   }
 }
+
+/** The db container exists but is not running; `supabase stop` clears the stopped project. */
+export const dbNotRunningError = (containerId: string, status: string) =>
+  new StatusDbNotRunningError({
+    message: `${containerId} container is not running: ${status || "unknown"}`,
+    suggestion: `Run ${aqua("supabase stop")} to remove this project's stopped containers, then run ${aqua("supabase start")} again.`,
+  });
 
 /** The db container is running but its Docker health check is not `healthy`. */
 export class StatusDbNotReadyError extends Data.TaggedError("StatusDbNotReadyError")<{

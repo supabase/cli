@@ -37,9 +37,10 @@ formatting without disabling safe compaction.
 
 ## Subprocesses / Containers
 
-| What                                                                                                                                                                  | When                                                           |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| `docker`/`podman` container recreate for the local `db` (+ satellite restarts, Kong reload) — the same primitives `db start`/`db reset` use, via `resetLocalDatabase` | smart-mode Local choice when reset is confirmed (or `--reset`) |
+| What                                                                                                                                                                                                                                                                              | When                                                           |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `docker`/`podman` container recreate for the local `db` (+ satellite restarts, Kong reload) — the same primitives `db start`/`db reset` use, via `resetLocalDatabase`                                                                                                             | smart-mode Local choice when reset is confirmed (or `--reset`) |
+| Local database auto-start via `startLocalDatabase` — absent `db` container: started; present but not running: removed with `docker container rm -f` (data volume kept) and started, as `db start` does; in Bitbucket Pipelines it fails with a `supabase stop` suggestion instead | the local `db` container is not running                        |
 
 ## Environment Variables
 

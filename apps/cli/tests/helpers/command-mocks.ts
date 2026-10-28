@@ -104,7 +104,7 @@ export const mockLinkedProjectCacheLayer = Layer.succeed(LinkedProjectCache, {
  * socket. Direct-path tests provide their own definitive `LocalDockerEngine`.
  */
 export const mockLocalDockerEngineUnavailableLayer = Layer.succeed(LocalDockerEngine, {
-  containerExists: () => Effect.succeed(Option.none()),
+  inspectContainer: () => Effect.succeed(Option.none()),
 });
 
 export const mockTelemetryStateLayer = Layer.succeed(TelemetryState, {

@@ -8,7 +8,7 @@
  * {@link StartLocalDatabaseResult} discriminator instead of printing the terminal line itself.
  */
 
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Path } from "effect";
 import { ChildProcessSpawner } from "effect/process";
 
 import { Output } from "../../shared/output/output.service.ts";
@@ -49,11 +49,14 @@ import { parseGoDuration, resolveHealthTimeoutSeconds } from "../go-duration.ts"
 import { ramInBytes } from "../size-units.ts";
 import { goUrlParse } from "../storage-url.ts";
 import { loadLocalProjectContext } from "../local-project-context.ts";
-import { cliProjectFilterValue } from "../docker-ids.ts";
+import { cliProjectFilterValue, localDbContainerId } from "../docker-ids.ts";
+import { isBitbucketPipeline } from "../bitbucket-pipeline.ts";
 import { holdLocalStackStartLock } from "../local-stack-start-lock.ts";
+import { dbNotRunningError } from "../status-errors.ts";
 import { buildLocalDbContainerInputs } from "./local-container-inputs.ts";
+import { removeContainer } from "./container-lifecycle.ts";
 import { awaitDockerHealthSettled } from "./health-check.ts";
-import { isLocalDbRunning } from "./local-db-running.ts";
+import { localDbState } from "./local-db-running.ts";
 import { rollbackStart } from "./rollback.ts";
 import { startDatabase } from "./start-database.ts";
 
@@ -633,16 +636,26 @@ const startLocalDatabaseInScope = Effect.fn("DbBootstrap.startLocalDatabase")(fu
 
   // If the db container is already up, tell the caller and stop here. Runs after the config
   // load/validation above.
-  const running = yield* isLocalDbRunning(
-    spawner,
-    fs,
-    path,
-    cliSettings.workdir,
-    Option.getOrUndefined(cliSettings.projectId),
-  );
-  yield* Effect.annotateCurrentSpan("db.already_running", running);
+  // Probed by the same project id bring-up uses, so a stopped container is removed by the name
+  // that was inspected.
+  const dbState = yield* localDbState(spawner, fs, path, cliSettings.workdir, context.projectId);
+  const running = dbState.exists && dbState.running;
+  const recoverStopped = dbState.exists && !dbState.running;
+  yield* Effect.annotateCurrentSpan({
+    "db.already_running": running,
+    "db.recover_stopped": recoverStopped,
+  });
   if (running) {
     return { status: "already-running" } satisfies StartLocalDatabaseResult;
+  }
+  // Bitbucket has no named volumes, so removing the container would destroy its data.
+  if (dbState.exists) {
+    const inBitbucketPipeline = yield* isBitbucketPipeline(projectEnvValues).pipe(
+      Effect.mapError((error) => new DbConfigLoadError({ message: error.message })),
+    );
+    if (inBitbucketPipeline) {
+      return yield* dbNotRunningError(localDbContainerId(context.projectId), dbState.status);
+    }
   }
 
   // Resolve a relative `--from-backup` against the caller's cwd, captured before any workdir
@@ -682,6 +695,13 @@ const startLocalDatabaseInScope = Effect.fn("DbBootstrap.startLocalDatabase")(fu
   } = inputs;
 
   const filterValue = cliProjectFilterValue(projectId);
+
+  // Only the db container: `db start` leaves the project's other services alone.
+  if (recoverStopped) {
+    yield* removeContainer(spawner, dbContainerId).pipe(
+      Effect.withSpan("DbBootstrap.recoverStoppedDatabase"),
+    );
+  }
 
   // Assigned by `startDatabase`'s own pre-create volume-existence check; defaults to
   // `false` so a rollback triggered by an earlier failure (e.g. network creation) never
