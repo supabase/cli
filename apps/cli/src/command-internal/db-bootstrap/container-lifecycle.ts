@@ -2,7 +2,8 @@
  * Given a fully-resolved {@link StartContainerSpec}, sets the two project-identity labels,
  * provisions the container's own named volumes, builds the `docker create` argv, spawns `docker
  * create`, copies any `secretFiles` in via `docker cp` (see
- * {@link copyStartSecretFilesIntoContainer}), then spawns `docker start`.
+ * {@link copyStartSecretFilesIntoContainer}), runs the caller's optional `beforeStart` hook, then
+ * spawns `docker start`.
  *
  * Network creation is not part of this per-container function; see {@link ensureNetwork} for why
  * it runs once instead of once per container.
@@ -36,6 +37,7 @@ import {
   isDockerClientEnvKey,
   type StartContainerSpec,
 } from "./docker-create-args.ts";
+import { POSTGRES_DATA_DIR } from "./postgres.service.ts";
 
 type StartSecretFileSpec = NonNullable<StartContainerSpec["secretFiles"]>[number];
 
@@ -645,10 +647,41 @@ function extractPreStartArchiveIntoContainer(
   );
 }
 
+/** Docker's and Podman's `cp` stderr when the source path is absent from the container. */
+const COPY_SOURCE_MISSING_PATTERN =
+  /could not find the file|no such container:path|could not be found|no such file or directory/iu;
+
+/**
+ * Whether the Postgres data directory of a created, not-yet-started container already holds a
+ * cluster (`PG_VERSION`, written by `initdb`). Only a confirmed-missing file resolves `false`;
+ * every other outcome resolves `true`, so an ambiguous probe never runs setup over real data.
+ */
+export const postgresDataInitialized = Effect.fn("ContainerLifecycle.postgresDataInitialized")(
+  function* (spawner: Spawner, containerId: string) {
+    const initialized = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const child = yield* spawnContainerCli(
+          spawner,
+          ["cp", `${containerId}:${POSTGRES_DATA_DIR}/PG_VERSION`, "-"],
+          { stdin: "ignore", stdout: "ignore", stderr: "pipe" },
+        );
+        const [exitCode, stderr] = yield* Effect.all(
+          [child.exitCode.pipe(Effect.map(Number)), collectText(child.stderr)],
+          { concurrency: "unbounded" },
+        );
+        return exitCode === 0 || !COPY_SOURCE_MISSING_PATTERN.test(stderr);
+      }),
+    ).pipe(Effect.orElseSucceed(() => true));
+    yield* Effect.annotateCurrentSpan({ "db.data_initialized": initialized });
+    return initialized;
+  },
+);
+
 /**
  * Provisions this container's named volumes (skipped under Bitbucket Pipelines), creates it,
  * copies any `secretFiles` and `preStartArchives` in via `docker cp` while it's created but not
- * yet running (so its entrypoint never races the copy), then starts it.
+ * yet running (so its entrypoint never races the copy), runs `beforeStart` with the container id
+ * while it is still stopped, then starts it.
  *
  * Resolves to the created container's id/name on success.
  */
@@ -656,6 +689,7 @@ export function createContainer(
   spawner: Spawner,
   spec: StartContainerSpec,
   opts: ContainerOpts,
+  beforeStart?: (containerId: string) => Effect.Effect<void>,
 ): Effect.Effect<string, ContainerError> {
   return Effect.gen(function* () {
     const labels: Record<string, string> = {
@@ -711,6 +745,9 @@ export function createContainer(
         }).pipe(Effect.orElseSucceed(() => 0)),
       ),
     );
+    if (beforeStart !== undefined) {
+      yield* beforeStart(containerId);
+    }
     yield* dockerStartContainer(spawner, containerId, finalSpec);
     return containerId;
   }).pipe(

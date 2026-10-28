@@ -2,6 +2,7 @@ import { BunServices } from "@effect/platform-bun";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import {
   Cause,
+  Clock,
   Deferred,
   Effect,
   Exit,
@@ -27,6 +28,7 @@ import {
   mockRuntimeInfo,
 } from "../../../../tests/helpers/mocks.ts";
 import { EXEC_FAILED_STATE } from "../../../../tests/helpers/docker-health.ts";
+import { observeMakeDirectory, startLockState } from "../../../../tests/helpers/start-lock.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
 import {
@@ -39,6 +41,7 @@ import {
   withEmptyConfigEnv,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { classifyCliErrorActionability } from "../../../shared/telemetry/error-actionability.ts";
 import {
   DebugFlag,
   ExperimentalFlag,
@@ -61,6 +64,7 @@ import {
 } from "../../../command-internal/stack-catalog-setup.ts";
 import {
   StackError,
+  holdLock,
   type DatabaseInstance,
   type ServiceCreation,
   type ServiceCreationInput,
@@ -215,6 +219,28 @@ function freshVolumeRoute(
   return (args) => {
     if (args[0] === "volume" && args[1] === "inspect") {
       return { exitCode: 1, stderr: [`Error: No such volume: ${args[2] ?? ""}`] };
+    }
+    return base(args);
+  };
+}
+
+/** Docker's answer when the created Postgres container's data directory holds no `PG_VERSION`, i.e. `initdb` never ran. */
+function uninitialisedDataDirRoute(
+  base: (args: ReadonlyArray<string>) => RouteResult,
+): (args: ReadonlyArray<string>) => RouteResult {
+  return (args) => {
+    const source = args[1];
+    if (
+      args[0] === "cp" &&
+      source?.endsWith(":/var/lib/postgresql/data/PG_VERSION") === true &&
+      args[2] === "-"
+    ) {
+      return {
+        exitCode: 1,
+        stderr: [
+          `Error response from daemon: Could not find the file /var/lib/postgresql/data/PG_VERSION in container ${source.split(":")[0]}`,
+        ],
+      };
     }
     return base(args);
   };
@@ -858,6 +884,135 @@ describe("db start", () => {
       });
     },
   );
+
+  describe("an existing volume whose Postgres data directory was never initialised", () => {
+    it.effect("runs the schema setup pipeline as it does for a brand-new volume", () => {
+      const { layer, out, child } = setup({ route: uninitialisedDataDirRoute(defaultRoute()) });
+      return Effect.gen(function* () {
+        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(out.stderrText).toContain("Initialising schema...");
+        expect(dbSetupJobCalls(child.spawned)).toHaveLength(3);
+        expect(volumePruneWasAttempted(child.spawned)).toBe(false);
+        expect(yield* readCurrentBranch(tempRoot.current)).toBe("main");
+      });
+    });
+
+    for (const [probe, route, volumePruned] of [
+      ["uninitialised", uninitialisedDataDirRoute, true],
+      ["initialised", (base: ReturnType<typeof defaultRoute>) => base, false],
+    ] as const) {
+      it.live(
+        `rolls back ${volumePruned ? "and prunes" : "without pruning"} the volume when Postgres never becomes healthy on an ${probe} data directory`,
+        () => {
+          const { layer, child } = setup({
+            configContents: 'project_id = "test"\n[db]\nhealth_timeout = "1s"\n',
+            route: route(defaultRoute()),
+            connectFailures: Number.POSITIVE_INFINITY,
+          });
+          return Effect.gen(function* () {
+            const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+            expect(Exit.isFailure(exit)).toBe(true);
+            expect(rollbackWasAttempted(child.spawned)).toBe(true);
+            expect(volumePruneWasAttempted(child.spawned)).toBe(volumePruned);
+          });
+        },
+        15_000,
+      );
+    }
+  });
+
+  describe("per-project start lock", () => {
+    const WAITING_LINE = "Waiting for another supabase start for this project to finish...\n";
+
+    const startLockFile = Effect.fnUntraced(function* (workdir: string) {
+      const path = yield* Path.Path;
+      return path.join(workdir, ".supabase", "locks", "start-test.lock");
+    });
+
+    it.effect(
+      "waits the 10 minute budget for a concurrent start of the same project, then fails without touching Docker",
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const lockFile = yield* startLockFile(tempRoot.current);
+          yield* fs.makeDirectory(path.dirname(lockFile), { recursive: true });
+          yield* holdLock(lockFile, "0 millis", "concurrent start");
+          const lockDirReady = yield* Deferred.make<void>();
+          const { layer, out, child } = setup();
+
+          const forkedAt = yield* Clock.currentTimeMillis;
+          const fiber = yield* dbStart(DEFAULT_FLAGS).pipe(
+            Effect.provide(
+              Layer.mergeAll(
+                layer,
+                observeMakeDirectory((made) =>
+                  made === path.dirname(lockFile)
+                    ? Deferred.succeed(lockDirReady, undefined).pipe(Effect.asVoid)
+                    : Effect.void,
+                ),
+              ),
+            ),
+            Effect.flip,
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* Effect.raceFirst(Deferred.await(lockDirReady), Fiber.await(fiber));
+          for (let minute = 0; minute < 60 && fiber.pollUnsafe() === undefined; minute++) {
+            yield* TestClock.adjust("1 minute");
+          }
+          const error = yield* Fiber.join(fiber);
+          const waitedMillis = (yield* Clock.currentTimeMillis) - forkedAt;
+
+          expect(error).toMatchObject({
+            _tag: "LocalStackStartBusyError",
+            message: "another supabase start is still running for this project",
+            suggestion: expect.stringContaining("supabase start"),
+          });
+          expect(classifyCliErrorActionability(error)).toMatchObject({
+            error_fingerprint: "tag:LocalStackStartBusyError:lease_held",
+          });
+          expect(out.stderrText).toContain(WAITING_LINE);
+          expect(waitedMillis).toBeGreaterThanOrEqual(10 * 60_000);
+          expect(waitedMillis).toBeLessThanOrEqual(11 * 60_000);
+          expect(child.spawned).toEqual([]);
+        }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      60_000,
+    );
+
+    for (const outcome of ["succeeds", "fails"] as const) {
+      it.effect(
+        `holds the lock while the database comes up and releases it when the start ${outcome}`,
+        () => {
+          const { layer, dbSession } = setup({ route: freshVolumeRoute(defaultRoute()) });
+          return Effect.gen(function* () {
+            const lockFile = yield* startLockFile(tempRoot.current);
+            const stateAtConnect: Array<"free" | "busy" | "error"> = [];
+            const probingConnection = Layer.succeed(DbConnection, {
+              connect: () =>
+                startLockState(lockFile).pipe(
+                  Effect.flatMap((state) => {
+                    stateAtConnect.push(state);
+                    return outcome === "fails" && stateAtConnect.length > 1
+                      ? Effect.fail(new DbConnectError({ message: "connection refused" }))
+                      : Effect.succeed(dbSession.session);
+                  }),
+                ),
+            });
+
+            const exit = yield* dbStart(DEFAULT_FLAGS).pipe(
+              Effect.provide(Layer.mergeAll(layer, probingConnection)),
+              Effect.exit,
+            );
+
+            expect(Exit.isSuccess(exit)).toBe(outcome === "succeeds");
+            expect(stateAtConnect.length).toBeGreaterThan(1);
+            expect(stateAtConnect.every((state) => state === "busy")).toBe(true);
+            expect(yield* startLockState(lockFile)).toBe("free");
+          }).pipe(Effect.provide(BunServices.layer));
+        },
+      );
+    }
+  });
 
   it.effect("proceeds with no config file (missing config is tolerated)", () => {
     const { layer, child } = setup({ skipConfig: true, route: freshVolumeRoute(defaultRoute()) });

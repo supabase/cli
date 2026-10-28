@@ -2,6 +2,7 @@ import { generateKeyPairSync } from "node:crypto";
 
 import { BunServices } from "@effect/platform-bun";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
+import { holdLock } from "@supabase/stack/effect";
 import {
   Cause,
   Clock,
@@ -49,9 +50,13 @@ import {
   inspectedState,
 } from "../../../tests/helpers/docker-health.ts";
 import { assertPermissionDrift } from "../../../tests/helpers/permission-drift.ts";
+import { observeMakeDirectory, startLockState } from "../../../tests/helpers/start-lock.ts";
 import { unusedStackServices } from "../../../tests/helpers/unused-stack.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
-import { classifyCliCauseActionability } from "../../shared/telemetry/error-actionability.ts";
+import {
+  classifyCliCauseActionability,
+  classifyCliErrorActionability,
+} from "../../shared/telemetry/error-actionability.ts";
 import {
   DebugFlag,
   ExperimentalFlag,
@@ -398,6 +403,55 @@ function freshVolumeRoute(
   };
 }
 
+/** Docker's answer when the created Postgres container's data directory holds no `PG_VERSION`, i.e. `initdb` never ran. */
+function uninitialisedDataDirRoute(
+  base: (
+    args: ReadonlyArray<string>,
+  ) => RouteResult | Effect.Effect<RouteResult, PlatformError.PlatformError>,
+): (
+  args: ReadonlyArray<string>,
+) => RouteResult | Effect.Effect<RouteResult, PlatformError.PlatformError> {
+  return (args) => {
+    if (
+      args[0] === "cp" &&
+      args[1]?.endsWith(":/var/lib/postgresql/data/PG_VERSION") === true &&
+      args[2] === "-"
+    ) {
+      return {
+        exitCode: 1,
+        stderr: [
+          `Error response from daemon: Could not find the file /var/lib/postgresql/data/PG_VERSION in container ${args[1].split(":")[0]}`,
+        ],
+      };
+    }
+    return base(args);
+  };
+}
+
+/** The project's database container reports `state` until recovery lists the project's containers, then behaves like a fresh bring-up. */
+function recoveringStackRoute(
+  state: string,
+  workdir: string,
+  base: (args: ReadonlyArray<string>) => RouteResult = defaultRoute(),
+) {
+  let recovering = false;
+  return (args: ReadonlyArray<string>): RouteResult => {
+    if (
+      args[0] === "container" &&
+      args[1] === "inspect" &&
+      args[2] === "supabase_db_demo" &&
+      !recovering
+    ) {
+      return { stdout: [state] };
+    }
+    if (args[0] === "ps" && args.includes("--all")) {
+      recovering = true;
+      return { stdout: [`db-id\tsupabase_db_demo\t${workdir}`] };
+    }
+    return base(args);
+  };
+}
+
 /**
  * Vector-capable variant: empty bucket list, a fixed set of existing vector buckets, and a
  * raw-body recorder for `DeleteVectorBucket` calls; every other request answers a bare 200.
@@ -572,6 +626,8 @@ interface SetupOpts {
   readonly experimental?: boolean;
   /** Replaces the `DbConnection.connect` behind the Postgres readiness probe. Defaults to succeeding. */
   readonly dbConnect?: (typeof DbConnection)["Service"]["connect"];
+  /** Overrides `$SUPABASE_HOME`, which the start lock lives under. Defaults to `<workdir>/.supabase`. */
+  readonly supabaseHome?: string;
 }
 
 const setup = Effect.fnUntraced(function* (opts: SetupOpts = {}) {
@@ -585,7 +641,7 @@ const setup = Effect.fnUntraced(function* (opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const telemetry = mockTelemetryStateTracked();
   const analytics = mockAnalytics();
-  const cliSettings = mockCommandSettings({ workdir });
+  const cliSettings = mockCommandSettings({ workdir, supabaseHome: opts.supabaseHome });
   const child = mockStartContainerCliSpawner(opts.route ?? defaultRoute(), {
     failSpawn: opts.failSpawn,
     onSecretCopy: opts.onSecretCopy,
@@ -1055,7 +1111,7 @@ describe("start integration", () => {
         "BITBUCKET_CLONE_DIR",
         "/opt/atlassian/pipelines/agent/build",
         Effect.gen(function* () {
-          const { layer, child } = yield* setup({
+          const { layer, out, child } = yield* setup({
             route: (args) => {
               if (args[0] === "container" && args[1] === "inspect") {
                 return { stdout: [STOPPED_STATE] };
@@ -1067,8 +1123,11 @@ describe("start integration", () => {
           const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(Cause.pretty(exit.cause)).toContain("StatusDbNotRunningError");
+            const serialized = Cause.pretty(exit.cause);
+            expect(serialized).toContain("StatusDbNotRunningError");
+            expect(serialized).toContain("supabase_db_demo container is not running: exited");
           }
+          expect(out.stderrText).not.toContain("is already running");
           expect(
             child.spawned.some(
               (spawn) =>
@@ -1085,7 +1144,7 @@ describe("start integration", () => {
     it.effect("does not remove containers when re-inspect returns an unknown state", () =>
       Effect.gen(function* () {
         let dbInspects = 0;
-        const { layer, child } = yield* setup({
+        const { layer, out, child } = yield* setup({
           route: (args) => {
             if (args[0] === "container" && args[1] === "inspect") {
               dbInspects += 1;
@@ -1097,6 +1156,12 @@ describe("start integration", () => {
 
         const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
         expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain(
+            "supabase_db_demo container is not running: unknown",
+          );
+        }
+        expect(out.stderrText).not.toContain("is already running");
         expect(
           child.spawned.some(
             (spawn) =>
@@ -1106,34 +1171,103 @@ describe("start integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.effect("does not recover a created database container with unknown volume state", () =>
+    it.effect("recovers a created database container without pruning the database volume", () =>
       Effect.gen(function* () {
-        const { layer, child } = yield* setup({
+        const workdir = tempRoot.current;
+        const route = defaultRoute();
+        let recovering = false;
+        const { layer, out, child } = yield* setup({
           route: (args) => {
-            if (args[0] === "container" && args[1] === "inspect") {
+            if (
+              args[0] === "container" &&
+              args[1] === "inspect" &&
+              args[2] === "supabase_db_demo" &&
+              !recovering
+            ) {
               return { stdout: [CREATED_STATE] };
             }
-            return { exitCode: 0 };
+            if (args[0] === "ps" && args.includes("--all")) {
+              recovering = true;
+              return { stdout: [`db-id\tsupabase_db_demo\t${workdir}`] };
+            }
+            return route(args);
           },
         });
 
-        const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const serialized = Cause.pretty(exit.cause);
-          expect(serialized).toContain("StatusDbNotRunningError");
-          expect(serialized).toContain("container is not running: created");
-        }
+        yield* start(flags()).pipe(Effect.provide(layer));
+
+        expect(out.stderrText).not.toContain("is already running");
+        expect(out.stderrText).not.toContain("Initialising schema...");
+        expect(createdContainerNames(child.spawned)).toContain("supabase_db_demo");
         expect(
           child.spawned.some(
             (spawn) =>
-              (spawn.args[0] === "ps" && spawn.args.includes("--all")) ||
-              spawn.args[0] === "stop" ||
-              spawn.args[1] === "prune" ||
-              spawn.args[0] === "create",
+              spawn.args[0] === "container" &&
+              spawn.args[1] === "prune" &&
+              spawn.args.includes("label=com.supabase.cli.project=demo"),
           ),
+        ).toBe(true);
+        expect(
+          child.spawned.some((spawn) => spawn.args[0] === "volume" && spawn.args[1] === "prune"),
         ).toBe(false);
       }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect(
+      "fails with the unknown status and a supabase stop suggestion when Docker reports no database state",
+      () =>
+        Effect.gen(function* () {
+          const { layer, out, child } = yield* setup({
+            route: (args) => {
+              if (args[0] === "container" && args[1] === "inspect") return { stdout: [""] };
+              return { exitCode: 0 };
+            },
+          });
+
+          const error = yield* start(flags()).pipe(Effect.provide(layer), Effect.flip);
+
+          expect(error).toMatchObject({
+            _tag: "StatusDbNotRunningError",
+            message: "supabase_db_demo container is not running: unknown",
+            suggestion: expect.stringContaining("supabase stop"),
+          });
+          expect(classifyCliErrorActionability(error)).toMatchObject({
+            error_kind: "user_actionable",
+            suggested_command: "supabase stop",
+          });
+          expect(out.stderrText).not.toContain("is already running");
+          expect(createdContainerNames(child.spawned)).toEqual([]);
+        }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect(
+      "fails with the container status and no already-running banner when the database stops between the two inspects",
+      () =>
+        Effect.gen(function* () {
+          let dbInspects = 0;
+          const { layer, out } = yield* setup({
+            route: (args) => {
+              if (
+                args[0] === "container" &&
+                args[1] === "inspect" &&
+                args[2] === "supabase_db_demo"
+              ) {
+                dbInspects += 1;
+                return { stdout: [dbInspects === 1 ? HEALTHY_STATE : STOPPED_STATE] };
+              }
+              return { exitCode: 0 };
+            },
+          });
+
+          const error = yield* start(flags()).pipe(Effect.provide(layer), Effect.flip);
+
+          expect(error).toMatchObject({
+            _tag: "StatusDbNotRunningError",
+            message: "supabase_db_demo container is not running: exited",
+            suggestion: expect.stringContaining("supabase stop"),
+          });
+          expect(out.stderrText).not.toContain("is already running");
+        }).pipe(Effect.provide(BunServices.layer)),
     );
 
     it.effect("validates custom TLS files before removing a stopped stack", () =>
@@ -1390,6 +1524,147 @@ describe("start integration", () => {
           expect(child.spawned.some((spawn) => spawn.args[0] === "stop")).toBe(false);
           expect(createdContainerNames(child.spawned)).toEqual([]);
         }).pipe(Effect.provide(BunServices.layer)),
+    );
+  });
+
+  describe("per-project start lock", () => {
+    const WAITING_LINE = "Waiting for another supabase start for this project to finish...\n";
+
+    const startLockFile = Effect.fnUntraced(function* (workdir: string) {
+      const path = yield* Path.Path;
+      return path.join(workdir, ".supabase", "locks", "start-demo.lock");
+    });
+
+    const startAgainstHeldLock = (format: "text" | "json" | "stream-json") =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const lockFile = yield* startLockFile(tempRoot.current);
+        yield* fs.makeDirectory(path.dirname(lockFile), { recursive: true });
+        yield* holdLock(lockFile, "0 millis", "concurrent start");
+        const lockDirReady = yield* Deferred.make<void>();
+        const { layer, out, child } = yield* setup({ format });
+
+        const forkedAt = yield* Clock.currentTimeMillis;
+        const fiber = yield* start(flags()).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              layer,
+              observeMakeDirectory((made) =>
+                made === path.dirname(lockFile)
+                  ? Deferred.succeed(lockDirReady, undefined).pipe(Effect.asVoid)
+                  : Effect.void,
+              ),
+            ),
+          ),
+          Effect.flip,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Effect.raceFirst(Deferred.await(lockDirReady), Fiber.await(fiber));
+        for (let minute = 0; minute < 60 && fiber.pollUnsafe() === undefined; minute++) {
+          yield* TestClock.adjust("1 minute");
+        }
+        const error = yield* Fiber.join(fiber);
+        const waitedMillis = (yield* Clock.currentTimeMillis) - forkedAt;
+        return { error, out, child, waitedMillis };
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+
+    it.effect(
+      "waits the 10 minute budget for a concurrent start of the same project, then fails without touching Docker",
+      () =>
+        Effect.gen(function* () {
+          const { error, out, child, waitedMillis } = yield* startAgainstHeldLock("text");
+
+          expect(error).toMatchObject({
+            _tag: "LocalStackStartBusyError",
+            message: "another supabase start is still running for this project",
+            suggestion: expect.stringContaining("supabase start"),
+          });
+          expect(classifyCliErrorActionability(error)).toMatchObject({
+            error_kind: "user_actionable",
+            error_fingerprint: "tag:LocalStackStartBusyError:lease_held",
+          });
+          expect(out.stderrText).toContain(WAITING_LINE);
+          expect(waitedMillis).toBeGreaterThanOrEqual(10 * 60_000);
+          expect(waitedMillis).toBeLessThanOrEqual(11 * 60_000);
+          expect(child.spawned).toEqual([]);
+        }),
+      60_000,
+    );
+
+    for (const format of ["json", "stream-json"] as const) {
+      it.effect(
+        `keeps the waiting line out of ${format} output while waiting for a concurrent start`,
+        () =>
+          Effect.gen(function* () {
+            const { error, out } = yield* startAgainstHeldLock(format);
+
+            expect(error).toMatchObject({ _tag: "LocalStackStartBusyError" });
+            expect(out.rawChunks).toEqual([]);
+          }),
+        60_000,
+      );
+    }
+
+    it.effect("holds the lock from before the first Docker inspect through bring-up", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const lockFile = yield* startLockFile(tempRoot.current);
+          const base = defaultRoute();
+          const stateAtInspect: Array<"free" | "busy" | "error"> = [];
+          const { layer } = yield* setup({
+            route: (args) =>
+              args[0] === "container" && args[1] === "inspect" && args[2] === "supabase_db_demo"
+                ? startLockState(lockFile).pipe(
+                    Effect.map((state) => {
+                      stateAtInspect.push(state);
+                      return base(args);
+                    }),
+                  )
+                : base(args),
+          });
+
+          yield* start(flags()).pipe(Effect.provide(layer));
+
+          expect(stateAtInspect.length).toBeGreaterThan(1);
+          expect(stateAtInspect.every((state) => state === "busy")).toBe(true);
+          expect(yield* startLockState(lockFile)).toBe("free");
+        }),
+      ).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("releases the lock when start fails", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const lockFile = yield* startLockFile(tempRoot.current);
+          const { layer } = yield* setup({
+            route: (args) =>
+              args[0] === "container" && args[1] === "inspect" ? { stdout: [""] } : { exitCode: 0 },
+          });
+
+          const error = yield* start(flags()).pipe(Effect.provide(layer), Effect.flip);
+
+          expect(error).toMatchObject({ _tag: "StatusDbNotRunningError" });
+          expect(yield* startLockState(lockFile)).toBe("free");
+        }),
+      ).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("starts without a lock when the lock location cannot be created", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const blocker = path.join(tempRoot.current, "not-a-directory");
+        yield* fs.writeFileString(blocker, "");
+        const { layer, out, child } = yield* setup({
+          supabaseHome: path.join(blocker, "home"),
+        });
+
+        yield* start(flags()).pipe(Effect.provide(layer));
+
+        expect(createdContainerNames(child.spawned)).toContain("supabase_db_demo");
+        expect(out.stderrText).not.toContain(WAITING_LINE);
+      }).pipe(Effect.provide(BunServices.layer)),
     );
   });
 
@@ -2712,6 +2987,76 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(content).toBe("main");
         }).pipe(Effect.provide(BunServices.layer)),
     );
+
+    describe("a reused volume whose Postgres data directory was never initialised", () => {
+      for (const [status, state] of [
+        ["created", CREATED_STATE],
+        ["exited", STOPPED_STATE],
+      ] as const) {
+        it.effect(
+          `runs the database setup when the ${status} container's volume has no PG_VERSION`,
+          () =>
+            Effect.gen(function* () {
+              const { layer, out, child } = yield* setup({
+                route: uninitialisedDataDirRoute(recoveringStackRoute(state, tempRoot.current)),
+              });
+
+              yield* start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer));
+
+              expect(out.stderrText).not.toContain("is already running");
+              expect(out.stderrText).toContain("Initialising schema...");
+              expect(dbSetupJobCalls(child.spawned)).toHaveLength(3);
+              expect(
+                child.spawned.some((s) => s.args[0] === "volume" && s.args[1] === "prune"),
+              ).toBe(false);
+            }).pipe(Effect.provide(BunServices.layer)),
+        );
+      }
+
+      it.effect("seeds configured buckets, as it does for a brand-new volume", () =>
+        Effect.gen(function* () {
+          const http = mockStorageBucketHttpClient();
+          const { layer } = yield* setup({
+            configContents: 'project_id = "demo"\n[storage.buckets.avatars]\npublic = false\n',
+            route: uninitialisedDataDirRoute(recoveringStackRoute(CREATED_STATE, tempRoot.current)),
+            httpClientLayer: http.layer,
+          });
+
+          yield* start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer));
+
+          expect(http.createdBucketRequests).toHaveLength(1);
+        }).pipe(Effect.provide(BunServices.layer)),
+      );
+
+      for (const [probe, route, volumePruned] of [
+        ["uninitialised", uninitialisedDataDirRoute, true],
+        ["initialised", (base: ReturnType<typeof recoveringStackRoute>) => base, false],
+      ] as const) {
+        it.live(
+          `rolls back ${volumePruned ? "and prunes" : "without pruning"} the volume when Postgres never becomes healthy on an ${probe} data directory`,
+          () =>
+            Effect.gen(function* () {
+              const { layer, child } = yield* setup({
+                configContents: 'project_id = "demo"\n[db]\nhealth_timeout = "0s"\n',
+                dbConnect: refusedDbConnect,
+                route: route(recoveringStackRoute(CREATED_STATE, tempRoot.current)),
+              });
+
+              const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+
+              expect(Exit.isFailure(exit)).toBe(true);
+              if (Exit.isFailure(exit)) {
+                expect(Cause.pretty(exit.cause)).toContain("HealthCheckTimeoutError");
+              }
+              expect(rollbackWasAttempted(child.spawned)).toBe(true);
+              expect(
+                child.spawned.some((s) => s.args[0] === "volume" && s.args[1] === "prune"),
+              ).toBe(volumePruned);
+            }).pipe(Effect.provide(BunServices.layer)),
+          10_000,
+        );
+      }
+    });
 
     it.effect("seeds a configured bucket on a fresh volume with storage enabled", () =>
       Effect.gen(function* () {

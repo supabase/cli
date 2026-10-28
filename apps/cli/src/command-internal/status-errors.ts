@@ -51,9 +51,10 @@ export class StatusDbInspectError extends Data.TaggedError("StatusDbInspectError
 /** The db container is absent or present but not in the `running` state. */
 export class StatusDbNotRunningError extends Data.TaggedError("StatusDbNotRunningError")<{
   readonly message: string;
+  readonly suggestion?: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.startStack;
+    return this.suggestion === undefined ? actionability.startStack : actionability.stopStack;
   }
 }
 

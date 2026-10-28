@@ -25,6 +25,9 @@ import { START_DB_WEBHOOK_SQL } from "./templates/db-webhook.sql.ts";
  */
 const POSTGRES_PASSWORD = "postgres";
 
+/** `PGDATA` in every `supabase/postgres` image; the pgdata snapshot tar layout depends on it. */
+export const POSTGRES_DATA_DIR = "/var/lib/postgresql/data";
+
 /**
  * In-container path for the pgsodium root key, delivered via
  * {@link buildPostgresStartContainerSpec}'s `secretFiles` docker cp rather than a heredoc.
@@ -309,7 +312,7 @@ export function buildPostgresStartContainerSpec(
           secretFiles: [{ containerPath: POSTGRES_PGSODIUM_ROOT_KEY_PATH, content: rootKeyValue }],
         }),
     binds: [
-      `${containerName}:/var/lib/postgresql/data`,
+      `${containerName}:${POSTGRES_DATA_DIR}`,
       // The backup file bind is appended only on the `fromBackup` branch.
       ...(input.fromBackup === undefined
         ? []

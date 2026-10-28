@@ -37,9 +37,16 @@ One piece of the old Go CLI's `start` remains explicitly **out of scope**:
 
 ### Fresh-volume DB setup (`startSetupLocalDatabase`)
 
-Runs the initial schema/migrations/seed pipeline. Gated on
-`isFreshVolume` (`volumeExists` on the Postgres volume, checked BEFORE the
-volume is created) — this same check also selects which of
+Runs the initial schema/migrations/seed pipeline. Gated on `isFreshVolume`, true when the
+Postgres volume did not exist before this run created it (`volumeExists`, checked BEFORE the
+volume is created) OR when it exists but was never initialised: after Postgres's container is
+created and before it starts, `docker cp <container>:/var/lib/postgresql/data/PG_VERSION -` exits
+non-zero with a missing-file message (Docker's `Could not find the file`, older Docker clients'
+`No such container:path`, Podman's `could not be found`) because `initdb` has not run, for example after an earlier `start` died between
+`docker create` and `docker start`. Any other probe outcome — exit 0, an unspawnable runtime, or an
+unrecognised error — counts as initialised, so an existing database is never re-seeded on an
+ambiguous probe. A volume whose `initdb` started but whose setup never finished has `PG_VERSION`
+and also counts as initialised. Only the volume-existence check selects which of
 `Starting database...`/`Starting database from backup...` prints to stderr immediately
 before Postgres's container is created. Runs immediately
 after Postgres's own health check passes, before "Starting containers..." prints and
@@ -184,6 +191,7 @@ command.
 | Path                                                                                     | Format | When                                                                                                                                                                                             |
 | ---------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `<workdir>/supabase/.branches/_current_branch`                                           | text   | on every start, only if absent — writes `"main"`                                                                                                                                                 |
+| `$SUPABASE_HOME/locks/start-<project_id>.lock`                                           | SQLite | on every start with a non-empty project id — the per-project start lock (see "Concurrent starts"); never deleted, released when the command ends (by the OS if the process dies)                 |
 | `<workdir>/supabase/snippets/`                                                           | —      | when Studio is enabled, only if absent — created before any container and kept on rollback; `podman create -v`, unlike Docker, rejects a missing bind source                                     |
 | `<workdir>/supabase/.temp/start-secrets/<edgeRuntimeContainerName>/{env,multiline-env}/` | varies | Edge Runtime's own JWT/service-role-key/secret env artifacts — see below                                                                                                                         |
 | auth email `content_path` files (SELinux security label only, no content change)         | xattr  | when the container runtime applies SELinux labels (enforcing or permissive): the `rw,z` Kong bind relabels each mounted template to the shared container context; persists after `supabase stop` |
@@ -291,6 +299,8 @@ code is surfaced on failure.
 | `1`  | malformed CSV in an `--exclude`/`-x` value — fails during flag parsing, before the handler and telemetry, with the exact diagnostic text on stderr; the shorthand frames it with both spellings (e.g. `invalid argument "a\"b" for "-x, --exclude" flag: parse error on line 1, column 2: bare " in non-quoted-field`; a blank-only value fails with `EOF`) — CLI-2005 |
 | `1`  | malformed `config.toml` / `Config.Validate` failure, including an `auth.email.*.content_path` that resolves outside the project root, or that resolves in-root but is missing/unreadable (checked eagerly, before any Docker work, regardless of `auth.enabled` — see Notes)                                                                                           |
 | `1`  | stopped Postgres detected but the project id sanitizes to empty — aborts before recovery removes any containers                                                                                                                                                                                                                                                        |
+| `1`  | Postgres container exists but is not running and is not recovered (Bitbucket Pipelines, or Docker reported no state) — `<container> container is not running: <status>` (`unknown` for an empty status) with a `supabase stop` then `supabase start` suggestion; the "already running" banner is never printed                                                         |
+| `1`  | another `supabase start`/`supabase db start` for this project still held the start lock after the 10-minute wait (`LocalStackStartBusyError`) — fails before any container work, with a suggestion to wait for or cancel the other start                                                                                                                               |
 | `1`  | `docker`/`podman` not spawnable, or the daemon is unreachable                                                                                                                                                                                                                                                                                                          |
 | `1`  | stopped-stack recovery cannot list, stop, or prune current-project containers, or prune matching networks — aborts before startup; named volumes are preserved                                                                                                                                                                                                         |
 | `1`  | image pull exhausted across every registry candidate, or the Docker daemon becomes unreachable during the pre-pull — even with `--ignore-health-check` (intentional divergence from the old Go CLI's exit-0 swallow quirk; see the CLI-1987 note under "Notes")                                                                                                        |
@@ -305,9 +315,9 @@ code is surfaced on failure.
 Rollback (`rollbackStart`) tears down everything created so far by Docker label,
 and never masks the original failure — a rollback error
 is logged to stderr and swallowed. `deleteVolumes` is
-`true` only when this run's Postgres volume was freshly created (so a failed
-first-ever `start` prunes its own empty volume too), `false` otherwise (never touches a
-pre-existing user's data on a failed restart). Rollback also reclaims this run's own
+`true` only when this run's Postgres volume was freshly created or reused while still
+uninitialised (so a failed first-ever `start` prunes its own empty volume too), `false`
+otherwise (never touches a pre-existing user's data on a failed restart). Rollback also reclaims this run's own
 `<workdir>/supabase/.temp/start-secrets/<containerName>` directories (via
 `cleanupStartSecrets`, `command-internal/start-secrets-cleanup.ts`) once
 teardown is CONFIRMED complete — the matching containers come from
@@ -434,12 +444,16 @@ prose, not structured data.
   "unhealthy service", but a user reading only `--help` may still expect exit 0 here.
 - `--preview` is a hidden, parsed-but-inert flag, inherited from the old Go CLI (never
   read by its own `start.Run`).
-- The already-running check uses `docker container inspect` on the Postgres container and,
-  unless `--ignore-health-check` is set, requires its Docker health to be `healthy` or absent;
+- The already-running check uses `docker container inspect` on the Postgres container. A
+  container that is not running never prints the "already running" banner: it fails with
+  `<container> container is not running: <status>` (`unknown` for an empty status) and a
+  suggestion to run `supabase stop` then `supabase start`. For a running container, unless
+  `--ignore-health-check` is set, it requires its Docker health to be `healthy` or absent;
   otherwise it fails with `<container> container is not ready: ...` (reason format in "Readiness
   gating"). When Docker could not launch the health check, it accepts the container and prints
   the same `WARNING:` naming `supabase_db_<project>` as unverified. For a verified
-  stopped container outside Bitbucket Pipelines, `start` removes all current-project
+  stopped container (any non-empty Docker status, including `created`) outside Bitbucket
+  Pipelines, `start` removes all current-project
   containers — including running siblings — and unused networks, preserves named volumes,
   and continues normal startup. After container removal succeeds, it deletes
   `<invoking-workdir>/supabase/.temp/start-secrets/<containerName>` only for containers
@@ -452,9 +466,18 @@ prose, not structured data.
   unaffected by that change.
 - Existing local values declared under a Function import map's `scopes` are mounted read-only into Edge Runtime, and into the Studio container that shares the same resolved Function bind mounts, even when they resolve outside the nearest Git root. The Edge Runtime container additionally prunes its aggregated bind list before `docker create` — a bind already supplied verbatim by a same-mode parent bind is dropped so the bootstrap `docker cp` never sees a file bind nested inside a read-only parent (supabase/supabase#50088) — while Studio keeps the full unpruned set (its bring-up performs no `docker cp`). The mounted target itself is bound as declared; imports reached from inside an out-of-root target are not additionally bound. Edge Runtime bring-up prints a `WARN` naming each distinct out-of-root host path once; Studio's bind resolution stays silent, so with Edge Runtime excluded (`-x edge-runtime`) the mounts still reach Studio and no warning is printed. Missing targets retain Edge Runtime startup's existing skip behavior. This is NOT the same permissiveness as email template `content_path` below — a `scopes` value is an explicit opt-in mechanism, mounted `:ro`, with containment enforced on the upload side elsewhere (`functions deploy`), whereas `content_path` has no opt-in at all and is enforced at resolution time, mounted `:rw,z`.
 - **Auth email `content_path` project-root containment AND readability apply here regardless of `auth.enabled`.** Kong's mount set (`resolveKongEmailTemplateMounts`, `start.handler.ts`) covers every configured `[auth.email.template.*]` entry, and every `enabled = true` `[auth.email.notification.*]` entry, unconditionally — Kong is the stack's mandatory gateway, independent of whether GoTrue itself is started. `start.handler.ts` resolves, confines (`resolveEmailTemplateContentPath`; symlinks dereferenced using `fs.realPath` before the check), AND read-verifies (a discarded `FileSystem.readFileString`) that same set in one eager pass before any Docker work, in addition to the `auth.enabled`-gated read `resolveLocalConfigValues`'s own validation performs; the resulting resolved path is threaded straight into Kong's bind mount (`buildKongEmailTemplateBind` in `kong.service.ts`, which no longer re-resolves anything) rather than re-derived later, right before Kong's own `docker create`. Each template is bound `rw,z`: when the container runtime applies SELinux labels (enforcing or permissive mode) it relabels the mounted host file in place with the shared container context so Kong can read it under enforcement — a persistent change to the file's security label that survives `supabase stop` — and the option is a no-op where the runtime has no SELinux support. A path that resolves outside the project root aborts the run with `Invalid config for auth.email.<section>.<name>.content_path: resolves outside the project root (<resolved path>)`; a resolved, in-root path that cannot be read as a regular file aborts with `Invalid config for auth.email.<section>.<name>.content_path: <read error>` — both before a single container is created, and both regardless of `auth.enabled` (closing the gap where a missing `content_path` would otherwise reach an unconditional Kong bind mount and the root-privileged Docker daemon would silently create a directory there).
-- Docker status `created` is not considered a recoverable stopped stack: the container and
-  named volume are preserved because the volume may not have completed its first database
-  initialization, and `start` reports the existing not-running status instead.
+- A Postgres container in Docker status `created` (an earlier `start` died between `docker
+create` and `docker start`) is recovered like any other stopped stack. The named volume is
+  preserved, and the data-directory probe (see "Fresh-volume DB setup") decides whether the
+  next bring-up still runs the setup pipeline and bucket seeding.
+- **Concurrent starts:** `start` and `db start` take a per-project
+  lock at `$SUPABASE_HOME/locks/start-<project_id>.lock` (a SQLite `BEGIN IMMEDIATE` lock the OS
+  releases when the process dies) once the project id is resolved and before inspecting any
+  container, and hold it until the command ends. A second run prints `Waiting for another supabase
+start for this project to finish...` to stderr (text format only) and waits up to 10
+  minutes, then fails with `LocalStackStartBusyError`. A lock location that cannot be created or
+  opened never blocks a start: it continues unlocked and logs the reason under `--debug`. `stop`
+  does not take the lock, so it still runs while another start is in progress.
 - **Intentional divergence from Go — spec-strict import-map key matching (CLI-2179, ruled
   2026-08-12):** Edge Runtime bind mounts are computed by the same functions import scanner
   as `functions deploy`/`functions serve` (`walkImportPaths`/`substituteImportMapValue`,

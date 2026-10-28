@@ -15,6 +15,7 @@ import {
   removeContainer,
   removeVolume,
   createContainer,
+  postgresDataInitialized,
   volumeExists,
 } from "./container-lifecycle.ts";
 import { useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
@@ -524,6 +525,40 @@ describe("createContainer secretFiles", () => {
   });
 });
 
+describe("createContainer beforeStart", () => {
+  it.live(
+    "runs the hook with the created container id after the secret copy and before start",
+    () => {
+      const mock = mockSpawner((args) => {
+        if (args[0] === "create") return { exitCode: 0, stdout: "container-id-hook\n" };
+        return { exitCode: 0 };
+      });
+      const spec: StartContainerSpec = {
+        ...baseSpec,
+        binds: [],
+        secretFiles: [{ containerPath: "/etc/kong/kong.yml", content: "super-secret-content" }],
+      };
+
+      return createContainer(
+        mock.spawner,
+        spec,
+        { projectId: "proj", isBitbucketPipeline: false, workdir: workdir.current, extraHosts: [] },
+        (containerId) => postgresDataInitialized(mock.spawner, containerId).pipe(Effect.asVoid),
+      ).pipe(
+        Effect.map((containerId) => {
+          expect(containerId).toBe("container-id-hook");
+          expect(mock.spawned).toEqual([
+            expect.arrayContaining(["create"]),
+            ["cp", "-", "container-id-hook:/"],
+            ["cp", "container-id-hook:/var/lib/postgresql/data/PG_VERSION", "-"],
+            ["start", "container-id-hook"],
+          ]);
+        }),
+      );
+    },
+  );
+});
+
 describe("ensureNetwork", () => {
   it.live("creates the network with labels when it does not exist yet", () => {
     const mock = mockSpawner((args) =>
@@ -723,6 +758,74 @@ describe("volumeExists", () => {
       Effect.flip,
       Effect.map((error) => {
         expect(error).toBeInstanceOf(VolumeInspectError);
+      }),
+    );
+  });
+});
+
+describe("postgresDataInitialized", () => {
+  const pgVersionProbe = ["cp", "container-id-pg:/var/lib/postgresql/data/PG_VERSION", "-"];
+
+  it.live("resolves true when PG_VERSION can be copied out (cp exits 0)", () => {
+    const mock = mockSpawner(() => ({ exitCode: 0 }));
+    return postgresDataInitialized(mock.spawner, "container-id-pg").pipe(
+      Effect.map((initialized) => {
+        expect(initialized).toBe(true);
+        expect(mock.spawned).toEqual([pgVersionProbe]);
+      }),
+    );
+  });
+
+  const missingFileStderr = {
+    Docker:
+      "Error response from daemon: Could not find the file /var/lib/postgresql/data/PG_VERSION in container container-id-pg\n",
+    Podman:
+      'Error: "/var/lib/postgresql/data/PG_VERSION" could not be found on container container-id-pg: no such file or directory\n',
+    "an older Docker client":
+      "Error: No such container:path: container-id-pg:/var/lib/postgresql/data/PG_VERSION\n",
+  };
+  for (const [runtime, stderr] of Object.entries(missingFileStderr)) {
+    it.live(`resolves false when ${runtime} reports the PG_VERSION file missing`, () => {
+      const mock = mockSpawner(() => ({ exitCode: 1, stderr }));
+      return postgresDataInitialized(mock.spawner, "container-id-pg").pipe(
+        Effect.map((initialized) => {
+          expect(initialized).toBe(false);
+        }),
+      );
+    });
+  }
+
+  const otherFailureStderr = {
+    "a missing container": "Error response from daemon: No such container: container-id-pg\n",
+    "a permission error": "Error response from daemon: permission denied\n",
+    "an unreachable daemon": "Cannot connect to the Docker daemon at unix:///var/run/docker.sock\n",
+    "empty stderr": "",
+  };
+  for (const [cause, stderr] of Object.entries(otherFailureStderr)) {
+    it.live(`resolves true (never re-seeds) on a non-zero exit with ${cause}`, () => {
+      const mock = mockSpawner(() => ({ exitCode: 1, stderr }));
+      return postgresDataInitialized(mock.spawner, "container-id-pg").pipe(
+        Effect.map((initialized) => {
+          expect(initialized).toBe(true);
+        }),
+      );
+    });
+  }
+
+  it.live("resolves true when no container runtime can be spawned", () => {
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.fail(
+        PlatformError.systemError({
+          _tag: "NotFound",
+          module: "ChildProcess",
+          method: "spawn",
+          description: "spawn ENOENT",
+        }),
+      ),
+    );
+    return postgresDataInitialized(spawner, "container-id-pg").pipe(
+      Effect.map((initialized) => {
+        expect(initialized).toBe(true);
       }),
     );
   });

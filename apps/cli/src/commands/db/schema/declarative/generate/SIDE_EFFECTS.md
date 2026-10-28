@@ -28,11 +28,12 @@ formatting without disabling safe compaction.
 
 ## Files Written
 
-| Path                                                                                            | Format | When                                                         |
-| ----------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------ |
-| `<workdir>/supabase/schemas/**/*.sql` (default declarative dir, or invocation-local `--output`) | SQL    | selected destination is wiped + rewritten after confirmation |
-| `<selected-output>/.pgdelta-export.json`                                                        | JSON   | export metadata                                              |
-| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`                                         | JSON   | with `PGDELTA_DEBUG`                                         |
+| Path                                                                                            | Format | When                                                                                                                                                                                                                  |
+| ----------------------------------------------------------------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/schemas/**/*.sql` (default declarative dir, or invocation-local `--output`) | SQL    | selected destination is wiped + rewritten after confirmation                                                                                                                                                          |
+| `<selected-output>/.pgdelta-export.json`                                                        | JSON   | export metadata                                                                                                                                                                                                       |
+| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`                                         | JSON   | with `PGDELTA_DEBUG`                                                                                                                                                                                                  |
+| `$SUPABASE_HOME/locks/start-<project_id>.lock`                                                  | SQLite | when the local database is started — the per-project start lock shared with `supabase start`; a concurrent start prints `Waiting for another supabase start for this project to finish...` on stderr (see `db start`) |
 
 ## Subprocesses / Containers
 

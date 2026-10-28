@@ -106,6 +106,7 @@ import {
   type LocalProjectContext,
 } from "../../command-internal/local-project-context.ts";
 import { seedBucketsRun } from "../../command-internal/seed-buckets.ts";
+import { holdLocalStackStartLock } from "../../command-internal/local-stack-start-lock.ts";
 import { cleanupStartSecrets } from "../../command-internal/start-secrets-cleanup.ts";
 import {
   StatusDbInspectError,
@@ -598,6 +599,11 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
 
     const dbContainerId = localDbContainerId(projectId);
     const filterValue = cliProjectFilterValue(projectId);
+    const dbNotRunning = (status: string) =>
+      new StatusDbNotRunningError({
+        message: `${dbContainerId} container is not running: ${status || "unknown"}`,
+        suggestion: `Run ${aqua("supabase stop")} to remove this project's stopped containers, then run ${aqua("supabase start")} again.`,
+      });
 
     // Shared by the already-running branch (full status pipeline, re-health-checked) and the
     // success path (a direct pretty-print, no re-health-check).
@@ -634,6 +640,9 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       Effect.mapError((error) => new StartConfigLoadError({ message: error.message })),
     );
 
+    // A concurrent start's rollback would otherwise prune this run's containers and network.
+    yield* holdLocalStackStartLock(projectId);
+
     // 3. A missing container proceeds to startup; other inspect failures propagate. Stopped
     // stacks are recovered unless Bitbucket's lack of named volumes makes removal destructive.
     const inspectDbState = inspectContainerState(spawner, dbContainerId).pipe(
@@ -653,41 +662,40 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     const isRecoverableStoppedState = (
       state: { readonly running: boolean; readonly status: string } | void,
     ) =>
-      // `created` may own a just-provisioned volume that Postgres never initialized.
-      state?.running === false && state.status.length > 0 && state.status !== "created";
+      // Bring-up's data-directory probe decides whether a reused volume still needs setup.
+      state?.running === false && state.status.length > 0;
     const shouldRecoverStoppedStack = isRecoverableStoppedState(dbState) && !inBitbucketPipeline;
     yield* Effect.annotateCurrentSpan({
-      "start.already_running": dbState !== undefined && !shouldRecoverStoppedStack,
+      "start.already_running": dbState?.running === true,
       "start.recover_stopped_stack": shouldRecoverStoppedStack,
     });
 
     const reportAlreadyRunningStatus = Effect.fn("start.reportAlreadyRunning")(function* () {
+      // The full status pipeline for this branch: health-check plus "stopped services" diffing,
+      // distinct from the success path's direct pretty-print call below.
+      const state = flags.ignoreHealthCheck
+        ? undefined
+        : yield* inspectContainerState(spawner, dbContainerId).pipe(
+            Effect.mapError((cause) => new StatusDbInspectError({ message: cause.message })),
+          );
+      if (state !== undefined && !state.running) {
+        return yield* dbNotRunning(state.status);
+      }
+
       // Gated on text mode for consistency with every other supplementary stderr line this
       // handler prints — json/stream-json callers get a clean structured payload with no noise.
       if (output.format === "text") {
         yield* output.raw(startAlreadyRunningMessage(), "stderr");
       }
 
-      // The full status pipeline for this branch: health-check plus "stopped services" diffing,
-      // distinct from the success path's direct pretty-print call below.
-      if (!flags.ignoreHealthCheck) {
-        const state = yield* inspectContainerState(spawner, dbContainerId).pipe(
-          Effect.mapError((cause) => new StatusDbInspectError({ message: cause.message })),
-        );
-        if (!state.running) {
-          return yield* new StatusDbNotRunningError({
-            message: `${dbContainerId} container is not running: ${state.status}`,
+      if (state?.health !== undefined && state.health !== "healthy") {
+        if (!healthCheckCannotExec(state)) {
+          return yield* new StatusDbNotReadyError({
+            message: `${dbContainerId} ${formatNotReadyReason(state)}`,
           });
         }
-        if (state.health !== undefined && state.health !== "healthy") {
-          if (!healthCheckCannotExec(state)) {
-            return yield* new StatusDbNotReadyError({
-              message: `${dbContainerId} ${formatNotReadyReason(state)}`,
-            });
-          }
-          yield* Effect.annotateCurrentSpan("db.health_exec_unavailable", true);
-          yield* output.raw(healthCheckExecUnavailableWarning([dbContainerId]), "stderr");
-        }
+        yield* Effect.annotateCurrentSpan("db.health_exec_unavailable", true);
+        yield* output.raw(healthCheckExecUnavailableWarning([dbContainerId]), "stderr");
       }
 
       const runningNames = yield* listContainersByLabel(spawner, {
@@ -717,6 +725,9 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     });
 
     if (dbState !== undefined && !shouldRecoverStoppedStack) {
+      if (!dbState.running) {
+        return yield* dbNotRunning(dbState.status);
+      }
       return yield* reportAlreadyRunningStatus();
     }
 
@@ -1734,6 +1745,9 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       // Recheck after preflight in case Docker or another process restarted the stack.
       const recheckedState = yield* inspectDbState;
       if (recheckedState !== undefined && !isRecoverableStoppedState(recheckedState)) {
+        if (!recheckedState.running) {
+          return yield* dbNotRunning(recheckedState.status);
+        }
         return yield* reportAlreadyRunningStatus();
       }
       // cliProjectFilterValue("") targets every CLI-managed project; never use it here.
@@ -1958,5 +1972,5 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       const { values: statusValues } = yield* buildStatusValues(statusExcluded, values);
       yield* output.success("", statusValues);
     }
-  }).pipe(Effect.ensuring(telemetryState.flush));
+  }).pipe(Effect.scoped, Effect.ensuring(telemetryState.flush));
 });
