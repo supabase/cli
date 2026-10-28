@@ -46,13 +46,14 @@ Local targets and database URLs make none.
 
 ## Exit Codes
 
-| Code | Condition                                                                                        |
-| ---- | ------------------------------------------------------------------------------------------------ |
-| `0`  | success                                                                                          |
-| `1`  | database connection failure                                                                      |
-| `1`  | migration SQL execution error                                                                    |
-| `1`  | hosted target without `--yes` in a run that cannot prompt (`HostedMutationConsentRequiredError`) |
-| `1`  | hosted confirmation declined (`context canceled`)                                                |
+| Code | Condition                                                                                                                                                                                    |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                                                                      |
+| `1`  | database connection failure                                                                                                                                                                  |
+| `1`  | migration SQL execution error                                                                                                                                                                |
+| `1`  | hosted target without `--yes` in a run that cannot prompt (`HostedMutationConsentRequiredError`)                                                                                             |
+| `1`  | hosted confirmation declined (`context canceled`)                                                                                                                                            |
+| `1`  | `MigrationChecksBlockedError` — the replayed end state has an error-level `[db.migrations.checks]` finding, or its findings read failed while a rule is at `error`; the replay stays applied |
 
 ## Output
 
@@ -85,6 +86,13 @@ Same structured result delivered as an NDJSON `result` event.
 - `--last` (default 1) resets up to the last n migration versions; must be `> 0`
   and `<` the number of applied migrations. The error's `Try supabase db reset …`
   suggestion carries the flags that select a hosted target (`--remote`, `--remote=<ref>`).
+- **Migration security checks**: like a local `db reset`, the replay runs no per-file check;
+  findings are read once before the replay and once after the last migration, before seeding,
+  with `begin`, `set_config(…, true)`, a splinter lint `SELECT` and `rollback`. New warnings and
+  every error print to stderr; an error-level finding fails the command (`SB001`) with the
+  findings and how to proceed (fix, `db advisors --baseline`, or `--skip-checks`), and the
+  database is left with its migrations applied. `--skip-checks` skips the reads and
+  prints that checks were skipped.
 - Takes no positional arguments.
 - Performs no best-effort migrations-catalog cache optimization.
 - Dotenvx-encrypted (`encrypted:`) `[db.vault]` values are decrypted during config

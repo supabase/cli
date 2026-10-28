@@ -116,6 +116,7 @@ ContainerRestartError
 ContainerRuntimeNotFoundError
 ContainerStartError
 CredentialDeleteError
+DbAdvisorsBaselineError
 DbAdvisorsBeginTxError
 DbAdvisorsFailOnError
 DbAdvisorsInvalidTokenError
@@ -324,6 +325,7 @@ LogoutCancelledError
 MigraDiffError
 MigraSchemaLoadError
 MigrationApplyError
+MigrationChecksBlockedError
 MigrationDropError
 MigrationFetchWriteError
 MigrationFileNotFoundError

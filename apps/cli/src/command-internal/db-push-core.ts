@@ -21,6 +21,7 @@ import { aqua, bold } from "./colors.ts";
 import type { DbTomlValues } from "./db-config.toml-read.ts";
 import { DbConnection, type PgConnInput } from "./db-connection.service.ts";
 import { applyMigrations, seedGlobals } from "./migration-apply.ts";
+import { type MigrationChecksReport, migrationChecksRun } from "./migration-checks.ts";
 import { listRemoteMigrations, suggestRevertHistory } from "./migration-history.ts";
 import { requireTargetMutationConsent } from "./hosted-consent/hosted-consent.ts";
 import type { HostedMutationConsent } from "./hosted-consent/hosted-consent.token.ts";
@@ -84,6 +85,8 @@ export interface DbPushCoreInput {
    * invocation; `bootstrap` suppresses it since it emits its own top-level result instead.
    */
   readonly emitStructuredResult: boolean;
+  /** `--skip-checks`: apply migrations without `[db.migrations.checks]` security checks. */
+  readonly skipChecks: boolean;
 }
 
 export const dbPushCore = Effect.fn("DbPush.run")(function* (input: DbPushCoreInput) {
@@ -108,6 +111,7 @@ export const dbPushCore = Effect.fn("DbPush.run")(function* (input: DbPushCoreIn
     preapproved,
     emitStructuredResult,
     seed,
+    skipChecks,
   } = input;
 
   const vaultSecrets = toml.vault;
@@ -125,6 +129,7 @@ export const dbPushCore = Effect.fn("DbPush.run")(function* (input: DbPushCoreIn
       const session = yield* dbConn.connect(conn, { isLocal, dnsResolver });
 
       let pending: ReadonlyArray<string> = [];
+      let checksReport = Option.none<MigrationChecksReport>();
       if (!toml.migrationsEnabled) {
         yield* output.raw(
           `Skipping migrations because it is disabled in config.toml for project: ${projectRef}\n`,
@@ -263,7 +268,14 @@ export const dbPushCore = Effect.fn("DbPush.run")(function* (input: DbPushCoreIn
           if (includeVault) {
             yield* upsertVaultSecrets(session, vaultSecrets);
           }
-          yield* applyMigrations(session, fs, path, pending, applyError);
+          checksReport = yield* applyMigrations(
+            session,
+            fs,
+            path,
+            pending,
+            applyError,
+            migrationChecksRun(toml, skipChecks, repairTargetFlags),
+          );
         } else {
           yield* output.raw("Schema migrations are up to date.\n", "stderr");
         }
@@ -284,6 +296,7 @@ export const dbPushCore = Effect.fn("DbPush.run")(function* (input: DbPushCoreIn
           migrations: pending.map((p) => path.basename(p)),
           seeds: seeds.map((s) => s.path),
           roles: globals,
+          ...(Option.isSome(checksReport) ? { checks: checksReport.value } : {}),
         });
       }
     }),

@@ -37,6 +37,10 @@ const config = {
     Flag.withDescription("Reset up to the last n migration versions."),
     Flag.optional,
   ),
+  skipChecks: Flag.Boolean("skip-checks").pipe(
+    Flag.withDescription("Skip the [db.migrations.checks] security checks when replaying local migrations."),
+    Flag.withDefault(false),
+  ),
 } as const;
 
 export type DbResetFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -46,7 +50,10 @@ export const dbResetCommand = Command.make("reset", config).pipe(
   Command.withShortDescription("Resets a database to current migrations"),
   withPermissions(
     compose(
-      { operations: [], noApiEffectFlags: ["no-seed", "sql-paths", "version", "last"] },
+      {
+        operations: [],
+        noApiEffectFlags: ["no-seed", "sql-paths", "version", "last", "skip-checks"],
+      },
       dbConfig,
       withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
       branchResolution,
@@ -60,6 +67,7 @@ export const dbResetCommand = Command.make("reset", config).pipe(
           "sql-paths": flags.sqlPaths,
           version: flags.version,
           last: flags.last,
+          "skip-checks": flags.skipChecks,
         },
       }),
       withJsonErrorHandling,

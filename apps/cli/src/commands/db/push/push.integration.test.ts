@@ -84,6 +84,7 @@ const DEFAULT_FLAGS: DbPushFlags = {
   includeRoles: false,
   includeSeed: Option.none(),
   skipVault: false,
+  skipChecks: false,
   dryRun: false,
   ...NO_TARGET,
   password: Option.none(),

@@ -31,6 +31,10 @@ const config = {
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
+  skipChecks: Flag.Boolean("skip-checks").pipe(
+    Flag.withDescription("Skip the [db.migrations.checks] security checks when replaying local migrations."),
+    Flag.withDefault(false),
+  ),
   ...targetFlags({ subject: "database", dbUrl: true }),
 } as const;
 
@@ -41,7 +45,7 @@ export const migrationDownCommand = Command.make("down", config).pipe(
   Command.withShortDescription("Resets applied migrations up to the last n versions"),
   withPermissions(
     compose(
-      { operations: [], noApiEffectFlags: ["last"] },
+      { operations: [], noApiEffectFlags: ["last", "skip-checks"] },
       dbConfig,
       withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
       branchResolution,
@@ -52,6 +56,7 @@ export const migrationDownCommand = Command.make("down", config).pipe(
       withCommandTelemetry({
         flags: {
           last: flags.last,
+          "skip-checks": flags.skipChecks,
         },
       }),
       withJsonErrorHandling,

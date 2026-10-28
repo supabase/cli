@@ -15,10 +15,14 @@ import { failsOn } from "../../../command-internal/fail-on.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import type { DbSession } from "../../../command-internal/db-connection.service.ts";
+import { readMigrationCheckFindings } from "../../../command-internal/migration-checks.ts";
+import { getDocumentValue } from "../../../config/cli-config-document.ts";
+import { MIGRATION_CHECK_RULES } from "@supabase/config/internal";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import type { DbAdvisorsFlags } from "./advisors.command.ts";
 import {
+  DbAdvisorsBaselineError,
   DbAdvisorsBeginTxError,
   DbAdvisorsFailOnError,
   DbAdvisorsInvalidTokenError,
@@ -34,6 +38,12 @@ import {
   scanAdvisorLintRow,
 } from "./advisors.format.ts";
 import { fetchPerformanceAdvisors, fetchSecurityAdvisors } from "./advisors.linked.ts";
+import {
+  type BaselineExclusion,
+  baselineRules,
+  loadBaselinePolicy,
+  writeBaseline,
+} from "./advisors.baseline.ts";
 import { splitLintsSql } from "./advisors.lints-sql.ts";
 
 /** Established output-contract suggestion for a missing/invalid access token. */
@@ -61,6 +71,29 @@ const queryLints = Effect.fn("DbAdvisors.queryLints")(function* (session: DbSess
   return rows.map(scanAdvisorLintRow);
 });
 
+/** Runs `use` on a connection to the local (or `--db-url`) database. */
+const withLocalSession = <A, E, R>(
+  target: Exclude<ResolvedTarget, { readonly kind: "linked" }>,
+  dnsResolver: "native" | "https",
+  use: (session: DbSession) => Effect.Effect<A, E, R>,
+) =>
+  Effect.gen(function* () {
+    const resolver = yield* DbConfigResolver;
+    const dbConn = yield* DbConnection;
+    const cfg = yield* resolver.resolveConnection({
+      target,
+      dnsResolver,
+      password: Option.none(),
+      networkBanRemoval: yield* hostedMutationPreapproval,
+    });
+    return yield* Effect.scoped(
+      Effect.gen(function* () {
+        const session = yield* dbConn.connect(cfg.conn, { isLocal: cfg.isLocal, dnsResolver });
+        return yield* use(session);
+      }),
+    );
+  });
+
 /** Gathers lints from a local (or `--db-url`) database connection. */
 const runLocal = Effect.fn("db.advisors.runLocal")(function* (
   target: Exclude<ResolvedTarget, { readonly kind: "linked" }>,
@@ -69,19 +102,8 @@ const runLocal = Effect.fn("db.advisors.runLocal")(function* (
   level: string,
 ) {
   const output = yield* Output;
-  const resolver = yield* DbConfigResolver;
-  const dbConn = yield* DbConnection;
-
-  const cfg = yield* resolver.resolveConnection({
-    target,
-    dnsResolver,
-    password: Option.none(),
-    networkBanRemoval: yield* hostedMutationPreapproval,
-  });
-
-  const lints = yield* Effect.scoped(
+  const lints = yield* withLocalSession(target, dnsResolver, (session) =>
     Effect.gen(function* () {
-      const session = yield* dbConn.connect(cfg.conn, { isLocal: cfg.isLocal, dnsResolver });
       yield* session.exec("begin").pipe(
         Effect.mapError(
           (cause) =>
@@ -103,52 +125,107 @@ const runLocal = Effect.fn("db.advisors.runLocal")(function* (
   return filterAdvisorLints(lints, advisorType, level);
 });
 
+/**
+ * Runs `use` once the linked project's access token is present and well formed; the
+ * linked-project cache is written whenever the project ref was resolved, even when a later step
+ * fails.
+ */
+const withLinkedAccess = <A, E, R>(
+  target: Extract<ResolvedTarget, { readonly kind: "linked" }>,
+  use: Effect.Effect<A, E, R>,
+) =>
+  Effect.gen(function* () {
+    const credentials = yield* CommandCredentials;
+    const linkedProjectCache = yield* LinkedProjectCache;
+    return yield* Effect.gen(function* () {
+      // The access token is validated against the `sbp_` pattern before calling the API: a
+      // malformed token maps to the invalid-token error, an absent token to missing.
+      const tokenOpt = yield* credentials.getAccessToken.pipe(
+        Effect.catchTag("InvalidAccessTokenError", (cause) =>
+          Effect.fail(
+            new DbAdvisorsInvalidTokenError({
+              message: cause.message,
+              suggestion: loginSuggestion(),
+              // Preserve the token source so an env-provided malformed token keeps
+              // its `set_env_var` remediation instead of degrading to `supabase login`.
+              source: cause.source,
+            }),
+          ),
+        ),
+      );
+      if (Option.isNone(tokenOpt)) {
+        return yield* new DbAdvisorsNotLoggedInError({
+          message: missingAccessTokenMessage(),
+          suggestion: loginSuggestion(),
+        });
+      }
+      return yield* use;
+    }).pipe(Effect.ensuring(linkedProjectCache.cache(target.ref)));
+  });
+
 /** Gathers the linked project's lints from the Management API, never from its database. */
 const runLinked = Effect.fn("db.advisors.runLinked")(function* (
   target: Extract<ResolvedTarget, { readonly kind: "linked" }>,
   advisorType: string,
   level: string,
 ) {
-  const credentials = yield* CommandCredentials;
-  const linkedProjectCache = yield* LinkedProjectCache;
-
   const { ref } = target;
+  return yield* withLinkedAccess(
+    target,
+    Effect.gen(function* () {
+      const lints: Array<AdvisorLint> = [];
+      if (advisorType === "all" || advisorType === "security") {
+        lints.push(...(yield* fetchSecurityAdvisors(ref)));
+      }
+      if (advisorType === "all" || advisorType === "performance") {
+        lints.push(...(yield* fetchPerformanceAdvisors(ref)));
+      }
+      // The endpoint selection already applied the type filter, so filter by "all".
+      return filterAdvisorLints(lints, "all", level);
+    }),
+  );
+});
 
-  // The linked-project cache is written whenever the project ref was resolved, even when a later
-  // step fails.
-  return yield* Effect.gen(function* () {
-    // The access token is validated against the `sbp_` pattern before calling the API: a
-    // malformed token maps to the invalid-token error, an absent token to missing.
-    const tokenOpt = yield* credentials.getAccessToken.pipe(
-      Effect.catchTag("InvalidAccessTokenError", (cause) =>
-        Effect.fail(
-          new DbAdvisorsInvalidTokenError({
-            message: cause.message,
-            suggestion: loginSuggestion(),
-            // Preserve the token source so an env-provided malformed token keeps
-            // its `set_env_var` remediation instead of degrading to `supabase login`.
-            source: cause.source,
-          }),
-        ),
-      ),
-    );
-    if (Option.isNone(tokenOpt)) {
-      return yield* new DbAdvisorsNotLoggedInError({
-        message: missingAccessTokenMessage(),
-        suggestion: loginSuggestion(),
-      });
-    }
-
-    const lints: Array<AdvisorLint> = [];
-    if (advisorType === "all" || advisorType === "security") {
-      lints.push(...(yield* fetchSecurityAdvisors(ref)));
-    }
-    if (advisorType === "all" || advisorType === "performance") {
-      lints.push(...(yield* fetchPerformanceAdvisors(ref)));
-    }
-    // The endpoint selection already applied the type filter, so filter by "all".
-    return filterAdvisorLints(lints, "all", level);
-  }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
+/**
+ * `--baseline`: reads every current finding for the `[db.migrations.checks]` rules that are not
+ * off and records it in `[db.migrations.checks.exclude]`. A linked project's findings come from
+ * its security advisors, others from the same read migrations run.
+ */
+const runBaseline = Effect.fn("db.advisors.baseline")(function* (
+  target: ResolvedTarget,
+  dnsResolver: "native" | "https",
+) {
+  const checks = yield* loadBaselinePolicy(target.kind === "linked" ? target.ref : undefined);
+  const rules = new Set<string>(baselineRules(checks.policy));
+  const findings: ReadonlyArray<BaselineExclusion> =
+    rules.size === 0
+      ? []
+      : target.kind === "linked"
+        ? (yield* withLinkedAccess(target, fetchSecurityAdvisors(target.ref))).flatMap((lint) => {
+            const rule = MIGRATION_CHECK_RULES.find((known) => known === lint.name);
+            const schema = getDocumentValue(lint.metadata, ["schema"]);
+            const name = getDocumentValue(lint.metadata, ["name"]);
+            return rule === undefined ||
+              !rules.has(rule) ||
+              typeof schema !== "string" ||
+              typeof name !== "string"
+              ? []
+              : [{ rule, object: `${schema}.${name}` }];
+          })
+        : (yield* withLocalSession(target, dnsResolver, (session) =>
+            readMigrationCheckFindings(session, checks).pipe(
+              Effect.catchTag(
+                "DbExecError",
+                (cause) =>
+                  new DbAdvisorsQueryError({ message: `failed to query lints: ${cause.message}` }),
+              ),
+            ),
+          )).flatMap((finding) =>
+            finding.schema === null || finding.name === null
+              ? []
+              : [{ rule: finding.rule, object: `${finding.schema}.${finding.name}` }],
+          );
+  yield* writeBaseline(checks.policy, findings);
 });
 
 /** Prints the lints (or the empty-result message) and applies `--fail-on`. */
@@ -191,6 +268,17 @@ const runAdvisors = Effect.fnUntraced(function* (
   dnsResolver: "native" | "https",
 ) {
   const target = yield* resolveTarget(flags);
+  if (flags.baseline) {
+    if (Option.isSome(flags.type) || Option.isSome(flags.level) || Option.isSome(flags.failOn)) {
+      return yield* new DbAdvisorsBaselineError({
+        message:
+          "--baseline records every current security check finding and cannot be combined with --type, --level or --fail-on.",
+        reason: "flags",
+      });
+    }
+    yield* Effect.annotateCurrentSpan({ "db.conn_type": target.kind, "advisor.baseline": true });
+    return yield* runBaseline(target, dnsResolver);
+  }
 
   const advisorType = Option.getOrElse(flags.type, () => "all");
   const level = Option.getOrElse(flags.level, () => "warn");

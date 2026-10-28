@@ -456,6 +456,7 @@ const flags = (over: Partial<DbSchemaDeclarativeSyncFlags> = {}): DbSchemaDeclar
   name: over.name ?? Option.none(),
   apply: over.apply ?? Option.none(),
   noApply: over.noApply ?? Option.none(),
+  skipChecks: over.skipChecks ?? false,
 });
 
 const seedDeclarative = (workdir: string) =>

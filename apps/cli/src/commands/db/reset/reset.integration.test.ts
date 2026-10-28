@@ -156,6 +156,7 @@ const DEFAULT_FLAGS: DbResetFlags = {
   sqlPaths: Option.none(),
   version: Option.none(),
   last: Option.none(),
+  skipChecks: false,
 };
 
 /**

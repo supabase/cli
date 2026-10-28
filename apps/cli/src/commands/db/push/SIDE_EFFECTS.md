@@ -31,14 +31,16 @@ is set. A hosted target asks one combined confirmation before the first write.
 
 ## Database Mutations
 
-| Statement                                                                                                           | When                                                                                                                                                                                                                                    |
-| ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `RESET ALL` + migration statements + `INSERT INTO supabase_migrations.schema_migrations(version, name, statements)` | per pending migration (after confirmation); compatible statements use an implicit extended-protocol batch with one final `Sync`, while pipeline-incompatible statements run standalone — see Notes                                      |
-| `CREATE SCHEMA/TABLE … supabase_migrations.schema_migrations`, `ALTER TABLE … ADD COLUMN …`                         | once before applying migrations, when a read-only probe finds the ledger not yet provisioned (idempotent; supabase/cli#6393)                                                                                                            |
-| `roles.sql` statements (no history row)                                                                             | per `--include-roles` globals file (after confirmation); statements use an implicit extended-protocol batch with one final `Sync`                                                                                                       |
-| `SELECT id, name FROM vault.secrets …`, `SELECT vault.update_secret(...)`, `SELECT vault.create_secret(...)`        | when `[db.vault]` has syncable secrets, migrations are applied, and `--skip-vault` is not set                                                                                                                                           |
-| `CREATE TABLE … supabase_migrations.seed_files`, seed statements, `INSERT … seed_files(path, hash) … ON CONFLICT …` | per pending seed file with `--include-seed` (after confirmation; the `seed_files` DDL only when a read-only probe finds that ledger not yet provisioned); a dirty seed only refreshes the hash                                          |
-| `SET SESSION ROLE postgres`                                                                                         | stepped-down sessions only (`cli_login_*`/`supabase_admin`): after each top-level role-reverting statement, at the end of each migration/globals/seed file, and before the history insert and the `seed_files` upsert (CLI-2205, #6236) |
+| Statement                                                                                                           | When                                                                                                                                                                                                                                                                              |
+| ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RESET ALL` + migration statements + `INSERT INTO supabase_migrations.schema_migrations(version, name, statements)` | per pending migration (after confirmation); compatible statements use an implicit extended-protocol batch with one final `Sync`, while pipeline-incompatible statements run standalone — see Notes                                                                                |
+| `CREATE SCHEMA/TABLE … supabase_migrations.schema_migrations`, `ALTER TABLE … ADD COLUMN …`                         | once before applying migrations, when a read-only probe finds the ledger not yet provisioned (idempotent; supabase/cli#6393)                                                                                                                                                      |
+| `roles.sql` statements (no history row)                                                                             | per `--include-roles` globals file (after confirmation); statements use an implicit extended-protocol batch with one final `Sync`                                                                                                                                                 |
+| `SELECT id, name FROM vault.secrets …`, `SELECT vault.update_secret(...)`, `SELECT vault.create_secret(...)`        | when `[db.vault]` has syncable secrets, migrations are applied, and `--skip-vault` is not set                                                                                                                                                                                     |
+| `CREATE TABLE … supabase_migrations.seed_files`, seed statements, `INSERT … seed_files(path, hash) … ON CONFLICT …` | per pending seed file with `--include-seed` (after confirmation; the `seed_files` DDL only when a read-only probe finds that ledger not yet provisioned); a dirty seed only refreshes the hash                                                                                    |
+| `[db.migrations.checks]` check statements (`set local statement_timeout`, one `DO` block, restore)                  | per pending migration when a rule is at `error` and `--skip-checks` is not set, inside the file's batch after its statements and before the history insert; files with pipeline-incompatible statements, authored transaction control, or `transaction=false` skip it — see Notes |
+| `begin`, `set_config(…, true)`, splinter lint `SELECT`, `rollback`                                                  | read-only findings read, once before and once after the migrations, when a rule is at `warn` or `error` and `--skip-checks` is not set — see Notes                                                                                                                                |
+| `SET SESSION ROLE postgres`                                                                                         | stepped-down sessions only (`cli_login_*`/`supabase_admin`): after each top-level role-reverting statement, at the end of each migration/globals/seed file, and before the history insert and the `seed_files` upsert (CLI-2205, #6236)                                           |
 
 ## API Routes
 
@@ -71,6 +73,8 @@ is set. A hosted target asks one combined confirmation before the first write.
 | `1`  | an invalid config value, including an unparsable `SUPABASE_*` override                                                                                                                                                  |
 | `1`  | `config.toml` parse failure                                                                                                                                                                                             |
 | `1`  | database connection / migration / seed / roles / vault apply failure                                                                                                                                                    |
+| `1`  | `MigrationChecksBlockedError` — an error-level `[db.migrations.checks]` finding, or the check timing out, rolled the migration and its history row back                                                                 |
+| `1`  | `MigrationChecksBlockedError` — a file checked after commit left an error-level finding, or has error-level rules and the after-commit findings read failed (the migrations stay applied), or an `[api].schemas` entry contains a comma                 |
 
 ## Output
 
@@ -96,6 +100,22 @@ stdout is payload-only. A single `result` object is emitted:
   "migrations": ["<file>.sql"],
   "seeds": ["supabase/seed.sql"],
   "roles": ["supabase/roles.sql"],
+  "checks": {
+    "outcome": "applied_with_findings",
+    "findings": [
+      {
+        "rule": "rls_disabled_in_public",
+        "severity": "warn",
+        "schema": "public",
+        "name": "todos",
+        "type": "table",
+        "detail": "…",
+        "fixes": [{ "kind": "statement", "label": "…", "sql": "…", "why": "…" }],
+        "docs": "…"
+      }
+    ],
+    "checkedAfterCommit": []
+  },
   "target": { "kind": "linked", "project_ref": "<ref>", "environment": "production" }
 }
 ```
@@ -103,7 +123,26 @@ stdout is payload-only. A single `result` object is emitted:
 `target` is the announced target (a remote project or branch as `linked`, `local`, or `db-url`); the linked shape carries the
 project ref and its environment.
 
+`checks` is present when migrations were applied; `outcome` is `skipped`, `off`, `passed`,
+`applied_with_findings`, or `read_failed`.
+
 ## Notes
+
+- **Migration security checks**: `[db.migrations.checks]` (unset rules are `warn`) with
+  `[api].schemas` as the exposed schemas. Every error-level finding fails the run (`SB001`),
+  including one on an object that predates it, with each finding wrapped to 80 columns, its
+  `Fix:`, docs link, and how to allow it. Findings on objects the file touched are listed apart
+  from findings that already existed; when only existing findings remain the message says the
+  file was rolled back because they must be resolved or baselined, and gives
+  `supabase db advisors --baseline` with the push target's flag (`--remote`, `--remote=<url>`).
+  Earlier files stay applied. After the run commits, or after a later file fails, new warnings
+  (the findings read before and after are diffed) print to stderr as a `WARNING:` summary; text
+  mode only. A file checked after commit (non-transactional or authored `BEGIN`) with an
+  error-level finding fails the run (`SB001`) saying it was already committed. A failed findings
+  read prints a `WARNING:`; when a file checked after commit has error-level rules, it also
+  fails the run (`unchecked`). A timed-out check is `SB002`. An `[api].schemas`
+  entry containing a comma fails before any migration runs. `--skip-checks` skips all of it and
+  prints that checks were skipped.
 
 - **Config value precedence** (ADR 0032): explicit flag > shell env > project
   `.env*` > config (`config.json` over `config.toml`; a matched `[remotes.*]`

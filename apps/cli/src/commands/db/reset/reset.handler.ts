@@ -11,6 +11,7 @@ import {
 import { planDbSeed } from "../../../command-internal/seed-remote-consent.ts";
 import { sqlFilesGlob } from "../../../command-internal/sql-files-glob.ts";
 import { resolveTarget } from "../../../command-internal/target/resolve-target.ts";
+import { flagsForTarget } from "../../../command-internal/target/target-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
@@ -27,6 +28,10 @@ import {
   ignoresExperimentalSchemaPaths,
 } from "../../../command-internal/migrate-and-seed.ts";
 import { applyMigrations, applySchemaFiles } from "../../../command-internal/migration-apply.ts";
+import {
+  MigrationChecksSkipped,
+  migrationChecksRun,
+} from "../../../command-internal/migration-checks.ts";
 import { parseMigrationVersion } from "../../../command-internal/migration-timestamp.format.ts";
 import { listLocalMigrations } from "../../../command-internal/migration-list.ts";
 import { pathMatch } from "../../../command-internal/path-match.ts";
@@ -178,7 +183,9 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
     // git-branch line) is hoisted into `resetLocalDatabase`, shared with `db schema declarative`'s
     // recovery reset; this call site keeps only version/seed-flags plumbing and the JSON envelope.
     if (cfg.isLocal) {
-      yield* resetLocalDatabase({ version: resolvedVersion });
+      yield* resetLocalDatabase({ version: resolvedVersion }).pipe(
+        Effect.provideService(MigrationChecksSkipped, flags.skipChecks),
+      );
       if (output.format !== "text") {
         yield* output.success("Reset local database.", { version: resolvedVersion });
       }
@@ -274,7 +281,14 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
             return m?.[1] !== undefined && m[1] <= resolvedVersion;
           });
           yield* Effect.annotateCurrentSpan({ "migration.count": pending.length });
-          yield* applyMigrations(session, fs, path, pending, applyError);
+          yield* applyMigrations(
+            session,
+            fs,
+            path,
+            pending,
+            applyError,
+            migrationChecksRun(toml, flags.skipChecks, flagsForTarget(target)),
+          );
         }
 
         if (seedEnabled) {

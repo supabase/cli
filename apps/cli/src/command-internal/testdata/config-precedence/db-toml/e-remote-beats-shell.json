@@ -14,6 +14,20 @@
     },
     "denoVersion": 2,
     "majorVersion": 17,
+    "migrationChecks": {
+      "exclude": [],
+      "severities": {
+        "auth_users_exposed": "warn",
+        "function_search_path_mutable": "warn",
+        "policy_exists_rls_disabled": "warn",
+        "rls_disabled_in_public": "warn",
+        "rls_enabled_no_policy": "warn",
+        "rls_policy_always_true": "warn",
+        "rls_references_user_metadata": "warn",
+        "security_definer_view": "warn",
+        "sensitive_columns_exposed": "warn"
+      }
+    },
     "migrationsEnabled": true,
     "orioledbVersion": null,
     "password": "postgres",

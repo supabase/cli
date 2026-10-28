@@ -330,6 +330,9 @@ importers:
       '@supabase/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@supabase/pg-checks':
+        specifier: https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-checks@1b3a5bc
+        version: https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-checks@1b3a5bc
       '@supabase/pg-delta':
         specifier: 1.0.0-alpha.60
         version: 1.0.0-alpha.60(@supabase/pg-topo@1.0.0-alpha.8(supports-color@7.2.0))(supports-color@7.2.0)
@@ -2856,6 +2859,10 @@ packages:
   '@supabase/functions-js@2.112.4':
     resolution: {integrity: sha512-DQ0aVH8wSQAccVqNoEkec62qCu2QRNyoGN53RqsVZ1k6F1zq4/v8scrlR6LNT2RJmT97apiTmORijPVhErCS2g==}
     engines: {node: '>=22.0.0'}
+
+  '@supabase/pg-checks@https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-checks@1b3a5bc':
+    resolution: {integrity: sha512-fyG8LHbcGWDNJm3Oo/a08gozo9BbF82Rn+vFdfkllI0fLioWOXIr/txEWVsOy5sYpqFdUIdHQkVytbgylZBZ/w==, tarball: https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-checks@1b3a5bc}
+    version: 0.0.0
 
   '@supabase/pg-delta@1.0.0-alpha.60':
     resolution: {integrity: sha512-pUO6OPOCOhcz89tHL+oOGWUPkVgPiw50n7ftnpUoozdOhqsPEANj81SvRMXClCepgkysvI+CJSN868vtj6ueog==}
@@ -8562,6 +8569,8 @@ snapshots:
   '@supabase/functions-js@2.112.4':
     dependencies:
       tslib: 2.8.1
+
+  '@supabase/pg-checks@https://pkg.pr.new/supabase/pg-toolbelt/@supabase/pg-checks@1b3a5bc': {}
 
   '@supabase/pg-delta@1.0.0-alpha.60(@supabase/pg-topo@1.0.0-alpha.8(supports-color@7.2.0))(supports-color@7.2.0)':
     dependencies:
