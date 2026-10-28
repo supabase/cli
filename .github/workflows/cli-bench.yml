@@ -53,6 +53,7 @@ jobs:
 
       - name: Build branch binary
         id: branch_build
+        continue-on-error: true
         run: |
           pnpm --filter supabase run build:binary
           mkdir -p "$BENCH_DIR/branch"
@@ -61,7 +62,9 @@ jobs:
       - name: Build merge-base binary
         id: base_build
         continue-on-error: true
+        if: steps.branch_build.outcome == 'success'
         env:
+          HUSKY: "0"
           BASE_REF: ${{ github.base_ref }}
         run: |
           merge_base="$(git merge-base HEAD "origin/$BASE_REF")"
@@ -80,7 +83,7 @@ jobs:
       - name: Start replay server
         id: replay
         continue-on-error: true
-        if: steps.base_build.outcome == 'success'
+        if: steps.branch_build.outcome == 'success' && steps.base_build.outcome == 'success'
         run: |
           bun apps/cli-e2e/scripts/replay-serve.ts > "$BENCH_DIR/replay.log" 2>&1 &
           echo "REPLAY_PID=$!" >> "$GITHUB_ENV"
@@ -99,7 +102,7 @@ jobs:
       - name: Run benchmark
         id: bench
         continue-on-error: true
-        if: steps.base_build.outcome == 'success'
+        if: steps.replay.outcome == 'success'
         shell: bash
         run: |
           bun apps/cli/scripts/bench-cli.ts \
@@ -115,10 +118,17 @@ jobs:
         run: kill "$REPLAY_PID" || true
 
       - name: Write job summary
-        if: always() && steps.branch_build.outcome == 'success'
+        if: always()
         env:
+          BRANCH_BUILD: ${{ steps.branch_build.outcome == 'success' && 'ok' || 'failed' }}
           BASE_BUILD: ${{ steps.base_build.outcome == 'success' && 'ok' || 'failed' }}
-        run: bun apps/cli/scripts/bench-summary.ts --report "$BENCH_DIR/report.json" --base-build "$BASE_BUILD"
+          REPLAY: ${{ steps.replay.outcome == 'success' && 'ok' || 'failed' }}
+        run: |
+          bun apps/cli/scripts/bench-summary.ts \
+            --report "$BENCH_DIR/report.json" \
+            --branch-build "$BRANCH_BUILD" \
+            --base-build "$BASE_BUILD" \
+            --replay "$REPLAY"
 
       - name: Upload report
         if: always()
