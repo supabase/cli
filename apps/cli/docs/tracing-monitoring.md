@@ -104,14 +104,17 @@ is updated in place, or created if it is missing. Only the repository owner and 
 access can run it; the command must be the whole comment, so `/bench full` (reserved for a future
 heavier tier) and anything else is ignored. The commenter's request is acknowledged with an eyes
 reaction. Workflows triggered by comments run from the default branch, so `/bench` works only once
-the workflow is on `develop`. Against a fork's head the run gets no secrets and does not use
-dependency caches; it still installs and builds the fork's code, so it needs a maintainer's
+the workflow is on `develop`. Against a fork's head the run still installs and builds the fork's code, so it needs a maintainer's
 judgment about the change.
 
-Three jobs keep that safe. `resolve` and `comment` run scripts from `.github/scripts/cli-bench`
-on the default branch. `bench` builds and runs the pull request code with read-only permissions,
-and the one job that can write comments only downloads its rendered markdown and posts it, so
-it never runs pull request code.
+The work is split by trigger so a `/bench` run is safe. `resolve` and `comment` run scripts from the
+default branch. `bench-pr` (pull requests) uses the shared setup action with the dependency firewall
+token and normal caches; GitHub withholds secrets from fork pull requests. `bench-command` (`/bench`)
+references no secrets, installs the toolchain with its cache off, installs dependencies from the
+public registry, and writes no caches, because it checks out pull request code, possibly from a
+fork, in a context where repository secrets exist. Both call `.github/actions/cli-bench-run`. Only
+`comment` can write to the pull request; it downloads the rendered markdown and never runs pull
+request code.
 
 To run it locally with two binaries (for example builds from two commits):
 
