@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { JsonSchema, Schema } from "effect";
 import { ENV_PATTERN } from "./lib/env.ts";
 
 type Node = Record<string, unknown>;
@@ -9,8 +9,8 @@ const DATA_KEYWORDS = new Set(["default", "examples", "enum", "const"]);
 const SCHEMA_MAP_KEYWORDS = new Set(["properties", "patternProperties"]);
 
 /**
- * Renders a published JSON Schema document, carrying the `x-secret` marker through and keeping
- * pattern-keyed records open: the generator writes a boolean `additionalProperties` on them
+ * Renders a published draft-07 JSON Schema document, carrying the `x-secret` marker through and
+ * keeping pattern-keyed records open: the generator writes a boolean `additionalProperties` on them
  * (effect 4.0) with no per-schema setting, while the published documents never carried one there.
  * With `acceptEnvReferences`, number, integer, boolean, string-enum and string-list leaves also
  * accept the `env(VAR)` references the loader resolves.
@@ -28,11 +28,16 @@ export function toPublishedJsonSchemaDocument(
   });
   const root = openPatternKeyedRecords(document.schema);
   const definitions = openPatternKeyedRecords(document.definitions);
+  const published = JsonSchema.toDocumentDraft07({
+    dialect: "draft-2020-12",
+    schema: options.acceptEnvReferences ? acceptEnvReferences(root) : root,
+    definitions: options.acceptEnvReferences ? mapSchemas(definitions) : definitions,
+  });
   return {
-    $schema: "https://json-schema.org/draft/2020-12/schema",
-    ...(options.acceptEnvReferences ? acceptEnvReferences(root) : root),
-    ...(Object.keys(definitions).length > 0
-      ? { $defs: options.acceptEnvReferences ? mapSchemas(definitions) : definitions }
+    $schema: JsonSchema.META_SCHEMA_URI_DRAFT_07,
+    ...published.schema,
+    ...(Object.keys(published.definitions).length > 0
+      ? { definitions: published.definitions }
       : {}),
   };
 }
@@ -67,11 +72,11 @@ function acceptEnvReferences<T>(node: T): T {
   return out as T;
 }
 
-function mapSchemas(schemas: unknown): unknown {
+function mapSchemas<T>(schemas: T): T {
   if (!isNode(schemas)) return schemas;
   return Object.fromEntries(
     Object.entries(schemas).map(([name, schema]) => [name, acceptEnvReferences(schema)]),
-  );
+  ) as T;
 }
 
 function acceptEnvReferencesInUnion(members: ReadonlyArray<unknown>): Array<unknown> {

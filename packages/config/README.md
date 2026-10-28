@@ -175,10 +175,10 @@ Every runtime and type export of the pure `.` entrypoint, grouped by category:
 
 **JSON Schema generators + URLs**
 
-| Export                                                | What it is                                                |
-| ----------------------------------------------------- | --------------------------------------------------------- |
-| `toCliConfigJsonSchema` / `toProjectConfigJsonSchema` | Render each shape's JSON Schema (draft 2020-12) document. |
-| `CLI_CONFIG_SCHEMA_URL` / `PROJECT_CONFIG_SCHEMA_URL` | The `$id`/`$schema` URL for each generated document.      |
+| Export                                                | What it is                                           |
+| ----------------------------------------------------- | ---------------------------------------------------- |
+| `toCliConfigJsonSchema` / `toProjectConfigJsonSchema` | Render each shape's JSON Schema (draft-07) document. |
+| `CLI_CONFIG_SCHEMA_URL` / `PROJECT_CONFIG_SCHEMA_URL` | The `$id`/`$schema` URL for each generated document. |
 
 **Errors**
 

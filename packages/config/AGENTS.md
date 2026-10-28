@@ -49,9 +49,9 @@ artifacts (`./schema.json`, `./project-schema.json`).
   `CliConfigWriteError` — kept off `./effect`'s public surface deliberately (no consumer outside
   `apps/cli` needs them, and internal-only keeps the published semver surface unchanged). Anything
   here can change or vanish in any release.
-- `@supabase/config/schema.json` — generated JSON Schema (draft 2020-12) for `CliConfig` (a
+- `@supabase/config/schema.json` — generated JSON Schema (draft-07) for `CliConfig` (a
   `dist/` build output); number, integer, boolean, enum and string-list fields also accept `env(VAR)` strings.
-- `@supabase/config/project-schema.json` (CLI-2234) — generated JSON Schema (draft 2020-12) for
+- `@supabase/config/project-schema.json` (CLI-2234) — generated JSON Schema (draft-07) for
   `ProjectConfig`, derived from `ProjectConfigSchema` (`src/project-config/project-schema.ts`); a
   `dist/` build output alongside `schema.json`.
 

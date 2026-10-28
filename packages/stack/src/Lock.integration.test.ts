@@ -101,6 +101,28 @@ describe("lock", () => {
       ),
   );
 
+  it.live("a lock written under the legacy schema URL reads under the current one", () =>
+    inProject((projectRoot, lockFile) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.makeDirectory(`${projectRoot}/supabase`, { recursive: true });
+        const legacy = {
+          ...lockOf(selection),
+          $schema: "https://supabase.com/docs/cli/supabase-lock/v1.schema.json",
+        };
+        yield* fs.writeFileString(lockFile, stringify(legacy));
+
+        const read = yield* readLock(projectRoot);
+        yield* writeLock(projectRoot, Option.getOrThrow(read));
+
+        expect(Option.getOrThrow(read).$schema).toBe(LOCK_SCHEMA_URL);
+        expect(parse(yield* fs.readFileString(lockFile))).toMatchObject({
+          $schema: LOCK_SCHEMA_URL,
+        });
+      }),
+    ),
+  );
+
   it.live("a lock with a newer lockfileVersion fails with an upgrade error", () =>
     inProject((projectRoot, lockFile) =>
       Effect.gen(function* () {
