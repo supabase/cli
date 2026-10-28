@@ -78,7 +78,8 @@ for a handful of groups the target endpoint requires together even when only
 one member changed — the network-restriction CIDR pair, each storage feature
 container (`image_transformation`, `s3_protocol`, `analytics`, `vector`), the
 SMTP key set (or just `smtp_host: ""` to disable it), captcha, each auth
-hook, each OAuth provider, and the currently-active SMS provider. An
+hook, each OAuth provider, the OAuth server's `enabled` and
+`authorization_url_path` pair, and the currently-active SMS provider. An
 undeclared member of one of these groups is sent with the project's CURRENT
 value — read from the same row-1 response, so it does not change — never a
 value your file doesn't declare. Only when that response did not report a

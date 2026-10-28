@@ -9,8 +9,8 @@
  * always prefers the project's current (`remote`) value over a schema-materialized local
  * default, so an undeclared companion never gets clobbered with a default the user never asked
  * for. Only when `remote` doesn't report a companion at all does resolution fall through to
- * `local` (and, for the storage feature containers only, the decoded `config`) — and that
- * fallback is disclosed via `forced`, never applied silently.
+ * `local` (and, for the storage feature containers and the OAuth server pair only, the decoded
+ * `config`) — and that fallback is disclosed via `forced`, never applied silently.
  */
 
 import type { CliConfig, ConfigChange, ProjectConfig } from "@supabase/config";
@@ -53,7 +53,8 @@ export interface PushEncoderInput {
 /**
  * The storage encoder's own input: adds the decoded `config` as the last resort for the
  * `storage.analytics`/`storage.vector` containers' required inner keys, which the local
- * projection prunes entirely once disabled. No other encoder needs this fourth tier.
+ * projection prunes entirely once disabled. Only the auth encoder's OAuth server pair also
+ * needs this fourth tier.
  */
 export interface StorageEncoderInput extends PushEncoderInput {
   readonly config: CliConfig;
@@ -125,8 +126,11 @@ export interface AuthEncoderInput extends PushEncoderInput {
   readonly secrets: ReadonlyArray<PushSecretDecision>;
   /** HTML bodies loaded from `content_path`, for the unmapped mailer `*_content` keys. */
   readonly emailContent: AuthEmailContent;
-  /** Raw `data.attributes.auth` — for comparing the 13 unmapped mailer `*_content` keys. */
+  /** Raw `data.attributes.auth` — for comparing the 13 unmapped mailer `*_content` keys, and
+   *  for the OAuth server's stored path that `remote` prunes while disabled. */
   readonly remoteAuthAttributes: Readonly<Record<string, unknown>>;
+  /** Decoded config — the OAuth server pair's last fallback when the projection pruned it. */
+  readonly config: CliConfig;
   /** Clock value for `sms_test_otp_valid_until` (+10 calendar years). */
   readonly now: DateTime.Utc;
 }
@@ -201,12 +205,11 @@ function resolveLeaf(
 }
 
 /**
- * {@link resolveLeaf}, with a fourth fallback tier for the storage feature
- * containers only: the decoded `config`'s schema-materialized value, for the
- * `max_*` keys the local projection prunes entirely once a feature is
- * disabled.
+ * {@link resolveLeaf}, with a fourth fallback tier: the decoded `config`'s
+ * schema-materialized value, for keys the local projection prunes entirely
+ * once a feature is disabled.
  */
-function resolveStorageFeatureLeaf(
+function resolvePrunedLeaf(
   changes: ReadonlyArray<ConfigChange>,
   path: ReadonlyArray<string>,
   remote: ProjectConfig,
@@ -642,28 +645,28 @@ function encodeStorageBodyImpl(input: StorageEncoderInput): PushEncoded<StorageU
   const analyticsChanges = changesUnderPrefix(changes, ["storage", "analytics"]);
   if (analyticsChanges.length > 0) {
     const analyticsPaths = analyticsChanges.map((change) => change.path);
-    const enabledR = resolveStorageFeatureLeaf(
+    const enabledR = resolvePrunedLeaf(
       changes,
       ["storage", "analytics", "enabled"],
       remote,
       local,
       config,
     );
-    const maxNamespacesR = resolveStorageFeatureLeaf(
+    const maxNamespacesR = resolvePrunedLeaf(
       changes,
       ["storage", "analytics", "max_namespaces"],
       remote,
       local,
       config,
     );
-    const maxTablesR = resolveStorageFeatureLeaf(
+    const maxTablesR = resolvePrunedLeaf(
       changes,
       ["storage", "analytics", "max_tables"],
       remote,
       local,
       config,
     );
-    const maxCatalogsR = resolveStorageFeatureLeaf(
+    const maxCatalogsR = resolvePrunedLeaf(
       changes,
       ["storage", "analytics", "max_catalogs"],
       remote,
@@ -697,21 +700,21 @@ function encodeStorageBodyImpl(input: StorageEncoderInput): PushEncoded<StorageU
   const vectorChanges = changesUnderPrefix(changes, ["storage", "vector"]);
   if (vectorChanges.length > 0) {
     const vectorPaths = vectorChanges.map((change) => change.path);
-    const enabledR = resolveStorageFeatureLeaf(
+    const enabledR = resolvePrunedLeaf(
       changes,
       ["storage", "vector", "enabled"],
       remote,
       local,
       config,
     );
-    const maxBucketsR = resolveStorageFeatureLeaf(
+    const maxBucketsR = resolvePrunedLeaf(
       changes,
       ["storage", "vector", "max_buckets"],
       remote,
       local,
       config,
     );
-    const maxIndexesR = resolveStorageFeatureLeaf(
+    const maxIndexesR = resolvePrunedLeaf(
       changes,
       ["storage", "vector", "max_indexes"],
       remote,
@@ -1373,7 +1376,8 @@ export const PUSH_AUTH_LEAF_MAP: ReadonlyArray<PushAuthLeafSpec> = [
 function encodeAuthBodyImpl(
   input: AuthEncoderInput,
 ): PushEncoded<Readonly<Record<string, unknown>>> {
-  const { changes, local, remote, secrets, emailContent, remoteAuthAttributes, now } = input;
+  const { changes, local, remote, secrets, emailContent, remoteAuthAttributes, config, now } =
+    input;
   const body: Record<string, unknown> = {};
   const encoded: Array<ReadonlyArray<string>> = [];
   const unencodable: Array<{ path: ReadonlyArray<string>; reason: string }> = [];
@@ -1387,6 +1391,24 @@ function encodeAuthBodyImpl(
 
   for (const spec of PUSH_AUTH_LEAF_MAP) {
     leaf(spec.configPath, spec.apiKey, spec.transform, spec.reason);
+  }
+  /* The API takes `oauth_server_enabled` and `oauth_server_authorization_path` only together, so
+     when one of them ships the other rides along with its resolved value. */
+  const oauthPair = PUSH_AUTH_LEAF_MAP.filter(
+    (spec) =>
+      spec.apiKey === "oauth_server_enabled" || spec.apiKey === "oauth_server_authorization_path",
+  );
+  const oauthSent = oauthPair.find((spec) => spec.apiKey in body);
+  const oauthUnsent = oauthPair.find((spec) => !(spec.apiKey in body));
+  if (oauthSent !== undefined && oauthUnsent !== undefined) {
+    /* `remote` prunes a disabled server's stored path, so the raw attribute is read first. */
+    const stored = oauthUnsent.transform(remoteAuthAttributes[oauthUnsent.apiKey]);
+    const resolved: LeafResolution =
+      stored === undefined
+        ? resolvePrunedLeaf(changes, oauthUnsent.configPath, remote, local, config)
+        : { value: stored, source: "remote" };
+    body[oauthUnsent.apiKey] = resolved.value;
+    pushForced(forced, oauthUnsent.configPath, resolved);
   }
 
   // smtp (container)

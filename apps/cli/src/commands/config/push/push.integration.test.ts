@@ -1359,12 +1359,201 @@ otp_expiry = 120
           (r) => r.method === "PATCH" && r.url.includes("/config/auth"),
         );
         expect(update).toBeDefined();
-        expect(update?.body).toEqual({ oauth_server_enabled: true });
+        expect(update?.body).toEqual({
+          oauth_server_enabled: true,
+          oauth_server_authorization_path: "/oauth/consent",
+        });
         expect(out.stderrText).not.toContain("has no Management API field");
         const success = out.messages.find((m) => m.type === "success");
         const data = yield* decodeJsonRecord(success?.data);
         expect(data["unsupported"]).toEqual([]);
         expect(data["unmanaged"]).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    "disabling auth.oauth_server also sends the project's current authorization path the API requires with it",
+    () => {
+      const { layer, api } = setup({
+        toml: `project_id = "test"\n[auth.oauth_server]\nenabled = false\n`,
+        format: "json",
+        yes: true,
+        v2: {
+          status: 200,
+          body: v2Response({
+            attributes: (a) => ({
+              ...a,
+              auth: {
+                ...asJsonRecord(a["auth"]),
+                oauth_server_enabled: true,
+                oauth_server_authorization_path: "/custom/consent",
+              },
+            }),
+          }),
+        },
+      });
+      return Effect.gen(function* () {
+        yield* configPush({ projectRef: Option.none() });
+        const update = api.requests.find(
+          (r) => r.method === "PATCH" && r.url.includes("/config/auth"),
+        );
+        expect(update?.body).toEqual({
+          oauth_server_enabled: false,
+          oauth_server_authorization_path: "/custom/consent",
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    "disabling auth.oauth_server on a project with no stored path sends the declared path and discloses it",
+    () => {
+      const { layer, out, api } = setup({
+        toml: `project_id = "test"\n[auth.oauth_server]\nenabled = false\nauthorization_url_path = "/my/consent"\n`,
+        format: "json",
+        yes: true,
+        v2: {
+          status: 200,
+          body: v2Response({
+            attributes: (a) => ({
+              ...a,
+              auth: {
+                ...asJsonRecord(a["auth"]),
+                oauth_server_enabled: true,
+                oauth_server_authorization_path: null,
+              },
+            }),
+          }),
+        },
+      });
+      return Effect.gen(function* () {
+        yield* configPush({ projectRef: Option.none() });
+        const update = api.requests.find(
+          (r) => r.method === "PATCH" && r.url.includes("/config/auth"),
+        );
+        expect(update?.body).toEqual({
+          oauth_server_enabled: false,
+          oauth_server_authorization_path: "/my/consent",
+        });
+        const success = out.messages.find((m) => m.type === "success");
+        const data = yield* decodeJsonRecord(success?.data);
+        expect(data["forced"]).toEqual([
+          { path: ["auth", "oauth_server", "authorization_url_path"], value: "/my/consent" },
+        ]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    "enabling auth.oauth_server keeps the custom authorization path the disabled project still stores",
+    () => {
+      const { layer, out, api } = setup({
+        toml: `project_id = "test"\n[auth.oauth_server]\nenabled = true\n`,
+        format: "json",
+        yes: true,
+        v2: {
+          status: 200,
+          body: v2Response({
+            attributes: (a) => ({
+              ...a,
+              auth: {
+                ...asJsonRecord(a["auth"]),
+                oauth_server_enabled: false,
+                oauth_server_authorization_path: "/custom/consent",
+              },
+            }),
+          }),
+        },
+      });
+      return Effect.gen(function* () {
+        yield* configPush({ projectRef: Option.none() });
+        const update = api.requests.find(
+          (r) => r.method === "PATCH" && r.url.includes("/config/auth"),
+        );
+        expect(update?.body).toEqual({
+          oauth_server_enabled: true,
+          oauth_server_authorization_path: "/custom/consent",
+        });
+        const success = out.messages.find((m) => m.type === "success");
+        const data = yield* decodeJsonRecord(success?.data);
+        expect(data["forced"]).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    "enabling auth.oauth_server on a project with no authorization path sends the default path and discloses it",
+    () => {
+      const { layer, out, api } = setup({
+        toml: `project_id = "test"\n[auth.oauth_server]\nenabled = true\n`,
+        format: "json",
+        yes: true,
+        v2: {
+          status: 200,
+          body: v2Response({
+            attributes: (a) => ({
+              ...a,
+              auth: {
+                ...asJsonRecord(a["auth"]),
+                oauth_server_enabled: false,
+                oauth_server_authorization_path: null,
+              },
+            }),
+          }),
+        },
+      });
+      return Effect.gen(function* () {
+        yield* configPush({ projectRef: Option.none() });
+        const update = api.requests.find(
+          (r) => r.method === "PATCH" && r.url.includes("/config/auth"),
+        );
+        expect(update?.body).toEqual({
+          oauth_server_enabled: true,
+          oauth_server_authorization_path: "/oauth/consent",
+        });
+        const success = out.messages.find((m) => m.type === "success");
+        const data = yield* decodeJsonRecord(success?.data);
+        expect(data["forced"]).toEqual([
+          { path: ["auth", "oauth_server", "authorization_url_path"], value: "/oauth/consent" },
+        ]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    "changing only auth.oauth_server.authorization_url_path also sends the enabled flag the API requires with it",
+    () => {
+      const { layer, out, api } = setup({
+        toml: `project_id = "test"\n[auth.oauth_server]\nenabled = true\nauthorization_url_path = "/new/consent"\n`,
+        format: "json",
+        yes: true,
+        v2: {
+          status: 200,
+          body: v2Response({
+            attributes: (a) => ({
+              ...a,
+              auth: {
+                ...asJsonRecord(a["auth"]),
+                oauth_server_enabled: true,
+                oauth_server_authorization_path: "/oauth/consent",
+              },
+            }),
+          }),
+        },
+      });
+      return Effect.gen(function* () {
+        yield* configPush({ projectRef: Option.none() });
+        const update = api.requests.find(
+          (r) => r.method === "PATCH" && r.url.includes("/config/auth"),
+        );
+        expect(update?.body).toEqual({
+          oauth_server_enabled: true,
+          oauth_server_authorization_path: "/new/consent",
+        });
+        const success = out.messages.find((m) => m.type === "success");
+        const data = yield* decodeJsonRecord(success?.data);
+        expect(data["forced"]).toEqual([]);
       }).pipe(Effect.provide(layer));
     },
   );
