@@ -65,7 +65,7 @@ milliseconds, plus the branch-minus-base delta in ms and percent. With `--trace`
 launch is followed by an untimed launch with `SUPABASE_TRACE_FILE` set, so tracing never inflates
 the wall times, and the report adds, per span name, the median total duration and count for
 each build, sorted by the largest absolute delta; a span name present in only one build is flagged
-rather than compared. `--command` splits on whitespace and does not support shell quoting; repeat the
+rather than compared. `--command` splits on whitespace and does not support shell quoting (use `--workloads` for quoted arguments); repeat the
 flag for more than one command, and use `--cwd-setup init` when a command, such as `status`, needs to
 run inside an initialized project. Pass `--json` for a machine-readable report, `--out <file>` to
 also write the raw per-run samples, and `--cpu-prof` to capture a Bun CPU profile of one untimed
@@ -83,6 +83,121 @@ mkdir /tmp/cli-base && git archive <sha> | tar -x -C /tmp/cli-base
 rm -f /tmp/cli-base/mise.toml /tmp/cli-base/mise.lock # if mise refuses the untrusted config
 (cd /tmp/cli-base && pnpm install && pnpm exec turbo run supabase#build)
 ```
+
+### Pull request benchmark
+
+`.github/workflows/cli-bench.yml` runs on every ready pull request into `develop` or `next`. It builds
+the pull request and its merge base with `pnpm --filter supabase run build:binary`, runs both
+through `bench-cli.ts` against a local replay server, and writes a job summary with `bench-summary.ts`.
+The job is report only: it never blocks a pull request, and no benchmark problem fails it. The
+workloads use no Docker, database, or network, and no humans are involved.
+
+To run it locally with two binaries (for example builds from two commits):
+
+```sh
+pnpm --filter @supabase/cli-e2e run replay:serve   # prints {"url":"http://127.0.0.1:<port>"}
+bun apps/cli/scripts/bench-cli.ts --base <base-binary> --branch <branch-binary> \
+  --workloads apps/cli/bench/workloads.pr.json --api-url <url> --trace --out /tmp/report.json
+bun apps/cli/scripts/bench-summary.ts --report /tmp/report.json
+```
+
+`--workloads` replaces repeated `--command` flags. `apps/cli/bench/workloads.pr.json` lists entries
+with an `id`, an `args` array (so quoting works), a `cwdSetup` of `none`, `init`, or `linked`, and
+optionally a replay `scenario` and a `projectRef`. `linked` runs `init`, then writes the files a
+linked project has (`supabase/.temp/project-ref` and a stub `pooler-url`), so `--linked` commands
+resolve a project without a database. Setup runs outside the timed region.
+
+`--api-url` (which requires `--trace`) points every launch at the replay server by writing a profile
+file into the launch's fresh `SUPABASE_HOME` and setting `SUPABASE_PROFILE`, plus a dummy access
+token. The profile is the CLI's only API redirect: `SUPABASE_API_URL` does not change where the
+Management API client sends requests, so it is never set. Every launch gets the profile, including
+`--version` and `init`, so an unexpected new API call reaches the server and is counted. Before each
+launch the harness clears the server's request log and scenario, then selects the workload's
+scenario, so scenarios that are used up as they are served start fresh every time. A failing control
+call aborts the benchmark.
+
+API calls are counted from the traced launch's HTTP client spans: spans to the `--api-url` host and
+port are API calls, and spans to any other host are `externalCalls`. The count is cross-checked
+against the replay server's request log for the same launch. The `--out` file stores raw per-run
+data; the summary derives medians, flags, and verdicts from it, so thresholds can change without
+re-running.
+
+The summary reports:
+
+- Flags: an API call count that goes from 0 to more than 0 (for example `migration new` starting to
+  call the API) or from more than 0 to 0, calls to hosts other than the replay server, counts that
+  differ between runs of one build, spans that disagree with the request log, 4xx/5xx replay
+  responses (the build did not follow the recorded scenario), non-zero or differing exit codes, and
+  missing traces. Other count changes, such as 1 to 2 calls, appear in the API calls table with the
+  changed endpoints but are not flagged.
+- Wall time: base and branch medians and ranges. A verdict of slower or faster needs the branch
+  median outside the base min-max range, a change of at least 5 percent and 5 ms, and at least 5
+  measured runs; otherwise it reads "within noise", or "not comparable" when a build failed.
+  Thresholds are named constants in `bench-report.ts`.
+- API calls per workload, base and branch.
+- Phase deltas: the three largest span deltas for each workload with a slower or faster verdict.
+- Binary size of `dist/supabase`.
+
+The baseline API calls per workload on both `develop` and `next` builds (a project-scoped command
+also refreshes the linked-project cache, so it makes two calls):
+
+| Workload                                   | API calls                                                              |
+| ------------------------------------------ | ---------------------------------------------------------------------- |
+| `version`, `help`, `init`, `migration-new` | 0                                                                      |
+| `projects-list`                            | 1: `GET /v1/projects`                                                  |
+| `db-query`                                 | 2: `POST /v1/projects/{ref}/database/query`, `GET /v1/projects/{ref}`  |
+| `gen-types`                                | 2: `GET /v1/projects/{ref}/types/typescript`, `GET /v1/projects/{ref}` |
+| `functions-list`                           | 2: `GET /v1/projects/{ref}/functions`, `GET /v1/projects/{ref}`        |
+
+`SUPABASE_NO_KEYRING=1` disables the keyring (`CommandCredentials.load` reports
+`keyring.enabled=false`); the value `true` is not recognized. Counts come from the untimed traced
+launch, so a launch that behaves differently when timed shows up only as an exit-code difference.
+
+#### How the workloads were chosen
+
+The list comes from `cli_command_executed` usage in PostHog over the last 30 days, for stable CLI
+versions only (prereleases excluded). Commands are ranked by distinct `device_id`, then by run
+count; the p50 and p90 duration of successful runs, the CI share, and the agent share are context.
+Only commands that run with no Docker, no database, no real network, and no prompts are kept, and
+every Go-proxied command is dropped. One command is taken from each class (startup, local files,
+API read without a ref, API calls with a ref, API read of a large response) rather than the top N
+overall, capped at 8 workloads to fit the time budget. Refresh the list each quarter, or after the
+v3 release with the version regex updated:
+
+```sql
+SELECT properties.command cmd, uniq(properties.device_id) users, count() runs,
+ round(100*countIf(properties.exit_code != 0)/count(),1) err_pct,
+ round(quantileIf(0.5)(properties.duration_ms, properties.exit_code = 0)) p50_ms,
+ round(quantileIf(0.9)(properties.duration_ms, properties.exit_code = 0)) p90_ms,
+ round(100*countIf(properties.is_ci = true)/count(),1) ci_pct,
+ round(100*countIf(properties.is_agent = true)/count(),1) agent_pct
+FROM events WHERE event='cli_command_executed' AND timestamp >= now() - INTERVAL 30 DAY
+ AND match(properties.cli_version,'^2\\.(119|120|121|122)\\.[0-9]+$')
+GROUP BY cmd ORDER BY users DESC LIMIT 40
+```
+
+Caveats:
+
+- Flags differ between branches. The manifest uses the `develop` form (`--linked`, `--project-ref`,
+  `--project-id`). `next` accepts these as deprecated aliases until v4 and prints a warning in both
+  builds, but `next` requires `db query --remote --read-only` and sends `read_only: true`, which
+  the `develop` replay scenario does not match, so the `db-query` workload exits non-zero on `next`
+  with the `develop` manifest. After the v3 cut, switch the manifest to `--remote[=<ref>]` and the
+  `db-query-remote-*` scenario.
+- Telemetry records the command path but no flags or arguments, so `SELECT 1`, `bench`, and the
+  TypeScript target only approximate real use.
+- `device_id` counts machines, not people, short-lived CI runners inflate it, and a large share of
+  runs come from agents. Telemetry durations include network, Docker, and wait time, so they guided
+  the choice but are not what the benchmark measures.
+- Excluded high-usage commands: `start`, `status`, `stop`, `db start`, `db reset`, and `test db`
+  need Docker; `db push`, `db lint`, `db dump`, `db diff`, `migration list`, `migration up`,
+  `migration repair`, and `db schema declarative sync` need a database (a nightly tier);
+  `link` probes `https://<ref>.<project_host>`, which never reaches the replay server;
+  `functions deploy` uses Docker by default and its API path has no success scenario; `login` is
+  interactive unless a token is passed; `functions serve` needs Docker.
+- The first launch of a process is slower (credential loading); the warm-up runs absorb it.
+- Launches write a profile file, so numbers from runs with `--api-url` are not comparable with runs
+  without it.
 
 ## Grafana, Tempo, or Jaeger
 
