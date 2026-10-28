@@ -13,7 +13,7 @@ Management API.
 | `<workdir>/supabase/config.toml`       | TOML       | local / `--remote=<url>` — to resolve the DB connection config                                                                                             |
 | `~/.supabase/access-token`             | plain text | a remote project or branch only, when `SUPABASE_ACCESS_TOKEN` unset (keyring → file)                                                                       |
 | `<workdir>/supabase/.temp/project-ref` | plain text | bare `--remote` — to resolve the project ref, skipped when `SUPABASE_PROJECT_ID` is set; with no selector — only to name the project in the `Target:` hint |
-| `PGSSL*` PEM, `pg_service.conf`        | PEM, libpq | remote project: `pg_service.conf` if `PGSERVICE` is set; PEM files only on the pooler temp-role probe; see `db push`                                       |
+| `PGSSL*` PEM, `pg_service.conf`        | PEM, libpq | `--remote=<url>` or local on the experimental stack (shell env only), when set; client cert and key never for the local stack database; see `db push`      |
 
 ## Files Written
 
@@ -52,7 +52,7 @@ One connection. Within one transaction: `BEGIN` → `set local search_path = ''`
 | `SUPABASE_PROJECT_ID`   | linked project ref override, and the parent that `--remote=<branch>` is resolved against (superseded by `--remote=<ref>`) | no                                        |
 | `SUPABASE_PROFILE`      | API profile (built-in name or YAML path)                                                                                  | no                                        |
 | `PGHOST` / `PGPORT` / … | connection overrides (local / `--remote=<url>`)                                                                           | no                                        |
-| `PG*` libpq             | remote project: validated; used only by the temp-role probe; see `db push`                                                | no                                        |
+| `PG*` libpq             | `--remote=<url>` TLS, timeout, service, and local on the experimental stack (shell env only); see `db push`               | no                                        |
 
 The API base URL is derived from `SUPABASE_PROFILE`; `SUPABASE_API_URL` is **not**
 honored (see `command-settings.layer.unit.test.ts`).

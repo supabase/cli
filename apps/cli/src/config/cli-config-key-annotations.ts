@@ -144,6 +144,10 @@ export const CLI_CONFIG_SECTION_ENV_EXEMPT: Readonly<Record<string, string>> = {
     "a plain struct in the document model: its keys exist whether or not it is written",
   "db.settings":
     "a plain struct in the document model: its keys exist whether or not it is written",
+  "db.migrations.checks":
+    'every rule defaults to "warn" without the section, so an env severity must apply while it is absent',
+  "db.migrations.checks.exclude":
+    "an absent section means no exclusions, so an env exclusion list must apply while it is absent",
   "experimental.pgdelta":
     "enabled defaults to true without the section, so the env rollback must apply while it is absent",
 };
