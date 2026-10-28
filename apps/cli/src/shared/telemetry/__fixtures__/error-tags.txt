@@ -258,6 +258,7 @@ FeedbackMessageTooLongError
 FeedbackNotFoundError
 FileWatcherError
 FunctionDeployCancelledError
+FunctionDeployDockerNotRunningError
 FunctionDownloadNotFoundError
 FunctionImportNotDirectoryError
 FunctionNotFoundError
