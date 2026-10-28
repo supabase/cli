@@ -264,10 +264,12 @@ function parseLastHealthProbe(health: unknown): ContainerHealthProbe | undefined
   return { exitCode, output: output.replace(/\s+/gu, " ").trim() };
 }
 
-// runc reports a bad healthcheck command as a Go `exec.Error` or as an `os.PathError`.
+// runc reports a bad healthcheck command as a Go `exec.Error`, an `os.PathError`, or (before
+// runc 1.1) wrapped in "exec user process caused".
 const EXEC_IMAGE_FAULT_PATTERNS: ReadonlyArray<RegExp> = [
   /exec: \\?"[^"]*": (?:executable file not found in \$PATH|stat \S+: no such file or directory|permission denied)/u,
   /(?:^|: )exec [^\s:]+: (?:no such file or directory|exec format error|permission denied)/u,
+  /exec user process caused:? \\?"?(?:no such file or directory|exec format error|permission denied)/u,
 ];
 
 /**

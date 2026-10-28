@@ -77,6 +77,8 @@ export class HealthCheckTimeoutError extends Data.TaggedError("HealthCheckTimeou
    * logger is a non-sequitur.
    */
   readonly suggestion?: string;
+  /** Containers accepted as ready on `running` alone because Docker could not exec their health check. */
+  readonly readinessAssumed?: ReadonlyArray<string>;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.startStack;
@@ -466,6 +468,7 @@ export function waitForHealthyServices(
               .join("\n"),
             unhealthy: probeError.failures,
             ...(hints.length === 0 ? {} : { suggestion: hints.join("\n\n") }),
+            ...(seen.assumed.size === 0 ? {} : { readinessAssumed: [...seen.assumed] }),
           });
         }),
       ),

@@ -1881,6 +1881,12 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
             }
             // Downgrade to a warning and fall through to the success path, no rollback.
             yield* output.raw(`${healthWarningText(error)}\n`, "stderr");
+            if (error.readinessAssumed !== undefined) {
+              yield* output.raw(
+                healthCheckExecUnavailableWarning(error.readinessAssumed),
+                "stderr",
+              );
+            }
           } else {
             // No manual `rollbackStart` here — the outer `Effect.onError`
             // below rolls back on this failure too.

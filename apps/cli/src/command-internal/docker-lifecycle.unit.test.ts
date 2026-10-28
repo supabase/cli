@@ -604,6 +604,24 @@ describe("healthCheckCannotExec", () => {
       ),
     ],
     [
+      "an older runc reporting a healthcheck binary built for another architecture",
+      state(
+        probe(
+          -1,
+          "OCI runtime exec failed: exec failed: container_linux.go:380: starting container process caused: exec user process caused: exec format error: unknown",
+        ),
+      ),
+    ],
+    [
+      "an older runc reporting a missing shebang interpreter",
+      state(
+        probe(
+          -1,
+          'OCI runtime exec failed: exec failed: container_linux.go:349: starting container process caused "exec user process caused \\"no such file or directory\\"": unknown',
+        ),
+      ),
+    ],
+    [
       "an image fault that only appears after the first 300 characters",
       state(probe(-1, imageFaultPastTheDisplayedReason)),
     ],

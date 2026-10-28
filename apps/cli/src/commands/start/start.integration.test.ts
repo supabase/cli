@@ -3968,6 +3968,37 @@ content_path = "./supabase/templates/custom_notice.html"
     );
 
     it.live(
+      "--ignore-health-check still names the services accepted as running when it downgrades a failure",
+      () =>
+        Effect.gen(function* () {
+          const { layer, out, child } = yield* setup({
+            route: execBrokenHostRoute(),
+            httpClientLayer: mockGatewayHttpClient({ "/storage/v1/status": 503 }).layer,
+          });
+
+          yield* start(flags({ ignoreHealthCheck: true })).pipe(Effect.provide(layer));
+
+          const storage = serviceContainerName("storage", projectId);
+          expect(out.stderrText).toContain(
+            `${storage} container is not ready: /storage/v1/status: unexpected status 503`,
+          );
+          const warnings = out.stderrText
+            .split("\n")
+            .filter((line) => line.includes("Docker cannot run health checks"));
+          expect(warnings).toHaveLength(1);
+          for (const service of readinessAssumed) {
+            expect(warnings[0]).toContain(serviceContainerName(service, projectId));
+          }
+          expect(warnings[0]).not.toContain(storage);
+          expect(rollbackWasAttempted(child.spawned)).toBe(false);
+        }).pipe(
+          Effect.provideService(HealthCheckTimeoutSeconds, 0),
+          Effect.provide(BunServices.layer),
+        ),
+      10_000,
+    );
+
+    it.live(
       "does not accept a Docker probe timeout as an exec failure",
       () =>
         Effect.gen(function* () {
