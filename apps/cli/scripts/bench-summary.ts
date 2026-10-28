@@ -1,8 +1,9 @@
 /**
- * Renders a `bench-cli.ts --out` report as a Markdown job summary: flags, wall time, API calls,
- * phase deltas, and binary size. Run as
- * `bun scripts/bench-summary.ts --report <file> [--branch-build|--base-build|--replay ok|failed]`; writes to
- * `GITHUB_STEP_SUMMARY` when set, otherwise to stdout.
+ * Renders a `bench-cli.ts --out` report as Markdown: the answer first, then a timing table, API
+ * calls, binary size, and collapsed details. Run as `bun scripts/bench-summary.ts --report <file>`
+ * with optional `--branch-build|--base-build|--replay ok|failed` step outcomes, `--head-sha`,
+ * `--base-ref`, `--merge-base`, and `--comment-out <file>` for the pull request
+ * comment variant; the job summary goes to `GITHUB_STEP_SUMMARY` when set, otherwise to stdout.
  */
 import process from "node:process";
 import { parseArgs } from "node:util";
@@ -12,13 +13,14 @@ import {
   analyzeWorkload,
   collectFlags,
   decodeBenchReport,
+  VERDICT_MIN_PCT,
   type BenchReport,
   type Flag,
   type WorkloadAnalysis,
 } from "./bench-report.ts";
 
 const USAGE =
-  "usage: bun scripts/bench-summary.ts --report <file> [--branch-build ok|failed] [--base-build ok|failed] [--replay ok|failed]";
+  "usage: bun scripts/bench-summary.ts --report <file> [--branch-build ok|failed] [--base-build ok|failed] [--replay ok|failed] [--head-sha <sha>] [--base-ref <ref>] [--merge-base <sha>] [--comment-out <file>]";
 
 type Outcome = "ok" | "failed";
 
@@ -27,6 +29,10 @@ export interface SummaryOptions {
   readonly branchBuild: Outcome;
   readonly baseBuild: Outcome;
   readonly replay: Outcome;
+  readonly headSha: string | undefined;
+  readonly baseRef: string | undefined;
+  readonly mergeBase: string | undefined;
+  readonly commentOut: string | undefined;
 }
 
 const OUTCOME_FLAGS = ["branch-build", "base-build", "replay"] as const;
@@ -40,6 +46,10 @@ export function parseSummaryArgs(argv: ReadonlyArray<string>): SummaryOptions {
       "branch-build": { type: "string", default: "ok" },
       "base-build": { type: "string", default: "ok" },
       replay: { type: "string", default: "ok" },
+      "head-sha": { type: "string" },
+      "base-ref": { type: "string" },
+      "merge-base": { type: "string" },
+      "comment-out": { type: "string" },
     },
   });
   for (const flag of OUTCOME_FLAGS) {
@@ -52,30 +62,53 @@ export function parseSummaryArgs(argv: ReadonlyArray<string>): SummaryOptions {
     branchBuild: values["branch-build"] === "failed" ? "failed" : "ok",
     baseBuild: values["base-build"] === "failed" ? "failed" : "ok",
     replay: values.replay === "failed" ? "failed" : "ok",
+    headSha: values["head-sha"],
+    baseRef: values["base-ref"],
+    mergeBase: values["merge-base"],
+    commentOut: values["comment-out"],
   };
   if (values.report === undefined && summaryNotice(options) === undefined) throw new Error(USAGE);
   return options;
 }
 
-const NO_REPORT = "the benchmark did not produce a report; see the Run benchmark step log";
+const NO_REPORT =
+  "The benchmark did not produce a report. See the Run benchmark step in the workflow run.";
+const UNREADABLE_REPORT =
+  "The benchmark report could not be read. See the Write job summary step in the workflow run.";
 
 /** The reason there is nothing to compare, in the order the steps run, or undefined when all ran. */
 export function summaryNotice(
   options: Pick<SummaryOptions, "branchBuild" | "baseBuild" | "replay">,
 ): string | undefined {
-  if (options.branchBuild === "failed") return "branch build failed, no comparison";
-  if (options.baseBuild === "failed") return "base build failed, no comparison";
+  if (options.branchBuild === "failed") {
+    return "The build of this commit failed, so there is nothing to compare.";
+  }
+  if (options.baseBuild === "failed") {
+    return "The build of the base branch failed, so there is nothing to compare.";
+  }
   if (options.replay === "failed") {
-    return "replay server failed to start, no comparison; see the Start replay server step log";
+    return "The local test server failed to start, so the benchmark did not run. See the Start replay server step in the workflow run.";
   }
   return undefined;
 }
 
 const sign = (value: number) => (value >= 0 ? "+" : "");
-const ms = (value: number) => `${value} ms`;
-const range = (build: WorkloadAnalysis["base"]) => `${build.timing.min}-${build.timing.max} ms`;
+const ms = (value: number) => `${Math.round(value)} ms`;
+const range = (build: WorkloadAnalysis["base"]) =>
+  `${Math.round(build.timing.min)}-${Math.round(build.timing.max)} ms`;
+const signedMs = (value: number) => `${sign(value)}${Math.round(value)} ms`;
+const signedPct = (value: number) => `${sign(value)}${Math.round(value)}%`;
 
 const cell = (value: string) => value.replaceAll("|", "\\|");
+/** Inline code for text that comes from the benchmarked build or its workload file. */
+const code = (value: string) => `\`${value.replaceAll("`", "'").replaceAll(/\s+/gu, " ")}\``;
+const command = (analysis: Pick<WorkloadAnalysis, "args">) =>
+  code(["supabase", ...analysis.args].join(" "));
+const plural = (count: number, one: string, many: string) => (count === 1 ? one : many);
+const callCount = (count: number | undefined) =>
+  `${count ?? "some"} ${count === 1 ? "call" : "calls"}`;
+const MIB = 1024 * 1024;
+const mb = (bytes: number) => `${(bytes / MIB).toFixed(1)} MB`;
 
 function table(header: ReadonlyArray<string>, rows: ReadonlyArray<ReadonlyArray<string>>): string {
   return [
@@ -85,96 +118,262 @@ function table(header: ReadonlyArray<string>, rows: ReadonlyArray<ReadonlyArray<
   ].join("\n");
 }
 
-function flagsSection(flags: ReadonlyArray<Flag>): string {
-  if (flags.length === 0) return "No flags.";
-  return flags.map((flag) => `- **${flag.workload}** (${flag.kind}): ${flag.detail}`).join("\n");
+const when = (build: Flag["build"]) => (build === "base" ? "before" : "after");
+
+/** One plain-words sentence for a flag. */
+function describeFlag(flag: Flag, analysis: WorkloadAnalysis): string {
+  const name = command(analysis);
+  const at = when(flag.build);
+  switch (flag.kind) {
+    case "new-api-calls": {
+      const added = analysis.endpointChanges
+        .filter((change) => change.branch > change.base)
+        .slice(0, 3)
+        .map((change) => code(change.endpoint));
+      return (
+        `${name} now calls the Management API. It made no calls before and now makes ` +
+        `${analysis.branch.api?.medianCalls ?? "some"}${added.length === 0 ? "" : ` (${added.join(", ")})`}.`
+      );
+    }
+    case "api-calls-dropped":
+      return `${name} no longer calls the Management API. It made ${callCount(analysis.base.api?.medianCalls)} before and now makes none.`;
+    case "external-calls":
+      return `${name} made calls to hosts other than the local test server ${at}, so its timing may be skewed.`;
+    case "non-deterministic":
+      return `${name} makes a different number of API calls from run to run ${at}, so its results are less reliable.`;
+    case "request-log-mismatch":
+      return `The API calls counted for ${name} ${at} do not match what the local test server saw, so the counts may be wrong.`;
+    case "error-status":
+      return `${name} got error responses from the local test server ${at}, so it did not follow the recorded scenario.`;
+    case "trace-incomplete":
+      return `Some runs of ${name} ${at} produced no usable trace, so call counts and phase timings may be incomplete.`;
+    case "non-zero-exit":
+      return `${name} exited with an error ${at}; its timing is not compared.`;
+    case "exit-codes-differ":
+      return `${name} exits with different codes before and after, so its timing is not compared.`;
+    case "traced-exit-differs":
+      return `${name} exited differently when traced ${at}, so its timing is not compared.`;
+    case "insufficient-samples":
+      return `${name} had too few timed runs for a timing verdict.`;
+  }
 }
 
-function wallTimeSection(analyses: ReadonlyArray<WorkloadAnalysis>): string {
+function changeText(analysis: WorkloadAnalysis): string {
+  switch (analysis.verdict) {
+    case "not comparable":
+      return "not compared";
+    case "slower":
+    case "faster": {
+      const delta = Math.abs(Math.round(analysis.deltaMs));
+      return `${analysis.verdict} by ${delta} ms (${signedPct(analysis.deltaPct)})`;
+    }
+    case "within noise":
+      return Math.abs(analysis.deltaPct) >= VERDICT_MIN_PCT
+        ? `no real change (${signedPct(analysis.deltaPct)}, within normal variation)`
+        : "no real change";
+  }
+}
+
+function timingTable(analyses: ReadonlyArray<WorkloadAnalysis>): string {
   return table(
-    ["Workload", "Base", "Branch", "Change", "Base range", "Branch range", "Verdict"],
+    ["Command", "Before", "After", "Change"],
     analyses.map((analysis) => [
-      analysis.id,
+      command(analysis),
       ms(analysis.base.timing.median),
       ms(analysis.branch.timing.median),
-      `${sign(analysis.deltaMs)}${analysis.deltaMs} ms (${sign(analysis.deltaPct)}${analysis.deltaPct}%)`,
+      changeText(analysis),
+    ]),
+  );
+}
+
+interface ApiOverview {
+  readonly line: string;
+  /** Ids of the commands whose API calls changed. */
+  readonly changedIds: ReadonlyArray<string>;
+}
+
+function apiOverview(analyses: ReadonlyArray<WorkloadAnalysis>): ApiOverview {
+  const measured = analyses.filter(
+    (analysis) => analysis.base.api !== undefined && analysis.branch.api !== undefined,
+  );
+  if (measured.length === 0) return { line: "API calls were not counted.", changedIds: [] };
+  const changed = measured.filter(
+    (analysis) =>
+      analysis.base.api?.medianCalls !== analysis.branch.api?.medianCalls ||
+      analysis.endpointChanges.length > 0,
+  );
+  const missing = analyses.length - measured.length;
+  const suffix = missing === 0 ? "" : ` (not measured for ${missing})`;
+  if (changed.length === 0) {
+    return {
+      line: `API calls: unchanged for ${measured.length === 1 ? "the command" : `all ${measured.length} commands`}${suffix}.`,
+      changedIds: [],
+    };
+  }
+  const lines = changed.map((analysis) => {
+    const endpoints = analysis.endpointChanges
+      .map((change) => `${code(change.endpoint)} ${change.base} -> ${change.branch}`)
+      .join(", ");
+    return `- ${command(analysis)}: ${callCount(analysis.base.api?.medianCalls)} before, ${analysis.branch.api?.medianCalls} now${endpoints === "" ? "" : ` (${endpoints})`}`;
+  });
+  return {
+    line: [
+      `API calls changed for ${changed.length} ${plural(changed.length, "command", "commands")}${suffix}:`,
+      ...lines,
+    ].join("\n"),
+    changedIds: changed.map((analysis) => analysis.id),
+  };
+}
+
+function sizeLine(report: BenchReport): string {
+  const { baseSizeBytes: base, branchSizeBytes: branch } = report;
+  if (base === undefined || branch === undefined) return "Binary size: not recorded.";
+  const delta = branch - base;
+  if (delta === 0) return `Binary size: ${mb(branch)}, unchanged.`;
+  const abs = Math.abs(delta);
+  const size = abs < 1024 ? `${abs} bytes` : abs < MIB ? `${(abs / 1024).toFixed(1)} KB` : mb(abs);
+  return `Binary size: ${mb(branch)}, ${delta > 0 ? "up" : "down"} ${size} from ${mb(base)}.`;
+}
+
+function apiDetailTable(analyses: ReadonlyArray<WorkloadAnalysis>): string {
+  const rows = analyses
+    .filter((analysis) => analysis.base.api !== undefined || analysis.branch.api !== undefined)
+    .map((analysis) => [
+      command(analysis),
+      String(analysis.base.api?.medianCalls ?? "n/a"),
+      String(analysis.branch.api?.medianCalls ?? "n/a"),
+      analysis.endpointChanges
+        .map((change) => `${code(change.endpoint)} ${change.base} -> ${change.branch}`)
+        .join("<br>"),
+    ]);
+  if (rows.length === 0) return "API calls were not counted.";
+  return table(["Command", "Before", "After", "Endpoint changes"], rows);
+}
+
+function rangeTable(analyses: ReadonlyArray<WorkloadAnalysis>): string {
+  return table(
+    ["Command", "Before range", "After range", "Change", "Verdict"],
+    analyses.map((analysis) => [
+      command(analysis),
       range(analysis.base),
       range(analysis.branch),
+      `${signedMs(analysis.deltaMs)} (${signedPct(analysis.deltaPct)})`,
       analysis.verdict,
     ]),
   );
 }
 
-function apiSection(analyses: ReadonlyArray<WorkloadAnalysis>): string {
-  const rows = analyses
-    .filter((analysis) => analysis.base.api !== undefined || analysis.branch.api !== undefined)
-    .map((analysis) => [
-      analysis.id,
-      String(analysis.base.api?.medianCalls ?? "n/a"),
-      String(analysis.branch.api?.medianCalls ?? "n/a"),
-      analysis.endpointChanges.length === 0
-        ? ""
-        : analysis.endpointChanges
-            .map((change) => `\`${change.endpoint}\` ${change.base} -> ${change.branch}`)
-            .join("<br>"),
-    ]);
-  if (rows.length === 0) return "API calls were not counted.";
-  return table(["Workload", "Base", "Branch", "Endpoint changes"], rows);
-}
-
-function phaseSection(analyses: ReadonlyArray<WorkloadAnalysis>): string {
+function phaseDetail(analyses: ReadonlyArray<WorkloadAnalysis>): string {
   const rows = analyses.flatMap((analysis) =>
     analysis.phaseRows.map((row) => {
       const only = row.onlyIn === undefined ? undefined : row[row.onlyIn];
       return [
-        analysis.id,
-        row.name,
+        command(analysis),
+        code(row.name),
         row.deltaMs === undefined
-          ? `${row.onlyIn} only, ${only?.medianMs} ms`
-          : `${sign(row.deltaMs)}${row.deltaMs} ms`,
-        `${row.base?.medianMs ?? "-"} -> ${row.branch?.medianMs ?? "-"} ms`,
+          ? `${row.onlyIn === "base" ? "before" : "after"} only, ${Math.round(only?.medianMs ?? 0)} ms`
+          : signedMs(row.deltaMs),
+        `${row.base === undefined ? "-" : Math.round(row.base.medianMs)} -> ${row.branch === undefined ? "-" : Math.round(row.branch.medianMs)} ms`,
       ];
     }),
   );
   if (rows.length === 0) {
     return analyses.some((analysis) => analysis.verdict === "not comparable")
-      ? "No phase deltas are available; some workloads were not comparable."
-      : "No workload moved beyond noise, so there are no phase deltas.";
+      ? "No phase deltas are available; some commands were not comparable."
+      : "No command moved beyond noise, so there are no phase deltas.";
   }
-  return table(["Workload", "Span", "Change", "Base -> branch"], rows);
+  return table(["Command", "Span", "Change", "Before -> after"], rows);
 }
 
-function sizeSection(report: BenchReport): string {
-  const { baseSizeBytes: base, branchSizeBytes: branch } = report;
-  if (base === undefined || branch === undefined) return "Binary sizes were not recorded.";
-  const delta = branch - base;
-  return table(
-    ["Base", "Branch", "Change"],
-    [[`${base} bytes`, `${branch} bytes`, `${sign(delta)}${delta} bytes`]],
+export const BENCH_MARKER = "<!-- cli-bench:pr -->";
+
+export interface RenderContext {
+  /** `comment` adds the marker and the re-run footer; `summary` is the job summary. */
+  readonly target: "summary" | "comment";
+  readonly headSha?: string | undefined;
+  readonly baseRef?: string | undefined;
+  readonly mergeBase?: string | undefined;
+}
+
+const short = (sha: string) => sha.slice(0, 7);
+
+function contextLine(report: BenchReport | undefined, context: RenderContext): string {
+  const parts: Array<string> = [];
+  if (context.headSha !== undefined && context.headSha !== "") {
+    const against =
+      context.baseRef === undefined || context.baseRef === ""
+        ? ""
+        : ` against ${code(context.baseRef)}${
+            context.mergeBase === undefined || context.mergeBase === ""
+              ? ""
+              : ` at ${code(short(context.mergeBase))}`
+          }`;
+    parts.push(`Commit ${code(short(context.headSha))}${against}`);
+  }
+  if (report !== undefined) parts.push(`${report.runs} ${plural(report.runs, "run", "runs")} each`);
+  parts.push("report only, never blocks merging");
+  return parts.join(" · ");
+}
+
+function frame(
+  title: string,
+  body: ReadonlyArray<string>,
+  context: RenderContext,
+  report?: BenchReport,
+): string {
+  const footer =
+    context.target === "comment" ? ["Comment `/bench` to run it again on the latest commit."] : [];
+  return (
+    [
+      ...(context.target === "comment" ? [BENCH_MARKER] : []),
+      `## CLI benchmark: ${title}`,
+      contextLine(report, context),
+      ...body,
+      ...footer,
+    ].join("\n\n") + "\n"
   );
 }
 
-/** The Markdown summary, or `notice` when there is no report to compare. */
-export function renderSummary(report: BenchReport | undefined, notice: string): string {
-  const title = "## CLI benchmark (report only)";
-  if (report === undefined) return `${title}\n\n${notice}\n`;
+/** The Markdown report, or `notice` in plain words when there is no report to compare. */
+export function renderSummary(
+  report: BenchReport | undefined,
+  notice: string,
+  context: RenderContext = { target: "summary" },
+): string {
+  if (report === undefined) return frame("could not run", [notice], context);
   const analyses = report.workloads.map((workload) => analyzeWorkload(workload, report.trace));
-  const flags = analyses.flatMap(collectFlags);
-  return (
+  const flags = analyses.flatMap((analysis) =>
+    collectFlags(analysis).map((flag) => ({ flag, analysis })),
+  );
+  if (analyses.length === 0) return frame("no commands were benchmarked", [], context, report);
+  const api = apiOverview(analyses);
+  const moved = analyses
+    .filter((analysis) => analysis.verdict === "slower" || analysis.verdict === "faster")
+    .map((analysis) => analysis.id);
+  const things = new Set([...flags.map(({ analysis }) => analysis.id), ...moved, ...api.changedIds])
+    .size;
+  const title =
+    things === 0 ? "no changes found" : `${things} ${plural(things, "thing", "things")} to check`;
+  return frame(
+    title,
     [
-      title,
-      `${report.runs} measured runs per build after ${report.warmup} warm-up runs. This job never blocks a pull request.`,
-      "### Flags",
-      flagsSection(flags),
-      "### Wall time",
-      wallTimeSection(analyses),
-      "### API calls",
-      apiSection(analyses),
-      "### Phase deltas",
-      phaseSection(analyses),
-      "### Binary size",
-      sizeSection(report),
-    ].join("\n\n") + "\n"
+      ...flags.map(({ flag, analysis }) => `⚠️ ${describeFlag(flag, analysis)}`),
+      timingTable(analyses),
+      api.line,
+      sizeLine(report),
+      [
+        "<details><summary>Details: timing ranges, API calls per command, slowest phases</summary>",
+        "#### Timing ranges",
+        rangeTable(analyses),
+        "#### API calls per command",
+        apiDetailTable(analyses),
+        "#### Slowest phases",
+        phaseDetail(analyses),
+        "</details>",
+      ].join("\n\n"),
+    ],
+    context,
+    report,
   );
 }
 
@@ -192,7 +391,7 @@ export const loadReport = Effect.fn("BenchSummary.loadReport")(function* (
       Console.error(`could not read benchmark report ${file}: ${String(cause)}`).pipe(
         Effect.as({
           report: undefined,
-          notice: "the benchmark report could not be read or decoded; see the job log",
+          notice: UNREADABLE_REPORT,
         }),
       ),
     ),
@@ -225,13 +424,24 @@ const main = Effect.gen(function* () {
     outcomeNotice === undefined && options.report !== undefined
       ? yield* loadReport(fs, options.report)
       : { report: undefined, notice: outcomeNotice ?? NO_REPORT };
-  const markdown = renderSummary(loaded.report, loaded.notice);
-
+  const context = {
+    headSha: options.headSha,
+    baseRef: options.baseRef,
+    mergeBase: options.mergeBase,
+  };
+  const markdown = renderSummary(loaded.report, loaded.notice, { target: "summary", ...context });
   const summaryFile = yield* Config.option(Config.String("GITHUB_STEP_SUMMARY"));
   if (Option.isSome(summaryFile) && summaryFile.value !== "") {
     yield* fs.writeFileString(summaryFile.value, markdown, { flag: "a" });
   } else {
     yield* Console.log(markdown);
+  }
+
+  if (options.commentOut !== undefined) {
+    yield* fs.writeFileString(
+      options.commentOut,
+      renderSummary(loaded.report, loaded.notice, { target: "comment", ...context }),
+    );
   }
 });
 

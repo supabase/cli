@@ -449,13 +449,15 @@ export interface Flag {
   readonly workload: string;
   readonly kind: FlagKind;
   readonly detail: string;
+  /** The build the flag is about, absent when it concerns the comparison. */
+  readonly build?: Build;
 }
 
 /** Everything about a workload that makes its comparison suspect or notable beyond timing. */
 export function collectFlags(analysis: WorkloadAnalysis): ReadonlyArray<Flag> {
   const flags: Array<Flag> = [];
-  const add = (kind: FlagKind, detail: string) =>
-    flags.push({ workload: analysis.id, kind, detail });
+  const add = (kind: FlagKind, detail: string, build?: Build) =>
+    flags.push({ workload: analysis.id, kind, detail, ...(build === undefined ? {} : { build }) });
   const baseCalls = analysis.base.api?.medianCalls;
   const branchCalls = analysis.branch.api?.medianCalls;
   if (baseCalls === 0 && branchCalls !== undefined && branchCalls > 0) {
@@ -477,37 +479,43 @@ export function collectFlags(analysis: WorkloadAnalysis): ReadonlyArray<Flag> {
     const summary = analysis[build];
     const failed = summary.exitCodes.filter((code) => code !== 0).length;
     if (failed > 0) {
-      add("non-zero-exit", `${build} exited non-zero in ${failed}/${summary.samples} runs`);
+      add("non-zero-exit", `${build} exited non-zero in ${failed}/${summary.samples} runs`, build);
     }
     const timed = new Set(summary.exitCodes);
     if (summary.tracedExitCodes.some((code) => !timed.has(code))) {
       add(
         "traced-exit-differs",
         `${build} traced launch exited differently from its timed launches`,
+        build,
       );
     }
     if (summary.traceMissingRuns > 0 || summary.skippedTraceLines > 0) {
       add(
         "trace-incomplete",
         `${build} has ${summary.traceMissingRuns} runs without a trace and ${summary.skippedTraceLines} undecodable trace lines`,
+        build,
       );
     }
     const api = summary.api;
     if (api === undefined) continue;
     if (api.externalCalls > 0) {
-      add("external-calls", `${build} made calls to hosts other than the replay server`);
+      add("external-calls", `${build} made calls to hosts other than the replay server`, build);
     }
-    if (api.nonDeterministic) add("non-deterministic", `${build} API calls differ between runs`);
+    if (api.nonDeterministic) {
+      add("non-deterministic", `${build} API calls differ between runs`, build);
+    }
     if (api.logMismatchRuns > 0) {
       add(
         "request-log-mismatch",
         `${build} spans disagree with the replay request log in ${api.logMismatchRuns} runs`,
+        build,
       );
     }
     if (api.errorStatuses > 0) {
       add(
         "error-status",
         `${build} got 4xx/5xx replay responses, so it did not follow the recorded scenario`,
+        build,
       );
     }
   }

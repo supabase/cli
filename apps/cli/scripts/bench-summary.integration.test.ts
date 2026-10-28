@@ -18,7 +18,7 @@ describe("loadReport", () => {
         expect(absent.report).toBeUndefined();
         expect(absent.notice).toContain("did not produce a report");
         expect(unreadable.report).toBeUndefined();
-        expect(unreadable.notice).toContain("could not be read or decoded");
+        expect(unreadable.notice).toContain("could not be read");
       }),
     ).pipe(Effect.provide(BunServices.layer)),
   );

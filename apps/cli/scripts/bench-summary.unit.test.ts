@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { BenchReport, RunSample } from "./bench-report.ts";
-import { parseSummaryArgs, renderSummary, summaryNotice } from "./bench-summary.ts";
+import { BENCH_MARKER, parseSummaryArgs, renderSummary, summaryNotice } from "./bench-summary.ts";
 
 const run = (wallMs: number, calls: number, endpoints: Record<string, number>): RunSample => ({
   wallMs,
@@ -28,51 +28,121 @@ const report = (workloads: BenchReport["workloads"]): BenchReport => ({
   workloads,
 });
 
+const steady = (id: string, args: ReadonlyArray<string>) => ({
+  id,
+  args,
+  base: runs(5, (i) => run(30 + i, 0, {})),
+  branch: runs(5, (i) => run(30 + i, 0, {})),
+});
+
+const migrationNew = {
+  id: "migration-new",
+  args: ["migration", "new", "bench"],
+  base: runs(5, (i) => run(50 + i, 0, {})),
+  branch: runs(5, (i) => run(120 + i, 1, { "GET /v1/projects/abc": 1 })),
+};
+
 describe("renderSummary", () => {
-  it("lists a flagged workload first and shows the endpoint that appeared", () => {
-    const markdown = renderSummary(
-      report([
-        {
-          id: "migration-new",
-          args: ["migration", "new", "bench"],
-          base: runs(5, (i) => run(50 + i, 0, {})),
-          branch: runs(5, (i) => run(120 + i, 1, { "GET /v1/projects/abc": 1 })),
-        },
-      ]),
-      "unused",
+  it("leads with no changes found and shows commands, not workload ids", () => {
+    const sized = {
+      ...report([steady("version", ["--version"])]),
+      baseSizeBytes: 140269744,
+      branchSizeBytes: 140269744,
+    };
+    const markdown = renderSummary(sized, "unused", {
+      target: "summary",
+      headSha: "abcdef1234567890",
+      baseRef: "develop",
+      mergeBase: "1234567890abcdef",
+    });
+
+    expect(markdown).toContain("## CLI benchmark: no changes found");
+    expect(markdown).toContain(
+      "Commit `abcdef1` against `develop` at `1234567` · 5 runs each · report only, never blocks merging",
     );
-
-    expect(markdown).toContain("report only");
-    expect(markdown).toMatch(/\*\*migration-new\*\* \(new-api-calls\)/u);
-    expect(markdown).not.toContain("No flags.");
-    expect(markdown).toContain("`GET /v1/projects/abc` 0 -> 1");
-    expect(markdown).toContain("slower");
-    expect(markdown).toContain("+500 bytes");
+    expect(markdown).toContain("| `supabase --version` | 32 ms | 32 ms | no real change |");
+    expect(markdown).toContain("API calls: unchanged for the command.");
+    expect(markdown).toContain("Binary size: 133.8 MB, unchanged.");
+    expect(markdown).not.toContain("⚠️");
   });
 
-  it("says there are no flags and no phase deltas when nothing moved", () => {
-    const markdown = renderSummary(
-      report([
-        {
-          id: "version",
-          args: ["--version"],
-          base: runs(5, (i) => run(30 + i, 0, {})),
-          branch: runs(5, (i) => run(30 + i, 0, {})),
-        },
-      ]),
-      "unused",
+  it("shows a binary size change in MB, or KB when it is small", () => {
+    const grown = {
+      ...report([steady("version", ["--version"])]),
+      baseSizeBytes: 140269744,
+      branchSizeBytes: 140269744 + 3 * 1048576,
+    };
+    const nudged = { ...grown, branchSizeBytes: 140269744 + 2048 };
+
+    expect(renderSummary(grown, "unused")).toContain(
+      "Binary size: 136.8 MB, up 3.0 MB from 133.8 MB.",
     );
-
-    expect(markdown).toContain("No flags.");
-    expect(markdown).toContain("within noise");
-    expect(markdown).toContain("no phase deltas");
+    expect(renderSummary(nudged, "unused")).toContain("up 2.0 KB from 133.8 MB");
   });
 
-  it("reports a missing report with the notice it is given", () => {
-    expect(renderSummary(undefined, "no report here")).toContain("no report here");
+  it("explains a new API call in plain words and counts each command once", () => {
+    const markdown = renderSummary(report([migrationNew]), "unused");
+
+    expect(markdown).toContain("## CLI benchmark: 1 thing to check");
+    expect(markdown).toContain(
+      "⚠️ `supabase migration new bench` now calls the Management API. It made no calls before and now makes 1 (`GET /v1/projects/abc`).",
+    );
+    expect(markdown).toContain("slower by 70 ms (+135%)");
   });
 
-  it("does not claim a missing timing verdict when workloads were not comparable", () => {
+  it("keeps command text from the benchmarked build inside code spans", () => {
+    const markdown = renderSummary(report([steady("x", ["a`@someone`", "b|c"])]), "unused");
+
+    expect(markdown).toContain("`supabase a'@someone' b\\|c`");
+  });
+
+  it("says nothing was benchmarked instead of a clean pass when there are no commands", () => {
+    const markdown = renderSummary(report([]), "unused");
+
+    expect(markdown).toContain("## CLI benchmark: no commands were benchmarked");
+    expect(markdown).not.toContain("no changes found");
+  });
+
+  it("describes a dropped API call with a singular count", () => {
+    const dropped = {
+      id: "list",
+      args: ["projects", "list"],
+      base: runs(5, (i) => run(30 + i, 1, { "GET /v1/projects": 1 })),
+      branch: runs(5, (i) => run(30 + i, 0, {})),
+    };
+
+    const markdown = renderSummary(report([dropped]), "unused");
+
+    expect(markdown).toContain(
+      "⚠️ `supabase projects list` no longer calls the Management API. It made 1 call before and now makes none.",
+    );
+  });
+
+  it("names the failed step and stays a notice when there is no report", () => {
+    const markdown = renderSummary(undefined, "The build of this commit failed.", {
+      target: "summary",
+    });
+
+    expect(markdown).toContain("## CLI benchmark: could not run");
+    expect(markdown).toContain("The build of this commit failed.");
+    expect(markdown).not.toContain("/bench");
+  });
+
+  it("adds the marker, re-run hint only to the comment", () => {
+    const input = report([steady("version", ["--version"])]);
+    const context = { headSha: "abcdef1234" } as const;
+
+    const comment = renderSummary(input, "unused", { target: "comment", ...context });
+    const summary = renderSummary(input, "unused", { target: "summary", ...context });
+
+    expect(BENCH_MARKER).toBe("<!-- cli-bench:pr -->");
+    expect(comment.startsWith(`${BENCH_MARKER}\n`)).toBe(true);
+    expect(comment).toContain("Comment `/bench` to run it again on the latest commit.");
+    expect(summary).not.toContain(BENCH_MARKER);
+    expect(summary).not.toContain("/bench");
+  });
+
+  it("does not claim a missing timing verdict when commands were not comparable", () => {
     const failing = (wallMs: number): RunSample => ({ ...run(wallMs, 0, {}), exitCode: 1 });
 
     const markdown = renderSummary(
@@ -87,42 +157,17 @@ describe("renderSummary", () => {
       "unused",
     );
 
-    expect(markdown).toContain(
-      "No phase deltas are available; some workloads were not comparable.",
-    );
-  });
-});
-
-describe("summaryNotice", () => {
-  const ok = { branchBuild: "ok", baseBuild: "ok", replay: "ok" } as const;
-
-  it("is undefined when every step succeeded", () => {
-    expect(summaryNotice(ok)).toBeUndefined();
+    expect(markdown).toContain("No phase deltas are available; some commands were not comparable.");
+    expect(markdown).toContain("not compared");
   });
 
-  it.each([
-    { failed: { branchBuild: "failed" }, expected: "branch build failed" },
-    { failed: { baseBuild: "failed" }, expected: "base build failed" },
-    { failed: { replay: "failed" }, expected: "replay server failed to start" },
-  ] as const)("names the failed step: $expected", ({ failed, expected }) => {
-    expect(summaryNotice({ ...ok, ...failed })).toContain(expected);
-  });
-
-  it("reports the earliest failed step when later ones were skipped", () => {
-    expect(
-      summaryNotice({ branchBuild: "failed", baseBuild: "failed", replay: "failed" }),
-    ).toContain("branch build failed");
-  });
-});
-
-describe("renderSummary without API counts", () => {
-  it("says API calls were not counted and keeps table cells intact when an id contains a pipe", () => {
+  it("says API calls were not counted when no call data exists", () => {
     const noTrace = (wallMs: number): RunSample => ({ wallMs, exitCode: 0 });
     const markdown = renderSummary(
       {
         ...report([
           {
-            id: "a|b",
+            id: "a",
             args: ["x"],
             base: runs(5, (i) => noTrace(30 + i)),
             branch: runs(5, (i) => noTrace(30 + i)),
@@ -134,7 +179,28 @@ describe("renderSummary without API counts", () => {
     );
 
     expect(markdown).toContain("API calls were not counted.");
-    expect(markdown).toContain("a\\|b");
+  });
+});
+
+describe("summaryNotice", () => {
+  const ok = { branchBuild: "ok", baseBuild: "ok", replay: "ok" } as const;
+
+  it("is undefined when every step succeeded", () => {
+    expect(summaryNotice(ok)).toBeUndefined();
+  });
+
+  it.each([
+    { failed: { branchBuild: "failed" }, expected: "build of this commit failed" },
+    { failed: { baseBuild: "failed" }, expected: "build of the base branch failed" },
+    { failed: { replay: "failed" }, expected: "test server failed to start" },
+  ] as const)("names the failed step: $expected", ({ failed, expected }) => {
+    expect(summaryNotice({ ...ok, ...failed })).toContain(expected);
+  });
+
+  it("reports the earliest failed step when later ones were skipped", () => {
+    expect(
+      summaryNotice({ branchBuild: "failed", baseBuild: "failed", replay: "failed" }),
+    ).toContain("build of this commit failed");
   });
 });
 
@@ -145,17 +211,14 @@ describe("parseSummaryArgs", () => {
 
   it("needs a report unless a step failed", () => {
     expect(() => parseSummaryArgs([])).toThrow();
-    expect(parseSummaryArgs(["--replay", "failed"])).toEqual({
+    expect(parseSummaryArgs(["--replay", "failed"])).toMatchObject({
       report: undefined,
       branchBuild: "ok",
       baseBuild: "ok",
       replay: "failed",
     });
-    expect(parseSummaryArgs(["--report", "r.json"])).toEqual({
-      report: "r.json",
-      branchBuild: "ok",
-      baseBuild: "ok",
-      replay: "ok",
-    });
+    expect(
+      parseSummaryArgs(["--report", "r.json", "--head-sha", "abc", "--comment-out", "c.md"]),
+    ).toMatchObject({ report: "r.json", replay: "ok", headSha: "abc", commentOut: "c.md" });
   });
 });

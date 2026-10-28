@@ -94,6 +94,25 @@ summary instead of failing the job: a failed branch or base build or a replay se
 start replaces the comparison with a notice naming the step. The workloads use no Docker, database, or network, and no
 prompts.
 
+The first run on a pull request from this repository also posts one comment, tagged with the hidden
+marker `<!-- cli-bench:pr -->`. Later pushes leave that comment alone. Pull requests from forks get
+the job summary only, because their token is read-only.
+
+A maintainer can comment exactly `/bench` on a pull request to run the benchmark again on its
+current head commit against the merge base with its base branch (`develop` or `next`). The comment
+is updated in place, or created if it is missing. Only the repository owner and people with write
+access can run it; the command must be the whole comment, so `/bench full` (reserved for a future
+heavier tier) and anything else is ignored. The commenter's request is acknowledged with an eyes
+reaction. Workflows triggered by comments run from the default branch, so `/bench` works only once
+the workflow is on `develop`. Against a fork's head the run gets no secrets and does not use
+dependency caches; it still installs and builds the fork's code, so it needs a maintainer's
+judgment about the change.
+
+Three jobs keep that safe. `resolve` and `comment` run scripts from `.github/scripts/cli-bench`
+on the default branch. `bench` builds and runs the pull request code with read-only permissions,
+and the one job that can write comments only downloads its rendered markdown and posts it, so
+it never runs pull request code.
+
 To run it locally with two binaries (for example builds from two commits):
 
 ```sh
@@ -123,7 +142,10 @@ against the replay server's request log for the same launch. The `--out` file st
 data; the summary derives medians, flags, and verdicts from it, so thresholds can change without
 re-running.
 
-The summary reports:
+The report (the comment and the job summary share one renderer) leads with the answer, "no changes
+found" or "N things to check", then one plain-words line for each flag, a table of the median time
+per command before and after the change, API calls, and the binary size. A collapsed section holds
+the timing ranges, API calls per command, and the slowest phases. It reports:
 
 - Flags: an API call count that goes from 0 to more than 0 (for example `migration new` starting to
   call the API) or from more than 0 to 0, calls to hosts other than the replay server, counts that
@@ -131,7 +153,7 @@ The summary reports:
   responses (the build did not follow the recorded scenario), non-zero or differing exit codes,
   missing traces, and too few runs for a timing verdict. Other count changes, such as 1 to 2 calls, appear in the API calls table with the
   changed endpoints but are not flagged.
-- Wall time: base and branch medians and ranges. A verdict of slower or faster needs the branch
+- Wall time: base ("before") and branch ("after") medians and ranges. A verdict of slower or faster needs the branch
   median outside the base min-max range, a change of at least 5 percent and 5 ms, and at least 5
   measured runs; otherwise it reads "within noise", or "not comparable" when a build failed.
   Thresholds are named constants in `bench-report.ts`.
