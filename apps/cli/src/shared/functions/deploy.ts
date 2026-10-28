@@ -2588,8 +2588,8 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
   const deployed = useLocalBundler
     ? yield* Effect.gen(function* () {
         if (!(yield* isDockerRunning())) {
-          /* An explicit --use-api, --use-docker or --legacy-bundle refuses the API fallback. */
-          if (explicitUseApi || explicitUseDocker || explicitLegacyBundle) {
+          /* --use-api=false, --use-docker or a true --legacy-bundle refuses the API fallback. */
+          if (explicitUseApi || explicitUseDocker || (explicitLegacyBundle && flags.legacyBundle)) {
             return yield* new FunctionDeployDockerNotRunningError({
               message:
                 "Docker is not running. Start Docker to bundle Functions locally, or deploy with --use-api.",

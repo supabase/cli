@@ -2008,7 +2008,10 @@ describe("functions deploy", () => {
       },
     );
 
-    it.live("falls back to API bundling with a warning when no bundler flag is passed", () => {
+    it.live.each<readonly [string, ReadonlyArray<string>]>([
+      ["no bundler flag is passed", []],
+      ["--legacy-bundle=false is passed", ["--legacy-bundle=false"]],
+    ])("falls back to API bundling with a warning when %s", ([, flagArgs]) => {
       const out = mockOutput({ format: "text" });
       const child = mockChildProcessSpawner({ exitCode: 1 });
       const api = mockCommandPlatformApi({
@@ -2029,7 +2032,7 @@ describe("functions deploy", () => {
         Layer.succeed(YesFlag, false),
         child.layer,
         Stdio.layerTest({
-          args: Effect.succeed(["functions", "deploy", "hello-world"]),
+          args: Effect.succeed(["functions", "deploy", "hello-world", ...flagArgs]),
         }),
       );
 
