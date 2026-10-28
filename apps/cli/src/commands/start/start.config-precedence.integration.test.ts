@@ -343,9 +343,12 @@ describe("start container env precedence goldens", () => {
           ),
         );
 
-        yield* start({ exclude: [], ignoreHealthCheck: false, preview: false }).pipe(
-          Effect.provide(layer),
-        );
+        yield* start({
+          exclude: [],
+          ignoreHealthCheck: false,
+          skipChecks: false,
+          preview: false,
+        }).pipe(Effect.provide(layer));
 
         const stagingRoot = path.join(workdir, "supabase", ".temp", "start-secrets");
         const stagedFiles = (yield* fs.readDirectory(stagingRoot, { recursive: true })).filter(

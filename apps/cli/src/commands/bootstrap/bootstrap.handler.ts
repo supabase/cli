@@ -410,6 +410,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
         toml,
         preapproved: Option.some(consent),
         emitStructuredResult: false,
+        skipChecks: false,
       }).pipe(pushNotify, Effect.retry(retry), Effect.withSpan("bootstrap.pushMigrations"));
 
       if (isText) {

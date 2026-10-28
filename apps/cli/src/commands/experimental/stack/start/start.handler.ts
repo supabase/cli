@@ -143,7 +143,9 @@ const portConflictSuggestion = (
 };
 
 const stackError = (
-  cause: { readonly message: string } & Partial<Pick<StackError, "outcomes" | "conflict">>,
+  cause: { readonly message: string; readonly suggestion?: string } & Partial<
+    Pick<StackError, "outcomes" | "conflict">
+  >,
   members: ReadonlyArray<{ readonly id?: string; readonly service: string }> = [],
   requested: ReadonlyArray<{ readonly service: string; readonly endpoints?: unknown }> = [],
   portSaved = false,
@@ -152,7 +154,8 @@ const stackError = (
     const service = members.find((member) => member.id === id)?.service;
     return service === undefined ? id : `${service} (${id})`;
   });
-  const suggestion = portConflictSuggestion(cause.conflict, requested, portSaved);
+  const suggestion =
+    portConflictSuggestion(cause.conflict, requested, portSaved) ?? cause.suggestion;
   return new StackCommandStartError({
     reason: "stack",
     message: cause.message,

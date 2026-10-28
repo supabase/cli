@@ -92,6 +92,7 @@ function flags(overrides: Partial<StartFlags> = {}): StartFlags {
   return {
     exclude: overrides.exclude ?? [],
     ignoreHealthCheck: overrides.ignoreHealthCheck ?? false,
+    skipChecks: overrides.skipChecks ?? false,
     preview: overrides.preview ?? false,
   };
 }

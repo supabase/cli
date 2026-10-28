@@ -39,7 +39,7 @@ import {
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { DnsResolverFlag, YesFlag } from "../../../command-internal/global-flags.ts";
+import { DnsResolverFlag, OutputFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import { CommandCredentials } from "../../../auth/command-credentials.service.ts";
 import { InvalidAccessTokenError } from "../../../auth/errors.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
@@ -313,6 +313,7 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(TargetPolicy, { group: "selectable", consent: "none" }),
     Layer.succeed(YesFlag, false),
     Layer.succeed(DnsResolverFlag, "native"),
+    Layer.succeed(OutputFlag, Option.none()),
     Layer.succeed(CliArgs, { args: [] }),
     BunServices.layer,
   );
@@ -340,6 +341,7 @@ const flags = (over: Partial<DbAdvisorsFlags> = {}): DbAdvisorsFlags => ({
   type: over.type ?? Option.none<"all" | "security" | "performance">(),
   level: over.level ?? Option.none<"info" | "warn" | "error">(),
   failOn: over.failOn ?? Option.none<"none" | "info" | "warn" | "error">(),
+  baseline: over.baseline ?? false,
 });
 
 describe("db advisors — local", () => {
@@ -349,6 +351,7 @@ describe("db advisors — local", () => {
       yield* dbAdvisors(flags());
       assertPermissionDrift({
         command: "db advisors",
+        activeFlags: { baseline: false },
         requests: api.requests,
         exact: true,
       });
@@ -515,7 +518,7 @@ describe("db advisors — linked", () => {
         );
         assertPermissionDrift({
           command: "db advisors",
-          activeFlags: { remote: VALID_REF },
+          activeFlags: { remote: VALID_REF, baseline: false },
           requests: [...asRecordedRequests(resolverRequests), ...api.requests],
           exact: true,
         });
@@ -546,7 +549,7 @@ describe("db advisors — linked", () => {
         );
         assertPermissionDrift({
           command: "db advisors",
-          activeFlags: {},
+          activeFlags: { baseline: false },
           requests: [],
           exact: true,
         });
@@ -574,7 +577,7 @@ describe("db advisors — linked", () => {
         expect(cache.cached).toBe(true);
         assertPermissionDrift({
           command: "db advisors",
-          activeFlags: { remote: true, type: "all" },
+          activeFlags: { remote: true, type: "all", baseline: false },
           requests: api.requests,
         });
       }).pipe(Effect.provide(layer));
@@ -593,7 +596,7 @@ describe("db advisors — linked", () => {
       expect(urls.some((u) => u.includes("/advisors/performance"))).toBe(true);
       assertPermissionDrift({
         command: "db advisors",
-        activeFlags: { remote: true, type: "all", level: true },
+        activeFlags: { remote: true, type: "all", level: true, baseline: false },
         requests: api.requests,
         exact: true,
       });
@@ -629,6 +632,93 @@ describe("db advisors — linked", () => {
     },
   );
 
+  it.effect(
+    "--baseline writes the linked project's findings for rules that are not off to the exclude list",
+    () => {
+      const lint = (name: string, schema: string, table: string) => ({
+        ...securityLint,
+        name,
+        metadata: { schema, name: table, type: "table" },
+      });
+      const { layer, api, cache } = setup({
+        securityLints: [
+          lint("rls_disabled_in_public", "public", "legacy"),
+          lint("rls_disabled_in_public", "public", "kept"),
+          lint("rls_enabled_no_policy", "public", "muted"),
+          lint("not_a_check_rule", "public", "other"),
+        ],
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const configPath = `${tempRoot.current}/supabase/config.toml`;
+        yield* fs.makeDirectory(`${tempRoot.current}/supabase`, { recursive: true });
+        yield* fs.writeFileString(
+          configPath,
+          '[db.migrations.checks]\nrls_enabled_no_policy = "off"\n\n[db.migrations.checks.exclude]\n# reviewed\nrls_disabled_in_public = ["public.kept"]\n',
+        );
+
+        yield* dbAdvisors(linkedFlags({ baseline: true }));
+
+        expect(yield* fs.readFileString(configPath)).toBe(
+          '[db.migrations.checks]\nrls_enabled_no_policy = "off"\n\n[db.migrations.checks.exclude]\n# reviewed\nrls_disabled_in_public = ["public.kept", "public.legacy"]\n',
+        );
+        assertPermissionDrift({
+          command: "db advisors",
+          activeFlags: { remote: true, baseline: true },
+          requests: api.requests,
+          exact: true,
+        });
+        expect(cache.cached).toBe(true);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("--baseline rejects --type, --level and --fail-on", () => {
+    const { layer, api } = setup({ securityLints: [securityLint] });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        dbAdvisors(linkedFlags({ baseline: true, level: Option.some("error") })),
+      );
+      expect(Exit.isFailure(exit) && Cause.pretty(exit.cause)).toContain("cannot be combined");
+      expect(api.requests).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "--baseline honours -o json with a message and sorts the existing exclude entries",
+    () => {
+      const { layer, out } = setup({
+        securityLints: [
+          {
+            ...securityLint,
+            name: "rls_disabled_in_public",
+            metadata: { schema: "public", name: "b", type: "table" },
+          },
+        ],
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const configPath = `${tempRoot.current}/supabase/config.toml`;
+        yield* fs.makeDirectory(`${tempRoot.current}/supabase`, { recursive: true });
+        yield* fs.writeFileString(
+          configPath,
+          '[db.migrations.checks.exclude]\nrls_disabled_in_public = ["public.z", "public.a"]\n',
+        );
+
+        yield* dbAdvisors(linkedFlags({ baseline: true }));
+        yield* dbAdvisors(linkedFlags({ baseline: true }));
+
+        expect(yield* fs.readFileString(configPath)).toContain(
+          'rls_disabled_in_public = ["public.a", "public.b", "public.z"]',
+        );
+        const messages = [...out.stdoutText.matchAll(/"message": "([^"]*)"/gu)].map((m) => m[1]);
+        expect(messages).toHaveLength(2);
+        expect(messages[0]).toContain("Added 1 object");
+        expect(messages[1]).toContain("No new findings");
+      }).pipe(Effect.provideService(OutputFlag, Option.some("json")), Effect.provide(layer));
+    },
+  );
+
   it.effect("never resolves a database connection for linked advisors", () => {
     const { layer, resolver, api, cache } = setup({
       ipv6Error: true,
@@ -659,7 +749,7 @@ describe("db advisors — linked", () => {
       expect(urls.some((u) => u.includes("/advisors/performance"))).toBe(false);
       assertPermissionDrift({
         command: "db advisors",
-        activeFlags: { remote: true, type: "security" },
+        activeFlags: { remote: true, type: "security", baseline: false },
         requests: api.requests,
         exact: true,
       });
@@ -675,7 +765,7 @@ describe("db advisors — linked", () => {
       expect(urls.some((u) => u.includes("/advisors/security"))).toBe(false);
       assertPermissionDrift({
         command: "db advisors",
-        activeFlags: { remote: true, type: "performance" },
+        activeFlags: { remote: true, type: "performance", baseline: false },
         requests: api.requests,
         exact: true,
       });
@@ -795,6 +885,7 @@ describe("db advisors — linked", () => {
 
 describeDbTargetSelection("db advisors", {
   dbUrl: true,
+  activeFlags: { baseline: false },
   workdir: () => tempRoot.current,
   attempt: ({ target }) => {
     const ctx = setup({ rows: [], securityLints: [], performanceLints: [] });

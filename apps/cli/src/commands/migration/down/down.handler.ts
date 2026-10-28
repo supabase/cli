@@ -13,6 +13,7 @@ import {
   requireTargetMutationConsent,
 } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { migrateAndSeed } from "../../../command-internal/migrate-and-seed.ts";
+import { MigrationChecksSkipped } from "../../../command-internal/migration-checks.ts";
 import {
   listRemoteMigrations,
   withTargetFlags,
@@ -95,7 +96,8 @@ const runDown = Effect.fnUntraced(function* (flags: MigrationDownFlags) {
           experimental: false,
           pgDeltaEnabled: false,
           schemaPaths: [],
-        });
+          checks: toml,
+        }).pipe(Effect.provideService(MigrationChecksSkipped, flags.skipChecks));
 
         if (output.format !== "text") {
           yield* output.success("Migrations reverted", { version, last: flags.last });

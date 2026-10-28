@@ -60,13 +60,13 @@ Local targets and database URLs make none.
 
 Prints `Target: …` to stderr, then `Applying migration <file>...` per pending migration, then
 `Local database is up to date.` (`Remote database is up to date.` for a non-local target) to
-stdout. Connects, lists remote + local
+stdout, only when no migration was pending. Connects, lists remote + local
 migrations, computes the pending set, upserts `[db.vault]` secrets, and applies
 each pending migration transactionally. Does **not** seed.
 
 ### `--output-format json`
 
-Emits `output.success("Migrations applied", { applied: [<path>] })`.
+Emits `output.success("Migrations applied", { applied: [<path>], checks })`; `checks` has the same shape as `db push`'s and is present when migrations were applied.
 
 ### `--output-format stream-json`
 
@@ -80,6 +80,13 @@ Same structured `applied` result delivered as an NDJSON `result` event.
 - A local target never prompts.
 
 ## Notes
+
+- **Migration security checks**: same `[db.migrations.checks]` behavior as `db push` (every
+  error-level finding rolls the file back and fails the run; new warnings print to stderr after
+  commit, or after a later file fails). A file checked after commit (non-transactional or authored
+  `BEGIN`) that leaves an error-level finding exits 1 with a message that it was already
+  committed. Blocked and timed-out errors carry `SB001` and `SB002` in their text and as the
+  JSON error code. `--skip-checks` skips them and prints that checks were skipped.
 
 - `--include-all` applies all migrations not found on the remote history table.
 - Pipeline-incompatible statements (`CREATE [UNIQUE] INDEX CONCURRENTLY`,

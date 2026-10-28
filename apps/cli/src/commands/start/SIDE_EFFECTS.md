@@ -318,6 +318,13 @@ prose, not structured data.
 
 ## Notes
 
+- **Migration security checks** (local replay): no per-file check; after the last migration and
+  before seeding, one read reports new warnings and every error. An error-level finding, or a
+  failed read while a rule is at `error`, fails the command (`SB001`) with the findings and how
+  to proceed (fix, `db advisors --baseline`, or `--skip-checks`). The stack is not rolled back:
+  the remaining services come up and the failure is reported last, with exit 1. `--skip-checks` skips the read and prints that
+  checks were skipped.
+
 - **`pg_net` converges with `[experimental.webhooks]` on every non-backup start**: a fresh
   volume installs `pg_net` only when webhooks are enabled or migration history contains a
   `create extension … pg_net`; an existing volume

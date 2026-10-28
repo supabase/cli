@@ -11,10 +11,8 @@ import {
   hostedMutationPreapproval,
   requireTargetMutationConsent,
 } from "../../../command-internal/hosted-consent/hosted-consent.ts";
-import {
-  MigrationApplyError,
-  applyMigrationFile,
-} from "../../../command-internal/migration-apply.ts";
+import { MigrationApplyError, applyMigrations } from "../../../command-internal/migration-apply.ts";
+import { migrationChecksRun } from "../../../command-internal/migration-checks.ts";
 import {
   findPendingMigrations,
   listLocalMigrationPaths,
@@ -118,21 +116,24 @@ const runUp = Effect.fnUntraced(function* (flags: MigrationUpFlags) {
         yield* upsertVaultSecrets(session, toml.vault);
 
         yield* Effect.annotateCurrentSpan({ "migration.count": pending.length });
-        for (const migrationPath of pending) {
-          yield* output.raw(`Applying migration ${path.basename(migrationPath)}...\n`, "stderr");
-          yield* applyMigrationFile(
-            session,
-            fs,
-            path,
-            migrationPath,
-            (message) => new MigrationApplyError({ message }),
-          );
-        }
+        const checks = yield* applyMigrations(
+          session,
+          fs,
+          path,
+          pending,
+          (message) => new MigrationApplyError({ message }),
+          migrationChecksRun(toml, flags.skipChecks, flagsForTarget(target)),
+        );
 
         if (output.format === "text") {
-          yield* output.raw(`${cfg.isLocal ? "Local" : "Remote"} database is up to date.\n`);
+          if (pending.length === 0) {
+            yield* output.raw(`${cfg.isLocal ? "Local" : "Remote"} database is up to date.\n`);
+          }
         } else {
-          yield* output.success("Migrations applied", { applied: pending });
+          yield* output.success("Migrations applied", {
+            applied: pending,
+            ...(Option.isSome(checks) ? { checks: checks.value } : {}),
+          });
         }
       }),
     );

@@ -68,9 +68,9 @@ enabled = true
 schema_paths = []
 
 [db.migrations.checks]
-# Security checks for migrations, one severity per rule. "error" will block the
-# migration; until blocking ships it reports like "warn". "warn" reports the
-# finding, "off" skips the rule. New projects start every rule at "warn".
+# Security checks for migrations, one severity per rule. "error" blocks the
+# migration, "warn" reports the finding, "off" skips the rule. New projects
+# start every rule at "warn".
 rls_disabled_in_public = "warn"
 rls_enabled_no_policy = "warn"
 policy_exists_rls_disabled = "warn"
@@ -81,9 +81,9 @@ auth_users_exposed = "warn"
 function_search_path_mutable = "warn"
 rls_references_user_metadata = "warn"
 
-# Skip specific objects for one rule. Names are "schema.name" (tables, views, functions).
-# [db.migrations.checks.exclude]
-# rls_disabled_in_public = ["public.countries"]
+# To skip specific objects for one rule, add a [db.migrations.checks.exclude] table with
+# "schema.name" entries (tables, views, functions), or run supabase db advisors --baseline
+# to exclude every current finding. For example: rls_disabled_in_public = ["public.countries"]
 
 [db.seed]
 # If enabled, seeds the database after migrations during a db reset.

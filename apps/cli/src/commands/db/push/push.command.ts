@@ -33,6 +33,10 @@ const config = {
     Flag.withDescription("Skip updating vault secrets from config.toml."),
     Flag.withDefault(false),
   ),
+  skipChecks: Flag.Boolean("skip-checks").pipe(
+    Flag.withDescription("Apply migrations without the [db.migrations.checks] security checks."),
+    Flag.withDefault(false),
+  ),
   dryRun: Flag.Boolean("dry-run").pipe(
     Flag.withDescription(
       "Print the migrations that would be applied, but don't actually apply them.",
@@ -59,7 +63,14 @@ export const dbPushCommand = Command.make("push", config).pipe(
     compose(
       {
         operations: [],
-        noApiEffectFlags: ["include-all", "include-roles", "include-seed", "skip-vault", "dry-run"],
+        noApiEffectFlags: [
+          "include-all",
+          "include-roles",
+          "include-seed",
+          "skip-vault",
+          "skip-checks",
+          "dry-run",
+        ],
       },
       dbConfig,
       withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
@@ -74,6 +85,7 @@ export const dbPushCommand = Command.make("push", config).pipe(
           "include-roles": flags.includeRoles,
           "include-seed": flags.includeSeed,
           "skip-vault": flags.skipVault,
+          "skip-checks": flags.skipChecks,
           "dry-run": flags.dryRun,
           // `password` is a credential — always reaches telemetry as `<redacted>`.
           password: flags.password,

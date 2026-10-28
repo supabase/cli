@@ -90,8 +90,12 @@ const notRunning = () =>
     message: `${aqua("supabase start")} is not running.`,
   });
 
-const resetFailed = (message: string, cause?: unknown) =>
-  new ResetLocalDbFailedError({ message, ...(cause === undefined ? {} : { cause }) });
+const resetFailed = (message: string, cause?: unknown, suggestion?: string) =>
+  new ResetLocalDbFailedError({
+    message,
+    ...(cause === undefined ? {} : { cause }),
+    ...(suggestion === undefined ? {} : { suggestion }),
+  });
 
 const suggestionOf = (error: unknown): string | undefined =>
   error instanceof StackStorageUnavailableError || error instanceof StackStorageCapabilityError
@@ -210,7 +214,7 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
             ? new ResetLocalDbNotRunningError({ message: cause.message })
             : cause.reason === "connect"
               ? resetFailed(`failed to connect after reset: ${cause.message}`)
-              : resetFailed(cause.message),
+              : resetFailed(cause.message, undefined, cause.suggestion),
       ),
     );
     yield* opened.value.stack.composition.start.pipe(

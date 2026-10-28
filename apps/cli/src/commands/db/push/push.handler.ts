@@ -94,6 +94,7 @@ export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
       toml,
       preapproved: Option.none(),
       emitStructuredResult: true,
+      skipChecks: flags.skipChecks,
     });
   });
 

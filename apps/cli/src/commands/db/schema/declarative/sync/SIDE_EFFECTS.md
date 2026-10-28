@@ -67,15 +67,16 @@ disabling safe compaction.
 
 ## Exit Codes
 
-| Code | Condition                                                                                           |
-| ---- | --------------------------------------------------------------------------------------------------- |
-| `0`  | success (migration created, applied, or "No schema changes found")                                  |
-| `1`  | pg-delta disabled (`[experimental.pgdelta] enabled = false` and no `--experimental`)                |
-| `1`  | conflicting `--apply`/`--no-apply` (mutually exclusive)                                             |
-| `1`  | no declarative schema files found                                                                   |
-| `1`  | shadow-database / selected pg-delta engine / diff failure                                           |
-| `1`  | apply failure (when applied) — propagated from the native migration apply (`applyMigrationToLocal`) |
-| `1`  | repairable legacy extension omissions in non-interactive mode                                       |
+| Code | Condition                                                                                                                                                |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success (migration created, applied, or "No schema changes found")                                                                                       |
+| `1`  | pg-delta disabled (`[experimental.pgdelta] enabled = false` and no `--experimental`)                                                                     |
+| `1`  | conflicting `--apply`/`--no-apply` (mutually exclusive)                                                                                                  |
+| `1`  | no declarative schema files found                                                                                                                        |
+| `1`  | shadow-database / selected pg-delta engine / diff failure                                                                                                |
+| `1`  | apply failure (when applied) — propagated from the native migration apply (`applyMigrationToLocal`)                                                      |
+| `1`  | `MigrationChecksBlockedError` (when applied) — an error-level `[db.migrations.checks]` finding rolled the migration back; no debug bundle or reset offer |
+| `1`  | repairable legacy extension omissions in non-interactive mode                                                                                            |
 
 The pg-delta gate and the mutex check are both raised before any side effects run,
 but the gate wins when both conditions apply simultaneously: the gate check runs
@@ -143,6 +144,10 @@ existing SQL or creates an export manifest.
   (the reset itself is native too — `resetLocalDatabase` — run in-process,
   sharing this command's own telemetry finalizer cycle rather than firing a
   second one from a child process).
+- **Migration security checks**: the apply checks the generated migration like
+  `migration up --local` (`[db.migrations.checks]`, `[api].schemas`, the same findings reads and
+  `Applying migration <file>...` line); `--skip-checks` skips them, including in the recovery
+  reset, and prints that checks were skipped.
 - **Architecture:** the engine plans and renders in-process from two live
   shadows.
 - **Stale local-container guard.** Before diffing against the running local `db`

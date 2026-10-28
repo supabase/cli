@@ -8,19 +8,20 @@ Management API.
 
 ## Files Read
 
-| Path                                   | Format     | When                                                                                                                                                       |
-| -------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`       | TOML       | local / `--remote=<url>` — to resolve the DB connection config                                                                                             |
-| `~/.supabase/access-token`             | plain text | a remote project or branch only, when `SUPABASE_ACCESS_TOKEN` unset (keyring → file)                                                                       |
-| `<workdir>/supabase/.temp/project-ref` | plain text | bare `--remote` — to resolve the project ref, skipped when `SUPABASE_PROJECT_ID` is set; with no selector — only to name the project in the `Target:` hint |
-| `PGSSL*` PEM, `pg_service.conf`        | PEM, libpq | `--remote=<url>` or local on the experimental stack (shell env only), when set; client cert and key never for the local stack database; see `db push`      |
+| Path                                   | Format     | When                                                                                                                                                                                           |
+| -------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`       | TOML       | local / `--remote=<url>` — to resolve the DB connection config; `--baseline` — always, for `[db.migrations.checks]` and `[api].schemas` (with a matched `[remotes.<ref>]` block for a project) |
+| `~/.supabase/access-token`             | plain text | a remote project or branch only, when `SUPABASE_ACCESS_TOKEN` unset (keyring → file)                                                                                                           |
+| `<workdir>/supabase/.temp/project-ref` | plain text | bare `--remote` — to resolve the project ref, skipped when `SUPABASE_PROJECT_ID` is set; with no selector — only to name the project in the `Target:` hint                                     |
+| `PGSSL*` PEM, `pg_service.conf`        | PEM, libpq | `--remote=<url>` or local on the experimental stack (shell env only), when set; client cert and key never for the local stack database; see `db push`                                          |
 
 ## Files Written
 
-| Path                                           | Format | When                                                            |
-| ---------------------------------------------- | ------ | --------------------------------------------------------------- |
-| `~/.supabase/telemetry.json`                   | JSON   | always (PostHog state flush)                                    |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON   | a remote project or branch only, via `LinkedProjectCache.cache` |
+| Path                                                | Format      | When                                                                                                                     |
+| --------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `~/.supabase/telemetry.json`                        | JSON        | always (PostHog state flush)                                                                                             |
+| `<workdir>/supabase/.temp/linked-project.json`      | JSON        | a remote project or branch only, via `LinkedProjectCache.cache`                                                          |
+| `<workdir>/supabase/config.toml` (or `config.json`) | TOML / JSON | `--baseline`, only when it adds an entry: atomic, format-preserving edit of `[db.migrations.checks.exclude]` (see Notes) |
 
 The local lint query runs inside a transaction that is **always rolled back**.
 
@@ -44,6 +45,11 @@ One connection. Within one transaction: `BEGIN` → `set local search_path = ''`
 (setup half of `templates/lints.sql`) → the multi-CTE lints query → `ROLLBACK`.
 `--type` filters the resulting rows by category (`SECURITY` / `PERFORMANCE`).
 
+`--baseline` instead runs the `[db.migrations.checks]` read migrations use: `BEGIN`,
+`set_config('search_path', '', true)` (and `pgrst.db_schemas` when `[api].schemas` differs),
+the splinter lint `SELECT` for every rule not at `off`, `ROLLBACK`. For a project it calls only
+`GET /v1/projects/{ref}/advisors/security`.
+
 ## Environment Variables
 
 | Variable                | Purpose                                                                                                                   | Required?                                 |
@@ -59,13 +65,14 @@ honored (see `command-settings.layer.unit.test.ts`).
 
 ## Exit Codes
 
-| Code | Condition                                                                   |
-| ---- | --------------------------------------------------------------------------- |
-| `0`  | success — no issues at or above `--fail-on` (empty result is still `0`)     |
-| `1`  | a remote project or branch with no access token (suggests `supabase login`) |
-| `1`  | connection / `BEGIN` / setup / query failure (local, `--remote=<url>`)      |
-| `1`  | advisors API non-200 (remote project or branch)                             |
-| `1`  | a lint's level is at or above `--fail-on`                                   |
+| Code | Condition                                                                                                                                                                                                                        |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — no issues at or above `--fail-on` (empty result is still `0`)                                                                                                                                                          |
+| `1`  | a remote project or branch with no access token (suggests `supabase login`)                                                                                                                                                      |
+| `1`  | connection / `BEGIN` / setup / query failure (local, `--remote=<url>`)                                                                                                                                                           |
+| `1`  | advisors API non-200 (remote project or branch)                                                                                                                                                                                  |
+| `1`  | a lint's level is at or above `--fail-on`                                                                                                                                                                                        |
+| `1`  | `--baseline`: config load failure, a layout the editor refuses (for example an `env(...)` exclude list), or the write failing (`DbAdvisorsBaselineError`); an `[api].schemas` entry with a comma (`MigrationChecksBlockedError`) |
 
 ## Output
 
@@ -85,6 +92,13 @@ A standard `output.success("db advisors", { results })` envelope on stdout
 
 A `result` event carrying `{ results }`. Additive.
 
+With `--baseline`, text mode prints `Added <n> object(s) to [db.migrations.checks.exclude] in
+<config path>:` and one `  <rule>: <schema.name>, …` line per rule to stdout, or
+`No new findings: <config path> already excludes every current finding.`; machine formats emit
+`output.success(<message>, { baseline: { config, added: [{ rule, object }], message } })`; with
+`-o json` the same `{ baseline }` object is written to stdout on every run, including
+`No new findings`.
+
 When `--fail-on` triggers in a machine format, the result is still emitted and
 the process exits non-zero (no error envelope is written over the payload).
 
@@ -93,5 +107,11 @@ the process exits non-zero (no error envelope is written over the payload).
 - `--type` (`all` default): `security` / `performance` select endpoints (remote) or filter categories (local, `--remote=<url>`).
 - `--level` (`warn` default) sets the minimum issue level to display.
 - `--fail-on` (`none` default) sets the level that forces a non-zero exit.
+- `--baseline` records every current finding for the `[db.migrations.checks]` rules not at `off`
+  as `"schema.name"` under its rule in `[db.migrations.checks.exclude]` of the base document (not a
+  `[remotes.*]` block), so migration checks stop blocking on objects that predate them. It writes
+  each rule's entries sorted (existing and new), skips objects the resolved policy already excludes,
+  and leaves every other byte of the file, comments included, unchanged; a second run with no new
+  findings writes nothing. Combining it with `--type`, `--level` or `--fail-on` exits 1 (`DbAdvisorsBaselineError`).
 - Not-logged-in suggestion: `Run supabase login first.`
 - Telemetry: only the standard `cli_command_executed` event (no custom events).

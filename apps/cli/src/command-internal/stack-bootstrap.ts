@@ -15,6 +15,8 @@ import { StackCatalogSetup, type StackCatalogSetupInput } from "./stack-catalog-
 export class StackBootstrapError extends Data.TaggedError("StackBootstrapError")<{
   readonly reason: "unavailable" | "connect" | "apply";
   readonly message: string;
+  /** The failed step's own next steps, such as a blocked security check's `--skip-checks` hint. */
+  readonly suggestion?: string;
   readonly cause?: unknown;
 }> {}
 
@@ -27,6 +29,12 @@ const bootstrapError =
         typeof error === "object" && error !== null && "message" in error
           ? String(error.message)
           : String(error),
+      ...(typeof error === "object" &&
+      error !== null &&
+      "suggestion" in error &&
+      typeof error.suggestion === "string"
+        ? { suggestion: error.suggestion }
+        : {}),
       cause: error,
     });
 
@@ -87,7 +95,13 @@ interface StackMigrations {
   readonly workdir: string;
   readonly toml: Pick<
     DbTomlValues,
-    "migrationsEnabled" | "seed" | "pgDelta" | "schemaPaths" | "webhooksEnabled"
+    | "migrationsEnabled"
+    | "seed"
+    | "pgDelta"
+    | "schemaPaths"
+    | "webhooksEnabled"
+    | "migrationChecks"
+    | "apiSchemas"
   >;
   readonly experimental: boolean;
   /** Applies migrations up to this version; omitted applies all of them. */
@@ -116,6 +130,7 @@ const applyStackMigrateAndSeed = (
           pgDeltaEnabled: toml.pgDelta.enabled,
           schemaPaths: toml.schemaPaths,
           localDatabaseWebhooksEnabled: toml.webhooksEnabled,
+          checks: toml,
         });
       }),
     "postgres",

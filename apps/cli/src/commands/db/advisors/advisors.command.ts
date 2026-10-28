@@ -28,6 +28,12 @@ const config = {
     Flag.withDescription("Issue level to exit with non-zero status: none, info, warn, error."),
     Flag.optional,
   ),
+  baseline: Flag.Boolean("baseline").pipe(
+    Flag.withDescription(
+      "Add every current security check finding to [db.migrations.checks.exclude] in supabase/config.toml.",
+    ),
+    Flag.withDefault(false),
+  ),
 } as const;
 
 export type DbAdvisorsFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -47,17 +53,30 @@ export const dbAdvisorsCommand = Command.make("advisors", config).pipe(
           {
             operationId: "v1-get-security-advisors",
             kind: "required",
+            when: [{ dbTarget: ["linked"] }, { flag: "baseline", is: true }],
+          },
+          {
+            operationId: "v1-get-security-advisors",
+            kind: "required",
             when: [{ dbTarget: ["linked"] }, { flag: "type", present: false }],
           },
           {
             operationId: "v1-get-performance-advisors",
             kind: "required",
-            when: [{ dbTarget: ["linked"] }, { flag: "type", oneOf: ["all", "performance"] }],
+            when: [
+              { dbTarget: ["linked"] },
+              { flag: "type", oneOf: ["all", "performance"] },
+              { flag: "baseline", is: false },
+            ],
           },
           {
             operationId: "v1-get-performance-advisors",
             kind: "required",
-            when: [{ dbTarget: ["linked"] }, { flag: "type", present: false }],
+            when: [
+              { dbTarget: ["linked"] },
+              { flag: "type", present: false },
+              { flag: "baseline", is: false },
+            ],
           },
         ],
         noApiEffectFlags: ["level", "fail-on"],
@@ -74,6 +93,7 @@ export const dbAdvisorsCommand = Command.make("advisors", config).pipe(
           type: flags.type,
           level: flags.level,
           "fail-on": flags.failOn,
+          baseline: flags.baseline,
         },
         // type/level/fail-on are auto-detected as safe via `config` below.
         config,
