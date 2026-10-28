@@ -84,7 +84,7 @@ export const linkCommand = Command.make("link", config).pipe(
           { operationId: "v1-get-project", kind: "required" },
           {
             operationId: "v1-get-project-api-keys",
-            kind: "required",
+            kind: "best-effort",
             request: { query: { reveal: "true" } },
           },
           {
