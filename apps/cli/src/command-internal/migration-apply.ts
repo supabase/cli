@@ -314,15 +314,15 @@ export const checkScannerBufferSize = <E>(
 
 /**
  * Renders a `^` caret line under the error position of a failing statement. `pos` is the
- * server's 1-based error cursor, measured in UTF-8 bytes, so multibyte statements shift the caret
- * correctly. The caret line replaces every line after the error line. Position 0 (absent), a
+ * server's 1-based error cursor, measured in characters (code points), not UTF-8 bytes or UTF-16
+ * units. The caret line replaces every line after the error line. Position 0 (absent), a
  * position past the end of the statement, or one landing exactly on a line break leave the
  * statement untouched.
  */
 export const markError = (stat: string, pos: number): string => {
   const lines = stat.split("\n");
   for (const [j, line] of lines.entries()) {
-    const c = utf8ByteLength(line);
+    const c = [...line].length;
     if (pos > c) {
       pos -= c + 1;
       continue;
