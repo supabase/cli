@@ -31,13 +31,13 @@ the result as a table or JSON.
 
 ## Environment Variables
 
-| Variable                | Purpose                                                                                |
-| ----------------------- | -------------------------------------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | `--linked` auth                                                                        |
-| `SUPABASE_API_SCHEMAS`  | overrides `[api].schemas` for the local / `--db-url` agent-mode advisory               |
-| `SUPABASE_API_ENABLED`  | overrides `[api].enabled`; malformed values fail config load on `--local` / `--db-url` |
-| agent-detection signals | `--agent=auto` (e.g. `CURSOR_*`, `CLAUDECODE`, …) via `@vercel/detect-agent`           |
-| `PG*` libpq             | linked-project TLS, timeout, service; see `db push`                                    |
+| Variable                | Purpose                                                                                                                               |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | `--linked` auth                                                                                                                       |
+| `SUPABASE_API_SCHEMAS`  | overrides `[api].schemas` for the local / `--db-url` agent-mode advisory                                                              |
+| `SUPABASE_API_ENABLED`  | overrides `[api].enabled`; malformed values fail config load on every target unless a matching `[remotes.*]` block sets `api.enabled` |
+| agent-detection signals | `--agent=auto` (e.g. `CURSOR_*`, `CLAUDECODE`, …) via `@vercel/detect-agent`                                                          |
+| `PG*` libpq             | linked-project TLS, timeout, service; see `db push`                                                                                   |
 
 ## Exit Codes
 
