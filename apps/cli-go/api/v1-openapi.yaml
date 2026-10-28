@@ -13696,6 +13696,7 @@ components:
                   - log_edge_function_error_rate_high
                   - realtime_authorization_timeouts
                   - realtime_postgres_changes_spike
+                  - realtime_concurrent_users_near_limit
                   - project_not_active
                   - advisor_check_unavailable
               title:
