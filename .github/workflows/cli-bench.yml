@@ -1,8 +1,14 @@
 name: CLI benchmark
+run-name: "CLI benchmark #${{ github.event.pull_request.number || github.event.issue.number }}"
 
-# Report-only comparison of the pull request's CLI build with a build of its merge base. Every
+# Report-only comparison of a pull request's CLI build with a build of its merge base. Every
 # workload runs against the replay server, so no Docker, database, or network is involved. The
 # job never blocks a pull request and is not a required check.
+#
+# Each run writes a job summary. The first run on a pull request from this repository also posts
+# one comment tagged `<!-- cli-bench:pr -->`; later pushes leave it alone. A maintainer commenting
+# exactly `/bench` re-runs the benchmark on the pull request's current head and updates that
+# comment. See apps/cli/docs/tracing-monitoring.md.
 on:
   pull_request:
     types:
@@ -20,36 +26,123 @@ on:
       - "pnpm-lock.yaml"
       - "turbo.json"
       - ".github/workflows/cli-bench.yml"
+      - ".github/scripts/cli-bench/**"
+  # A `/bench` comment on a pull request starts a run. The resolve job checks who commented and
+  # which commit it applies to; the jobs that run pull request code hold no write permission, and
+  # the one job that writes comments never checks out or runs pull request code.
+  # jactionlint ignore=dangerous-triggers
+  issue_comment:
+    types:
+      - created
 
-permissions:
-  contents: read
+permissions: {}
 
+# Comments that are not a `/bench` from a maintainer get a per-run group, so they cannot cancel an
+# in-flight benchmark; `/bench full` is one of them.
 concurrency:
-  group: cli-bench-${{ github.event.pull_request.number }}
+  group: >-
+    cli-bench-${{ github.event.pull_request.number || github.event.issue.number }}-${{
+      (github.event_name == 'issue_comment' && (github.event.comment.body != '/bench' ||
+        !contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)))
+        && github.run_id || 'run' }}
   cancel-in-progress: true
 
 jobs:
+  resolve:
+    name: Resolve
+    # Cheap, non-authoritative pre-filter; resolve.ts does the exact command match and the
+    # effective-permission lookup.
+    if: >
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
+      (github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request != null &&
+        startsWith(github.event.comment.body, '/bench') &&
+        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Reacts to the accepted command; runs only code from the default branch.
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      should_run: ${{ steps.resolve.outputs.should_run }}
+      pr_number: ${{ steps.resolve.outputs.pr_number }}
+      # Every job benchmarks this commit, so a push during the run is never reported as measured.
+      head_sha: ${{ steps.resolve.outputs.head_sha }}
+      base_ref: ${{ steps.resolve.outputs.base_ref }}
+      is_fork: ${{ steps.resolve.outputs.is_fork }}
+      trigger: ${{ steps.resolve.outputs.trigger }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: ".bun-version"
+          no-cache: true
+      - name: Resolve
+        id: resolve
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          COMMENT_AUTHOR_LOGIN: ${{ github.event.comment.user.login }}
+          COMMENT_AUTHOR_ASSOCIATION: ${{ github.event.comment.author_association }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: bun .github/scripts/cli-bench/resolve.ts
+
   bench:
-    if: github.event.pull_request.draft == false
     name: Benchmark CLI against merge base
+    needs: resolve
+    if: needs.resolve.outputs.should_run == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
+    # This job builds and runs pull request code, so it holds nothing beyond read access.
+    permissions:
+      contents: read
+    env:
+      HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
+      BASE_REF: ${{ needs.resolve.outputs.base_ref }}
     steps:
       - name: Prepare benchmark directory
         run: |
           mkdir -p "$RUNNER_TEMP/bench"
           echo "BENCH_DIR=$RUNNER_TEMP/bench" >> "$GITHUB_ENV"
 
-      - name: Checkout
+      - name: Checkout pull request head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.resolve.outputs.head_sha }}
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Setup
-        uses: ./.github/actions/setup
+      - name: Require a free trusted path
+        run: |
+          if [ -e trusted ] || [ -L trusted ]; then
+            echo "The pull request contains a trusted path." >&2
+            exit 1
+          fi
+
+      # The setup action comes from the default branch, so a pull request cannot change it.
+      - name: Checkout default branch (setup action only)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          ref: ${{ github.event.repository.default_branch }}
+          path: trusted
+          persist-credentials: false
+
+      # This job never references a secret, so a fork's code cannot read one; installs use the
+      # public registry. A command run uses the default branch's cache scope, so it skips caches.
+      - name: Setup
+        uses: ./trusted/.github/actions/setup
+        with:
+          dependency-cache: ${{ needs.resolve.outputs.trigger == 'auto' && 'true' || 'false' }}
 
       - name: Build branch binary
         id: branch_build
@@ -65,10 +158,10 @@ jobs:
         if: steps.branch_build.outcome == 'success'
         env:
           HUSKY: "0"
-          BASE_REF: ${{ github.base_ref }}
         run: |
           merge_base="$(git merge-base HEAD "origin/$BASE_REF")"
           echo "Merge base: $merge_base"
+          echo "merge_base=$merge_base" >> "$GITHUB_OUTPUT"
           git worktree add "$RUNNER_TEMP/base-src" "$merge_base"
           cd "$RUNNER_TEMP/base-src"
           # Setup writes this file only when the Dependency Firewall token is available.
@@ -123,12 +216,17 @@ jobs:
           BRANCH_BUILD: ${{ steps.branch_build.outcome == 'success' && 'ok' || 'failed' }}
           BASE_BUILD: ${{ steps.base_build.outcome == 'success' && 'ok' || 'failed' }}
           REPLAY: ${{ steps.replay.outcome == 'success' && 'ok' || 'failed' }}
+          MERGE_BASE: ${{ steps.base_build.outputs.merge_base }}
         run: |
           bun apps/cli/scripts/bench-summary.ts \
             --report "$BENCH_DIR/report.json" \
             --branch-build "$BRANCH_BUILD" \
             --base-build "$BASE_BUILD" \
-            --replay "$REPLAY"
+            --replay "$REPLAY" \
+            --head-sha "$HEAD_SHA" \
+            --base-ref "$BASE_REF" \
+            --merge-base "$MERGE_BASE" \
+            --comment-out "$BENCH_DIR/comment.md"
 
       - name: Upload report
         if: always()
@@ -140,3 +238,60 @@ jobs:
             ${{ runner.temp }}/bench/report.txt
           retention-days: 14
           if-no-files-found: ignore
+
+      - name: Upload comment
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cli-bench-comment
+          path: ${{ runner.temp }}/bench/comment.md
+          retention-days: 1
+          if-no-files-found: ignore
+
+  comment:
+    name: Post pull request comment
+    needs:
+      - resolve
+      - bench
+    # A pull_request run from a fork has a read-only token, so only `/bench` comments a fork's
+    # result. Failing to post never fails the workflow.
+    if: >-
+      ${{ !cancelled() && needs.resolve.outputs.should_run == 'true' && needs.bench.result != 'skipped' &&
+      (needs.resolve.outputs.trigger == 'command' || needs.resolve.outputs.is_fork == 'false') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    # The only job that can write to the pull request. It runs scripts from the default branch and
+    # reads the rendered markdown as data; it never checks out or runs pull request code.
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: ".bun-version"
+          no-cache: true
+      - name: Download comment
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cli-bench-comment
+          path: ${{ runner.temp }}/bench-comment
+      - name: Post comment
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
+          MODE: ${{ needs.resolve.outputs.trigger == 'command' && 'upsert' || 'create-if-missing' }}
+          BODY_FILE: ${{ runner.temp }}/bench-comment/comment.md
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ ! -f "$BODY_FILE" ]; then
+            echo "The benchmark job produced no comment."
+            exit 0
+          fi
+          bun .github/scripts/cli-bench/post-comment.ts

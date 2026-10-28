@@ -130,6 +130,7 @@ runs:
       with:
         version: 2026.10.17
         install_args: ${{ inputs.tools }}
+        cache: ${{ inputs.dependency-cache }}
 
     - name: Resolve pnpm store path
       if: inputs.dependency-cache == 'true'
