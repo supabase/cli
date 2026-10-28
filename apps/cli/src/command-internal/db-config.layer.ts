@@ -705,6 +705,7 @@ export const dbConfigResolverLayer = Layer.effect(
             conn:
               isLocal && conn.password.length === 0 ? { ...conn, password: localPassword } : conn,
             isLocal,
+            exposedSchemas: tomlValues.exposedSchemas,
           };
         }
 
@@ -778,7 +779,11 @@ export const dbConfigResolverLayer = Layer.effect(
         });
         const backend = yield* currentStackBackend;
         if (backend.kind === "stack") {
-          return { conn: yield* stackDatabaseConn, isLocal: true };
+          return {
+            conn: yield* stackDatabaseConn,
+            isLocal: true,
+            exposedSchemas: tomlValues.exposedSchemas,
+          };
         }
         return {
           conn: {
@@ -789,6 +794,7 @@ export const dbConfigResolverLayer = Layer.effect(
             database: "postgres",
           },
           isLocal: true,
+          exposedSchemas: tomlValues.exposedSchemas,
         };
       });
 
