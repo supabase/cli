@@ -6,10 +6,11 @@
  * `startSetupLocalDatabase`) with a distinct sequence per major version: PG >= 15 recreates the
  * container/volume/network and re-runs setup; PG <= 14 recreates the two databases in place and
  * reinitializes the schema. Neither path probes for an existing volume, supports
- * `--from-backup`, or rolls back on failure.
+ * `--from-backup`, or rolls back the database on failure; PG15 stops storage/auth/realtime/pooler
+ * first and restarts them (+ Kong reload) once at the end, even when the reset fails.
  */
 
-import { Data, Effect, Result, Schedule, type FileSystem, type Path } from "effect";
+import { Data, Effect, Exit, Result, Schedule, type FileSystem, type Path } from "effect";
 import type * as HttpClient from "effect/http/HttpClient";
 import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
@@ -67,6 +68,7 @@ import {
 import {
   restartContainer,
   restartServicesAndReloadKong,
+  stopSatelliteServices,
   type ContainerRestartError,
   type KongReloadError,
   type RestartServicesError,
@@ -270,6 +272,7 @@ const recreateLocalDatabase15 = <E>(
   Effect.gen(function* () {
     const output = yield* Output;
 
+    yield* stopSatelliteServices(spawner, input.projectId);
     yield* removeContainer(spawner, input.dbContainerId);
     yield* removeVolume(spawner, input.dbContainerId);
 
@@ -317,8 +320,23 @@ const recreateLocalDatabase15 = <E>(
     });
 
     yield* output.raw("Restarting containers...\n", "stderr");
-    yield* restartServicesAndReloadKong(spawner, input.projectId);
-  });
+  }).pipe(
+    /* Restarts the satellites once whatever the outcome; after a failure or Ctrl-C a restore error only warns. */
+    Effect.onExit((exit) =>
+      Exit.isSuccess(exit)
+        ? restartServicesAndReloadKong(spawner, input.projectId)
+        : restartServicesAndReloadKong(spawner, input.projectId).pipe(
+            Effect.catch((error) =>
+              Effect.gen(function* () {
+                const output = yield* Output;
+                yield* output.warn(
+                  `${error.message}\nRun supabase stop && supabase start to bring the local stack back.`,
+                );
+              }),
+            ),
+          ),
+    ),
+  );
 
 /**
  * Loads `config.toml` once, ahead of `initDatabase` (needs `api.auto_expose_new_tables`) and the

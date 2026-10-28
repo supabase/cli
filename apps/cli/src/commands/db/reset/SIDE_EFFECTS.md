@@ -95,6 +95,7 @@ equivalent, PG15) or `InitSchema14`/`ApplyApiPrivileges` (PG14).
 | Command                                                                                                                      | When                                  | Purpose                                                                                                                                                                                                                                                   |
 | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `docker container inspect supabase_db_<project>`                                                                             | local path                            | `AssertSupabaseDbIsRunning` probe (Podman fallback) — spawned only when the direct Engine-API request over the active local socket/named pipe gives no definitive answer                                                                                  |
+| `docker stop <storage\|auth\|realtime\|pooler container>`                                                                    | local path, PG15                      | stop the satellites before removing the db container so their `unless-stopped` restarts cannot race the one-shot init jobs (issue #6915), not-found tolerated per service                                                                                 |
 | `docker container rm -f supabase_db_<project>` / `docker volume rm -f <same>`                                                | local path, PG15                      | remove the existing container/volume before recreating (Podman fallback)                                                                                                                                                                                  |
 | `docker network create` / `docker volume create` / `docker create` / `docker start`                                          | local path, PG15                      | recreate the Postgres container (same primitives `db start` uses)                                                                                                                                                                                         |
 | `docker run --rm <realtime\|storage\|gotrue image>`                                                                          | local path, PG15, per enabled service | the one-shot `initSchema15` migrate jobs (`startSetupLocalDatabase`)                                                                                                                                                                                      |
@@ -132,7 +133,8 @@ child) is fully native as of CLI-1958.
 
 ### Local path (native, in TS)
 
-**PG15+:** the container/volume are removed and recreated (see "Subprocesses"), then
+**PG15+:** the storage/auth/realtime/pooler containers are stopped, then the
+container/volume are removed and recreated (see "Subprocesses"), then
 the reused `startSetupLocalDatabase` pipeline runs the initial schema (as
 one-shot Docker jobs, not SQL over a session), `ApplyApiPrivileges`, a vault upsert,
 a `roles.sql` seed, and `MigrateAndSeed` (migrations `≤ --version`, seed unless
@@ -161,7 +163,9 @@ Bucket objects are then seeded over the Storage gateway (reusing the `seed bucke
 local path), gated on a native storage-health check: absent (any inspect error, not
 just "not found") skips buckets without failing; present-but-unhealthy waits up to a
 **hardcoded 30 seconds** (independent of `db.health_timeout`) and, on timeout, **fails
-the whole reset** (not just "skip buckets").
+the whole reset** (not just "skip buckets"). On PG15, a failure or interrupt before the final
+restart runs the same restart + Kong reload once before the original error surfaces (a restore
+failure only warns).
 
 ## API Routes
 
@@ -217,6 +221,7 @@ echoed, because those may genuinely have reached the server.
 | `1`  | drop / migrate / seed / vault apply failure, or connection error                                                                           |
 | `1`  | no `[db.migrations].schema_paths` pattern matched anything on the `--experimental` branch, either target                                   |
 | `1`  | local: container/volume remove, network/volume/container create, health-check timeout, PG14 SQL, satellite-restart, or Kong-reload failure |
+| `1`  | local, PG15: satellite stop failure                                                                                                        |
 | `1`  | `--project-ref` set with a resolved target other than linked (see Notes)                                                                   |
 
 There is no remaining Go child on either target (CLI-1955 removed it for local,

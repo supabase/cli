@@ -2146,11 +2146,119 @@ describe("db reset", () => {
         expect(telemetry.flushed).toBe(true);
       });
     });
+
+    it.effect("stops the satellites before removing the database container", () => {
+      const { layer, child } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        const dbRemoval = child.spawned.findIndex(
+          (s) => s.args[0] === "container" && s.args[1] === "rm",
+        );
+        expect(dbRemoval).toBeGreaterThan(-1);
+        const stoppedBeforeRemoval = child.spawned
+          .slice(0, dbRemoval)
+          .filter((s) => s.args[0] === "stop")
+          .map((s) => s.args[1]);
+        expect(stoppedBeforeRemoval).toHaveLength(4);
+        const lastSetupJob = child.spawned.findLastIndex((s) => s.args[0] === "run");
+        expect(lastSetupJob).toBeGreaterThan(dbRemoval);
+        expect(child.spawned.findIndex((s) => s.args[0] === "restart")).toBeGreaterThan(
+          lastSetupJob,
+        );
+        expect(stoppedBeforeRemoval).toEqual(
+          expect.arrayContaining([
+            "supabase_storage_test",
+            "supabase_auth_test",
+            "supabase_realtime_test",
+            "supabase_pooler_test",
+          ]),
+        );
+      });
+    });
+
+    it.effect("restarts the stopped satellites when the reset fails after stopping them", () => {
+      const { layer, out, child } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        route: (args) => (args[0] === "run" ? { exitCode: 1 } : defaultLocalResetRoute()(args)),
+      });
+      return Effect.gen(function* () {
+        const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("error running container: exit 1");
+        }
+        expect(out.stderrText).not.toContain("Restarting containers...");
+        expect(child.spawned.filter((s) => s.args[0] === "stop")).toHaveLength(4);
+        expect(restartedContainers(child.spawned)).toHaveLength(4);
+        expect(restartedContainers(child.spawned)).toEqual(
+          expect.arrayContaining([
+            "supabase_storage_test",
+            "supabase_auth_test",
+            "supabase_realtime_test",
+            "supabase_pooler_test",
+          ]),
+        );
+      });
+    });
+
+    it.effect("restores the satellites without touching the database when a stop fails", () => {
+      const { layer, child } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        route: (args) =>
+          args[0] === "stop" && args[1] === "supabase_auth_test"
+            ? { exitCode: 1, stderr: ["Error: cannot stop"] }
+            : defaultLocalResetRoute()(args),
+      });
+      return Effect.gen(function* () {
+        const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("failed to stop supabase_auth_test");
+        }
+        expect(child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "rm")).toBe(
+          false,
+        );
+        expect(restartedContainers(child.spawned)).toHaveLength(4);
+      });
+    });
+
+    it.effect("warns and keeps the original failure when restoring the satellites fails", () => {
+      const { layer, out } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        route: (args) =>
+          args[0] === "run"
+            ? { exitCode: 1 }
+            : defaultLocalResetRoute({ restartFails: ["supabase_storage_test"] })(args),
+      });
+      return Effect.gen(function* () {
+        const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("error running container: exit 1");
+        }
+        expect(out.messages).toContainEqual(
+          expect.objectContaining({
+            type: "warn",
+            message: expect.stringContaining("failed to restart supabase_storage_test"),
+          }),
+        );
+      });
+    });
   });
 
   describe("local reset — Kong reload", () => {
     it.effect("fails the whole command with the exact suggestion when Kong reload fails", () => {
-      const { layer } = setup(tmp.current, {
+      const { layer, child } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
         args: ["db", "reset", "--local"],
         isLocal: true,
@@ -2172,6 +2280,8 @@ describe("db reset", () => {
             suggestion: expect.stringContaining(`docker restart ${KONG_ID}`),
           });
         }
+        expect(restartedContainers(child.spawned)).toHaveLength(4);
+        expect(kongReloadCalls(child.spawned)).toHaveLength(1);
       });
     });
 
@@ -2204,7 +2314,7 @@ describe("db reset", () => {
     });
 
     it.effect("fails the command when a satellite restart fails", () => {
-      const { layer } = setup(tmp.current, {
+      const { layer, child } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
         args: ["db", "reset", "--local"],
         isLocal: true,
@@ -2216,6 +2326,7 @@ describe("db reset", () => {
         if (Exit.isFailure(exit)) {
           expect(Cause.pretty(exit.cause)).toContain("failed to restart supabase_storage_test");
         }
+        expect(restartedContainers(child.spawned)).toHaveLength(4);
       });
     });
   });
