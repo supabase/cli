@@ -110,6 +110,7 @@ describe("startServiceMeta", () => {
       imageConfigField: entry?.imageConfigField,
       enabledGate: entry?.enabledGate,
       dependsOn: entry?.dependsOn,
+      gatewayReadyPath: entry?.gatewayReadyPath,
     });
   });
 

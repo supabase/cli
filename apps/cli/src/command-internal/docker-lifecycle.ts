@@ -235,13 +235,75 @@ export const inspectContainerState = (spawner: Spawner, containerId: string) =>
     }),
   ).pipe(Effect.withTracerEnabled(false), Effect.provideService(ChildTracePropagation, false));
 
-function parseContainerState(stdout: string): {
+/** The most recent health-check probe Docker recorded for a container. */
+interface ContainerHealthProbe {
+  readonly exitCode: number;
+  readonly output: string;
+}
+
+export interface ContainerState {
   readonly running: boolean;
   readonly status: string;
   readonly exitCode: number;
   readonly oomKilled: boolean;
   readonly health?: string;
-} {
+  readonly lastHealthProbe?: ContainerHealthProbe;
+}
+
+const HEALTH_PROBE_OUTPUT_MAX = 300;
+
+function parseLastHealthProbe(health: unknown): ContainerHealthProbe | undefined {
+  if (!isJsonRecord(health)) return undefined;
+  const log = health["Log"];
+  if (!Array.isArray(log)) return undefined;
+  const last: unknown = log[log.length - 1];
+  if (!isJsonRecord(last)) return undefined;
+  const exitCode = last["ExitCode"];
+  const output = last["Output"];
+  if (typeof exitCode !== "number" || typeof output !== "string") return undefined;
+  return { exitCode, output: output.replace(/\s+/gu, " ").trim() };
+}
+
+// runc reports a bad healthcheck command as a Go `exec.Error` or as an `os.PathError`.
+const EXEC_IMAGE_FAULT_PATTERNS: ReadonlyArray<RegExp> = [
+  /exec: \\?"[^"]*": (?:executable file not found in \$PATH|stat \S+: no such file or directory|permission denied)/u,
+  /(?:^|: )exec [^\s:]+: (?:no such file or directory|exec format error|permission denied)/u,
+];
+
+/**
+ * True when Docker could not launch the health check inside a running container. moby records an
+ * exec-start failure as probe exit code -1 with the runtime error as output; a probe timeout also
+ * uses -1 but its output never names the OCI runtime. Image faults in the healthcheck command are
+ * excluded: they are the image's problem, not the host's.
+ */
+export function healthCheckCannotExec(state: ContainerState): boolean {
+  const probe = state.lastHealthProbe;
+  if (!state.running || state.status !== "running" || state.health === "healthy") return false;
+  if (probe === undefined || probe.exitCode !== -1) return false;
+  const out = probe.output;
+  return (
+    out.includes("OCI runtime exec failed") &&
+    (out.includes("unable to start container process") ||
+      out.includes("starting container process caused")) &&
+    !EXEC_IMAGE_FAULT_PATTERNS.some((pattern) => pattern.test(out))
+  );
+}
+
+/** The not-ready reason for an unhealthy container, naming its last health-check probe. */
+export function formatNotReadyReason(state: ContainerState): string {
+  const base = `container is not ready: ${state.health}`;
+  const probe = state.lastHealthProbe;
+  if (probe === undefined) return base;
+  const output =
+    probe.output.length > HEALTH_PROBE_OUTPUT_MAX
+      ? `${probe.output.slice(0, HEALTH_PROBE_OUTPUT_MAX - 1)}…`
+      : probe.output;
+  return output.length > 0
+    ? `${base} (last health check exit code ${probe.exitCode}: ${output})`
+    : `${base} (last health check exit code ${probe.exitCode})`;
+}
+
+function parseContainerState(stdout: string): ContainerState {
   const trimmed = stdout.trim();
   let parsed: unknown;
   try {
@@ -262,9 +324,15 @@ function parseContainerState(stdout: string): {
   const health = state["Health"];
   const healthStatus =
     isJsonRecord(health) && typeof health["Status"] === "string" ? health["Status"] : undefined;
-  return healthStatus !== undefined
-    ? { running, status, exitCode, oomKilled, health: healthStatus }
-    : { running, status, exitCode, oomKilled };
+  const lastHealthProbe = parseLastHealthProbe(health);
+  return {
+    running,
+    status,
+    exitCode,
+    oomKilled,
+    ...(healthStatus === undefined ? {} : { health: healthStatus }),
+    ...(lastHealthProbe === undefined ? {} : { lastHealthProbe }),
+  };
 }
 
 function isJsonRecord(value: unknown): value is { readonly [key: string]: unknown } {

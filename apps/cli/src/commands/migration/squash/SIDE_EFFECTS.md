@@ -57,7 +57,7 @@ live shadow available.
 - Network ensure (`ensureNetwork`, same as `db diff`/`db pull`).
 - Shadow Postgres container: no `--name`, no network alias, `--publish <shadow_port>:5432`,
   `-c max_worker_processes=0`, `--rm`, PG≤14 tmpfs on `/docker-entrypoint-initdb.d` — created,
-  started, health-polled (`container inspect`), then removed (`rm -f -v`) once squash finishes,
+  started, readiness-polled (`container inspect` plus a host Postgres connect probe), then removed (`rm -f -v`) once squash finishes,
   success or failure.
 - PG15+ one-shot realtime/storage/auth migrate jobs (`initSchema15`), dialed at the shadow
   container's own 12-char short id as `DB_HOST` (no name/alias needed — see

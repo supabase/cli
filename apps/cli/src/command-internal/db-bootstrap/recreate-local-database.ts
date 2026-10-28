@@ -2,7 +2,7 @@
  * `db reset --local`'s container-recreate composition — not a thin wrapper over
  * {@link startDatabase}, since the shared `StartDatabase`-equivalent primitive is never called
  * from a reset either. Reuses the same underlying primitives (`ensureNetwork`,
- * `buildPostgresStartContainerSpec`, `createContainer`, `waitForHealthyServices`,
+ * `buildPostgresStartContainerSpec`, `createContainer`, `waitForPostgresReady`,
  * `startSetupLocalDatabase`) with a distinct sequence per major version: PG >= 15 recreates the
  * container/volume/network and re-runs setup; PG <= 14 recreates the two databases in place and
  * reinitializes the schema. Neither path probes for an existing volume, supports
@@ -53,7 +53,11 @@ import {
   type FreshDbSetupInput,
   type StartSetupLocalDatabaseError,
 } from "./db-setup.ts";
-import { waitForHealthyServices, type HealthCheckTimeoutError } from "./health-check.ts";
+import {
+  awaitDockerHealthSettled,
+  waitForPostgresReady,
+  type HealthCheckTimeoutError,
+} from "./health-check.ts";
 import type { ImagePrepullError } from "./image-prepull.ts";
 import { startInternalDbPassword } from "./internal-db-connection.ts";
 import {
@@ -284,10 +288,18 @@ const recreateLocalDatabase15 = <E>(
     yield* createContainer(spawner, postgresSpec, input.containerOpts);
 
     // Never swallowed — reset has no `--from-backup`-equivalent gate.
-    yield* waitForHealthyServices(spawner, [postgresSpec.containerName], {
-      timeoutSeconds: input.dbHealthTimeoutSeconds,
-      images: new Map([[postgresSpec.containerName, resolvedPostgresImage]]),
-    });
+    yield* waitForPostgresReady(
+      spawner,
+      postgresSpec.containerName,
+      {
+        host: input.hostname,
+        port: input.dbPort,
+        user: "postgres",
+        password: startInternalDbPassword(input.setup.dbUrl),
+        database: "postgres",
+      },
+      { timeoutSeconds: input.dbHealthTimeoutSeconds, image: resolvedPostgresImage },
+    );
 
     // No fresh-volume gate needed: a reset just removed the volume above, so it's always fresh.
     // Passes the resolved reset `version`/`seedFlags`, unlike `db start`'s own call.
@@ -378,9 +390,18 @@ const recreateLocalDatabase14 = <E>(
     // the satellite restarts inside `restartServicesAndReloadKong`.
     yield* output.raw("Restarting containers...\n", "stderr");
     yield* restartContainer(spawner, input.dbContainerId);
-    yield* waitForHealthyServices(spawner, [input.dbContainerId], {
-      timeoutSeconds: input.dbHealthTimeoutSeconds,
-    });
+    yield* waitForPostgresReady(
+      spawner,
+      input.dbContainerId,
+      {
+        host: input.hostname,
+        port: input.dbPort,
+        user: "postgres",
+        password: dbPassword,
+        database: "postgres",
+      },
+      { timeoutSeconds: input.dbHealthTimeoutSeconds },
+    );
     yield* restartServicesAndReloadKong(spawner, input.projectId);
 
     // Final connect as `postgres`/`postgres` to migrate and seed.
@@ -421,6 +442,7 @@ export const recreateLocalDatabase = <E>(
     ? recreateLocalDatabase14(spawner, input)
     : recreateLocalDatabase15(spawner, input)
   ).pipe(
+    Effect.tap(() => awaitDockerHealthSettled(spawner, input.dbContainerId)),
     Effect.withSpan("DbBootstrap.recreateLocalDatabase", {
       attributes: { "db.major_version": input.setup.majorVersion },
     }),

@@ -40,7 +40,7 @@ import { START_DB_SCHEMA_SQL } from "./templates/db-schema.sql.ts";
 import { START_DB_SUPABASE_SQL } from "./templates/db-supabase.sql.ts";
 import { START_DB_WEBHOOK_SQL } from "./templates/db-webhook.sql.ts";
 import { CREATE_VAULT_KV, READ_VAULT_KV, UPDATE_VAULT_KV, type VaultSecret } from "../vault.ts";
-import { waitForShadowReady } from "./health-check.ts";
+import { waitForPostgresReady } from "./health-check.ts";
 import {
   exportPgDataTar,
   pgDataRestoreArchive,
@@ -532,7 +532,7 @@ const awaitShadowReady = <E>(
   containerId: string,
   what: string,
 ): Effect.Effect<void, ShadowCacheUnavailable, DbConnection> =>
-  waitForShadowReady(spawner, containerId, shadowConnConfig(input), {
+  waitForPostgresReady(spawner, containerId, shadowConnConfig(input), {
     timeoutSeconds: input.healthTimeoutSeconds,
     image: input.image,
   }).pipe(

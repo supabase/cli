@@ -42,9 +42,14 @@ composition reuses too — see that command's `SIDE_EFFECTS.md`):
    `ghcr.io/supabase/cli/postgres`; a historical `.temp/postgres-version` pin,
    PG14, OrioleDB tags the catalog does not pin, and flag-off majors 13/15 (`15.8.1.085`) stay on docker.io.
    The restore entrypoint is the same on both families.
-6. Wait for the container to become healthy (`db.health_timeout`, default `2m`). A timeout
-   fails the command UNLESS `--from-backup` is set, in which case it is swallowed (a large
-   restore can exceed the timeout) — the container-logs dump to stderr still happens
+6. Wait for Postgres to accept connections (`db.health_timeout`, default `2m`): every 500ms,
+   `docker container inspect` (a container that is not running fails the wait at once), then a
+   short-lived host connect to the published Postgres address (2s dial cap) — Docker's health
+   status is not read, because it needs `docker exec`, which nested or sandboxed Docker cannot
+   do, and lags connectability by up to one 10s interval. A timeout fails the command with
+   `<container> container is not ready: <connect error>` UNLESS `--from-backup` is set, in
+   which case it is swallowed (a large restore can exceed the timeout) — the container-logs dump
+   to stderr, and the `exec format error` recovery advice when the logs show it, still happen
    either way.
 7. On a fresh volume with `--from-backup` unset: run the `SetupLocalDatabase`-equivalent
    pipeline (`command-internal/db-bootstrap/db-setup.ts`) — initial schema (PG<=14: SQL over a
@@ -60,6 +65,10 @@ composition reuses too — see that command's `SIDE_EFFECTS.md`):
    that reaches this point (fresh volume, existing volume, and a swallowed
    `--from-backup` health-check timeout), but NOT on the already-running short-circuit or
    the `backup volume already exists` guard.
+9. Wait up to 15s for Docker's first health verdict, so `supabase db start && supabase status`
+   does not see `starting`: poll `docker container inspect` every 1s until the health status
+   leaves `starting`, the container stops running, or Docker cannot launch its health check. Never
+   fails the command, whatever the outcome, and is not covered by the rollback below.
 
 Any failure from step 1 onward rolls back via `rollbackStart` (stop + prune every
 container/network this project's label matches; volumes are pruned too, but ONLY when the
@@ -107,7 +116,7 @@ only spawns on fallback.
 | `docker image inspect` / `docker pull` (registry-fallback resolve)                                                               | when not already running — resolves the Postgres image                                                                                                     |
 | `docker volume create --label ...`                                                                                               | when not already running, unless a `--from-backup` restore onto an existing volume (fails first)                                                           |
 | `docker create` + optional `docker cp - <id>:/` + `docker start`                                                                 | when not already running — `cp` streams one in-memory tar archive containing the pgsodium root key at its exact path when the selected entrypoint needs it |
-| `docker container inspect` (repeated)                                                                                            | health-wait polling, 1s constant backoff up to `db.health_timeout`                                                                                         |
+| `docker container inspect` (repeated)                                                                                            | readiness polling every 500ms up to `db.health_timeout`, then health-settle polling every 1s for up to 15s                                                 |
 | `docker logs <id>`                                                                                                               | on a health-check timeout (either path — swallowed or not)                                                                                                 |
 | `docker run --rm ...`                                                                                                            | fresh volume, no `--from-backup`, `db.major_version >= 15`: up to 3 one-shot migrate jobs (realtime/storage/auth)                                          |
 | `docker ps` / `docker stop` / `docker container prune` / `docker volume prune` (fresh-volume runs only) / `docker network prune` | on ANY failure from network-ensure through `_current_branch` — the rollback                                                                                |
@@ -217,8 +226,8 @@ The resident owner process manages the database beyond the CLI invocation. Stack
   migration history owns it; existing volumes with webhooks disabled DROP a `pg_net` that
   migration history does not own. `pg_net` installed outside migrations (Studio SQL editor)
   is dropped on the next start — accepted, documented edge.
-- `--from-backup` restores the database from a logical backup file on start; the health
-  check is skipped (not failed) for backups — a large restore can exceed
+- `--from-backup` restores the database from a logical backup file on start; a readiness-wait
+  timeout is swallowed (not failed) for backups — a large restore can exceed
   `db.health_timeout`.
 - No `cli_stack_started` telemetry — that event belongs to `supabase start`, not
   `db start`. The only event is the standard `cli_command_executed`.

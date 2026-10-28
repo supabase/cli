@@ -17,7 +17,6 @@ import {
 } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { vi } from "vitest";
 
 vi.mock("node:net", (importOriginal) =>
@@ -122,12 +121,10 @@ interface SetupOpts {
   // Fails the first `writeFileString` call whose path matches; prefer over
   // `failWriteOnCall` when shadow setup writes extra files first.
   readonly failWriteMatching?: (path: string) => boolean;
-  // Makes the shadow container never report healthy; only the `--use-pgadmin` branch
-  // gates on this (the shadow-source branch uses `neverConnectableShadow` instead).
-  readonly neverHealthyShadow?: boolean;
-  // Refuses every connect to the shadow's port, so `waitForShadowReady` keeps
-  // polling — the shadow-source branch's equivalent of `neverHealthyShadow`.
+  // Refuses every connect to the shadow's port, so `waitForPostgresReady` keeps polling.
   readonly neverConnectableShadow?: boolean;
+  // Docker reports every container's health check as unable to exec, as on a nested or sandboxed host.
+  readonly execFailedHealth?: boolean;
   // `CommandSettings.projectId`; defaults to `Option.some("test")`. Pass
   // `Option.none()` to exercise the config.toml/workdir-basename fallback
   // (`resolveLocalProjectId`).
@@ -181,7 +178,7 @@ const SHADOW_PORT = 54320;
 /**
  * Records every `DbConnection.connect` target's database name and every `exec`/`query` run
  * against it. `neverConnectableShadow` fails every connect to the shadow port, leaving local
- * connects untouched — this keeps a provisioning fiber suspended in `waitForShadowReady`'s
+ * connects untouched — this keeps a provisioning fiber suspended in `waitForPostgresReady`'s
  * retry loop.
  */
 function fakeShadowDbConnection(opts: { readonly neverConnectableShadow?: boolean } = {}) {
@@ -221,30 +218,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   // A docker-spawner fake backs container lifecycle; a fake Postgres session backs
   // shadow setup.
   const shadowSpawner = mockShadowContainerCliSpawner({
-    neverHealthy: opts.neverHealthyShadow ?? false,
+    execFailedHealth: opts.execFailedHealth ?? false,
     dbNotRunning: opts.dbNotRunning ?? false,
     dbInspectFailsWith: opts.dbInspectFailsWith,
   });
-  const shadowHealthProbed = Deferred.makeUnsafe<void>();
-  const shadowSpawnerLayer = Layer.effect(
-    ChildProcessSpawner.ChildProcessSpawner,
-    Effect.map(ChildProcessSpawner.ChildProcessSpawner, (inner) =>
-      ChildProcessSpawner.make((command) =>
-        inner
-          .spawn(command)
-          .pipe(
-            Effect.tap(() =>
-              ChildProcess.isStandardCommand(command) &&
-              command.args[0] === "container" &&
-              command.args[1] === "inspect" &&
-              command.args[2] === FAKE_SHADOW_CONTAINER_ID
-                ? Deferred.succeed(shadowHealthProbed, undefined)
-                : Effect.void,
-            ),
-          ),
-      ),
-    ),
-  ).pipe(Layer.provide(shadowSpawner.layer));
   // Cache tests need the stateful Docker model since `docker cp` needs real container state.
   const dockerDaemon = opts.statefulDocker === true ? mockDockerDaemonCliSpawner() : undefined;
   const shadowDbConnection = fakeShadowDbConnection({
@@ -478,7 +455,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     edge,
     docker,
     shadowDbConnection.layer,
-    dockerDaemon?.layer ?? shadowSpawnerLayer,
+    dockerDaemon?.layer ?? shadowSpawner.layer,
     mockLocalDockerEngineUnavailableLayer,
     alwaysReadyHttpClientLayer,
     opts.realLayers === true
@@ -538,7 +515,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     differRegistryEnvAtCall,
     shadowSetupJobCalls,
     shadowSpawned: shadowSpawner.spawned,
-    shadowHealthProbed,
     dockerDaemon,
     shadowConnectedDatabases: shadowDbConnection.connectedDatabases,
     shadowExecCalls: shadowDbConnection.execCalls,
@@ -639,6 +615,21 @@ describe("db diff", () => {
       expect(sawHost).toBe(true);
     }).pipe(Effect.provide(s.layer), (body) => withEnvVar("GITHUB_HEAD_REF", undefined, body));
   });
+
+  it.effect(
+    "diffs when Docker cannot exec the shadow's health check but the shadow accepts connections",
+    () => {
+      const s = setup(tmp.current, {
+        diffSql: "create table players ();\n",
+        execFailedHealth: true,
+      });
+      return Effect.gen(function* () {
+        yield* dbDiff(flags());
+        expect(stdout(s.out)).toBe("create table players ();\n\n");
+        expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.effect("forwards SUPABASE_SSL_DEBUG=TRUE to the migra script as true", () => {
     const s = setup(tmp.current, { diffSql: "create table players ();\n" });
@@ -2119,7 +2110,7 @@ describe("db diff", () => {
           Effect.forkChild({ startImmediately: true }),
         );
         // Waits until the shadow's readiness gate has refused a connect at least once,
-        // proving the fiber is suspended in `waitForShadowReady`'s retry loop.
+        // proving the fiber is suspended in `waitForPostgresReady`'s retry loop.
         yield* Deferred.await(s.shadowConnectRefused);
         // `Fiber.interrupt` only resolves once finalizers complete; this would hang (the readiness
         // timeout never elapses under the test clock) if `acquire` still covered the readiness wait.
@@ -2161,6 +2152,21 @@ describe("db diff", () => {
         return Effect.gen(function* () {
           yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
           expect(stderr(s.out)).toContain("No schema changes found");
+        }).pipe(Effect.provide(s.layer));
+      },
+    );
+
+    it.effect(
+      "diffs when Docker cannot exec the shadow's health check but the shadow accepts connections",
+      () => {
+        const s = setup(tmp.current, {
+          pgadminStdout: [JSON.stringify([pgadminEntry()])],
+          execFailedHealth: true,
+        });
+        return Effect.gen(function* () {
+          yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
+          expect(stdout(s.out)).toContain("ALTER TABLE test;");
+          expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
         }).pipe(Effect.provide(s.layer));
       },
     );
@@ -2643,16 +2649,13 @@ describe("db diff", () => {
     it.effect(
       "removes the shadow container on interruption during the health wait for --use-pgadmin too",
       () => {
-        const s = setup(tmp.current, { neverHealthyShadow: true });
+        const s = setup(tmp.current, { neverConnectableShadow: true });
         return Effect.gen(function* () {
           const fiber = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
             Effect.provide(s.layer),
             Effect.forkChild({ startImmediately: true }),
           );
-          // Waits for the shadow's own health probe (its 64-hex id); the pgadmin path's
-          // separate `supabase_db_test` probe fires first and would satisfy a looser
-          // check immediately.
-          yield* Deferred.await(s.shadowHealthProbed);
+          yield* Deferred.await(s.shadowConnectRefused);
           yield* Fiber.interrupt(fiber);
           expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
           expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);

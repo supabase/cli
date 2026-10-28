@@ -103,6 +103,16 @@ equivalent, PG15) or `InitSchema14`/`ApplyApiPrivileges` (PG14).
 | `docker container inspect <kong container>` + `docker exec <kong> kong reload --nginx-conf /home/kong/custom_nginx.template` | local path, both PG14 and PG15        | reload Kong so it re-resolves the restarted containers' addresses (issue #6016) — the `--nginx-conf` flag is load-bearing: a bare `kong reload` regenerates nginx.conf from Kong's default template and drops the custom `email_templates` server (#6059) |
 | `docker container inspect supabase_storage_<project>`                                                                        | local path                            | storage-health gate before bucket seeding                                                                                                                                                                                                                 |
 
+The recreated database's readiness (PG15 after `docker start`, PG14 after `docker restart`) is not
+read from Docker's health status, which needs `docker exec` that some hosts cannot do. It polls
+every 500ms within `db.health_timeout`: `docker container inspect supabase_db_<project>` (a
+container that is not running fails at once), then a short-lived host connect as `postgres` to the
+published Postgres address (2s dial cap). Before the command returns, it waits up to 15s for
+Docker's first health verdict on the database container (polling `docker container inspect` every
+1s until the status leaves `starting`, the container stops running, or Docker cannot launch its
+health check), so a following `supabase status` does not see `starting`. That wait never fails the
+reset.
+
 No subprocess delegation remains on either target — the remote path's
 `--experimental` schema-files apply (formerly delegated to a `supabase-go db reset`
 child) is fully native as of CLI-1958.

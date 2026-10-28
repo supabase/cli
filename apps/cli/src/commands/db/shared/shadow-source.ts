@@ -28,7 +28,7 @@ import {
 import type { DockerRun } from "../../../command-internal/docker-run.service.ts";
 import type { ImagePrepullError } from "../../../command-internal/db-bootstrap/image-prepull.ts";
 import type { HealthCheckTimeoutError } from "../../../command-internal/db-bootstrap/health-check.ts";
-import { waitForShadowReady } from "../../../command-internal/db-bootstrap/health-check.ts";
+import { waitForPostgresReady } from "../../../command-internal/db-bootstrap/health-check.ts";
 import { seedGlobals } from "../../../command-internal/migration-apply.ts";
 import { BAD_PATTERN_MESSAGE, pathMatch } from "../../../command-internal/path-match.ts";
 import { toPostgresURL } from "../../../command-internal/postgres-url.ts";
@@ -95,7 +95,7 @@ export const prepareShadowSource = Effect.fn("ShadowSource.prepare")(function* <
     database: "postgres",
   };
 
-  yield* waitForShadowReady(spawner, containerId, connConfig, {
+  yield* waitForPostgresReady(spawner, containerId, connConfig, {
     timeoutSeconds: input.healthTimeoutSeconds,
     image: input.image,
   });

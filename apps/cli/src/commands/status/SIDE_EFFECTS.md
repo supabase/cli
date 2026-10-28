@@ -90,7 +90,8 @@ convention used elsewhere in config loading, and take precedence over the corres
 | `1`  | listing running containers failed (Docker daemon unreachable, etc.)                                                                                                                                                                                                                                                                                             |
 | `1`  | the db container inspect call failed (including "not found") — health assertion, skipped by `--ignore-health-check` above                                                                                                                                                                                                                                       |
 | `1`  | the db container is present but not in the `running` state — health assertion, skipped by `--ignore-health-check` above                                                                                                                                                                                                                                         |
-| `1`  | the db container is running but its Docker health check isn't `healthy` — health assertion, skipped by `--ignore-health-check` above                                                                                                                                                                                                                            |
+| `1`  | the db container is running but its Docker health check isn't `healthy` — health assertion, skipped by `--ignore-health-check` above; the message ends with the last recorded probe, `(last health check exit code <n>: <output>)`, when Docker has one                                                                                                         |
+| `0`  | the db container is running but Docker could not launch its health check (last probe exit code `-1`, `OCI runtime exec failed`, as on nested or sandboxed Docker) — status renders, with a stderr `WARNING:`                                                                                                                                                    |
 | `1`  | `auth.jwt_secret` is configured but shorter than 16 characters (rejected at config-load time)                                                                                                                                                                                                                                                                   |
 | `1`  | `auth.signing_keys_path` is configured but the file is missing/malformed, or its first key's algorithm is not `RS256`/`ES256`                                                                                                                                                                                                                                   |
 | `1`  | `api.enabled` and `api.tls.enabled` are true and only one of `api.tls.cert_path`/`key_path` is set (rejected at config-load time)                                                                                                                                                                                                                               |
@@ -212,6 +213,10 @@ headers); colors are stripped on non-TTY/piped output.
 `Stopped services: [<container-id> ...]` is written to stderr (space-separated
 bracketed list, e.g. `[supabase_storage_test supabase_studio_test]`) whenever one of
 the 13 expected service containers isn't in the running set.
+
+When Docker could not launch the db container's health check, stderr gets `WARNING: Docker cannot
+run health checks inside containers on this host (OCI runtime exec failed). Readiness of
+<container> was not verified.` in every output format, and the status still renders on stdout.
 
 Whenever a machine format (`-o env|json|toml|yaml`, or `--output-format json|stream-json`)
 emits the deprecated `INBUCKET_URL` field, stderr gets

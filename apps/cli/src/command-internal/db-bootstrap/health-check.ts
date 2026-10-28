@@ -17,8 +17,13 @@ import {
 } from "../../shared/telemetry/error-actionability.ts";
 import { ChildTracePropagation } from "../../shared/telemetry/spans.ts";
 import { spawnContainerCliWithRuntime, type ContainerRuntime } from "../container-cli.ts";
+import { yellow } from "../colors.ts";
 import { DbConnection, type PgConnInput } from "../db-connection.service.ts";
-import { inspectContainerState } from "../docker-lifecycle.ts";
+import {
+  formatNotReadyReason,
+  healthCheckCannotExec,
+  inspectContainerState,
+} from "../docker-lifecycle.ts";
 import { kongAuthHeaders } from "../kong-auth.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
@@ -79,17 +84,30 @@ export class HealthCheckTimeoutError extends Data.TaggedError("HealthCheckTimeou
 }
 
 /**
- * PostgREST's local Kong gateway coordinates. TLS/CA trust for a local https gateway is the
- * caller's responsibility when composing the `HttpClient.HttpClient` layer this module requires
- * — when `api.tls.enabled`, the caller resolves the local Kong CA and overrides the HTTP client
- * around the health-check call, so `checkHttpReady` trusts it instead of exhausting the full
- * retry budget on a TLS verification failure.
+ * The local Kong gateway coordinates. TLS/CA trust for a local https gateway is the caller's
+ * responsibility when composing the `HttpClient.HttpClient` layer this module requires — when
+ * `api.tls.enabled`, the caller resolves the local Kong CA and overrides the HTTP client around
+ * the health-check call, so `checkHttpReady` trusts it instead of exhausting the full retry
+ * budget on a TLS verification failure.
  */
-export interface HealthCheckPostgrestGateway {
-  readonly containerId: string;
+interface HealthCheckGateway {
   readonly apiExternalUrl: string;
   readonly secretKey: string;
 }
+
+/** A {@link HealthCheckGateway} that probes one specific container instead of its Docker health. */
+export interface HealthCheckPostgrestGateway extends HealthCheckGateway {
+  readonly containerId: string;
+}
+
+/**
+ * How to judge a container whose Docker health check cannot run: accept it as `running`, probe
+ * its route through the gateway, or (for the gateway itself) accept any HTTP response from it.
+ */
+export type ExecFallbackProbe =
+  | { readonly kind: "running" }
+  | { readonly kind: "gateway"; readonly gateway: HealthCheckGateway; readonly path: string }
+  | { readonly kind: "gateway-reachable"; readonly gateway: HealthCheckGateway };
 
 export interface WaitForHealthyServicesOptions {
   readonly timeoutSeconds?: number;
@@ -98,6 +116,15 @@ export interface WaitForHealthyServicesOptions {
   readonly edgeRuntime?: HealthCheckPostgrestGateway;
   /** Each watched container's already-resolved image, keyed by container name. */
   readonly images?: ReadonlyMap<string, string>;
+  /** Per-container fallback used only when Docker cannot run that container's health check. */
+  readonly execFallbacks?: ReadonlyMap<string, ExecFallbackProbe>;
+}
+
+export interface WaitForHealthyServicesResult {
+  /** Containers whose Docker health check could not run, at any point during the wait. */
+  readonly execUnavailable: ReadonlyArray<string>;
+  /** The subset accepted on `running` alone, with no readiness verification. */
+  readonly readinessAssumed: ReadonlyArray<string>;
 }
 
 /** The container runtime's message when an image cannot be executed by the host kernel. */
@@ -156,40 +183,97 @@ function execFormatRecoveryHint(
   ].join("\n");
 }
 
+interface ExecFallbackSeen {
+  readonly execUnavailable: Set<string>;
+  readonly assumed: Set<string>;
+}
+
 /** Not-running/not-ready gating, via the same {@link inspectContainerState} primitive `status.handler.ts` uses. */
-function checkContainerReady(spawner: Spawner, containerId: string): Effect.Effect<void, string> {
+function checkContainerReady(
+  spawner: Spawner,
+  containerId: string,
+  fallback: ExecFallbackProbe | undefined,
+  seen: ExecFallbackSeen,
+): Effect.Effect<void, string, HttpClient.HttpClient> {
   return inspectContainerState(spawner, containerId).pipe(
     Effect.mapError((cause) => cause.message),
-    Effect.flatMap((state) => {
+    Effect.flatMap((state): Effect.Effect<void, string, HttpClient.HttpClient> => {
       if (!state.running) {
         return Effect.fail(`container is not running: ${state.status}`);
       }
-      if (state.health !== undefined && state.health !== "healthy") {
-        return Effect.fail(`container is not ready: ${state.health}`);
+      if (state.health === undefined || state.health === "healthy") {
+        return Effect.void;
       }
-      return Effect.void;
+      if (healthCheckCannotExec(state)) {
+        seen.execUnavailable.add(containerId);
+        if (fallback?.kind === "running") {
+          seen.assumed.add(containerId);
+          return Effect.void;
+        }
+        if (fallback?.kind === "gateway") {
+          return checkHttpReady(fallback.gateway, fallback.path, "GET").pipe(
+            Effect.mapError((reason) => `container is not ready: ${fallback.path}: ${reason}`),
+          );
+        }
+        if (fallback?.kind === "gateway-reachable") {
+          return checkHttpReady(fallback.gateway, "/", "GET", true).pipe(
+            Effect.mapError((reason) => `container is not ready: ${reason}`),
+          );
+        }
+      }
+      return Effect.fail(formatNotReadyReason(state));
     }),
   );
 }
 
-/** An HTTP HEAD through the local Kong gateway, expecting exactly 200. */
+/** An HTTP request through the local Kong gateway, expecting exactly 200 unless `anyStatus`. */
 function checkHttpReady(
-  gateway: HealthCheckPostgrestGateway,
+  gateway: HealthCheckGateway,
   path: string,
+  method: "HEAD" | "GET" = "HEAD",
+  anyStatus = false,
 ): Effect.Effect<void, string, HttpClient.HttpClient> {
   return Effect.gen(function* () {
     const httpClient = yield* HttpClient.HttpClient;
-    const request = HttpClientRequest.head(`${gateway.apiExternalUrl}${path}`).pipe(
-      HttpClientRequest.setHeaders(kongAuthHeaders(gateway.secretKey)),
-    );
-    const response = yield* httpClient.execute(request).pipe(
+    const url = `${gateway.apiExternalUrl}${path}`;
+    const request = (
+      method === "GET" ? HttpClientRequest.get(url) : HttpClientRequest.head(url)
+    ).pipe(HttpClientRequest.setHeaders(kongAuthHeaders(gateway.secretKey)));
+    const status = yield* Effect.gen(function* () {
+      const response = yield* httpClient.execute(request);
+      if (method === "GET") {
+        yield* response.text.pipe(Effect.ignore);
+      }
+      return response.status;
+    }).pipe(
       Effect.timeout(`${HTTP_PROBE_TIMEOUT_SECONDS} seconds`),
       Effect.mapError((cause) => String(cause)),
     );
-    if (response.status !== 200) {
-      return yield* Effect.fail(`unexpected status ${response.status}`);
+    if (!anyStatus && status !== 200) {
+      return yield* Effect.fail(`unexpected status ${status}`);
     }
   });
+}
+
+function execUnavailableHint(containerIds: ReadonlyArray<string>): string | undefined {
+  const [first] = containerIds;
+  if (first === undefined) return undefined;
+  return [
+    `Docker could not run the health check inside ${containerIds.join(", ")} ("OCI runtime exec failed"), so it cannot report them healthy.`,
+    "This happens when Docker runs nested or sandboxed.",
+    `Check with: docker exec ${first} true`,
+  ].join("\n");
+}
+
+/** The stderr warning for a start that proceeded although Docker cannot run health checks here. */
+export function healthCheckExecUnavailableWarning(unverified: ReadonlyArray<string>): string {
+  return (
+    `${yellow("WARNING:")} Docker cannot run health checks inside containers on this host (OCI runtime exec failed). ` +
+    (unverified.length > 0
+      ? `Readiness of ${unverified.join(", ")} was not verified.`
+      : "Readiness was checked from the host instead.") +
+    "\n"
+  );
 }
 
 /**
@@ -263,33 +347,39 @@ function dumpContainerLogs(
 }
 
 /**
- * Waits for every container in `containerIds` to become ready. Resolves once all are ready;
- * fails with {@link HealthCheckTimeoutError} (carrying every still-unhealthy container's
- * last-seen reason) once the retry budget is exhausted. The caller decides whether
- * `--ignore-health-check` turns that failure into a warning instead of a hard exit.
+ * Waits for every container in `containerIds` to become ready. Resolves once all are ready,
+ * reporting which containers Docker could not health-check; fails with
+ * {@link HealthCheckTimeoutError} (carrying every still-unhealthy container's last-seen reason)
+ * once the retry budget is exhausted. The caller decides whether `--ignore-health-check` turns
+ * that failure into a warning instead of a hard exit.
  */
 export function waitForHealthyServices(
   spawner: Spawner,
   containerIds: ReadonlyArray<string>,
   opts: WaitForHealthyServicesOptions = {},
-): Effect.Effect<void, HealthCheckTimeoutError, HttpClient.HttpClient> {
+): Effect.Effect<WaitForHealthyServicesResult, HealthCheckTimeoutError, HttpClient.HttpClient> {
   const postgrest = opts.postgrest;
   const edgeRuntime = opts.edgeRuntime;
 
-  const checkOne = (containerId: string): Effect.Effect<void, string, HttpClient.HttpClient> => {
+  const checkOne = (
+    containerId: string,
+    seen: ExecFallbackSeen,
+  ): Effect.Effect<void, string, HttpClient.HttpClient> => {
     if (postgrest !== undefined && containerId === postgrest.containerId) {
       return checkHttpReady(postgrest, POSTGREST_READY_PATH);
     }
     if (edgeRuntime !== undefined && containerId === edgeRuntime.containerId) {
       return checkHttpReady(edgeRuntime, EDGE_RUNTIME_READY_PATH);
     }
-    return checkContainerReady(spawner, containerId);
+    return checkContainerReady(spawner, containerId, opts.execFallbacks?.get(containerId), seen);
   };
 
   return Effect.gen(function* () {
     const timeoutSeconds = opts.timeoutSeconds ?? (yield* HealthCheckTimeoutSeconds);
     let stillWatching = containerIds;
+    let lastFailures: ReadonlyArray<HealthCheckFailure> | undefined;
     let attempts = 0;
+    const seen: ExecFallbackSeen = { execUnavailable: new Set(), assumed: new Set() };
 
     // Each round narrows `stillWatching` to just the containers that failed, so a container
     // that becomes healthy mid-run stops being probed on later rounds.
@@ -299,7 +389,7 @@ export function waitForHealthyServices(
         const outcomes = yield* Effect.forEach(
           stillWatching,
           (containerId) =>
-            checkOne(containerId).pipe(
+            checkOne(containerId, seen).pipe(
               Effect.match({
                 onFailure: (reason): HealthCheckFailure | undefined => ({
                   containerId,
@@ -315,6 +405,7 @@ export function waitForHealthyServices(
         );
         stillWatching = failures.map((failure) => failure.containerId);
         if (failures.length > 0) {
+          lastFailures = failures;
           return yield* new HealthCheckProbeError({ failures });
         }
       },
@@ -323,8 +414,28 @@ export function waitForHealthyServices(
     // A 1-second constant delay, capped at `timeoutSeconds` retries after the initial attempt.
     const schedule = Schedule.max([Schedule.spaced("1 seconds"), Schedule.recurs(timeoutSeconds)]);
 
+    const boundSeconds = (timeoutSeconds + 1) * (1 + HTTP_PROBE_TIMEOUT_SECONDS);
+
     yield* probe.pipe(
       Effect.retry(schedule),
+      Effect.timeoutOrElse({
+        duration: Duration.seconds(boundSeconds),
+        orElse: () =>
+          Effect.annotateCurrentSpan("health.probe_bound_reached", true).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new HealthCheckProbeError({
+                  failures:
+                    lastFailures ??
+                    stillWatching.map((containerId) => ({
+                      containerId,
+                      reason: `container is not ready: readiness probe hung after ${boundSeconds}s`,
+                    })),
+                }),
+              ),
+            ),
+          ),
+      }),
       Effect.catch((probeError) =>
         Effect.gen(function* () {
           // An interrupted fiber never reaches this `Effect.catch` handler, so no separate
@@ -337,17 +448,24 @@ export function waitForHealthyServices(
           const execFormatErrors = scans
             .filter((scan) => scan.found)
             .map((scan) => scan.containerId);
-          const suggestion = execFormatRecoveryHint(
-            execFormatErrors,
-            opts.images,
-            scans.find((scan) => scan.runtime !== undefined)?.runtime ?? "docker",
-          );
+          const hints = [
+            execFormatRecoveryHint(
+              execFormatErrors,
+              opts.images,
+              scans.find((scan) => scan.runtime !== undefined)?.runtime ?? "docker",
+            ),
+            execUnavailableHint(
+              probeError.failures
+                .map((failure) => failure.containerId)
+                .filter((containerId) => seen.execUnavailable.has(containerId)),
+            ),
+          ].filter((hint) => hint !== undefined);
           return yield* new HealthCheckTimeoutError({
             message: probeError.failures
               .map((failure) => `${failure.containerId} ${failure.reason}`)
               .join("\n"),
             unhealthy: probeError.failures,
-            ...(suggestion === undefined ? {} : { suggestion }),
+            ...(hints.length === 0 ? {} : { suggestion: hints.join("\n\n") }),
           });
         }),
       ),
@@ -356,10 +474,16 @@ export function waitForHealthyServices(
           Effect.annotateCurrentSpan({
             "retry.attempt_count": attempts,
             "health.unhealthy_count": stillWatching.length,
+            "health.exec_unavailable_count": seen.execUnavailable.size,
+            "health.readiness_assumed_count": seen.assumed.size,
           }),
         ),
       ),
     );
+    return {
+      execUnavailable: [...seen.execUnavailable],
+      readinessAssumed: [...seen.assumed],
+    };
   }).pipe(
     Effect.withSpan("HealthCheck.waitHealthyServices", {
       attributes: { "health.container_count": containerIds.length },
@@ -368,18 +492,18 @@ export function waitForHealthyServices(
 }
 
 /** Caps a hung dial so one probe cannot swallow the whole poll budget. */
-const SHADOW_READY_CONNECT_TIMEOUT_SECONDS = 2;
+const POSTGRES_READY_CONNECT_TIMEOUT_SECONDS = 2;
 
 /**
  * One round's verdict. `fatal` makes an exited container fail fast instead of burning the
  * remaining budget: nothing about a dead container can change on a later round.
  */
-interface ShadowReadyFailure {
+interface PostgresReadyFailure {
   readonly reason: string;
   readonly fatal: boolean;
 }
 
-const shadowNotReady = (reason: string): ShadowReadyFailure => ({
+const postgresNotReady = (reason: string): PostgresReadyFailure => ({
   reason,
   fatal: false,
 });
@@ -390,36 +514,36 @@ const shadowNotReady = (reason: string): ShadowReadyFailure => ({
  * the real connection too. `Effect.scoped` closes the session the moment the probe resolves; the
  * caller opens its own connection afterwards.
  */
-const probeShadowConnect = (
+const probePostgresConnect = (
   connConfig: PgConnInput,
-): Effect.Effect<void, ShadowReadyFailure, DbConnection> =>
+): Effect.Effect<void, PostgresReadyFailure, DbConnection> =>
   Effect.scoped(
     Effect.gen(function* () {
       const dbConnection = yield* DbConnection;
       yield* dbConnection.connect(
-        { ...connConfig, connectTimeoutSeconds: SHADOW_READY_CONNECT_TIMEOUT_SECONDS },
+        { ...connConfig, connectTimeoutSeconds: POSTGRES_READY_CONNECT_TIMEOUT_SECONDS },
         { isLocal: true, dnsResolver: "native" },
       );
     }),
-  ).pipe(Effect.mapError((cause) => shadowNotReady(cause.message)));
+  ).pipe(Effect.mapError((cause) => postgresNotReady(`container is not ready: ${cause.message}`)));
 
-export interface WaitForShadowReadyOptions {
+export interface WaitForPostgresReadyOptions {
   readonly timeoutSeconds?: number;
-  /** The shadow container's already-resolved postgres image, named in the exec-format recovery hint. */
+  /** The container's already-resolved postgres image, named in the exec-format recovery hint. */
   readonly image?: string;
 }
 
 /**
- * Shadow readiness: inspect + connect probe, polled every 500ms. Docker's
- * healthcheck is `interval=10s` with no start period, so Postgres is connectable
- * ~6.5s before `Health.Status` flips. Same error shape as the health gate,
- * plus a wall-clock cap so a hung 2s dial cannot overrun the retry budget.
+ * Postgres readiness: inspect + connect probe, polled every 500ms. Docker's health status needs
+ * `docker exec`, which some hosts cannot do, and it lags connectability by up to one 10s
+ * interval. Same error shape as the health gate, plus a wall-clock cap so a hung 2s dial cannot
+ * overrun the retry budget.
  */
-export function waitForShadowReady(
+export function waitForPostgresReady(
   spawner: Spawner,
   containerId: string,
   connConfig: PgConnInput,
-  opts: WaitForShadowReadyOptions = {},
+  opts: WaitForPostgresReadyOptions = {},
 ): Effect.Effect<void, HealthCheckTimeoutError, DbConnection> {
   return Effect.gen(function* () {
     const timeoutSeconds = opts.timeoutSeconds ?? (yield* HealthCheckTimeoutSeconds);
@@ -430,17 +554,17 @@ export function waitForShadowReady(
       Schedule.spaced("500 millis"),
       Schedule.recurs(timeoutSeconds * 2),
     ]);
-    const boundSeconds = timeoutSeconds + SHADOW_READY_CONNECT_TIMEOUT_SECONDS;
+    const boundSeconds = timeoutSeconds + POSTGRES_READY_CONNECT_TIMEOUT_SECONDS;
 
     // Per-evaluation state: the retry rounds within one evaluation share the latest failure for
     // the timeout diagnostic, while re-evaluating the returned Effect starts from a fresh slot.
-    let lastFailure: ShadowReadyFailure | undefined;
+    let lastFailure: PostgresReadyFailure | undefined;
     let attempts = 0;
 
-    const probe: Effect.Effect<void, ShadowReadyFailure, DbConnection> = Effect.gen(function* () {
+    const probe: Effect.Effect<void, PostgresReadyFailure, DbConnection> = Effect.gen(function* () {
       attempts += 1;
       const state = yield* inspectContainerState(spawner, containerId).pipe(
-        Effect.mapError((cause) => shadowNotReady(cause.message)),
+        Effect.mapError((cause) => postgresNotReady(cause.message)),
       );
       if (!state.running) {
         return yield* Effect.fail({
@@ -448,7 +572,7 @@ export function waitForShadowReady(
           fatal: true,
         });
       }
-      yield* probeShadowConnect(connConfig);
+      yield* probePostgresConnect(connConfig);
     }).pipe(
       Effect.withTracerEnabled(false),
       Effect.provideService(ChildTracePropagation, false),
@@ -466,7 +590,9 @@ export function waitForShadowReady(
         orElse: () =>
           Effect.fail(
             lastFailure ??
-              shadowNotReady(`not ready after ${boundSeconds}s: connection attempt hung`),
+              postgresNotReady(
+                `container is not ready: connection attempt hung after ${boundSeconds}s`,
+              ),
           ),
       }),
       Effect.catch((failure) =>
@@ -491,5 +617,31 @@ export function waitForShadowReady(
         Effect.suspend(() => Effect.annotateCurrentSpan("retry.attempt_count", attempts)),
       ),
     );
-  }).pipe(Effect.withSpan("HealthCheck.waitShadowReady"));
+  }).pipe(Effect.withSpan("HealthCheck.waitPostgresReady"));
+}
+
+/**
+ * Waits up to `maxSeconds` for Docker's first health verdict on a container, so a caller that
+ * reads `Health.Status` right after a host-side readiness probe does not see `starting`.
+ * Best-effort: a timeout or an inspect failure ends the wait without failing.
+ */
+export function awaitDockerHealthSettled(
+  spawner: Spawner,
+  containerId: string,
+  maxSeconds = 15,
+): Effect.Effect<void> {
+  const stillStarting = inspectContainerState(spawner, containerId).pipe(
+    Effect.map(
+      (state) => state.running && state.health === "starting" && !healthCheckCannotExec(state),
+    ),
+    Effect.orElseSucceed(() => false),
+    Effect.withTracerEnabled(false),
+    Effect.provideService(ChildTracePropagation, false),
+  );
+  return stillStarting.pipe(
+    Effect.repeat({ schedule: Schedule.spaced("1 seconds"), while: (starting) => starting }),
+    Effect.timeout(Duration.seconds(maxSeconds)),
+    Effect.ignore,
+    Effect.withSpan("HealthCheck.awaitDockerHealthSettled"),
+  );
 }
