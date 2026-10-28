@@ -1,6 +1,8 @@
 name: Live E2E Notifications
 
 on:
+  # The job only reads whether the run passed. It runs nothing the run produced.
+  # jactionlint ignore=dangerous-triggers
   workflow_run:
     workflows: [Live E2E, Release]
     types: [completed]

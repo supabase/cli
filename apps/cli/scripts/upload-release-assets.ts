@@ -153,7 +153,7 @@ export function missingAssets(expected: string[], uploaded: string[]): string[] 
   return expected.filter((name) => !present.has(name)).sort();
 }
 
-const usage = `Usage: pnpm exec bun apps/cli/scripts/upload-release-assets.ts <upload|verify> --version <version>
+const usage = `Usage: bun apps/cli/scripts/upload-release-assets.ts <upload|verify> --version <version>
 
   upload  Upload every release asset to the draft release v<version>, one at a time with retries.
   verify  Fail unless every expected asset is present on v<version> and reported as uploaded.`;

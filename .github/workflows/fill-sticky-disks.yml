@@ -71,6 +71,7 @@ jobs:
 
       - name: Pull stack package images
         run: |
+          set -o pipefail
           pnpm --silent --filter @supabase/stack prepare:test-artifacts --images |
             xargs --max-procs 4 --max-args 1 docker pull --quiet
 
@@ -78,6 +79,7 @@ jobs:
       - name: Prune Docker before saving its image disk
         if: always()
         run: |
+          set -o pipefail
           docker ps --all --quiet | xargs --no-run-if-empty docker rm --force
           docker system prune --force
           docker volume prune --all --force

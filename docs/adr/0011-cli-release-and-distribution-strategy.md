@@ -208,8 +208,8 @@ Draft, upload, verify, and finalize by the shared workflow:
     tag_name: v${{ inputs.version }}
     draft: true
     prerelease: ${{ inputs.prerelease }}
-- run: pnpm exec bun apps/cli/scripts/upload-release-assets.ts upload --version "${VERSION}"
-- run: pnpm exec bun apps/cli/scripts/upload-release-assets.ts verify --version "${VERSION}"
+- run: bun apps/cli/scripts/upload-release-assets.ts upload --version "${VERSION}"
+- run: bun apps/cli/scripts/upload-release-assets.ts verify --version "${VERSION}"
 - run: gh release edit v${VERSION} --draft=false
 ```
 

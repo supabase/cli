@@ -16,6 +16,10 @@ on:
         description: "PR number to review"
         required: true
         type: string
+  # A `/ai-review` comment on a pull request starts a review. The resolve job checks who
+  # commented, and the one job that can write to the pull request runs code from the default
+  # branch only, never from the pull request.
+  # jactionlint ignore=dangerous-triggers
   issue_comment:
     types:
       - created
@@ -65,7 +69,6 @@ jobs:
     outputs:
       should_run: ${{ steps.resolve.outputs.should_run }}
       pr_number: ${{ steps.resolve.outputs.pr_number }}
-      head_ref: ${{ steps.resolve.outputs.head_ref }}
       # Every job reviews this commit, so a push during the run is never reported as reviewed.
       head_sha: ${{ steps.resolve.outputs.head_sha }}
       trigger: ${{ steps.resolve.outputs.trigger }}
@@ -161,7 +164,10 @@ jobs:
       # behavior mid-rollout. Installed from the trusted checkout with npm config isolation so a
       # PR-supplied `.npmrc` in the untrusted `pr` checkout can never redirect this install to a
       # hostile registry.
-      # 2.1.280 is the first release that accepts claude-opus-5-5.
+      # 2.1.280 is the first release that accepts claude-opus-5-5. The CLI is installed on its
+      # own, not through the repository's lockfile, so nothing in the pull request's checkout
+      # can change what gets installed.
+      # jactionlint ignore=adhoc-packages
       - name: Install Claude Code CLI
         working-directory: trusted
         run: |
@@ -544,7 +550,7 @@ jobs:
     steps:
       # Security-critical: this is the only job with write permission, so it must only ever
       # execute trusted base-branch code — never the PR head. Checking out `develop` explicitly
-      # (never `needs.resolve.outputs.head_ref`) keeps a malicious PR from smuggling a script
+      # (never the PR's own ref) keeps a malicious PR from smuggling a script
       # change into the one job that can write back to the PR. (For `pull_request` events GitHub
       # runs the workflow file from the PR's own ref; acceptable since the auto path only admits
       # same-repo PRs, whose authors hold write access anyway, and fork PRs run with a read-only

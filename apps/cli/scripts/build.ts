@@ -35,7 +35,7 @@ const packageJsonPath = path.join(root, "apps/cli/package.json");
 const packageVersion = JSON.parse(await readFile(packageJsonPath, "utf8")) as { version?: string };
 const version = values.version ?? packageVersion.version;
 if (!version) {
-  console.error("Usage: pnpm exec bun apps/cli/scripts/build.ts [--version <npm-version>]");
+  console.error("Usage: bun apps/cli/scripts/build.ts [--version <npm-version>]");
   process.exit(1);
 }
 if (values.version === undefined) {
