@@ -51,6 +51,7 @@ import { goUrlParse } from "../storage-url.ts";
 import { loadLocalProjectContext } from "../local-project-context.ts";
 import { cliProjectFilterValue } from "../docker-ids.ts";
 import { buildLocalDbContainerInputs } from "./local-container-inputs.ts";
+import { awaitDockerHealthSettled } from "./health-check.ts";
 import { isLocalDbRunning } from "./local-db-running.ts";
 import { rollbackStart } from "./rollback.ts";
 import { startDatabase } from "./start-database.ts";
@@ -721,6 +722,10 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
       rollbackStart(spawner, filterValue, isFreshVolume, cliSettings.workdir, debug),
     ),
   );
+
+  // The connect probe returns before Docker's first health probe, and `status` and the
+  // already-running gate still read Docker health.
+  yield* awaitDockerHealthSettled(spawner, dbContainerId);
 
   return { status: "started" } satisfies StartLocalDatabaseResult;
 });

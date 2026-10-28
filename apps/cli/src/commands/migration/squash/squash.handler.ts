@@ -23,7 +23,7 @@ import {
   resolveDbSetupPrelude,
   setupDatabase,
 } from "../../../command-internal/db-bootstrap/db-setup.ts";
-import { waitForHealthyServices } from "../../../command-internal/db-bootstrap/health-check.ts";
+import { waitForPostgresReady } from "../../../command-internal/db-bootstrap/health-check.ts";
 import {
   buildShadowSetupDatabaseInput,
   connectShadowDatabase,
@@ -209,7 +209,7 @@ const squashMigrations = Effect.fn("MigrationSquash.squashMigrations")(function*
     (handle) =>
       Effect.scoped(
         Effect.gen(function* () {
-          yield* waitForHealthyServices(spawner, [handle.containerId], {
+          yield* waitForPostgresReady(spawner, handle.containerId, connConfig, {
             timeoutSeconds: shadowInput.healthTimeoutSeconds,
           });
           const session = yield* connectShadowDatabase(connConfig);

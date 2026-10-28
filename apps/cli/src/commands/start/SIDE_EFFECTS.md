@@ -73,6 +73,71 @@ tar archive) → `docker start` sequence is assembled by that shared core, not b
 health-checked via an HTTP probe through Kong (`/functions/v1/_internal/health`), not a
 Docker healthcheck — mirroring PostgREST's own probe shape.
 
+### Readiness gating
+
+Postgres's own wait does not read Docker's health status: Docker runs every `HEALTHCHECK` with
+`docker exec`, which some hosts cannot do (nested or sandboxed Docker), and
+the status lags connectability by up to one 10s health interval. The wait polls every 500ms
+within `db.health_timeout` (`SUPABASE_DB_HEALTH_TIMEOUT`): `docker container inspect` (a
+container that is not running fails the wait at once), then a short-lived host connect to the
+published Postgres address (2s dial cap). The first successful connect ends the wait. A timeout
+reports `<container> container is not ready: <connect error>`, after the container's logs. `db
+start` runs the same wait, including with `--from-backup`.
+
+Every other health-checked container is gated on Docker's health status (`healthy`), polled once
+per second within the 30s service timeout. A container with no Docker healthcheck passes once
+it is running. PostgREST and Edge Runtime keep their HTTP HEAD probes through Kong. The wait also
+stops after `(30 + 1) * (1 + 10)` seconds of wall-clock time, so a gateway that accepts
+connections and never answers cannot outlast the retry budget; it then fails like an exhausted
+budget, with the last round's reasons (`container is not ready: readiness probe hung after <n>s`
+when no round completed).
+
+After that wait, including when `--ignore-health-check` downgrades its failure and when no
+health-checked service was started, `start` waits up to 15s for Docker's first health verdict on
+the Postgres container (polling `docker container inspect` every 1s until the status leaves
+`starting`, the container stops running, or Docker cannot launch its health check), so a
+following `supabase status` or `supabase start` does not see `starting`. It never fails the run.
+
+When a container is running but Docker could not launch its health check, it is judged from the
+host instead of failing. This applies only when the container's last recorded probe has exit
+code `-1` with an `OCI runtime exec failed ... unable to start container process` output, whatever
+else the runtime reports (a cgroup or `setns` failure, for example); a probe timeout, a failing
+probe command, a restarting container, and an image fault in the healthcheck command
+(`exec: "<path>": executable file not found in $PATH`, `exec: "<path>": stat <path>: no such file
+or directory`, `exec <path>: no such file or directory`, `exec <path>: exec format error`, or
+`permission denied` in either form) keep failing:
+
+| Container                                           | Judged by                                                       |
+| --------------------------------------------------- | --------------------------------------------------------------- |
+| kong                                                | `GET <api-url>/`; any HTTP response counts as up                |
+| gotrue                                              | `GET <api-url>/auth/v1/health` through Kong, expecting 200      |
+| storage                                             | `GET <api-url>/storage/v1/status` through Kong, expecting 200   |
+| pg-meta                                             | `GET <api-url>/pg/health` through Kong, expecting 200           |
+| logflare                                            | `GET <api-url>/analytics/v1/health` through Kong, expecting 200 |
+| every other container, and all of them without Kong | accepted as soon as it is running; readiness is not verified    |
+
+The gateway requests carry the same `apikey`/`Authorization` headers as the bucket-seeding
+requests. Kong answers `404` on `/` because no route matches, which proves its proxy is up;
+only a failed connection or the 10s request timeout (covering the response body too) counts as
+not ready. If a gateway request keeps failing, the container reports `container is not ready: <path>: <reason>` (Kong:
+`container is not ready: <reason>`) and the wait times out as usual.
+
+When at least one container needed this fallback, `start` prints one `WARNING:` line to stderr,
+in every output format, after the health wait and before the success summary:
+`Docker cannot run health checks inside containers on this host (OCI runtime exec failed).`
+followed by `Readiness of <containers> was not verified.` (the containers accepted on `running`
+alone) or `Readiness was checked from the host instead.` when every fallback was a gateway
+request. `cli_stack_started` still fires on such a success.
+
+A not-ready reason names the last health-check probe Docker recorded:
+`<container> container is not ready: <status> (last health check exit code <n>: <output>)`, with
+the output's whitespace collapsed and capped at 300 characters, and the `: <output>` part
+omitted when the output is empty. No probe on record leaves the reason as
+`container is not ready: <status>`. When a timed-out container's health check could not be
+launched, the error's `suggestion` names those containers, says Docker could not run the check
+(typically nested or sandboxed Docker), and gives `docker exec <container> true` to confirm; it
+is joined after the `exec format error` advice when both apply.
+
 ### Storage bucket seeding (`seedBucketsRun`)
 
 Runs only when `isFreshVolume && Storage started`, after the bulk
@@ -219,7 +284,7 @@ code is surfaced on failure.
 
 | Code | Condition                                                                                                                                                                                                                                                                                                                                                              |
 | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success — every started container passed its health check                                                                                                                                                                                                                                                                                                              |
+| `0`  | success — every started container passed its health check, or was accepted through the exec-failure fallback with a stderr `WARNING:` (see "Readiness gating")                                                                                                                                                                                                         |
 | `0`  | the stack was already running — shows status instead of restarting                                                                                                                                                                                                                                                                                                     |
 | `0`  | `--ignore-health-check` set and one or more containers timed out — the failure is printed and swallowed, no rollback                                                                                                                                                                                                                                                   |
 | `1`  | `--ignore-health-check` set, the fresh-volume/Storage-healthy recheck-and-seed path ran (see "Storage bucket seeding"), and that seed itself failed — rolls back despite the flag                                                                                                                                                                                      |
@@ -231,8 +296,8 @@ code is surfaced on failure.
 | `1`  | image pull exhausted across every registry candidate, or the Docker daemon becomes unreachable during the pre-pull — even with `--ignore-health-check` (intentional divergence from the old Go CLI's exit-0 swallow quirk; see the CLI-1987 note under "Notes")                                                                                                        |
 | `1`  | Studio is enabled and `<workdir>/supabase/snippets/` cannot be created (a file is in the way, or the workdir is not writable) — fails before any network or container is created                                                                                                                                                                                       |
 | `1`  | network, volume, container create, or container start failure (including a port conflict) — rolls back everything created so far                                                                                                                                                                                                                                       |
-| `1`  | health check timeout **without** `--ignore-health-check` — rolls back                                                                                                                                                                                                                                                                                                  |
-| `1`  | Postgres itself fails to start or its own health wait times out, **without** `--ignore-health-check` — rolls back                                                                                                                                                                                                                                                      |
+| `1`  | health check timeout **without** `--ignore-health-check` (including a container whose exec-failure fallback request keeps failing) — rolls back                                                                                                                                                                                                                        |
+| `1`  | Postgres itself fails to start or its own readiness wait (inspect + host connect) times out, **without** `--ignore-health-check` — rolls back                                                                                                                                                                                                                          |
 | `0`  | `--ignore-health-check` set and Postgres's own health wait times out — the failure is printed and swallowed, no rollback; no OTHER service is ever created (Postgres's failure is returned before any other bring-up step runs), but the command still prints "Started..." + the (config-derived) status table                                                         |
 | `1`  | fresh-volume DB setup failure (schema SQL / one-shot migrate job / vault upsert / roles seed / migration-apply) — rolls back                                                                                                                                                                                                                                           |
 | `1`  | fresh-volume bucket-seeding failure — rolls back                                                                                                                                                                                                                                                                                                                       |
@@ -278,7 +343,7 @@ output modes.
   invalid values and listing the 13 valid ones — the command still proceeds.
 - stderr: already-running banner (`supabase start` in aqua) **or** the bring-up sequence:
   `Starting database...` (fresh volume) / `Starting database from backup...` (existing
-  volume) → Postgres create+start+health-wait → `Starting containers...` → (image
+  volume) → Postgres create+start+readiness wait → `Starting containers...` → (image
   pre-pull) → per-container create+start → `Waiting for health checks...` → `Started
 supabase local development setup.`
 - stderr (conditional, fresh-volume bucket seeding): `Creating <kind> bucket: <name>` per
@@ -287,6 +352,8 @@ supabase local development setup.`
 buckets to prune.` for a bucket left in place. These seeding lines use the raw writer, so they
   appear in every output mode, not only text. No confirmation question is printed and no stdin
   line is read.
+- stderr (conditional, Docker cannot run health checks on this host): one `WARNING:` line; see
+  "Readiness gating". Written to stderr in the json and stream-json formats too.
 - stderr (conditional, health-check timeout): per unhealthy container, a
   `<container> container logs:` header and that container's `docker logs` output, then one
   `<container>: <reason>` line each. Containers are named `supabase_<service>_<project id>`
@@ -311,7 +378,8 @@ buckets to prune.` for a bucket left in place. These seeding lines use the raw w
 
 A single JSON object (or a `result` NDJSON event) carrying the same value shape
 `supabase status --output json` produces. All the progress/warning/banner/security-notice
-text above is suppressed in these modes — stdout stays payload-only. On a health-check
+text above is suppressed in these modes — stdout stays payload-only — except the exec-failure
+`WARNING:` (see "Readiness gating"), which stays on stderr. On a health-check
 timeout the error payload carries the advice above as a discrete `error.suggestion` string
 alongside `error.message`, so a caller can surface it without re-parsing the message. It is
 prose, not structured data.
@@ -366,8 +434,11 @@ prose, not structured data.
   "unhealthy service", but a user reading only `--help` may still expect exit 0 here.
 - `--preview` is a hidden, parsed-but-inert flag, inherited from the old Go CLI (never
   read by its own `start.Run`).
-- The already-running check uses `docker container inspect` on the Postgres container,
-  not a health check. For a verified
+- The already-running check uses `docker container inspect` on the Postgres container and,
+  unless `--ignore-health-check` is set, requires its Docker health to be `healthy` or absent;
+  otherwise it fails with `<container> container is not ready: ...` (reason format in "Readiness
+  gating"). When Docker could not launch the health check, it accepts the container and prints
+  the same `WARNING:` naming `supabase_db_<project>` as unverified. For a verified
   stopped container outside Bitbucket Pipelines, `start` removes all current-project
   containers — including running siblings — and unused networks, preserves named volumes,
   and continues normal startup. After container removal succeeds, it deletes

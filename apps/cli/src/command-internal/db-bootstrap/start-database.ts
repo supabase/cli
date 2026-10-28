@@ -44,7 +44,8 @@ import {
   type StartSetupLocalDatabaseError,
 } from "./db-setup.ts";
 import type { ImagePrepullError } from "./image-prepull.ts";
-import { waitForHealthyServices, type HealthCheckTimeoutError } from "./health-check.ts";
+import { waitForPostgresReady, type HealthCheckTimeoutError } from "./health-check.ts";
+import { startInternalDbPassword } from "./internal-db-connection.ts";
 import {
   buildPostgresStartContainerSpec,
   type PostgresStartServiceInput,
@@ -180,17 +181,23 @@ export const startDatabase = <E>(
     });
     yield* createContainer(spawner, postgresSpec, input.containerOpts);
 
-    const postgresHealthResult = yield* waitForHealthyServices(
+    // A host connect, not Docker's HEALTHCHECK: that needs `docker exec`, which nested or
+    // sandboxed Docker cannot do.
+    const postgresHealthResult = yield* waitForPostgresReady(
       spawner,
-      [postgresSpec.containerName],
+      postgresSpec.containerName,
       {
-        timeoutSeconds: input.dbHealthTimeoutSeconds,
-        images: new Map([[postgresSpec.containerName, resolvedPostgresImage]]),
+        host: input.hostname,
+        port: input.dbPort,
+        user: "postgres",
+        password: startInternalDbPassword(input.setup.dbUrl),
+        database: "postgres",
       },
+      { timeoutSeconds: input.dbHealthTimeoutSeconds, image: resolvedPostgresImage },
     ).pipe(Effect.result);
     if (Result.isFailure(postgresHealthResult)) {
       // Discarded only when `fromBackup` is set — the log dump to stderr already happened
-      // inside `waitForHealthyServices` regardless. Any other failure propagates bare; see this
+      // inside `waitForPostgresReady` regardless. Any other failure propagates bare; see this
       // module's header for why `--ignore-health-check` is entirely the caller's concern.
       if (fromBackup === undefined) {
         return yield* postgresHealthResult.failure;

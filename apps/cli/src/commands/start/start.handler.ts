@@ -62,6 +62,8 @@ import {
 import { resolveDockerNetworkMode } from "../../shared/functions/functions-docker.ts";
 import { viperEnvStringWithProjectFallback } from "../../command-internal/viper-env.ts";
 import {
+  formatNotReadyReason,
+  healthCheckCannotExec,
   inspectContainerState,
   listContainersByLabel,
   type ContainerIdName,
@@ -150,7 +152,10 @@ import {
 } from "../../command-internal/db-bootstrap/container-lifecycle.ts";
 import { ensureImagesCached } from "../../command-internal/db-bootstrap/image-prepull.ts";
 import {
+  awaitDockerHealthSettled,
+  healthCheckExecUnavailableWarning,
   waitForHealthyServices,
+  type ExecFallbackProbe,
   type HealthCheckPostgrestGateway,
   type HealthCheckTimeoutError,
 } from "../../command-internal/db-bootstrap/health-check.ts";
@@ -675,9 +680,13 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           });
         }
         if (state.health !== undefined && state.health !== "healthy") {
-          return yield* new StatusDbNotReadyError({
-            message: `${dbContainerId} container is not ready: ${state.health}`,
-          });
+          if (!healthCheckCannotExec(state)) {
+            return yield* new StatusDbNotReadyError({
+              message: `${dbContainerId} ${formatNotReadyReason(state)}`,
+            });
+          }
+          yield* Effect.annotateCurrentSpan("db.health_exec_unavailable", true);
+          yield* output.raw(healthCheckExecUnavailableWarning([dbContainerId]), "stderr");
         }
       }
 
@@ -1561,6 +1570,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       // `docker create` returns) so an unhealthy container reports as `supabase_auth_demo`
       // rather than 64 hex characters, and the watch list stays in sync with its images.
       const started = new Map<string, string>();
+      const execFallbacks = new Map<string, ExecFallbackProbe>();
       let postgrestGateway: HealthCheckPostgrestGateway | undefined;
       let edgeRuntimeGateway: HealthCheckPostgrestGateway | undefined;
       let storageContainerId: string | undefined;
@@ -1676,6 +1686,16 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         yield* createContainer(spawner, spec, startOpts);
         if (excludeFromHealthWatch !== true) {
           started.set(spec.containerName, spec.image);
+          // Routed services fall back to `running` when Kong is excluded.
+          const gateway = { apiExternalUrl: values.apiUrl, secretKey: values.secretKey };
+          execFallbacks.set(
+            spec.containerName,
+            entry.gatewayReachable === true
+              ? { kind: "gateway-reachable", gateway }
+              : entry.gatewayReadyPath !== undefined && gates.kong
+                ? { kind: "gateway", gateway, path: entry.gatewayReadyPath }
+                : { kind: "running" },
+          );
         }
         if (entry.service === "postgrest") {
           postgrestGateway = {
@@ -1695,6 +1715,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         postgrestGateway,
         edgeRuntimeGateway,
         storageContainerId,
+        execFallbacks,
       };
     }).pipe(
       // The rollback's `NoBackupVolume` value is `true` only when this run's Postgres volume was
@@ -1750,7 +1771,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     // Only reached when Postgres itself became healthy — the `postgresUnhealthyIgnored`
     // short-circuit above skips this entire block and falls through to the tail below instead.
     if (bringUpResult.kind === "started") {
-      const { started, postgrestGateway, edgeRuntimeGateway, storageContainerId } = bringUpResult;
+      const { started, postgrestGateway, edgeRuntimeGateway, storageContainerId, execFallbacks } =
+        bringUpResult;
 
       // Wraps steps 9-11 below in the same `Effect.onError` rollback `bringUp`'s own pipe uses
       // above, so a SIGINT/SIGTERM landing anywhere in this tail also rolls back. Per-step manual
@@ -1817,6 +1839,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
             postgrest: postgrestGateway,
             edgeRuntime: edgeRuntimeGateway,
             images: started,
+            execFallbacks,
           }),
         ).pipe(Effect.result);
         if (Result.isFailure(healthResult)) {
@@ -1834,6 +1857,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
               const storageHealthResult = yield* withLocalKongCa(
                 waitForHealthyServices(spawner, [storageContainerId], {
                   images: started,
+                  execFallbacks,
                 }),
               ).pipe(Effect.result);
               if (Result.isSuccess(storageHealthResult)) {
@@ -1857,12 +1881,27 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
             }
             // Downgrade to a warning and fall through to the success path, no rollback.
             yield* output.raw(`${healthWarningText(error)}\n`, "stderr");
+            if (error.readinessAssumed !== undefined) {
+              yield* output.raw(
+                healthCheckExecUnavailableWarning(error.readinessAssumed),
+                "stderr",
+              );
+            }
           } else {
             // No manual `rollbackStart` here — the outer `Effect.onError`
             // below rolls back on this failure too.
             return yield* error;
           }
         }
+
+        if (Result.isSuccess(healthResult) && healthResult.success.execUnavailable.length > 0) {
+          yield* output.raw(
+            healthCheckExecUnavailableWarning(healthResult.success.readinessAssumed),
+            "stderr",
+          );
+        }
+
+        yield* awaitDockerHealthSettled(spawner, dbContainerId);
 
         // 10. Storage-bucket seeding, gated on a freshly created volume and Storage having
         // started. Reached only on a genuine health-check success — mutually exclusive with the
