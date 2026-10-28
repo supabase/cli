@@ -86,11 +86,12 @@ rm -f /tmp/cli-base/mise.toml /tmp/cli-base/mise.lock # if mise refuses the untr
 
 ### Pull request benchmark
 
-`.github/workflows/cli-bench.yml` runs on every ready pull request into `develop` or `next`. It builds
-the pull request and its merge base with `pnpm --filter supabase run build:binary`, runs both
+`.github/workflows/cli-bench.yml` runs on every ready pull request into `develop` or `next` that touches the CLI, its packages, or
+the e2e replay fixtures. It builds the pull request and the base tip it merges into with `pnpm --filter supabase run build:binary`, runs both
 through `bench-cli.ts` against a local replay server, and writes a job summary with `bench-summary.ts`.
-The job is report only: it never blocks a pull request, and no benchmark problem fails it. The
-workloads use no Docker, database, or network, and no humans are involved.
+The job is report only: it never blocks a pull request, and a benchmark problem is reported in the
+summary instead of failing the job. The workloads use no Docker, database, or network, and no
+prompts.
 
 To run it locally with two binaries (for example builds from two commits):
 
@@ -127,8 +128,8 @@ The summary reports:
 - Flags: an API call count that goes from 0 to more than 0 (for example `migration new` starting to
   call the API) or from more than 0 to 0, calls to hosts other than the replay server, counts that
   differ between runs of one build, spans that disagree with the request log, 4xx/5xx replay
-  responses (the build did not follow the recorded scenario), non-zero or differing exit codes, and
-  missing traces. Other count changes, such as 1 to 2 calls, appear in the API calls table with the
+  responses (the build did not follow the recorded scenario), non-zero or differing exit codes,
+  missing traces, and too few runs for a timing verdict. Other count changes, such as 1 to 2 calls, appear in the API calls table with the
   changed endpoints but are not flagged.
 - Wall time: base and branch medians and ranges. A verdict of slower or faster needs the branch
   median outside the base min-max range, a change of at least 5 percent and 5 ms, and at least 5

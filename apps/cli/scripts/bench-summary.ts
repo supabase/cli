@@ -39,6 +39,7 @@ export function parseSummaryArgs(argv: ReadonlyArray<string>): SummaryOptions {
 }
 
 const BASE_FAILED = "base build failed, no comparison";
+const NO_REPORT = "the benchmark did not produce a report; see the Run benchmark step log";
 
 const sign = (value: number) => (value >= 0 ? "+" : "");
 const ms = (value: number) => `${value} ms`;
@@ -124,9 +125,12 @@ function sizeSection(report: BenchReport): string {
 }
 
 /** The Markdown summary, or the base-build-failed notice when there is no report to compare. */
-export function renderSummary(report: BenchReport | undefined): string {
+export function renderSummary(
+  report: BenchReport | undefined,
+  notice: string = BASE_FAILED,
+): string {
   const title = "## CLI benchmark (report only)";
-  if (report === undefined) return `${title}\n\n${BASE_FAILED}\n`;
+  if (report === undefined) return `${title}\n\n${notice}\n`;
   const analyses = report.workloads.map((workload) => analyzeWorkload(workload, report.trace));
   const flags = analyses.flatMap(collectFlags);
   return (
@@ -168,11 +172,15 @@ const main = Effect.gen(function* () {
   if (options === undefined) return;
 
   const fs = yield* FileSystem.FileSystem;
+  const reportFile = options.baseBuild === "failed" ? undefined : options.report;
   const report =
-    options.baseBuild === "failed" || options.report === undefined
+    reportFile === undefined
       ? undefined
-      : yield* decodeBenchReport(yield* fs.readFileString(options.report));
-  const markdown = renderSummary(report);
+      : yield* fs.readFileString(reportFile).pipe(
+          Effect.flatMap(decodeBenchReport),
+          Effect.orElseSucceed(() => undefined),
+        );
+  const markdown = renderSummary(report, reportFile === undefined ? BASE_FAILED : NO_REPORT);
 
   const summaryFile = yield* Config.option(Config.String("GITHUB_STEP_SUMMARY"));
   if (Option.isSome(summaryFile) && summaryFile.value !== "") {

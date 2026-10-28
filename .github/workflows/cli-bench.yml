@@ -68,6 +68,10 @@ jobs:
           echo "Merge base: $merge_base"
           git worktree add "$RUNNER_TEMP/base-src" "$merge_base"
           cd "$RUNNER_TEMP/base-src"
+          # Setup writes this file only when the Dependency Firewall token is available.
+          if [ -f "$RUNNER_TEMP/dependency-firewall.npmrc" ]; then
+            export NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/dependency-firewall.npmrc"
+          fi
           pnpm install --frozen-lockfile
           pnpm --filter supabase run build:binary
           mkdir -p "$BENCH_DIR/base"
@@ -75,6 +79,7 @@ jobs:
 
       - name: Start replay server
         id: replay
+        continue-on-error: true
         if: steps.base_build.outcome == 'success'
         run: |
           bun apps/cli-e2e/scripts/replay-serve.ts > "$BENCH_DIR/replay.log" 2>&1 &
@@ -93,6 +98,7 @@ jobs:
 
       - name: Run benchmark
         id: bench
+        continue-on-error: true
         if: steps.base_build.outcome == 'success'
         shell: bash
         run: |

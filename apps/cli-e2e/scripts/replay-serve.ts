@@ -19,6 +19,7 @@ if (process.env["RECORD"] === "true") {
 
 const server = await startReplayServer({
   fixturesDir: FIXTURES_DIR,
+  hostname: "127.0.0.1",
   port: parsePort(process.argv.slice(2)),
 });
 

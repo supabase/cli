@@ -66,6 +66,10 @@ describe("renderSummary", () => {
     expect(markdown).toContain("no phase deltas");
   });
 
+  it("reports a missing report with the notice it is given", () => {
+    expect(renderSummary(undefined, "no report here")).toContain("no report here");
+  });
+
   it("reports a failed base build without a comparison", () => {
     expect(renderSummary(undefined)).toContain("base build failed, no comparison");
   });
