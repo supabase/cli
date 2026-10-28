@@ -63,7 +63,7 @@ import { INTERNAL_SCHEMAS } from "../../../command-internal/pg-dump.env.ts";
 import { dumpSchemaScript } from "../../../command-internal/pg-dump.scripts.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
-import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
+import { DbConnectError, DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import {
   DbConnection,
   type DbSession,
@@ -245,7 +245,9 @@ interface SetupOpts {
   readonly failResolve?: boolean;
   readonly failSql?: string;
   readonly networkId?: string;
-  readonly neverHealthyShadow?: boolean;
+  readonly neverConnectableShadow?: boolean;
+  /** Docker reports every container's health check as unable to exec, as on a nested or sandboxed host. */
+  readonly execFailedHealth?: boolean;
   readonly failCreateShadow?: boolean;
   readonly failRemoveShadow?: boolean;
   readonly failSetupJob?: boolean;
@@ -262,7 +264,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const cache = mockLinkedProjectCacheTracked();
 
   const spawner = mockShadowContainerCliSpawner({
-    neverHealthy: opts.neverHealthyShadow ?? false,
+    execFailedHealth: opts.execFailedHealth ?? false,
     failCreate: opts.failCreateShadow ?? false,
     failRemove: opts.failRemoveShadow ?? false,
   });
@@ -283,8 +285,11 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const connectedDatabases: Array<string> = [];
   const connection = Layer.succeed(DbConnection, {
     connect: (cfg: PgConnInput) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         connectedDatabases.push(cfg.database);
+        if (opts.neverConnectableShadow === true) {
+          return yield* new DbConnectError({ message: "connection refused" });
+        }
         const session: DbSession = {
           exec: (sql: string) =>
             Effect.suspend(() => {
@@ -732,6 +737,21 @@ describe("migration squash", () => {
     );
 
     it.effect(
+      "squashes when Docker cannot exec the shadow's health check but the shadow accepts connections",
+      () => {
+        const s = setupHappyPath({ execFailedHealth: true });
+        return Effect.gen(function* () {
+          yield* seedHappyPathMigrations(tmp.current);
+          yield* migrationSquash(flags());
+
+          expect(yield* migrationExists(tmp.current, "0_init.sql")).toBe(false);
+          expect(yield* migrationExists(tmp.current, "1_target.sql")).toBe(true);
+          expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
+        }).pipe(Effect.provide(s.layer));
+      },
+    );
+
+    it.effect(
       "runs the before/after dumps scoped to auth|storage and the full dump excluding the internal schemas",
       () => {
         const s = setupHappyPath();
@@ -912,11 +932,11 @@ describe("migration squash", () => {
     });
 
     it.effect(
-      "fails with a health-check timeout when the shadow never becomes healthy, and removes it",
+      "fails with a health-check timeout when the shadow never becomes connectable, and removes it",
       () => {
         // A zero-second health timeout means zero retries after the first failed
         // probe — an immediate, deterministic timeout with no real/virtual delay.
-        const s = setup(tmp.current, { neverHealthyShadow: true });
+        const s = setup(tmp.current, { neverConnectableShadow: true });
         return Effect.gen(function* () {
           yield* seedMigration(tmp.current, "0_init.sql");
           yield* seedMigration(tmp.current, "1_target.sql");

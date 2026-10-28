@@ -17,7 +17,7 @@ import {
   buildLocalDbContainerInputs,
   type LocalDbContainerInputs,
 } from "../../../command-internal/db-bootstrap/local-container-inputs.ts";
-import { waitForShadowReady } from "../../../command-internal/db-bootstrap/health-check.ts";
+import { waitForPostgresReady } from "../../../command-internal/db-bootstrap/health-check.ts";
 import {
   acquireShadowDatabase,
   peekShadowBaseline,
@@ -249,7 +249,7 @@ export const pgDeltaNextShadowLayer = Layer.effect(
       );
 
     const awaitShadowReady = (input: NativeShadowInput, handle: ShadowAcquiredHandle) =>
-      waitForShadowReady(input.spawner, handle.containerId, shadowConnConfig(input.base), {
+      waitForPostgresReady(input.spawner, handle.containerId, shadowConnConfig(input.base), {
         timeoutSeconds: input.base.healthTimeoutSeconds,
         image: input.base.image,
       });

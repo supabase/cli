@@ -10,8 +10,11 @@ import { parse as parseDotenv } from "dotenv";
 import { Effect, FileSystem, Option, Path, Predicate, Redacted, Result, Schema } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
+import { shouldSearchAncestors } from "../../../command-internal/workdir-search.ts";
+import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -26,6 +29,7 @@ import {
   SecretsSetInputError,
   SecretsSetNetworkError,
   SecretsSetUnexpectedStatusError,
+  SecretsSetWorkdirError,
 } from "../secrets.errors.ts";
 import type { SecretsSetFlags } from "./set.command.ts";
 
@@ -92,8 +96,14 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const runtimeInfo = yield* RuntimeInfo;
+  const cliSettings = yield* CommandSettings;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+
+  yield* validateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
+    Effect.mapError((error) => new SecretsSetWorkdirError({ message: error.message })),
+    Effect.tapError(() => telemetryState.flush),
+  );
 
   const { ref } = yield* resolver.resolve(flags.projectRef);
 
@@ -103,6 +113,8 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
     // while unresolved `env(VAR)` references stay plain strings, so `Redacted.isRedacted`
     // distinguishes them.
     const merged = new Map<string, string>();
+    /* Defaulted: search from cwd so a nearer config.json beats the TOML-only workdir walk. */
+    const configRoot = cliSettings.explicitWorkdir ? cliSettings.workdir : runtimeInfo.cwd;
     // A malformed config.toml (or sibling .env/.env.local) is swallowed here (logged, not
     // fatal) and proceeds with empty config-sourced secrets — env-file and positional-arg
     // secrets still work.
@@ -111,9 +123,10 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
     // so a schema-decode error on a remote target recovers that remote's override, not the base
     // document. `goViperCompat: true` enables the duplicate-project_id/format checks needed for
     // the `DuplicateRemoteProjectIdError` catch below to ever fire.
-    const loadedConfig = yield* loadCliConfig(runtimeInfo.cwd, {
+    const loadedConfig = yield* loadCliConfig(configRoot, {
       projectRef: ref,
       goViperCompat: true,
+      search: shouldSearchAncestors(cliSettings),
     }).pipe(
       Effect.flatMap((loaded) => {
         if (loaded === null) {
@@ -169,8 +182,9 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
     );
     if (loadedConfig !== null) {
       const projectEnv = yield* loadCliProjectEnvironment({
-        cwd: runtimeInfo.cwd,
+        cwd: configRoot,
         baseEnv: process.env,
+        search: shouldSearchAncestors(cliSettings),
       });
       if (projectEnv !== null) {
         const resolved = yield* resolveCliConfigSubtree(

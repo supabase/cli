@@ -24,6 +24,7 @@ import {
   jsonResponse,
   mockCommandSettings,
   mockCommandPlatformApi,
+  mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
@@ -79,9 +80,15 @@ interface SetupOpts {
   status?: number;
   network?: "fail";
   env?: Record<string, string | undefined>;
+  /* Temp-root subdirectories for the process cwd and an explicit `--workdir`. */
+  cwd?: string;
+  workdir?: string;
 }
 
 const tempRoot = useTempWorkdir("supabase-secrets-set-int-");
+
+const underTemp = (dir: string | undefined) =>
+  dir === undefined ? tempRoot.current : `${tempRoot.current}/${dir}`;
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
@@ -90,20 +97,25 @@ function setup(opts: SetupOpts = {}) {
     response: { status: opts.status ?? 201, body: null },
     network: opts.network,
   });
-  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+  const cliSettings = mockCommandSettings({
+    workdir: underTemp(opts.workdir),
+    explicitWorkdir: opts.workdir !== undefined,
+  });
   const debugLogger = mockDebugLoggerTracked();
+  const telemetry = mockTelemetryStateTracked();
   const layer = Layer.mergeAll(
     buildTestRuntime({
       out,
       api,
       cliSettings,
+      telemetry: telemetry.layer,
       goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
     }),
-    mockRuntimeInfo({ cwd: tempRoot.current }),
+    mockRuntimeInfo({ cwd: underTemp(opts.cwd) }),
     processEnvLayer(opts.env ?? {}),
     debugLogger.layer,
   );
-  return { layer, out, api, debugLogger };
+  return { layer, out, api, debugLogger, telemetry };
 }
 
 const tempPath = (...segments: ReadonlyArray<string>) =>
@@ -358,6 +370,91 @@ SHARED = "config-shared"
             { name: "SHARED", value: "cli-shared" },
           ]),
         );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("uses the --workdir project's config and .env, not the process cwd's", () => {
+    const { layer, api } = setup({ cwd: "other", workdir: "app" });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(yield* tempPath("other", "supabase"), { recursive: true });
+      yield* fs.makeDirectory(yield* tempPath("app", "supabase"), { recursive: true });
+      yield* writeTempFile("other/supabase/config.toml", '[edge_runtime.secrets]\nLEAK = "cwd"\n');
+      yield* writeTempFile("other/supabase/.env", "TOKEN_VAL=cwd-token\nCWD_ONLY_VAL=cwd-only\n");
+      yield* writeTempFile(
+        "app/supabase/config.toml",
+        '[edge_runtime.secrets]\nPLAIN = "workdir"\nTOKEN = "env(TOKEN_VAL)"\nCWD_ONLY = "env(CWD_ONLY_VAL)"\n',
+      );
+      yield* writeTempFile("app/supabase/.env", "TOKEN_VAL=workdir-token\n");
+      yield* writeTempFile("other/args.env", "FROM_FILE=cwd-relative\n");
+      yield* secretsSet({
+        projectRef: Option.none(),
+        envFile: Option.some("args.env"),
+        secrets: [],
+      });
+      expect(api.requests[0]?.body).toEqual([
+        { name: "PLAIN", value: "workdir" },
+        { name: "TOKEN", value: "workdir-token" },
+        { name: "FROM_FILE", value: "cwd-relative" },
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("uses neither a parent project nor the cwd project from an explicit --workdir", () => {
+    const { layer, api } = setup({ cwd: "other", workdir: "app/nested" });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(yield* tempPath("app", "nested"), { recursive: true });
+      yield* fs.makeDirectory(yield* tempPath("app", "supabase"), { recursive: true });
+      yield* fs.makeDirectory(yield* tempPath("other", "supabase"), { recursive: true });
+      yield* writeTempFile("app/supabase/config.toml", '[edge_runtime.secrets]\nPARENT = "x"\n');
+      yield* writeTempFile("other/supabase/config.toml", '[edge_runtime.secrets]\nLEAK = "cwd"\n');
+      const exit = yield* Effect.exit(
+        secretsSet({ projectRef: Option.none(), envFile: Option.none(), secrets: [] }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("SecretsNoArgumentsError");
+      }
+      expect(api.requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fails before any request when the explicit --workdir does not exist", () => {
+    const { layer, api, telemetry } = setup({ workdir: "missing" });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        secretsSet({
+          projectRef: Option.some("invalid"),
+          envFile: Option.none(),
+          secrets: ["FOO=bar"],
+        }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("SecretsSetWorkdirError");
+      }
+      expect(api.requests).toHaveLength(0);
+      expect(telemetry.flushed).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "without --workdir, uses the nearest project config even when it is config.json",
+    () => {
+      const { layer, api } = setup({ cwd: "app/nested" });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.makeDirectory(yield* tempPath("app", "nested"), { recursive: true });
+        yield* fs.makeDirectory(yield* tempPath("app", "supabase"), { recursive: true });
+        yield* writeConfig('[edge_runtime.secrets]\nPARENT = "x"\n');
+        yield* writeTempFile(
+          "app/supabase/config.json",
+          '{"edge_runtime":{"secrets":{"CHILD":"nearest"}}}',
+        );
+        yield* secretsSet({ projectRef: Option.none(), envFile: Option.none(), secrets: [] });
+        expect(api.requests[0]?.body).toEqual([{ name: "CHILD", value: "nearest" }]);
       }).pipe(Effect.provide(layer));
     },
   );

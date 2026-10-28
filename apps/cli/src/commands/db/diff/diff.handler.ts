@@ -45,7 +45,7 @@ import {
   stackWithShadowDatabase,
 } from "../../../command-internal/stack-shadow.ts";
 import { isLocalDbRunning } from "../../../command-internal/db-bootstrap/local-db-running.ts";
-import { waitForHealthyServices } from "../../../command-internal/db-bootstrap/health-check.ts";
+import { waitForPostgresReady } from "../../../command-internal/db-bootstrap/health-check.ts";
 import { withShadowDatabase } from "../../../command-internal/db-bootstrap/shadow-cache.ts";
 import {
   createShadowDatabase,
@@ -658,7 +658,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
           createShadowDatabase(spawner, shadowBase),
           (handle) =>
             Effect.gen(function* () {
-              yield* waitForHealthyServices(spawner, [handle.containerId], {
+              yield* waitForPostgresReady(spawner, handle.containerId, shadowConnConfig, {
                 timeoutSeconds: shadowBase.healthTimeoutSeconds,
               });
               yield* migrateShadowDatabase(spawner, {

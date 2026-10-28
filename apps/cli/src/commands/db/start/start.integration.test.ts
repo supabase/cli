@@ -2,8 +2,10 @@ import { BunServices } from "@effect/platform-bun";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import {
   Cause,
+  Deferred,
   Effect,
   Exit,
+  Fiber,
   FileSystem,
   Layer,
   Option,
@@ -16,6 +18,7 @@ import {
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vitest";
 
 import {
@@ -23,6 +26,7 @@ import {
   mockProcessControl,
   mockRuntimeInfo,
 } from "../../../../tests/helpers/mocks.ts";
+import { EXEC_FAILED_STATE } from "../../../../tests/helpers/docker-health.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
 import {
@@ -176,7 +180,7 @@ function volumePruneWasAttempted(spawned: ReadonlyArray<SpawnRecord>): boolean {
 }
 
 /** Stateful default route: only created containers inspect successfully, matching Docker across initial state detection and post-create health waits. Existing volume by default (a restart). */
-function defaultRoute(opts: { readonly neverHealthy?: boolean } = {}) {
+function defaultRoute() {
   const created = new Set<string>();
   return (args: ReadonlyArray<string>): RouteResult => {
     if (args[0] === "image" && args[1] === "inspect") return { exitCode: 0 };
@@ -196,7 +200,6 @@ function defaultRoute(opts: { readonly neverHealthy?: boolean } = {}) {
       if (!created.has(id)) {
         return { exitCode: 1, stderr: [`Error: No such container: ${id}`] };
       }
-      if (opts.neverHealthy === true) return { stdout: [STARTING_STATE] };
       return { stdout: [HEALTHY_STATE] };
     }
     if (args[0] === "logs") return { exitCode: 0 };
@@ -214,6 +217,18 @@ function freshVolumeRoute(
       return { exitCode: 1, stderr: [`Error: No such volume: ${args[2] ?? ""}`] };
     }
     return base(args);
+  };
+}
+
+/** Docker's HEALTHCHECK can never launch on this host, so every created container reports exec-failed health. */
+function execFailedHealthRoute(
+  base: (args: ReadonlyArray<string>) => RouteResult,
+): (args: ReadonlyArray<string>) => RouteResult {
+  return (args) => {
+    const result = base(args);
+    return args[0] === "container" && args[1] === "inspect" && result.stdout?.[0] === HEALTHY_STATE
+      ? { stdout: [EXEC_FAILED_STATE] }
+      : result;
   };
 }
 
@@ -311,8 +326,10 @@ interface SetupOpts {
   readonly experimental?: boolean;
   /** `--debug`. Defaults to `false`. */
   readonly debug?: boolean;
-  /** Number of initial `DbConnection.connect` attempts that fail before succeeding. */
+  /** Number of consecutive `DbConnection.connect` attempts that fail, from `connectFailuresStartAt`. */
   readonly connectFailures?: number;
+  /** 1-based attempt number of the first failing connect. Attempt 1 is the Postgres readiness probe. Defaults to 1. */
+  readonly connectFailuresStartAt?: number;
   /** Whether the mocked connect failures are dial-level (`retryable`). Defaults to `true`. */
   readonly connectFailuresRetryable?: boolean;
   /** Record catalog apply targets instead of the default noop. */
@@ -353,11 +370,15 @@ function setup(opts: SetupOpts = {}) {
 
   let connectAttempts = 0;
   const connectFailures = opts.connectFailures ?? 0;
+  const connectFailuresStartAt = opts.connectFailuresStartAt ?? 1;
   const dbConnection = Layer.succeed(DbConnection, {
     connect: () =>
       Effect.suspend(() => {
         connectAttempts += 1;
-        if (connectAttempts <= connectFailures) {
+        if (
+          connectAttempts >= connectFailuresStartAt &&
+          connectAttempts < connectFailuresStartAt + connectFailures
+        ) {
           return Effect.fail(
             new DbConnectError({
               message:
@@ -500,10 +521,14 @@ describe("db start", () => {
   it.live(
     "fresh volume: retries the host connect while the published port is not yet reachable (#6136)",
     () => {
-      const s = setup({ route: freshVolumeRoute(defaultRoute()), connectFailures: 2 });
+      const s = setup({
+        route: freshVolumeRoute(defaultRoute()),
+        connectFailuresStartAt: 2,
+        connectFailures: 2,
+      });
       return Effect.gen(function* () {
         yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(s.layer));
-        expect(s.connectAttempts).toBe(3);
+        expect(s.connectAttempts).toBe(4);
         expect(yield* readCurrentBranch(tempRoot.current)).toBe("main");
       });
     },
@@ -513,13 +538,14 @@ describe("db start", () => {
   it.effect("fresh volume: a non-dial connect failure is not retried", () => {
     const s = setup({
       route: freshVolumeRoute(defaultRoute()),
+      connectFailuresStartAt: 2,
       connectFailures: 1,
       connectFailuresRetryable: false,
     });
     return Effect.gen(function* () {
       const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(s.layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(s.connectAttempts).toBe(1);
+      expect(s.connectAttempts).toBe(2);
     });
   });
 
@@ -711,13 +737,63 @@ describe("db start", () => {
     });
   });
 
+  it.effect("starts when Docker's health check cannot exec but the host can connect", () => {
+    const s = setup({ route: execFailedHealthRoute(freshVolumeRoute(defaultRoute())) });
+    return Effect.gen(function* () {
+      yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(s.layer));
+      expect(s.connectAttempts).toBeGreaterThan(0);
+      expect(rollbackWasAttempted(s.child.spawned)).toBe(false);
+      expect(yield* readCurrentBranch(tempRoot.current)).toBe("main");
+    });
+  });
+
+  it.effect("waits for Docker's first health verdict once the database accepts connections", () => {
+    const settleStarted = Deferred.makeUnsafe<void>();
+    const settleDone = Deferred.makeUnsafe<void>();
+    const base = freshVolumeRoute(defaultRoute());
+    let inspectsAfterConnect = 0;
+    const s = setup({
+      route: (args) => {
+        const result = base(args);
+        const isDbInspect =
+          args[0] === "container" &&
+          args[1] === "inspect" &&
+          result.stdout?.[0] === HEALTHY_STATE &&
+          s.connectAttempts > 0;
+        if (!isDbInspect) return result;
+        inspectsAfterConnect += 1;
+        Deferred.doneUnsafe(settleStarted, Effect.void);
+        if (inspectsAfterConnect < 3) return { stdout: [STARTING_STATE] };
+        Deferred.doneUnsafe(settleDone, Effect.void);
+        return result;
+      },
+    });
+    return Effect.gen(function* () {
+      const fiber = yield* dbStart(DEFAULT_FLAGS).pipe(
+        Effect.provide(s.layer),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Effect.raceFirst(Deferred.await(settleStarted), Fiber.await(fiber));
+      // Small steps: the settle's own 15s cap must stay far away however many scheduler turns
+      // each poll needs before it registers its next sleep.
+      while (fiber.pollUnsafe() === undefined && !(yield* Deferred.isDone(settleDone))) {
+        yield* TestClock.adjust("100 millis");
+      }
+      const exit = yield* Fiber.await(fiber);
+
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(inspectsAfterConnect).toBe(3);
+    });
+  });
+
   it.live("a health-check timeout without --from-backup fails the command and rolls back", () => {
     // `db.health_timeout` (unlike the generic 30s `serviceTimeout` every other service waits on)
     // is a real config.toml-configurable seam — this keeps the scenario fast instead of waiting
     // out the real 2m default.
     const { layer, child } = setup({
       configContents: 'project_id = "test"\n[db]\nhealth_timeout = "1s"\n',
-      route: freshVolumeRoute(defaultRoute({ neverHealthy: true })),
+      route: freshVolumeRoute(defaultRoute()),
+      connectFailures: Number.POSITIVE_INFINITY,
     });
     return Effect.gen(function* () {
       const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
@@ -737,7 +813,8 @@ describe("db start", () => {
       // it first.
       const { layer, child } = setup({
         configContents: 'project_id = "test"\n[db]\nhealth_timeout = "1s"\n',
-        route: freshVolumeRoute(defaultRoute({ neverHealthy: true })),
+        route: freshVolumeRoute(defaultRoute()),
+        connectFailures: Number.POSITIVE_INFINITY,
         projectEnvContents: "SUPABASE_DEBUG=true\n",
       });
       // This log write goes straight to the real process stderr, never the mocked Output
@@ -769,7 +846,8 @@ describe("db start", () => {
     () => {
       const { layer, child } = setup({
         configContents: 'project_id = "test"\n[db]\nhealth_timeout = "1s"\n',
-        route: freshVolumeRoute(defaultRoute({ neverHealthy: true })),
+        route: freshVolumeRoute(defaultRoute()),
+        connectFailures: Number.POSITIVE_INFINITY,
       });
       return Effect.gen(function* () {
         // The stderr log dump on timeout is covered by the shared health-check.ts suite; this
