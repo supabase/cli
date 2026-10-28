@@ -71,7 +71,33 @@ describe("renderSummary", () => {
   });
 });
 
+describe("renderSummary without API counts", () => {
+  it("says API calls were not counted and keeps table cells intact when an id contains a pipe", () => {
+    const noTrace = (wallMs: number): RunSample => ({ wallMs, exitCode: 0 });
+    const markdown = renderSummary({
+      ...report([
+        {
+          id: "a|b",
+          args: ["x"],
+          base: runs(5, (i) => noTrace(30 + i)),
+          branch: runs(5, (i) => noTrace(30 + i)),
+        },
+      ]),
+      trace: false,
+    });
+
+    expect(markdown).toContain("API calls were not counted.");
+    expect(markdown).toContain("a\\|b");
+  });
+});
+
 describe("parseSummaryArgs", () => {
+  it("rejects an unknown base build state", () => {
+    expect(() => parseSummaryArgs(["--report", "r.json", "--base-build", "maybe"])).toThrow(
+      "--base-build",
+    );
+  });
+
   it("needs a report unless the base build failed", () => {
     expect(() => parseSummaryArgs([])).toThrow();
     expect(parseSummaryArgs(["--base-build", "failed"])).toEqual({

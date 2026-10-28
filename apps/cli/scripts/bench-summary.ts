@@ -5,6 +5,7 @@
  * `GITHUB_STEP_SUMMARY` when set, otherwise to stdout.
  */
 import process from "node:process";
+import { parseArgs } from "node:util";
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { Config, Console, Effect, FileSystem, Option, Stdio } from "effect";
 import {
@@ -25,17 +26,16 @@ export interface SummaryOptions {
 
 /** Parses argv; throws on an unknown `--base-build` or a missing report for a successful base. */
 export function parseSummaryArgs(argv: ReadonlyArray<string>): SummaryOptions {
-  const valueOf = (flag: string) => {
-    const index = argv.indexOf(flag);
-    return index === -1 ? undefined : argv[index + 1];
-  };
-  const baseBuild = valueOf("--base-build") ?? "ok";
+  const { values } = parseArgs({
+    args: [...argv],
+    options: { report: { type: "string" }, "base-build": { type: "string", default: "ok" } },
+  });
+  const baseBuild = values["base-build"];
   if (baseBuild !== "ok" && baseBuild !== "failed") {
     throw new Error('--base-build must be "ok" or "failed"');
   }
-  const report = valueOf("--report");
-  if (report === undefined && baseBuild === "ok") throw new Error(USAGE);
-  return { report, baseBuild };
+  if (values.report === undefined && baseBuild === "ok") throw new Error(USAGE);
+  return { report: values.report, baseBuild };
 }
 
 const BASE_FAILED = "base build failed, no comparison";
@@ -44,11 +44,13 @@ const sign = (value: number) => (value >= 0 ? "+" : "");
 const ms = (value: number) => `${value} ms`;
 const range = (build: WorkloadAnalysis["base"]) => `${build.timing.min}-${build.timing.max} ms`;
 
+const cell = (value: string) => value.replaceAll("|", "\\|");
+
 function table(header: ReadonlyArray<string>, rows: ReadonlyArray<ReadonlyArray<string>>): string {
   return [
     `| ${header.join(" | ")} |`,
     `| ${header.map(() => "---").join(" | ")} |`,
-    ...rows.map((row) => `| ${row.join(" | ")} |`),
+    ...rows.map((row) => `| ${row.map(cell).join(" | ")} |`),
   ].join("\n");
 }
 
@@ -103,7 +105,11 @@ function phaseSection(analyses: ReadonlyArray<WorkloadAnalysis>): string {
       ];
     }),
   );
-  if (rows.length === 0) return "No workload moved beyond noise, so there are no phase deltas.";
+  if (rows.length === 0) {
+    return analyses.some((analysis) => analysis.verdict === "not comparable")
+      ? "No phase deltas: no workload had a timing verdict, and some were not comparable."
+      : "No workload moved beyond noise, so there are no phase deltas.";
+  }
   return table(["Workload", "Span", "Change", "Base -> branch"], rows);
 }
 

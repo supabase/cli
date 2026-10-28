@@ -79,12 +79,12 @@ describe("buildRunPlan", () => {
     const plan = buildRunPlan(2, 1);
 
     expect(plan.map((run) => [run.build, run.warmup])).toEqual([
-      ["base", true],
       ["branch", true],
+      ["base", true],
+      ["base", false],
+      ["branch", false],
       ["branch", false],
       ["base", false],
-      ["base", false],
-      ["branch", false],
     ]);
   });
 });

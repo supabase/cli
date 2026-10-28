@@ -10,24 +10,14 @@ import { tmpdir } from "node:os";
 import process from "node:process";
 import { parseArgs } from "node:util";
 import { BunPath, BunRuntime, BunServices } from "@effect/platform-bun";
-import {
-  Clock,
-  Console,
-  Effect,
-  FileSystem,
-  Layer,
-  Option,
-  Path,
-  Ref,
-  Schema,
-  Stdio,
-} from "effect";
+import { Clock, Console, Effect, FileSystem, Layer, Option, Path, Ref, Stdio } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import {
   analyzeWorkload,
   BenchReport,
   classifyHttpSpans,
+  encodeBenchReport,
   collectFlags,
   parseWorkloadManifest,
   summarizeSpanRun,
@@ -46,7 +36,7 @@ const USAGE =
   'usage: bun scripts/bench-cli.ts --base <path> --branch <path> [--runs N] [--warmup N] [--command "<args>"]... [--workloads <file.json>] [--api-url <url>] [--cwd-setup init] [--trace] [--json] [--out <file>] [--cpu-prof] [--update-check]\n' +
   "  --command splits on whitespace; it does not support shell quoting. Use --workloads for quoted arguments.\n" +
   "  --workloads reads a manifest of workloads and cannot be combined with --command or --cwd-setup.\n" +
-  "  --api-url points every launch at a replay server through a profile file, and counts Management API calls; it requires --trace.\n" +
+  "  --api-url points every launch at a replay server through a profile file, and counts Management API calls from the traced launches; it requires --trace.\n" +
   "  --update-check keeps the GitHub release check, which otherwise adds network time to every launch.";
 
 export interface BenchOptions {
@@ -183,13 +173,13 @@ export interface PlannedRun {
   readonly iteration: number;
 }
 
-/** Launches base and branch once per iteration, swapping which goes first on odd iterations. */
+/** Launches base and branch once per iteration, swapping which goes first on every other measured iteration. */
 export function buildRunPlan(runs: number, warmup: number): ReadonlyArray<PlannedRun> {
   const plan: Array<PlannedRun> = [];
   for (let iteration = 0; iteration < runs + warmup; iteration++) {
     const isWarmup = iteration < warmup;
     const order: ReadonlyArray<Build> =
-      iteration % 2 === 0 ? ["base", "branch"] : ["branch", "base"];
+      Math.abs(iteration - warmup) % 2 === 0 ? ["base", "branch"] : ["branch", "base"];
     for (const build of order) plan.push({ build, warmup: isWarmup, iteration });
   }
   return plan;
@@ -319,7 +309,11 @@ const prepareLaunch = (options: BenchOptions, workload: Workload, binary: string
     return { projectDir, env };
   });
 
-const runWorkloadBench = (options: BenchOptions, workload: Workload, profiled: Ref.Ref<boolean>) =>
+export const runWorkloadBench = (
+  options: BenchOptions,
+  workload: Workload,
+  profiled: Ref.Ref<boolean>,
+) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -479,8 +473,6 @@ function formatReport(report: BenchReport): string {
   return lines.join("\n");
 }
 
-const encodeReport = Schema.encodeEffect(Schema.fromJsonString(BenchReport, { space: 2 }));
-
 const fileSize = (binary: string) =>
   FileSystem.FileSystem.use((fs) => fs.stat(binary)).pipe(
     Effect.map((info) => Number(info.size)),
@@ -540,10 +532,10 @@ const main = Effect.gen(function* () {
 
   if (options.out !== undefined) {
     const fs = yield* FileSystem.FileSystem;
-    yield* fs.writeFileString(options.out, yield* encodeReport(report));
+    yield* fs.writeFileString(options.out, yield* encodeBenchReport(report));
   }
 
-  yield* Console.log(options.json ? yield* encodeReport(report) : formatReport(report));
+  yield* Console.log(options.json ? yield* encodeBenchReport(report) : formatReport(report));
 });
 
 if (import.meta.main) {

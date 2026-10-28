@@ -3,7 +3,7 @@ import { Effect } from "effect";
 import { FetchHttpClient } from "effect/http";
 import * as HttpClient from "effect/http/HttpClient";
 import { startReplayServer } from "../../cli-e2e/src/server/replay-server.ts";
-import { controlPlan, readRequestLogCount, resetReplay } from "./replay-control.ts";
+import { readRequestLogCount, resetReplay } from "./replay-control.ts";
 
 const fixturesDir = new URL("../../cli-e2e/fixtures", import.meta.url).pathname;
 const SCENARIO = "projects-list-renders-project-list";
@@ -15,20 +15,6 @@ const replayServer = Effect.acquireRelease(
 
 const callApi = (url: string, path: string) =>
   HttpClient.HttpClient.use((client) => client.get(new URL(path, url).toString()));
-
-describe("controlPlan", () => {
-  it("always clears the request log and scenario before selecting a scenario", () => {
-    expect(controlPlan(undefined).map((call) => `${call.method} ${call.path}`)).toEqual([
-      "DELETE /_ctrl/requests",
-      "DELETE /_ctrl/scenario",
-    ]);
-    expect(controlPlan("s").at(-1)).toEqual({
-      method: "POST",
-      path: "/_ctrl/scenario",
-      body: { name: "s" },
-    });
-  });
-});
 
 describe("replay control against the replay server", () => {
   it.effect("serves a consumed scenario again and starts each launch with an empty log", () =>

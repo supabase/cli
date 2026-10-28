@@ -5,6 +5,8 @@ import {
   analyzeWorkload,
   classifyHttpSpans,
   collectFlags,
+  decodeBenchReport,
+  encodeBenchReport,
   compareSpans,
   deltaOf,
   exitCodesDiffer,
@@ -13,6 +15,7 @@ import {
   summarizeTimings,
   timingVerdict,
   validateWorkloads,
+  type BenchReport,
   type RunSample,
   type SpanRunSummary,
   type WorkloadReport,
@@ -117,7 +120,7 @@ describe("compareSpans", () => {
 });
 
 describe("workload manifest", () => {
-  const entry = { id: "w", args: ["init"], cwdSetup: "none" };
+  const entry = { id: "w", args: ["init"], cwdSetup: "none" } as const;
 
   it.effect("decodes entries and rejects an unknown cwdSetup", () =>
     Effect.gen(function* () {
@@ -149,7 +152,7 @@ describe("workload manifest", () => {
       'duplicate workload id "b"',
     ]);
     expect(
-      validateWorkloads([{ ...entry, scenario: "s" }] as never, { apiUrl: "http://127.0.0.1:1" }),
+      validateWorkloads([{ ...entry, scenario: "s" }], { apiUrl: "http://127.0.0.1:1" }),
     ).toEqual([]);
   });
 });
@@ -356,4 +359,85 @@ describe("analyzeWorkload and collectFlags", () => {
     expect(same.verdict).toBe("within noise");
     expect(same.phaseRows).toEqual([]);
   });
+});
+
+describe("classifyHttpSpans host matching", () => {
+  it("matches a bracketed IPv6 API URL against the unbracketed span address", () => {
+    const summary = classifyHttpSpans(
+      [httpSpan("GET", "/v1/x", 4010, 200, "::1")],
+      "http://[::1]:4010",
+    );
+
+    expect(summary.apiCalls).toBe(1);
+    expect(summary.externalCalls).toBe(0);
+  });
+
+  it("counts a call to another host as external even when its port is unknown", () => {
+    const other: ReportSpan = {
+      ...span("GET", 0, 1),
+      http: { method: "GET", path: "/", address: "api.example.com", port: undefined, status: 200 },
+    };
+
+    expect(classifyHttpSpans([other], "http://127.0.0.1:4010").externalCalls).toBe(1);
+  });
+});
+
+describe("more flags", () => {
+  it("explains a missing verdict when there are too few runs", () => {
+    const few = times(3, () => sample(50, { calls: 1 }));
+
+    const flags = collectFlags(analyzeWorkload(workload(few, few), true));
+
+    expect(flags.map((flag) => flag.kind)).toEqual(["insufficient-samples"]);
+  });
+
+  it("flags a traced launch that exits differently from the timed launches", () => {
+    const traced = sample(50, { calls: 1 });
+    const odd: RunSample = { ...traced, trace: { ...traced.trace!, exitCode: 1 } };
+
+    const flags = collectFlags(
+      analyzeWorkload(
+        workload(
+          times(5, () => sample(50, { calls: 1 })),
+          times(5, () => odd),
+        ),
+        true,
+      ),
+    );
+
+    expect(flags.map((flag) => flag.kind)).toContain("traced-exit-differs");
+  });
+});
+
+describe("report JSON", () => {
+  const minimal: BenchReport = {
+    base: "/b",
+    branch: "/c",
+    runs: 5,
+    warmup: 1,
+    trace: false,
+    workloads: [{ id: "w", args: ["x"], base: [{ wallMs: 1, exitCode: 0 }], branch: [] }],
+  };
+  const full: BenchReport = {
+    ...minimal,
+    baseSizeBytes: 10,
+    branchSizeBytes: 11,
+    trace: true,
+    apiUrl: "http://127.0.0.1:1",
+    cpuProfilePath: "/p",
+    workloads: [
+      { ...minimal.workloads[0]!, base: [sample(1, { calls: 1, endpoints: { "GET /a": 1 } })] },
+    ],
+  };
+
+  it.effect.each([
+    { name: "omitted optional fields", report: minimal },
+    { name: "every field", report: full },
+  ])("round-trips a report with $name", ({ report }) =>
+    Effect.gen(function* () {
+      const decoded = yield* decodeBenchReport(yield* encodeBenchReport(report));
+
+      expect(decoded).toEqual(report);
+    }),
+  );
 });

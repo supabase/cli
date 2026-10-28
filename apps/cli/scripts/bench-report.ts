@@ -197,6 +197,7 @@ export function classifyHttpSpans(
   apiUrl: string,
 ): HttpCallSummary {
   const url = new URL(apiUrl);
+  const apiHost = url.hostname.replace(/^\[|\]$/gu, "");
   const apiPort = url.port === "" ? (url.protocol === "https:" ? 443 : 80) : Number(url.port);
   let apiCalls = 0;
   let externalCalls = 0;
@@ -205,7 +206,7 @@ export function classifyHttpSpans(
   for (const span of spans) {
     const http = span.http;
     if (http === undefined) continue;
-    if (http.address !== url.hostname || (http.port !== undefined && http.port !== apiPort)) {
+    if (http.address !== apiHost || (http.port !== undefined && http.port !== apiPort)) {
       externalCalls += 1;
       continue;
     }
@@ -263,7 +264,9 @@ export const BenchReport = Schema.Struct({
 });
 export type BenchReport = typeof BenchReport.Type;
 
-export const decodeBenchReport = Schema.decodeUnknownEffect(Schema.fromJsonString(BenchReport));
+const BenchReportJson = Schema.fromJsonString(BenchReport, { space: 2 });
+export const decodeBenchReport = Schema.decodeUnknownEffect(BenchReportJson);
+export const encodeBenchReport = Schema.encodeEffect(BenchReportJson);
 
 /* Analysis */
 
@@ -440,7 +443,8 @@ export type FlagKind =
   | "trace-incomplete"
   | "non-zero-exit"
   | "exit-codes-differ"
-  | "traced-exit-differs";
+  | "traced-exit-differs"
+  | "insufficient-samples";
 
 export interface Flag {
   readonly workload: string;
@@ -460,6 +464,12 @@ export function collectFlags(analysis: WorkloadAnalysis): ReadonlyArray<Flag> {
   }
   if (baseCalls !== undefined && baseCalls > 0 && branchCalls === 0) {
     add("api-calls-dropped", `base makes ${baseCalls} API calls, branch makes 0`);
+  }
+  if (Math.min(analysis.base.samples, analysis.branch.samples) < VERDICT_MIN_SAMPLES) {
+    add(
+      "insufficient-samples",
+      `fewer than ${VERDICT_MIN_SAMPLES} measured runs, so no timing verdict`,
+    );
   }
   if (analysis.exitCodesDiffer) {
     add("exit-codes-differ", "exit codes differ between builds, so timings are not comparable");
