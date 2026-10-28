@@ -205,12 +205,11 @@ function resolveLeaf(
 }
 
 /**
- * {@link resolveLeaf}, with a fourth fallback tier for the storage feature
- * containers and the OAuth server pair only: the decoded `config`'s
- * schema-materialized value, for the keys (`max_*`, `authorization_url_path`)
- * the local projection prunes entirely once a feature is disabled.
+ * {@link resolveLeaf}, with a fourth fallback tier: the decoded `config`'s
+ * schema-materialized value, for keys the local projection prunes entirely
+ * once a feature is disabled.
  */
-function resolveStorageFeatureLeaf(
+function resolvePrunedLeaf(
   changes: ReadonlyArray<ConfigChange>,
   path: ReadonlyArray<string>,
   remote: ProjectConfig,
@@ -646,28 +645,28 @@ function encodeStorageBodyImpl(input: StorageEncoderInput): PushEncoded<StorageU
   const analyticsChanges = changesUnderPrefix(changes, ["storage", "analytics"]);
   if (analyticsChanges.length > 0) {
     const analyticsPaths = analyticsChanges.map((change) => change.path);
-    const enabledR = resolveStorageFeatureLeaf(
+    const enabledR = resolvePrunedLeaf(
       changes,
       ["storage", "analytics", "enabled"],
       remote,
       local,
       config,
     );
-    const maxNamespacesR = resolveStorageFeatureLeaf(
+    const maxNamespacesR = resolvePrunedLeaf(
       changes,
       ["storage", "analytics", "max_namespaces"],
       remote,
       local,
       config,
     );
-    const maxTablesR = resolveStorageFeatureLeaf(
+    const maxTablesR = resolvePrunedLeaf(
       changes,
       ["storage", "analytics", "max_tables"],
       remote,
       local,
       config,
     );
-    const maxCatalogsR = resolveStorageFeatureLeaf(
+    const maxCatalogsR = resolvePrunedLeaf(
       changes,
       ["storage", "analytics", "max_catalogs"],
       remote,
@@ -701,21 +700,21 @@ function encodeStorageBodyImpl(input: StorageEncoderInput): PushEncoded<StorageU
   const vectorChanges = changesUnderPrefix(changes, ["storage", "vector"]);
   if (vectorChanges.length > 0) {
     const vectorPaths = vectorChanges.map((change) => change.path);
-    const enabledR = resolveStorageFeatureLeaf(
+    const enabledR = resolvePrunedLeaf(
       changes,
       ["storage", "vector", "enabled"],
       remote,
       local,
       config,
     );
-    const maxBucketsR = resolveStorageFeatureLeaf(
+    const maxBucketsR = resolvePrunedLeaf(
       changes,
       ["storage", "vector", "max_buckets"],
       remote,
       local,
       config,
     );
-    const maxIndexesR = resolveStorageFeatureLeaf(
+    const maxIndexesR = resolvePrunedLeaf(
       changes,
       ["storage", "vector", "max_indexes"],
       remote,
@@ -1406,7 +1405,7 @@ function encodeAuthBodyImpl(
     const stored = oauthUnsent.transform(remoteAuthAttributes[oauthUnsent.apiKey]);
     const resolved: LeafResolution =
       stored === undefined
-        ? resolveStorageFeatureLeaf(changes, oauthUnsent.configPath, remote, local, config)
+        ? resolvePrunedLeaf(changes, oauthUnsent.configPath, remote, local, config)
         : { value: stored, source: "remote" };
     body[oauthUnsent.apiKey] = resolved.value;
     pushForced(forced, oauthUnsent.configPath, resolved);
