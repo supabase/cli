@@ -5,13 +5,6 @@
     { "id": "init", "args": ["init"], "cwdSetup": "none" },
     { "id": "migration-new", "args": ["migration", "new", "bench"], "cwdSetup": "init" },
     {
-      "id": "db-query",
-      "args": ["db", "query", "--linked", "SELECT 1"],
-      "cwdSetup": "linked",
-      "projectRef": "replayfixtureprojref",
-      "scenario": "db-query-linked-returns-select-1-result-in-table-format"
-    },
-    {
       "id": "gen-types",
       "args": ["gen", "types", "--lang", "typescript", "--project-id", "replayfixtureprojref"],
       "cwdSetup": "none",

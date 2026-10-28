@@ -264,8 +264,6 @@ const baseLaunchEnv = (
         SUPABASE_PROFILE: profilePath,
         SUPABASE_ACCESS_TOKEN: BENCH_ACCESS_TOKEN,
         SUPABASE_TELEMETRY_DISABLED: "1",
-        // With a pooler-url file present, a set password skips the interactive login-role flow.
-        SUPABASE_DB_PASSWORD: "bench-placeholder-password",
       }),
 });
 
@@ -296,15 +294,6 @@ const prepareLaunch = (options: BenchOptions, workload: Workload, binary: string
           `warning: ${binary} init exited ${init.exitCode} in ${projectDir}; the run may not reflect a real project`,
         );
       }
-    }
-    if (workload.cwdSetup === "linked" && workload.projectRef !== undefined) {
-      const tempDir = path.join(projectDir, "supabase", ".temp");
-      yield* fs.makeDirectory(tempDir, { recursive: true });
-      yield* fs.writeFileString(path.join(tempDir, "project-ref"), workload.projectRef);
-      yield* fs.writeFileString(
-        path.join(tempDir, "pooler-url"),
-        `postgresql://postgres.${workload.projectRef}:[YOUR-PASSWORD]@aws-0-eu-central-1.pooler.supabase.com:6543/postgres`,
-      );
     }
     return { projectDir, env };
   });

@@ -136,10 +136,9 @@ describe("workload manifest", () => {
     }),
   );
 
-  it("requires a projectRef for linked workloads, --api-url for scenarios, and unique ids", () => {
+  it("requires --api-url for scenarios and unique ids", () => {
     const problems = validateWorkloads(
       [
-        { id: "a", args: [], cwdSetup: "linked" },
         { id: "b", args: [], cwdSetup: "none", scenario: "s" },
         { id: "b", args: [], cwdSetup: "none" },
       ],
@@ -147,7 +146,6 @@ describe("workload manifest", () => {
     );
 
     expect(problems).toEqual([
-      'workload "a" uses cwdSetup "linked" and needs a projectRef',
       'workload "b" names a scenario and needs --api-url',
       'duplicate workload id "b"',
     ]);

@@ -103,10 +103,9 @@ bun apps/cli/scripts/bench-summary.ts --report /tmp/report.json
 ```
 
 `--workloads` replaces repeated `--command` flags. `apps/cli/bench/workloads.pr.json` lists entries
-with an `id`, an `args` array (so quoting works), a `cwdSetup` of `none`, `init`, or `linked`, and
-optionally a replay `scenario` and a `projectRef`. `linked` runs `init`, then writes the files a
-linked project has (`supabase/.temp/project-ref` and a stub `pooler-url`), so `--linked` commands
-resolve a project without a database. Setup runs outside the timed region.
+with an `id`, an `args` array (so quoting works), a `cwdSetup` of `none` or `init`, and optionally
+a replay `scenario`. `init` runs `supabase init` in the launch's project directory first. Setup runs
+outside the timed region.
 
 `--api-url` (which requires `--trace`) points every launch at the replay server by writing a profile
 file into the launch's fresh `SUPABASE_HOME` and setting `SUPABASE_PROFILE`, plus a dummy access
@@ -146,7 +145,6 @@ also refreshes the linked-project cache, so it makes two calls):
 | ------------------------------------------ | ---------------------------------------------------------------------- |
 | `version`, `help`, `init`, `migration-new` | 0                                                                      |
 | `projects-list`                            | 1: `GET /v1/projects`                                                  |
-| `db-query`                                 | 2: `POST /v1/projects/{ref}/database/query`, `GET /v1/projects/{ref}`  |
 | `gen-types`                                | 2: `GET /v1/projects/{ref}/types/typescript`, `GET /v1/projects/{ref}` |
 | `functions-list`                           | 2: `GET /v1/projects/{ref}/functions`, `GET /v1/projects/{ref}`        |
 
@@ -162,7 +160,7 @@ count; the p50 and p90 duration of successful runs, the CI share, and the agent 
 Only commands that run with no Docker, no database, no real network, and no prompts are kept, and
 every Go-proxied command is dropped. One command is taken from each class (startup, local files,
 API read without a ref, API calls with a ref, API read of a large response) rather than the top N
-overall, capped at 8 workloads to fit the time budget. Refresh the list each quarter, or after the
+overall, capped to fit the time budget. Refresh the list each quarter, or after the
 v3 release with the version regex updated:
 
 ```sql
@@ -179,13 +177,14 @@ GROUP BY cmd ORDER BY users DESC LIMIT 40
 
 Caveats:
 
-- Flags differ between branches. The manifest uses the `develop` form (`--linked`, `--project-ref`,
+- Flags differ between branches. The manifest uses the `develop` form (`--project-ref`,
   `--project-id`). `next` accepts these as deprecated aliases until v4 and prints a warning in both
-  builds, but `next` requires `db query --remote --read-only` and sends `read_only: true`, which
-  the `develop` replay scenario does not match, so the `db-query` workload exits non-zero on `next`
-  with the `develop` manifest. After the v3 cut, switch the manifest to `--remote[=<ref>]` and the
-  `db-query-remote-*` scenario.
-- Telemetry records the command path but no flags or arguments, so `SELECT 1`, `bench`, and the
+  builds. After the v3 cut, switch the manifest to `--remote[=<ref>]`.
+- `db query` is not benchmarked yet, although it is one of the most used commands. `next` requires
+  `db query --remote --read-only`, whose request the `develop` replay scenario does not match, so one
+  manifest cannot run it on both branches. Add it after the v3 cut with the `db-query-remote-*`
+  scenario.
+- Telemetry records the command path but no flags or arguments, so `bench` and the
   TypeScript target only approximate real use.
 - `device_id` counts machines, not people, short-lived CI runners inflate it, and a large share of
   runs come from agents. Telemetry durations include network, Docker, and wait time, so they guided

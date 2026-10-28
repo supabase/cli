@@ -145,9 +145,8 @@ export function exitCodesDiffer(
 const Workload = Schema.Struct({
   id: Schema.NonEmptyString,
   args: Schema.Array(Schema.String),
-  cwdSetup: Schema.Literals(["none", "init", "linked"]),
+  cwdSetup: Schema.Literals(["none", "init"]),
   scenario: Schema.optionalKey(Schema.String),
-  projectRef: Schema.optionalKey(Schema.String),
 });
 export type Workload = typeof Workload.Type;
 
@@ -165,9 +164,6 @@ export function validateWorkloads(
   for (const workload of workloads) {
     if (seen.has(workload.id)) problems.push(`duplicate workload id "${workload.id}"`);
     seen.add(workload.id);
-    if (workload.cwdSetup === "linked" && workload.projectRef === undefined) {
-      problems.push(`workload "${workload.id}" uses cwdSetup "linked" and needs a projectRef`);
-    }
     if (workload.scenario !== undefined && context.apiUrl === undefined) {
       problems.push(`workload "${workload.id}" names a scenario and needs --api-url`);
     }

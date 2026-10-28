@@ -31,7 +31,7 @@ describe("PR workload manifest", () => {
         const fixture = yield* fs.readFileString(
           `${scenariosDir}${workload.scenario}/interactions.json`,
         );
-        const ref = workload.projectRef ?? workload.args.find((arg) => arg.startsWith("replay"));
+        const ref = workload.args.find((arg) => arg.startsWith("replay"));
         if (ref !== undefined) expect(fixture).toContain(`/v1/projects/${ref}`);
       }
     }).pipe(Effect.provide(BunServices.layer)),
