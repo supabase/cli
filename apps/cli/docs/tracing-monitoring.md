@@ -90,7 +90,8 @@ rm -f /tmp/cli-base/mise.toml /tmp/cli-base/mise.lock # if mise refuses the untr
 the e2e replay fixtures. It builds the pull request and the base tip it merges into with `pnpm --filter supabase run build:binary`, runs both
 through `bench-cli.ts` against a local replay server, and writes a job summary with `bench-summary.ts`.
 The job is report only: it never blocks a pull request, and a benchmark problem is reported in the
-summary instead of failing the job. The workloads use no Docker, database, or network, and no
+summary instead of failing the job: a failed branch or base build or a replay server that does not
+start replaces the comparison with a notice naming the step. The workloads use no Docker, database, or network, and no
 prompts.
 
 To run it locally with two binaries (for example builds from two commits):

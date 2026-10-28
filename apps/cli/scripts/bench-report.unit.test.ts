@@ -223,8 +223,8 @@ const sample = (
 ): RunSample => ({
   wallMs,
   exitCode,
+  tracedExitCode: exitCode,
   trace: {
-    exitCode,
     skippedLines: 0,
     spans: { "cli.run": { totalMs: wallMs / 2, count: 1 } },
     ...(api === undefined
@@ -391,7 +391,7 @@ describe("more flags", () => {
 
   it("flags a traced launch that exits differently from the timed launches", () => {
     const traced = sample(50, { calls: 1 });
-    const odd: RunSample = { ...traced, trace: { ...traced.trace!, exitCode: 1 } };
+    const odd: RunSample = { ...traced, tracedExitCode: 1 };
 
     const flags = collectFlags(
       analyzeWorkload(
@@ -404,6 +404,39 @@ describe("more flags", () => {
     );
 
     expect(flags.map((flag) => flag.kind)).toContain("traced-exit-differs");
+  });
+});
+
+describe("traced launch failures", () => {
+  it("keeps a failed traced launch visible when no spans were decoded", () => {
+    const failedWithoutSpans: RunSample = { wallMs: 50, exitCode: 0, tracedExitCode: 1 };
+
+    const analysis = analyzeWorkload(
+      workload(
+        times(5, () => sample(50)),
+        times(5, () => failedWithoutSpans),
+      ),
+      true,
+    );
+
+    expect(analysis.verdict).toBe("not comparable");
+    expect(collectFlags(analysis).map((flag) => flag.kind)).toEqual(
+      expect.arrayContaining(["traced-exit-differs", "trace-incomplete"]),
+    );
+  });
+});
+
+describe("endpoint changes without an API measurement", () => {
+  it("reports none when one build has no API measurement", () => {
+    const analysis = analyzeWorkload(
+      workload(
+        times(5, () => ({ wallMs: 50, exitCode: 0 })),
+        times(5, () => sample(50, { calls: 1, endpoints: { "GET /v1/projects": 1 } })),
+      ),
+      true,
+    );
+
+    expect(analysis.endpointChanges).toEqual([]);
   });
 });
 

@@ -10,7 +10,18 @@ import { tmpdir } from "node:os";
 import process from "node:process";
 import { parseArgs } from "node:util";
 import { BunPath, BunRuntime, BunServices } from "@effect/platform-bun";
-import { Clock, Console, Effect, FileSystem, Layer, Option, Path, Ref, Stdio } from "effect";
+import {
+  Clock,
+  Console,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Ref,
+  Schema,
+  Stdio,
+} from "effect";
 import { FetchHttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import {
@@ -185,6 +196,15 @@ export function buildRunPlan(runs: number, warmup: number): ReadonlyArray<Planne
   return plan;
 }
 
+export class WorkloadValidationError extends Schema.TaggedError<WorkloadValidationError>()(
+  "WorkloadValidationError",
+  { problems: Schema.Array(Schema.String) },
+) {
+  override get message(): string {
+    return this.problems.join("\n");
+  }
+}
+
 /** The workloads for a run: the manifest entries, or one per `--command` with `--cwd-setup`. */
 export const resolveWorkloads = Effect.fn("BenchCli.resolveWorkloads")(function* (
   options: BenchOptions,
@@ -201,7 +221,7 @@ export const resolveWorkloads = Effect.fn("BenchCli.resolveWorkloads")(function*
           return yield* parseWorkloadManifest(yield* fs.readFileString(options.workloadsFile!));
         });
   const problems = validateWorkloads(workloads, { apiUrl: options.apiUrl });
-  if (problems.length > 0) return yield* Effect.fail(problems.join("\n"));
+  if (problems.length > 0) return yield* new WorkloadValidationError({ problems });
   return workloads;
 });
 
@@ -350,6 +370,7 @@ export const runWorkloadBench = (
           }
 
           let trace: RunSample["trace"];
+          let tracedExitCode: number | undefined;
           if (traceFile !== undefined || bunOptions !== undefined) {
             const observed = yield* prepareLaunch(options, workload, binary);
             yield* resetServer;
@@ -363,6 +384,7 @@ export const runWorkloadBench = (
                 ...(bunOptions === undefined ? {} : { BUN_OPTIONS: bunOptions }),
               }),
             });
+            tracedExitCode = traced.exitCode;
             if (traceFile !== undefined) {
               const requestLogCount =
                 options.apiUrl === undefined
@@ -377,7 +399,6 @@ export const runWorkloadBench = (
                     ? undefined
                     : classifyHttpSpans(spans, options.apiUrl);
                 trace = {
-                  exitCode: traced.exitCode,
                   skippedLines,
                   spans: summarizeSpanRun(spans),
                   ...(http === undefined || requestLogCount === undefined
@@ -391,6 +412,7 @@ export const runWorkloadBench = (
           samples[planned.build].push({
             wallMs: result.wallMs,
             exitCode: result.exitCode,
+            ...(tracedExitCode === undefined ? {} : { tracedExitCode }),
             ...(trace === undefined ? {} : { trace }),
           });
         }),

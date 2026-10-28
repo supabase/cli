@@ -225,7 +225,6 @@ const ApiSample = Schema.Struct({
 });
 
 const TraceSample = Schema.Struct({
-  exitCode: Schema.Finite,
   skippedLines: Schema.Finite,
   spans: Schema.Record(Schema.String, SpanRunSummary),
   api: Schema.optionalKey(ApiSample),
@@ -234,6 +233,8 @@ const TraceSample = Schema.Struct({
 const RunSample = Schema.Struct({
   wallMs: Schema.Finite,
   exitCode: Schema.Finite,
+  /** Exit code of the traced launch, recorded even when no spans could be decoded. */
+  tracedExitCode: Schema.optionalKey(Schema.Finite),
   trace: Schema.optionalKey(TraceSample),
 });
 export type RunSample = typeof RunSample.Type;
@@ -344,7 +345,9 @@ function summarizeBuild(samples: ReadonlyArray<RunSample>, traced: boolean): Bui
     timing: summarizeTimings(samples.map((sample) => sample.wallMs)),
     samples: samples.length,
     exitCodes: samples.map((sample) => sample.exitCode),
-    tracedExitCodes: withTrace.map((trace) => trace.exitCode),
+    tracedExitCodes: samples.flatMap((sample) =>
+      sample.tracedExitCode === undefined ? [] : [sample.tracedExitCode],
+    ),
     spans: traced ? aggregateSpanRuns(withTrace.map((trace) => trace.spans)) : undefined,
     api: summarizeApi(samples),
     traceMissingRuns: traced ? samples.length - withTrace.length : 0,
@@ -385,16 +388,16 @@ function endpointChanges(
   base: BuildAnalysis,
   branch: BuildAnalysis,
 ): ReadonlyArray<EndpointChange> {
-  const keys = new Set([
-    ...Object.keys(base.api?.endpoints ?? {}),
-    ...Object.keys(branch.api?.endpoints ?? {}),
-  ]);
+  if (base.api === undefined || branch.api === undefined) return [];
+  const baseEndpoints = base.api.endpoints;
+  const branchEndpoints = branch.api.endpoints;
+  const keys = new Set([...Object.keys(baseEndpoints), ...Object.keys(branchEndpoints)]);
   return [...keys]
     .sort()
     .map((endpoint) => ({
       endpoint,
-      base: base.api?.endpoints[endpoint] ?? 0,
-      branch: branch.api?.endpoints[endpoint] ?? 0,
+      base: baseEndpoints[endpoint] ?? 0,
+      branch: branchEndpoints[endpoint] ?? 0,
     }))
     .filter((change) => change.base !== change.branch);
 }

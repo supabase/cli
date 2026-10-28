@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { BenchReport, RunSample } from "./bench-report.ts";
-import { parseSummaryArgs, renderSummary } from "./bench-summary.ts";
+import { parseSummaryArgs, renderSummary, summaryNotice } from "./bench-summary.ts";
 
 const run = (wallMs: number, calls: number, endpoints: Record<string, number>): RunSample => ({
   wallMs,
   exitCode: 0,
+  tracedExitCode: 0,
   trace: {
-    exitCode: 0,
     skippedLines: 0,
     spans: { "cli.run": { totalMs: wallMs / 2, count: 1 } },
     api: { apiCalls: calls, externalCalls: 0, errorStatuses: 0, endpoints, requestLogCount: calls },
@@ -39,6 +39,7 @@ describe("renderSummary", () => {
           branch: runs(5, (i) => run(120 + i, 1, { "GET /v1/projects/abc": 1 })),
         },
       ]),
+      "unused",
     );
 
     expect(markdown).toContain("report only");
@@ -59,6 +60,7 @@ describe("renderSummary", () => {
           branch: runs(5, (i) => run(30 + i, 0, {})),
         },
       ]),
+      "unused",
     );
 
     expect(markdown).toContain("No flags.");
@@ -70,25 +72,66 @@ describe("renderSummary", () => {
     expect(renderSummary(undefined, "no report here")).toContain("no report here");
   });
 
-  it("reports a failed base build without a comparison", () => {
-    expect(renderSummary(undefined)).toContain("base build failed, no comparison");
+  it("does not claim a missing timing verdict when workloads were not comparable", () => {
+    const failing = (wallMs: number): RunSample => ({ ...run(wallMs, 0, {}), exitCode: 1 });
+
+    const markdown = renderSummary(
+      report([
+        {
+          id: "broken",
+          args: ["x"],
+          base: runs(5, (i) => run(30 + i, 0, {})),
+          branch: runs(5, (i) => failing(30 + i)),
+        },
+      ]),
+      "unused",
+    );
+
+    expect(markdown).toContain(
+      "No phase deltas are available; some workloads were not comparable.",
+    );
+  });
+});
+
+describe("summaryNotice", () => {
+  const ok = { branchBuild: "ok", baseBuild: "ok", replay: "ok" } as const;
+
+  it("is undefined when every step succeeded", () => {
+    expect(summaryNotice(ok)).toBeUndefined();
+  });
+
+  it.each([
+    { failed: { branchBuild: "failed" }, expected: "branch build failed" },
+    { failed: { baseBuild: "failed" }, expected: "base build failed" },
+    { failed: { replay: "failed" }, expected: "replay server failed to start" },
+  ] as const)("names the failed step: $expected", ({ failed, expected }) => {
+    expect(summaryNotice({ ...ok, ...failed })).toContain(expected);
+  });
+
+  it("reports the earliest failed step when later ones were skipped", () => {
+    expect(
+      summaryNotice({ branchBuild: "failed", baseBuild: "failed", replay: "failed" }),
+    ).toContain("branch build failed");
   });
 });
 
 describe("renderSummary without API counts", () => {
   it("says API calls were not counted and keeps table cells intact when an id contains a pipe", () => {
     const noTrace = (wallMs: number): RunSample => ({ wallMs, exitCode: 0 });
-    const markdown = renderSummary({
-      ...report([
-        {
-          id: "a|b",
-          args: ["x"],
-          base: runs(5, (i) => noTrace(30 + i)),
-          branch: runs(5, (i) => noTrace(30 + i)),
-        },
-      ]),
-      trace: false,
-    });
+    const markdown = renderSummary(
+      {
+        ...report([
+          {
+            id: "a|b",
+            args: ["x"],
+            base: runs(5, (i) => noTrace(30 + i)),
+            branch: runs(5, (i) => noTrace(30 + i)),
+          },
+        ]),
+        trace: false,
+      },
+      "unused",
+    );
 
     expect(markdown).toContain("API calls were not counted.");
     expect(markdown).toContain("a\\|b");
@@ -96,18 +139,23 @@ describe("renderSummary without API counts", () => {
 });
 
 describe("parseSummaryArgs", () => {
-  it("rejects an unknown base build state", () => {
-    expect(() => parseSummaryArgs(["--report", "r.json", "--base-build", "maybe"])).toThrow(
-      "--base-build",
-    );
+  it("rejects an unknown step outcome", () => {
+    expect(() => parseSummaryArgs(["--report", "r.json", "--replay", "maybe"])).toThrow("--replay");
   });
 
-  it("needs a report unless the base build failed", () => {
+  it("needs a report unless a step failed", () => {
     expect(() => parseSummaryArgs([])).toThrow();
-    expect(parseSummaryArgs(["--base-build", "failed"])).toEqual({
+    expect(parseSummaryArgs(["--replay", "failed"])).toEqual({
       report: undefined,
-      baseBuild: "failed",
+      branchBuild: "ok",
+      baseBuild: "ok",
+      replay: "failed",
     });
-    expect(parseSummaryArgs(["--report", "r.json"])).toEqual({ report: "r.json", baseBuild: "ok" });
+    expect(parseSummaryArgs(["--report", "r.json"])).toEqual({
+      report: "r.json",
+      branchBuild: "ok",
+      baseBuild: "ok",
+      replay: "ok",
+    });
   });
 });

@@ -1,7 +1,7 @@
 /**
  * Renders a `bench-cli.ts --out` report as a Markdown job summary: flags, wall time, API calls,
  * phase deltas, and binary size. Run as
- * `bun scripts/bench-summary.ts --report <file> [--base-build ok|failed]`; writes to
+ * `bun scripts/bench-summary.ts --report <file> [--branch-build|--base-build|--replay ok|failed]`; writes to
  * `GITHUB_STEP_SUMMARY` when set, otherwise to stdout.
  */
 import process from "node:process";
@@ -17,29 +17,59 @@ import {
   type WorkloadAnalysis,
 } from "./bench-report.ts";
 
-const USAGE = "usage: bun scripts/bench-summary.ts --report <file> [--base-build ok|failed]";
+const USAGE =
+  "usage: bun scripts/bench-summary.ts --report <file> [--branch-build ok|failed] [--base-build ok|failed] [--replay ok|failed]";
+
+type Outcome = "ok" | "failed";
 
 export interface SummaryOptions {
   readonly report: string | undefined;
-  readonly baseBuild: "ok" | "failed";
+  readonly branchBuild: Outcome;
+  readonly baseBuild: Outcome;
+  readonly replay: Outcome;
 }
 
-/** Parses argv; throws on an unknown `--base-build` or a missing report for a successful base. */
+const OUTCOME_FLAGS = ["branch-build", "base-build", "replay"] as const;
+
+/** Parses argv; throws on an unknown outcome or a missing report when every step succeeded. */
 export function parseSummaryArgs(argv: ReadonlyArray<string>): SummaryOptions {
   const { values } = parseArgs({
     args: [...argv],
-    options: { report: { type: "string" }, "base-build": { type: "string", default: "ok" } },
+    options: {
+      report: { type: "string" },
+      "branch-build": { type: "string", default: "ok" },
+      "base-build": { type: "string", default: "ok" },
+      replay: { type: "string", default: "ok" },
+    },
   });
-  const baseBuild = values["base-build"];
-  if (baseBuild !== "ok" && baseBuild !== "failed") {
-    throw new Error('--base-build must be "ok" or "failed"');
+  for (const flag of OUTCOME_FLAGS) {
+    if (values[flag] !== "ok" && values[flag] !== "failed") {
+      throw new Error(`--${flag} must be "ok" or "failed"`);
+    }
   }
-  if (values.report === undefined && baseBuild === "ok") throw new Error(USAGE);
-  return { report: values.report, baseBuild };
+  const options: SummaryOptions = {
+    report: values.report,
+    branchBuild: values["branch-build"] === "failed" ? "failed" : "ok",
+    baseBuild: values["base-build"] === "failed" ? "failed" : "ok",
+    replay: values.replay === "failed" ? "failed" : "ok",
+  };
+  if (values.report === undefined && summaryNotice(options) === undefined) throw new Error(USAGE);
+  return options;
 }
 
-const BASE_FAILED = "base build failed, no comparison";
 const NO_REPORT = "the benchmark did not produce a report; see the Run benchmark step log";
+
+/** The reason there is nothing to compare, in the order the steps run, or undefined when all ran. */
+export function summaryNotice(
+  options: Pick<SummaryOptions, "branchBuild" | "baseBuild" | "replay">,
+): string | undefined {
+  if (options.branchBuild === "failed") return "branch build failed, no comparison";
+  if (options.baseBuild === "failed") return "base build failed, no comparison";
+  if (options.replay === "failed") {
+    return "replay server failed to start, no comparison; see the Start replay server step log";
+  }
+  return undefined;
+}
 
 const sign = (value: number) => (value >= 0 ? "+" : "");
 const ms = (value: number) => `${value} ms`;
@@ -108,7 +138,7 @@ function phaseSection(analyses: ReadonlyArray<WorkloadAnalysis>): string {
   );
   if (rows.length === 0) {
     return analyses.some((analysis) => analysis.verdict === "not comparable")
-      ? "No phase deltas: no workload had a timing verdict, and some were not comparable."
+      ? "No phase deltas are available; some workloads were not comparable."
       : "No workload moved beyond noise, so there are no phase deltas.";
   }
   return table(["Workload", "Span", "Change", "Base -> branch"], rows);
@@ -124,11 +154,8 @@ function sizeSection(report: BenchReport): string {
   );
 }
 
-/** The Markdown summary, or the base-build-failed notice when there is no report to compare. */
-export function renderSummary(
-  report: BenchReport | undefined,
-  notice: string = BASE_FAILED,
-): string {
+/** The Markdown summary, or `notice` when there is no report to compare. */
+export function renderSummary(report: BenchReport | undefined, notice: string): string {
   const title = "## CLI benchmark (report only)";
   if (report === undefined) return `${title}\n\n${notice}\n`;
   const analyses = report.workloads.map((workload) => analyzeWorkload(workload, report.trace));
@@ -151,6 +178,27 @@ export function renderSummary(
   );
 }
 
+export const loadReport = Effect.fn("BenchSummary.loadReport")(function* (
+  fs: FileSystem.FileSystem,
+  file: string,
+) {
+  if (!(yield* fs.exists(file).pipe(Effect.orElseSucceed(() => false)))) {
+    return { report: undefined, notice: NO_REPORT };
+  }
+  return yield* fs.readFileString(file).pipe(
+    Effect.flatMap(decodeBenchReport),
+    Effect.map((report) => ({ report, notice: NO_REPORT })),
+    Effect.catch((cause) =>
+      Console.error(`could not read benchmark report ${file}: ${String(cause)}`).pipe(
+        Effect.as({
+          report: undefined,
+          notice: "the benchmark report could not be read or decoded; see the job log",
+        }),
+      ),
+    ),
+  );
+});
+
 const main = Effect.gen(function* () {
   const stdio = yield* Stdio.Stdio;
   const argv = yield* stdio.args;
@@ -172,15 +220,12 @@ const main = Effect.gen(function* () {
   if (options === undefined) return;
 
   const fs = yield* FileSystem.FileSystem;
-  const reportFile = options.baseBuild === "failed" ? undefined : options.report;
-  const report =
-    reportFile === undefined
-      ? undefined
-      : yield* fs.readFileString(reportFile).pipe(
-          Effect.flatMap(decodeBenchReport),
-          Effect.orElseSucceed(() => undefined),
-        );
-  const markdown = renderSummary(report, reportFile === undefined ? BASE_FAILED : NO_REPORT);
+  const outcomeNotice = summaryNotice(options);
+  const loaded =
+    outcomeNotice === undefined && options.report !== undefined
+      ? yield* loadReport(fs, options.report)
+      : { report: undefined, notice: outcomeNotice ?? NO_REPORT };
+  const markdown = renderSummary(loaded.report, loaded.notice);
 
   const summaryFile = yield* Config.option(Config.String("GITHUB_STEP_SUMMARY"));
   if (Option.isSome(summaryFile) && summaryFile.value !== "") {

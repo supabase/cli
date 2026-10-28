@@ -67,6 +67,25 @@ describe("resolveWorkloads", () => {
   );
 });
 
+describe("resolveWorkloads validation", () => {
+  it.effect("fails with a WorkloadValidationError carrying the problems", () =>
+    Effect.gen(function* () {
+      const options = parseBenchArgs([
+        ...required,
+        "--command",
+        "migration new bench",
+        "--command",
+        "migration new bench",
+      ]);
+
+      const error = yield* resolveWorkloads(options).pipe(Effect.flip);
+
+      const problems = error._tag === "WorkloadValidationError" ? error.problems : undefined;
+      expect(problems).toEqual(['duplicate workload id "migration new bench"']);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+});
+
 describe("wantsHelp", () => {
   it("treats --help as a flag only when it is not a --command value", () => {
     expect(wantsHelp(["--help"])).toBe(true);
