@@ -53,6 +53,14 @@ export class SecretsSetUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
+export class SecretsSetWorkdirError extends Data.TaggedError("SecretsSetWorkdirError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
 export class SecretsUnsetNetworkError extends Data.TaggedError("SecretsUnsetNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
