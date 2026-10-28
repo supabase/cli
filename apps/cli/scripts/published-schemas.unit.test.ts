@@ -6,7 +6,7 @@ import {
   toCliConfigJsonSchema,
   toProjectConfigJsonSchema,
 } from "@supabase/config";
-import { LOCK_SCHEMA_URL } from "@supabase/stack/effect";
+import { HOSTED_LOCK_SCHEMA_URL } from "@supabase/stack/effect";
 import { Effect, FileSystem, JsonSchema, Path, Schema } from "effect";
 import { lockSchemaDocument, publishedSchemaPath } from "./published-schemas.ts";
 
@@ -58,6 +58,14 @@ const findPostDraft07Usage = (node: unknown, path: ReadonlyArray<string> = []): 
   });
 };
 
+const collectRefs = (node: unknown): Array<string> => {
+  if (Array.isArray(node)) return node.flatMap(collectRefs);
+  if (!isNode(node)) return [];
+  return Object.entries(node).flatMap(([keyword, value]) =>
+    keyword === "$ref" && typeof value === "string" ? [value] : collectRefs(value),
+  );
+};
+
 const withoutMetadata = ({
   $id: _id,
   title: _title,
@@ -83,7 +91,7 @@ const published = [
   {
     name: "supabase-lock",
     file: "schemas/supabase-lock/v1.json",
-    url: LOCK_SCHEMA_URL,
+    url: HOSTED_LOCK_SCHEMA_URL,
     build: (): Document => lockSchemaDocument(),
     comparable: (document: Document): Document => document,
   },
@@ -159,6 +167,36 @@ describe.each(published)("published $name schema", (entry) => {
         entry.comparable(document),
         `apps/docs/public/${entry.file} is stale: ${REGENERATE}`,
       ).toEqual(entry.comparable(entry.build()));
+    }),
+  );
+});
+
+describe("published supabase-lock schema definitions", () => {
+  const readLockDefinitions = Effect.gen(function* () {
+    const document = yield* readCommitted("schemas/supabase-lock/v1.json");
+    const definitions = document["definitions"];
+    return { document, definitions: isNode(definitions) ? definitions : {} };
+  });
+
+  it.effect("are pairwise distinct", () =>
+    Effect.gen(function* () {
+      const { definitions } = yield* readLockDefinitions;
+      const bodies = Object.values(definitions).map((definition) => JSON.stringify(definition));
+
+      expect(bodies.length).toBeGreaterThan(1);
+      expect(new Set(bodies).size).toBe(bodies.length);
+    }),
+  );
+
+  it.effect("cover every $ref in the document", () =>
+    Effect.gen(function* () {
+      const { document, definitions } = yield* readLockDefinitions;
+      const refs = collectRefs(document);
+
+      expect(refs).not.toEqual([]);
+      expect(
+        refs.filter((ref) => !Object.keys(definitions).includes(ref.replace("#/definitions/", ""))),
+      ).toEqual([]);
     }),
   );
 });

@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Option, Path, Schema } from "effect";
 import { database15, selection } from "../tests/pins.ts";
 import {
+  HOSTED_LOCK_SCHEMA_URL,
   Lock,
   LOCK_SCHEMA_URL,
   lockSelection,
@@ -101,16 +102,29 @@ describe("lock", () => {
       ),
   );
 
-  it.live("a lock written under the legacy schema URL reads under the current one", () =>
+  it.live("a fresh lock is written with the schema URL older CLIs require", () =>
+    inProject((projectRoot, lockFile) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+
+        yield* writeLock(projectRoot, lockOf(selection));
+
+        expect(parse(yield* fs.readFileString(lockFile))).toMatchObject({
+          $schema: LOCK_SCHEMA_URL,
+        });
+      }),
+    ),
+  );
+
+  it.live("a lock naming the hosted schema URL reads and rewrites with the written one", () =>
     inProject((projectRoot, lockFile) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         yield* fs.makeDirectory(`${projectRoot}/supabase`, { recursive: true });
-        const legacy = {
-          ...lockOf(selection),
-          $schema: "https://supabase.com/docs/cli/supabase-lock/v1.schema.json",
-        };
-        yield* fs.writeFileString(lockFile, stringify(legacy));
+        yield* fs.writeFileString(
+          lockFile,
+          stringify({ ...lockOf(selection), $schema: HOSTED_LOCK_SCHEMA_URL }),
+        );
 
         const read = yield* readLock(projectRoot);
         yield* writeLock(projectRoot, Option.getOrThrow(read));

@@ -24,9 +24,10 @@ development. The generator:
    frontmatter.
 4. Writes `content/docs/commands/index.mdx`, a table linking to every command page, and
    `content/docs/commands/meta.json`, which controls sidebar order.
-5. Copies the built `@supabase/config` JSON schemas into `public/cli/` so the configuration
-   reference links resolve. This requires `@supabase/config#build` to have run first, which
-   `turbo.json` wires up.
+5. Writes the config, project-config and `supabase.lock` JSON Schemas to
+   `public/schemas/<name>/v1.json`, mirroring their `https://supabase.com/schemas/` URLs. The two
+   config schemas are copied from the `@supabase/config` build, which requires
+   `@supabase/config#build` to have run first; `turbo.json` wires that up.
 
 The generated `content/docs/commands/` directory is git-ignored; only the hand-authored pages are
 committed.

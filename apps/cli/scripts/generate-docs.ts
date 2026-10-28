@@ -1,7 +1,7 @@
 import { BunFileSystem, BunPath } from "@effect/platform-bun";
 import process from "node:process";
 import { CLI_CONFIG_SCHEMA_URL, PROJECT_CONFIG_SCHEMA_URL } from "@supabase/config";
-import { LOCK_SCHEMA_URL } from "@supabase/stack/effect";
+import { HOSTED_LOCK_SCHEMA_URL } from "@supabase/stack/effect";
 import { Console, Effect, FileSystem, Layer, Path, Schema } from "effect";
 import { rootCommand } from "../src/cli/root.ts";
 import { collectCommands, getHelpDoc } from "../src/shared/cli/command-docs.ts";
@@ -106,7 +106,7 @@ const main = Effect.gen(function* () {
 
   /** Writes the `supabase.lock` v1 JSON Schema, generated from the stack's lock schema, to its docs-site public path. */
   const writeLockSchemaAsset = Effect.fnUntraced(function* () {
-    const destPath = path.join(defaultDocsPublicDir, publishedSchemaPath(LOCK_SCHEMA_URL));
+    const destPath = path.join(defaultDocsPublicDir, publishedSchemaPath(HOSTED_LOCK_SCHEMA_URL));
 
     yield* fs.makeDirectory(path.dirname(destPath), { recursive: true });
     yield* fs.writeFileString(destPath, `${yield* encodeJson(lockSchemaDocument())}\n`);
