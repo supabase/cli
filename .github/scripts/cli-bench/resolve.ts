@@ -16,6 +16,8 @@ import { fetchAuthorPermission, WRITE_PERMISSIONS } from "../contribution-gate.t
 import { githubFetch, requireEnv } from "./github.ts";
 
 export const BENCH_COMMAND = "/bench";
+/** Base branches the benchmark runs for; keep in sync with the workflow's `branches:` filter. */
+export const BENCH_BASE_BRANCHES: ReadonlyArray<string> = ["develop"];
 
 export type Trigger = "auto" | "command";
 
@@ -95,6 +97,13 @@ export async function resolveBench(input: ResolveInput, io: ResolveIo): Promise<
   // Only same-repository branches run: their authors already get repository secrets on a pull request.
   if (pr.headRepoFullName !== pr.baseRepoFullName) {
     return skipped("command", `${BENCH_COMMAND} runs only on pull requests from this repository.`);
+  }
+
+  if (!BENCH_BASE_BRANCHES.includes(pr.baseRef)) {
+    return skipped(
+      "command",
+      `${BENCH_COMMAND} runs only on pull requests into ${BENCH_BASE_BRANCHES.join(" or ")}.`,
+    );
   }
 
   // Cosmetic: a failed reaction must never fail an authorized run.

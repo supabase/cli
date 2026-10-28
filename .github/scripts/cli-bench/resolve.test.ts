@@ -117,4 +117,17 @@ describe("resolveBench", () => {
     expect(result.skipReason).toContain("from this repository");
     expect(reactions).toEqual([]);
   });
+
+  test.each([
+    ["a pull request into next", "next"],
+    ["a stacked pull request into a feature branch", "feature/stack-base"],
+  ])("does not run /bench on %s and does not react", async (_name, baseRef) => {
+    const { impl, reactions } = io({ maintainer: "write" }, pr({ baseRef }));
+
+    const result = await resolveBench(command("/bench"), impl);
+
+    expect(result.shouldRun).toBe(false);
+    expect(result.skipReason).toContain("into develop");
+    expect(reactions).toEqual([]);
+  });
 });

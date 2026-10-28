@@ -86,7 +86,7 @@ rm -f /tmp/cli-base/mise.toml /tmp/cli-base/mise.lock # if mise refuses the untr
 
 ### Pull request benchmark
 
-`.github/workflows/cli-bench.yml` runs on every ready pull request into `develop` or `next` that touches the CLI, its packages, or
+`.github/workflows/cli-bench.yml` runs on every ready pull request into `develop` that touches the CLI, its packages, or
 the e2e replay fixtures. It builds the pull request and the base tip it merges into with `pnpm --filter supabase run build:binary`, runs both
 through `bench-cli.ts` against a local replay server, and writes a job summary with `bench-summary.ts`.
 The job is report only: it never blocks a pull request, and a benchmark problem is reported in the
@@ -99,9 +99,9 @@ marker `<!-- cli-bench:pr -->`. Later pushes leave that comment alone. Pull requ
 the job summary only, because their token is read-only.
 
 A maintainer can comment exactly `/bench` on a pull request to run the benchmark again on its
-current head commit against the merge base with its base branch (`develop` or `next`). The comment
+current head commit against the merge base with its base branch, `develop`. The comment
 is updated in place, or created if it is missing. Only the repository owner and people with write
-access can run it, and only on pull requests from this repository; the command must be the whole comment, so `/bench full` (reserved for a future
+access can run it, and only on pull requests into `develop` from this repository; the command must be the whole comment, so `/bench full` (reserved for a future
 heavier tier) and anything else is ignored. The commenter's request is acknowledged with an eyes
 reaction. Workflows triggered by comments run from the default branch, so `/bench` works only once
 the workflow is on `develop`.
