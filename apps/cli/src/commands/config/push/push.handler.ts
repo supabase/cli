@@ -619,6 +619,7 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
             secrets,
             emailContent: authEmailContent,
             remoteAuthAttributes,
+            config,
             now,
           });
           const result = yield* applyResource("auth", changes, encoded, secrets, (body) =>
