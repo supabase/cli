@@ -88,7 +88,7 @@ export { holdLock } from "./StackNamespace.ts";
 export { holdSharedLock } from "./StackNamespace.ts";
 /** Holds a cross-process lock that excludes every `holdSharedLock` holder. */
 export { holdExclusiveLock } from "./StackNamespace.ts";
-/** Whether a `holdLock` failure means another holder kept the lock for the whole budget. */
+/** Whether a lock acquisition failure means another holder kept the lock for the whole budget. */
 export { isLockBusy } from "./StackNamespace.ts";
 export {
   Lock,

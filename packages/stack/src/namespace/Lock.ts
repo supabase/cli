@@ -14,7 +14,7 @@ class LockBusy extends Schema.TaggedError<LockBusy>()("Namespace.LockBusy", {
   message: Schema.String,
 }) {}
 
-/** Whether `error` is a {@link holdLock} failure because another holder kept the lock for the whole budget. */
+/** Whether `error` is a lock acquisition failure because another holder kept the lock for the whole budget. */
 export const isLockBusy = (error: NamespaceError): boolean => Schema.is(LockBusy)(error.cause);
 
 /**

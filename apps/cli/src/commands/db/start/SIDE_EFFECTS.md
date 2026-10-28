@@ -157,16 +157,17 @@ code is surfaced on failure.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                       |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success — database started, or already running                                                                                                                                                                  |
-| `0`  | `--from-backup` set and the health-check timed out (swallowed)                                                                                                                                                  |
-| `1`  | malformed `supabase/config.toml`                                                                                                                                                                                |
-| `1`  | another lifecycle command still holds this project's lock after 10 minutes — prints `Waiting for another Supabase CLI command to finish with project <id>...` to stderr first (`ProjectLifecycleLockBusyError`) |
-| `1`  | Docker daemon unreachable / inspect failure                                                                                                                                                                     |
-| `1`  | `backup volume already exists` (`--from-backup` against a non-fresh volume)                                                                                                                                     |
-| `1`  | a health-check timeout with `--from-backup` unset                                                                                                                                                               |
-| `1`  | any other container-bootstrap failure (network/volume/create/start/setup)                                                                                                                                       |
+| Code | Condition                                                                                                                                                                                                                                                                     |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — database started, or already running                                                                                                                                                                                                                                |
+| `0`  | `--from-backup` set and the health-check timed out (swallowed)                                                                                                                                                                                                                |
+| `1`  | malformed `supabase/config.toml`                                                                                                                                                                                                                                              |
+| `1`  | another lifecycle command still holds this project's lock after 10 minutes — prints `Waiting for another Supabase CLI command to finish with project <id>...` (or `...with local Supabase projects...` behind `stop --all`) to stderr first (`ProjectLifecycleLockBusyError`) |
+| `1`  | `$SUPABASE_HOME/locks` cannot be created or a lock file there cannot be opened — fails before any Docker command (`ProjectLifecycleLockIoError`)                                                                                                                              |
+| `1`  | Docker daemon unreachable / inspect failure                                                                                                                                                                                                                                   |
+| `1`  | `backup volume already exists` (`--from-backup` against a non-fresh volume)                                                                                                                                                                                                   |
+| `1`  | a health-check timeout with `--from-backup` unset                                                                                                                                                                                                                             |
+| `1`  | any other container-bootstrap failure (network/volume/create/start/setup)                                                                                                                                                                                                     |
 
 ## Output
 

@@ -96,6 +96,7 @@ and ensure it is on PATH") rather than a generic "failed to ..." string.
 | `0`  | success — containers/volumes/networks pruned                                                                                                       |
 | `1`  | `--project-id` and `--all` both set (`StopMutuallyExclusiveError`)                                                                                 |
 | `1`  | another lifecycle command still holds the lock after 10 minutes (`ProjectLifecycleLockBusyError`); `--all` waits for every other lifecycle command |
+| `1`  | `$SUPABASE_HOME/locks` cannot be created or a lock file there cannot be opened — fails before any Docker command (`ProjectLifecycleLockIoError`)   |
 | `1`  | `config.toml` present but malformed (`StopConfigLoadError`) — an **absent** file is not an error                                                   |
 | `1`  | listing containers failed (`StopListError`)                                                                                                        |
 | `1`  | stopping one or more containers failed (`StopContainerError`)                                                                                      |

@@ -128,7 +128,7 @@ export const holdProjectLifecycleLock = Effect.fn("ProjectLifecycleLock.hold")(f
     yield* take(
       holdSharedLock,
       gate,
-      `Waiting for another Supabase CLI command to finish with project ${projectId}...\n`,
+      "Waiting for another Supabase CLI command to finish with local Supabase projects...\n",
       "Another Supabase CLI command is stopping all local Supabase projects. Wait for it to finish, then retry.",
     );
     yield* take(

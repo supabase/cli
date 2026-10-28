@@ -234,6 +234,40 @@ describe("project lifecycle lock", () => {
   );
 
   it.live(
+    "holds a start until stop --all has finished pruning",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-lifecycle-home-" });
+        const pruning = yield* pause();
+        const docker = dockerModel({
+          before: Effect.fnUntraced(function* (args: ReadonlyArray<string>) {
+            if (isNetworkPrune(args)) yield* pruning.hold;
+            return undefined;
+          }),
+        });
+        const stopper = yield* makeProcess(docker, home, "other");
+        const starter = yield* makeProcess(docker, home, "demo");
+
+        const stopping = yield* runStop(stopper, stopFlags({ all: Option.some(true) }));
+        yield* Deferred.await(pruning.reached);
+        const starting = yield* runStart(starter);
+
+        expect(yield* waitingOrFinished(starter, starting)).toBe("waiting");
+        expect(starter.out.stderrText).toContain(
+          "Waiting for another Supabase CLI command to finish with local Supabase projects...",
+        );
+        expect(docker.networkNames()).toEqual([]);
+
+        yield* Deferred.succeed(pruning.release, undefined);
+        yield* Fiber.join(stopping);
+        yield* Fiber.join(starting);
+        expect(docker.networkNames()).toEqual([NETWORK]);
+      }).pipe(Effect.provide(BunServices.layer)),
+    10_000,
+  );
+
+  it.live(
     "lets starts of different projects run side by side",
     () =>
       Effect.gen(function* () {
