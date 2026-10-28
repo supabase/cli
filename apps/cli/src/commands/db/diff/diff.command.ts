@@ -112,7 +112,7 @@ const explicitLinkedSide = (flag: "from" | "to") =>
 
 export const dbDiffCommand = Command.make("diff", config).pipe(
   Command.withDescription(
-    "Compares a shadow built from supabase/migrations with a live database (--local by default, --linked, or --db-url). Declarative files under supabase/schemas are not part of this baseline. Output is printed by default; in normal mode, -f names and saves the complete diff as a migration and does not filter objects. Explicit --from/--to output is flattened review SQL, not a portable apply script.",
+    "Compares a shadow built from supabase/migrations with a live database (--local by default, --linked, or --db-url). Declarative files under supabase/schemas are not part of this baseline. With migra and a local target, declared schema files, if any, replace the live database as the target. Output is printed by default; in normal mode, -f names and saves the complete diff as a migration and does not filter objects. Explicit --from/--to output is flattened review SQL, not a portable apply script.",
   ),
   Command.withShortDescription("Diffs the local database for schema changes"),
   withPermissions(

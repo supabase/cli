@@ -237,8 +237,9 @@ transaction metadata.
 - Explicit `--from`/`--to` mode always uses pg-delta and writes the flattened review
   representation to `--output` (or stdout). It ignores `--file`; normal mode retains
   per-unit migration files for the CLI apply paths.
-- Normal mode always compares the migrations shadow to the selected live database;
-  declarative files and `schema_paths` do not replace that baseline.
+- Normal mode compares the migrations shadow to the selected live database;
+  declarative files and `schema_paths` do not replace that baseline. With migra and a
+  local target, declared schema files, if any, replace the live database as the target.
 
 ### Shadow baseline cache (`SUPABASE_SHADOW_CACHE`, default ON)
 
