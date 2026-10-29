@@ -1,6 +1,6 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://supabase.com/docs/cli/supabase-lock/v1.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://supabase.com/schemas/supabase-lock/v1.json",
   "title": "supabase.lock",
   "description": "The service versions that supabase start pins in supabase/supabase.lock.",
   "type": "object",
@@ -8,7 +8,8 @@
     "$schema": {
       "type": "string",
       "enum": [
-        "https://supabase.com/docs/cli/supabase-lock/v1.schema.json"
+        "https://supabase.com/docs/cli/supabase-lock/v1.schema.json",
+        "https://supabase.com/schemas/supabase-lock/v1.json"
       ]
     },
     "lockfileVersion": {
@@ -54,40 +55,40 @@
       "type": "object",
       "properties": {
         "database": {
-          "$ref": "#/$defs/DatabaseLock"
+          "$ref": "#/definitions/DatabaseLock"
         },
         "rest": {
-          "$ref": "#/$defs/ServiceLock"
+          "$ref": "#/definitions/ServiceLock"
         },
         "auth": {
-          "$ref": "#/$defs/ServiceLock"
+          "$ref": "#/definitions/ServiceLock"
         },
         "realtime": {
-          "$ref": "#/$defs/ServiceLock"
+          "$ref": "#/definitions/ServiceLock"
         },
         "storage": {
-          "$ref": "#/$defs/ServiceLock"
+          "$ref": "#/definitions/ServiceLock"
         },
         "imgproxy": {
-          "$ref": "#/$defs/ServiceLock"
+          "$ref": "#/definitions/ServiceLock"
         },
         "functions": {
-          "$ref": "#/$defs/ServiceLock"
+          "$ref": "#/definitions/ServiceLock"
         },
         "studio": {
-          "$ref": "#/$defs/ServiceLock"
+          "$ref": "#/definitions/ServiceLock"
         },
         "pgmeta": {
-          "$ref": "#/$defs/ServiceLock"
+          "$ref": "#/definitions/ServiceLock"
         },
         "mail": {
-          "$ref": "#/$defs/ServiceLock"
+          "$ref": "#/definitions/ServiceLock"
         },
         "analytics": {
-          "$ref": "#/$defs/ServiceLock"
+          "$ref": "#/definitions/ServiceLock"
         },
         "pooler": {
-          "$ref": "#/$defs/ServiceLock"
+          "$ref": "#/definitions/ServiceLock"
         }
       },
       "required": [
@@ -113,7 +114,7 @@
     "services"
   ],
   "additionalProperties": true,
-  "$defs": {
+  "definitions": {
     "LinkedVersion": {
       "type": "object",
       "properties": {
@@ -148,51 +149,6 @@
       ],
       "additionalProperties": true
     },
-    "ArtifactPin": {
-      "type": "object",
-      "properties": {
-        "upstreamVersion": {
-          "type": "string"
-        },
-        "revision": {
-          "type": "integer"
-        },
-        "image": {
-          "type": "string"
-        },
-        "upstreamImage": {
-          "type": "string"
-        },
-        "natives": {
-          "type": "object",
-          "properties": {
-            "darwin-arm64": {
-              "$ref": "#/$defs/NativePin"
-            },
-            "linux-amd64": {
-              "$ref": "#/$defs/NativePin"
-            },
-            "linux-arm64": {
-              "$ref": "#/$defs/NativePin"
-            }
-          },
-          "required": [
-            "darwin-arm64",
-            "linux-amd64",
-            "linux-arm64"
-          ],
-          "additionalProperties": true
-        }
-      },
-      "required": [
-        "upstreamVersion",
-        "revision",
-        "image",
-        "upstreamImage",
-        "natives"
-      ],
-      "additionalProperties": true
-    },
     "DatabaseLock": {
       "type": "object",
       "properties": {
@@ -200,7 +156,7 @@
           "type": "string"
         },
         "linked": {
-          "$ref": "#/$defs/LinkedVersion"
+          "$ref": "#/definitions/LinkedVersion"
         },
         "resolution": {
           "type": "string",
@@ -212,7 +168,49 @@
           ]
         },
         "resolved": {
-          "$ref": "#/$defs/ArtifactPin"
+          "type": "object",
+          "properties": {
+            "upstreamVersion": {
+              "type": "string"
+            },
+            "revision": {
+              "type": "integer"
+            },
+            "image": {
+              "type": "string"
+            },
+            "upstreamImage": {
+              "type": "string"
+            },
+            "natives": {
+              "type": "object",
+              "properties": {
+                "darwin-arm64": {
+                  "$ref": "#/definitions/NativePin"
+                },
+                "linux-amd64": {
+                  "$ref": "#/definitions/NativePin"
+                },
+                "linux-arm64": {
+                  "$ref": "#/definitions/NativePin"
+                }
+              },
+              "required": [
+                "darwin-arm64",
+                "linux-amd64",
+                "linux-arm64"
+              ],
+              "additionalProperties": true
+            }
+          },
+          "required": [
+            "upstreamVersion",
+            "revision",
+            "image",
+            "upstreamImage",
+            "natives"
+          ],
+          "additionalProperties": true
         },
         "majorVersion": {
           "type": "integer"
@@ -241,7 +239,7 @@
           "type": "string"
         },
         "linked": {
-          "$ref": "#/$defs/LinkedVersion"
+          "$ref": "#/definitions/LinkedVersion"
         },
         "resolution": {
           "type": "string",
@@ -253,7 +251,49 @@
           ]
         },
         "resolved": {
-          "$ref": "#/$defs/ArtifactPin"
+          "type": "object",
+          "properties": {
+            "upstreamVersion": {
+              "type": "string"
+            },
+            "revision": {
+              "type": "integer"
+            },
+            "image": {
+              "type": "string"
+            },
+            "upstreamImage": {
+              "type": "string"
+            },
+            "natives": {
+              "type": "object",
+              "properties": {
+                "darwin-arm64": {
+                  "$ref": "#/definitions/NativePin"
+                },
+                "linux-amd64": {
+                  "$ref": "#/definitions/NativePin"
+                },
+                "linux-arm64": {
+                  "$ref": "#/definitions/NativePin"
+                }
+              },
+              "required": [
+                "darwin-arm64",
+                "linux-amd64",
+                "linux-arm64"
+              ],
+              "additionalProperties": true
+            }
+          },
+          "required": [
+            "upstreamVersion",
+            "revision",
+            "image",
+            "upstreamImage",
+            "natives"
+          ],
+          "additionalProperties": true
         }
       },
       "required": [

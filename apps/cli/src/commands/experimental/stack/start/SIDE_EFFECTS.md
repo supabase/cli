@@ -133,7 +133,7 @@ When the project has a `supabase/config.toml`, the versions a new or stopped sta
 twelve services it records the specifier requested under `[local.services]` (`<service>.version`,
 else `default.version`, else `linked`), how it resolved, and the exact pin: the release revision,
 each target's archive and manifest digests, and the image digest. Its
-[JSON Schema](https://supabase.com/docs/cli/supabase-lock/v1.schema.json) is published with the
+[JSON Schema](https://supabase.com/schemas/supabase-lock/v1.json) is published with the
 docs. A project without `supabase/config.toml` runs the versions bundled with the CLI and has no
 lock, unless `--frozen` is set, which fails the start.
 
