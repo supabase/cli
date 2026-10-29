@@ -8,7 +8,8 @@
     "$schema": {
       "type": "string",
       "enum": [
-        "https://supabase.com/docs/cli/supabase-lock/v1.schema.json"
+        "https://supabase.com/docs/cli/supabase-lock/v1.schema.json",
+        "https://supabase.com/schemas/supabase-lock/v1.json"
       ]
     },
     "lockfileVersion": {

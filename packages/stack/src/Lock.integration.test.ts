@@ -13,6 +13,8 @@ import {
   writeLock,
 } from "./Lock.ts";
 
+const V1_LOCK_SCHEMA_URL = "https://supabase.com/docs/cli/supabase-lock/v1.schema.json";
+
 const bundled = (pin: Lock["services"]["rest"]["resolved"]) =>
   ({ specifier: "bundled", resolution: "resolved", resolved: pin }) as const;
 
@@ -110,7 +112,7 @@ describe("lock", () => {
         yield* writeLock(projectRoot, lockOf(selection));
 
         expect(parse(yield* fs.readFileString(lockFile))).toMatchObject({
-          $schema: LOCK_SCHEMA_URL,
+          $schema: V1_LOCK_SCHEMA_URL,
         });
       }),
     ),
@@ -129,9 +131,9 @@ describe("lock", () => {
         const read = yield* readLock(projectRoot);
         yield* writeLock(projectRoot, Option.getOrThrow(read));
 
-        expect(Option.getOrThrow(read).$schema).toBe(LOCK_SCHEMA_URL);
+        expect(Option.getOrThrow(read).$schema).toBe(V1_LOCK_SCHEMA_URL);
         expect(parse(yield* fs.readFileString(lockFile))).toMatchObject({
-          $schema: LOCK_SCHEMA_URL,
+          $schema: V1_LOCK_SCHEMA_URL,
         });
       }),
     ),

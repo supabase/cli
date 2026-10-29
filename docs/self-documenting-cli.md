@@ -50,7 +50,7 @@ apps/docs/
 │   ├── getting-started.mdx     ← Quickstart guide (hand-authored)
 │   ├── meta.json               ← Top-level page order
 │   └── commands/               ← Auto-generated command reference (git-ignored)
-├── public/cli/                 ← Generated config schema assets
+├── public/schemas/             ← Generated config, project-config and supabase.lock JSON Schemas
 └── lib/
     └── source.ts               ← Fumadocs content source loader
 ```

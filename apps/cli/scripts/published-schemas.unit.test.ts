@@ -6,7 +6,7 @@ import {
   toCliConfigJsonSchema,
   toProjectConfigJsonSchema,
 } from "@supabase/config";
-import { HOSTED_LOCK_SCHEMA_URL } from "@supabase/stack/effect";
+import { HOSTED_LOCK_SCHEMA_URL, LOCK_SCHEMA_URL } from "@supabase/stack/effect";
 import { Effect, FileSystem, JsonSchema, Path, Schema } from "effect";
 import { lockSchemaDocument, publishedSchemaPath } from "./published-schemas.ts";
 
@@ -197,6 +197,18 @@ describe("published supabase-lock schema definitions", () => {
       expect(
         refs.filter((ref) => !Object.keys(definitions).includes(ref.replace("#/definitions/", ""))),
       ).toEqual([]);
+    }),
+  );
+
+  it.effect("accept every $schema value readLock accepts", () =>
+    Effect.gen(function* () {
+      const document = yield* readCommitted("schemas/supabase-lock/v1.json");
+      const properties = document["properties"];
+      const schemaProperty = isNode(properties) ? properties["$schema"] : undefined;
+
+      expect(isNode(schemaProperty) ? schemaProperty["enum"] : undefined).toEqual(
+        expect.arrayContaining([LOCK_SCHEMA_URL, HOSTED_LOCK_SCHEMA_URL]),
+      );
     }),
   );
 });
