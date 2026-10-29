@@ -424,7 +424,6 @@ ProfileLoadError
 ProfileSaveError
 ProjectConfigParseError
 ProjectLifecycleLockBusyError
-ProjectLifecycleLockIoError
 ProjectLinkIoError
 ProjectLinkMalformedError
 ProjectNotLinkedError

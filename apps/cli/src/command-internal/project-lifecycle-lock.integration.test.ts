@@ -30,10 +30,7 @@ import { unusedStackServices } from "../../tests/helpers/unused-stack.ts";
 import { DbConnection, type DbSession } from "./db-connection.service.ts";
 import { dockerRunLayer } from "./docker-run.layer.ts";
 import { DebugFlag, ExperimentalFlag, NetworkIdFlag, YesFlag } from "./global-flags.ts";
-import {
-  ProjectLifecycleLockBusyError,
-  ProjectLifecycleLockIoError,
-} from "./project-lifecycle-lock.ts";
+import { ProjectLifecycleLockBusyError } from "./project-lifecycle-lock.ts";
 
 const startFlags: StartFlags = { exclude: [], ignoreHealthCheck: false, preview: false };
 
@@ -433,20 +430,43 @@ describe("project lifecycle lock", () => {
     );
   }
 
-  it.effect("fails before any Docker command when the lock directory cannot be created", () =>
-    Effect.gen(function* () {
+  describe("when the lock directory cannot be created", () => {
+    const unwritableHome = Effect.fnUntraced(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const base = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-lifecycle-home-" });
       const notADirectory = path.join(base, "file");
       yield* fs.writeFileString(notADirectory, "");
-      const docker = dockerModel();
-      const cli = yield* makeProcess(docker, path.join(notADirectory, "home"), "demo");
+      return path.join(notADirectory, "home");
+    });
 
-      const error = yield* start(startFlags).pipe(Effect.provide(cli.layer), Effect.flip);
+    it.effect("starts the stack without the lock", () =>
+      Effect.gen(function* () {
+        const docker = dockerModel();
+        const cli = yield* makeProcess(docker, yield* unwritableHome(), "demo");
 
-      expect(error).toBeInstanceOf(ProjectLifecycleLockIoError);
-      expect(docker.commands()).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
+        yield* start(startFlags).pipe(Effect.provide(cli.layer));
+
+        expect(docker.containerNames()).toContain("supabase_db_demo");
+        expect(cli.out.stderrText).not.toContain("Waiting for another Supabase CLI command");
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("stops the stack without the lock", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-lifecycle-home-" });
+        const docker = dockerModel();
+        const starter = yield* makeProcess(docker, home, "demo");
+        const stopper = yield* makeProcess(docker, yield* unwritableHome(), "demo");
+        yield* start(startFlags).pipe(Effect.provide(starter.layer));
+        expect(docker.containerNames()).toContain("supabase_db_demo");
+
+        yield* stop(stopFlags()).pipe(Effect.provide(stopper.layer));
+
+        expect(docker.containerNames()).toEqual([]);
+        expect(docker.networkNames()).toEqual([]);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+  });
 });

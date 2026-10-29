@@ -5,7 +5,17 @@ import {
   isLockBusy,
   type NamespaceError,
 } from "@supabase/stack/effect";
-import { Clock, Crypto, Data, Duration, Effect, FileSystem, Path, type Scope } from "effect";
+import {
+  Clock,
+  Crypto,
+  Data,
+  Duration,
+  Effect,
+  FileSystem,
+  Option,
+  Path,
+  type Scope,
+} from "effect";
 
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { Output } from "../shared/output/output.service.ts";
@@ -14,6 +24,7 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
+import { DebugLogger } from "./debug-logger.service.ts";
 import { cliProjectFilterValue } from "./docker-ids.ts";
 
 const LOCKS_DIR = "locks";
@@ -32,16 +43,6 @@ export class ProjectLifecycleLockBusyError extends Data.TaggedError(
   }
 }
 
-/** The lock files could not be created or opened. */
-export class ProjectLifecycleLockIoError extends Data.TaggedError("ProjectLifecycleLockIoError")<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return { ...actionability.runtimeCrash, fingerprint_suffix: "filesystem_io" };
-  }
-}
-
-type LockError = ProjectLifecycleLockBusyError | ProjectLifecycleLockIoError;
 type TakeLock = (
   file: string,
   budget: Duration.Input,
@@ -53,8 +54,9 @@ type TakeLock = (
  * command is still creating, for the enclosing scope. An empty `projectId` targets every project
  * (`stop --all`) and excludes all other holders; otherwise it excludes only commands for the same
  * project. Take it before any Docker probe and release it after rollback. It is not reentrant, so
- * never take it inside code a lock holder calls. Older binaries, raw `docker` commands, and a
- * different `SUPABASE_HOME` are not covered.
+ * never take it inside code a lock holder calls. A lock that cannot be created or opened is
+ * skipped with a debug line. Older binaries, raw `docker` commands, and a different `SUPABASE_HOME`
+ * are not covered.
  */
 export const holdProjectLifecycleLock = Effect.fn("ProjectLifecycleLock.hold")(function* (
   projectId: string,
@@ -64,6 +66,7 @@ export const holdProjectLifecycleLock = Effect.fn("ProjectLifecycleLock.hold")(f
   const path = yield* Path.Path;
   const output = yield* Output;
   const crypto = yield* Crypto.Crypto;
+  const debugLogger = yield* Effect.serviceOption(DebugLogger);
 
   const allProjects = projectId.length === 0;
   const started = yield* Clock.currentTimeMillis;
@@ -75,10 +78,6 @@ export const holdProjectLifecycleLock = Effect.fn("ProjectLifecycleLock.hold")(f
     waitingLine: string,
     busyMessage: string,
   ) {
-    const failure = (error: NamespaceError): LockError =>
-      isLockBusy(error)
-        ? new ProjectLifecycleLockBusyError({ message: busyMessage })
-        : new ProjectLifecycleLockIoError({ message: `failed to lock ${file}: ${error.message}` });
     yield* hold(file, Duration.zero, LOCK_SUBJECT).pipe(
       Effect.catchIf(isLockBusy, () =>
         Effect.gen(function* () {
@@ -94,20 +93,15 @@ export const holdProjectLifecycleLock = Effect.fn("ProjectLifecycleLock.hold")(f
           );
         }),
       ),
-      Effect.mapError(failure),
+      Effect.mapError((error) =>
+        isLockBusy(error) ? new ProjectLifecycleLockBusyError({ message: busyMessage }) : error,
+      ),
     );
   });
 
   yield* Effect.gen(function* () {
     const dir = path.join(supabaseHome, LOCKS_DIR);
-    yield* fs.makeDirectory(dir, { recursive: true }).pipe(
-      Effect.mapError(
-        (error) =>
-          new ProjectLifecycleLockIoError({
-            message: `failed to create ${dir}: ${error.message}`,
-          }),
-      ),
-    );
+    yield* fs.makeDirectory(dir, { recursive: true });
     const gate = path.join(dir, GATE_FILE);
 
     if (allProjects) {
@@ -138,12 +132,20 @@ export const holdProjectLifecycleLock = Effect.fn("ProjectLifecycleLock.hold")(f
       `Another Supabase CLI command is still starting or stopping project ${projectId}. Wait for it to finish, then retry.`,
     );
   }).pipe(
-    Effect.tap(() => Effect.annotateCurrentSpan({ "lock.outcome": "acquired" })),
-    Effect.tapError((error) =>
-      Effect.annotateCurrentSpan({
-        "lock.outcome": error._tag === "ProjectLifecycleLockBusyError" ? "timeout" : "error",
-      }),
-    ),
+    Effect.matchEffect({
+      onSuccess: () => Effect.annotateCurrentSpan({ "lock.outcome": "acquired" }),
+      onFailure: (error) =>
+        error instanceof ProjectLifecycleLockBusyError
+          ? Effect.annotateCurrentSpan({ "lock.outcome": "timeout" }).pipe(
+              Effect.andThen(Effect.fail(error)),
+            )
+          : (Option.isSome(debugLogger)
+              ? debugLogger.value.debug(
+                  `Continuing without the Docker lifecycle lock: ${error.message}`,
+                )
+              : Effect.void
+            ).pipe(Effect.andThen(Effect.annotateCurrentSpan({ "lock.outcome": "unavailable" }))),
+    }),
     Effect.onExit(() =>
       Effect.annotateCurrentSpan({
         "lock.mode": allProjects ? "all" : "project",

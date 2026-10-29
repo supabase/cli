@@ -192,14 +192,14 @@ command.
 
 ## Files Written
 
-| Path                                                                                     | Format           | When                                                                                                                                                                                             |
-| ---------------------------------------------------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `<workdir>/supabase/.branches/_current_branch`                                           | text             | on every start, only if absent — writes `"main"`                                                                                                                                                 |
-| `<workdir>/supabase/snippets/`                                                           | —                | when Studio is enabled, only if absent — created before any container and kept on rollback; `podman create -v`, unlike Docker, rejects a missing bind source                                     |
-| `<workdir>/supabase/.temp/start-secrets/<edgeRuntimeContainerName>/{env,multiline-env}/` | varies           | Edge Runtime's own JWT/service-role-key/secret env artifacts — see below                                                                                                                         |
-| auth email `content_path` files (SELinux security label only, no content change)         | xattr            | when the container runtime applies SELinux labels (enforcing or permissive): the `rw,z` Kong bind relabels each mounted template to the shared container context; persists after `supabase stop` |
-| `$SUPABASE_HOME/locks/docker-lifecycle.lock`                                             | SQLite lock file | held for the whole run: shared for one project, exclusive for `stop --all`; waits up to 10 minutes for a conflicting command                                                                     |
-| `$SUPABASE_HOME/locks/docker-project-<sha256(project label)>.lock`                       | SQLite lock file | held for the whole run: serializes lifecycle commands for the same project; waits up to 10 minutes                                                                                               |
+| Path                                                                                     | Format           | When                                                                                                                                                                                                               |
+| ---------------------------------------------------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `<workdir>/supabase/.branches/_current_branch`                                           | text             | on every start, only if absent — writes `"main"`                                                                                                                                                                   |
+| `<workdir>/supabase/snippets/`                                                           | —                | when Studio is enabled, only if absent — created before any container and kept on rollback; `podman create -v`, unlike Docker, rejects a missing bind source                                                       |
+| `<workdir>/supabase/.temp/start-secrets/<edgeRuntimeContainerName>/{env,multiline-env}/` | varies           | Edge Runtime's own JWT/service-role-key/secret env artifacts — see below                                                                                                                                           |
+| auth email `content_path` files (SELinux security label only, no content change)         | xattr            | when the container runtime applies SELinux labels (enforcing or permissive): the `rw,z` Kong bind relabels each mounted template to the shared container context; persists after `supabase stop`                   |
+| `$SUPABASE_HOME/locks/docker-lifecycle.lock`                                             | SQLite lock file | held for the whole run: shared for one project, exclusive for `stop --all`; waits up to 10 minutes for a conflicting command (skipped, with a debug line, when `$SUPABASE_HOME/locks` cannot be created or opened) |
+| `$SUPABASE_HOME/locks/docker-project-<sha256(project label)>.lock`                       | SQLite lock file | held for the whole run: serializes lifecycle commands for the same project; waits up to 10 minutes (skipped, with a debug line, when `$SUPABASE_HOME/locks` cannot be created or opened)                           |
 
 Kong's `custom_nginx.template`, Vector's `vector.yaml`, and Postgres's own bootstrap
 script (`postgresql.conf`-equivalent setup) are all rendered in memory and injected
@@ -306,7 +306,6 @@ code is surfaced on failure.
 | `1`  | stopped Postgres detected but the project id sanitizes to empty — aborts before recovery removes any containers                                                                                                                                                                                                                                                        |
 | `1`  | Postgres container exists but is not running and is not recovered (Bitbucket Pipelines, or Docker reported no state) — `<container> container is not running: <status>` (`unknown` for an empty status) with a `supabase stop` then `supabase start` suggestion; the "already running" banner is never printed                                                         |
 | `1`  | another lifecycle command still holds this project's lock after 10 minutes — prints `Waiting for another Supabase CLI command to finish with project <id>...` (or `...with local Supabase projects...` behind `stop --all`) to stderr first (`ProjectLifecycleLockBusyError`)                                                                                          |
-| `1`  | `$SUPABASE_HOME/locks` cannot be created or a lock file there cannot be opened — fails before any Docker command (`ProjectLifecycleLockIoError`)                                                                                                                                                                                                                       |
 | `1`  | `docker`/`podman` not spawnable, or the daemon is unreachable                                                                                                                                                                                                                                                                                                          |
 | `1`  | stopped-stack recovery cannot list, stop, or prune current-project containers, or prune matching networks — aborts before startup; named volumes are preserved                                                                                                                                                                                                         |
 | `1`  | image pull exhausted across every registry candidate, or the Docker daemon becomes unreachable during the pre-pull — even with `--ignore-health-check` (intentional divergence from the old Go CLI's exit-0 swallow quirk; see the CLI-1987 note under "Notes")                                                                                                        |
@@ -404,14 +403,14 @@ prose, not structured data.
 
 - **Lifecycle lock**: `start`, `db start`, and `stop` serialize on `$SUPABASE_HOME/locks`, so a
   `docker network prune` from one never lands between another's network create and its first
-  container attach. The lock (SQLite `BEGIN IMMEDIATE` locks the OS releases when the process dies)
-  is taken once the project id is resolved, before inspecting any container, and held until the
-  command ends, after any rollback. A command that has to wait prints `Waiting for another Supabase
-CLI command to finish with project <id>...` to stderr (text format only), waits up to 10 minutes,
-  then fails with `ProjectLifecycleLockBusyError`. The lock does not cover older CLI binaries, raw
-  `docker` commands, a different `SUPABASE_HOME`, projects sharing a custom `--network-id`, or
-  Docker requests a killed process already sent, and `stop --all` is not queued ahead of a stream
-  of single-project commands.
+  container attach. The lock (SQLite `BEGIN IMMEDIATE` locks the OS releases when the process
+  dies) is taken once the project id is resolved, before inspecting any container, and held until
+  the command ends, after any rollback. A command that has to wait prints a waiting line to stderr
+  (text format only), waits up to 10 minutes, then fails with `ProjectLifecycleLockBusyError`. A lock location that cannot be
+  created or opened never blocks the command: it continues unlocked and logs the reason under
+  `--debug`. The lock does not cover older CLI binaries, raw `docker` commands, a different
+  `SUPABASE_HOME`, projects sharing a custom `--network-id`, or Docker requests a killed process
+  already sent, and `stop --all` is not queued ahead of a stream of single-project commands.
 - **`pg_net` converges with `[experimental.webhooks]` on every non-backup start** (see
   `docs/go-cli-divergences.md`): a fresh volume installs `pg_net` only when webhooks are
   enabled or migration history contains a `create extension … pg_net`; an existing volume
