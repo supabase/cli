@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { Effect } from "effect";
+
 import {
   evaluateAllOpenPrs,
   evaluateGate,
@@ -190,60 +192,71 @@ describe("evaluateAllOpenPrs", () => {
     return { io, closed, permissionLookups };
   }
 
-  test("closes only non-conforming external PRs and leaves the rest", async () => {
-    const { io, closed, permissionLookups } = makeIo(
-      [
-        // no issue -> close
-        { number: 1, authorLogin: "ext-a", authorAssociation: "NONE", isBot: false },
-        // public member -> skip (no permission lookup needed)
-        { number: 2, authorLogin: "maint", authorAssociation: "MEMBER", isBot: false },
-        // bot -> skip
-        { number: 3, authorLogin: "dependabot", authorAssociation: "NONE", isBot: true },
-        // conforming external -> keep
-        { number: 4, authorLogin: "ext-b", authorAssociation: "CONTRIBUTOR", isBot: false },
-        // missing label -> close
-        { number: 5, authorLogin: "ext-c", authorAssociation: "NONE", isBot: false },
-        // private-membership maintainer (CONTRIBUTOR + write access) -> skip
-        { number: 6, authorLogin: "hidden-maint", authorAssociation: "CONTRIBUTOR", isBot: false },
-      ],
-      {
-        4: [{ repository: REPO, number: 40, state: "OPEN", labels: [GATE_LABEL] }],
-        5: [{ repository: REPO, number: 50, state: "OPEN", labels: ["🐛 Bug"] }],
-      },
-      { "hidden-maint": "write" },
-    );
+  test("closes only non-conforming external PRs and leaves the rest", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const { io, closed, permissionLookups } = makeIo(
+          [
+            // no issue -> close
+            { number: 1, authorLogin: "ext-a", authorAssociation: "NONE", isBot: false },
+            // public member -> skip (no permission lookup needed)
+            { number: 2, authorLogin: "maint", authorAssociation: "MEMBER", isBot: false },
+            // bot -> skip
+            { number: 3, authorLogin: "dependabot", authorAssociation: "NONE", isBot: true },
+            // conforming external -> keep
+            { number: 4, authorLogin: "ext-b", authorAssociation: "CONTRIBUTOR", isBot: false },
+            // missing label -> close
+            { number: 5, authorLogin: "ext-c", authorAssociation: "NONE", isBot: false },
+            // private-membership maintainer (CONTRIBUTOR + write access) -> skip
+            {
+              number: 6,
+              authorLogin: "hidden-maint",
+              authorAssociation: "CONTRIBUTOR",
+              isBot: false,
+            },
+          ],
+          {
+            4: [{ repository: REPO, number: 40, state: "OPEN", labels: [GATE_LABEL] }],
+            5: [{ repository: REPO, number: 50, state: "OPEN", labels: ["🐛 Bug"] }],
+          },
+          { "hidden-maint": "write" },
+        );
 
-    const entries = await evaluateAllOpenPrs(io, REPO);
+        const entries = yield* Effect.promise(() => evaluateAllOpenPrs(io, REPO));
 
-    expect(closed.map((c) => c.number).sort((a, b) => a - b)).toEqual([1, 5]);
-    const byNumber = Object.fromEntries(entries.map((entry) => [entry.number, entry.result]));
-    expect(byNumber[1]?.reason).toBe("no-linked-issue");
-    expect(byNumber[2]?.pass).toBe(true);
-    expect(byNumber[2]?.reason).toBe("internal");
-    expect(byNumber[3]?.reason).toBe("bot");
-    expect(byNumber[4]?.pass).toBe(true);
-    expect(byNumber[5]?.reason).toBe("missing-label");
-    expect(byNumber[6]?.pass).toBe(true);
-    expect(byNumber[6]?.reason).toBe("internal");
-    expect(closed.find((c) => c.number === 1)?.message).toContain(GATE_LABEL);
-    expect(permissionLookups).not.toContain("maint");
-    expect(permissionLookups).not.toContain("dependabot");
-  });
+        expect(closed.map((c) => c.number).sort((a, b) => a - b)).toEqual([1, 5]);
+        const byNumber = Object.fromEntries(entries.map((entry) => [entry.number, entry.result]));
+        expect(byNumber[1]?.reason).toBe("no-linked-issue");
+        expect(byNumber[2]?.pass).toBe(true);
+        expect(byNumber[2]?.reason).toBe("internal");
+        expect(byNumber[3]?.reason).toBe("bot");
+        expect(byNumber[4]?.pass).toBe(true);
+        expect(byNumber[5]?.reason).toBe("missing-label");
+        expect(byNumber[6]?.pass).toBe(true);
+        expect(byNumber[6]?.reason).toBe("internal");
+        expect(closed.find((c) => c.number === 1)?.message).toContain(GATE_LABEL);
+        expect(permissionLookups).not.toContain("maint");
+        expect(permissionLookups).not.toContain("dependabot");
+      }),
+    ));
 
-  test("returns an entry per PR and closes none when all conform", async () => {
-    const { io, closed } = makeIo(
-      [{ number: 9, authorLogin: "ext", authorAssociation: "NONE", isBot: false }],
-      {
-        9: [{ repository: REPO, number: 90, state: "OPEN", labels: [GATE_LABEL] }],
-      },
-    );
+  test("returns an entry per PR and closes none when all conform", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const { io, closed } = makeIo(
+          [{ number: 9, authorLogin: "ext", authorAssociation: "NONE", isBot: false }],
+          {
+            9: [{ repository: REPO, number: 90, state: "OPEN", labels: [GATE_LABEL] }],
+          },
+        );
 
-    const entries = await evaluateAllOpenPrs(io, REPO);
+        const entries = yield* Effect.promise(() => evaluateAllOpenPrs(io, REPO));
 
-    expect(entries).toHaveLength(1);
-    expect(closed).toHaveLength(0);
-    expect(entries[0]?.result.pass).toBe(true);
-  });
+        expect(entries).toHaveLength(1);
+        expect(closed).toHaveLength(0);
+        expect(entries[0]?.result.pass).toBe(true);
+      }),
+    ));
 });
 
 describe("fetchAuthorPermission", () => {
@@ -262,27 +275,42 @@ describe("fetchAuthorPermission", () => {
     );
   }
 
-  test("returns the effective permission for a collaborator", async () => {
-    stubFetch(200, { permission: "admin" });
-    const permission = await fetchAuthorPermission("t", "supabase", "cli", "maint");
-    expect(permission).toBe("admin");
-  });
+  test("returns the effective permission for a collaborator", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        stubFetch(200, { permission: "admin" });
+        const permission = yield* Effect.promise(() =>
+          fetchAuthorPermission("t", "supabase", "cli", "maint"),
+        );
+        expect(permission).toBe("admin");
+      }),
+    ));
 
-  test("maps a 404 (non-collaborator fork author) to undefined", async () => {
-    stubFetch(404, { message: "Not Found" });
-    const permission = await fetchAuthorPermission("t", "supabase", "cli", "ext");
-    expect(permission).toBeUndefined();
-  });
+  test("maps a 404 (non-collaborator fork author) to undefined", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        stubFetch(404, { message: "Not Found" });
+        const permission = yield* Effect.promise(() =>
+          fetchAuthorPermission("t", "supabase", "cli", "ext"),
+        );
+        expect(permission).toBeUndefined();
+      }),
+    ));
 
-  test("throws on other API failures so the run aborts without closing PRs", async () => {
+  test("throws on other API failures so the run aborts without closing PRs", () => {
     stubFetch(403, { message: "Forbidden" });
-    await expect(fetchAuthorPermission("t", "supabase", "cli", "ext")).rejects.toThrow(/403/);
+    return expect(fetchAuthorPermission("t", "supabase", "cli", "ext")).rejects.toThrow(/403/);
   });
 
-  test("skips the network call for a blank login", async () => {
-    stubFetch(200, { permission: "admin" });
-    const permission = await fetchAuthorPermission("t", "supabase", "cli", "");
-    expect(permission).toBeUndefined();
-    expect(fetchSpy).not.toHaveBeenCalled();
-  });
+  test("skips the network call for a blank login", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        stubFetch(200, { permission: "admin" });
+        const permission = yield* Effect.promise(() =>
+          fetchAuthorPermission("t", "supabase", "cli", ""),
+        );
+        expect(permission).toBeUndefined();
+        expect(fetchSpy).not.toHaveBeenCalled();
+      }),
+    ));
 });

@@ -1,10 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { Effect, FileSystem, Path } from "effect";
 
 import { type CheckRun, REQUIRED_CHECKS } from "./fast-forward.ts";
-import { createTestRepo, git, type TestRepo } from "./promotion-test-repo.ts";
+import { createTestRepo, git, runEffect, type TestRepo } from "./promotion-test-repo.ts";
 import {
   buildSuggestions,
   failureExcerpt,
@@ -337,91 +335,113 @@ describe("buildSuggestions", () => {
 describe("verifyWorkflows", () => {
   const BASE = "refs/remotes/origin/sync/develop-into-next";
   const repos: TestRepo[] = [];
-  afterEach(() => {
-    for (const repo of repos.splice(0)) {
-      repo.cleanup();
-    }
-  });
+  afterEach(() =>
+    runEffect(Effect.forEach(repos.splice(0), (repo) => repo.cleanup, { discard: true })),
+  );
 
   /** A sync branch at `develop` and a `next` that edits a workflow, checked out the way the publish job sees them. */
   function syncCheckout() {
-    const repo = createTestRepo();
-    repos.push(repo);
-    mkdirSync(join(repo.seed, ".github"));
-    repo.commit(repo.seed, ".github/ci.yml", "on: push\n", "ci: add workflow");
-    git(repo.seed, "push", "origin", "main:develop", "main:sync/develop-into-next");
-    git(repo.seed, "switch", "-c", "next");
-    repo.commit(repo.seed, ".github/ci.yml", "on: pull_request\n", "ci: next trigger");
-    git(repo.seed, "push", "origin", "next");
-    const checkout = repo.checkout();
-    git(checkout, "switch", "sync/develop-into-next");
-    git(checkout, "merge", "--no-ff", "--no-edit", "origin/next");
-    return { repo, checkout };
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { join } = yield* Path.Path;
+      const repo = yield* createTestRepo;
+      repos.push(repo);
+      yield* fs.makeDirectory(join(repo.seed, ".github"));
+      yield* repo.commit(repo.seed, ".github/ci.yml", "on: push\n", "ci: add workflow");
+      git(repo.seed, "push", "origin", "main:develop", "main:sync/develop-into-next");
+      git(repo.seed, "switch", "-c", "next");
+      yield* repo.commit(repo.seed, ".github/ci.yml", "on: pull_request\n", "ci: next trigger");
+      git(repo.seed, "push", "origin", "next");
+      const checkout = repo.checkout();
+      git(checkout, "switch", "sync/develop-into-next");
+      git(checkout, "merge", "--no-ff", "--no-edit", "origin/next");
+      return { repo, checkout };
+    });
   }
 
-  test("accepts git's merge of next", () => {
-    const { checkout } = syncCheckout();
+  test("accepts git's merge of next", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const { checkout } = yield* syncCheckout();
 
-    expect(() => verifyWorkflows(checkout, BASE, "HEAD")).not.toThrow();
-  });
+        expect(() => verifyWorkflows(checkout, BASE, "HEAD")).not.toThrow();
+      }),
+    ));
 
-  test("rejects a workflow added through a merge of a commit outside next", () => {
-    const { repo, checkout } = syncCheckout();
-    git(checkout, "switch", "-c", "forged", "HEAD~1");
-    repo.commit(checkout, ".github/evil.yml", "on: push\n", "ci: evil");
-    git(checkout, "switch", "sync/develop-into-next");
-    git(checkout, "merge", "--no-ff", "--no-edit", "forged");
+  test("rejects a workflow added through a merge of a commit outside next", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const { repo, checkout } = yield* syncCheckout();
+        git(checkout, "switch", "-c", "forged", "HEAD~1");
+        yield* repo.commit(checkout, ".github/evil.yml", "on: push\n", "ci: evil");
+        git(checkout, "switch", "sync/develop-into-next");
+        git(checkout, "merge", "--no-ff", "--no-edit", "forged");
 
-    expect(() => verifyWorkflows(checkout, BASE, "HEAD")).toThrow(
-      "merges a commit outside refs/remotes/origin/next",
-    );
-  });
+        expect(() => verifyWorkflows(checkout, BASE, "HEAD")).toThrow(
+          "merges a commit outside refs/remotes/origin/next",
+        );
+      }),
+    ));
 
-  test("ignores tags named like the remote branches", () => {
-    const { repo, checkout } = syncCheckout();
-    git(checkout, "switch", "-c", "forged", "HEAD~1");
-    repo.commit(checkout, ".github/evil.yml", "on: push\n", "ci: evil");
-    git(checkout, "tag", "origin/next");
-    git(checkout, "switch", "sync/develop-into-next");
-    git(checkout, "merge", "--no-ff", "--no-edit", "forged");
-    git(checkout, "tag", "origin/sync/develop-into-next");
+  test("ignores tags named like the remote branches", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const { repo, checkout } = yield* syncCheckout();
+        git(checkout, "switch", "-c", "forged", "HEAD~1");
+        yield* repo.commit(checkout, ".github/evil.yml", "on: push\n", "ci: evil");
+        git(checkout, "tag", "origin/next");
+        git(checkout, "switch", "sync/develop-into-next");
+        git(checkout, "merge", "--no-ff", "--no-edit", "forged");
+        git(checkout, "tag", "origin/sync/develop-into-next");
 
-    expect(() => verifyWorkflows(checkout, BASE, "HEAD")).toThrow(
-      "merges a commit outside refs/remotes/origin/next",
-    );
-  });
+        expect(() => verifyWorkflows(checkout, BASE, "HEAD")).toThrow(
+          "merges a commit outside refs/remotes/origin/next",
+        );
+      }),
+    ));
 
-  test("rejects a workflow added in a plain commit", () => {
-    const { repo, checkout } = syncCheckout();
-    repo.commit(checkout, ".github/evil.yml", "on: push\n", "ci: evil");
+  test("rejects a workflow added in a plain commit", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const { repo, checkout } = yield* syncCheckout();
+        yield* repo.commit(checkout, ".github/evil.yml", "on: push\n", "ci: evil");
 
-    expect(() => verifyWorkflows(checkout, BASE, "HEAD")).toThrow(
-      "workflow edits must come from a maintainer",
-    );
-  });
+        expect(() => verifyWorkflows(checkout, BASE, "HEAD")).toThrow(
+          "workflow edits must come from a maintainer",
+        );
+      }),
+    ));
 });
 
 describe("leftoverConflictMarkers", () => {
-  test("finds every zdiff3 marker line and ignores marker-like text", () => {
-    const dir = mkdtempSync(join(tmpdir(), "sync-agent-"));
-    writeFileSync(
-      join(dir, "a.ts"),
-      ["ok", "<<<<<<< HEAD", "|||||||", "=======", ">>>>>>> next", "======= not a marker"].join(
-        "\n",
-      ),
-    );
+  test("finds every zdiff3 marker line and ignores marker-like text", () =>
+    runEffect(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const { join } = yield* Path.Path;
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "sync-agent-" });
+          yield* fs.writeFileString(
+            join(dir, "a.ts"),
+            [
+              "ok",
+              "<<<<<<< HEAD",
+              "|||||||",
+              "=======",
+              ">>>>>>> next",
+              "======= not a marker",
+            ].join("\n"),
+          );
 
-    try {
-      expect(leftoverConflictMarkers(dir, ["a.ts", "missing.ts"])).toEqual([
-        "a.ts:2",
-        "a.ts:3",
-        "a.ts:4",
-        "a.ts:5",
-      ]);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
+          expect(leftoverConflictMarkers(dir, ["a.ts", "missing.ts"])).toEqual([
+            "a.ts:2",
+            "a.ts:3",
+            "a.ts:4",
+            "a.ts:5",
+          ]);
+        }),
+      ),
+    ));
 });
 
 test("failure excerpt keeps an early test failure that the log tail would drop", () => {

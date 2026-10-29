@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { Effect } from "effect";
 
 import {
   type CheckRun,
@@ -19,20 +20,20 @@ import {
   runFastForward,
 } from "./fast-forward.ts";
 import { makeGit } from "./promotion-shared.ts";
-import { createTestRepo, git, type TestRepo } from "./promotion-test-repo.ts";
+import { createTestRepo, git, runEffect, type TestRepo } from "./promotion-test-repo.ts";
 
 const repos: TestRepo[] = [];
 
-afterEach(() => {
-  for (const repo of repos.splice(0)) {
-    repo.cleanup();
-  }
-});
+afterEach(() =>
+  runEffect(Effect.forEach(repos.splice(0), (repo) => repo.cleanup, { discard: true })),
+);
 
-function setup(): TestRepo {
-  const repo = createTestRepo();
-  repos.push(repo);
-  return repo;
+function setup() {
+  return Effect.gen(function* () {
+    const repo = yield* createTestRepo;
+    repos.push(repo);
+    return repo;
+  });
 }
 
 const releaseBot: PullRequestAuthor = { login: "supabase-cli-releaser[bot]", type: "Bot" };
@@ -284,53 +285,68 @@ describe("actionsCheckRuns", () => {
 describe("fetchPullRequestCheckRuns", () => {
   function fakeGraphql(pages: unknown[]): { query: GraphqlQuery; cursors: unknown[] } {
     const cursors: unknown[] = [];
-    const query: GraphqlQuery = async (_query, variables) => {
+    const query: GraphqlQuery = (_query, variables) => {
       cursors.push(variables.cursor);
-      return pages[cursors.length - 1];
+      return Promise.resolve(pages[cursors.length - 1]);
     };
     return { query, cursors };
   }
 
-  test("follows pagination and returns the pull request's Actions runs", async () => {
-    const { query, cursors } = fakeGraphql([
-      rollupPage([rollupContext("Check code quality", "SUCCESS")], { endCursor: "c1" }),
-      rollupPage([rollupContext("Lint Pull Request", "SUCCESS")]),
-    ]);
+  test("follows pagination and returns the pull request's Actions runs", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const { query, cursors } = fakeGraphql([
+          rollupPage([rollupContext("Check code quality", "SUCCESS")], { endCursor: "c1" }),
+          rollupPage([rollupContext("Lint Pull Request", "SUCCESS")]),
+        ]);
 
-    const runs = await fetchPullRequestCheckRuns(query, "supabase/cli", 7, "abc");
+        const runs = yield* Effect.promise(() =>
+          fetchPullRequestCheckRuns(query, "supabase/cli", 7, "abc"),
+        );
 
-    expect(runs.map((r) => r.name)).toEqual(["Check code quality", "Lint Pull Request"]);
-    expect(cursors).toEqual([null, "c1"]);
-  });
+        expect(runs.map((r) => r.name)).toEqual(["Check code quality", "Lint Pull Request"]);
+        expect(cursors).toEqual([null, "c1"]);
+      }),
+    ));
 
-  test("passes owner, name and number as variables", async () => {
-    const seen: Record<string, unknown>[] = [];
-    await fetchPullRequestCheckRuns(
-      async (_query, variables) => {
-        seen.push(variables);
-        return rollupPage([]);
-      },
-      "supabase/cli",
-      7,
-      "abc",
-    );
-    expect(seen[0]).toMatchObject({ owner: "supabase", name: "cli", number: 7 });
-  });
+  test("passes owner, name and number as variables", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const seen: Record<string, unknown>[] = [];
+        yield* Effect.promise(() =>
+          fetchPullRequestCheckRuns(
+            (_query, variables) => {
+              seen.push(variables);
+              return Promise.resolve(rollupPage([]));
+            },
+            "supabase/cli",
+            7,
+            "abc",
+          ),
+        );
+        expect(seen[0]).toMatchObject({ owner: "supabase", name: "cli", number: 7 });
+      }),
+    ));
 
-  test("returns no runs when the commit has no rollup", async () => {
-    const page = rollupPage([]);
-    const commit = page.repository.pullRequest.commits.nodes[0]!.commit as {
-      statusCheckRollup: unknown;
-    };
-    commit.statusCheckRollup = null;
-    const { query } = fakeGraphql([page]);
+  test("returns no runs when the commit has no rollup", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const page = rollupPage([]);
+        const commit = page.repository.pullRequest.commits.nodes[0]!.commit as {
+          statusCheckRollup: unknown;
+        };
+        commit.statusCheckRollup = null;
+        const { query } = fakeGraphql([page]);
 
-    expect(await fetchPullRequestCheckRuns(query, "supabase/cli", 7, "abc")).toEqual([]);
-  });
+        expect(
+          yield* Effect.promise(() => fetchPullRequestCheckRuns(query, "supabase/cli", 7, "abc")),
+        ).toEqual([]);
+      }),
+    ));
 
-  test("fails when the head commit changed", async () => {
+  test("fails when the head commit changed", () => {
     const { query } = fakeGraphql([rollupPage([], { oid: "def" })]);
-    await expect(fetchPullRequestCheckRuns(query, "supabase/cli", 7, "abc")).rejects.toThrow(
+    return expect(fetchPullRequestCheckRuns(query, "supabase/cli", 7, "abc")).rejects.toThrow(
       "no longer abc",
     );
   });
@@ -361,49 +377,58 @@ function tagMain(repo: TestRepo, tag: string): void {
 }
 
 describe("isMajorPromotion", () => {
-  test("detects a breaking commit after the last stable tag", () => {
-    const repo = setup();
-    repo.commit(repo.seed, "old.txt", "old\n", "feat(cli)!: old break");
-    tagMain(repo, "v1.0.0");
-    git(repo.seed, "push", "origin", "main");
-    git(repo.seed, "switch", "-c", "develop");
-    repo.commit(repo.seed, "a.txt", "a\n", "fix(cli): small");
-    const head = repo.commit(repo.seed, "b.txt", "b\n", "feat(cli)!: break things");
-    git(repo.seed, "push", "origin", "develop");
-    const checkout = repo.checkout();
+  test("detects a breaking commit after the last stable tag", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const repo = yield* setup();
+        yield* repo.commit(repo.seed, "old.txt", "old\n", "feat(cli)!: old break");
+        tagMain(repo, "v1.0.0");
+        git(repo.seed, "push", "origin", "main");
+        git(repo.seed, "switch", "-c", "develop");
+        yield* repo.commit(repo.seed, "a.txt", "a\n", "fix(cli): small");
+        const head = yield* repo.commit(repo.seed, "b.txt", "b\n", "feat(cli)!: break things");
+        git(repo.seed, "push", "origin", "develop");
+        const checkout = repo.checkout();
 
-    expect(isMajorPromotion(makeGit(checkout), head, "main")).toBe(true);
-  });
+        expect(isMajorPromotion(makeGit(checkout), head, "main")).toBe(true);
+      }),
+    ));
 
-  test("ignores breaking commits that precede the last stable tag", () => {
-    const repo = setup();
-    repo.commit(repo.seed, "old.txt", "old\n", "feat(cli)!: old break");
-    tagMain(repo, "v1.0.0");
-    git(repo.seed, "push", "origin", "main");
-    git(repo.seed, "switch", "-c", "develop");
-    const head = repo.commit(repo.seed, "a.txt", "a\n", "feat(cli): minor");
-    git(repo.seed, "push", "origin", "develop");
-    const checkout = repo.checkout();
+  test("ignores breaking commits that precede the last stable tag", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const repo = yield* setup();
+        yield* repo.commit(repo.seed, "old.txt", "old\n", "feat(cli)!: old break");
+        tagMain(repo, "v1.0.0");
+        git(repo.seed, "push", "origin", "main");
+        git(repo.seed, "switch", "-c", "develop");
+        const head = yield* repo.commit(repo.seed, "a.txt", "a\n", "feat(cli): minor");
+        git(repo.seed, "push", "origin", "develop");
+        const checkout = repo.checkout();
 
-    expect(isMajorPromotion(makeGit(checkout), head, "main")).toBe(false);
-  });
+        expect(isMajorPromotion(makeGit(checkout), head, "main")).toBe(false);
+      }),
+    ));
 
-  test("a sync merge commit message is not breaking", () => {
-    const repo = setup();
-    tagMain(repo, "v1.0.0");
-    git(repo.seed, "switch", "-c", "develop");
-    repo.commit(repo.seed, "d.txt", "d\n", "fix(cli): d");
-    git(repo.seed, "switch", "main");
-    repo.commit(repo.seed, "m.txt", "m\n", "fix(cli): m");
-    git(repo.seed, "push", "origin", "main");
-    git(repo.seed, "switch", "develop");
-    git(repo.seed, "merge", "--no-edit", "main");
-    const head = git(repo.seed, "rev-parse", "HEAD");
-    git(repo.seed, "push", "origin", "develop");
-    const checkout = repo.checkout();
+  test("a sync merge commit message is not breaking", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const repo = yield* setup();
+        tagMain(repo, "v1.0.0");
+        git(repo.seed, "switch", "-c", "develop");
+        yield* repo.commit(repo.seed, "d.txt", "d\n", "fix(cli): d");
+        git(repo.seed, "switch", "main");
+        yield* repo.commit(repo.seed, "m.txt", "m\n", "fix(cli): m");
+        git(repo.seed, "push", "origin", "main");
+        git(repo.seed, "switch", "develop");
+        git(repo.seed, "merge", "--no-edit", "main");
+        const head = git(repo.seed, "rev-parse", "HEAD");
+        git(repo.seed, "push", "origin", "develop");
+        const checkout = repo.checkout();
 
-    expect(isMajorPromotion(makeGit(checkout), head, "main")).toBe(false);
-  });
+        expect(isMajorPromotion(makeGit(checkout), head, "main")).toBe(false);
+      }),
+    ));
 });
 
 interface Scenario {
@@ -428,22 +453,24 @@ function scenarioIo(
   const dispatches: string[] = [];
   const io: FastForwardIo = {
     git: makeGit(checkout),
-    getPullRequest: async () => pullRequest,
-    listReviews: async () => [],
-    listCheckRuns: async () => checks,
-    findOpenPullRequest: async (base, head) => {
+    getPullRequest: () => Promise.resolve(pullRequest),
+    listReviews: () => Promise.resolve([]),
+    listCheckRuns: () => Promise.resolve(checks),
+    findOpenPullRequest: (base, head) => {
       lookups.push(`${base}<-${head}`);
       if (openSyncPullRequest instanceof Error) {
-        throw openSyncPullRequest;
+        return Promise.reject(openSyncPullRequest);
       }
-      return openSyncPullRequest;
+      return Promise.resolve(openSyncPullRequest);
     },
-    listComments: async () => [],
-    comment: async (body) => {
+    listComments: () => Promise.resolve([]),
+    comment: (body) => {
       comments.push(body);
+      return Promise.resolve();
     },
-    dispatchResync: async () => {
+    dispatchResync: () => {
       dispatches.push(pullRequest.head.ref);
+      return Promise.resolve();
     },
   };
   return { io, comments, lookups, dispatches };
@@ -460,206 +487,260 @@ function deployScenario(
     checks?: CheckRun[];
     openSyncPullRequest?: number | Error;
   } = {},
-): Scenario {
-  const repo = setup();
-  tagMain(repo, "v1.0.0");
-  git(repo.seed, "switch", "-c", "develop");
-  repo.commit(repo.seed, "a.txt", "a\n", "fix(cli): a");
-  const head = repo.commit(repo.seed, "b.txt", "b\n", options.headMessage ?? "feat(cli): b");
-  git(repo.seed, "push", "origin", "develop");
-  publish(repo, 7);
-  const checkout = repo.checkout();
-  const pullRequest: PullRequest = {
-    number: 7,
-    state: "open",
-    draft: false,
-    user: maintainer,
-    head: { sha: head, ref: "develop" },
-    base: { ref: "main" },
-    labels: (options.labels ?? []).map((name) => ({ name })),
-  };
-  const { io, comments, lookups } = scenarioIo(
-    repo,
-    checkout,
-    pullRequest,
-    options.checks ?? greenChecks,
-    options.openSyncPullRequest,
-  );
-  return { repo, checkout, head, comments, lookups, io, pullRequest };
-}
-
-describe("runFastForward deploy", () => {
-  test("fast-forwards main to the approved head without commenting", async () => {
-    const { repo, head, io, comments } = deployScenario();
-
-    const outcome = await runFastForward(io, { reviewCommitId: head });
-
-    expect(outcome).toEqual({ status: "fast-forwarded", sha: head });
-    expect(repo.remoteTip("main")).toBe(head);
-    expect(comments).toEqual([]);
-  });
-
-  test("refuses a stale approval", async () => {
-    const { repo, io, comments } = deployScenario();
-    const mainBefore = repo.remoteTip("main");
-
-    const outcome = await runFastForward(io, { reviewCommitId: "0".repeat(40) });
-
-    expect(outcome.status).toBe("refused");
-    expect(repo.remoteTip("main")).toBe(mainBefore);
-    expect(comments[0]).toContain("Re-approve the current head");
-  });
-
-  test("refuses when required checks are not green", async () => {
-    const { repo, head, io, comments } = deployScenario({
-      checks: [run("Check code quality", "failure"), ...greenChecks.slice(1)],
-    });
-    const mainBefore = repo.remoteTip("main");
-
-    const outcome = await runFastForward(io, { reviewCommitId: head });
-
-    expect(outcome.status).toBe("refused");
-    expect(repo.remoteTip("main")).toBe(mainBefore);
-    expect(comments[0]).toContain("| Check code quality | failure |");
-  });
-
-  test("refuses a major release without the release-major label", async () => {
-    const { repo, head, io, comments } = deployScenario({ headMessage: "feat(cli)!: break" });
-    const mainBefore = repo.remoteTip("main");
-
-    const outcome = await runFastForward(io, { reviewCommitId: head });
-
-    expect(outcome.status).toBe("refused");
-    expect(repo.remoteTip("main")).toBe(mainBefore);
-    expect(comments[0]).toContain("release-major");
-  });
-
-  test("accepts a major release with the release-major label", async () => {
-    const { repo, head, io } = deployScenario({
-      headMessage: "feat(cli)!: break",
-      labels: ["release-major"],
-    });
-
-    const outcome = await runFastForward(io, { reviewCommitId: head });
-
-    expect(outcome.status).toBe("fast-forwarded");
-    expect(repo.remoteTip("main")).toBe(head);
-  });
-
-  test("refuses when main moved after the head was cut and points at the sync workflow", async () => {
-    const { repo, head, io, comments } = deployScenario();
-    git(repo.seed, "switch", "main");
-    const movedMain = repo.commit(repo.seed, "hotfix.txt", "fix\n", "fix(cli): hotfix");
-    git(repo.seed, "push", "origin", "main");
-
-    const outcome = await runFastForward(io, { reviewCommitId: head });
-
-    expect(outcome.status).toBe("refused");
-    expect(repo.remoteTip("main")).toBe(movedMain);
-    expect(comments[0]).toContain("moved since approval");
-    expect(comments[0]).toContain("pair=main-into-develop");
-  });
-
-  test("names the open back-merge pull request when main has a hotfix develop lacks", async () => {
-    const { repo, head, io, comments, lookups } = deployScenario({ openSyncPullRequest: 42 });
-    git(repo.seed, "switch", "main");
-    repo.commit(repo.seed, "hotfix.txt", "fix\n", "fix(cli): hotfix");
-    git(repo.seed, "push", "origin", "main");
-
-    const outcome = await runFastForward(io, { reviewCommitId: head });
-
-    expect(outcome.status).toBe("refused");
-    expect(lookups).toEqual(["develop<-sync/main-into-develop"]);
-    expect(comments[0]).toContain("waiting in #42");
-  });
-
-  test("still comments with the dispatch guidance when the sync pull request lookup fails", async () => {
-    const { repo, head, io, comments, lookups } = deployScenario({
-      openSyncPullRequest: new Error("api down"),
-    });
-    git(repo.seed, "switch", "main");
-    repo.commit(repo.seed, "hotfix.txt", "fix\n", "fix(cli): hotfix");
-    git(repo.seed, "push", "origin", "main");
-
-    const outcome = await runFastForward(io, { reviewCommitId: head });
-
-    expect(outcome.status).toBe("refused");
-    expect(lookups).toEqual(["develop<-sync/main-into-develop"]);
-    expect(comments[0]).toContain("moved since approval");
-    expect(comments[0]).toContain("pair=main-into-develop");
-  });
-
-  test("refuses when main moves between the ancestry check and the push", async () => {
-    const { repo, head, io, comments } = deployScenario();
-    git(repo.seed, "switch", "main");
-    const movedMain = repo.commit(repo.seed, "hotfix.txt", "fix\n", "fix(cli): hotfix");
-    const racing: FastForwardIo = {
-      ...io,
-      git(args) {
-        if (args[0] === "push") {
-          git(repo.seed, "push", "origin", "main");
-        }
-        return io.git(args);
-      },
-    };
-
-    const outcome = await runFastForward(racing, { reviewCommitId: head });
-
-    expect(outcome.status).toBe("refused");
-    expect(repo.remoteTip("main")).toBe(movedMain);
-    expect(comments[0]).toContain("moved since approval");
-  });
-
-  test("ignores pull requests that are not promotions", async () => {
-    const { repo, head, io, pullRequest, comments } = deployScenario();
-    pullRequest.head.ref = "feature/x";
-    const mainBefore = repo.remoteTip("main");
-
-    const outcome = await runFastForward(io, { reviewCommitId: head });
-
-    expect(outcome.status).toBe("ignored");
-    expect(comments).toEqual([]);
-    expect(repo.remoteTip("main")).toBe(mainBefore);
-  });
-
-  test("dry run neither pushes nor comments", async () => {
-    const { repo, head, io, comments } = deployScenario();
-    const mainBefore = repo.remoteTip("main");
-
-    const outcome = await runFastForward(io, { reviewCommitId: head, dryRun: true });
-
-    expect(outcome.status).toBe("dry-run");
-    expect(repo.remoteTip("main")).toBe(mainBefore);
-    expect(comments).toEqual([]);
-  });
-});
-
-describe("runFastForward cut", () => {
-  test("fast-forwards develop to next without the major guard", async () => {
-    const repo = setup();
+) {
+  return Effect.gen(function* () {
+    const repo = yield* setup();
     tagMain(repo, "v1.0.0");
     git(repo.seed, "switch", "-c", "develop");
+    yield* repo.commit(repo.seed, "a.txt", "a\n", "fix(cli): a");
+    const head = yield* repo.commit(
+      repo.seed,
+      "b.txt",
+      "b\n",
+      options.headMessage ?? "feat(cli): b",
+    );
     git(repo.seed, "push", "origin", "develop");
-    git(repo.seed, "switch", "-c", "next");
-    const head = repo.commit(repo.seed, "v3.txt", "v3\n", "feat(cli)!: v3");
-    git(repo.seed, "push", "origin", "next");
-    publish(repo, 11);
+    publish(repo, 7);
+    const checkout = repo.checkout();
     const pullRequest: PullRequest = {
-      number: 11,
+      number: 7,
       state: "open",
       draft: false,
       user: maintainer,
-      head: { sha: head, ref: "next" },
-      base: { ref: "develop" },
-      labels: [],
+      head: { sha: head, ref: "develop" },
+      base: { ref: "main" },
+      labels: (options.labels ?? []).map((name) => ({ name })),
     };
-    const { io } = scenarioIo(repo, repo.checkout(), pullRequest, greenChecks);
-
-    const outcome = await runFastForward(io, { reviewCommitId: head });
-
-    expect(outcome.status).toBe("fast-forwarded");
-    expect(repo.remoteTip("develop")).toBe(head);
+    const { io, comments, lookups } = scenarioIo(
+      repo,
+      checkout,
+      pullRequest,
+      options.checks ?? greenChecks,
+      options.openSyncPullRequest,
+    );
+    const scenario: Scenario = { repo, checkout, head, comments, lookups, io, pullRequest };
+    return scenario;
   });
+}
+
+describe("runFastForward deploy", () => {
+  test("fast-forwards main to the approved head without commenting", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const { repo, head, io, comments } = yield* deployScenario();
+
+        const outcome = yield* Effect.promise(() => runFastForward(io, { reviewCommitId: head }));
+
+        expect(outcome).toEqual({ status: "fast-forwarded", sha: head });
+        expect(repo.remoteTip("main")).toBe(head);
+        expect(comments).toEqual([]);
+      }),
+    ));
+
+  test("refuses a stale approval", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const { repo, io, comments } = yield* deployScenario();
+        const mainBefore = repo.remoteTip("main");
+
+        const outcome = yield* Effect.promise(() =>
+          runFastForward(io, { reviewCommitId: "0".repeat(40) }),
+        );
+
+        expect(outcome.status).toBe("refused");
+        expect(repo.remoteTip("main")).toBe(mainBefore);
+        expect(comments[0]).toContain("Re-approve the current head");
+      }),
+    ));
+
+  test("refuses when required checks are not green", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const { repo, head, io, comments } = yield* deployScenario({
+          checks: [run("Check code quality", "failure"), ...greenChecks.slice(1)],
+        });
+        const mainBefore = repo.remoteTip("main");
+
+        const outcome = yield* Effect.promise(() => runFastForward(io, { reviewCommitId: head }));
+
+        expect(outcome.status).toBe("refused");
+        expect(repo.remoteTip("main")).toBe(mainBefore);
+        expect(comments[0]).toContain("| Check code quality | failure |");
+      }),
+    ));
+
+  test("refuses a major release without the release-major label", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const { repo, head, io, comments } = yield* deployScenario({
+          headMessage: "feat(cli)!: break",
+        });
+        const mainBefore = repo.remoteTip("main");
+
+        const outcome = yield* Effect.promise(() => runFastForward(io, { reviewCommitId: head }));
+
+        expect(outcome.status).toBe("refused");
+        expect(repo.remoteTip("main")).toBe(mainBefore);
+        expect(comments[0]).toContain("release-major");
+      }),
+    ));
+
+  test("accepts a major release with the release-major label", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const { repo, head, io } = yield* deployScenario({
+          headMessage: "feat(cli)!: break",
+          labels: ["release-major"],
+        });
+
+        const outcome = yield* Effect.promise(() => runFastForward(io, { reviewCommitId: head }));
+
+        expect(outcome.status).toBe("fast-forwarded");
+        expect(repo.remoteTip("main")).toBe(head);
+      }),
+    ));
+
+  test("refuses when main moved after the head was cut and points at the sync workflow", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const { repo, head, io, comments } = yield* deployScenario();
+        git(repo.seed, "switch", "main");
+        const movedMain = yield* repo.commit(repo.seed, "hotfix.txt", "fix\n", "fix(cli): hotfix");
+        git(repo.seed, "push", "origin", "main");
+
+        const outcome = yield* Effect.promise(() => runFastForward(io, { reviewCommitId: head }));
+
+        expect(outcome.status).toBe("refused");
+        expect(repo.remoteTip("main")).toBe(movedMain);
+        expect(comments[0]).toContain("moved since approval");
+        expect(comments[0]).toContain("pair=main-into-develop");
+      }),
+    ));
+
+  test("names the open back-merge pull request when main has a hotfix develop lacks", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const { repo, head, io, comments, lookups } = yield* deployScenario({
+          openSyncPullRequest: 42,
+        });
+        git(repo.seed, "switch", "main");
+        yield* repo.commit(repo.seed, "hotfix.txt", "fix\n", "fix(cli): hotfix");
+        git(repo.seed, "push", "origin", "main");
+
+        const outcome = yield* Effect.promise(() => runFastForward(io, { reviewCommitId: head }));
+
+        expect(outcome.status).toBe("refused");
+        expect(lookups).toEqual(["develop<-sync/main-into-develop"]);
+        expect(comments[0]).toContain("waiting in #42");
+      }),
+    ));
+
+  test("still comments with the dispatch guidance when the sync pull request lookup fails", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const { repo, head, io, comments, lookups } = yield* deployScenario({
+          openSyncPullRequest: new Error("api down"),
+        });
+        git(repo.seed, "switch", "main");
+        yield* repo.commit(repo.seed, "hotfix.txt", "fix\n", "fix(cli): hotfix");
+        git(repo.seed, "push", "origin", "main");
+
+        const outcome = yield* Effect.promise(() => runFastForward(io, { reviewCommitId: head }));
+
+        expect(outcome.status).toBe("refused");
+        expect(lookups).toEqual(["develop<-sync/main-into-develop"]);
+        expect(comments[0]).toContain("moved since approval");
+        expect(comments[0]).toContain("pair=main-into-develop");
+      }),
+    ));
+
+  test("refuses when main moves between the ancestry check and the push", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const { repo, head, io, comments } = yield* deployScenario();
+        git(repo.seed, "switch", "main");
+        const movedMain = yield* repo.commit(repo.seed, "hotfix.txt", "fix\n", "fix(cli): hotfix");
+        const racing: FastForwardIo = {
+          ...io,
+          git(args) {
+            if (args[0] === "push") {
+              git(repo.seed, "push", "origin", "main");
+            }
+            return io.git(args);
+          },
+        };
+
+        const outcome = yield* Effect.promise(() =>
+          runFastForward(racing, { reviewCommitId: head }),
+        );
+
+        expect(outcome.status).toBe("refused");
+        expect(repo.remoteTip("main")).toBe(movedMain);
+        expect(comments[0]).toContain("moved since approval");
+      }),
+    ));
+
+  test("ignores pull requests that are not promotions", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const { repo, head, io, pullRequest, comments } = yield* deployScenario();
+        pullRequest.head.ref = "feature/x";
+        const mainBefore = repo.remoteTip("main");
+
+        const outcome = yield* Effect.promise(() => runFastForward(io, { reviewCommitId: head }));
+
+        expect(outcome.status).toBe("ignored");
+        expect(comments).toEqual([]);
+        expect(repo.remoteTip("main")).toBe(mainBefore);
+      }),
+    ));
+
+  test("dry run neither pushes nor comments", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const { repo, head, io, comments } = yield* deployScenario();
+        const mainBefore = repo.remoteTip("main");
+
+        const outcome = yield* Effect.promise(() =>
+          runFastForward(io, { reviewCommitId: head, dryRun: true }),
+        );
+
+        expect(outcome.status).toBe("dry-run");
+        expect(repo.remoteTip("main")).toBe(mainBefore);
+        expect(comments).toEqual([]);
+      }),
+    ));
+});
+
+describe("runFastForward cut", () => {
+  test("fast-forwards develop to next without the major guard", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const repo = yield* setup();
+        tagMain(repo, "v1.0.0");
+        git(repo.seed, "switch", "-c", "develop");
+        git(repo.seed, "push", "origin", "develop");
+        git(repo.seed, "switch", "-c", "next");
+        const head = yield* repo.commit(repo.seed, "v3.txt", "v3\n", "feat(cli)!: v3");
+        git(repo.seed, "push", "origin", "next");
+        publish(repo, 11);
+        const pullRequest: PullRequest = {
+          number: 11,
+          state: "open",
+          draft: false,
+          user: maintainer,
+          head: { sha: head, ref: "next" },
+          base: { ref: "develop" },
+          labels: [],
+        };
+        const { io } = scenarioIo(repo, repo.checkout(), pullRequest, greenChecks);
+
+        const outcome = yield* Effect.promise(() => runFastForward(io, { reviewCommitId: head }));
+
+        expect(outcome.status).toBe("fast-forwarded");
+        expect(repo.remoteTip("develop")).toBe(head);
+      }),
+    ));
 });
 
 interface SyncScenario {
@@ -670,284 +751,368 @@ interface SyncScenario {
   dispatches: string[];
 }
 
-function resolvedSyncScenario(source = "main", target = "develop"): SyncScenario {
-  const repo = setup();
-  git(repo.seed, "switch", "-c", target);
-  repo.commit(repo.seed, "shared.txt", `${target}\n`, `feat(cli): ${target} edit`);
-  git(repo.seed, "push", "origin", target);
-  git(repo.seed, "switch", "-C", source, "main");
-  repo.commit(repo.seed, "shared.txt", `${source}\n`, `fix(cli): ${source} edit`);
-  git(repo.seed, "push", "origin", source);
-  const syncBranch = `sync/${source}-into-${target}`;
-  git(repo.seed, "switch", "-c", syncBranch);
-  try {
-    git(repo.seed, "merge", "--no-edit", target);
-  } catch {
-    repo.commit(repo.seed, "shared.txt", "resolved\n", "chore(repo): resolve sync");
-  }
-  const head = git(repo.seed, "rev-parse", "HEAD");
-  git(repo.seed, "push", "origin", syncBranch);
-  publish(repo, 21);
-  const pullRequest: PullRequest = {
-    number: 21,
-    state: "open",
-    draft: false,
-    user: releaseBot,
-    head: { sha: head, ref: syncBranch },
-    base: { ref: target },
-    labels: [],
-  };
-  const { io, comments, dispatches } = scenarioIo(repo, repo.checkout(), pullRequest, greenChecks);
-  return { repo, head, io, comments, dispatches };
+function resolvedSyncScenario(source = "main", target = "develop") {
+  return Effect.gen(function* () {
+    const repo = yield* setup();
+    git(repo.seed, "switch", "-c", target);
+    yield* repo.commit(repo.seed, "shared.txt", `${target}\n`, `feat(cli): ${target} edit`);
+    git(repo.seed, "push", "origin", target);
+    git(repo.seed, "switch", "-C", source, "main");
+    yield* repo.commit(repo.seed, "shared.txt", `${source}\n`, `fix(cli): ${source} edit`);
+    git(repo.seed, "push", "origin", source);
+    const syncBranch = `sync/${source}-into-${target}`;
+    git(repo.seed, "switch", "-c", syncBranch);
+    yield* Effect.try(() => git(repo.seed, "merge", "--no-edit", target)).pipe(
+      Effect.catch(() =>
+        repo.commit(repo.seed, "shared.txt", "resolved\n", "chore(repo): resolve sync"),
+      ),
+    );
+    const head = git(repo.seed, "rev-parse", "HEAD");
+    git(repo.seed, "push", "origin", syncBranch);
+    publish(repo, 21);
+    const pullRequest: PullRequest = {
+      number: 21,
+      state: "open",
+      draft: false,
+      user: releaseBot,
+      head: { sha: head, ref: syncBranch },
+      base: { ref: target },
+      labels: [],
+    };
+    const { io, comments, dispatches } = scenarioIo(
+      repo,
+      repo.checkout(),
+      pullRequest,
+      greenChecks,
+    );
+    const scenario: SyncScenario = { repo, head, io, comments, dispatches };
+    return scenario;
+  });
 }
 
 describe("runFastForward sync", () => {
-  test("refuses a sync pull request opened by a person and points at the workflow", async () => {
-    const { repo, head, io, comments } = resolvedSyncScenario();
-    const before = repo.remoteTip("develop");
-    const humanPr = { ...(await io.getPullRequest()), user: maintainer };
+  test("refuses a sync pull request opened by a person and points at the workflow", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const { repo, head, io, comments } = yield* resolvedSyncScenario();
+        const before = repo.remoteTip("develop");
+        const humanPr = { ...(yield* Effect.promise(() => io.getPullRequest())), user: maintainer };
 
-    const outcome = await runFastForward(
-      { ...io, getPullRequest: async () => humanPr },
-      { reviewCommitId: head },
-    );
+        const outcome = yield* Effect.promise(() =>
+          runFastForward(
+            { ...io, getPullRequest: () => Promise.resolve(humanPr) },
+            { reviewCommitId: head },
+          ),
+        );
 
-    expect(outcome.status).toBe("refused");
-    expect(comments).toHaveLength(1);
-    expect(comments[0]).toContain("gh workflow run sync-branches.yml -f pair=main-into-develop");
-    expect(comments[0]).toContain("Close this pull request");
-    expect(repo.remoteTip("develop")).toBe(before);
-  });
+        expect(outcome.status).toBe("refused");
+        expect(comments).toHaveLength(1);
+        expect(comments[0]).toContain(
+          "gh workflow run sync-branches.yml -f pair=main-into-develop",
+        );
+        expect(comments[0]).toContain("Close this pull request");
+        expect(repo.remoteTip("develop")).toBe(before);
+      }),
+    ));
 
-  test("ignores a closed sync pull request opened by a person", async () => {
-    const { head, io, comments } = resolvedSyncScenario();
-    const closed = { ...(await io.getPullRequest()), user: maintainer, state: "closed" };
+  test("ignores a closed sync pull request opened by a person", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const { head, io, comments } = yield* resolvedSyncScenario();
+        const closed = {
+          ...(yield* Effect.promise(() => io.getPullRequest())),
+          user: maintainer,
+          state: "closed",
+        };
 
-    const outcome = await runFastForward(
-      { ...io, getPullRequest: async () => closed },
-      { reviewCommitId: head },
-    );
+        const outcome = yield* Effect.promise(() =>
+          runFastForward(
+            { ...io, getPullRequest: () => Promise.resolve(closed) },
+            { reviewCommitId: head },
+          ),
+        );
 
-    expect(outcome.status).toBe("ignored");
-    expect(comments).toEqual([]);
-  });
+        expect(outcome.status).toBe("ignored");
+        expect(comments).toEqual([]);
+      }),
+    ));
 
-  test("fast-forwards the target and deletes the sync branch", async () => {
-    const { repo, head, io } = resolvedSyncScenario();
+  test("fast-forwards the target and deletes the sync branch", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const { repo, head, io } = yield* resolvedSyncScenario();
 
-    const outcome = await runFastForward(io, { reviewCommitId: head });
+        const outcome = yield* Effect.promise(() => runFastForward(io, { reviewCommitId: head }));
 
-    expect(outcome.status).toBe("fast-forwarded");
-    expect(repo.remoteTip("develop")).toBe(head);
-    expect(() => repo.remoteTip("sync/main-into-develop")).toThrow();
-  });
+        expect(outcome.status).toBe("fast-forwarded");
+        expect(repo.remoteTip("develop")).toBe(head);
+        expect(() => repo.remoteTip("sync/main-into-develop")).toThrow();
+      }),
+    ));
 
-  test("lands the sync bot's approval only while it is active and nobody requests changes", async () => {
-    const review = (login: string, state: string) => ({ user: { login }, state });
-    const approved = review(AUTO_APPROVER_LOGIN, "APPROVED");
-    const attempt = async (reviews: ReturnType<typeof review>[]) => {
-      const { repo, head, io } = resolvedSyncScenario();
-      const before = repo.remoteTip("develop");
-      const outcome = await runFastForward(
-        { ...io, listReviews: async () => reviews },
-        { reviewCommitId: head, approver: AUTO_APPROVER_LOGIN },
-      );
-      return { status: outcome.status, moved: repo.remoteTip("develop") !== before };
-    };
+  test("lands the sync bot's approval only while it is active and nobody requests changes", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const review = (login: string, state: string) => ({ user: { login }, state });
+        const approved = review(AUTO_APPROVER_LOGIN, "APPROVED");
+        const attempt = (reviews: ReturnType<typeof review>[]) =>
+          Effect.gen(function* () {
+            const { repo, head, io } = yield* resolvedSyncScenario();
+            const before = repo.remoteTip("develop");
+            const outcome = yield* Effect.promise(() =>
+              runFastForward(
+                { ...io, listReviews: () => Promise.resolve(reviews) },
+                { reviewCommitId: head, approver: AUTO_APPROVER_LOGIN },
+              ),
+            );
+            return { status: outcome.status, moved: repo.remoteTip("develop") !== before };
+          });
 
-    expect(await attempt([approved, review("maintainer", "CHANGES_REQUESTED")])).toEqual({
-      status: "refused",
-      moved: false,
-    });
-    expect(await attempt([approved, review(AUTO_APPROVER_LOGIN, "DISMISSED")])).toEqual({
-      status: "refused",
-      moved: false,
-    });
-    expect(
-      await attempt([
-        review("maintainer", "CHANGES_REQUESTED"),
-        review("maintainer", "APPROVED"),
-        approved,
-      ]),
-    ).toEqual({ status: "fast-forwarded", moved: true });
-  });
+        expect(yield* attempt([approved, review("maintainer", "CHANGES_REQUESTED")])).toEqual({
+          status: "refused",
+          moved: false,
+        });
+        expect(yield* attempt([approved, review(AUTO_APPROVER_LOGIN, "DISMISSED")])).toEqual({
+          status: "refused",
+          moved: false,
+        });
+        expect(
+          yield* attempt([
+            review("maintainer", "CHANGES_REQUESTED"),
+            review("maintainer", "APPROVED"),
+            approved,
+          ]),
+        ).toEqual({ status: "fast-forwarded", moved: true });
+      }),
+    ));
 
-  test("lands the approved head merged with a target move without pulling in the moved source", async () => {
-    const { repo, head, io, comments } = resolvedSyncScenario();
-    git(repo.seed, "switch", "main");
-    const movedMain = repo.commit(repo.seed, "late-main.txt", "late\n", "fix(cli): late main");
-    git(repo.seed, "push", "origin", "main");
-    git(repo.seed, "switch", "develop");
-    const movedDevelop = repo.commit(repo.seed, "late.txt", "late\n", "feat(cli): late");
-    git(repo.seed, "push", "origin", "develop");
+  test("lands the approved head merged with a target move without pulling in the moved source", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const { repo, head, io, comments } = yield* resolvedSyncScenario();
+        git(repo.seed, "switch", "main");
+        const movedMain = yield* repo.commit(
+          repo.seed,
+          "late-main.txt",
+          "late\n",
+          "fix(cli): late main",
+        );
+        git(repo.seed, "push", "origin", "main");
+        git(repo.seed, "switch", "develop");
+        const movedDevelop = yield* repo.commit(repo.seed, "late.txt", "late\n", "feat(cli): late");
+        git(repo.seed, "push", "origin", "develop");
 
-    const outcome = await runFastForward(io, { reviewCommitId: head });
+        const outcome = yield* Effect.promise(() => runFastForward(io, { reviewCommitId: head }));
 
-    const landed = repo.remoteTip("develop");
-    expect(outcome).toEqual({ status: "merged-after-resync", sha: landed });
-    expect(repo.isAncestor(head, landed)).toBe(true);
-    expect(repo.isAncestor(movedDevelop, landed)).toBe(true);
-    expect(repo.isAncestor(movedMain, landed)).toBe(false);
-    expect(() => repo.remoteTip("sync/main-into-develop")).toThrow();
-    expect(comments).toHaveLength(1);
-    expect(comments[0]).toContain("moved since approval");
-    expect(comments[0]).toContain(`landed it as ${landed.slice(0, 7)}`);
-    expect(comments[0]).not.toContain("Re-approve");
-  });
+        const landed = repo.remoteTip("develop");
+        expect(outcome).toEqual({ status: "merged-after-resync", sha: landed });
+        expect(repo.isAncestor(head, landed)).toBe(true);
+        expect(repo.isAncestor(movedDevelop, landed)).toBe(true);
+        expect(repo.isAncestor(movedMain, landed)).toBe(false);
+        expect(() => repo.remoteTip("sync/main-into-develop")).toThrow();
+        expect(comments).toHaveLength(1);
+        expect(comments[0]).toContain("moved since approval");
+        expect(comments[0]).toContain(`landed it as ${landed.slice(0, 7)}`);
+        expect(comments[0]).not.toContain("Re-approve");
+      }),
+    ));
 
-  test("retries the merge when the target moves again before the push", async () => {
-    const { repo, head, io } = resolvedSyncScenario();
-    git(repo.seed, "switch", "develop");
-    repo.commit(repo.seed, "late-1.txt", "1\n", "feat(cli): late 1");
-    git(repo.seed, "push", "origin", "develop");
-    let raced = false;
-    const racing: FastForwardIo = {
-      ...io,
-      git(args) {
-        if (args[0] === "push" && !raced) {
-          raced = true;
-          repo.commit(repo.seed, "late-2.txt", "2\n", "feat(cli): late 2");
-          git(repo.seed, "push", "origin", "develop");
-        }
-        return io.git(args);
-      },
-    };
-
-    const outcome = await runFastForward(racing, { reviewCommitId: head });
-
-    const landed = repo.remoteTip("develop");
-    expect(outcome).toEqual({ status: "merged-after-resync", sha: landed });
-    expect(git(repo.remote, "ls-tree", "--name-only", landed)).toContain("late-2.txt");
-    expect(repo.isAncestor(head, landed)).toBe(true);
-  });
-
-  test("falls back to re-approval when the target keeps moving", async () => {
-    const { repo, head, io, comments } = resolvedSyncScenario();
-    git(repo.seed, "switch", "develop");
-    let movedDevelop = repo.commit(repo.seed, "late-0.txt", "late\n", "feat(cli): late 0");
-    git(repo.seed, "push", "origin", "develop");
-    let moves = 0;
-    const racing: FastForwardIo = {
-      ...io,
-      git(args) {
-        if (args[0] === "push" && args[2] === "HEAD:refs/heads/develop") {
-          moves += 1;
-          movedDevelop = repo.commit(
-            repo.seed,
-            `late-${moves}.txt`,
-            "late\n",
-            `feat(cli): late ${moves}`,
-          );
-          git(repo.seed, "push", "origin", "develop");
-        }
-        return io.git(args);
-      },
-    };
-
-    const outcome = await runFastForward(racing, { reviewCommitId: head });
-
-    expect(outcome.status).toBe("resynced");
-    expect(moves).toBe(3);
-    expect(repo.remoteTip("develop")).toBe(movedDevelop);
-    const resynced = repo.remoteTip("sync/main-into-develop");
-    expect(resynced).not.toBe(head);
-    expect(repo.isAncestor(head, resynced)).toBe(true);
-    expect(comments).toHaveLength(1);
-    expect(comments[0]).toContain("Re-approve");
-  });
-
-  test("dry run pushes nothing when the target moved cleanly", async () => {
-    const { repo, head, io, comments } = resolvedSyncScenario();
-    git(repo.seed, "switch", "develop");
-    const movedDevelop = repo.commit(repo.seed, "late.txt", "late\n", "feat(cli): late");
-    git(repo.seed, "push", "origin", "develop");
-
-    const outcome = await runFastForward(io, { reviewCommitId: head, dryRun: true });
-
-    expect(outcome.status).toBe("dry-run");
-    expect(repo.remoteTip("develop")).toBe(movedDevelop);
-    expect(repo.remoteTip("sync/main-into-develop")).toBe(head);
-    expect(comments).toEqual([]);
-  });
-
-  test("refuses and leaves the branch alone when a moved target conflicts", async () => {
-    const { repo, head, io, comments, dispatches } = resolvedSyncScenario();
-    git(repo.seed, "switch", "develop");
-    const movedDevelop = repo.commit(
-      repo.seed,
-      "shared.txt",
-      "conflicting\n",
-      "feat(cli): conflicting",
-    );
-    git(repo.seed, "push", "origin", "develop");
-
-    const outcome = await runFastForward(io, { reviewCommitId: head });
-
-    expect(outcome.status).toBe("refused");
-    expect(repo.remoteTip("sync/main-into-develop")).toBe(head);
-    expect(repo.remoteTip("develop")).toBe(movedDevelop);
-    expect(comments[0]).toContain("- `shared.txt`");
-    expect(dispatches).toEqual([]);
-  });
-
-  test("hands a conflicting move of next back to Claude for two resyncs, or a maintainer when dispatch fails", async () => {
-    const attempt = async (resyncs: number, dispatchFails = false) => {
-      const { repo, head, io, comments, dispatches } = resolvedSyncScenario("develop", "next");
-      git(repo.seed, "switch", "next");
-      repo.commit(repo.seed, "shared.txt", "conflicting\n", "feat(cli)!: conflicting");
-      git(repo.seed, "push", "origin", "next");
-      const botComments = [
-        {
-          user: { login: releaseBot.login },
-          body: "<!-- sync-agent resolve -->\n### Claude resolved the merge of `next`",
-        },
-        ...Array.from({ length: resyncs }, () => ({
-          user: { login: "github-actions[bot]" },
-          body: "<!-- fast-forward resync -->\n`next` moved since approval",
-        })),
-      ];
-
-      const outcome = await runFastForward(
-        {
+  test("retries the merge when the target moves again before the push", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const { repo, head, io } = yield* resolvedSyncScenario();
+        git(repo.seed, "switch", "develop");
+        yield* repo.commit(repo.seed, "late-1.txt", "1\n", "feat(cli): late 1");
+        git(repo.seed, "push", "origin", "develop");
+        /* The late commit is made ahead, since the runner calls the wrapper below synchronously. */
+        yield* repo.commit(repo.seed, "late-2.txt", "2\n", "feat(cli): late 2");
+        let raced = false;
+        const racing: FastForwardIo = {
           ...io,
-          listComments: async () => botComments,
-          ...(dispatchFails && {
-            dispatchResync: async () => {
-              throw new Error("HTTP 403");
-            },
-          }),
-        },
-        { reviewCommitId: head },
-      );
+          git(args) {
+            if (args[0] === "push" && !raced) {
+              raced = true;
+              git(repo.seed, "push", "origin", "develop");
+            }
+            return io.git(args);
+          },
+        };
 
-      expect(repo.remoteTip("sync/develop-into-next")).toBe(head);
-      return { status: outcome.status, dispatches, comment: comments.at(-1) };
-    };
+        const outcome = yield* Effect.promise(() =>
+          runFastForward(racing, { reviewCommitId: head }),
+        );
 
-    const resync = await attempt(1);
-    expect(resync).toMatchObject({
-      status: "resync-dispatched",
-      dispatches: ["sync/develop-into-next"],
-    });
-    expect(resync.comment).toContain("- `shared.txt`");
-    expect(resync.comment).toContain("resync 2 of 2");
-    expect(await attempt(2)).toMatchObject({ status: "refused", dispatches: [] });
-    const failed = await attempt(0, true);
-    expect(failed.status).toBe("refused");
-    expect(failed.comment).toContain("Starting Claude's resync failed (HTTP 403)");
-  });
+        const landed = repo.remoteTip("develop");
+        expect(outcome).toEqual({ status: "merged-after-resync", sha: landed });
+        expect(git(repo.remote, "ls-tree", "--name-only", landed)).toContain("late-2.txt");
+        expect(repo.isAncestor(head, landed)).toBe(true);
+      }),
+    ));
 
-  test("fast-forwards the approved head even when the source moved with a conflicting change", async () => {
-    const { repo, head, io, comments } = resolvedSyncScenario();
-    git(repo.seed, "switch", "main");
-    repo.commit(repo.seed, "shared.txt", "conflicting main\n", "fix(cli): conflicting main");
-    git(repo.seed, "push", "origin", "main");
+  test("falls back to re-approval when the target keeps moving", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const { repo, head, io, comments } = yield* resolvedSyncScenario();
+        git(repo.seed, "switch", "develop");
+        let movedDevelop = yield* repo.commit(
+          repo.seed,
+          "late-0.txt",
+          "late\n",
+          "feat(cli): late 0",
+        );
+        git(repo.seed, "push", "origin", "develop");
+        /* The late commits are made ahead, since the runner calls the wrapper below synchronously. */
+        const lateCommits: string[] = [];
+        for (const move of [1, 2, 3]) {
+          lateCommits.push(
+            yield* repo.commit(repo.seed, `late-${move}.txt`, "late\n", `feat(cli): late ${move}`),
+          );
+        }
+        let moves = 0;
+        const racing: FastForwardIo = {
+          ...io,
+          git(args) {
+            if (args[0] === "push" && args[2] === "HEAD:refs/heads/develop") {
+              moves += 1;
+              const late = lateCommits[moves - 1];
+              if (late === undefined) throw new Error(`unexpected push ${moves}`);
+              movedDevelop = late;
+              git(repo.seed, "push", "origin", `${movedDevelop}:refs/heads/develop`);
+            }
+            return io.git(args);
+          },
+        };
 
-    const outcome = await runFastForward(io, { reviewCommitId: head });
+        const outcome = yield* Effect.promise(() =>
+          runFastForward(racing, { reviewCommitId: head }),
+        );
 
-    expect(outcome).toEqual({ status: "fast-forwarded", sha: head });
-    expect(repo.remoteTip("develop")).toBe(head);
-    expect(() => repo.remoteTip("sync/main-into-develop")).toThrow();
-    expect(comments).toEqual([]);
-  });
+        expect(outcome.status).toBe("resynced");
+        expect(moves).toBe(3);
+        expect(repo.remoteTip("develop")).toBe(movedDevelop);
+        const resynced = repo.remoteTip("sync/main-into-develop");
+        expect(resynced).not.toBe(head);
+        expect(repo.isAncestor(head, resynced)).toBe(true);
+        expect(comments).toHaveLength(1);
+        expect(comments[0]).toContain("Re-approve");
+      }),
+    ));
+
+  test("dry run pushes nothing when the target moved cleanly", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const { repo, head, io, comments } = yield* resolvedSyncScenario();
+        git(repo.seed, "switch", "develop");
+        const movedDevelop = yield* repo.commit(repo.seed, "late.txt", "late\n", "feat(cli): late");
+        git(repo.seed, "push", "origin", "develop");
+
+        const outcome = yield* Effect.promise(() =>
+          runFastForward(io, { reviewCommitId: head, dryRun: true }),
+        );
+
+        expect(outcome.status).toBe("dry-run");
+        expect(repo.remoteTip("develop")).toBe(movedDevelop);
+        expect(repo.remoteTip("sync/main-into-develop")).toBe(head);
+        expect(comments).toEqual([]);
+      }),
+    ));
+
+  test("refuses and leaves the branch alone when a moved target conflicts", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const { repo, head, io, comments, dispatches } = yield* resolvedSyncScenario();
+        git(repo.seed, "switch", "develop");
+        const movedDevelop = yield* repo.commit(
+          repo.seed,
+          "shared.txt",
+          "conflicting\n",
+          "feat(cli): conflicting",
+        );
+        git(repo.seed, "push", "origin", "develop");
+
+        const outcome = yield* Effect.promise(() => runFastForward(io, { reviewCommitId: head }));
+
+        expect(outcome.status).toBe("refused");
+        expect(repo.remoteTip("sync/main-into-develop")).toBe(head);
+        expect(repo.remoteTip("develop")).toBe(movedDevelop);
+        expect(comments[0]).toContain("- `shared.txt`");
+        expect(dispatches).toEqual([]);
+      }),
+    ));
+
+  test("hands a conflicting move of next back to Claude for two resyncs, or a maintainer when dispatch fails", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const attempt = (resyncs: number, dispatchFails = false) =>
+          Effect.gen(function* () {
+            const { repo, head, io, comments, dispatches } = yield* resolvedSyncScenario(
+              "develop",
+              "next",
+            );
+            git(repo.seed, "switch", "next");
+            yield* repo.commit(repo.seed, "shared.txt", "conflicting\n", "feat(cli)!: conflicting");
+            git(repo.seed, "push", "origin", "next");
+            const botComments = [
+              {
+                user: { login: releaseBot.login },
+                body: "<!-- sync-agent resolve -->\n### Claude resolved the merge of `next`",
+              },
+              ...Array.from({ length: resyncs }, () => ({
+                user: { login: "github-actions[bot]" },
+                body: "<!-- fast-forward resync -->\n`next` moved since approval",
+              })),
+            ];
+
+            const outcome = yield* Effect.promise(() =>
+              runFastForward(
+                {
+                  ...io,
+                  listComments: () => Promise.resolve(botComments),
+                  ...(dispatchFails && {
+                    dispatchResync: () => Promise.reject(new Error("HTTP 403")),
+                  }),
+                },
+                { reviewCommitId: head },
+              ),
+            );
+
+            expect(repo.remoteTip("sync/develop-into-next")).toBe(head);
+            return { status: outcome.status, dispatches, comment: comments.at(-1) };
+          });
+
+        const resync = yield* attempt(1);
+        expect(resync).toMatchObject({
+          status: "resync-dispatched",
+          dispatches: ["sync/develop-into-next"],
+        });
+        expect(resync.comment).toContain("- `shared.txt`");
+        expect(resync.comment).toContain("resync 2 of 2");
+        expect(yield* attempt(2)).toMatchObject({ status: "refused", dispatches: [] });
+        const failed = yield* attempt(0, true);
+        expect(failed.status).toBe("refused");
+        expect(failed.comment).toContain("Starting Claude's resync failed (HTTP 403)");
+      }),
+    ));
+
+  test("fast-forwards the approved head even when the source moved with a conflicting change", () =>
+    runEffect(
+      Effect.gen(function* () {
+        const { repo, head, io, comments } = yield* resolvedSyncScenario();
+        git(repo.seed, "switch", "main");
+        yield* repo.commit(
+          repo.seed,
+          "shared.txt",
+          "conflicting main\n",
+          "fix(cli): conflicting main",
+        );
+        git(repo.seed, "push", "origin", "main");
+
+        const outcome = yield* Effect.promise(() => runFastForward(io, { reviewCommitId: head }));
+
+        expect(outcome).toEqual({ status: "fast-forwarded", sha: head });
+        expect(repo.remoteTip("develop")).toBe(head);
+        expect(() => repo.remoteTip("sync/main-into-develop")).toThrow();
+        expect(comments).toEqual([]);
+      }),
+    ));
 });
