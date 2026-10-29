@@ -17,30 +17,30 @@ function normalizeNewlines(text: string): string {
   return text.replace(/\r\n/g, "\n");
 }
 
-// Vendored copies of the Go CLI's init-template scaffold files. Dotted file
+// Vendored copies of the init-template scaffold files. Dotted file
 // names are de-dotted so git/tooling don't interpret the fixtures themselves.
 const readVendoredTemplate = Effect.fnUntraced(function* (name: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const contents = yield* fs.readFileString(
-    path.join(import.meta.dirname, "testdata/go-templates", name),
+    path.join(import.meta.dirname, "testdata/templates", name),
   );
   return normalizeNewlines(contents);
 });
 
-// Go's config.toml scaffold renders through text/template (`config.Eject`), so
+// The config.toml scaffold renders through text/template, so
 // an action wrapping a backtick raw string — {{ `{{ .Code }}` }} in the
 // source — is rendered to the literal string it quotes: `{{ .Code }}` in the
 // ejected file. This is the only text/template construct emulated here; the
 // "models every template action" test below fails loudly if that ever changes.
-function resolveGoTemplateEscapes(template: string): string {
+function resolveTemplateEscapes(template: string): string {
   return template.replace(/\{\{\s*`([^`]*)`\s*\}\}/g, "$1");
 }
 
-// Emulates what Go's config.Eject writes to disk for a fresh `supabase init` project.
-const renderExpectedGoEject = readVendoredTemplate("config.toml").pipe(
+// Emulates what the scaffold writes to disk for a fresh `supabase init` project.
+const renderExpectedInitOutput = readVendoredTemplate("config.toml").pipe(
   Effect.map((template) =>
-    resolveGoTemplateEscapes(template)
+    resolveTemplateEscapes(template)
       .replace("{{ .ProjectId }}", "demo-project")
       // The version is catalog data, checked by the pinned-version test below.
       .replace(
@@ -48,16 +48,16 @@ const renderExpectedGoEject = readVendoredTemplate("config.toml").pipe(
         /^orioledb_version = "(.*)"$/m.exec(renderCliConfigTemplate("demo-project", true))?.[1] ??
           "",
       )
-      // supabase init always opts new projects into pg-delta; the Go template
+      // supabase init always opts new projects into pg-delta; the template
       // renders this from a flag only set on the init path.
       .replace("{{ .Experimental.PgDeltaInitEnabled }}", "true"),
   ),
 );
 
-// The Go scaffold still describes `auto_expose_new_tables` as unset-means-
+// The vendored scaffold still describes `auto_expose_new_tables` as unset-means-
 // revoked and deprecated; the native template documents unset-means-exposed
 // instead, since platform projects never stopped auto-exposing new entities.
-const GO_AUTO_EXPOSE_COMMENT = `# without explicit GRANTs. When unset, new entities are NOT auto-exposed, matching the new cloud
+const SCAFFOLD_AUTO_EXPOSE_COMMENT = `# without explicit GRANTs. When unset, new entities are NOT auto-exposed, matching the new cloud
 # default. Set to \`true\` to keep the legacy behaviour of auto-exposing new entities; this is
 # deprecated and the field is removed on 2026-10-30 once the always-revoked behaviour is permanent.
 # auto_expose_new_tables = true`;
@@ -74,40 +74,40 @@ const NATIVE_WEB3_ETHEREUM_EXAMPLE = `
 # enabled = true
 `;
 
-// The Go scaffold describes the per-provider `enable_signup` keys as signup switches; the native
-// template spells them `enabled`, says they turn the provider off and points to `[auth]
+// The vendored scaffold describes the per-provider `enable_signup` keys as signup switches; the
+// native template spells them `enabled`, says they turn the provider off and points to `[auth]
 // enable_signup` for signups.
-const GO_SIGNUP_COMMENT = `# Allow/disallow new user signups to your project.
+const SCAFFOLD_SIGNUP_COMMENT = `# Allow/disallow new user signups to your project.
 enable_signup = true`;
 
 const NATIVE_SIGNUP_COMMENT = `# Allow/disallow new user signups to your project. Existing users can still sign in.
 enable_signup = true`;
 
-const GO_EMAIL_SIGNUP_COMMENT = `# Allow/disallow new user signups via email to your project.
+const SCAFFOLD_EMAIL_SIGNUP_COMMENT = `# Allow/disallow new user signups via email to your project.
 enable_signup = true`;
 
 const NATIVE_EMAIL_SIGNUP_COMMENT = `# Allow/disallow the email provider. When false, users can't sign up or sign in with email.
 # To block new signups only, set enable_signup = false under [auth] instead.
 enabled = true`;
 
-const GO_SMS_SIGNUP_COMMENT = `# Allow/disallow new user signups via SMS to your project.
+const SCAFFOLD_SMS_SIGNUP_COMMENT = `# Allow/disallow new user signups via SMS to your project.
 enable_signup = false`;
 
 const NATIVE_SMS_SIGNUP_COMMENT = `# Allow/disallow the phone provider. When false, users can't sign up or sign in with SMS.
 # To block new signups only, set enable_signup = false under [auth] instead.
 enabled = false`;
 
-const renderExpectedNativeEject = renderExpectedGoEject.pipe(
+const renderExpectedNativeEject = renderExpectedInitOutput.pipe(
   Effect.map((eject) =>
     eject
       .replace(
         '# content_path = "./templates/password_changed_notification.html"',
         '# content_path = "./supabase/templates/password_changed_notification.html"',
       )
-      .replace(GO_AUTO_EXPOSE_COMMENT, NATIVE_AUTO_EXPOSE_COMMENT)
-      .replace(GO_SIGNUP_COMMENT, NATIVE_SIGNUP_COMMENT)
-      .replace(GO_EMAIL_SIGNUP_COMMENT, NATIVE_EMAIL_SIGNUP_COMMENT)
-      .replace(GO_SMS_SIGNUP_COMMENT, NATIVE_SMS_SIGNUP_COMMENT)
+      .replace(SCAFFOLD_AUTO_EXPOSE_COMMENT, NATIVE_AUTO_EXPOSE_COMMENT)
+      .replace(SCAFFOLD_SIGNUP_COMMENT, NATIVE_SIGNUP_COMMENT)
+      .replace(SCAFFOLD_EMAIL_SIGNUP_COMMENT, NATIVE_EMAIL_SIGNUP_COMMENT)
+      .replace(SCAFFOLD_SMS_SIGNUP_COMMENT, NATIVE_SMS_SIGNUP_COMMENT)
       .replace("rows returns from", "rows returned from")
       .replace("(SIWS, EIP-4361)", "(SIWS)")
       .replace(
@@ -126,19 +126,17 @@ describe("project init templates", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect(
-    "models every template action in the Go scaffold, so parity cannot silently drift",
-    () =>
-      Effect.gen(function* () {
-        // Anything beyond the GoTrue OTP placeholder means the Go template gained
-        // a construct this suite doesn't emulate; update `resolveGoTemplateEscapes`
-        // to match before shipping.
-        const unresolvedActions = (yield* renderExpectedGoEject).match(/\{\{[^}]*\}\}/g) ?? [];
-        expect(new Set(unresolvedActions)).toEqual(new Set(["{{ .Code }}"]));
-      }).pipe(Effect.provide(BunServices.layer)),
+  it.effect("models every template action in the scaffold, so it cannot silently drift", () =>
+    Effect.gen(function* () {
+      // Anything beyond the GoTrue OTP placeholder means the template gained
+      // a construct this suite doesn't emulate; update `resolveTemplateEscapes`
+      // to match before shipping.
+      const unresolvedActions = (yield* renderExpectedInitOutput).match(/\{\{[^}]*\}\}/g) ?? [];
+      expect(new Set(unresolvedActions)).toEqual(new Set(["{{ .Code }}"]));
+    }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it("renders the SMS and MFA phone OTP templates as GoTrue templates, not raw Go escapes", () => {
+  it("renders the SMS and MFA phone OTP templates as GoTrue templates, not raw template escapes", () => {
     const rendered = renderCliConfigTemplate("demo-project", false);
     const otpTemplateLines = rendered.split("\n").filter((line) => line.startsWith("template = "));
     expect(otpTemplateLines).toEqual([
@@ -171,7 +169,7 @@ describe("project init templates", () => {
       const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
       yield* Effect.addFinalizer(() => Effect.sync(() => errorSpy.mockRestore()));
 
-      const loaded = yield* loadCliConfig(cwd, { goViperCompat: true });
+      const loaded = yield* loadCliConfig(cwd, { cliCompat: true });
 
       expect(loaded?.config.auth.email.enable_signup).toBe(true);
       expect(loaded?.config.auth.sms.enable_signup).toBe(false);
@@ -203,13 +201,13 @@ describe("project init templates", () => {
     expect(rendered).not.toMatch(/^port = 54327$/m);
   });
 
-  it.effect("matches the Go .gitignore scaffold", () =>
+  it.effect("matches the .gitignore scaffold", () =>
     Effect.gen(function* () {
       expect(INIT_GITIGNORE_TEMPLATE).toBe(yield* readVendoredTemplate("gitignore"));
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("matches the Go VS Code extensions scaffold", () =>
+  it.effect("matches the VS Code extensions scaffold", () =>
     Effect.gen(function* () {
       expect(VSCODE_EXTENSIONS_TEMPLATE).toBe(
         yield* readVendoredTemplate("vscode-extensions.json.golden"),
@@ -217,7 +215,7 @@ describe("project init templates", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("matches the Go VS Code settings scaffold", () =>
+  it.effect("matches the VS Code settings scaffold", () =>
     Effect.gen(function* () {
       expect(VSCODE_SETTINGS_TEMPLATE).toBe(
         yield* readVendoredTemplate("vscode-settings.json.golden"),
@@ -225,7 +223,7 @@ describe("project init templates", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("matches the Go IntelliJ scaffold", () =>
+  it.effect("matches the IntelliJ scaffold", () =>
     Effect.gen(function* () {
       expect(INTELLIJ_DENO_TEMPLATE).toBe(yield* readVendoredTemplate("idea-deno.xml"));
     }).pipe(Effect.provide(BunServices.layer)),

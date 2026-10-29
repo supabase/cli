@@ -4,7 +4,7 @@ import { Effect, Exit } from "effect";
 import { normalizeCause } from "../../../shared/output/normalize-error.ts";
 import { postgresConfigDeleteConfigFlag } from "./delete.command.ts";
 
-describe("postgres-config delete --config flag (pflag StringSlice parity)", () => {
+describe("postgres-config delete --config flag", () => {
   it.effect("splits a comma-separated value into multiple keys", () =>
     Effect.gen(function* () {
       const [, values] = yield* postgresConfigDeleteConfigFlag.parse({
@@ -27,7 +27,7 @@ describe("postgres-config delete --config flag (pflag StringSlice parity)", () =
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("keeps only the first CSV record of a multiline value (pflag reads ONE record)", () =>
+  it.effect("keeps only the first CSV record of a multiline value (only ONE record is read)", () =>
     Effect.gen(function* () {
       const [, values] = yield* postgresConfigDeleteConfigFlag.parse({
         flags: { config: ['a\nb"c'] },
@@ -38,7 +38,7 @@ describe("postgres-config delete --config flag (pflag StringSlice parity)", () =
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("rejects malformed CSV (bare quote) with pflag's exact diagnostic", () =>
+  it.effect("rejects malformed CSV (bare quote) with the exact diagnostic", () =>
     Effect.gen(function* () {
       const exit = yield* Effect.exit(
         postgresConfigDeleteConfigFlag.parse({
@@ -57,7 +57,7 @@ describe("postgres-config delete --config flag (pflag StringSlice parity)", () =
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("rejects a blank-only value with pflag's EOF diagnostic", () =>
+  it.effect("rejects a blank-only value with the EOF diagnostic", () =>
     Effect.gen(function* () {
       const exit = yield* Effect.exit(
         postgresConfigDeleteConfigFlag.parse({

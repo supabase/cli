@@ -2,15 +2,19 @@ import type { V1ListAllBranchesOutput } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { RemoteTarget } from "../../../config/remote-target.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
-import { encodeGoToml, encodeGoYaml } from "../../../command-internal/go-struct-output.encoders.ts";
+import { encodeSortedJson } from "../../../command-internal/output.encoders.ts";
+import {
+  encodeStructToml,
+  encodeStructYaml,
+} from "../../../command-internal/struct-output.encoders.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
-import { GO_BRANCHES_LIST, GO_BRANCHES_TOML_WRAPPER } from "../branches.go-payload.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
+import { BRANCHES_LIST_SHAPE, BRANCHES_TOML_WRAPPER_SHAPE } from "../branches.response-shape.ts";
 import {
   BranchesEnvNotSupportedError,
   BranchesListNetworkError,
@@ -30,15 +34,18 @@ const mapListError = mapHttpError({
 
 export const branchesList = Effect.fn("branches.list")(function* (flags: BranchesListFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
-  const remoteTarget = yield* RemoteTarget;
+  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
   // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
   // holds the branch's own ref, which the platform 403s on for every branches-management endpoint.
-  const { ref } = yield* remoteTarget.resolveParentScoped(flags.projectRef);
+  const ref = yield* resolveProjectTarget(
+    { remote: flags.remote, projectRef: flags.projectRef },
+    { parent: true },
+  );
   yield* Effect.annotateCurrentSpan("project.ref", ref);
 
   yield* Effect.gen(function* () {
@@ -51,27 +58,27 @@ export const branchesList = Effect.fn("branches.list")(function* (flags: Branche
     yield* Effect.annotateCurrentSpan("branch.count", branches.length);
     yield* fetching?.clear ?? Effect.void;
 
-    const goFmt = Option.getOrUndefined(goOutputFlag);
+    const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
-    if (goFmt === "env") {
+    if (outputFlagFormat === "env") {
       return yield* new BranchesEnvNotSupportedError({
         message: "--output env flag is not supported",
       });
     }
-    if (goFmt === "json") {
-      yield* output.raw(encodeGoJson(branches));
+    if (outputFlagFormat === "json") {
+      yield* output.raw(encodeSortedJson(branches));
       return;
     }
-    if (goFmt === "yaml") {
-      yield* output.raw(encodeGoYaml(branches, GO_BRANCHES_LIST));
+    if (outputFlagFormat === "yaml") {
+      yield* output.raw(encodeStructYaml(branches, BRANCHES_LIST_SHAPE));
       return;
     }
-    if (goFmt === "toml") {
+    if (outputFlagFormat === "toml") {
       // An empty branch list omits the `branches` key entirely rather than emitting `[]`.
       yield* output.raw(
-        encodeGoToml(
+        encodeStructToml(
           { branches: branches.length > 0 ? branches : undefined },
-          GO_BRANCHES_TOML_WRAPPER,
+          BRANCHES_TOML_WRAPPER_SHAPE,
         ),
       );
       return;
@@ -85,12 +92,7 @@ export const branchesList = Effect.fn("branches.list")(function* (flags: Branche
 
     // Marks the linked branch as `(active)`; resolveOptional never prompts or fails
     // when nothing is linked.
-    const activeRef = yield* remoteTarget.resolveOptional(Option.none());
-    yield* output.raw(
-      renderBranchesListTable(
-        branches,
-        Option.getOrUndefined(Option.map(activeRef, (target) => target.ref)),
-      ),
-    );
+    const activeRef = yield* resolver.resolveOptional(Option.none());
+    yield* output.raw(renderBranchesListTable(branches, Option.getOrUndefined(activeRef)));
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });

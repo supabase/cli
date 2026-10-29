@@ -5,13 +5,7 @@ import { testBehaviour } from "./test-context.ts";
 describe("network-bans", () => {
   describe("network-bans:get", () => {
     testBehaviour("renders fixture data in output", async ({ run, projectRef }) => {
-      const result = await run([
-        "network-bans",
-        "get",
-        "--experimental",
-        "--project-ref",
-        projectRef,
-      ]);
+      const result = await run(["network-bans", "get", "--experimental", `--remote=${projectRef}`]);
       expect(result.exitCode).toBe(0);
     });
 
@@ -22,8 +16,7 @@ describe("network-bans", () => {
         "--experimental",
         "--output",
         "json",
-        "--project-ref",
-        projectRef,
+        `--remote=${projectRef}`,
       ]);
       expect(result.exitCode).toBe(0);
     });
@@ -34,8 +27,7 @@ describe("network-bans", () => {
         "get",
         "--experimental",
         "--debug",
-        "--project-ref",
-        projectRef,
+        `--remote=${projectRef}`,
       ]);
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toMatch(/HTTP.*GET:/);
@@ -51,8 +43,7 @@ describe("network-bans", () => {
         "network-bans",
         "get",
         "--experimental",
-        "--project-ref",
-        PROJECT_REF,
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Invalid token");
@@ -68,8 +59,7 @@ describe("network-bans", () => {
         "network-bans",
         "get",
         "--experimental",
-        "--project-ref",
-        PROJECT_REF,
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Forbidden");
@@ -85,8 +75,7 @@ describe("network-bans", () => {
         "network-bans",
         "get",
         "--experimental",
-        "--project-ref",
-        PROJECT_REF,
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Project not found");
@@ -102,8 +91,7 @@ describe("network-bans", () => {
         "network-bans",
         "get",
         "--experimental",
-        "--project-ref",
-        PROJECT_REF,
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Too Many Requests");
@@ -119,8 +107,7 @@ describe("network-bans", () => {
         "network-bans",
         "get",
         "--experimental",
-        "--project-ref",
-        PROJECT_REF,
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
@@ -135,8 +122,8 @@ describe("network-bans", () => {
         "--experimental",
         "--db-unban-ip",
         "1.2.3.4",
-        "--project-ref",
-        projectRef,
+        "--yes",
+        `--remote=${projectRef}`,
       ]);
       expect(result.exitCode).toBe(0);
     });
@@ -150,8 +137,8 @@ describe("network-bans", () => {
         "1.2.3.4",
         "--db-unban-ip",
         "5.6.7.8",
-        "--project-ref",
-        projectRef,
+        "--yes",
+        `--remote=${projectRef}`,
       ]);
       expect(result.exitCode).toBe(0);
     });
@@ -163,8 +150,8 @@ describe("network-bans", () => {
         "--experimental",
         "--db-unban-ip",
         "invalid-ip",
-        "--project-ref",
-        PROJECT_REF,
+        "--yes",
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("invalid IP address");
@@ -182,8 +169,8 @@ describe("network-bans", () => {
         "--experimental",
         "--db-unban-ip",
         "1.2.3.4",
-        "--project-ref",
-        PROJECT_REF,
+        "--yes",
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Invalid token");
@@ -201,8 +188,8 @@ describe("network-bans", () => {
         "--experimental",
         "--db-unban-ip",
         "1.2.3.4",
-        "--project-ref",
-        PROJECT_REF,
+        "--yes",
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Project not found");
@@ -217,8 +204,7 @@ describe("network-restrictions", () => {
         "network-restrictions",
         "get",
         "--experimental",
-        "--project-ref",
-        projectRef,
+        `--remote=${projectRef}`,
       ]);
       expect(result.exitCode).toBe(0);
     });
@@ -230,8 +216,7 @@ describe("network-restrictions", () => {
         "--experimental",
         "--output",
         "json",
-        "--project-ref",
-        projectRef,
+        `--remote=${projectRef}`,
       ]);
       expect(result.exitCode).toBe(0);
     });
@@ -246,8 +231,7 @@ describe("network-restrictions", () => {
         "network-restrictions",
         "get",
         "--experimental",
-        "--project-ref",
-        PROJECT_REF,
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Invalid token");
@@ -263,8 +247,7 @@ describe("network-restrictions", () => {
         "network-restrictions",
         "get",
         "--experimental",
-        "--project-ref",
-        PROJECT_REF,
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Forbidden");
@@ -280,8 +263,7 @@ describe("network-restrictions", () => {
         "network-restrictions",
         "get",
         "--experimental",
-        "--project-ref",
-        PROJECT_REF,
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Project not found");
@@ -297,8 +279,7 @@ describe("network-restrictions", () => {
         "network-restrictions",
         "get",
         "--experimental",
-        "--project-ref",
-        PROJECT_REF,
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Too Many Requests");
@@ -314,8 +295,7 @@ describe("network-restrictions", () => {
         "network-restrictions",
         "get",
         "--experimental",
-        "--project-ref",
-        PROJECT_REF,
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
@@ -330,8 +310,8 @@ describe("network-restrictions", () => {
         "--experimental",
         "--db-allow-cidr",
         "0.0.0.0/0",
-        "--project-ref",
-        projectRef,
+        "--yes",
+        `--remote=${projectRef}`,
       ]);
       expect(result.exitCode).toBe(0);
     });
@@ -344,8 +324,8 @@ describe("network-restrictions", () => {
         "--append",
         "--db-allow-cidr",
         "8.8.8.0/24",
-        "--project-ref",
-        projectRef,
+        "--yes",
+        `--remote=${projectRef}`,
       ]);
       expect(result.exitCode).toBe(0);
     });
@@ -358,8 +338,8 @@ describe("network-restrictions", () => {
         "--bypass-cidr-checks",
         "--db-allow-cidr",
         "0.0.0.0/0",
-        "--project-ref",
-        projectRef,
+        "--yes",
+        `--remote=${projectRef}`,
       ]);
       expect(result.exitCode).toBe(0);
     });
@@ -371,8 +351,8 @@ describe("network-restrictions", () => {
         "--experimental",
         "--db-allow-cidr",
         "not-a-cidr",
-        "--project-ref",
-        PROJECT_REF,
+        "--yes",
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("failed to parse IP");
@@ -390,8 +370,8 @@ describe("network-restrictions", () => {
         "--experimental",
         "--db-allow-cidr",
         "0.0.0.0/0",
-        "--project-ref",
-        PROJECT_REF,
+        "--yes",
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Invalid token");
@@ -409,8 +389,8 @@ describe("network-restrictions", () => {
         "--experimental",
         "--db-allow-cidr",
         "0.0.0.0/0",
-        "--project-ref",
-        PROJECT_REF,
+        "--yes",
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Project not found");
@@ -428,8 +408,8 @@ describe("network-restrictions", () => {
         "--experimental",
         "--db-allow-cidr",
         "0.0.0.0/0",
-        "--project-ref",
-        PROJECT_REF,
+        "--yes",
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Too Many Requests");
@@ -447,8 +427,8 @@ describe("network-restrictions", () => {
         "--experimental",
         "--db-allow-cidr",
         "0.0.0.0/0",
-        "--project-ref",
-        PROJECT_REF,
+        "--yes",
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
@@ -463,8 +443,7 @@ describe("ssl-enforcement", () => {
         "ssl-enforcement",
         "get",
         "--experimental",
-        "--project-ref",
-        projectRef,
+        `--remote=${projectRef}`,
       ]);
       expect(result.exitCode).toBe(0);
     });
@@ -476,8 +455,7 @@ describe("ssl-enforcement", () => {
         "--experimental",
         "--output",
         "json",
-        "--project-ref",
-        projectRef,
+        `--remote=${projectRef}`,
       ]);
       expect(result.exitCode).toBe(0);
     });
@@ -492,8 +470,7 @@ describe("ssl-enforcement", () => {
         "ssl-enforcement",
         "get",
         "--experimental",
-        "--project-ref",
-        PROJECT_REF,
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Invalid token");
@@ -509,8 +486,7 @@ describe("ssl-enforcement", () => {
         "ssl-enforcement",
         "get",
         "--experimental",
-        "--project-ref",
-        PROJECT_REF,
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Forbidden");
@@ -526,8 +502,7 @@ describe("ssl-enforcement", () => {
         "ssl-enforcement",
         "get",
         "--experimental",
-        "--project-ref",
-        PROJECT_REF,
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Project not found");
@@ -543,8 +518,7 @@ describe("ssl-enforcement", () => {
         "ssl-enforcement",
         "get",
         "--experimental",
-        "--project-ref",
-        PROJECT_REF,
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Too Many Requests");
@@ -560,8 +534,7 @@ describe("ssl-enforcement", () => {
         "ssl-enforcement",
         "get",
         "--experimental",
-        "--project-ref",
-        PROJECT_REF,
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
@@ -575,8 +548,8 @@ describe("ssl-enforcement", () => {
         "update",
         "--experimental",
         "--enable-db-ssl-enforcement",
-        "--project-ref",
-        projectRef,
+        "--yes",
+        `--remote=${projectRef}`,
       ]);
       expect(result.exitCode).toBe(0);
     });
@@ -587,8 +560,8 @@ describe("ssl-enforcement", () => {
         "update",
         "--experimental",
         "--disable-db-ssl-enforcement",
-        "--project-ref",
-        projectRef,
+        "--yes",
+        `--remote=${projectRef}`,
       ]);
       expect(result.exitCode).toBe(0);
     });
@@ -600,8 +573,8 @@ describe("ssl-enforcement", () => {
         "--experimental",
         "--enable-db-ssl-enforcement",
         "--disable-db-ssl-enforcement",
-        "--project-ref",
-        PROJECT_REF,
+        "--yes",
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
     });
@@ -611,8 +584,8 @@ describe("ssl-enforcement", () => {
         "ssl-enforcement",
         "update",
         "--experimental",
-        "--project-ref",
-        PROJECT_REF,
+        "--yes",
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
     });
@@ -628,8 +601,8 @@ describe("ssl-enforcement", () => {
         "update",
         "--experimental",
         "--enable-db-ssl-enforcement",
-        "--project-ref",
-        PROJECT_REF,
+        "--yes",
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Invalid token");
@@ -646,8 +619,8 @@ describe("ssl-enforcement", () => {
         "update",
         "--experimental",
         "--enable-db-ssl-enforcement",
-        "--project-ref",
-        PROJECT_REF,
+        "--yes",
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Forbidden");
@@ -664,8 +637,8 @@ describe("ssl-enforcement", () => {
         "update",
         "--experimental",
         "--enable-db-ssl-enforcement",
-        "--project-ref",
-        PROJECT_REF,
+        "--yes",
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Project not found");
@@ -682,8 +655,8 @@ describe("ssl-enforcement", () => {
         "update",
         "--experimental",
         "--enable-db-ssl-enforcement",
-        "--project-ref",
-        PROJECT_REF,
+        "--yes",
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Too Many Requests");
@@ -700,8 +673,8 @@ describe("ssl-enforcement", () => {
         "update",
         "--experimental",
         "--enable-db-ssl-enforcement",
-        "--project-ref",
-        PROJECT_REF,
+        "--yes",
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");

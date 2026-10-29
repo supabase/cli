@@ -1,22 +1,8 @@
 import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect } from "vitest";
+import { linkProject } from "./link-project.ts";
 import { testBehaviour } from "./test-context.ts";
-
-/** Writes .supabase/.temp/project-ref and a stub pooler-url so --linked
- *  commands resolve a connection without a live postgres TCP probe (nothing
- *  listens on db.{ref}.localhost:5432 in the test harness); combined with
- *  SUPABASE_DB_PASSWORD (set in harness.ts), the command reaches its handler
- *  and makes the Management API call under test. */
-function linkProject(dir: string, ref: string): void {
-  const tempDir = join(dir, "supabase", ".temp");
-  mkdirSync(tempDir, { recursive: true });
-  writeFileSync(join(tempDir, "project-ref"), ref);
-  writeFileSync(
-    join(tempDir, "pooler-url"),
-    `postgresql://postgres.${ref}:[YOUR-PASSWORD]@aws-0-eu-central-1.pooler.supabase.com:6543/postgres`,
-  );
-}
 
 const TEST_MIGRATION_SQL =
   "CREATE TABLE IF NOT EXISTS e2e_test_table (id bigint generated always as identity primary key);";
@@ -32,7 +18,7 @@ describe("db advisors", () => {
   describe("db advisors:security", () => {
     testBehaviour("returns security advisors", async ({ run, projectRef, workspace }) => {
       linkProject(workspace.path, projectRef);
-      const result = await run(["db", "advisors", "--linked", "--type", "security"]);
+      const result = await run(["db", "advisors", "--type", "security", "--remote"]);
       expect(result.exitCode).toBe(0);
       expect(result.stdout.trim()).toBe("");
       expect(result.stderr).toContain("No issues found");
@@ -45,11 +31,11 @@ describe("db advisors", () => {
         const result = await run([
           "db",
           "advisors",
-          "--linked",
           "--type",
           "security",
           "--fail-on",
           "error",
+          "--remote",
         ]);
         expect(result.exitCode).toBe(0);
       },
@@ -62,7 +48,7 @@ describe("db advisors", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 401, body: { message: "Invalid token" } }),
       });
-      const result = await run(["db", "advisors", "--linked", "--type", "security"]);
+      const result = await run(["db", "advisors", "--type", "security", "--remote"]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Invalid token");
     });
@@ -74,7 +60,7 @@ describe("db advisors", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 403, body: { message: "Forbidden" } }),
       });
-      const result = await run(["db", "advisors", "--linked", "--type", "security"]);
+      const result = await run(["db", "advisors", "--type", "security", "--remote"]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Forbidden");
     });
@@ -86,7 +72,7 @@ describe("db advisors", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 429, body: { message: "Too Many Requests" } }),
       });
-      const result = await run(["db", "advisors", "--linked", "--type", "security"]);
+      const result = await run(["db", "advisors", "--type", "security", "--remote"]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Too Many Requests");
     });
@@ -98,7 +84,7 @@ describe("db advisors", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 500, body: { message: "Internal Server Error" } }),
       });
-      const result = await run(["db", "advisors", "--linked", "--type", "security"]);
+      const result = await run(["db", "advisors", "--type", "security", "--remote"]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
     });
@@ -107,7 +93,7 @@ describe("db advisors", () => {
   describe("db advisors:performance", () => {
     testBehaviour("returns performance advisors", async ({ run, projectRef, workspace }) => {
       linkProject(workspace.path, projectRef);
-      const result = await run(["db", "advisors", "--linked", "--type", "performance"]);
+      const result = await run(["db", "advisors", "--type", "performance", "--remote"]);
       expect(result.exitCode).toBe(0);
       if (result.stdout.trim()) {
         const parsed = JSON.parse(result.stdout) as unknown[];
@@ -121,19 +107,19 @@ describe("db advisors", () => {
   describe("db advisors:all", () => {
     testBehaviour("returns advisors with --type all", async ({ run, projectRef, workspace }) => {
       linkProject(workspace.path, projectRef);
-      const result = await run(["db", "advisors", "--linked", "--type", "all"]);
+      const result = await run(["db", "advisors", "--type", "all", "--remote"]);
       expect(result.exitCode).toBe(0);
     });
   });
 });
 
 describe("db query", () => {
-  describe("db query:linked", () => {
+  describe("db query:remote", () => {
     testBehaviour(
       "returns SELECT 1 result in table format",
       async ({ run, projectRef, workspace }) => {
         linkProject(workspace.path, projectRef);
-        const result = await run(["db", "query", "--linked", "SELECT 1"]);
+        const result = await run(["db", "query", "SELECT 1", "--read-only", "--remote"]);
         expect(result.exitCode).toBe(0);
         expect(result.stdout).toContain("1");
       },
@@ -141,7 +127,15 @@ describe("db query", () => {
 
     testBehaviour("returns JSON with --output json", async ({ run, projectRef, workspace }) => {
       linkProject(workspace.path, projectRef);
-      const result = await run(["db", "query", "--linked", "--output", "json", "SELECT 1"]);
+      const result = await run([
+        "db",
+        "query",
+        "--output",
+        "json",
+        "SELECT 1",
+        "--read-only",
+        "--remote",
+      ]);
       expect(result.exitCode).toBe(0);
       const parsed = JSON.parse(result.stdout) as unknown;
       // In agent mode (CLAUDECODE env set) the output is wrapped in {warning, boundary, rows}.
@@ -158,7 +152,7 @@ describe("db query", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 401, body: { message: "Invalid token" } }),
       });
-      const result = await run(["db", "query", "--linked", "SELECT 1"]);
+      const result = await run(["db", "query", "SELECT 1", "--read-only", "--remote"]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Invalid token");
     });
@@ -170,7 +164,7 @@ describe("db query", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 403, body: { message: "Forbidden" } }),
       });
-      const result = await run(["db", "query", "--linked", "SELECT 1"]);
+      const result = await run(["db", "query", "SELECT 1", "--read-only", "--remote"]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Forbidden");
     });
@@ -184,7 +178,7 @@ describe("db push", () => {
       async ({ run, projectRef, workspace }) => {
         linkProject(workspace.path, projectRef);
         seedMigration(workspace.path);
-        const result = await run(["db", "push", "--dry-run"]);
+        const result = await run(["db", "push", "--dry-run", "--remote"]);
         expect(result.exitCode).not.toBe(0);
         expect(result.stderr).toContain("connect");
       },
@@ -192,19 +186,19 @@ describe("db push", () => {
   });
 
   describe("db push:local", () => {
-    testBehaviour("exits non-zero on connection refused with --local", async ({ run }) => {
-      const result = await run(["db", "push", "--local"]);
+    testBehaviour("exits non-zero on connection refused without --remote", async ({ run }) => {
+      const result = await run(["db", "push"]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("connect");
     });
   });
 
-  describe("db push:linked", () => {
+  describe("db push:remote", () => {
     testBehaviour(
-      "exits non-zero on connection refused with --linked",
+      "exits non-zero on connection refused with --remote",
       async ({ run, projectRef, workspace }) => {
         linkProject(workspace.path, projectRef);
-        const result = await run(["db", "push"]);
+        const result = await run(["db", "push", "--remote"]);
         expect(result.exitCode).not.toBe(0);
         expect(result.stderr).toContain("connect");
       },
@@ -213,38 +207,38 @@ describe("db push", () => {
 });
 
 describe("db pull", () => {
-  testBehaviour("exits non-zero on connection refused with --local", async ({ run }) => {
-    const result = await run(["db", "pull", "--local"]);
+  testBehaviour("exits non-zero on connection refused without --remote", async ({ run }) => {
+    const result = await run(["db", "pull"]);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain("connect");
   });
 });
 
 describe("db lint", () => {
-  testBehaviour("exits non-zero on connection refused with --local", async ({ run }) => {
-    const result = await run(["db", "lint", "--local"]);
+  testBehaviour("exits non-zero on connection refused without --remote", async ({ run }) => {
+    const result = await run(["db", "lint"]);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain("connect");
   });
 });
 
 describe("db dump", () => {
-  testBehaviour("exits non-zero on connection refused with --local", async ({ run }) => {
-    const result = await run(["db", "dump", "--local"]);
+  testBehaviour("exits non-zero on connection refused without --remote", async ({ run }) => {
+    const result = await run(["db", "dump"]);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain("connect");
   });
 
   testBehaviour("exits non-zero when --role-only and --data-only are both set", async ({ run }) => {
-    const result = await run(["db", "dump", "--local", "--role-only", "--data-only"]);
+    const result = await run(["db", "dump", "--role-only", "--data-only"]);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr.toLowerCase()).toMatch(/role.only|data.only|mutually exclusive/);
   });
 });
 
 describe("db reset", () => {
-  testBehaviour("exits non-zero on connection refused with --local", async ({ run }) => {
-    const result = await run(["db", "reset", "--local"]);
+  testBehaviour("exits non-zero on connection refused without --remote", async ({ run }) => {
+    const result = await run(["db", "reset"]);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toMatch(/connect|not running/i);
   });
@@ -268,8 +262,8 @@ describe("test new", () => {
 });
 
 describe("test db", () => {
-  testBehaviour("exits non-zero on connection refused with --local", async ({ run }) => {
-    const result = await run(["test", "db", "--local"]);
+  testBehaviour("exits non-zero on connection refused without --remote", async ({ run }) => {
+    const result = await run(["test", "db"]);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain("connect");
   });

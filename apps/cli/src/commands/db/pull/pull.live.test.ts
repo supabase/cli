@@ -29,12 +29,12 @@ test("pulls the remote schema into an initial migration", ({
           "db",
           "query",
           `create table if not exists ${marker} (id int)`,
-          "--db-url",
-          project.dbUrl,
+          "--yes",
+          `--remote=${project.dbUrl}`,
         ]);
         requireLiveSuccess(seeded, "db query setup for db pull");
 
-        const result = yield* cliEffect(["db", "pull", "--db-url", project.dbUrl, "--yes"]);
+        const result = yield* cliEffect(["db", "pull", "--yes", `--remote=${project.dbUrl}`]);
         expect(result.exitCode, result.stderr).toBe(0);
 
         expect(result.stderr, result.stderr).toContain("Schema written to");
@@ -51,7 +51,7 @@ test("pulls the remote schema into an initial migration", ({
       });
 
       const resetRemote = Effect.gen(function* () {
-        const reset = yield* cliEffect(["db", "reset", "--db-url", project.dbUrl, "--yes"]);
+        const reset = yield* cliEffect(["db", "reset", "--yes", `--remote=${project.dbUrl}`]);
         requireLiveSuccess(reset, "db reset cleanup after db pull");
       });
 

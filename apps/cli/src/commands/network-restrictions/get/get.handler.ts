@@ -1,17 +1,17 @@
 import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { RemoteTarget } from "../../../config/remote-target.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
   encodeEnv,
-  encodeGoJson,
+  encodeSortedJson,
   encodeToml,
   encodeYaml,
-} from "../../../command-internal/go-output.encoders.ts";
+} from "../../../command-internal/output.encoders.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import {
   NetworkRestrictionsGetNetworkError,
@@ -33,14 +33,13 @@ export const networkRestrictionsGet = Effect.fn("network-restrictions.get")(func
   flags: NetworkRestrictionsGetFlags,
 ) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* RemoteTarget;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
-    const { ref } = yield* resolver.resolve(flags.projectRef);
+    const ref = yield* resolveProjectTarget(flags);
 
     yield* Effect.gen(function* () {
       const fetching =
@@ -53,21 +52,21 @@ export const networkRestrictionsGet = Effect.fn("network-restrictions.get")(func
       );
       yield* fetching?.clear ?? Effect.void;
 
-      const goFmt = Option.getOrUndefined(goOutputFlag);
+      const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
-      if (goFmt === "json") {
-        yield* output.raw(encodeGoJson(response));
+      if (outputFlagFormat === "json") {
+        yield* output.raw(encodeSortedJson(response));
         return;
       }
-      if (goFmt === "yaml") {
+      if (outputFlagFormat === "yaml") {
         yield* output.raw(encodeYaml(response));
         return;
       }
-      if (goFmt === "toml") {
+      if (outputFlagFormat === "toml") {
         yield* output.raw(encodeToml(response) + "\n");
         return;
       }
-      if (goFmt === "env") {
+      if (outputFlagFormat === "env") {
         yield* output.raw(encodeEnv(response) + "\n");
         return;
       }

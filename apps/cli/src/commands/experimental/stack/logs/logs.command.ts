@@ -4,6 +4,7 @@ import { withPermissions } from "../../../../command-internal/command-permission
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { stackLogs } from "./logs.handler.ts";
+import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 
 const config = {
   stack: Flag.String("stack").pipe(
@@ -78,4 +79,5 @@ export const stackLogsCommand = Command.make("logs", config).pipe(
       withJsonErrorHandling,
     ),
   ),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

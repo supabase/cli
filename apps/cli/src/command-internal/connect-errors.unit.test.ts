@@ -101,7 +101,7 @@ describe("connectFailureMessage", () => {
     );
   });
 
-  it("surfaces the last dial attempt of a dual-stack AggregateError (pgconn last-fallback parity)", () => {
+  it("surfaces the last dial attempt of a dual-stack AggregateError (last attempt wins)", () => {
     const aggregate = Object.assign(new AggregateError([], ""), {
       code: "ECONNREFUSED",
       errors: [
@@ -114,7 +114,7 @@ describe("connectFailureMessage", () => {
     );
   });
 
-  it("reproduces pgconn's server-error rendering byte-for-byte for a server ErrorResponse", () => {
+  it("renders a server ErrorResponse byte-for-byte", () => {
     expect(connectFailureMessage(target, realSqlConnectError(authFailedError()))).toBe(
       `${prefix} server error (FATAL: password authentication failed for user "postgres" (SQLSTATE 28P01))`,
     );
@@ -274,6 +274,13 @@ describe("connectSuggestion", () => {
     expect(connectSuggestion(err, { ...ctx, isLocal: true })).toBe(SUGGEST_LOCAL_STACK);
   });
 
+  it("points a refused local connection at --remote when the checkout is linked", () => {
+    const err = sqlError(systemError("connect ECONNREFUSED 127.0.0.1:54322", "ECONNREFUSED"));
+    expect(connectSuggestion(err, { ...ctx, isLocal: true, linkedCheckout: true })).toBe(
+      `${SUGGEST_LOCAL_STACK}\nTo use the linked project instead, pass --remote.`,
+    );
+  });
+
   it("maps an AggregateError of refused dials to the network-restrictions hint", () => {
     const err = sqlError(
       Object.assign(new AggregateError([], "all attempts failed"), {
@@ -336,7 +343,7 @@ describe("connectSuggestion", () => {
     expect(connectSuggestion(realSqlConnectError(aggregate), ctx)).toBe(ipv6Suggestion());
   });
 
-  it("classifies only the LAST attempt of a mixed-family aggregate (pgconn last-fallback parity)", () => {
+  it("classifies only the LAST attempt of a mixed-family aggregate (last attempt wins)", () => {
     const aggregate = Object.assign(new AggregateError([], ""), {
       code: "EHOSTUNREACH",
       errors: [
@@ -382,7 +389,7 @@ describe("connectSuggestion", () => {
     );
   });
 
-  it("sets no suggestion for a mid-handshake TLS disconnect, like Go", () => {
+  it("sets no suggestion for a mid-handshake TLS disconnect", () => {
     const midHandshake = Object.assign(
       new Error("Client network socket disconnected before secure TLS connection was established"),
       { code: "ECONNRESET" },
@@ -390,7 +397,7 @@ describe("connectSuggestion", () => {
     expect(connectSuggestion(realSqlConnectError(midHandshake), ctx)).toBeUndefined();
   });
 
-  it("keeps an IPv4 EADDRNOTAVAIL unclassified, like Go without an IPv6 literal", () => {
+  it("keeps an IPv4 EADDRNOTAVAIL unclassified without an IPv6 literal", () => {
     const err = realSqlConnectError(dialError("EADDRNOTAVAIL", "10.1.2.3", 5432));
     expect(connectSuggestion(err, ctx)).toBeUndefined();
   });

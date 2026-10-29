@@ -61,7 +61,7 @@ export class GenTypesWorkdirError extends Data.TaggedError("GenTypesWorkdirError
 }
 
 /**
- * `loadCliConfig` failed to parse the config, or found two `[remotes.*]` blocks with the same
+ * The config failed to parse, or has two `[remotes.*]` blocks with the same
  * `project_id`. Reports a clean parse failure instead of the raw `CliConfigParseError`/
  * `DuplicateRemoteProjectIdError` tag leaking through as the message.
  */
@@ -114,6 +114,7 @@ export class GenTypesLocalDbNotRunningError extends Data.TaggedError(
   "GenTypesLocalDbNotRunningError",
 )<{
   readonly message: string;
+  readonly suggestion?: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.startStack;
@@ -123,6 +124,7 @@ export class GenTypesLocalDbNotRunningError extends Data.TaggedError(
 export class GenTypesLocalDbInspectError extends Data.TaggedError("GenTypesLocalDbInspectError")<{
   readonly message: string;
   readonly daemonDown: boolean;
+  readonly suggestion?: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     if (this.daemonDown) {

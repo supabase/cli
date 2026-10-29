@@ -5,7 +5,7 @@ import { commandCredentialsLayer } from "../../../auth/command-credentials.layer
 import { httpClientLayer } from "../../../auth/http-debug.layer.ts";
 import { commandPlatformApiFactoryLayer } from "../../../auth/command-platform-api-factory.layer.ts";
 import { commandSettingsLayer } from "../../../config/command-settings.layer.ts";
-import { remoteTargetLayer } from "../../../config/remote-target.layer.ts";
+import { projectRefLayer } from "../../../config/project-ref.layer.ts";
 import { dbConfigLayer } from "../../../command-internal/db-config.layer.ts";
 import { dbConnectionLayer } from "../../../command-internal/db-connection.sql-pg.layer.ts";
 import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";
@@ -42,7 +42,7 @@ const platformApiFactory = commandPlatformApiFactoryLayer.pipe(
   Layer.provide(identityStitchLayer),
 );
 
-const projectRef = remoteTargetLayer.pipe(
+const projectRef = projectRefLayer.pipe(
   Layer.provide(platformApiFactory),
   Layer.provide(cliSettings),
 );
@@ -69,6 +69,7 @@ export const dbLintRuntimeLayer = Layer.mergeAll(
   credentials,
   projectRef,
   linkedProjectCache,
+  platformApiFactory,
   // Exposed at top level so `withCommandTelemetry` can read `stitchedDistinctId()`.
   identityStitchLayer,
   telemetryStateLayer,

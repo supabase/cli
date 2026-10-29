@@ -1,3 +1,8 @@
+import type { Option } from "effect";
+
+import type { HostedMutationConsent } from "../../command-internal/hosted-consent/hosted-consent.token.ts";
+import type { ResolvedTarget } from "../../command-internal/target/resolve-target.ts";
+
 export const PULL_STEP_ORDER = ["config", "migration_history", "db", "functions"] as const;
 
 export type PullStepId = (typeof PULL_STEP_ORDER)[number];
@@ -19,7 +24,7 @@ export interface PullStepResult {
   readonly written: ReadonlyArray<string>;
   /** Per-step machine detail; shape varies by step. See SIDE_EFFECTS.md's JSON payload shape. */
   readonly detail: Record<string, unknown>;
-  /** Present for `status: "skipped"` (e.g. "not_needed", "declined", "--with-migration-history not set"). */
+  /** Present for `status: "skipped"` (e.g. "not_needed", "--with-migration-history not set"). */
   readonly reason?: string;
   /** Present for `status: "failed"`. */
   readonly failure?: PullStepFailure;
@@ -28,6 +33,8 @@ export interface PullStepResult {
 export interface PullStepContext {
   readonly ref: string;
   readonly assumeYes: boolean;
+  readonly target: ResolvedTarget;
+  readonly preapproved: Option.Option<HostedMutationConsent>;
 }
 
 export interface PullAggregate {

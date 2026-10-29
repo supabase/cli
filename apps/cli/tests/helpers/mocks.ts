@@ -1,6 +1,7 @@
 import { tmpdir } from "node:os";
 import process from "node:process";
 import { BunPath, BunServices } from "@effect/platform-bun";
+import { ConfigEnvPins, definedEnv } from "./config-env-pins.ts";
 import {
   Console,
   ConfigProvider,
@@ -22,7 +23,7 @@ import {
   ProjectLinkState,
   type ProjectLinkStateValue,
 } from "../../src/shared/config/project-link-state.service.ts";
-import { legacyProjectStateLayer } from "../../src/command-internal/legacy-project-state.layer.ts";
+import { legacyProjectStateLayer } from "../../src/shared/config/legacy-project-state.layer.ts";
 import { CliProjectContext } from "../../src/shared/config/cli-project-context.service.ts";
 import { NonInteractiveError } from "../../src/shared/output/errors.ts";
 import { Output } from "../../src/shared/output/output.service.ts";
@@ -219,7 +220,6 @@ export function mockOutput(
     promptSelectResponses?: ReadonlyArray<string>;
     promptPasswordResponses?: ReadonlyArray<string>;
     promptConfirmResponses?: ReadonlyArray<boolean>;
-    promptConfirmAcceptsDefault?: boolean;
   } = {},
 ) {
   const messages: OutputMessage[] = [];
@@ -405,7 +405,6 @@ export function mockOutput(
                 )
               : Effect.succeed(
                   promptConfirmResponses.shift() ??
-                    (opts.promptConfirmAcceptsDefault ? promptOptions?.defaultValue : undefined) ??
                     opts.confirmLogout ??
                     opts.confirmRelogin ??
                     true,
@@ -612,7 +611,7 @@ function withAmbientTestRun(
 export function processEnvLayer(
   values: Readonly<Record<string, string | undefined>> = {},
 ): Layer.Layer<never> {
-  return ConfigProvider.layer(
+  const providerLayer = ConfigProvider.layer(
     Effect.acquireRelease(
       Effect.sync(() => {
         const snapshot = applyProcessEnv(process.env, withAmbientTestRun(process.env, values));
@@ -627,6 +626,11 @@ export function processEnvLayer(
         }),
     ).pipe(Effect.map(({ provider }) => provider)),
   );
+  const pinsLayer = Layer.effect(
+    ConfigEnvPins,
+    Effect.sync(() => definedEnv(process.env)),
+  );
+  return pinsLayer.pipe(Layer.provideMerge(providerLayer));
 }
 
 export function mockCliProjectContext(

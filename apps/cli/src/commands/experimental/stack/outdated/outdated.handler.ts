@@ -1,8 +1,7 @@
 import { defaultArtifactSelection } from "@supabase/stack/defaults";
 import { Effect, Ref, Schema } from "effect";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
-import { loadLocalProjectContext } from "../../../../command-internal/local-project-context.ts";
-import { loadStackConfig, StackConfigError } from "../../../../command-internal/stack-config.ts";
+import { loadStackConfig } from "../../../../command-internal/stack-config.ts";
 import {
   LockResolutionError,
   outdatedServices,
@@ -68,19 +67,12 @@ export const stackOutdated = Effect.fn("experimental.stack.outdated")(function* 
     );
 
     const reported = yield* Ref.make<ReadonlyArray<OutdatedService> | undefined>(undefined);
-    yield* Effect.gen(function* () {
-      const context = yield* loadLocalProjectContext(
-        settings.workdir,
-        (message) => new StackConfigError({ message }),
-      );
-      return yield* loadStackConfig(settings.workdir, {
-        context,
-        selection: (request) =>
-          outdatedServices(request).pipe(
-            Effect.tap((rows) => Ref.set(reported, rows)),
-            Effect.as(defaultArtifactSelection()),
-          ),
-      });
+    yield* loadStackConfig(settings.workdir, {
+      selection: (request) =>
+        outdatedServices(request).pipe(
+          Effect.tap((rows) => Ref.set(reported, rows)),
+          Effect.as(defaultArtifactSelection()),
+        ),
     }).pipe(
       Effect.mapError(
         (error) =>

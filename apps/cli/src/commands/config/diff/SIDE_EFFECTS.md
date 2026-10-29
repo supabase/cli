@@ -1,5 +1,7 @@
 # `supabase config diff`
 
+Target: hosted, no consent — see [Command target](../../../../docs/command-target.md)
+
 Read-only comparison between the local `supabase/config.toml` and the effective
 configuration the Management API reports for a target project or branch.
 Classifies every remotely-managed property as `update` / `remote_only` /
@@ -8,13 +10,13 @@ writes `config.toml` or any remote configuration.**
 
 ## Files Read
 
-| Path                                              | Format                    | When                                                                                                                                                                                                                                                                                        |
-| ------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml` or `config.json` | TOML/JSON                 | always, before any network call (`loadCliConfig` probes `config.json` first, then `config.toml` — a missing file or parse error aborts, exit 1, naming whichever file actually failed); re-read after target resolution when the file declares `[remotes.*]`, to apply the matching overlay |
-| `<workdir>/supabase/.env`, `.env.local`           | dotenv                    | always, to resolve `env(VAR)` references inside `config.toml`                                                                                                                                                                                                                               |
-| `<workdir>/supabase/.temp/project-ref`            | plain text                | project-ref fallback (flag → `SUPABASE_PROJECT_ID` → this file); parent-ref candidate for a branch-name `--project-ref` (checked eagerly, BEFORE any spinner or branch lookup)                                                                                                              |
-| `<workdir>/supabase/.temp/linked-project.json`    | JSON                      | parent-ref candidate for a branch-name `--project-ref` (same eager pre-check); existence-checked for the telemetry cache write below                                                                                                                                                        |
-| `~/.supabase/access-token`                        | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                                                                                                                                                                                                                                  |
+| Path                                                      | Format                    | When                                                                                                                                                                                                                                                                                                               |
+| --------------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `<workdir>/supabase/config.toml` or `config.json`         | TOML/JSON                 | always, before any network call (the config load probes `config.json` first, then `config.toml` — a missing file or parse error aborts, exit 1, naming whichever file actually failed); re-read after target resolution when the file declares `[remotes.*]`, to apply the matching overlay                        |
+| `<workdir>/{supabase/,}.env{.<env>.local,.local,.<env>,}` | dotenv                    | always: supplies `env(VAR)` references inside `config.toml` and the `SUPABASE_*` project-env tier of the local operand. `<env>` is `SUPABASE_ENV` (default `development`); `.env.local` is skipped when `SUPABASE_ENV=test`; the first file to set a key wins and the `supabase/` tier beats the project-root tier |
+| `<workdir>/supabase/.temp/project-ref`                    | plain text                | project-ref fallback (`--remote=<ref>` → `SUPABASE_PROJECT_ID` → this file); parent-ref candidate for a branch-name `--remote` (checked eagerly, BEFORE any spinner or branch lookup)                                                                                                                              |
+| `<workdir>/supabase/.temp/linked-project.json`            | JSON                      | parent-ref candidate for a branch-name `--remote` (same eager pre-check); existence-checked for the telemetry cache write below                                                                                                                                                                                    |
+| `~/.supabase/access-token`                                | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                                                                                                                                                                                                                                                         |
 
 ## Files Written
 
@@ -31,21 +33,22 @@ that finds differences.
 
 All Bearer-authenticated, all read-only.
 
-| #   | Purpose                 | Method | Path                                 | Success | Notes                                                                                                                                                                                                     |
-| --- | ----------------------- | ------ | ------------------------------------ | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0a  | branch by UUID          | GET    | `/v1/branches/{branch_id}`           | 200     | only when `--project-ref` is a UUID; needs no linked project (no parent pre-check)                                                                                                                        |
-| 0b  | branch by name          | GET    | `/v1/projects/{ref}/branches/{name}` | 200     | only when `--project-ref` is a NAME (not a ref/UUID); the parent ref is resolved from local state BEFORE this call — an absent/invalid parent fails without making this request; 404 → "branch not found" |
-| 1   | effective remote config | GET    | `/v2/projects/{ref}/config`          | 200     | always (after target resolution); 401/403/404 get purpose-written messages, other statuses the generic `unexpected status N: body` shape                                                                  |
+| #   | Purpose                 | Method | Path                             | Success | Notes                                                                                                                                                                                                                                                                                                        |
+| --- | ----------------------- | ------ | -------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0a  | branch list             | GET    | `/v1/projects/{parent}/branches` | 200     | only when `--remote` is a branch name or UUID and a project is linked; `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project, resolved from local state BEFORE this call — an absent/invalid parent fails without making this request; no match → "branch not found", listing the branches that exist |
+| 0b  | branch by UUID          | GET    | `/v1/branches/{id}`              | 200     | only when `--remote` is a branch UUID and no usable project is linked; the lookup needs no parent project                                                                                                                                                                                                    |
+| 1   | effective remote config | GET    | `/v2/projects/{ref}/config`      | 200     | always (after target resolution); 401/403/404 get purpose-written messages, other statuses the generic `unexpected status N: body` shape                                                                                                                                                                     |
 
 ## Environment Variables
 
-| Variable                | Purpose                                                                                                               | Required?                                                                                                                                                                                                                                                                 |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SUPABASE_PROJECT_ID`   | project ref (flag → this → `.temp/project-ref` → prompt)                                                              | no                                                                                                                                                                                                                                                                        |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                  | no (falls back to keyring → `~/.supabase/access-token`)                                                                                                                                                                                                                   |
-| `SUPABASE_PROFILE`      | API profile selection                                                                                                 | no                                                                                                                                                                                                                                                                        |
-| `SUPABASE_WORKDIR`      | working directory `supabase/config.toml`/`config.json` is read from (`--workdir` takes priority)                      | no — when unset, the CLI walks up from cwd looking for `supabase/config.toml`; when SET (flag or env) the directory is used exactly as given and **no ancestor is searched**, so a path with no `supabase/` of its own fails instead of loading a parent project's config |
-| `env(VAR)` references   | interpolated into `config.toml` values at load; a change on an env-resolved property names the variable in the output | no                                                                                                                                                                                                                                                                        |
+| Variable                           | Purpose                                                                                                                                                       | Required?                                                                                                                                                                                                                                                                                           |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SUPABASE_PROJECT_ID`              | project ref (`--remote=<ref>` → this → `.temp/project-ref` → prompt)                                                                                          | no                                                                                                                                                                                                                                                                                                  |
+| `SUPABASE_ACCESS_TOKEN`            | auth token (bypasses credential file/keyring lookup)                                                                                                          | no (falls back to keyring → `~/.supabase/access-token`)                                                                                                                                                                                                                                             |
+| `SUPABASE_PROFILE`                 | API profile selection                                                                                                                                         | no                                                                                                                                                                                                                                                                                                  |
+| `SUPABASE_WORKDIR`                 | working directory `supabase/config.toml`/`config.json` is read from (`--workdir` takes priority)                                                              | no — when unset, the CLI walks up from cwd looking for `supabase/config.toml` or `supabase/config.json`; when SET (flag or env) the directory is used exactly as given and **no ancestor is searched**, so a path with no `supabase/` of its own fails instead of loading a parent project's config |
+| `SUPABASE_<PATH>` config overrides | override the matching config key (flag > shell > project `.env*` > matched `[remotes.*]` block > base config); the local operand carries the overridden value | no                                                                                                                                                                                                                                                                                                  |
+| `env(VAR)` references              | interpolated into `config.toml` values at load; a change on an env-resolved property names the variable in the output                                         | no                                                                                                                                                                                                                                                                                                  |
 
 ## Exit Codes
 
@@ -71,16 +74,18 @@ same as any other non-zero exit.
 | `1`  | the `-o`/`--output` global flag passed (any value — not supported by this command)                                                                                                                                                                             |
 | `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`ConfigDiffWorkdirError`) — beats the config read and every network call                                                                                                           |
 | `1`  | missing or malformed `supabase/config.toml`/`config.json` (`ConfigDiffLoadConfigError`) — a missing file suggests `supabase init` only for a DEFAULTED workdir; with an explicit workdir the message names the resolved path instead and never suggests `init` |
-| `1`  | branch-name `--project-ref` with no linked parent project (`ConfigDiffBranchNotLinkedError`)                                                                                                                                                                   |
-| `1`  | branch-name `--project-ref` with a corrupt/invalid linked parent ref (`ConfigDiffParentRefInvalidError`)                                                                                                                                                       |
-| `1`  | unknown branch (branch-name `--project-ref` 404, `ConfigDiffBranchNotFoundError`)                                                                                                                                                                              |
-| `1`  | resolved branch has no project ref yet — still provisioning (`ConfigDiffBranchNotReadyError`)                                                                                                                                                                  |
+| `1`  | a flag, `SUPABASE_*` variable, project `.env*` file or config value fails to decode (`CliConfigValueError`) — names the source that supplied it; surfaced as-is, not wrapped in the command's load error                                                       |
+| `1`  | branch-name `--remote` with no linked parent project (`LinkBranchNotLinkedError`)                                                                                                                                                                              |
+| `1`  | branch-name `--remote` with a corrupt/invalid linked parent ref (`LinkParentRefInvalidError`)                                                                                                                                                                  |
+| `1`  | unknown branch (no branch of the linked project matches the name or UUID, `LinkBranchNotFoundError`; or an unknown UUID with no linked project, `LinkBranchListStatusError`)                                                                                   |
+| `1`  | resolved branch has no project ref yet — still provisioning (`LinkBranchNotReadyError`)                                                                                                                                                                        |
 | `1`  | two `[remotes.*]` blocks declare the same `project_id` as the target ref                                                                                                                                                                                       |
 | `1`  | remote config read failure (network, 401/403/404, or other unexpected status)                                                                                                                                                                                  |
 
 ## Output
 
-Diagnostics on **stderr**: `Comparing against …` (resolved target + local
+Diagnostics on **stderr**: the `Target:` banner (project name, ref and, for a
+branch, the parent project), `Comparing against …` (resolved target + local
 scope, i.e. `[remotes.<name>]` or `base config`) before the fetch, then
 `Comparison scope: <blocks>` listing the blocks the response carried (missing
 blocks are called out). The payload is on **stdout**.
@@ -90,7 +95,10 @@ blocks are called out). The payload is on **stdout**.
 One block per difference (`<path> [update|remote-only|local-only]` with
 `local:`/`remote:` lines; unset renders `(unset)` / `(not returned)`, an
 undeclared path with a schema default renders `<value> (schema default — not
-declared in config.toml)`, env-resolved values append `(from env VAR, …)`),
+declared in config.toml)`, env-resolved values append `(from env VAR, …)`, and a value a
+`SUPABASE_*` variable overrode appends `(from SUPABASE_X)` for the shell or
+`(from SUPABASE_X in supabase/.env.local)` for a project `.env*` file, path relative to the
+workdir), the local operand being exactly what `config push` sends,
 then a summary count line — `No config differences found.` when clean —
 followed by a `Note: N block(s) … not returned by the API and … not compared:
 …` line when the response omitted a block entirely, a `Note: … (masked by the
@@ -116,17 +124,17 @@ masked/unmanaged caveats too, so echoing it never claims "in sync" on a
 partial response (e.g. a scoped token returning `auth: {}`) or while masked
 values may have drifted. The payload contains `schema_version` (integer
 version of THIS payload contract, currently `1`), `config_schema` (the file's
-`$schema` URL), `target` (`project_ref`, optional `branch`, `local_scope`),
+`$schema` URL), `target` (the [command target](../../../../docs/command-target.md) plus optional `branch` and `local_scope`),
 `scope` (`{present, missing}` block lists — the block set is owned by
 `@supabase/config`), `changes[]` (`path` as a SEGMENT ARRAY — a record key may
 contain a `.` — plus `class`, `declared`, `local`, `remote`, optional
-`env_variables[]`; unset sides are `null`), `masked[]` and `unmanaged[]`
+`env_variables[]`, and `origin` — `{source: "shell" | "project_env", env_variable, file?}` —
+only on a value a `SUPABASE_*` variable overrode; unset sides are `null`), `masked[]` and `unmanaged[]`
 (segment-array paths), and `counts` (per class + `total`).
 
 ### `-o/--output` (machine formats)
 
-**Not supported.** `config diff` is a net-new TS command with no Go parity
-contract (CLI-2156, per Colum). Any `-o`/`--output` value — every
+**Not supported.** `config diff` does not accept `-o`/`--output`. Any value — every
 machine-format value AND `pretty` — is rejected outright
 (`ConfigDiffOutputFlagUnsupportedError`, exit 1) with:
 
@@ -140,7 +148,7 @@ command's own `withCommandTelemetry` wiring widens the wrapper's
 per-command `-o` enum to the full global choice set so every value (including
 `table`/`csv`, which are otherwise only meaningful to `db query`) reaches this
 handler-level rejection with its pointed message, rather than the wrapper's
-generic pflag-style "invalid argument" rejection. One telemetry consequence of
+generic "invalid argument" rejection. One telemetry consequence of
 the widening: a rejected `-o` invocation still emits `cli_command_executed`
 (exit code 1, `invalid_input`), whereas other commands' out-of-enum `-o`
 values are rejected by the wrapper's enum check before instrumentation fires

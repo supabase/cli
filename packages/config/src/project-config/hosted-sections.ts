@@ -21,8 +21,7 @@ export type HostedSectionKey = (typeof HOSTED_SECTION_KEYS)[number];
  * `ProjectConfig`'s shape, `ProjectConfigSchema`/`toProjectConfigJsonSchema`, and
  * `fromConfigDocument`'s output alike: local bind ports/TLS overrides, `db.pooler`'s
  * `enabled`/`port`, the `db.migrations`/`db.seed` subtrees, every config-side `realtime.*` field,
- * `db.orioledb_version` (plus its deprecated `experimental.orioledb_version` alias — a document
- * that hasn't gone through the loader's deprecation normalization can still carry it), the
+ * `db.orioledb_version` and the removed `experimental.orioledb_version`, the
  * `auth.{email,sms}.enabled` aliases `fromConfigDocument` folds into `enable_signup`, local-only
  * `experimental.*` engine/backend selection, and the whole top-level `local` section.
  *
