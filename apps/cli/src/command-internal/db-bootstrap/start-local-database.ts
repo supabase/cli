@@ -8,7 +8,7 @@
  * {@link StartLocalDatabaseResult} discriminator instead of printing the terminal line itself.
  */
 
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Path } from "effect";
 import { ChildProcessSpawner } from "effect/process";
 
 import { Output } from "../../shared/output/output.service.ts";
@@ -49,12 +49,16 @@ import { parseGoDuration, resolveHealthTimeoutSeconds } from "../go-duration.ts"
 import { ramInBytes } from "../size-units.ts";
 import { goUrlParse } from "../storage-url.ts";
 import { loadLocalProjectContext } from "../local-project-context.ts";
-import { cliProjectFilterValue } from "../docker-ids.ts";
+import { cliProjectFilterValue, localDbContainerId } from "../docker-ids.ts";
+import { isBitbucketPipeline } from "../bitbucket-pipeline.ts";
+import { holdLocalStackStartLock } from "../local-stack-start-lock.ts";
+import { dbNotRunningError } from "../status-errors.ts";
 import { buildLocalDbContainerInputs } from "./local-container-inputs.ts";
+import { removeContainer } from "./container-lifecycle.ts";
 import { awaitDockerHealthSettled } from "./health-check.ts";
-import { isLocalDbRunning } from "./local-db-running.ts";
-import { rollbackStart } from "./rollback.ts";
-import { startDatabase } from "./start-database.ts";
+import { localDbState } from "./local-db-running.ts";
+import { rollbackDatabaseStart } from "./rollback.ts";
+import { backupVolumeExistsError, startDatabase } from "./start-database.ts";
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -85,15 +89,7 @@ interface StartLocalDatabaseResult {
   readonly status: StartLocalDatabaseStatus;
 }
 
-/**
- * Starts the local Postgres database, or no-ops when it is already running. See this module's
- * own header for the full design rationale.
- *
- * `fromBackupFlag` is `db start`'s own `--from-backup` value, resolved against the caller's cwd
- * before being passed in; the declarative seam's `ensureLocalDatabaseStarted` always calls with
- * no argument.
- */
-export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(function* (
+const startLocalDatabaseInScope = Effect.fn("DbBootstrap.startLocalDatabase")(function* (
   fromBackupFlag?: string,
 ) {
   const output = yield* Output;
@@ -110,7 +106,7 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
   // `isLocalDbRunning`'s best-effort read, which swallows config errors.
   const dbTomlValues = yield* checkDbToml(fs, path, cliSettings.workdir);
 
-  // Threaded into `rollbackStart`'s own teardown (gates its `Pruned …:` stderr reports) and into
+  // Threaded into `rollbackDatabaseStart`'s own teardown (gates its `Pruned …:` stderr reports) and into
   // `buildLocalDbContainerInputs`'s own `setup.debug`, so a failed fresh-volume migrate job tees
   // its own stderr. Resolved with the `SUPABASE_DEBUG` shell/project-`.env` fallback, not the
   // bare flag.
@@ -635,18 +631,31 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
     ),
   );
 
+  // Held through bring-up and rollback so a concurrent start cannot prune this run's containers.
+  yield* holdLocalStackStartLock(context.projectId);
+
   // If the db container is already up, tell the caller and stop here. Runs after the config
   // load/validation above.
-  const running = yield* isLocalDbRunning(
-    spawner,
-    fs,
-    path,
-    cliSettings.workdir,
-    Option.getOrUndefined(cliSettings.projectId),
-  );
-  yield* Effect.annotateCurrentSpan("db.already_running", running);
+  // Probed by the same project id bring-up uses, so a stopped container is removed by the name
+  // that was inspected.
+  const dbState = yield* localDbState(spawner, fs, path, cliSettings.workdir, context.projectId);
+  const running = dbState.exists && dbState.running;
+  const recoverStopped = dbState.exists && !dbState.running;
+  yield* Effect.annotateCurrentSpan({
+    "db.already_running": running,
+    "db.recover_stopped": recoverStopped,
+  });
   if (running) {
     return { status: "already-running" } satisfies StartLocalDatabaseResult;
+  }
+  // Bitbucket has no named volumes, so removing the container would destroy its data.
+  if (dbState.exists) {
+    const inBitbucketPipeline = yield* isBitbucketPipeline(projectEnvValues).pipe(
+      Effect.mapError((error) => new DbConfigLoadError({ message: error.message })),
+    );
+    if (inBitbucketPipeline) {
+      return yield* dbNotRunningError(localDbContainerId(context.projectId), dbState.status);
+    }
   }
 
   // Resolve a relative `--from-backup` against the caller's cwd, captured before any workdir
@@ -658,6 +667,12 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
       : path.isAbsolute(fromBackupFlag)
         ? fromBackupFlag
         : path.join(runtimeInfo.cwd, fromBackupFlag);
+
+  // A stopped container's named volume always exists, so a restore is refused before the
+  // container is removed.
+  if (recoverStopped && fromBackup !== undefined) {
+    return yield* backupVolumeExistsError();
+  }
 
   // Not running → bring up the container natively. `context` (loaded eagerly above) is threaded
   // through as `preloadedContext` so this call reuses it instead of calling
@@ -687,6 +702,13 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
 
   const filterValue = cliProjectFilterValue(projectId);
 
+  // Only the db container: `db start` leaves the project's other services alone.
+  if (recoverStopped) {
+    yield* removeContainer(spawner, dbContainerId).pipe(
+      Effect.withSpan("DbBootstrap.recoverStoppedDatabase"),
+    );
+  }
+
   // Assigned by `startDatabase`'s own pre-create volume-existence check; defaults to
   // `false` so a rollback triggered by an earlier failure (e.g. network creation) never
   // deletes a volume this run never confirmed was fresh.
@@ -694,8 +716,7 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
 
   // Runs the exact start-database sequence (network -> volume probe -> container create+start
   // -> health wait -> fresh-volume setup -> `_current_branch`) — shared with `supabase start`,
-  // see `startDatabase`'s own header. Any failure rolls back via the same `Effect.onError`
-  // wrapper `supabase start` uses.
+  // see `startDatabase`'s own header. Any failure rolls back only what `db start` creates.
   yield* startDatabase(spawner, {
     fs,
     path,
@@ -719,7 +740,7 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
     },
   }).pipe(
     Effect.onError(() =>
-      rollbackStart(spawner, filterValue, isFreshVolume, cliSettings.workdir, debug),
+      rollbackDatabaseStart(spawner, filterValue, dbContainerId, isFreshVolume, debug),
     ),
   );
 
@@ -729,3 +750,14 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
 
   return { status: "started" } satisfies StartLocalDatabaseResult;
 });
+
+/**
+ * Starts the local Postgres database, or no-ops when it is already running. See this module's
+ * own header for the full design rationale.
+ *
+ * `fromBackupFlag` is `db start`'s own `--from-backup` value, resolved against the caller's cwd
+ * before being passed in; the declarative seam's `ensureLocalDatabaseStarted` always calls with
+ * no argument.
+ */
+export const startLocalDatabase = (fromBackupFlag?: string) =>
+  Effect.scoped(startLocalDatabaseInScope(fromBackupFlag));

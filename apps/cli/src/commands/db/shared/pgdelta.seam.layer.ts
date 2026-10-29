@@ -11,7 +11,7 @@ import { getRegistryImageUrl } from "../../../command-internal/docker-registry.t
 import { isDockerDaemonUnreachable } from "../../../command-internal/docker-suggest.ts";
 import { imageDigest, imageTag, isSlimImageRef } from "../../../shared/services/slim-images.ts";
 import { upstreamVersionFromTag } from "../../../shared/services/services.shared.ts";
-import { isLocalDbRunning } from "../../../command-internal/db-bootstrap/local-db-running.ts";
+import { localDbState } from "../../../command-internal/db-bootstrap/local-db-running.ts";
 import { startLocalDatabase } from "../../../command-internal/db-bootstrap/start-local-database.ts";
 import { resolveLocalProjectId, localDbContainerId } from "../../../command-internal/docker-ids.ts";
 import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
@@ -104,7 +104,7 @@ export const declarativeSeamLayer = Layer.effect(
             ),
           );
         }
-        const running = yield* isLocalDbRunning(
+        const dbState = yield* localDbState(
           spawner,
           fs,
           path,
@@ -124,7 +124,7 @@ export const declarativeSeamLayer = Layer.effect(
               }),
           ),
         );
-        if (running) return; // already running — the seam never prints anything here.
+        if (dbState.exists && dbState.running) return; // the seam never prints anything here.
         yield* startLocalDatabase().pipe(
           Effect.provideContext(context),
           Effect.asVoid,

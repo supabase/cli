@@ -15,6 +15,7 @@ import {
   LocalDockerEngine,
   dockerEndpointSocketPath,
   isLocalDbRunning,
+  localDbState,
   localDockerEngineLayer,
 } from "./local-db-running.ts";
 
@@ -109,10 +110,10 @@ const localDockerEngineTestLayer = localDockerEngineLayer.pipe(
   Layer.provide(runtimeInfoLayer),
 );
 
-const engineContainerExists = (containerId: string) =>
+const engineInspectContainer = (containerId: string) =>
   Effect.gen(function* () {
     const engine = yield* LocalDockerEngine;
-    return yield* engine.containerExists(containerId);
+    return yield* engine.inspectContainer(containerId);
   }).pipe(Effect.provide(localDockerEngineTestLayer));
 
 describe("LocalDockerEngine (direct Engine-API transport)", () => {
@@ -122,16 +123,45 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
         Effect.gen(function* () {
           const engine = yield* makeEngineServer((_req, res) => {
             res.writeHead(200, { "content-type": "application/json", ...ENGINE_IDENTITY_HEADERS });
-            res.end(JSON.stringify({ Id: "abc123", State: { Status: "created" } }));
+            res.end(JSON.stringify({ Id: "abc123", State: { Running: true, Status: "running" } }));
           });
           const answer = yield* withDockerHost(
             `unix://${engine.socketPath}`,
-            engineContainerExists("supabase_db_engine-probe"),
+            engineInspectContainer("supabase_db_engine-probe"),
           );
-          expect(answer).toEqual(Option.some(true));
+          expect(answer).toEqual(Option.some({ exists: true, running: true, status: "running" }));
           expect(engine.requestedUrls).toEqual(["/containers/supabase_db_engine-probe/json"]);
         }),
       ),
+    );
+
+    it.live.each([
+      ["a stopped container", { Running: false, Status: "exited" }, false, "exited"],
+      ["a created container", { Running: false, Status: "created" }, false, "created"],
+      ["a running container", { Running: true, Status: "running" }, true, "running"],
+      ["a missing State", undefined, true, ""],
+      ["a non-object State", "exited", true, ""],
+    ] as const)(
+      "reports %s from the Engine inspect payload's State",
+      ([, state, running, status]) =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const engine = yield* makeEngineServer((_req, res) => {
+              res.writeHead(200, {
+                "content-type": "application/json",
+                ...ENGINE_IDENTITY_HEADERS,
+              });
+              res.end(
+                JSON.stringify({ Id: "abc123", ...(state === undefined ? {} : { State: state }) }),
+              );
+            });
+            const answer = yield* withDockerHost(
+              `unix://${engine.socketPath}`,
+              engineInspectContainer("supabase_db_engine-probe"),
+            );
+            expect(answer).toEqual(Option.some({ exists: true, running, status }));
+          }),
+        ),
     );
 
     it.live("answers absent for an Engine 404", () =>
@@ -143,9 +173,9 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
           });
           const answer = yield* withDockerHost(
             `unix://${engine.socketPath}`,
-            engineContainerExists("supabase_db_engine-probe"),
+            engineInspectContainer("supabase_db_engine-probe"),
           );
-          expect(answer).toEqual(Option.some(false));
+          expect(answer).toEqual(Option.some({ exists: false }));
         }),
       ),
     );
@@ -169,19 +199,19 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
           });
           const present = yield* withDockerHost(
             `unix://${engine.socketPath}`,
-            engineContainerExists("present"),
+            engineInspectContainer("present"),
           );
           const absent = yield* withDockerHost(
             `unix://${engine.socketPath}`,
-            engineContainerExists("absent"),
+            engineInspectContainer("absent"),
           );
           const viaServerHeader = yield* withDockerHost(
             `unix://${engine.socketPath}`,
-            engineContainerExists("server-header"),
+            engineInspectContainer("server-header"),
           );
           expect(present).toEqual(Option.none());
           expect(absent).toEqual(Option.none());
-          expect(viaServerHeader).toEqual(Option.some(false));
+          expect(viaServerHeader).toEqual(Option.some({ exists: false }));
         }),
       ),
     );
@@ -197,11 +227,11 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
           });
           const empty = yield* withDockerHost(
             `unix://${engine.socketPath}`,
-            engineContainerExists("empty"),
+            engineInspectContainer("empty"),
           );
           const malformed = yield* withDockerHost(
             `unix://${engine.socketPath}`,
-            engineContainerExists("malformed"),
+            engineInspectContainer("malformed"),
           );
           expect(empty).toEqual(Option.none());
           expect(malformed).toEqual(Option.none());
@@ -223,7 +253,7 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
             });
             const answer = yield* withDockerHost(
               `unix://${engine.socketPath}`,
-              engineContainerExists("supabase_db_engine-probe"),
+              engineInspectContainer("supabase_db_engine-probe"),
             );
             expect(answer).toEqual(Option.none());
           }),
@@ -238,7 +268,7 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
             const engine = yield* makeEngineServer(() => {});
             const answer = yield* withDockerHost(
               `unix://${engine.socketPath}`,
-              engineContainerExists("supabase_db_engine-probe"),
+              engineInspectContainer("supabase_db_engine-probe"),
             );
             expect(answer).toEqual(Option.none());
           }),
@@ -255,7 +285,7 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
           });
           const answer = yield* withDockerHost(
             `unix://${engine.socketPath}`,
-            engineContainerExists("supabase_db_engine-probe"),
+            engineInspectContainer("supabase_db_engine-probe"),
           );
           expect(answer).toEqual(Option.none());
         }),
@@ -276,7 +306,7 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
           });
           const answer = yield* withDockerHost(
             `unix://${engine.socketPath}`,
-            engineContainerExists("supabase_db_engine-probe"),
+            engineInspectContainer("supabase_db_engine-probe"),
           );
           expect(answer).toEqual(Option.none());
         }),
@@ -297,7 +327,7 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
       });
       const traced = Effect.gen(function* () {
         const engine = yield* LocalDockerEngine;
-        return yield* engine.containerExists("supabase_db_engine-probe");
+        return yield* engine.inspectContainer("supabase_db_engine-probe");
       }).pipe(Effect.provide(localDockerEngineTestLayer.pipe(Layer.provide(recorder))));
       return Effect.scoped(
         Effect.gen(function* () {
@@ -360,7 +390,7 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
             });
             const answer = yield* withDockerHost(
               `unix://${engine.socketPath}`,
-              engineContainerExists("supabase_db_engine-probe"),
+              engineInspectContainer("supabase_db_engine-probe"),
             );
             expect(answer).toEqual(Option.none());
           }),
@@ -373,7 +403,7 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
     const missingDir = mkdtempSync(join(tmpdir(), "ldbgone-"));
     return withDockerHost(
       `unix://${join(missingDir, "never-created.sock")}`,
-      engineContainerExists("supabase_db_engine-probe"),
+      engineInspectContainer("supabase_db_engine-probe"),
     ).pipe(
       Effect.ensuring(Effect.sync(() => rmSync(missingDir, { recursive: true, force: true }))),
       Effect.map((answer) => {
@@ -385,7 +415,7 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
   it.live("gives no answer for an endpoint the transport cannot address (ssh)", () =>
     withDockerHost(
       "ssh://user@remote-host",
-      engineContainerExists("supabase_db_engine-probe"),
+      engineInspectContainer("supabase_db_engine-probe"),
     ).pipe(
       Effect.map((answer) => {
         expect(answer).toEqual(Option.none());
@@ -411,10 +441,10 @@ describe("isLocalDbRunning", () => {
     const mock = mockContainerCliSpawner(() => ({ exitCode: 0 }));
     return probe(mock.layer).pipe(
       Effect.provideService(LocalDockerEngine, {
-        containerExists: (containerId) =>
+        inspectContainer: (containerId) =>
           Effect.sync(() => {
             asked.push(containerId);
-          }).pipe(Effect.as(Option.some(true))),
+          }).pipe(Effect.as(Option.some({ exists: true, running: true, status: "running" }))),
       }),
       Effect.map((running) => {
         expect(running).toBe(true);
@@ -424,11 +454,39 @@ describe("isLocalDbRunning", () => {
     );
   });
 
+  it.live("still reports a stopped container as present, from the Engine answer", () => {
+    const mock = mockContainerCliSpawner(() => ({ exitCode: 0 }));
+    return probe(mock.layer).pipe(
+      Effect.provideService(LocalDockerEngine, {
+        inspectContainer: () =>
+          Effect.succeed(Option.some({ exists: true, running: false, status: "exited" })),
+      }),
+      Effect.map((exists) => {
+        expect(exists).toBe(true);
+        expect(mock.spawned).toEqual([]);
+      }),
+    );
+  });
+
+  it.live("still reports a stopped container as present, from the container CLI stdout", () => {
+    const mock = mockContainerCliSpawner(() => ({
+      stdout: [JSON.stringify([{ State: { Running: false, Status: "exited" } }])],
+    }));
+    return probe(mock.layer).pipe(
+      Effect.provideService(LocalDockerEngine, {
+        inspectContainer: () => Effect.succeed(Option.none()),
+      }),
+      Effect.map((exists) => {
+        expect(exists).toBe(true);
+      }),
+    );
+  });
+
   it.live("trusts a definitive Engine 404 without spawning the container CLI", () => {
     const mock = mockContainerCliSpawner(() => ({ exitCode: 0 }));
     return probe(mock.layer).pipe(
       Effect.provideService(LocalDockerEngine, {
-        containerExists: () => Effect.succeed(Option.some(false)),
+        inspectContainer: () => Effect.succeed(Option.some({ exists: false })),
       }),
       Effect.map((running) => {
         expect(running).toBe(false);
@@ -444,7 +502,7 @@ describe("isLocalDbRunning", () => {
     }));
     return probe(mock.layer).pipe(
       Effect.provideService(LocalDockerEngine, {
-        containerExists: () => Effect.succeed(Option.none()),
+        inspectContainer: () => Effect.succeed(Option.none()),
       }),
       Effect.map((running) => {
         expect(running).toBe(false);
@@ -477,4 +535,87 @@ describe("isLocalDbRunning", () => {
       );
     },
   );
+});
+
+describe("localDbState", () => {
+  const stateOf = (spawnerLayer: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>) =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workdir = mkdtempSync(join(tmpdir(), "ldbstate-"));
+      return yield* localDbState(spawner, fs, path, workdir, "engine-probe").pipe(
+        Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))),
+      );
+    }).pipe(
+      Effect.provide(spawnerLayer),
+      Effect.provide(BunServices.layer),
+      Effect.provideService(LocalDockerEngine, {
+        inspectContainer: () => Effect.succeed(Option.none()),
+      }),
+    );
+
+  it.live.each([
+    ["a stopped container", { Running: false, Status: "exited" }, false, "exited"],
+    ["a created container", { Running: false, Status: "created" }, false, "created"],
+    ["a running container", { Running: true, Status: "running" }, true, "running"],
+  ] as const)(
+    "reads %s from the container CLI inspect stdout's State",
+    ([, state, running, status]) => {
+      const mock = mockContainerCliSpawner(() => ({
+        stdout: [JSON.stringify([{ Id: "abc123", State: state }])],
+      }));
+      return stateOf(mock.layer).pipe(
+        Effect.map((answer) => {
+          expect(answer).toEqual({ exists: true, running, status });
+          expect(mock.spawned.map((s) => s.args)).toEqual([
+            ["container", "inspect", "supabase_db_engine-probe"],
+          ]);
+        }),
+      );
+    },
+  );
+
+  it.live.each([
+    ["empty", ""],
+    ["not JSON", "not json"],
+    ["a JSON object rather than an array", '{"State":{"Running":false,"Status":"exited"}}'],
+    ["an empty array", "[]"],
+    ["an entry without State", '[{"Id":"abc123"}]'],
+  ] as const)(
+    "counts a container whose inspect stdout is %s as running when the exit code is 0",
+    ([, stdout]) => {
+      const mock = mockContainerCliSpawner(() => ({ stdout: stdout === "" ? [] : [stdout] }));
+      return stateOf(mock.layer).pipe(
+        Effect.map((answer) => {
+          expect(answer).toEqual({ exists: true, running: true, status: "" });
+        }),
+      );
+    },
+  );
+
+  it.live("answers absent when the container CLI reports no such container", () => {
+    const mock = mockContainerCliSpawner(() => ({
+      exitCode: 1,
+      stderr: ["Error response from daemon: No such container: supabase_db_engine-probe"],
+    }));
+    return stateOf(mock.layer).pipe(
+      Effect.map((answer) => {
+        expect(answer).toEqual({ exists: false });
+      }),
+    );
+  });
+
+  it.live("fails with the daemon marker when the container CLI cannot reach the daemon", () => {
+    const mock = mockContainerCliSpawner(() => ({
+      exitCode: 1,
+      stderr: ["Cannot connect to the Docker daemon at unix:///var/run/docker.sock."],
+    }));
+    return stateOf(mock.layer).pipe(
+      Effect.flip,
+      Effect.map((error) => {
+        expect(error).toMatchObject({ _tag: "LocalDbRunningError", daemonDown: true });
+      }),
+    );
+  });
 });
