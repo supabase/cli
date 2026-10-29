@@ -41,7 +41,7 @@ const SUBCOMMANDS = [
 ] as const;
 
 describe("inspect:flags", () => {
-  testBehaviour("rejects --db-url with --local", ({ run, workspace, pgMockPort, signal }) =>
+  testBehaviour("rejects --remote with --local", ({ run, workspace, pgMockPort, signal }) =>
     runE2e(
       Effect.gen(function* () {
         yield* setupInspectWorkspace(workspace.path, pgMockPort);
@@ -49,11 +49,13 @@ describe("inspect:flags", () => {
           "inspect",
           "db",
           "db-stats",
-          "--db-url",
-          "postgresql://postgres:postgres@localhost:5432/postgres",
           "--local",
+          "--remote=postgresql://postgres:postgres@localhost:5432/postgres",
         ]);
         expect(result.exitCode).not.toBe(0);
+        expect(result.stderr).toContain(
+          "Only one of --remote, --linked, --db-url and --local can be set; got --remote and --local.",
+        );
       }),
       signal,
     ),
@@ -69,7 +71,7 @@ for (const { name, fixtureKey, assertValue } of SUBCOMMANDS) {
           Effect.gen(function* () {
             yield* setupInspectWorkspace(workspace.path, pgMockPort);
             yield* setPgFixture(apiUrl, fixtureKey);
-            const result = yield* run(["inspect", "db", name, "--local"]);
+            const result = yield* run(["inspect", "db", name]);
             expect(result.exitCode).toBe(0);
             expect(result.stdout).toContain(assertValue);
           }),
@@ -84,8 +86,7 @@ for (const { name, fixtureKey, assertValue } of SUBCOMMANDS) {
             "inspect",
             "db",
             name,
-            "--db-url",
-            "postgresql://postgres:postgres@localhost:1/postgres",
+            "--remote=postgresql://postgres:postgres@localhost:1/postgres",
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).not.toBe("");
@@ -104,7 +105,7 @@ describe("inspect:report", () => {
         const path = yield* Path.Path;
         yield* setupInspectWorkspace(workspace.path, pgMockPort);
         const outDir = path.join(workspace.path, "report-out");
-        const result = yield* run(["inspect", "report", "--local", "--output-dir", outDir]);
+        const result = yield* run(["inspect", "report", "--output-dir", outDir]);
         expect(result.exitCode).toBe(0);
         expect(result.stderr).toContain("Reports saved to");
         const subdirs = yield* fs.readDirectory(outDir);
@@ -124,8 +125,7 @@ describe("inspect:report", () => {
         const result = yield* run([
           "inspect",
           "report",
-          "--db-url",
-          "postgresql://postgres:postgres@localhost:1/postgres",
+          "--remote=postgresql://postgres:postgres@localhost:1/postgres",
         ]);
         expect(result.exitCode).not.toBe(0);
         expect(result.stderr).not.toBe("");

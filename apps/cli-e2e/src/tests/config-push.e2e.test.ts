@@ -62,7 +62,7 @@ describe("config push", () => {
     runE2e(
       Effect.gen(function* () {
         yield* writeConfigToml(workspace.path);
-        const result = yield* run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
+        const result = yield* run(["config", "push", "--yes", `--remote=${PROJECT_REF}`]);
         expect(result.exitCode).toBe(0);
       }),
       signal,
@@ -77,9 +77,8 @@ describe("config push", () => {
           "config",
           "push",
           "--yes",
-          "--project-ref",
-          PROJECT_REF,
           "--debug",
+          `--remote=${PROJECT_REF}`,
         ]);
         expect(result.exitCode).toBe(0);
         expect(result.stderr).toMatch(/HTTP.*GET:/);
@@ -97,7 +96,7 @@ describe("config push", () => {
         });
 
         yield* writeConfigToml(workspace.path);
-        const result = yield* run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
+        const result = yield* run(["config", "push", "--yes", `--remote=${PROJECT_REF}`]);
         expect(result.exitCode).not.toBe(0);
         expect(result.stderr).toContain("401");
       }),
@@ -118,7 +117,7 @@ describe("config push", () => {
           });
 
           yield* writeConfigToml(workspace.path);
-          const result = yield* run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["config", "push", "--yes", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("403");
         }),
@@ -135,7 +134,7 @@ describe("config push", () => {
         });
 
         yield* writeConfigToml(workspace.path);
-        const result = yield* run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
+        const result = yield* run(["config", "push", "--yes", `--remote=${PROJECT_REF}`]);
         expect(result.exitCode).not.toBe(0);
         expect(result.stderr).toContain("404");
       }),
@@ -152,7 +151,7 @@ describe("config push", () => {
         });
 
         yield* writeConfigToml(workspace.path);
-        const result = yield* run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
+        const result = yield* run(["config", "push", "--yes", `--remote=${PROJECT_REF}`]);
         expect(result.exitCode).not.toBe(0);
         expect(result.stderr).toContain("409");
       }),
@@ -171,7 +170,7 @@ describe("config push", () => {
         });
 
         yield* writeConfigToml(workspace.path);
-        const result = yield* run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
+        const result = yield* run(["config", "push", "--yes", `--remote=${PROJECT_REF}`]);
         expect(result.exitCode).not.toBe(0);
         expect(result.stderr).toContain("422");
         expect(result.stderr).toContain("max_rows");
@@ -189,7 +188,7 @@ describe("config push", () => {
         });
 
         yield* writeConfigToml(workspace.path);
-        const result = yield* run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
+        const result = yield* run(["config", "push", "--yes", `--remote=${PROJECT_REF}`]);
         expect(result.exitCode).not.toBe(0);
         expect(result.stderr).toContain("429");
       }),
@@ -206,7 +205,7 @@ describe("config push", () => {
         });
 
         yield* writeConfigToml(workspace.path);
-        const result = yield* run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
+        const result = yield* run(["config", "push", "--yes", `--remote=${PROJECT_REF}`]);
         expect(result.exitCode).not.toBe(0);
         expect(result.stderr).toContain("500");
       }),
@@ -223,7 +222,7 @@ describe("config push", () => {
         });
 
         yield* writeConfigToml(workspace.path);
-        const result = yield* run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
+        const result = yield* run(["config", "push", "--yes", `--remote=${PROJECT_REF}`]);
         expect(result.exitCode).not.toBe(0);
         expect(result.stderr).toContain("502");
       }),

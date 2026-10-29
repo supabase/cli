@@ -12,8 +12,7 @@ describe("postgres-config", () => {
             "postgres-config",
             "get",
             "--experimental",
-            "--project-ref",
-            projectRef,
+            `--remote=${projectRef}`,
           ]);
           expect(result.exitCode).toBe(0);
           expect(result.stdout).not.toBe("");
@@ -33,8 +32,7 @@ describe("postgres-config", () => {
               "--experimental",
               "--output",
               "json",
-              "--project-ref",
-              projectRef,
+              `--remote=${projectRef}`,
             ]);
             expect(result.exitCode).toBe(0);
             const parsed = yield* decodeJsonOutput(Schema.Unknown)(result.stdout);
@@ -53,8 +51,7 @@ describe("postgres-config", () => {
             "get",
             "--experimental",
             "--debug",
-            "--project-ref",
-            projectRef,
+            `--remote=${projectRef}`,
           ]);
           expect(result.exitCode).toBe(0);
           expect(result.stderr).toMatch(/HTTP.*GET:/);
@@ -74,8 +71,7 @@ describe("postgres-config", () => {
             "postgres-config",
             "get",
             "--experimental",
-            "--project-ref",
-            PROJECT_REF,
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
@@ -95,8 +91,7 @@ describe("postgres-config", () => {
             "postgres-config",
             "get",
             "--experimental",
-            "--project-ref",
-            PROJECT_REF,
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Forbidden");
@@ -116,8 +111,7 @@ describe("postgres-config", () => {
             "postgres-config",
             "get",
             "--experimental",
-            "--project-ref",
-            PROJECT_REF,
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Project not found");
@@ -137,8 +131,7 @@ describe("postgres-config", () => {
             "postgres-config",
             "get",
             "--experimental",
-            "--project-ref",
-            PROJECT_REF,
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Too Many Requests");
@@ -158,8 +151,7 @@ describe("postgres-config", () => {
             "postgres-config",
             "get",
             "--experimental",
-            "--project-ref",
-            PROJECT_REF,
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Internal Server Error");
@@ -179,8 +171,8 @@ describe("postgres-config", () => {
             "--experimental",
             "--config",
             "max_connections=200",
-            "--project-ref",
-            projectRef,
+            "--yes",
+            `--remote=${projectRef}`,
           ]);
           expect(result.exitCode).toBe(0);
         }),
@@ -199,8 +191,8 @@ describe("postgres-config", () => {
             "max_connections=200",
             "--config",
             "shared_buffers=256MB",
-            "--project-ref",
-            projectRef,
+            "--yes",
+            `--remote=${projectRef}`,
           ]);
           expect(result.exitCode).toBe(0);
         }),
@@ -220,8 +212,8 @@ describe("postgres-config", () => {
               "--config",
               "max_connections=200",
               "--replace-existing-overrides",
-              "--project-ref",
-              projectRef,
+              "--yes",
+              `--remote=${projectRef}`,
             ]);
             expect(result.exitCode).toBe(0);
           }),
@@ -241,8 +233,8 @@ describe("postgres-config", () => {
               "--config",
               "max_connections=200",
               "--no-restart",
-              "--project-ref",
-              projectRef,
+              "--yes",
+              `--remote=${projectRef}`,
             ]);
             expect(result.exitCode).toBe(0);
           }),
@@ -263,8 +255,8 @@ describe("postgres-config", () => {
             "--experimental",
             "--config",
             "max_connections=200",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
@@ -286,8 +278,8 @@ describe("postgres-config", () => {
             "--experimental",
             "--config",
             "max_connections=200",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Project not found");
@@ -309,8 +301,8 @@ describe("postgres-config", () => {
             "--experimental",
             "--config",
             "invalid_key=value",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("unrecognized config key");
@@ -332,8 +324,8 @@ describe("postgres-config", () => {
             "--experimental",
             "--config",
             "max_connections=200",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Too Many Requests");
@@ -355,8 +347,8 @@ describe("postgres-config", () => {
             "--experimental",
             "--config",
             "max_connections=200",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Internal Server Error");
@@ -376,8 +368,8 @@ describe("postgres-config", () => {
             "--experimental",
             "--config",
             "max_connections",
-            "--project-ref",
-            projectRef,
+            "--yes",
+            `--remote=${projectRef}`,
           ]);
           expect(result.exitCode).toBe(0);
         }),
@@ -396,8 +388,8 @@ describe("postgres-config", () => {
             "max_connections",
             "--config",
             "shared_buffers",
-            "--project-ref",
-            projectRef,
+            "--yes",
+            `--remote=${projectRef}`,
           ]);
           expect(result.exitCode).toBe(0);
         }),
@@ -417,8 +409,8 @@ describe("postgres-config", () => {
               "--config",
               "max_connections",
               "--no-restart",
-              "--project-ref",
-              projectRef,
+              "--yes",
+              `--remote=${projectRef}`,
             ]);
             expect(result.exitCode).toBe(0);
           }),
@@ -439,8 +431,8 @@ describe("postgres-config", () => {
             "--experimental",
             "--config",
             "max_connections",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
@@ -462,8 +454,8 @@ describe("postgres-config", () => {
             "--experimental",
             "--config",
             "max_connections",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Project not found");
@@ -485,8 +477,8 @@ describe("postgres-config", () => {
             "--experimental",
             "--config",
             "max_connections",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Too Many Requests");
@@ -508,8 +500,8 @@ describe("postgres-config", () => {
             "--experimental",
             "--config",
             "max_connections",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Internal Server Error");
@@ -529,8 +521,7 @@ describe("vanity-subdomains", () => {
             "vanity-subdomains",
             "get",
             "--experimental",
-            "--project-ref",
-            projectRef,
+            `--remote=${projectRef}`,
           ]);
           expect(result.exitCode).toBe(0);
           expect(result.stdout).not.toBe("");
@@ -550,8 +541,7 @@ describe("vanity-subdomains", () => {
               "--experimental",
               "--output",
               "json",
-              "--project-ref",
-              projectRef,
+              `--remote=${projectRef}`,
             ]);
             expect(result.exitCode).toBe(0);
             const parsed = yield* decodeJsonOutput(Schema.Unknown)(result.stdout);
@@ -569,8 +559,7 @@ describe("vanity-subdomains", () => {
             "get",
             "--experimental",
             "--debug",
-            "--project-ref",
-            projectRef,
+            `--remote=${projectRef}`,
           ]);
           expect(result.exitCode).toBe(0);
           expect(result.stderr).toMatch(/HTTP.*GET:/);
@@ -590,8 +579,7 @@ describe("vanity-subdomains", () => {
             "vanity-subdomains",
             "get",
             "--experimental",
-            "--project-ref",
-            PROJECT_REF,
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
@@ -611,8 +599,7 @@ describe("vanity-subdomains", () => {
             "vanity-subdomains",
             "get",
             "--experimental",
-            "--project-ref",
-            PROJECT_REF,
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Forbidden");
@@ -632,8 +619,7 @@ describe("vanity-subdomains", () => {
             "vanity-subdomains",
             "get",
             "--experimental",
-            "--project-ref",
-            PROJECT_REF,
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Project not found");
@@ -653,8 +639,7 @@ describe("vanity-subdomains", () => {
             "vanity-subdomains",
             "get",
             "--experimental",
-            "--project-ref",
-            PROJECT_REF,
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Too Many Requests");
@@ -674,8 +659,7 @@ describe("vanity-subdomains", () => {
             "vanity-subdomains",
             "get",
             "--experimental",
-            "--project-ref",
-            PROJECT_REF,
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Internal Server Error");
@@ -695,8 +679,7 @@ describe("vanity-subdomains", () => {
             "--experimental",
             "--desired-subdomain",
             "myapp",
-            "--project-ref",
-            projectRef,
+            `--remote=${projectRef}`,
           ]);
           expect(result.exitCode).toBe(0);
           expect(result.stdout).not.toBe("");
@@ -718,8 +701,7 @@ describe("vanity-subdomains", () => {
               "myapp",
               "--output",
               "json",
-              "--project-ref",
-              projectRef,
+              `--remote=${projectRef}`,
             ]);
             expect(result.exitCode).toBe(0);
             const parsed = yield* decodeJsonOutput(Schema.Unknown)(result.stdout);
@@ -736,8 +718,7 @@ describe("vanity-subdomains", () => {
             "vanity-subdomains",
             "check-availability",
             "--experimental",
-            "--project-ref",
-            PROJECT_REF,
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
         }),
@@ -758,8 +739,7 @@ describe("vanity-subdomains", () => {
             "--experimental",
             "--desired-subdomain",
             "taken",
-            "--project-ref",
-            PROJECT_REF,
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("already taken");
@@ -781,8 +761,7 @@ describe("vanity-subdomains", () => {
             "--experimental",
             "--desired-subdomain",
             "myapp",
-            "--project-ref",
-            PROJECT_REF,
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
@@ -804,8 +783,7 @@ describe("vanity-subdomains", () => {
             "--experimental",
             "--desired-subdomain",
             "myapp",
-            "--project-ref",
-            PROJECT_REF,
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Project not found");
@@ -827,8 +805,7 @@ describe("vanity-subdomains", () => {
             "--experimental",
             "--desired-subdomain",
             "myapp",
-            "--project-ref",
-            PROJECT_REF,
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Too Many Requests");
@@ -848,8 +825,8 @@ describe("vanity-subdomains", () => {
             "--experimental",
             "--desired-subdomain",
             "myapp",
-            "--project-ref",
-            projectRef,
+            "--yes",
+            `--remote=${projectRef}`,
           ]);
           expect(result.exitCode).toBe(0);
           expect(result.stdout).toContain("Activated vanity subdomain");
@@ -871,8 +848,8 @@ describe("vanity-subdomains", () => {
             "--experimental",
             "--desired-subdomain",
             "taken",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("already taken");
@@ -894,8 +871,8 @@ describe("vanity-subdomains", () => {
             "--experimental",
             "--desired-subdomain",
             "myapp",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
@@ -917,8 +894,8 @@ describe("vanity-subdomains", () => {
             "--experimental",
             "--desired-subdomain",
             "myapp",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Project not found");
@@ -940,8 +917,8 @@ describe("vanity-subdomains", () => {
             "--experimental",
             "--desired-subdomain",
             "myapp",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Too Many Requests");
@@ -963,8 +940,8 @@ describe("vanity-subdomains", () => {
             "--experimental",
             "--desired-subdomain",
             "myapp",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Internal Server Error");
@@ -982,8 +959,8 @@ describe("vanity-subdomains", () => {
             "vanity-subdomains",
             "delete",
             "--experimental",
-            "--project-ref",
-            projectRef,
+            "--yes",
+            `--remote=${projectRef}`,
           ]);
           expect(result.exitCode).toBe(0);
           expect(result.stderr).toContain("Deleted vanity subdomain");
@@ -1003,8 +980,8 @@ describe("vanity-subdomains", () => {
             "vanity-subdomains",
             "delete",
             "--experimental",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
@@ -1024,8 +1001,8 @@ describe("vanity-subdomains", () => {
             "vanity-subdomains",
             "delete",
             "--experimental",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Project not found");
@@ -1045,8 +1022,8 @@ describe("vanity-subdomains", () => {
             "vanity-subdomains",
             "delete",
             "--experimental",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Too Many Requests");
@@ -1066,8 +1043,8 @@ describe("vanity-subdomains", () => {
             "vanity-subdomains",
             "delete",
             "--experimental",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Internal Server Error");
@@ -1083,7 +1060,7 @@ describe("encryption", () => {
     testBehaviour("renders root encryption key", ({ run, projectRef, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["encryption", "get-root-key", "--project-ref", projectRef]);
+          const result = yield* run(["encryption", "get-root-key", `--remote=${projectRef}`]);
           expect(result.exitCode).toBe(0);
           expect(result.stdout).not.toBe("");
         }),
@@ -1099,8 +1076,7 @@ describe("encryption", () => {
             "get-root-key",
             "--output",
             "json",
-            "--project-ref",
-            projectRef,
+            `--remote=${projectRef}`,
           ]);
           expect(result.exitCode).toBe(0);
         }),
@@ -1115,8 +1091,7 @@ describe("encryption", () => {
             "encryption",
             "get-root-key",
             "--debug",
-            "--project-ref",
-            projectRef,
+            `--remote=${projectRef}`,
           ]);
           expect(result.exitCode).toBe(0);
           expect(result.stderr).toMatch(/HTTP.*GET:/);
@@ -1132,7 +1107,7 @@ describe("encryption", () => {
             status: 401,
             body: { message: "Invalid token" },
           });
-          const result = yield* run(["encryption", "get-root-key", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["encryption", "get-root-key", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
         }),
@@ -1147,7 +1122,7 @@ describe("encryption", () => {
             status: 403,
             body: { message: "Forbidden" },
           });
-          const result = yield* run(["encryption", "get-root-key", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["encryption", "get-root-key", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Forbidden");
         }),
@@ -1162,7 +1137,7 @@ describe("encryption", () => {
             status: 404,
             body: { message: "Project not found" },
           });
-          const result = yield* run(["encryption", "get-root-key", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["encryption", "get-root-key", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Project not found");
         }),
@@ -1177,7 +1152,7 @@ describe("encryption", () => {
             status: 429,
             body: { message: "Too Many Requests" },
           });
-          const result = yield* run(["encryption", "get-root-key", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["encryption", "get-root-key", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Too Many Requests");
         }),
@@ -1192,7 +1167,7 @@ describe("encryption", () => {
             status: 500,
             body: { message: "Internal Server Error" },
           });
-          const result = yield* run(["encryption", "get-root-key", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["encryption", "get-root-key", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Internal Server Error");
         }),
@@ -1205,7 +1180,12 @@ describe("encryption", () => {
     testBehaviour.skipIf(isRecording)("rotates the vault root key", ({ run, projectRef, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["encryption", "update-root-key", "--project-ref", projectRef]);
+          const result = yield* run([
+            "encryption",
+            "update-root-key",
+            "--yes",
+            `--remote=${projectRef}`,
+          ]);
           expect(result.exitCode).toBe(0);
         }),
         signal,
@@ -1222,8 +1202,8 @@ describe("encryption", () => {
           const result = yield* run([
             "encryption",
             "update-root-key",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
@@ -1242,8 +1222,8 @@ describe("encryption", () => {
           const result = yield* run([
             "encryption",
             "update-root-key",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Forbidden");
@@ -1262,8 +1242,8 @@ describe("encryption", () => {
           const result = yield* run([
             "encryption",
             "update-root-key",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Project not found");
@@ -1282,8 +1262,8 @@ describe("encryption", () => {
           const result = yield* run([
             "encryption",
             "update-root-key",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Too Many Requests");
@@ -1302,8 +1282,8 @@ describe("encryption", () => {
           const result = yield* run([
             "encryption",
             "update-root-key",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Internal Server Error");
@@ -1319,7 +1299,7 @@ describe("backups", () => {
     testBehaviour("renders backup table with REGION column", ({ run, projectRef, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["backups", "list", "--project-ref", projectRef]);
+          const result = yield* run(["backups", "list", `--remote=${projectRef}`]);
           expect(result.exitCode).toBe(0);
           expect(result.stdout).toContain("REGION");
         }),
@@ -1337,8 +1317,7 @@ describe("backups", () => {
               "list",
               "--output",
               "json",
-              "--project-ref",
-              projectRef,
+              `--remote=${projectRef}`,
             ]);
             expect(result.exitCode).toBe(0);
             const parsed = yield* decodeJsonOutput(Schema.Unknown)(result.stdout);
@@ -1351,7 +1330,7 @@ describe("backups", () => {
     testBehaviour("--debug shows HTTP trace", ({ run, projectRef, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["backups", "list", "--debug", "--project-ref", projectRef]);
+          const result = yield* run(["backups", "list", "--debug", `--remote=${projectRef}`]);
           expect(result.exitCode).toBe(0);
           expect(result.stderr).toMatch(/HTTP.*GET:/);
         }),
@@ -1366,7 +1345,7 @@ describe("backups", () => {
             status: 401,
             body: { message: "Invalid token" },
           });
-          const result = yield* run(["backups", "list", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["backups", "list", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
         }),
@@ -1381,7 +1360,7 @@ describe("backups", () => {
             status: 403,
             body: { message: "Forbidden" },
           });
-          const result = yield* run(["backups", "list", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["backups", "list", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Forbidden");
         }),
@@ -1396,7 +1375,7 @@ describe("backups", () => {
             status: 404,
             body: { message: "Project not found" },
           });
-          const result = yield* run(["backups", "list", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["backups", "list", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Project not found");
         }),
@@ -1411,7 +1390,7 @@ describe("backups", () => {
             status: 429,
             body: { message: "Too Many Requests" },
           });
-          const result = yield* run(["backups", "list", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["backups", "list", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Too Many Requests");
         }),
@@ -1426,7 +1405,7 @@ describe("backups", () => {
             status: 500,
             body: { message: "Internal Server Error" },
           });
-          const result = yield* run(["backups", "list", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["backups", "list", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Internal Server Error");
         }),
@@ -1446,8 +1425,8 @@ describe("backups", () => {
               "restore",
               "-t",
               String(BACKUP_TIMESTAMP),
-              "--project-ref",
-              projectRef,
+              "--yes",
+              `--remote=${projectRef}`,
             ]);
             expect(result.exitCode).toBe(0);
           }),
@@ -1467,8 +1446,8 @@ describe("backups", () => {
             "restore",
             "-t",
             "0",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("out of range");
@@ -1489,8 +1468,8 @@ describe("backups", () => {
             "restore",
             "-t",
             String(BACKUP_TIMESTAMP),
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
@@ -1511,8 +1490,8 @@ describe("backups", () => {
             "restore",
             "-t",
             String(BACKUP_TIMESTAMP),
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Project not found");
@@ -1533,8 +1512,8 @@ describe("backups", () => {
             "restore",
             "-t",
             String(BACKUP_TIMESTAMP),
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Too Many Requests");
@@ -1555,8 +1534,8 @@ describe("backups", () => {
             "restore",
             "-t",
             String(BACKUP_TIMESTAMP),
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Internal Server Error");
@@ -1572,7 +1551,7 @@ describe("snippets", () => {
     testBehaviour("renders snippet table with ID and NAME columns", ({ run, projectRef, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["snippets", "list", "--project-ref", projectRef]);
+          const result = yield* run(["snippets", "list", `--remote=${projectRef}`]);
           expect(result.exitCode).toBe(0);
           expect(result.stdout).toContain("ID");
           expect(result.stdout).toContain("NAME");
@@ -1591,8 +1570,7 @@ describe("snippets", () => {
               "list",
               "--output",
               "json",
-              "--project-ref",
-              projectRef,
+              `--remote=${projectRef}`,
             ]);
             expect(result.exitCode).toBe(0);
             const parsed = yield* decodeJsonOutput(Schema.Record(Schema.String, Schema.Unknown))(
@@ -1607,7 +1585,7 @@ describe("snippets", () => {
     testBehaviour("--debug shows HTTP trace", ({ run, projectRef, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["snippets", "list", "--debug", "--project-ref", projectRef]);
+          const result = yield* run(["snippets", "list", "--debug", `--remote=${projectRef}`]);
           expect(result.exitCode).toBe(0);
           expect(result.stderr).toMatch(/HTTP.*GET:/);
         }),
@@ -1622,7 +1600,7 @@ describe("snippets", () => {
             status: 401,
             body: { message: "Invalid token" },
           });
-          const result = yield* run(["snippets", "list", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["snippets", "list", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
         }),
@@ -1637,7 +1615,7 @@ describe("snippets", () => {
             status: 403,
             body: { message: "Forbidden" },
           });
-          const result = yield* run(["snippets", "list", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["snippets", "list", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Forbidden");
         }),
@@ -1652,7 +1630,7 @@ describe("snippets", () => {
             status: 404,
             body: { message: "Project not found" },
           });
-          const result = yield* run(["snippets", "list", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["snippets", "list", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Project not found");
         }),
@@ -1667,7 +1645,7 @@ describe("snippets", () => {
             status: 429,
             body: { message: "Too Many Requests" },
           });
-          const result = yield* run(["snippets", "list", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["snippets", "list", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Too Many Requests");
         }),
@@ -1682,7 +1660,7 @@ describe("snippets", () => {
             status: 500,
             body: { message: "Internal Server Error" },
           });
-          const result = yield* run(["snippets", "list", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["snippets", "list", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Internal Server Error");
         }),
@@ -1701,8 +1679,7 @@ describe("snippets", () => {
               "snippets",
               "download",
               SNIPPET_ID,
-              "--project-ref",
-              projectRef,
+              `--remote=${projectRef}`,
             ]);
             expect(result.exitCode).toBe(0);
             expect(result.stdout).not.toBe("");
@@ -1722,8 +1699,7 @@ describe("snippets", () => {
             "snippets",
             "download",
             SNIPPET_ID,
-            "--project-ref",
-            PROJECT_REF,
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("not found");
@@ -1743,8 +1719,7 @@ describe("snippets", () => {
             "snippets",
             "download",
             SNIPPET_ID,
-            "--project-ref",
-            PROJECT_REF,
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
@@ -1764,8 +1739,7 @@ describe("snippets", () => {
             "snippets",
             "download",
             SNIPPET_ID,
-            "--project-ref",
-            PROJECT_REF,
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Too Many Requests");
@@ -1785,8 +1759,7 @@ describe("snippets", () => {
             "snippets",
             "download",
             SNIPPET_ID,
-            "--project-ref",
-            PROJECT_REF,
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Internal Server Error");

@@ -15,7 +15,7 @@ describe("sso", () => {
     testBehaviour("renders fixture data in output", ({ run, projectRef, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["sso", "list", "--project-ref", projectRef]);
+          const result = yield* run(["sso", "list", `--remote=${projectRef}`]);
           expect(result.exitCode).toBe(0);
           expect(result.stdout).toContain("IDENTITY PROVIDER ID");
         }),
@@ -26,14 +26,7 @@ describe("sso", () => {
     testBehaviour("returns json output with --output json", ({ run, projectRef, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run([
-            "sso",
-            "list",
-            "--output",
-            "json",
-            "--project-ref",
-            projectRef,
-          ]);
+          const result = yield* run(["sso", "list", "--output", "json", `--remote=${projectRef}`]);
           expect(result.exitCode).toBe(0);
           expect(yield* decodeJsonOutput(Schema.Unknown)(result.stdout)).toMatchObject({
             providers: [],
@@ -46,7 +39,7 @@ describe("sso", () => {
     testBehaviour("includes debug output with --debug", ({ run, projectRef, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["sso", "list", "--debug", "--project-ref", projectRef]);
+          const result = yield* run(["sso", "list", "--debug", `--remote=${projectRef}`]);
           expect(result.exitCode).toBe(0);
           expect(result.stderr).toMatch(/HTTP.*GET:/);
         }),
@@ -61,7 +54,7 @@ describe("sso", () => {
             status: 401,
             body: { message: "Invalid token" },
           });
-          const result = yield* run(["sso", "list", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["sso", "list", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
         }),
@@ -76,7 +69,7 @@ describe("sso", () => {
             status: 403,
             body: { message: "Forbidden" },
           });
-          const result = yield* run(["sso", "list", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["sso", "list", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Forbidden");
         }),
@@ -91,7 +84,7 @@ describe("sso", () => {
             status: 404,
             body: { message: "Project not found" },
           });
-          const result = yield* run(["sso", "list", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["sso", "list", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("SAML 2.0 support is not enabled");
         }),
@@ -106,7 +99,7 @@ describe("sso", () => {
             status: 429,
             body: { message: "Too Many Requests" },
           });
-          const result = yield* run(["sso", "list", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["sso", "list", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Too Many Requests");
         }),
@@ -121,7 +114,7 @@ describe("sso", () => {
             status: 500,
             body: { message: "Internal Server Error" },
           });
-          const result = yield* run(["sso", "list", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["sso", "list", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Internal Server Error");
         }),
@@ -134,7 +127,7 @@ describe("sso", () => {
     testBehaviour("renders fixture data in output", ({ run, projectRef, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["sso", "info", "--project-ref", projectRef]);
+          const result = yield* run(["sso", "info", `--remote=${projectRef}`]);
           expect(result.exitCode).toBe(0);
           expect(result.stdout).toContain("supabase.co/auth/v1/sso/saml/acs");
         }),
@@ -145,14 +138,7 @@ describe("sso", () => {
     testBehaviour("returns json output with --output json", ({ run, projectRef, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run([
-            "sso",
-            "info",
-            "--output",
-            "json",
-            "--project-ref",
-            projectRef,
-          ]);
+          const result = yield* run(["sso", "info", "--output", "json", `--remote=${projectRef}`]);
           expect(result.exitCode).toBe(0);
           expect(yield* decodeJsonOutput(Schema.Unknown)(result.stdout)).toMatchObject({
             acs_url: expect.stringContaining("supabase.co/auth/v1/sso/saml/acs"),
@@ -171,7 +157,7 @@ describe("sso", () => {
       ({ run, projectRef, signal }) =>
         runE2e(
           Effect.gen(function* () {
-            const result = yield* run(["sso", "show", PROVIDER_ID, "--project-ref", projectRef]);
+            const result = yield* run(["sso", "show", PROVIDER_ID, `--remote=${projectRef}`]);
             expect(result.exitCode).toBe(0);
             expect(result.stdout).toContain("example.com");
           }),
@@ -190,8 +176,7 @@ describe("sso", () => {
               PROVIDER_ID,
               "--output",
               "json",
-              "--project-ref",
-              projectRef,
+              `--remote=${projectRef}`,
             ]);
             expect(result.exitCode).toBe(0);
             expect(result.stdout).toContain("example.com");
@@ -210,8 +195,7 @@ describe("sso", () => {
               "show",
               PROVIDER_ID,
               "--metadata",
-              "--project-ref",
-              projectRef,
+              `--remote=${projectRef}`,
             ]);
             expect(result.exitCode).toBe(0);
             expect(result.stdout).toContain("EntityDescriptor");
@@ -227,7 +211,7 @@ describe("sso", () => {
             status: 401,
             body: { message: "Invalid token" },
           });
-          const result = yield* run(["sso", "show", PROVIDER_ID, "--project-ref", PROJECT_REF]);
+          const result = yield* run(["sso", "show", PROVIDER_ID, `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
         }),
@@ -242,7 +226,7 @@ describe("sso", () => {
             status: 403,
             body: { message: "Forbidden" },
           });
-          const result = yield* run(["sso", "show", PROVIDER_ID, "--project-ref", PROJECT_REF]);
+          const result = yield* run(["sso", "show", PROVIDER_ID, `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Forbidden");
         }),
@@ -257,7 +241,7 @@ describe("sso", () => {
             status: 404,
             body: { message: "SSO Identity Provider not found" },
           });
-          const result = yield* run(["sso", "show", PROVIDER_ID, "--project-ref", PROJECT_REF]);
+          const result = yield* run(["sso", "show", PROVIDER_ID, `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("could not be found");
         }),
@@ -272,7 +256,7 @@ describe("sso", () => {
             status: 429,
             body: { message: "Too Many Requests" },
           });
-          const result = yield* run(["sso", "show", PROVIDER_ID, "--project-ref", PROJECT_REF]);
+          const result = yield* run(["sso", "show", PROVIDER_ID, `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Too Many Requests");
         }),
@@ -287,7 +271,7 @@ describe("sso", () => {
             status: 500,
             body: { message: "Internal Server Error" },
           });
-          const result = yield* run(["sso", "show", PROVIDER_ID, "--project-ref", PROJECT_REF]);
+          const result = yield* run(["sso", "show", PROVIDER_ID, `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Internal Server Error");
         }),
@@ -315,8 +299,8 @@ describe("sso", () => {
               metadataPath,
               "--domains",
               "example.com",
-              "--project-ref",
-              projectRef,
+              "--yes",
+              `--remote=${projectRef}`,
             ]);
             expect(result.exitCode).toBe(0);
             expect(result.stdout).toContain("example.com");
@@ -334,8 +318,8 @@ describe("sso", () => {
             "--metadata-url",
             "https://example.com/saml/metadata",
             "--skip-url-validation",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain('"type"');
@@ -362,8 +346,8 @@ describe("sso", () => {
               "https://example.com/saml/metadata",
               "--metadata-file",
               metadataPath,
-              "--project-ref",
-              PROJECT_REF,
+              "--yes",
+              `--remote=${PROJECT_REF}`,
             ]);
             expect(result.exitCode).not.toBe(0);
             expect(result.stderr).toContain("metadata");
@@ -382,8 +366,8 @@ describe("sso", () => {
             "saml",
             "--metadata-url",
             "http://localhost:19999/saml.xml",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("HTTPS");
@@ -410,8 +394,8 @@ describe("sso", () => {
             "saml",
             "--metadata-file",
             metadataPath,
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
@@ -438,8 +422,8 @@ describe("sso", () => {
             "saml",
             "--metadata-file",
             metadataPath,
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Forbidden");
@@ -466,8 +450,8 @@ describe("sso", () => {
             "saml",
             "--metadata-file",
             metadataPath,
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid SAML metadata");
@@ -494,8 +478,8 @@ describe("sso", () => {
             "saml",
             "--metadata-file",
             metadataPath,
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Too Many Requests");
@@ -522,8 +506,8 @@ describe("sso", () => {
             "saml",
             "--metadata-file",
             metadataPath,
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Internal Server Error");
@@ -545,8 +529,8 @@ describe("sso", () => {
               PROVIDER_ID,
               "--add-domains",
               "example.com",
-              "--project-ref",
-              projectRef,
+              "--yes",
+              `--remote=${projectRef}`,
             ]);
             expect(result.exitCode).toBe(0);
             expect(result.stdout).toContain("example.com");
@@ -566,8 +550,8 @@ describe("sso", () => {
               PROVIDER_ID,
               "--domains",
               "new.com",
-              "--project-ref",
-              projectRef,
+              "--yes",
+              `--remote=${projectRef}`,
             ]);
             expect(result.exitCode).toBe(0);
             expect(result.stdout).toContain("new.com");
@@ -587,8 +571,8 @@ describe("sso", () => {
               PROVIDER_ID,
               "--remove-domains",
               "example.com",
-              "--project-ref",
-              projectRef,
+              "--yes",
+              `--remote=${projectRef}`,
             ]);
             expect(result.exitCode).toBe(0);
             expect(result.stdout).toContain("IDENTITY PROVIDER ID");
@@ -612,8 +596,8 @@ describe("sso", () => {
               PROVIDER_ID,
               "--metadata-file",
               metadataPath,
-              "--project-ref",
-              projectRef,
+              "--yes",
+              `--remote=${projectRef}`,
             ]);
             expect(result.exitCode).toBe(0);
             expect(result.stdout).toContain("EntityDescriptor");
@@ -633,8 +617,8 @@ describe("sso", () => {
             "a.com",
             "--add-domains",
             "b.com",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("domains");
@@ -656,8 +640,8 @@ describe("sso", () => {
             PROVIDER_ID,
             "--add-domains",
             "example.com",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
@@ -679,8 +663,8 @@ describe("sso", () => {
             PROVIDER_ID,
             "--add-domains",
             "example.com",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Forbidden");
@@ -702,8 +686,8 @@ describe("sso", () => {
             PROVIDER_ID,
             "--add-domains",
             "example.com",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("could not be found");
@@ -725,8 +709,8 @@ describe("sso", () => {
             PROVIDER_ID,
             "--add-domains",
             "example.com",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Too Many Requests");
@@ -748,8 +732,8 @@ describe("sso", () => {
             PROVIDER_ID,
             "--add-domains",
             "example.com",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Internal Server Error");
@@ -763,7 +747,13 @@ describe("sso", () => {
     testBehaviour.skipIf(isRecording)("removes a provider", ({ run, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["sso", "remove", PROVIDER_ID, "--project-ref", PROJECT_REF]);
+          const result = yield* run([
+            "sso",
+            "remove",
+            PROVIDER_ID,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
+          ]);
           expect(result.exitCode).toBe(0);
           expect(result.stdout).toContain("example.com");
         }),
@@ -778,7 +768,13 @@ describe("sso", () => {
             status: 401,
             body: { message: "Invalid token" },
           });
-          const result = yield* run(["sso", "remove", PROVIDER_ID, "--project-ref", PROJECT_REF]);
+          const result = yield* run([
+            "sso",
+            "remove",
+            PROVIDER_ID,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
+          ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
         }),
@@ -793,7 +789,13 @@ describe("sso", () => {
             status: 403,
             body: { message: "Forbidden" },
           });
-          const result = yield* run(["sso", "remove", PROVIDER_ID, "--project-ref", PROJECT_REF]);
+          const result = yield* run([
+            "sso",
+            "remove",
+            PROVIDER_ID,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
+          ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Forbidden");
         }),
@@ -808,7 +810,13 @@ describe("sso", () => {
             status: 404,
             body: { message: "SSO Identity Provider not found" },
           });
-          const result = yield* run(["sso", "remove", PROVIDER_ID, "--project-ref", PROJECT_REF]);
+          const result = yield* run([
+            "sso",
+            "remove",
+            PROVIDER_ID,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
+          ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("could not be found");
         }),
@@ -823,7 +831,13 @@ describe("sso", () => {
             status: 429,
             body: { message: "Too Many Requests" },
           });
-          const result = yield* run(["sso", "remove", PROVIDER_ID, "--project-ref", PROJECT_REF]);
+          const result = yield* run([
+            "sso",
+            "remove",
+            PROVIDER_ID,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
+          ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Too Many Requests");
         }),
@@ -838,7 +852,13 @@ describe("sso", () => {
             status: 500,
             body: { message: "Internal Server Error" },
           });
-          const result = yield* run(["sso", "remove", PROVIDER_ID, "--project-ref", PROJECT_REF]);
+          const result = yield* run([
+            "sso",
+            "remove",
+            PROVIDER_ID,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
+          ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Internal Server Error");
         }),

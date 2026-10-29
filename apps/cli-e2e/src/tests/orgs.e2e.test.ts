@@ -110,7 +110,7 @@ describe("orgs", () => {
     testBehaviour.skipIf(isRecording)("creates organization with name", ({ run, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["orgs", "create", ORG_NAME]);
+          const result = yield* run(["orgs", "create", ORG_NAME, "--yes"]);
           expect(result.exitCode).toBe(0);
           expect(result.stdout).toContain("Created organization:");
           expect(result.stdout).toMatch(/[a-z]{20}/);
@@ -122,7 +122,7 @@ describe("orgs", () => {
     testBehaviour("exits non-zero without name in non-TTY", ({ run, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["orgs", "create"]);
+          const result = yield* run(["orgs", "create", "--yes"]);
           expect(result.exitCode).not.toBe(0);
         }),
         signal,
@@ -136,7 +136,7 @@ describe("orgs", () => {
             status: 409,
             body: { message: "Organization name already in use" },
           });
-          const result = yield* run(["orgs", "create", ORG_NAME]);
+          const result = yield* run(["orgs", "create", ORG_NAME, "--yes"]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Organization name already in use");
         }),
@@ -151,7 +151,7 @@ describe("orgs", () => {
             status: 403,
             body: { message: "Organization limit reached" },
           });
-          const result = yield* run(["orgs", "create", ORG_NAME]);
+          const result = yield* run(["orgs", "create", ORG_NAME, "--yes"]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Organization limit reached");
         }),
@@ -166,7 +166,7 @@ describe("orgs", () => {
             status: 422,
             body: { message: "Invalid organization name" },
           });
-          const result = yield* run(["orgs", "create", ORG_NAME]);
+          const result = yield* run(["orgs", "create", ORG_NAME, "--yes"]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid organization name");
         }),
@@ -181,7 +181,7 @@ describe("orgs", () => {
             status: 401,
             body: { message: "Invalid token" },
           });
-          const result = yield* run(["orgs", "create", ORG_NAME]);
+          const result = yield* run(["orgs", "create", ORG_NAME, "--yes"]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
         }),
@@ -196,7 +196,7 @@ describe("orgs", () => {
             status: 429,
             body: { message: "Too Many Requests" },
           });
-          const result = yield* run(["orgs", "create", ORG_NAME]);
+          const result = yield* run(["orgs", "create", ORG_NAME, "--yes"]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Too Many Requests");
         }),
@@ -211,7 +211,7 @@ describe("orgs", () => {
             status: 500,
             body: { message: "Internal Server Error" },
           });
-          const result = yield* run(["orgs", "create", ORG_NAME]);
+          const result = yield* run(["orgs", "create", ORG_NAME, "--yes"]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Internal Server Error");
         }),

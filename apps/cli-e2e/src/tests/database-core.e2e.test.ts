@@ -1,23 +1,7 @@
 import { Effect, FileSystem, Path, Schema } from "effect";
 import { describe, expect } from "vitest";
+import { linkProject } from "./link-project.ts";
 import { decodeJsonOutput, postControl, runE2e, testBehaviour } from "./test-context.ts";
-
-/** Writes .supabase/.temp/project-ref and a stub pooler-url so --linked
- *  commands resolve a connection without a live postgres TCP probe (nothing
- *  listens on db.{ref}.localhost:5432 in the test harness); combined with
- *  SUPABASE_DB_PASSWORD (set in harness.ts), the command reaches its handler
- *  and makes the Management API call under test. */
-const linkProject = Effect.fnUntraced(function* (dir: string, ref: string) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const tempDir = path.join(dir, "supabase", ".temp");
-  yield* fs.makeDirectory(tempDir, { recursive: true });
-  yield* fs.writeFileString(path.join(tempDir, "project-ref"), ref);
-  yield* fs.writeFileString(
-    path.join(tempDir, "pooler-url"),
-    `postgresql://postgres.${ref}:[YOUR-PASSWORD]@aws-0-eu-central-1.pooler.supabase.com:6543/postgres`,
-  );
-});
 
 const TEST_MIGRATION_SQL =
   "CREATE TABLE IF NOT EXISTS e2e_test_table (id bigint generated always as identity primary key);";
@@ -40,7 +24,7 @@ describe("db advisors", () => {
       runE2e(
         Effect.gen(function* () {
           yield* linkProject(workspace.path, projectRef);
-          const result = yield* run(["db", "advisors", "--linked", "--type", "security"]);
+          const result = yield* run(["db", "advisors", "--type", "security", "--remote"]);
           expect(result.exitCode).toBe(0);
           expect(result.stdout.trim()).toBe("");
           expect(result.stderr).toContain("No issues found");
@@ -58,11 +42,11 @@ describe("db advisors", () => {
             const result = yield* run([
               "db",
               "advisors",
-              "--linked",
               "--type",
               "security",
               "--fail-on",
               "error",
+              "--remote",
             ]);
             expect(result.exitCode).toBe(0);
           }),
@@ -78,7 +62,7 @@ describe("db advisors", () => {
             status: 401,
             body: { message: "Invalid token" },
           });
-          const result = yield* run(["db", "advisors", "--linked", "--type", "security"]);
+          const result = yield* run(["db", "advisors", "--type", "security", "--remote"]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
         }),
@@ -94,7 +78,7 @@ describe("db advisors", () => {
             status: 403,
             body: { message: "Forbidden" },
           });
-          const result = yield* run(["db", "advisors", "--linked", "--type", "security"]);
+          const result = yield* run(["db", "advisors", "--type", "security", "--remote"]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Forbidden");
         }),
@@ -110,7 +94,7 @@ describe("db advisors", () => {
             status: 429,
             body: { message: "Too Many Requests" },
           });
-          const result = yield* run(["db", "advisors", "--linked", "--type", "security"]);
+          const result = yield* run(["db", "advisors", "--type", "security", "--remote"]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Too Many Requests");
         }),
@@ -126,7 +110,7 @@ describe("db advisors", () => {
             status: 500,
             body: { message: "Internal Server Error" },
           });
-          const result = yield* run(["db", "advisors", "--linked", "--type", "security"]);
+          const result = yield* run(["db", "advisors", "--type", "security", "--remote"]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Internal Server Error");
         }),
@@ -140,7 +124,7 @@ describe("db advisors", () => {
       runE2e(
         Effect.gen(function* () {
           yield* linkProject(workspace.path, projectRef);
-          const result = yield* run(["db", "advisors", "--linked", "--type", "performance"]);
+          const result = yield* run(["db", "advisors", "--type", "performance", "--remote"]);
           expect(result.exitCode).toBe(0);
           if (result.stdout.trim()) {
             const parsed = yield* decodeJsonOutput(Schema.Unknown)(result.stdout);
@@ -159,7 +143,7 @@ describe("db advisors", () => {
       runE2e(
         Effect.gen(function* () {
           yield* linkProject(workspace.path, projectRef);
-          const result = yield* run(["db", "advisors", "--linked", "--type", "all"]);
+          const result = yield* run(["db", "advisors", "--type", "all", "--remote"]);
           expect(result.exitCode).toBe(0);
         }),
         signal,
@@ -169,14 +153,14 @@ describe("db advisors", () => {
 });
 
 describe("db query", () => {
-  describe("db query:linked", () => {
+  describe("db query:remote", () => {
     testBehaviour(
       "returns SELECT 1 result in table format",
       ({ run, projectRef, workspace, signal }) =>
         runE2e(
           Effect.gen(function* () {
             yield* linkProject(workspace.path, projectRef);
-            const result = yield* run(["db", "query", "--linked", "SELECT 1"]);
+            const result = yield* run(["db", "query", "SELECT 1", "--read-only", "--remote"]);
             expect(result.exitCode).toBe(0);
             expect(result.stdout).toContain("1");
           }),
@@ -188,7 +172,15 @@ describe("db query", () => {
       runE2e(
         Effect.gen(function* () {
           yield* linkProject(workspace.path, projectRef);
-          const result = yield* run(["db", "query", "--linked", "--output", "json", "SELECT 1"]);
+          const result = yield* run([
+            "db",
+            "query",
+            "--output",
+            "json",
+            "SELECT 1",
+            "--read-only",
+            "--remote",
+          ]);
           expect(result.exitCode).toBe(0);
           const parsed = yield* decodeJsonOutput(Schema.Unknown)(result.stdout);
           // In agent mode (CLAUDECODE env set) the output is wrapped in {warning, boundary, rows}.
@@ -209,7 +201,7 @@ describe("db query", () => {
             status: 401,
             body: { message: "Invalid token" },
           });
-          const result = yield* run(["db", "query", "--linked", "SELECT 1"]);
+          const result = yield* run(["db", "query", "SELECT 1", "--read-only", "--remote"]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
         }),
@@ -225,7 +217,7 @@ describe("db query", () => {
             status: 403,
             body: { message: "Forbidden" },
           });
-          const result = yield* run(["db", "query", "--linked", "SELECT 1"]);
+          const result = yield* run(["db", "query", "SELECT 1", "--read-only", "--remote"]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Forbidden");
         }),
@@ -244,7 +236,7 @@ describe("db push", () => {
           Effect.gen(function* () {
             yield* linkProject(workspace.path, projectRef);
             yield* seedMigration(workspace.path);
-            const result = yield* run(["db", "push", "--dry-run"]);
+            const result = yield* run(["db", "push", "--dry-run", "--remote"]);
             expect(result.exitCode).not.toBe(0);
             expect(result.stderr).toContain("connect");
           }),
@@ -254,10 +246,10 @@ describe("db push", () => {
   });
 
   describe("db push:local", () => {
-    testBehaviour("exits non-zero on connection refused with --local", ({ run, signal }) =>
+    testBehaviour("exits non-zero on connection refused without --remote", ({ run, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["db", "push", "--local"]);
+          const result = yield* run(["db", "push"]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("connect");
         }),
@@ -266,14 +258,14 @@ describe("db push", () => {
     );
   });
 
-  describe("db push:linked", () => {
+  describe("db push:remote", () => {
     testBehaviour(
-      "exits non-zero on connection refused with --linked",
+      "exits non-zero on connection refused with --remote",
       ({ run, projectRef, workspace, signal }) =>
         runE2e(
           Effect.gen(function* () {
             yield* linkProject(workspace.path, projectRef);
-            const result = yield* run(["db", "push"]);
+            const result = yield* run(["db", "push", "--remote"]);
             expect(result.exitCode).not.toBe(0);
             expect(result.stderr).toContain("connect");
           }),
@@ -284,10 +276,10 @@ describe("db push", () => {
 });
 
 describe("db pull", () => {
-  testBehaviour("exits non-zero on connection refused with --local", ({ run, signal }) =>
+  testBehaviour("exits non-zero on connection refused without --remote", ({ run, signal }) =>
     runE2e(
       Effect.gen(function* () {
-        const result = yield* run(["db", "pull", "--local"]);
+        const result = yield* run(["db", "pull"]);
         expect(result.exitCode).not.toBe(0);
         expect(result.stderr).toContain("connect");
       }),
@@ -297,10 +289,10 @@ describe("db pull", () => {
 });
 
 describe("db lint", () => {
-  testBehaviour("exits non-zero on connection refused with --local", ({ run, signal }) =>
+  testBehaviour("exits non-zero on connection refused without --remote", ({ run, signal }) =>
     runE2e(
       Effect.gen(function* () {
-        const result = yield* run(["db", "lint", "--local"]);
+        const result = yield* run(["db", "lint"]);
         expect(result.exitCode).not.toBe(0);
         expect(result.stderr).toContain("connect");
       }),
@@ -310,10 +302,10 @@ describe("db lint", () => {
 });
 
 describe("db dump", () => {
-  testBehaviour("exits non-zero on connection refused with --local", ({ run, signal }) =>
+  testBehaviour("exits non-zero on connection refused without --remote", ({ run, signal }) =>
     runE2e(
       Effect.gen(function* () {
-        const result = yield* run(["db", "dump", "--local"]);
+        const result = yield* run(["db", "dump"]);
         expect(result.exitCode).not.toBe(0);
         expect(result.stderr).toContain("connect");
       }),
@@ -324,7 +316,7 @@ describe("db dump", () => {
   testBehaviour("exits non-zero when --role-only and --data-only are both set", ({ run, signal }) =>
     runE2e(
       Effect.gen(function* () {
-        const result = yield* run(["db", "dump", "--local", "--role-only", "--data-only"]);
+        const result = yield* run(["db", "dump", "--role-only", "--data-only"]);
         expect(result.exitCode).not.toBe(0);
         expect(result.stderr.toLowerCase()).toMatch(/role.only|data.only|mutually exclusive/);
       }),
@@ -334,10 +326,10 @@ describe("db dump", () => {
 });
 
 describe("db reset", () => {
-  testBehaviour("exits non-zero on connection refused with --local", ({ run, signal }) =>
+  testBehaviour("exits non-zero on connection refused without --remote", ({ run, signal }) =>
     runE2e(
       Effect.gen(function* () {
-        const result = yield* run(["db", "reset", "--local"]);
+        const result = yield* run(["db", "reset"]);
         expect(result.exitCode).not.toBe(0);
         expect(result.stderr).toMatch(/connect|not running/i);
       }),
@@ -376,10 +368,10 @@ describe("test new", () => {
 });
 
 describe("test db", () => {
-  testBehaviour("exits non-zero on connection refused with --local", ({ run, signal }) =>
+  testBehaviour("exits non-zero on connection refused without --remote", ({ run, signal }) =>
     runE2e(
       Effect.gen(function* () {
-        const result = yield* run(["test", "db", "--local"]);
+        const result = yield* run(["test", "db"]);
         expect(result.exitCode).not.toBe(0);
         expect(result.stderr).toContain("connect");
       }),

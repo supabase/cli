@@ -8,6 +8,13 @@ const TARGET = "\u0000target";
 
 const TARGET_FLAGS = ["db-url", "local", "linked"] as const satisfies ReadonlyArray<DbTarget>;
 
+/** How help names each target; the target flags themselves are hidden aliases of `--remote`. */
+const TARGET_LABELS: Readonly<Record<DbTarget, string>> = {
+  local: "the local stack",
+  linked: "--remote",
+  "db-url": "--remote=<url>",
+};
+
 const isLiteral = (value: string) => ![ABSENT, EMPTY, SET].includes(value);
 
 /** A literal value is a case of "given any value", so a set holding both keeps only `SET`. */
@@ -32,24 +39,18 @@ export type Condition = ReadonlyArray<Term>;
 
 export interface ConditionContext {
   readonly catalog: FlagCatalog;
-  /** The target a run uses when no target flag is given; set with `withDbTarget`. */
-  readonly targetDefault: "local" | "linked" | undefined;
   /** The values a variable can take; `undefined` for a variable the command does not have. */
   readonly domainOf: (variable: string) => ReadonlyArray<string> | undefined;
   /** The database targets a run can select. */
-  readonly targets: ReadonlyArray<string>;
+  readonly targets: ReadonlyArray<DbTarget>;
 }
 
 export function conditionContext(
   entries: ReadonlyArray<OperationEntry>,
   catalog: FlagCatalog,
-  targetDefault: "local" | "linked" | undefined,
 ): ConditionContext {
   const conditions = entries.flatMap((entry) => entry.when ?? []);
-  const targets = [
-    ...TARGET_FLAGS.filter((flag) => catalog.has(flag)),
-    ...(targetDefault !== undefined && !catalog.has(targetDefault) ? [targetDefault] : []),
-  ];
+  const targets = TARGET_FLAGS.filter((flag) => catalog.has(flag));
   const domainOf = (variable: string): ReadonlyArray<string> | undefined => {
     if (variable === TARGET) return targets;
     const flag = catalog.get(variable);
@@ -63,7 +64,7 @@ export function conditionContext(
     }
     return [ABSENT, EMPTY, SET];
   };
-  return { catalog, targetDefault, domainOf, targets };
+  return { catalog, domainOf, targets };
 }
 
 type Constraint =
@@ -158,6 +159,11 @@ export function termOf(
   const term = new Map<string, ReadonlySet<string>>();
   let widened = false;
   for (const condition of conditions ?? []) {
+    // Help does not spell out how `--remote` was given, so a selector condition only hedges.
+    if (condition.selector !== undefined) {
+      widened = true;
+      continue;
+    }
     const flag = condition.flag === undefined ? undefined : context.catalog.get(condition.flag);
     const constraint =
       condition.dbTarget !== undefined
@@ -245,21 +251,8 @@ export function conditionImplies(strong: Condition, weak: Condition): boolean {
   return strong.every((term) => weak.some((other) => implies(term, other)));
 }
 
-export const TARGET_VARIABLE = TARGET;
-
 export function withoutVariables(term: Term, variables: ReadonlyArray<string>): Term {
   return new Map([...term].filter(([variable]) => !variables.includes(variable)));
-}
-
-/** Whether every term restricts the target to the linked project alone. */
-export function onlyLinked(terms: ReadonlyArray<Term>): boolean {
-  return (
-    terms.length > 0 &&
-    terms.every((term) => {
-      const values = term.get(TARGET);
-      return values !== undefined && values.size === 1 && values.has("linked");
-    })
-  );
 }
 
 export const joinAnd = (items: ReadonlyArray<string>) =>
@@ -280,11 +273,8 @@ function textOfVariable(
   context: ConditionContext,
 ): Partial<TermText> {
   if (variable === TARGET) {
-    if (values.size === 1 && values.has("linked")) {
-      return context.targetDefault === "linked" ? { remote: true } : { positive: ["--linked"] };
-    }
     const named = context.targets.filter((target) => values.has(target));
-    return { positive: [joinOr(named.map((target) => `--${target}`))] };
+    return { positive: [joinOr(named.map((target) => TARGET_LABELS[target]))] };
   }
   const flag = context.catalog.get(variable);
   const name = `--${variable}`;

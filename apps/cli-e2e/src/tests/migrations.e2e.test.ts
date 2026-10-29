@@ -41,7 +41,7 @@ describe("migrations", () => {
     testBehaviour("exits non-zero on connection refused", ({ run, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["migration", "list", "--local"]);
+          const result = yield* run(["migration", "list"]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("failed to connect");
         }),
@@ -54,7 +54,7 @@ describe("migrations", () => {
     testBehaviour("exits non-zero on connection refused", ({ run, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["migration", "up", "--local"]);
+          const result = yield* run(["migration", "up"]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("failed to connect");
         }),
@@ -67,7 +67,7 @@ describe("migrations", () => {
     testBehaviour("exits non-zero on connection refused", ({ run, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["migration", "down", "--local"]);
+          const result = yield* run(["migration", "down"]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("failed to connect");
         }),
@@ -78,7 +78,7 @@ describe("migrations", () => {
     testBehaviour("exits non-zero on connection refused with --last 2", ({ run, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["migration", "down", "--last", "2", "--local"]);
+          const result = yield* run(["migration", "down", "--last", "2"]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("failed to connect");
         }),
@@ -91,7 +91,7 @@ describe("migrations", () => {
     testBehaviour("exits non-zero when --status flag is missing", ({ run, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["migration", "repair", "--local", "20230101000000"]);
+          const result = yield* run(["migration", "repair", "20230101000000"]);
           expect(result.exitCode).not.toBe(0);
           // A missing required flag's error prints once, without a duplicate
           // usage dump, and spells the flag name without its `--` prefix.
@@ -101,15 +101,22 @@ describe("migrations", () => {
       ),
     );
 
-    testBehaviour("exits non-zero on connection refused", ({ run, signal }) =>
+    testBehaviour("exits non-zero on connection refused", ({ run, workspace, signal }) =>
       runE2e(
         Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const migrationsDir = path.join(workspace.path, "supabase", "migrations");
+          yield* fs.makeDirectory(migrationsDir, { recursive: true });
+          yield* fs.writeFileString(
+            path.join(migrationsDir, "20230101000000_x.sql"),
+            "select 1;\n",
+          );
           const result = yield* run([
             "migration",
             "repair",
             "--status",
             "applied",
-            "--local",
             "20230101000000",
           ]);
           expect(result.exitCode).not.toBe(0);
@@ -124,7 +131,7 @@ describe("migrations", () => {
     testBehaviour("exits non-zero on connection refused", ({ run, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["migration", "squash", "--local"]);
+          const result = yield* run(["migration", "squash"]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).not.toBe("");
         }),
@@ -137,7 +144,7 @@ describe("migrations", () => {
     testBehaviour("exits non-zero on connection refused", ({ run, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["migration", "fetch", "--local"]);
+          const result = yield* run(["migration", "fetch"]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("failed to connect");
         }),

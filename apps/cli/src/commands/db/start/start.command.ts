@@ -2,10 +2,13 @@ import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { dbStart } from "./start.handler.ts";
 import { dbStartRuntimeLayer } from "./start.layers.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   fromBackup: Flag.String("from-backup").pipe(
@@ -31,4 +34,7 @@ export const dbStartCommand = Command.make("start", config).pipe(
     ),
   ),
   Command.provide(dbStartRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

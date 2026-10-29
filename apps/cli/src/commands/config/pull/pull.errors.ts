@@ -5,7 +5,6 @@ import {
   ErrorActionabilityId,
   statusCodeActionability,
 } from "../../../shared/telemetry/error-actionability.ts";
-import { mintConfigTargetErrors } from "../../../command-internal/project-target.ts";
 
 interface NetworkErrorArgs {
   readonly message: string;
@@ -49,27 +48,6 @@ export class ConfigPullOutputFlagUnsupportedError extends Data.TaggedError(
     return actionability.invalidInput;
   }
 }
-
-const targetErrors = mintConfigTargetErrors("ConfigPull");
-
-/** `--project-ref` named a branch the parent project does not have. */
-export const ConfigPullBranchNotFoundError = targetErrors.BranchNotFoundError;
-export type ConfigPullBranchNotFoundError = InstanceType<typeof ConfigPullBranchNotFoundError>;
-
-/** `--project-ref` named a branch (by name), but no project is linked to search branches under. */
-export const ConfigPullBranchNotLinkedError = targetErrors.BranchNotLinkedError;
-export type ConfigPullBranchNotLinkedError = InstanceType<typeof ConfigPullBranchNotLinkedError>;
-
-/**
- * `--project-ref` named a branch (by name), and a parent-project candidate exists but is not
- * ref-shaped — corrupt or stale linked state.
- */
-export const ConfigPullParentRefInvalidError = targetErrors.ParentRefInvalidError;
-export type ConfigPullParentRefInvalidError = InstanceType<typeof ConfigPullParentRefInvalidError>;
-
-/** The resolved branch has no project ref yet (still provisioning). */
-export const ConfigPullBranchNotReadyError = targetErrors.BranchNotReadyError;
-export type ConfigPullBranchNotReadyError = InstanceType<typeof ConfigPullBranchNotReadyError>;
 
 /**
  * A transport failure reading remote state over HTTP, shared by both the branch-lookup call and

@@ -34,7 +34,7 @@ describe("buildPostgrestEnv", () => {
     expect(env["PGRST_JWT_SECRET"]).toBe('{"keys":["fake"]}');
   });
 
-  test("matches Go's remaining static env values", () => {
+  test("sets the remaining static env values", () => {
     const env = buildPostgrestEnv(base);
     expect(env).toMatchObject({
       PGRST_DB_MAX_ROWS: "1000",
@@ -64,7 +64,7 @@ describe("buildPostgrestContainerSpec", () => {
     );
   });
 
-  test("has no healthcheck, no ports, and no exposedPorts — matching Go's PostgREST container.Config", () => {
+  test("has no healthcheck, no ports, and no exposedPorts", () => {
     const spec = buildPostgrestContainerSpec(input);
     expect(spec.healthcheck).toBeUndefined();
     expect(spec.ports).toBeUndefined();

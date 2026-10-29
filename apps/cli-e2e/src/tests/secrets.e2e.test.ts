@@ -8,7 +8,7 @@ describe("secrets", () => {
     testBehaviour("renders fixture data in output", ({ run, projectRef, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["secrets", "list", "--project-ref", projectRef]);
+          const result = yield* run(["secrets", "list", `--remote=${projectRef}`]);
           expect(result.exitCode).toBe(0);
           expect(result.stdout).toContain("NAME");
           expect(result.stdout).toContain("DIGEST");
@@ -24,7 +24,7 @@ describe("secrets", () => {
             status: 401,
             body: { message: "Invalid token" },
           });
-          const result = yield* run(["secrets", "list", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["secrets", "list", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
         }),
         signal,
@@ -39,8 +39,7 @@ describe("secrets", () => {
             "list",
             "--output",
             "json",
-            "--project-ref",
-            projectRef,
+            `--remote=${projectRef}`,
           ]);
           expect(result.exitCode).toBe(0);
           const parsed = yield* decodeJsonOutput(Schema.Unknown)(result.stdout);
@@ -57,7 +56,7 @@ describe("secrets", () => {
             status: 403,
             body: { message: "Forbidden" },
           });
-          const result = yield* run(["secrets", "list", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["secrets", "list", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
         }),
         signal,
@@ -71,7 +70,7 @@ describe("secrets", () => {
             status: 404,
             body: { message: "Project not found" },
           });
-          const result = yield* run(["secrets", "list", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["secrets", "list", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
         }),
         signal,
@@ -85,7 +84,7 @@ describe("secrets", () => {
             status: 429,
             body: { message: "Too Many Requests" },
           });
-          const result = yield* run(["secrets", "list", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["secrets", "list", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
         }),
         signal,
@@ -99,7 +98,7 @@ describe("secrets", () => {
             status: 500,
             body: { message: "Internal Server Error" },
           });
-          const result = yield* run(["secrets", "list", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["secrets", "list", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
         }),
         signal,
@@ -109,7 +108,7 @@ describe("secrets", () => {
     testBehaviour("includes debug output with --debug", ({ run, projectRef, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["secrets", "list", "--debug", "--project-ref", projectRef]);
+          const result = yield* run(["secrets", "list", "--debug", `--remote=${projectRef}`]);
           expect(result.exitCode).toBe(0);
         }),
         signal,
@@ -121,7 +120,13 @@ describe("secrets", () => {
     testBehaviour("sets a single secret", ({ run, projectRef, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["secrets", "set", "FOO=bar", "--project-ref", projectRef]);
+          const result = yield* run([
+            "secrets",
+            "set",
+            "FOO=bar",
+            "--yes",
+            `--remote=${projectRef}`,
+          ]);
           expect(result.exitCode).toBe(0);
           expect(result.stdout).toContain("Finished");
         }),
@@ -137,8 +142,8 @@ describe("secrets", () => {
             "set",
             "FOO=bar",
             "BAZ=qux",
-            "--project-ref",
-            projectRef,
+            "--yes",
+            `--remote=${projectRef}`,
           ]);
           expect(result.exitCode).toBe(0);
           expect(result.stdout).toContain("Finished");
@@ -158,8 +163,8 @@ describe("secrets", () => {
             "set",
             "--env-file",
             ".env.local",
-            "--project-ref",
-            projectRef,
+            "--yes",
+            `--remote=${projectRef}`,
           ]);
           expect(result.exitCode).toBe(0);
           expect(result.stdout).toContain("Finished");
@@ -175,7 +180,13 @@ describe("secrets", () => {
             status: 422,
             body: { message: "Validation failed", errors: [{ message: "Invalid secret name" }] },
           });
-          const result = yield* run(["secrets", "set", "FOO=bar", "--project-ref", PROJECT_REF]);
+          const result = yield* run([
+            "secrets",
+            "set",
+            "FOO=bar",
+            "--yes",
+            `--remote=${PROJECT_REF}`,
+          ]);
           expect(result.exitCode).not.toBe(0);
         }),
         signal,
@@ -190,8 +201,8 @@ describe("secrets", () => {
             "set",
             "--env-file",
             "nonexistent.env",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
         }),
@@ -206,7 +217,13 @@ describe("secrets", () => {
             status: 401,
             body: { message: "Invalid token" },
           });
-          const result = yield* run(["secrets", "set", "FOO=bar", "--project-ref", PROJECT_REF]);
+          const result = yield* run([
+            "secrets",
+            "set",
+            "FOO=bar",
+            "--yes",
+            `--remote=${PROJECT_REF}`,
+          ]);
           expect(result.exitCode).not.toBe(0);
         }),
         signal,
@@ -218,14 +235,7 @@ describe("secrets", () => {
     testBehaviour("removes a secret", ({ run, projectRef, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run([
-            "secrets",
-            "unset",
-            "FOO",
-            "--project-ref",
-            projectRef,
-            "--yes",
-          ]);
+          const result = yield* run(["secrets", "unset", "FOO", "--yes", `--remote=${projectRef}`]);
           expect(result.exitCode).toBe(0);
           expect(result.stdout).toContain("Finished");
         }),
@@ -236,15 +246,14 @@ describe("secrets", () => {
     testBehaviour("removes multiple secrets", ({ run, projectRef, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          yield* run(["secrets", "set", "FOO=bar", "BAR=baz", "--project-ref", projectRef]);
+          yield* run(["secrets", "set", "FOO=bar", "BAR=baz", "--yes", `--remote=${projectRef}`]);
           const result = yield* run([
             "secrets",
             "unset",
             "FOO",
             "BAR",
-            "--project-ref",
-            projectRef,
             "--yes",
+            `--remote=${projectRef}`,
           ]);
           expect(result.exitCode).toBe(0);
           expect(result.stdout).toContain("Finished");
@@ -264,9 +273,8 @@ describe("secrets", () => {
             "secrets",
             "unset",
             "NONEXISTENT",
-            "--project-ref",
-            PROJECT_REF,
             "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
         }),
@@ -285,9 +293,8 @@ describe("secrets", () => {
             "secrets",
             "unset",
             "FOO",
-            "--project-ref",
-            PROJECT_REF,
             "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
         }),
@@ -306,9 +313,8 @@ describe("secrets", () => {
             "secrets",
             "unset",
             "FOO",
-            "--project-ref",
-            PROJECT_REF,
             "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
         }),

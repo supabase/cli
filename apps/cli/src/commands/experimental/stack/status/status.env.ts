@@ -11,7 +11,6 @@ const variableNames = [
   "STUDIO_URL",
   "MCP_URL",
   "MAILPIT_URL",
-  "INBUCKET_URL",
   "PUBLISHABLE_KEY",
   "SECRET_KEY",
   "ANON_KEY",
@@ -22,8 +21,16 @@ const variableNames = [
   "S3_PROTOCOL_REGION",
 ] as const;
 
-/** Names the stack backend used to export, since removed; still worth naming in errors. */
-const removedVariableNames = new Set(["S3_PROTOCOL_URL"]);
+/** Names the stack backend used to export, since removed, mapped to their replacement if any. */
+const removedVariableNames = new Map<string, string | undefined>([
+  ["S3_PROTOCOL_URL", undefined],
+  ["INBUCKET_URL", "MAILPIT_URL"],
+]);
+
+const removedReplacement = (name: string) => {
+  const replacement = removedVariableNames.get(name);
+  return replacement === undefined ? "" : `; use ${replacement} instead`;
+};
 
 export const stackEnvOverrides = (entries: ReadonlyArray<string>) =>
   Effect.gen(function* () {
@@ -45,7 +52,7 @@ export const stackEnvOverrides = (entries: ReadonlyArray<string>) =>
         return yield* new StackCommandStatusError({
           reason: "flags",
           message: removedVariableNames.has(source)
-            ? `--override-name entry "${entry}" refers to ${source}, which is not exported by the stack backend.`
+            ? `--override-name entry "${entry}" refers to ${source}, which is not exported by the stack backend${removedReplacement(source)}.`
             : `--override-name entry "${entry}" refers to ${source}, which is not an exported variable; valid variables are ${variableNames.join(", ")}.`,
         });
       if (sources.has(source))

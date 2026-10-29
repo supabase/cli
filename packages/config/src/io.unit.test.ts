@@ -23,7 +23,6 @@ import {
   cliConfigValueSourceAt,
   isObject,
   type LoadedCliConfig,
-  type InternalLoadCliConfigOptions,
 } from "./config-document.ts";
 import {
   configJsonPath,
@@ -276,7 +275,7 @@ describe("config io", () => {
     expect(() => decodeCliConfig({ api: { max_rows: NaN } })).toThrow("Expected a finite number");
   });
 
-  test("only validates the highest-priority enabled sms provider during decode (Go switch parity)", () => {
+  test("only validates the highest-priority enabled sms provider during decode", () => {
     // Providers are validated in a fixed priority order (twilio, twilio_verify, messagebird,
     // textlocal, vonage); only the first enabled one is checked, so a complete, higher-priority
     // `twilio` block plus an incomplete, lower-priority `messagebird` block must decode fine.
@@ -327,7 +326,7 @@ describe("config io", () => {
     ).toThrow();
   });
 
-  test("decodes an unmodeled email template/notification name (Go map[string] parity)", () => {
+  test("decodes an unmodeled email template/notification name", () => {
     // `auth.email.template`/`notification` are open maps with no key restriction, and every
     // entry is validated regardless of name — an unrecognized key like
     // `[auth.email.template.custom]` is a legitimate config shape, not a decode error.
@@ -475,8 +474,6 @@ stack = true
       }),
     ));
 
-  // Go-parity callers (legacy `status`/`stop`) pass `tomlOnly: true` so a stray `config.json`
-  // never wins over `config.toml`.
   test("loads TOML instead of JSON when tomlOnly is set, even if JSON exists", () =>
     runConfigEffect(
       Effect.gen(function* () {
@@ -1088,7 +1085,7 @@ enabled = "env(SUPABASE_ANALYTICS_ENABLED)"
     ["f", false],
     ["FALSE", false],
   ] as const)(
-    "resolves env() on boolean fields using Go's strconv.ParseBool acceptance set (%s -> %s)",
+    "resolves env() on boolean fields using the boolean acceptance set (%s -> %s)",
     (envValue, expected) =>
       runConfigEffect(
         Effect.gen(function* () {
@@ -1116,13 +1113,13 @@ enabled = "env(SUPABASE_ANALYTICS_ENABLED)"
       ),
   );
 
-  test("splits a comma-separated string literal into a slice (Go's StringToSliceHookFunc)", () =>
+  test("splits a comma-separated string literal into a slice", () =>
     runConfigEffect(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const { join } = yield* Path.Path;
         // A plain string value for a `[]string` field like `additional_redirect_urls` decodes fine
-        // when `goViperCompat` is set, not just via `env(...)`.
+        // when `cliCompat` is set, not just via `env(...)`.
         const cwd = yield* makeTempProject();
 
         yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
@@ -1135,7 +1132,7 @@ additional_redirect_urls = "http://a,http://b"
 `,
         );
 
-        const loaded = yield* loadCliConfig(cwd, { goViperCompat: true });
+        const loaded = yield* loadCliConfig(cwd, { cliCompat: true });
         expect(loaded!.config.auth.additional_redirect_urls).toEqual(["http://a", "http://b"]);
       }),
     ));
@@ -1161,7 +1158,7 @@ additional_redirect_urls = "env(SUPABASE_REDIRECT_URLS)"
           "SUPABASE_REDIRECT_URLS=http://a,http://b\n",
         );
 
-        const loaded = yield* loadCliConfig(cwd, { goViperCompat: true });
+        const loaded = yield* loadCliConfig(cwd, { cliCompat: true });
         expect(loaded!.config.auth.additional_redirect_urls).toEqual(["http://a", "http://b"]);
       }),
     ));
@@ -1183,7 +1180,7 @@ additional_redirect_urls = ""
 `,
         );
 
-        const loaded = yield* loadCliConfig(cwd, { goViperCompat: true });
+        const loaded = yield* loadCliConfig(cwd, { cliCompat: true });
         expect(loaded!.config.auth.additional_redirect_urls).toEqual([]);
       }),
     ));
@@ -1210,7 +1207,7 @@ additional_redirect_urls = ["http://a", "http://b"]
       }),
     ));
 
-  test("preserves env() literals on string fields when the var is unset (Go parity)", () =>
+  test("preserves env() literals on string fields when the var is unset", () =>
     runConfigEffect(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -1232,7 +1229,7 @@ jwt_secret = "env(MISSING_SECRET)"
       }),
     ));
 
-  test("preserves env() literals on string fields when the var is set but empty (Go parity)", () =>
+  test("preserves env() literals on string fields when the var is set but empty", () =>
     runConfigEffect(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -1308,9 +1305,9 @@ port = "env(SUPABASE_DB_PORT_TEST)"
       }),
     ));
 
-  // Pins pre-Go-parity default behavior, so `packages/stack` and the functions manifest (which
-  // don't pass `goViperCompat`) don't inherit the Go-parity CLI's stricter/wider semantics.
-  test("loads successfully with a duplicate [remotes.*] project_id when goViperCompat is omitted", () =>
+  // Pins the strict default so callers that don't pass `cliCompat` don't inherit the CLI's
+  // config-loading semantics.
+  test("loads successfully with a duplicate [remotes.*] project_id when cliCompat is omitted", () =>
     runConfigEffect(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -1365,7 +1362,7 @@ runtime = "deno"
       }),
     ));
 
-  test("loads successfully with an invalid [remotes.*] project_id format when goViperCompat is omitted", () =>
+  test("loads successfully with an invalid [remotes.*] project_id format when cliCompat is omitted", () =>
     runConfigEffect(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -1388,7 +1385,7 @@ project_id = "not-a-ref"
       }),
     ));
 
-  test("does not split a comma-separated string literal for an array field when goViperCompat is omitted", () =>
+  test("does not split a comma-separated string literal for an array field when cliCompat is omitted", () =>
     runConfigEffect(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -1418,35 +1415,7 @@ additional_redirect_urls = "http://a,http://b"
       }),
     ));
 
-  test("does not warn on a deprecated provider (but still strips it) when goViperCompat is omitted", () =>
-    runConfigEffect(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const { join } = yield* Path.Path;
-        const cwd = yield* makeTempProject();
-        const warnings: Array<string> = [];
-        const errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
-          warnings.push(args.map((a) => String(a)).join(" "));
-        });
-        yield* Effect.addFinalizer(() => Effect.sync(() => errorSpy.mockRestore()));
-
-        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
-        yield* fs.writeFileString(
-          join(cwd, "supabase", "config.toml"),
-          `project_id = "abc123"
-
-[auth.external.slack]
-enabled = true
-`,
-        );
-
-        const loaded = yield* loadCliConfig(cwd);
-        expect("slack" in loaded!.config.auth.external).toBe(false);
-        expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
-      }),
-    ));
-
-  test("does not resolve a lowercase-named env() reference when goViperCompat is omitted", () =>
+  test("does not resolve a lowercase-named env() reference when cliCompat is omitted", () =>
     runConfigEffect(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -1465,7 +1434,7 @@ enabled = true
       }),
     ));
 
-  test("resolves a lowercase-named env() reference when goViperCompat is true", () =>
+  test("resolves a lowercase-named env() reference when cliCompat is true", () =>
     runConfigEffect(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -1479,7 +1448,7 @@ enabled = true
           `project_id = "env(lowercase_ref_default_on_test)"\n`,
         );
 
-        const loaded = yield* loadCliConfig(cwd, { goViperCompat: true });
+        const loaded = yield* loadCliConfig(cwd, { cliCompat: true });
         expect(loaded!.config.project_id).toBe("lowercase-ref-value");
       }),
     ));
@@ -1929,7 +1898,7 @@ project_id = "dupref"
 project_id = "dupref"
 `);
 
-        const message = yield* loadCliConfig(cwd, { goViperCompat: true }).pipe(
+        const message = yield* loadCliConfig(cwd, { cliCompat: true }).pipe(
           Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
             Effect.succeed(error.message),
           ),
@@ -1938,9 +1907,9 @@ project_id = "dupref"
       }),
     ));
 
-  // `goViperCompat` is required even though `projectRef` is passed: the duplicate/format checks
-  // are gated solely on `goViperCompat`, not on whether a remote is being selected.
-  test("rejects duplicate project_id across remotes with Go's message", () =>
+  // `cliCompat` is required even though `projectRef` is passed: the duplicate/format checks
+  // are gated solely on `cliCompat`, not on whether a remote is being selected.
+  test("rejects duplicate project_id across remotes", () =>
     runConfigEffect(
       Effect.gen(function* () {
         const cwd = yield* writeTomlProject(`project_id = "baseref"
@@ -1954,7 +1923,7 @@ project_id = "dupref"
 
         const message = yield* loadCliConfig(cwd, {
           projectRef: "dupref",
-          goViperCompat: true,
+          cliCompat: true,
         }).pipe(
           Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
             Effect.succeed(error.message),
@@ -1983,7 +1952,7 @@ project_id = "dupref"
 
         const message = yield* loadCliConfig(cwd, {
           projectRef: "previewref",
-          goViperCompat: true,
+          cliCompat: true,
         }).pipe(
           Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
             Effect.succeed(error.message),
@@ -2011,7 +1980,7 @@ max_rows = 2
 
         const message = yield* loadCliConfig(cwd, {
           projectRef: "previewref",
-          goViperCompat: true,
+          cliCompat: true,
         }).pipe(
           Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
             Effect.succeed(error.message),
@@ -2033,7 +2002,7 @@ max_rows = 2
 project_id = "not-a-ref"
 `);
 
-        const message = yield* loadCliConfig(cwd, { goViperCompat: true }).pipe(
+        const message = yield* loadCliConfig(cwd, { cliCompat: true }).pipe(
           Effect.catchTag("InvalidRemoteProjectIdError", (error) => Effect.succeed(error.message)),
         );
         expect(message).toBe(
@@ -2096,19 +2065,19 @@ enabled = true
       }),
     ));
 
-  test("resolves env() on a lowercase-named variable, matching Go's case-agnostic matcher", () =>
+  test("resolves env() on a lowercase-named variable", () =>
     runConfigEffect(
       Effect.gen(function* () {
-        // Env-var matching is case-agnostic when `goViperCompat` is set; without it, the strict
+        // Env-var matching is case-agnostic when `cliCompat` is set; without it, the strict
         // SCREAMING_SNAKE_CASE matcher wouldn't match this lowercase name at all.
         yield* stubEnv("project_id", "lowercase-ref");
         const cwd = yield* writeTomlProject(`project_id = "env(project_id)"\n`);
-        const loaded = yield* loadCliConfig(cwd, { goViperCompat: true });
+        const loaded = yield* loadCliConfig(cwd, { cliCompat: true });
         expect(loaded!.config.project_id).toBe("lowercase-ref");
       }),
     ));
 
-  test("does not match a remote whose project_id is env(REF) against the resolved ref (Go parity)", () =>
+  test("does not match a remote whose project_id is env(REF) against the resolved ref", () =>
     runConfigEffect(
       Effect.gen(function* () {
         // A `[remotes.x] project_id = "env(REF)"` never matches a caller-supplied, already-resolved
@@ -2232,503 +2201,233 @@ major_version = "not-a-number"
     ));
 });
 
-describe("config io deprecated [inbucket] back-compat", () => {
-  let warnings: Array<string> = [];
-  let errorSpy: MockInstance<typeof console.error> | undefined;
-
-  function captureWarnings() {
-    warnings = [];
-    // loadCliConfigFile emits the deprecation warning via Console.error, whose
-    // default implementation delegates to globalThis.console.error (stderr).
-    errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
-      warnings.push(args.map((a) => String(a)).join(" "));
-    });
-  }
-
-  afterEach(() => {
-    errorSpy?.mockRestore();
-    errorSpy = undefined;
-  });
-
-  function loadToml(contents: string) {
+describe("config io removed keys", () => {
+  function writeToml(cwd: string, contents: string) {
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const { join } = yield* Path.Path;
-      const cwd = yield* makeTempProject();
       const path = yield* configTomlPath(cwd);
       yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
       yield* fs.writeFileString(path, contents);
-
-      return yield* loadCliConfigFile(path);
+      return path;
     });
   }
 
-  test("loads a deprecated [inbucket] section as [local_smtp]", () =>
-    runConfigEffect(
-      Effect.gen(function* () {
-        captureWarnings();
-        const loaded = yield* loadToml(
-          `project_id = "abc123"
+  function loadToml(contents: string) {
+    return Effect.gen(function* () {
+      const cwd = yield* makeTempProject();
+      return yield* loadCliConfigFile(yield* writeToml(cwd, contents));
+    });
+  }
 
-[inbucket]
-enabled = true
-port = 12345
-`,
-        );
+  function loadTomlFailure(contents: string) {
+    return Effect.gen(function* () {
+      const cwd = yield* makeTempProject();
+      const error = yield* Effect.flip(loadCliConfigFile(yield* writeToml(cwd, contents)));
+      expect(error._tag).toBe("CliConfigRemovedKeyError");
+      return error;
+    });
+  }
 
-        expect(loaded.config.local_smtp.enabled).toBe(true);
-        expect(loaded.config.local_smtp.port).toBe(12345);
-        expect("inbucket" in loaded.config).toBe(false);
-        expect(loaded.document).not.toHaveProperty("inbucket");
-        expect(loaded.document).toHaveProperty("local_smtp");
-        expect(
-          warnings.some((m) =>
-            m.includes(
-              "WARN: config section [inbucket] is deprecated and will be removed in v3, use [local_smtp] instead.",
-            ),
-          ),
-        ).toBe(true);
-      }),
-    ));
-
-  test("fills schema defaults when a deprecated [inbucket] section is partial", () =>
-    runConfigEffect(
-      Effect.gen(function* () {
-        const loaded = yield* loadToml(
-          `project_id = "abc123"
-
-[inbucket]
-port = 9999
-`,
-        );
-
-        // enabled is omitted by the user; the schema default (true) must survive the
-        // inbucket -> local_smtp rewrite rather than collapsing to a zero value.
-        expect(loaded.config.local_smtp.enabled).toBe(true);
-        expect(loaded.config.local_smtp.port).toBe(9999);
-      }),
-    ));
-
-  test("prefers an explicit [local_smtp] when both sections are present", () =>
-    runConfigEffect(
-      Effect.gen(function* () {
-        captureWarnings();
-        const loaded = yield* loadToml(
-          `project_id = "abc123"
-
-[inbucket]
-enabled = true
-port = 11111
-
-[local_smtp]
-enabled = true
-port = 22222
-`,
-        );
-
-        expect(loaded.config.local_smtp.port).toBe(22222);
-        expect(loaded.document).not.toHaveProperty("inbucket");
-        // The deprecation warning still fires because the deprecated key was present.
-        expect(warnings.some((m) => m.includes("[inbucket] is deprecated"))).toBe(true);
-      }),
-    ));
-
-  test("normalizes a deprecated [remotes.*.inbucket] section", () =>
-    runConfigEffect(
-      Effect.gen(function* () {
-        captureWarnings();
-        const loaded = yield* loadToml(
-          `project_id = "abc123"
-
-[remotes.staging]
+  const stagingRemote = `[remotes.staging]
 project_id = "stagingrefaaaaaaaaaa"
+`;
 
+  test("the config schema accepts only an empty experimental.orioledb_version", () => {
+    const decode = Schema.decodeUnknownSync(CliConfigSchema);
+    expect(() => decode({ experimental: { orioledb_version: "" } })).not.toThrow();
+    expect(() => decode({ experimental: { orioledb_version: "17.0.1.084-orioledb" } })).toThrow();
+  });
+
+  test.each([
+    {
+      name: "[inbucket] whatever its contents",
+      toml: "[inbucket]\nenabled = false\n",
+      key: "[inbucket]",
+      replacement: "[local_smtp]",
+    },
+    {
+      name: "[remotes.*.inbucket]",
+      toml: `${stagingRemote}\n[remotes.staging.inbucket]\nport = 33333\n`,
+      key: "[remotes.staging.inbucket]",
+      replacement: "[remotes.staging.local_smtp]",
+    },
+    {
+      name: "a non-empty experimental.orioledb_version",
+      toml: '[experimental]\norioledb_version = "15.1.0.150"\n',
+      key: "experimental.orioledb_version",
+      replacement: "db.orioledb_version",
+    },
+    {
+      name: "a non-string experimental.orioledb_version",
+      toml: "[experimental]\norioledb_version = 1\n",
+      key: "experimental.orioledb_version",
+      replacement: "db.orioledb_version",
+    },
+    {
+      name: "a remote's non-empty experimental.orioledb_version",
+      toml: `${stagingRemote}\n[remotes.staging.experimental]\norioledb_version = "15.1.0.150"\n`,
+      key: "remotes.staging.experimental.orioledb_version",
+      replacement: "remotes.staging.db.orioledb_version",
+    },
+    {
+      name: "an enabled [auth.external.slack]",
+      toml: "[auth.external.slack]\nenabled = true\n",
+      key: "[auth.external.slack]",
+      replacement: "[auth.external.slack_oidc]",
+    },
+    {
+      name: "a disabled [auth.external.linkedin]",
+      toml: "[auth.external.linkedin]\nenabled = false\n",
+      key: "[auth.external.linkedin]",
+      replacement: "[auth.external.linkedin_oidc]",
+    },
+    {
+      name: "a remote's [auth.external.linkedin]",
+      toml: `${stagingRemote}\n[remotes.staging.auth.external.linkedin]\nenabled = true\n`,
+      key: "[remotes.staging.auth.external.linkedin]",
+      replacement: "[remotes.staging.auth.external.linkedin_oidc]",
+    },
+  ])("rejects $name", ({ toml, key, replacement }) =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const error = yield* loadTomlFailure(`project_id = "abc123"\n\n${toml}`);
+
+        expect(error).toMatchObject({ removedKeys: [{ key, replacement }] });
+      }),
+    ),
+  );
+
+  test("names the key, the file and the replacement", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const error = yield* loadTomlFailure(
+          'project_id = "abc123"\n\n[inbucket]\nenabled = true\n',
+        );
+
+        expect(error.message).toBe(
+          "[inbucket] in supabase/config.toml is no longer supported. Use [local_smtp] instead.",
+        );
+      }),
+    ));
+
+  test("reports every removed key in one error, the top level before each remote", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const error = yield* loadTomlFailure(
+          `project_id = "abc123"
+
+[inbucket]
+enabled = true
+
+[experimental]
+orioledb_version = "15.1.0.150"
+
+[auth.external.slack]
+enabled = true
+
+${stagingRemote}
 [remotes.staging.inbucket]
 enabled = true
-port = 33333
-`,
-        );
 
-        const staging = loaded.config.remotes.staging;
-        expect(staging?.local_smtp?.port).toBe(33333);
-        expect(staging).not.toHaveProperty("inbucket");
-        expect(
-          warnings.some((m) =>
-            m.includes(
-              "WARN: config section [remotes.staging.inbucket] is deprecated and will be removed in v3, use [remotes.staging.local_smtp] instead.",
-            ),
-          ),
-        ).toBe(true);
-      }),
-    ));
-
-  test("does not warn when only [local_smtp] is used", () =>
-    runConfigEffect(
-      Effect.gen(function* () {
-        captureWarnings();
-        const loaded = yield* loadToml(
-          `project_id = "abc123"
-
-[local_smtp]
-enabled = true
-port = 54324
-`,
-        );
-
-        expect(loaded.config.local_smtp.port).toBe(54324);
-        expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
-      }),
-    ));
-});
-
-describe("config io deprecated experimental.orioledb_version back-compat", () => {
-  let warnings: Array<string> = [];
-  let errorSpy: MockInstance<typeof console.error> | undefined;
-
-  function captureWarnings() {
-    warnings = [];
-    errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
-      warnings.push(args.map((a) => String(a)).join(" "));
-    });
-  }
-
-  afterEach(() => {
-    errorSpy?.mockRestore();
-    errorSpy = undefined;
-  });
-
-  function loadToml(contents: string) {
-    return Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const { join } = yield* Path.Path;
-      const cwd = yield* makeTempProject();
-      const path = yield* configTomlPath(cwd);
-      yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
-      yield* fs.writeFileString(path, contents);
-
-      return yield* loadCliConfigFile(path);
-    });
-  }
-
-  test("promotes a non-empty legacy experimental.orioledb_version to db.orioledb_version", () =>
-    runConfigEffect(
-      Effect.gen(function* () {
-        captureWarnings();
-        const loaded = yield* loadToml(
-          `project_id = "abc123"
-
-[experimental]
-orioledb_version = "15.1.0.150"
-`,
-        );
-
-        expect(loaded.config.db.orioledb_version).toBe("15.1.0.150");
-        expect(loaded.config.experimental.orioledb_version).toBeUndefined();
-        expect(loaded.document).not.toHaveProperty("experimental.orioledb_version");
-        expect(
-          warnings.some((m) =>
-            m.includes(
-              "WARN: experimental.orioledb_version is deprecated and will be removed in v3, use db.orioledb_version instead.",
-            ),
-          ),
-        ).toBe(true);
-      }),
-    ));
-
-  test("does not warn and stays absent when the legacy value is an empty string", () =>
-    runConfigEffect(
-      Effect.gen(function* () {
-        captureWarnings();
-        const loaded = yield* loadToml(
-          `project_id = "abc123"
-
-[experimental]
-orioledb_version = ""
-`,
-        );
-
-        expect(loaded.config.db.orioledb_version).toBeUndefined();
-        expect(loaded.config.experimental.orioledb_version).toBeUndefined();
-        expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
-      }),
-    ));
-
-  test("promotes a non-empty legacy value when db.orioledb_version is present but empty", () =>
-    runConfigEffect(
-      Effect.gen(function* () {
-        captureWarnings();
-        const loaded = yield* loadToml(
-          `project_id = "abc123"
-
-[db]
-orioledb_version = ""
-
-[experimental]
-orioledb_version = "15.1.0.150"
-`,
-        );
-
-        expect(loaded.config.db.orioledb_version).toBe("15.1.0.150");
-        expect(
-          warnings.some((m) =>
-            m.includes(
-              "WARN: experimental.orioledb_version is deprecated and will be removed in v3, use db.orioledb_version instead.",
-            ),
-          ),
-        ).toBe(true);
-      }),
-    ));
-
-  test("an explicit db.orioledb_version wins over a non-empty legacy value, but still warns", () =>
-    runConfigEffect(
-      Effect.gen(function* () {
-        captureWarnings();
-        const loaded = yield* loadToml(
-          `project_id = "abc123"
-
-[db]
-orioledb_version = "17.0.0.1"
-
-[experimental]
-orioledb_version = "15.1.0.150"
-`,
-        );
-
-        expect(loaded.config.db.orioledb_version).toBe("17.0.0.1");
-        expect(
-          warnings.some((m) =>
-            m.includes(
-              "WARN: experimental.orioledb_version is deprecated and will be removed in v3, use db.orioledb_version instead.",
-            ),
-          ),
-        ).toBe(true);
-      }),
-    ));
-
-  test("rejects a non-string legacy experimental.orioledb_version instead of silently discarding it", () =>
-    runConfigEffect(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const { join } = yield* Path.Path;
-        const cwd = yield* makeTempProject();
-        const path = yield* configTomlPath(cwd);
-        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
-        yield* fs.writeFileString(
-          path,
-          `project_id = "abc123"
-
-[experimental]
-orioledb_version = 1
-`,
-        );
-
-        const exit = yield* Effect.exit(loadCliConfigFile(path));
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const error = Cause.findErrorOption(exit.cause);
-          expect(Option.isSome(error)).toBe(true);
-          if (Option.isSome(error)) {
-            expect(error.value._tag).toBe("CliConfigParseError");
-          }
-        }
-      }),
-    ));
-
-  test("rejects a non-string canonical db.orioledb_version beside a valid legacy value", () =>
-    runConfigEffect(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const { join } = yield* Path.Path;
-        const cwd = yield* makeTempProject();
-        const path = yield* configTomlPath(cwd);
-        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
-        yield* fs.writeFileString(
-          path,
-          `project_id = "abc123"
-
-[db]
-orioledb_version = 1
-
-[experimental]
-orioledb_version = "15.1.0.150"
-`,
-        );
-
-        const exit = yield* Effect.exit(loadCliConfigFile(path));
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const error = Cause.findErrorOption(exit.cause);
-          expect(Option.isSome(error)).toBe(true);
-          if (Option.isSome(error)) {
-            expect(error.value._tag).toBe("CliConfigParseError");
-          }
-        }
-      }),
-    ));
-
-  test("normalizes a deprecated remotes.*.experimental.orioledb_version", () =>
-    runConfigEffect(
-      Effect.gen(function* () {
-        captureWarnings();
-        const loaded = yield* loadToml(
-          `project_id = "abc123"
-
-[remotes.staging]
-project_id = "stagingrefaaaaaaaaaa"
-
-[remotes.staging.experimental]
-orioledb_version = "15.1.0.150"
-`,
-        );
-
-        const staging = loaded.config.remotes.staging;
-        expect(staging?.db?.orioledb_version).toBe("15.1.0.150");
-        expect(
-          warnings.some((m) =>
-            m.includes(
-              "WARN: remotes.staging.experimental.orioledb_version is deprecated and will be removed in v3, use remotes.staging.db.orioledb_version instead.",
-            ),
-          ),
-        ).toBe(true);
-      }),
-    ));
-});
-
-describe("config io deprecated [auth.external.{linkedin,slack}] back-compat", () => {
-  let warnings: Array<string> = [];
-  let errorSpy: MockInstance<typeof console.error> | undefined;
-
-  function captureWarnings() {
-    warnings = [];
-    errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
-      warnings.push(args.map((a) => String(a)).join(" "));
-    });
-  }
-
-  afterEach(() => {
-    errorSpy?.mockRestore();
-    errorSpy = undefined;
-  });
-
-  function loadToml(contents: string, options?: InternalLoadCliConfigOptions) {
-    return Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const { join } = yield* Path.Path;
-      const cwd = yield* makeTempProject();
-      const path = yield* configTomlPath(cwd);
-      yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
-      yield* fs.writeFileString(path, contents);
-
-      return yield* loadCliConfigFile(path, options);
-    });
-  }
-
-  test("loads a bare [auth.external.slack] block without required fields", () =>
-    runConfigEffect(
-      Effect.gen(function* () {
-        captureWarnings();
-        const loaded = yield* loadToml(
-          `project_id = "abc123"
-
-[auth.external.slack]
-enabled = true
-`,
-          { goViperCompat: true },
-        );
-
-        expect("slack" in loaded.config.auth.external).toBe(false);
-        expect(loaded.document).not.toHaveProperty("auth.external.slack");
-        expect(
-          warnings.some((m) =>
-            m.includes(
-              'WARN: disabling deprecated "slack" provider. It will be removed in v3, use [auth.external.slack_oidc] instead.',
-            ),
-          ),
-        ).toBe(true);
-      }),
-    ));
-
-  test("loads a bare [auth.external.linkedin] block without required fields", () =>
-    runConfigEffect(
-      Effect.gen(function* () {
-        captureWarnings();
-        const loaded = yield* loadToml(
-          `project_id = "abc123"
-
-[auth.external.linkedin]
-enabled = true
-`,
-          { goViperCompat: true },
-        );
-
-        expect("linkedin" in loaded.config.auth.external).toBe(false);
-        expect(
-          warnings.some((m) =>
-            m.includes(
-              'WARN: disabling deprecated "linkedin" provider. It will be removed in v3, use [auth.external.linkedin_oidc] instead.',
-            ),
-          ),
-        ).toBe(true);
-      }),
-    ));
-
-  test("does not warn when the deprecated section is present but disabled", () =>
-    runConfigEffect(
-      Effect.gen(function* () {
-        captureWarnings();
-        const loaded = yield* loadToml(
-          `project_id = "abc123"
-
-[auth.external.slack]
+[remotes.staging.auth.external.linkedin]
 enabled = false
 `,
         );
 
-        expect("slack" in loaded.config.auth.external).toBe(false);
-        expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
+        expect(error.message).toBe(
+          [
+            "supabase/config.toml uses config keys that are no longer supported:",
+            "  [inbucket]: use [local_smtp] instead.",
+            "  experimental.orioledb_version: use db.orioledb_version instead.",
+            "  [auth.external.slack]: use [auth.external.slack_oidc] instead.",
+            "  [remotes.staging.inbucket]: use [remotes.staging.local_smtp] instead.",
+            "  [remotes.staging.auth.external.linkedin]: use [remotes.staging.auth.external.linkedin_oidc] instead.",
+          ].join("\n"),
+        );
       }),
     ));
 
-  test("does not warn when only [auth.external.slack_oidc] is used", () =>
+  test("saves over a config that uses removed keys and keeps its $schema", () =>
     runConfigEffect(
       Effect.gen(function* () {
-        captureWarnings();
-        const loaded = yield* loadToml(
-          `project_id = "abc123"
-
-[auth.external.slack_oidc]
-enabled = true
-client_id = "abc"
-secret = "shh"
-`,
+        const fs = yield* FileSystem.FileSystem;
+        const cwd = yield* makeTempProject();
+        const schemaRef = "./node_modules/@supabase/config/schema.json";
+        const filePath = yield* writeToml(
+          cwd,
+          `"$schema" = "${schemaRef}"\nproject_id = "abc123"\n\n[inbucket]\nenabled = true\n`,
         );
 
-        expect(loaded.config.auth.external.slack_oidc.enabled).toBe(true);
-        expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
+        const saved = yield* saveCliConfig({
+          cwd,
+          config: decodeCliConfig({ project_id: "abc123" }),
+        });
+
+        expect(saved.schemaRef).toBe(schemaRef);
+        const content = yield* fs.readFileString(filePath);
+        expect(content).toContain(`"$schema" = "${schemaRef}"`);
+        expect(content).not.toContain("inbucket");
       }),
     ));
 
-  test("strips a deprecated [remotes.*.auth.external.slack] block without warning for an unselected remote", () =>
-    runConfigEffect(
-      Effect.gen(function* () {
-        captureWarnings();
-        const loaded = yield* loadToml(
-          `project_id = "abc123"
+  describe("an empty experimental.orioledb_version", () => {
+    let errorSpy: MockInstance<typeof console.error> | undefined;
 
-[remotes.staging]
-project_id = "stagingrefaaaaaaaaaa"
+    afterEach(() => {
+      errorSpy?.mockRestore();
+      errorSpy = undefined;
+    });
 
-[remotes.staging.auth.external.slack]
-enabled = true
+    test("loads silently and leaves no trace in the loaded document", () =>
+      runConfigEffect(
+        Effect.gen(function* () {
+          errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+          const loaded = yield* loadToml(
+            `project_id = "abc123"
+
+[experimental]
+orioledb_version = ""
+
+${stagingRemote}
+[remotes.staging.experimental]
+orioledb_version = ""
 `,
-        );
+          );
 
-        // Not requesting `projectRef` means no remote is selected, so `remotes` survives
-        // decode verbatim (minus the deprecated key) rather than being merged/dropped.
-        expect(loaded.config.remotes.staging?.auth.external).not.toHaveProperty("slack");
-        expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
-      }),
-    ));
+          expect(errorSpy).not.toHaveBeenCalled();
+          expect(loaded.rawDocument).toEqual({
+            project_id: "abc123",
+            experimental: {},
+            remotes: { staging: { project_id: "stagingrefaaaaaaaaaa", experimental: {} } },
+          });
+          expect(loaded.document).not.toHaveProperty("experimental.orioledb_version");
+          expect(loaded.config.db.orioledb_version).toBeUndefined();
+          expect(loaded.valueOrigins?.map((origin) => origin.path.join("."))).not.toContain(
+            "experimental.orioledb_version",
+          );
+        }),
+      ));
+
+    test("leaves db.orioledb_version as written", () =>
+      runConfigEffect(
+        Effect.gen(function* () {
+          const loaded = yield* loadToml(
+            `project_id = "abc123"
+
+[db]
+orioledb_version = "15.1.0.150"
+
+[experimental]
+orioledb_version = ""
+`,
+          );
+
+          expect(loaded.config.db.orioledb_version).toBe("15.1.0.150");
+        }),
+      ));
+  });
 });
 
 describe("remoteNameForProjectRef / remoteProjectIdEntries", () => {
@@ -2920,12 +2619,51 @@ describe("writeCliConfigDocumentText", () => {
 });
 
 describe("decodeCliConfigDocumentForValidationEffect", () => {
+  test("fails with CliConfigRemovedKeyError naming every removed key, remotes included", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(
+          decodeCliConfigDocumentForValidationEffect(
+            {
+              project_id: "abc123",
+              inbucket: { enabled: true },
+              remotes: { staging: { experimental: { orioledb_version: "15.1.0.150" } } },
+            },
+            { cliCompat: true, path: "supabase/config.toml", format: "toml" },
+          ),
+        );
+
+        expect(error).toMatchObject({
+          _tag: "CliConfigRemovedKeyError",
+          removedKeys: [
+            { key: "[inbucket]", replacement: "[local_smtp]" },
+            {
+              key: "remotes.staging.experimental.orioledb_version",
+              replacement: "remotes.staging.db.orioledb_version",
+            },
+          ],
+        });
+      }),
+    ));
+
+  test("tolerates an empty experimental.orioledb_version", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const config = yield* decodeCliConfigDocumentForValidationEffect(
+          { project_id: "abc123", experimental: { orioledb_version: "" } },
+          { cliCompat: true, path: "supabase/config.toml", format: "toml" },
+        );
+
+        expect(config).toEqual(decodeCliConfig({ project_id: "abc123" }));
+      }),
+    ));
+
   test("decodes a valid document successfully", () =>
     runConfigEffect(
       Effect.gen(function* () {
         const config = yield* decodeCliConfigDocumentForValidationEffect(
           { project_id: "abc123" },
-          { goViperCompat: true, path: "supabase/config.toml", format: "toml" },
+          { cliCompat: true, path: "supabase/config.toml", format: "toml" },
         );
         expect(config.project_id).toBe("abc123");
       }),
@@ -2940,7 +2678,7 @@ describe("decodeCliConfigDocumentForValidationEffect", () => {
         };
         const exit = yield* Effect.exit(
           decodeCliConfigDocumentForValidationEffect(document, {
-            goViperCompat: true,
+            cliCompat: true,
             path: "supabase/config.toml",
             format: "toml",
           }),
@@ -2976,7 +2714,7 @@ describe("decodeCliConfigDocumentForValidationEffect", () => {
           },
         };
         const config = yield* decodeCliConfigDocumentForValidationEffect(document, {
-          goViperCompat: true,
+          cliCompat: true,
           path: "supabase/config.toml",
           format: "toml",
         });
@@ -3006,7 +2744,7 @@ describe("decodeCliConfigDocumentForValidationEffect", () => {
             project_id: "abc123",
             db: { major_version: "env(SUPABASE_VALIDATION_PG_VERSION_TEST)" },
           },
-          { goViperCompat: true, path, format: "toml" },
+          { cliCompat: true, path, format: "toml" },
         );
         expect(config.db.major_version).toBe(16);
       }),
@@ -3032,7 +2770,7 @@ describe("decodeCliConfigDocumentForValidationEffect", () => {
           },
         };
         const config = yield* decodeCliConfigDocumentForValidationEffect(document, {
-          goViperCompat: true,
+          cliCompat: true,
           path: "supabase/config.toml",
           format: "toml",
         });
@@ -3056,7 +2794,7 @@ describe("decodeCliConfigDocumentForValidationEffect", () => {
         };
         const exit = yield* Effect.exit(
           decodeCliConfigDocumentForValidationEffect(document, {
-            goViperCompat: true,
+            cliCompat: true,
             path: "supabase/config.toml",
             format: "toml",
             remoteName: "staging",
@@ -3091,7 +2829,7 @@ describe("decodeCliConfigDocumentForValidationEffect", () => {
           },
         };
         const config = yield* decodeCliConfigDocumentForValidationEffect(document, {
-          goViperCompat: true,
+          cliCompat: true,
           path: "supabase/config.toml",
           format: "toml",
         });

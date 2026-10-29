@@ -219,6 +219,8 @@ interface ReplayServerOptions {
   fixturesDir: string;
   /** Port to listen on (0 = random). */
   port?: number;
+  /** Interface to bind; Bun binds all interfaces when omitted. */
+  hostname?: string;
   /** Optional Postgres mock server to control via /_ctrl/pg-* endpoints. */
   pgMock?: PgMockHandle;
   /** Proxy to staging and record fixtures instead of replaying them. */
@@ -414,6 +416,7 @@ const makeReplayServer = Effect.fn("ReplayServer.start")(function* (options: Rep
       try: () =>
         Bun.serve({
           port: options.port ?? 0,
+          ...(options.hostname === undefined ? {} : { hostname: options.hostname }),
           fetch: (req: Request) => Effect.runPromiseWith(services)(handleRequest(req)),
         }),
       catch: (cause) => new ReplayServerStartError({ message: causeMessage(cause), cause }),

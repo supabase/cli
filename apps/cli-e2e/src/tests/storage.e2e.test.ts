@@ -1,10 +1,11 @@
-import { Effect, FileSystem, Path, Schema } from "effect";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { Effect, FileSystem, Path } from "effect";
+import { HttpClient } from "effect/http";
 import { describe, expect } from "vitest";
+import { getRequestLog } from "./request-log.ts";
 import { postControl, runE2e, testBehaviour } from "./test-context.ts";
 
 const BUCKET = "cli-e2e-bucket";
-const LOCAL_FLAGS = ["--experimental", "--local"];
+const EXPERIMENTAL_FLAGS = ["--experimental"];
 
 const setupStorageWorkspace = Effect.fnUntraced(function* (dir: string, relayUrl: string) {
   const fs = yield* FileSystem.FileSystem;
@@ -17,18 +18,6 @@ const setupStorageWorkspace = Effect.fnUntraced(function* (dir: string, relayUrl
   yield* fs.writeFileString(path.join(dir, "upload.txt"), "test upload content");
 });
 
-const RequestEntry = Schema.Struct({
-  method: Schema.String,
-  pathname: Schema.String,
-  headers: Schema.Record(Schema.String, Schema.String),
-  body: Schema.Unknown,
-});
-
-const getRequestLog = Effect.fnUntraced(function* (apiUrl: string) {
-  const res = yield* HttpClient.get(`${apiUrl}/_ctrl/requests`);
-  return yield* HttpClientResponse.schemaBodyJson(Schema.Array(RequestEntry))(res);
-});
-
 const injectGlobalError = (apiUrl: string, status: number, message: string) =>
   postControl(`${apiUrl}/_ctrl/error-all`, { status, body: { message } });
 
@@ -39,7 +28,7 @@ describe("storage ls", () => {
     runE2e(
       Effect.gen(function* () {
         yield* setupStorageWorkspace(workspace.path, apiUrl);
-        const result = yield* run(["storage", "ls", ...LOCAL_FLAGS, `ss:///${BUCKET}/`]);
+        const result = yield* run(["storage", "ls", ...EXPERIMENTAL_FLAGS, `ss:///${BUCKET}/`]);
         expect(result.exitCode).toBe(0);
         expect(result.stdout).toContain("hello.txt");
         const requests = yield* getRequestLog(apiUrl);
@@ -57,7 +46,13 @@ describe("storage ls", () => {
     runE2e(
       Effect.gen(function* () {
         yield* setupStorageWorkspace(workspace.path, apiUrl);
-        const result = yield* run(["storage", "ls", ...LOCAL_FLAGS, "-r", `ss:///${BUCKET}/`]);
+        const result = yield* run([
+          "storage",
+          "ls",
+          ...EXPERIMENTAL_FLAGS,
+          "-r",
+          `ss:///${BUCKET}/`,
+        ]);
         expect(result.exitCode).toBe(0);
         const requests = yield* getRequestLog(apiUrl);
         expect(
@@ -75,7 +70,7 @@ describe("storage ls", () => {
       Effect.gen(function* () {
         yield* setupStorageWorkspace(workspace.path, apiUrl);
         yield* injectGlobalError(apiUrl, 401, "Invalid token");
-        const result = yield* run(["storage", "ls", ...LOCAL_FLAGS, `ss:///${BUCKET}/`]);
+        const result = yield* run(["storage", "ls", ...EXPERIMENTAL_FLAGS, `ss:///${BUCKET}/`]);
         expect(result.exitCode).toBe(1);
         expect(result.stderr).toContain("Invalid token");
         yield* clearOverrides(apiUrl);
@@ -89,7 +84,7 @@ describe("storage ls", () => {
       Effect.gen(function* () {
         yield* setupStorageWorkspace(workspace.path, apiUrl);
         yield* injectGlobalError(apiUrl, 403, "Forbidden");
-        const result = yield* run(["storage", "ls", ...LOCAL_FLAGS, `ss:///${BUCKET}/`]);
+        const result = yield* run(["storage", "ls", ...EXPERIMENTAL_FLAGS, `ss:///${BUCKET}/`]);
         expect(result.exitCode).toBe(1);
         expect(result.stderr.length).toBeGreaterThan(0);
         yield* clearOverrides(apiUrl);
@@ -103,7 +98,7 @@ describe("storage ls", () => {
       Effect.gen(function* () {
         yield* setupStorageWorkspace(workspace.path, apiUrl);
         yield* injectGlobalError(apiUrl, 429, "Too Many Requests");
-        const result = yield* run(["storage", "ls", ...LOCAL_FLAGS, `ss:///${BUCKET}/`]);
+        const result = yield* run(["storage", "ls", ...EXPERIMENTAL_FLAGS, `ss:///${BUCKET}/`]);
         expect(result.exitCode).toBe(1);
         expect(result.stderr.length).toBeGreaterThan(0);
         yield* clearOverrides(apiUrl);
@@ -117,7 +112,7 @@ describe("storage ls", () => {
       Effect.gen(function* () {
         yield* setupStorageWorkspace(workspace.path, apiUrl);
         yield* injectGlobalError(apiUrl, 500, "Internal Server Error");
-        const result = yield* run(["storage", "ls", ...LOCAL_FLAGS, `ss:///${BUCKET}/`]);
+        const result = yield* run(["storage", "ls", ...EXPERIMENTAL_FLAGS, `ss:///${BUCKET}/`]);
         expect(result.exitCode).toBe(1);
         expect(result.stderr.length).toBeGreaterThan(0);
         yield* clearOverrides(apiUrl);
@@ -135,7 +130,7 @@ describe("storage cp", () => {
         const result = yield* run([
           "storage",
           "cp",
-          ...LOCAL_FLAGS,
+          ...EXPERIMENTAL_FLAGS,
           "upload.txt",
           `ss:///${BUCKET}/upload.txt`,
         ]);
@@ -158,7 +153,7 @@ describe("storage cp", () => {
         const result = yield* run([
           "storage",
           "cp",
-          ...LOCAL_FLAGS,
+          ...EXPERIMENTAL_FLAGS,
           "--cache-control",
           "no-cache",
           "upload.txt",
@@ -183,7 +178,7 @@ describe("storage cp", () => {
         const result = yield* run([
           "storage",
           "cp",
-          ...LOCAL_FLAGS,
+          ...EXPERIMENTAL_FLAGS,
           "--content-type",
           "application/json",
           "upload.txt",
@@ -208,7 +203,7 @@ describe("storage cp", () => {
         const result = yield* run([
           "storage",
           "cp",
-          ...LOCAL_FLAGS,
+          ...EXPERIMENTAL_FLAGS,
           "nonexistent.txt",
           `ss:///${BUCKET}/x.txt`,
         ]);
@@ -226,7 +221,7 @@ describe("storage cp", () => {
         const result = yield* run([
           "storage",
           "cp",
-          ...LOCAL_FLAGS,
+          ...EXPERIMENTAL_FLAGS,
           "upload.txt",
           `ss:///${BUCKET}/upload.txt`,
         ]);
@@ -246,7 +241,7 @@ describe("storage cp", () => {
         const result = yield* run([
           "storage",
           "cp",
-          ...LOCAL_FLAGS,
+          ...EXPERIMENTAL_FLAGS,
           "upload.txt",
           `ss:///${BUCKET}/upload.txt`,
         ]);
@@ -266,7 +261,7 @@ describe("storage cp", () => {
         const result = yield* run([
           "storage",
           "cp",
-          ...LOCAL_FLAGS,
+          ...EXPERIMENTAL_FLAGS,
           "upload.txt",
           `ss:///${BUCKET}/upload.txt`,
         ]);
@@ -286,7 +281,7 @@ describe("storage cp", () => {
         const result = yield* run([
           "storage",
           "cp",
-          ...LOCAL_FLAGS,
+          ...EXPERIMENTAL_FLAGS,
           "upload.txt",
           `ss:///${BUCKET}/upload.txt`,
         ]);
@@ -305,7 +300,7 @@ describe("storage cp", () => {
         const result = yield* run([
           "storage",
           "cp",
-          ...LOCAL_FLAGS,
+          ...EXPERIMENTAL_FLAGS,
           `ss:///${BUCKET}/hello.txt`,
           "hello-download.txt",
         ]);
@@ -325,14 +320,14 @@ describe("storage mv", () => {
         yield* run([
           "storage",
           "cp",
-          ...LOCAL_FLAGS,
+          ...EXPERIMENTAL_FLAGS,
           "upload.txt",
           `ss:///${BUCKET}/mv-source.txt`,
         ]);
         const result = yield* run([
           "storage",
           "mv",
-          ...LOCAL_FLAGS,
+          ...EXPERIMENTAL_FLAGS,
           `ss:///${BUCKET}/mv-source.txt`,
           `ss:///${BUCKET}/mv-dest.txt`,
         ]);
@@ -360,7 +355,7 @@ describe("storage mv", () => {
         const result = yield* run([
           "storage",
           "mv",
-          ...LOCAL_FLAGS,
+          ...EXPERIMENTAL_FLAGS,
           `ss:///${BUCKET}/a.txt`,
           `ss:///${BUCKET}/b.txt`,
         ]);
@@ -380,7 +375,7 @@ describe("storage mv", () => {
         const result = yield* run([
           "storage",
           "mv",
-          ...LOCAL_FLAGS,
+          ...EXPERIMENTAL_FLAGS,
           `ss:///${BUCKET}/a.txt`,
           `ss:///${BUCKET}/b.txt`,
         ]);
@@ -400,7 +395,7 @@ describe("storage mv", () => {
         const result = yield* run([
           "storage",
           "mv",
-          ...LOCAL_FLAGS,
+          ...EXPERIMENTAL_FLAGS,
           `ss:///${BUCKET}/a.txt`,
           `ss:///${BUCKET}/b.txt`,
         ]);
@@ -420,7 +415,7 @@ describe("storage mv", () => {
         const result = yield* run([
           "storage",
           "mv",
-          ...LOCAL_FLAGS,
+          ...EXPERIMENTAL_FLAGS,
           `ss:///${BUCKET}/a.txt`,
           `ss:///${BUCKET}/b.txt`,
         ]);
@@ -442,7 +437,7 @@ describe("storage rm", () => {
         yield* run([
           "storage",
           "cp",
-          ...LOCAL_FLAGS,
+          ...EXPERIMENTAL_FLAGS,
           "upload.txt",
           `ss:///${BUCKET}/rm-target.txt`,
         ]);
@@ -450,7 +445,7 @@ describe("storage rm", () => {
           "storage",
           "rm",
           "--yes",
-          ...LOCAL_FLAGS,
+          ...EXPERIMENTAL_FLAGS,
           `ss:///${BUCKET}/rm-target.txt`,
         ]);
         expect(result.exitCode).toBe(0);
@@ -472,13 +467,25 @@ describe("storage rm", () => {
         const path = yield* Path.Path;
         yield* setupStorageWorkspace(workspace.path, apiUrl);
         yield* fs.writeFileString(path.join(workspace.path, "file2.txt"), "second file");
-        yield* run(["storage", "cp", ...LOCAL_FLAGS, "upload.txt", `ss:///${BUCKET}/rm-a.txt`]);
-        yield* run(["storage", "cp", ...LOCAL_FLAGS, "file2.txt", `ss:///${BUCKET}/rm-b.txt`]);
+        yield* run([
+          "storage",
+          "cp",
+          ...EXPERIMENTAL_FLAGS,
+          "upload.txt",
+          `ss:///${BUCKET}/rm-a.txt`,
+        ]);
+        yield* run([
+          "storage",
+          "cp",
+          ...EXPERIMENTAL_FLAGS,
+          "file2.txt",
+          `ss:///${BUCKET}/rm-b.txt`,
+        ]);
         const result = yield* run([
           "storage",
           "rm",
           "--yes",
-          ...LOCAL_FLAGS,
+          ...EXPERIMENTAL_FLAGS,
           `ss:///${BUCKET}/rm-a.txt`,
           `ss:///${BUCKET}/rm-b.txt`,
         ]);
@@ -503,7 +510,7 @@ describe("storage rm", () => {
           "storage",
           "rm",
           "--yes",
-          ...LOCAL_FLAGS,
+          ...EXPERIMENTAL_FLAGS,
           `ss:///${BUCKET}/file.txt`,
         ]);
         expect(result.exitCode).toBe(1);
@@ -523,7 +530,7 @@ describe("storage rm", () => {
           "storage",
           "rm",
           "--yes",
-          ...LOCAL_FLAGS,
+          ...EXPERIMENTAL_FLAGS,
           `ss:///${BUCKET}/file.txt`,
         ]);
         expect(result.exitCode).toBe(1);
@@ -543,7 +550,7 @@ describe("storage rm", () => {
           "storage",
           "rm",
           "--yes",
-          ...LOCAL_FLAGS,
+          ...EXPERIMENTAL_FLAGS,
           `ss:///${BUCKET}/file.txt`,
         ]);
         expect(result.exitCode).toBe(1);
@@ -563,7 +570,7 @@ describe("storage rm", () => {
           "storage",
           "rm",
           "--yes",
-          ...LOCAL_FLAGS,
+          ...EXPERIMENTAL_FLAGS,
           `ss:///${BUCKET}/file.txt`,
         ]);
         expect(result.exitCode).toBe(1);

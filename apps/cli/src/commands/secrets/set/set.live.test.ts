@@ -19,8 +19,8 @@ test("sets a secret on the remote project", ({ cliEffect, project }) =>
           "secrets",
           "set",
           `${name}=live-value`,
-          "--project-ref",
-          project.ref,
+          "--yes",
+          `--remote=${project.ref}`,
         ]);
         expect(result.exitCode, result.stderr).toBe(0);
         expect(result.stdout).toContain("Finished");

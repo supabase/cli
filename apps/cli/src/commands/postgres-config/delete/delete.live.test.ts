@@ -29,6 +29,7 @@ test("removes the test-seeded override and get proves it is gone", ({ cli, cliEf
         const seeded = yield* cliEffect([
           "postgres-config",
           "update",
+          "--yes",
           "--config",
           "maintenance_work_mem=16MB",
           ...flags,
@@ -50,6 +51,7 @@ test("removes the test-seeded override and get proves it is gone", ({ cli, cliEf
         const removed = yield* cliEffect([
           "postgres-config",
           "delete",
+          "--yes",
           "--config",
           "maintenance_work_mem",
           ...flags,

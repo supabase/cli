@@ -93,7 +93,7 @@ describe("published JSON Schema artifacts", () => {
       "Supabase hosted project config (ProjectConfig)",
     ],
   ])("%s carries $schema, $id, and title", (_name, document, id, title) => {
-    expect(document["$schema"]).toBe("https://json-schema.org/draft/2020-12/schema");
+    expect(document["$schema"]).toBe("http://json-schema.org/draft-07/schema#");
     expect(document["$id"]).toBe(id);
     expect(document["title"]).toBe(title);
   });
