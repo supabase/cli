@@ -13,6 +13,7 @@
     "!apps/docs/**",
     "!packages/cli-test-helpers/**",
     "!tools/**",
+    "!.github/scripts/ai-review/*.test.ts",
     // Last match wins across the whole list: keep bare re-exclusions after every
     // `!` entry that would otherwise re-include them.
     "apps/cli/src/shared/cli/bin.ts",

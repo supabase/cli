@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { Effect } from "effect";
 import {
   AI_REVIEW_MARKER,
   assertFindings,
@@ -1146,165 +1147,226 @@ describe("post flow via injected ReviewIo", () => {
     return { io, updatedReviews, updatedComments, postedReviews, postedComments, calls };
   }
 
-  test("review mode supersedes only the workflow bot's marker-bearing reviews/comments, after posting", async () => {
-    const priorMarkerReview = {
-      id: 1,
-      body: `Old review\n${AI_REVIEW_MARKER}`,
-      authorLogin: "github-actions[bot]",
-    };
-    const humanReview = { id: 2, body: "Looks good to me!", authorLogin: "a-human-reviewer" };
-    const priorMarkerComment = {
-      id: 10,
-      body: `Notice\n${AI_REVIEW_MARKER}`,
-      authorLogin: "github-actions[bot]",
-    };
-    const unrelatedBotComment = {
-      id: 11,
-      body: "Unrelated automation comment.",
-      authorLogin: "github-actions[bot]",
-    };
-    const alreadySupersededComment = {
-      id: 12,
-      body: supersededBody(`Older notice\n${AI_REVIEW_MARKER}`),
-      authorLogin: "github-actions[bot]",
-    };
-    const impersonatorComment = {
-      id: 13,
-      body: `Fake review\n${AI_REVIEW_MARKER}`,
-      authorLogin: "not-the-workflow-bot",
-    };
+  test("review mode supersedes only the workflow bot's marker-bearing reviews/comments, after posting", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const priorMarkerReview = {
+          id: 1,
+          body: `Old review\n${AI_REVIEW_MARKER}`,
+          authorLogin: "github-actions[bot]",
+        };
+        const humanReview = { id: 2, body: "Looks good to me!", authorLogin: "a-human-reviewer" };
+        const priorMarkerComment = {
+          id: 10,
+          body: `Notice\n${AI_REVIEW_MARKER}`,
+          authorLogin: "github-actions[bot]",
+        };
+        const unrelatedBotComment = {
+          id: 11,
+          body: "Unrelated automation comment.",
+          authorLogin: "github-actions[bot]",
+        };
+        const alreadySupersededComment = {
+          id: 12,
+          body: supersededBody(`Older notice\n${AI_REVIEW_MARKER}`),
+          authorLogin: "github-actions[bot]",
+        };
+        const impersonatorComment = {
+          id: 13,
+          body: `Fake review\n${AI_REVIEW_MARKER}`,
+          authorLogin: "not-the-workflow-bot",
+        };
 
-    const { io, updatedReviews, updatedComments, postedReviews, calls } = makeReviewIo({
-      reviews: [priorMarkerReview, humanReview],
-      comments: [
-        priorMarkerComment,
-        unrelatedBotComment,
-        alreadySupersededComment,
-        impersonatorComment,
-      ],
-    });
+        const { io, updatedReviews, updatedComments, postedReviews, calls } = makeReviewIo({
+          reviews: [priorMarkerReview, humanReview],
+          comments: [
+            priorMarkerComment,
+            unrelatedBotComment,
+            alreadySupersededComment,
+            impersonatorComment,
+          ],
+        });
 
-    const review = makeMergedReview({ findings: [] });
-    await postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer);
+        const review = makeMergedReview({ findings: [] });
+        yield* Effect.promise(() =>
+          postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer),
+        );
 
-    expect(updatedReviews).toEqual([{ reviewId: 1, body: supersededBody(priorMarkerReview.body) }]);
-    expect(updatedComments).toEqual([
-      { commentId: 10, body: supersededBody(priorMarkerComment.body) },
-    ]);
-    expect(postedReviews).toHaveLength(1);
-    expect(postedReviews[0]?.event).toBe("COMMENT");
-    expect(calls.indexOf("postReview")).toBeLessThan(calls.indexOf("updateReviewBody"));
-  });
+        expect(updatedReviews).toEqual([
+          { reviewId: 1, body: supersededBody(priorMarkerReview.body) },
+        ]);
+        expect(updatedComments).toEqual([
+          { commentId: 10, body: supersededBody(priorMarkerComment.body) },
+        ]);
+        expect(postedReviews).toHaveLength(1);
+        expect(postedReviews[0]?.event).toBe("COMMENT");
+        expect(calls.indexOf("postReview")).toBeLessThan(calls.indexOf("updateReviewBody"));
+      }),
+    ));
 
-  test("the freshly posted review is never swept into its own supersede pass", async () => {
-    const review = makeMergedReview({ findings: [] });
-    const { io, updatedReviews, updatedComments, postedReviews, calls } = makeReviewIo();
+  test("the freshly posted review is never swept into its own supersede pass", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const review = makeMergedReview({ findings: [] });
+        const { io, updatedReviews, updatedComments, postedReviews, calls } = makeReviewIo();
 
-    await postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer);
+        yield* Effect.promise(() =>
+          postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer),
+        );
 
-    expect(postedReviews).toHaveLength(1);
-    expect(updatedReviews).toEqual([]);
-    expect(updatedComments).toEqual([]);
-    expect(calls.indexOf("listReviews")).toBeLessThan(calls.indexOf("postReview"));
-  });
+        expect(postedReviews).toHaveLength(1);
+        expect(updatedReviews).toEqual([]);
+        expect(updatedComments).toEqual([]);
+        expect(calls.indexOf("listReviews")).toBeLessThan(calls.indexOf("postReview"));
+      }),
+    ));
 
-  test("a review still posts even when the best-effort supersede fails", async () => {
-    const review = makeMergedReview({ findings: [] });
-    const { io, postedReviews } = makeReviewIo({ failSupersede: true });
-    await expect(
-      postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer),
-    ).resolves.toBeUndefined();
-    expect(postedReviews).toHaveLength(1);
-  });
+  test("a review still posts even when the best-effort supersede fails", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const review = makeMergedReview({ findings: [] });
+        const { io, postedReviews } = makeReviewIo({ failSupersede: true });
+        yield* Effect.promise(() =>
+          Promise.resolve(
+            expect(
+              postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer),
+            ).resolves.toBeUndefined(),
+          ),
+        );
+        expect(postedReviews).toHaveLength(1);
+      }),
+    ));
 
-  test("posts exactly one review when the first POST succeeds", async () => {
-    const finding = makeFinding({ file: "file.ts", line: 10 });
-    const review = makeMergedReview({ findings: [finding] });
-    const { io, postedReviews } = makeReviewIo();
+  test("posts exactly one review when the first POST succeeds", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const finding = makeFinding({ file: "file.ts", line: 10 });
+        const review = makeMergedReview({ findings: [finding] });
+        const { io, postedReviews } = makeReviewIo();
 
-    await postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer);
+        yield* Effect.promise(() =>
+          postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer),
+        );
 
-    expect(postedReviews).toHaveLength(1);
-  });
+        expect(postedReviews).toHaveLength(1);
+      }),
+    ));
 
-  test("retries once with inline comments folded into the body when the first POST 422s", async () => {
-    const finding = makeFinding({ file: "file.ts", line: 10 });
-    const review = makeMergedReview({ findings: [finding] });
-    const { io, postedReviews } = makeReviewIo({
-      postReviewStatuses: [422, 200],
-    });
+  test("retries once with inline comments folded into the body when the first POST 422s", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const finding = makeFinding({ file: "file.ts", line: 10 });
+        const review = makeMergedReview({ findings: [finding] });
+        const { io, postedReviews } = makeReviewIo({
+          postReviewStatuses: [422, 200],
+        });
 
-    await postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer);
+        yield* Effect.promise(() =>
+          postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer),
+        );
 
-    expect(postedReviews).toHaveLength(2);
-    expect(postedReviews[0]?.comments).toHaveLength(1);
-    expect(postedReviews[1]?.comments).toHaveLength(0);
-    expect(postedReviews[1]?.body).toContain("Inline comments (GitHub rejected");
-  });
+        expect(postedReviews).toHaveLength(2);
+        expect(postedReviews[0]?.comments).toHaveLength(1);
+        expect(postedReviews[1]?.comments).toHaveLength(0);
+        expect(postedReviews[1]?.body).toContain("Inline comments (GitHub rejected");
+      }),
+    ));
 
-  test("retries a rejected pinned review on the current head, still naming the reviewed commit", async () => {
-    const finding = makeFinding({ file: "file.ts", line: 999 }); // not anchorable -> body-only
-    const review = makeMergedReview({ findings: [finding] });
-    const { io, postedReviews } = makeReviewIo({ postReviewStatuses: [422, 200] });
+  test("retries a rejected pinned review on the current head, still naming the reviewed commit", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const finding = makeFinding({ file: "file.ts", line: 999 }); // not anchorable -> body-only
+        const review = makeMergedReview({ findings: [finding] });
+        const { io, postedReviews } = makeReviewIo({ postReviewStatuses: [422, 200] });
 
-    await postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer);
+        yield* Effect.promise(() =>
+          postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer),
+        );
 
-    expect(postedReviews.map((posted) => posted.commit_id)).toEqual([footer.headSha, undefined]);
-    expect(parseAiReviewState(postedReviews[1]?.body ?? "")?.head).toBe(footer.headSha);
-  });
+        expect(postedReviews.map((posted) => posted.commit_id)).toEqual([
+          footer.headSha,
+          undefined,
+        ]);
+        expect(parseAiReviewState(postedReviews[1]?.body ?? "")?.head).toBe(footer.headSha);
+      }),
+    ));
 
-  test("an older workflow's review carries no state, so it never retries a body-only 422", async () => {
-    const finding = makeFinding({ file: "file.ts", line: 999 });
-    const review = makeMergedReview({ findings: [finding] });
-    const { io, postedReviews } = makeReviewIo({ postReviewStatuses: [422] });
-    const unpinned = { ...footer, headSha: undefined, reviewsComplete: undefined };
+  test("an older workflow's review carries no state, so it never retries a body-only 422", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const finding = makeFinding({ file: "file.ts", line: 999 });
+        const review = makeMergedReview({ findings: [finding] });
+        const { io, postedReviews } = makeReviewIo({ postReviewStatuses: [422] });
+        const unpinned = { ...footer, headSha: undefined, reviewsComplete: undefined };
 
-    await expect(
-      postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, unpinned),
-    ).rejects.toThrow(/Review POST failed \(status 422\)/);
-    expect(postedReviews).toHaveLength(1);
-    expect(parseAiReviewState(postedReviews[0]?.body ?? "")).toBeNull();
-  });
+        yield* Effect.promise(() =>
+          Promise.resolve(
+            expect(
+              postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, unpinned),
+            ).rejects.toThrow(/Review POST failed \(status 422\)/),
+          ),
+        );
+        expect(postedReviews).toHaveLength(1);
+        expect(parseAiReviewState(postedReviews[0]?.body ?? "")).toBeNull();
+      }),
+    ));
 
-  test("throws with GitHub's response body when the retry also 422s, instead of swallowing it", async () => {
-    const finding = makeFinding({ file: "file.ts", line: 10 });
-    const review = makeMergedReview({ findings: [finding] });
-    const { io, postedReviews } = makeReviewIo({
-      postReviewStatuses: [422, 422],
-      postReviewBodies: [undefined, '{"message":"still invalid"}'],
-    });
+  test("throws with GitHub's response body when the retry also 422s, instead of swallowing it", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const finding = makeFinding({ file: "file.ts", line: 10 });
+        const review = makeMergedReview({ findings: [finding] });
+        const { io, postedReviews } = makeReviewIo({
+          postReviewStatuses: [422, 422],
+          postReviewBodies: [undefined, '{"message":"still invalid"}'],
+        });
 
-    await expect(postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer)).rejects.toThrow(
-      /status 422.*still invalid/s,
-    );
-    expect(postedReviews).toHaveLength(2);
-  });
+        yield* Effect.promise(() =>
+          Promise.resolve(
+            expect(
+              postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer),
+            ).rejects.toThrow(/status 422.*still invalid/s),
+          ),
+        );
+        expect(postedReviews).toHaveLength(2);
+      }),
+    ));
 
-  test("truncates a folded body over GitHub's 65536-char review body cap", async () => {
-    const hugeClaim = "x".repeat(70_000);
-    const finding = makeFinding({ file: "file.ts", line: 10, claim: hugeClaim });
-    const review = makeMergedReview({ findings: [finding] });
-    const { io, postedReviews } = makeReviewIo({
-      postReviewStatuses: [422, 200],
-    });
+  test("truncates a folded body over GitHub's 65536-char review body cap", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const hugeClaim = "x".repeat(70_000);
+        const finding = makeFinding({ file: "file.ts", line: 10, claim: hugeClaim });
+        const review = makeMergedReview({ findings: [finding] });
+        const { io, postedReviews } = makeReviewIo({
+          postReviewStatuses: [422, 200],
+        });
 
-    await postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer);
+        yield* Effect.promise(() =>
+          postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer),
+        );
 
-    const foldedBody = postedReviews[1]?.body ?? "";
-    expect(foldedBody.length).toBeLessThanOrEqual(65536);
-    expect(foldedBody).toContain("truncated");
-    expect(foldedBody).toContain(footer.runUrl);
-  });
+        const foldedBody = postedReviews[1]?.body ?? "";
+        expect(foldedBody.length).toBeLessThanOrEqual(65536);
+        expect(foldedBody).toContain("truncated");
+        expect(foldedBody).toContain(footer.runUrl);
+      }),
+    ));
 
-  test("posts a truncated body on the very first attempt for an oversized body-only review (no comments to fold)", async () => {
-    const finding = makeFinding({ file: "file.ts", line: 999, claim: "x".repeat(70_000) });
-    const review = makeMergedReview({ findings: [finding] });
-    const { io, postedReviews } = makeReviewIo();
+  test("posts a truncated body on the very first attempt for an oversized body-only review (no comments to fold)", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const finding = makeFinding({ file: "file.ts", line: 999, claim: "x".repeat(70_000) });
+        const review = makeMergedReview({ findings: [finding] });
+        const { io, postedReviews } = makeReviewIo();
 
-    await postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer);
+        yield* Effect.promise(() =>
+          postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer),
+        );
 
-    expect(postedReviews).toHaveLength(1);
-    expect(postedReviews[0]?.body.length).toBeLessThanOrEqual(65536);
-    expect(postedReviews[0]?.body).toContain("truncated");
-  });
+        expect(postedReviews).toHaveLength(1);
+        expect(postedReviews[0]?.body.length).toBeLessThanOrEqual(65536);
+        expect(postedReviews[0]?.body).toContain("truncated");
+      }),
+    ));
 });
