@@ -63,19 +63,6 @@ function projectResponse() {
   };
 }
 
-function entitlementResponse(opts: { readonly featureKey: string; readonly hasAccess: boolean }) {
-  return {
-    entitlements: [
-      {
-        feature: { key: opts.featureKey, type: "boolean" as const },
-        hasAccess: opts.hasAccess,
-        type: "boolean" as const,
-        config: { enabled: !opts.hasAccess },
-      },
-    ],
-  };
-}
-
 const tempRoot = useTempWorkdir("supabase-branches-create-int-");
 
 interface SetupOpts {
@@ -84,8 +71,6 @@ interface SetupOpts {
   readonly response?: unknown;
   readonly status?: number;
   readonly network?: "fail";
-  readonly gated?: boolean;
-  readonly featureKey?: string;
   /** Resolved `--yes`/`SUPABASE_YES` for the git-branch auto-name confirm. */
   readonly yes?: boolean;
   readonly stdinIsTty?: boolean;
@@ -97,23 +82,12 @@ interface SetupOpts {
 function buildApiLayer(opts: SetupOpts) {
   const status = opts.status ?? 201;
   const body = opts.response ?? CREATED;
-  const featureKey = opts.featureKey ?? "branching_limit";
   return mockCommandPlatformApi({
     network: opts.network,
     handler: (request) =>
       Effect.sync(() => {
         if (request.method === "POST" && request.url.includes("/branches")) {
           return jsonResponse(request, status, body);
-        }
-        if (request.method === "GET" && request.url.endsWith(`/v1/projects/${VALID_REF}`)) {
-          return jsonResponse(request, 200, projectResponse());
-        }
-        if (request.method === "GET" && request.url.includes("/entitlements")) {
-          return jsonResponse(
-            request,
-            200,
-            entitlementResponse({ featureKey, hasAccess: !(opts.gated ?? false) }),
-          );
         }
         return jsonResponse(request, 200, null);
       }),
@@ -439,22 +413,24 @@ describe("branches create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("fires cli_upgrade_suggested with feature_key=branching_limit on 402 gated", () => {
-    const { layer, analytics, api } = setup({ status: 402, gated: true });
+  it.effect("makes one request and suggests no upgrade on a 4xx without the envelope", () => {
+    const { layer, out, analytics, api } = setup({
+      status: 400,
+      response: { message: "Invalid branch name" },
+    });
     return Effect.gen(function* () {
-      yield* Effect.exit(branchesCreate({ ...baseFlags, name: Option.some("feat-x") }));
+      const exit = yield* Effect.exit(
+        branchesCreate({ ...baseFlags, name: Option.some("feat-x") }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(classifyCliCauseActionability(exit.cause).error_category).not.toBe("plan_limit");
+      }
       expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         `POST https://api.supabase.com/v1/projects/${VALID_REF}/branches`,
-        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
-        `GET https://api.supabase.com/v1/organizations/${ORG_SLUG}/entitlements`,
       ]);
-      assertPermissionDrift({ command: "branches create", requests: api.requests });
-      expect(analytics.captured).toEqual([
-        {
-          event: "cli_upgrade_suggested",
-          properties: { feature_key: "branching_limit", org_slug: ORG_SLUG },
-        },
-      ]);
+      expect(out.stderrText).not.toContain("Upgrade your plan:");
+      expect(analytics.captured).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 
@@ -532,7 +508,17 @@ describe("branches create integration", () => {
   });
 
   it.effect("writes linked-project cache + telemetry on the upgrade-suggest failure path", () => {
-    const { layer, telemetry, cache } = setupTracked({ status: 402, gated: true });
+    const { layer, telemetry, cache } = setupTracked({
+      status: 402,
+      response: {
+        message: "Branching is supported only on the Pro plan or above",
+        error: {
+          code: "entitlement_required",
+          feature: "branching_limit",
+          upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
+        },
+      },
+    });
     return Effect.gen(function* () {
       yield* Effect.exit(branchesCreate({ ...baseFlags, name: Option.some("feat-x") }));
       expect(telemetry.flushed).toBe(true);

@@ -5,7 +5,6 @@ import { Layer } from "effect";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
 import { projectRefPicker } from "../../../config/remote-target.layer.ts";
-import { upgradeSuggestion } from "../../../command-internal/upgrade-suggest.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
@@ -112,7 +111,6 @@ export const branchesCreateCommand = Command.make("create", config).pipe(
         noApiEffectFlags: ["region", "size", "persistent", "notify-url", "git-branch"],
       },
       projectRefPicker,
-      upgradeSuggestion,
       linkedProjectCache,
     ),
   ),

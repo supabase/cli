@@ -73,7 +73,6 @@ export const vanitySubdomainsCheckAvailability = Effect.fn("vanity-subdomains.ch
                     // analytics event.
                     const upgradeSuggested = yield* suggestUpgrade({
                       projectRef: ref,
-                      featureKey: "vanity_subdomain",
                       statusCode: mapped.status,
                       response: gateResponse(cause),
                       trackAnalytics: false,

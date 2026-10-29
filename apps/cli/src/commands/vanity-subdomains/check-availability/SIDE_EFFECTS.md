@@ -21,8 +21,6 @@
 | ------ | -------------------------------------------------------- | ------------ | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `GET`  | `/v1/projects`                                           | Bearer token | none                           | project list for the interactive picker — only when no ref comes from `--project-ref`, `SUPABASE_PROJECT_ID` or `.temp/project-ref` and stdin is a TTY with interactive output                               |
 | `POST` | `/v1/projects/{ref}/vanity-subdomain/check-availability` | Bearer token | `{ vanity_subdomain: string }` | `{ available: boolean }`                                                                                                                                                                                     |
-| `GET`  | `/v1/projects/{ref}`                                     | Bearer token | none                           | `{organization_slug}` — upgrade-gate side-call on a 4xx with no plan-gate error in the body                                                                                                                  |
-| `GET`  | `/v1/organizations/{slug}/entitlements`                  | Bearer token | none                           | `{entitlements[].feature.key, .hasAccess}` (key `vanity_subdomain`) — upgrade-gate side-call on a 4xx with no plan-gate error in the body                                                                    |
 | `GET`  | `/v1/projects/{ref}`                                     | Bearer token | none                           | `{ref, name, organization_id, organization_slug}` — `linkedProjectCache` fill, best-effort, skipped when `.temp/linked-project.json` exists, `.temp/project-ref` names another ref, or no token is available |
 
 ## Environment Variables
@@ -51,7 +49,7 @@
 | ---------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper); not fired when the `--experimental` gate is closed | `exit_code`, `duration_ms`, `flags` |
 
-This command may print an upgrade suggestion for gated 4xx responses, but it does not fire
+This command may print an upgrade suggestion for a 4xx whose body is the `entitlement_required` envelope, but it does not fire
 `cli_upgrade_suggested`.
 
 ## Output

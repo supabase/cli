@@ -70,7 +70,6 @@ export const vanitySubdomainsActivate = Effect.fn("vanity-subdomains.activate")(
                 Effect.gen(function* () {
                   const upgradeSuggested = yield* suggestUpgrade({
                     projectRef: ref,
-                    featureKey: "vanity_subdomain",
                     statusCode: mapped.status,
                     response: gateResponse(cause),
                   });
