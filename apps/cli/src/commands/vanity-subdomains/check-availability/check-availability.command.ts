@@ -6,7 +6,6 @@ import { withPermissions } from "../../../command-internal/command-permissions/c
 import { compose } from "../../../command-internal/command-permissions/model.ts";
 import { projectRefPicker } from "../../../config/remote-target.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
-import { upgradeSuggestion } from "../../../command-internal/upgrade-suggest.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
 import { RESOURCE_OUTPUT_FORMATS } from "../../../command-internal/go-output-flag.ts";
@@ -55,7 +54,6 @@ export const vanitySubdomainsCheckAvailabilityCommand = Command.make(
           },
         ],
       },
-      upgradeSuggestion,
       projectRefPicker,
       linkedProjectCache,
     ),

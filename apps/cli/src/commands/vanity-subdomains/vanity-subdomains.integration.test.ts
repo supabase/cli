@@ -1,7 +1,6 @@
 import type {
   V1ActivateVanitySubdomainConfigOutput,
   V1CheckVanitySubdomainAvailabilityOutput,
-  V1GetProjectOutput,
   V1GetVanitySubdomainConfigOutput,
 } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
@@ -27,11 +26,11 @@ import { vanitySubdomainsActivate } from "./activate/activate.handler.ts";
 import { vanitySubdomainsCheckAvailability } from "./check-availability/check-availability.handler.ts";
 import { vanitySubdomainsDelete } from "./delete/delete.handler.ts";
 import { vanitySubdomainsGet } from "./get/get.handler.ts";
+import { classifyCliCauseActionability } from "../../shared/telemetry/error-actionability.ts";
 
 type VanityConfig = typeof V1GetVanitySubdomainConfigOutput.Type;
 type AvailabilityResponse = typeof V1CheckVanitySubdomainAvailabilityOutput.Type;
 type ActivateResponse = typeof V1ActivateVanitySubdomainConfigOutput.Type;
-type ProjectResponse = typeof V1GetProjectOutput.Type;
 
 const tempRoot = useTempWorkdir("supabase-vanity-int-");
 
@@ -60,21 +59,12 @@ const SAMPLE_ACTIVATE: ActivateResponse = {
   custom_domain: "example.com",
 };
 
-// Schema-valid project body: the upgrade-suggest fallback decodes it with the typed client.
-const SAMPLE_PROJECT: ProjectResponse = {
-  id: VALID_REF,
-  ref: VALID_REF,
-  organization_id: "org-123",
-  organization_slug: "supabase",
-  name: "Test Project",
-  region: "us-east-1",
-  created_at: "2026-01-01T00:00:00Z",
-  status: "ACTIVE_HEALTHY",
-  database: {
-    host: "db.example.com",
-    version: "15",
-    postgres_engine: "15",
-    release_channel: "ga",
+const VANITY_GATE_ENVELOPE = {
+  message: "This feature requires the Pro, Team, or Enterprise organization plan.",
+  error: {
+    code: "entitlement_required",
+    feature: "vanity_subdomain",
+    upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
   },
 };
 
@@ -96,35 +86,6 @@ function runtimeWith(opts: {
     telemetry: opts.telemetry,
     linkedProjectCache: opts.linkedProjectCache,
     goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
-  });
-}
-
-// Mocks a billing-gated (402) write endpoint with entitlements reporting no access to
-// `vanity_subdomain`, for the upgrade-suggestion branch tests.
-function gatedApi(matchWrite: (url: string) => boolean) {
-  return mockCommandPlatformApi({
-    handler: (request) =>
-      Effect.sync(() => {
-        if (request.method === "POST" && matchWrite(request.url)) {
-          return jsonResponse(request, 402, {});
-        }
-        if (request.method === "GET" && request.url.endsWith(`/v1/projects/${VALID_REF}`)) {
-          return jsonResponse(request, 200, SAMPLE_PROJECT);
-        }
-        if (request.method === "GET" && request.url.includes("/entitlements")) {
-          return jsonResponse(request, 200, {
-            entitlements: [
-              {
-                feature: { key: "vanity_subdomain", type: "boolean" },
-                hasAccess: false,
-                type: "boolean",
-                config: { enabled: true },
-              },
-            ],
-          });
-        }
-        return jsonResponse(request, 200, null);
-      }),
   });
 }
 
@@ -506,7 +467,7 @@ describe("vanity-subdomains check-availability", () => {
 
   it.effect("suggests upgrade for gated checks without firing analytics", () => {
     const out = mockOutput({ format: "text" });
-    const api = gatedApi((url) => url.includes("/check-availability"));
+    const api = mockCommandPlatformApi({ response: { status: 400, body: VANITY_GATE_ENVELOPE } });
     const analytics = mockAnalytics();
     const layer = runtimeWith({ out, api, analytics });
 
@@ -519,17 +480,43 @@ describe("vanity-subdomains check-availability", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(out.stderrText).toContain("Upgrade your plan:");
+      expect(out.stderrText).toContain("/org/env-org/billing");
       expect(analytics.captured).toHaveLength(0);
       expect(requestLines(api)).toEqual([
         `POST ${API_URL}/v1/projects/${VALID_REF}/vanity-subdomain/check-availability`,
-        `GET ${API_URL}/v1/projects/${VALID_REF}`,
-        `GET ${API_URL}/v1/organizations/supabase/entitlements`,
       ]);
       assertPermissionDrift({
         command: "vanity-subdomains check-availability",
         activeFlags: { "desired-subdomain": "example.com" },
         requests: api.requests,
       });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("makes one request and suggests no upgrade on a check 4xx without the envelope", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi({
+      response: { status: 400, body: { message: "Invalid subdomain" } },
+    });
+    const analytics = mockAnalytics();
+    const layer = runtimeWith({ out, api, analytics });
+
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        vanitySubdomainsCheckAvailability({
+          projectRef: Option.none(),
+          desiredSubdomain: Option.some("example.com"),
+        }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(classifyCliCauseActionability(exit.cause).error_category).not.toBe("plan_limit");
+      }
+      expect(requestLines(api)).toEqual([
+        `POST ${API_URL}/v1/projects/${VALID_REF}/vanity-subdomain/check-availability`,
+      ]);
+      expect(out.stderrText).not.toContain("Upgrade your plan:");
+      expect(analytics.captured).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 
@@ -733,7 +720,7 @@ describe("vanity-subdomains activate", () => {
 
   it.effect("suggests upgrade and fires analytics for gated activation", () => {
     const out = mockOutput({ format: "text" });
-    const api = gatedApi((url) => url.endsWith("/vanity-subdomain/activate"));
+    const api = mockCommandPlatformApi({ response: { status: 400, body: VANITY_GATE_ENVELOPE } });
     const analytics = mockAnalytics();
     const layer = runtimeWith({ out, api, analytics });
 
@@ -746,16 +733,15 @@ describe("vanity-subdomains activate", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(out.stderrText).toContain("Upgrade your plan:");
+      expect(out.stderrText).toContain("/org/env-org/billing");
       expect(analytics.captured).toEqual([
         {
           event: "cli_upgrade_suggested",
-          properties: { feature_key: "vanity_subdomain", org_slug: "supabase" },
+          properties: { feature_key: "vanity_subdomain", org_slug: "env-org" },
         },
       ]);
       expect(requestLines(api)).toEqual([
         `POST ${API_URL}/v1/projects/${VALID_REF}/vanity-subdomain/activate`,
-        `GET ${API_URL}/v1/projects/${VALID_REF}`,
-        `GET ${API_URL}/v1/organizations/supabase/entitlements`,
       ]);
       assertPermissionDrift({
         command: "vanity-subdomains activate",
@@ -764,6 +750,36 @@ describe("vanity-subdomains activate", () => {
       });
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect(
+    "makes one request and suggests no upgrade on an activate 4xx without the envelope",
+    () => {
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi({
+        response: { status: 400, body: { message: "Invalid subdomain" } },
+      });
+      const analytics = mockAnalytics();
+      const layer = runtimeWith({ out, api, analytics });
+
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          vanitySubdomainsActivate({
+            projectRef: Option.none(),
+            desiredSubdomain: Option.some("example.com"),
+          }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(classifyCliCauseActionability(exit.cause).error_category).not.toBe("plan_limit");
+        }
+        expect(requestLines(api)).toEqual([
+          `POST ${API_URL}/v1/projects/${VALID_REF}/vanity-subdomain/activate`,
+        ]);
+        expect(out.stderrText).not.toContain("Upgrade your plan:");
+        expect(analytics.captured).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   // json mode so the spinner is suppressed — exercises the no-task error path.
   it.effect("fails with a network error on transport failure", () => {
