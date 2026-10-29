@@ -27,11 +27,9 @@ vi.mock("node:net", (importOriginal) =>
 
 const reachableDirectHost = withReachableDirectHost(fixtureNet);
 
+import { describeDbTargetSelection } from "../../../../tests/helpers/db-target-selection.ts";
+import { branchListApi } from "../../../../tests/helpers/remote-selection.ts";
 import { mockOutput, mockTty, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
-import {
-  assertTargetDefaultWarning,
-  setLinkedRefFile,
-} from "../../../../tests/helpers/target-default-warning.ts";
 import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
 import { withReachableDirectHost } from "../../../../tests/helpers/refuse-invalid-db-hosts.ts";
 import {
@@ -56,7 +54,10 @@ import {
   useTempWorkdir,
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { DnsResolverFlag, NetworkIdFlag } from "../../../command-internal/global-flags.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { DnsResolverFlag, NetworkIdFlag, YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import {
   InvalidProjectRefError,
@@ -64,12 +65,16 @@ import {
 } from "../../../config/project-ref.errors.ts";
 import {
   INVALID_PROJECT_REF_MESSAGE,
+  ProjectRefResolver,
   PROJECT_NOT_LINKED_MESSAGE,
   PROJECT_REF_PATTERN,
-} from "../../../config/remote-target.service.ts";
+} from "../../../config/project-ref.service.ts";
 import { dbConfig } from "../../../command-internal/db-config.layer.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import type { DbConfigFlags } from "../../../command-internal/db-config.types.ts";
+import type {
+  DbConnectionInput,
+  ResolvedDbConnection,
+} from "../../../command-internal/db-config.types.ts";
 import {
   DbConnection,
   type DbSession,
@@ -88,7 +93,6 @@ import { dbDump } from "./dump.handler.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { StackApi } from "../../../command-internal/stack-api.ts";
 import { selection } from "../../../../tests/helpers/pins.ts";
-import { stubRemoteTarget } from "../../../../tests/helpers/remote-target.ts";
 
 const LOCAL_CONN: PgConnInput = {
   host: "127.0.0.1",
@@ -238,33 +242,27 @@ function mockResolver(opts: {
   resolveFails?: boolean;
   ref?: string;
 }) {
-  const calls: DbConfigFlags[] = [];
-  const fallbackCalls: DbConfigFlags[] = [];
+  const calls: DbConnectionInput[] = [];
+  const fallbackCalls: DbConnectionInput[] = [];
   const layer = Layer.succeed(DbConfigResolver, {
-    resolve: (flags) => {
-      calls.push(flags);
+    resolveConnection: (input: DbConnectionInput) => {
+      calls.push(input);
       // Simulates connection resolution failing (IPv6 probe/pooler/temp login-role)
-      // after the ref is already loaded.
+      // after the ref is already resolved.
       if (opts.resolveFails === true) {
         return Effect.fail(
           new DbConfigConnectTempRoleError({ message: "failed to create temp role" }),
         );
       }
-      // A threaded `--project-ref` flag wins over the fixed `opts.ref` fixture,
-      // matching real resolver precedence.
-      const linkedProjectRef = flags.linkedProjectRef ?? Option.none();
-      const ref =
-        Option.isSome(linkedProjectRef) && linkedProjectRef.value.length > 0
-          ? linkedProjectRef.value
-          : opts.ref;
       return Effect.succeed({
         conn: opts.conn ?? LOCAL_CONN,
         isLocal: opts.isLocal ?? true,
-        ref: ref === undefined ? undefined : Option.some(ref),
-      });
+        ref: input.target.kind === "linked" ? Option.some(input.target.ref) : Option.none(),
+        target: input.target,
+      } satisfies ResolvedDbConnection);
     },
-    resolvePoolerFallback: (flags) => {
-      fallbackCalls.push(flags);
+    resolvePoolerFallback: (input) => {
+      fallbackCalls.push(input);
       return opts.poolerFallbackFails === true
         ? Effect.fail(new DbConfigConnectTempRoleError({ message: "failed to create temp role" }))
         : Effect.succeed(opts.poolerFallback ?? Option.none());
@@ -282,36 +280,39 @@ function mockResolver(opts: {
 }
 
 /**
- * Mocks `RemoteTarget` for the up-front `RemoteTarget.load` pre-capture, mirroring
- * push/diff's identical mock: an explicit `--project-ref` flag wins, a malformed value
- * fails with `InvalidProjectRefError`, and `opts.projectId` stands in for
- * `CommandSettings.projectId` consulted before falling back to `opts.ref`.
+ * Mocks `ProjectRefResolver`'s `resolveRef`: an explicit `--remote=<ref>` wins, a malformed
+ * value fails with `InvalidProjectRefError`, and `opts.projectId` stands in for the project id
+ * consulted before falling back to `opts.ref`.
  */
-function mockRemoteTarget(opts: {
+function mockProjectRefResolver(opts: {
   projectId: Option.Option<string>;
   ref?: string;
   linkedFails?: boolean;
 }) {
-  const validate = (ref: string) =>
+  const validate = (ref: string, source: "flag" | "env") =>
     PROJECT_REF_PATTERN.test(ref)
-      ? Effect.succeed(ref)
+      ? Effect.succeed({ ref, source, matchesLinkedRef: false })
       : Effect.fail(new InvalidProjectRefError({ ref, message: INVALID_PROJECT_REF_MESSAGE }));
-  const layer = stubRemoteTarget({
+  const layer = Layer.succeed(ProjectRefResolver, {
     resolve: () => Effect.succeed(opts.ref ?? VALID_REF),
     resolveForLink: () => Effect.succeed(opts.ref ?? VALID_REF),
-    resolveOptional: () => Effect.succeed(Option.some(opts.ref ?? VALID_REF)),
-    load: (flagValue: Option.Option<string>) => {
+    resolveRef: (flagValue: Option.Option<string>) => {
       if (Option.isSome(flagValue) && flagValue.value.length > 0) {
-        return validate(flagValue.value);
+        return validate(flagValue.value, "flag");
       }
       if (Option.isSome(opts.projectId)) {
-        return validate(opts.projectId.value);
+        return validate(opts.projectId.value, "env");
       }
       return opts.linkedFails === true
         ? Effect.fail(new ProjectRefNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }))
-        : Effect.succeed(opts.ref ?? VALID_REF);
+        : Effect.succeed({
+            ref: opts.ref ?? VALID_REF,
+            source: "file" as const,
+            matchesLinkedRef: true,
+          });
     },
-    prompt: () => Effect.succeed(opts.ref ?? VALID_REF),
+    resolveOptional: () => Effect.succeed(Option.some(opts.ref ?? VALID_REF)),
+    promptProjectRef: () => Effect.succeed(opts.ref ?? VALID_REF),
   });
   return { layer };
 }
@@ -470,7 +471,7 @@ function setup(opts: SetupOpts = {}) {
     resolveFails: opts.resolveFails,
     ref: opts.ref,
   });
-  const projectRef = mockRemoteTarget({
+  const projectRef = mockProjectRefResolver({
     projectId: opts.projectId ?? Option.none(),
     ref: opts.ref,
     linkedFails: opts.linkedFails,
@@ -480,6 +481,7 @@ function setup(opts: SetupOpts = {}) {
   const projectHttp = recordingProjectHttpClient(VALID_REF);
   const workdir = opts.workdir ?? "/work/project";
   const layer = Layer.mergeAll(
+    cliConfigValuesTestLayer,
     out.layer,
     opts.realLayers === true
       ? realDbConfigResolver({
@@ -517,11 +519,16 @@ function setup(opts: SetupOpts = {}) {
       NetworkIdFlag,
       opts.networkId === undefined ? Option.none() : Option.some(opts.networkId),
     ),
+    Layer.succeed(TargetPolicy, { group: "selectable", consent: "none" }),
+    Layer.succeed(YesFlag, false),
+    Layer.succeed(CliArgs, { args: [] }),
     Layer.succeed(DnsResolverFlag, "native"),
     BunServices.layer,
   );
   return { layer, out, telemetry, resolver, docker, bundled, cache, projectHttp };
 }
+
+const REMOTE_LINKED: DbDumpFlags["remote"] = Option.some({ _tag: "Linked" });
 
 const flags = (over: Partial<DbDumpFlags> = {}): DbDumpFlags => ({
   dryRun: over.dryRun ?? false,
@@ -532,8 +539,9 @@ const flags = (over: Partial<DbDumpFlags> = {}): DbDumpFlags => ({
   keepComments: over.keepComments ?? Option.none(),
   file: over.file ?? Option.none(),
   dbUrl: over.dbUrl ?? Option.none(),
-  linked: over.linked ?? Option.none(),
-  local: over.local ?? Option.none(),
+  remote: over.remote ?? Option.none(),
+  linked: over.linked ?? false,
+  local: over.local ?? false,
   projectRef: over.projectRef ?? Option.none(),
   password: over.password ?? Option.none(),
   schema: over.schema ?? [],
@@ -560,22 +568,20 @@ describe("db dump integration", () => {
   it.effect("errors when --use-copy is used without --data-only", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      const exit = yield* dbDump(flags({ useCopy: true, local: Option.some(true) })).pipe(
-        Effect.exit,
-      );
+      const exit = yield* dbDump(flags({ useCopy: true })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe(`required flag(s) "data-only" not set`);
     }).pipe(Effect.provide(layer));
   });
 
   it.effect(
-    "allows --use-copy with an explicit --data-only=false (Go required check is presence)",
+    "allows --use-copy with an explicit --data-only=false (the required check is presence)",
     () => {
       const { layer } = setup({ isLocal: true, stdout: "SELECT 1;\n" });
       return Effect.gen(function* () {
-        const exit = yield* dbDump(
-          flags({ useCopy: true, dataOnly: Option.some(false), local: Option.some(true) }),
-        ).pipe(Effect.exit);
+        const exit = yield* dbDump(flags({ useCopy: true, dataOnly: Option.some(false) })).pipe(
+          Effect.exit,
+        );
         expect(Exit.isSuccess(exit)).toBe(true);
       }).pipe(Effect.provide(layer));
     },
@@ -584,9 +590,7 @@ describe("db dump integration", () => {
   it.effect("errors when --exclude is used without --data-only", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      const exit = yield* dbDump(
-        flags({ exclude: ["public.users"], local: Option.some(true) }),
-      ).pipe(Effect.exit);
+      const exit = yield* dbDump(flags({ exclude: ["public.users"] })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe(`required flag(s) "data-only" not set`);
     }).pipe(Effect.provide(layer));
@@ -631,33 +635,25 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("rejects combining --linked and --local", () => {
-    const { layer } = setup();
+  it.effect("hands --password to the resolver, which rejects it for a non-linked target", () => {
+    const { layer, resolver } = setup();
     return Effect.gen(function* () {
-      const exit = yield* dbDump(
-        flags({ linked: Option.some(true), local: Option.some(true) }),
-      ).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(failMessage(exit)).toBe(
-        "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
+      yield* dbDump(
+        flags({
+          remote: Option.some({ _tag: "DbUrl", url: "postgresql://x" } as const),
+          password: Option.some("pw"),
+          dryRun: true,
+        }),
       );
+      expect(resolver.calls[0]).toMatchObject({
+        target: { kind: "db-url" },
+        password: Option.some("pw"),
+        hasPasswordFlag: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("rejects --linked=false --local as a target conflict (Go flag.Changed)", () => {
-    const { layer } = setup();
-    return Effect.gen(function* () {
-      const exit = yield* dbDump(
-        flags({ linked: Option.some(false), local: Option.some(true) }),
-      ).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(failMessage(exit)).toBe(
-        "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
-      );
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("rejects --data-only=false --role-only as a conflict (Go flag.Changed)", () => {
+  it.effect("rejects --data-only=false --role-only as a conflict", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* dbDump(
@@ -670,18 +666,10 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("treats --local=false as an explicit local target (Go ParseDatabaseConfig)", () => {
-    const { layer, resolver } = setup({ isLocal: true });
-    return Effect.gen(function* () {
-      yield* dbDump(flags({ local: Option.some(false), dryRun: true }));
-      expect(resolver.calls[0]?.connType).toBe("local");
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect("prints the expanded pg_dump script on --dry-run without running a container", () => {
     const { layer, out, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ dryRun: true, local: Option.some(true) }));
+      yield* dbDump(flags({ dryRun: true }));
       expect(out.stderrText).toContain("DRY RUN: *only* printing the pg_dump script to console.");
       expect(out.stderrText).toContain("Dumping schemas from local database...");
       expect(out.stdoutText).toContain('export PGHOST="127.0.0.1"');
@@ -695,7 +683,7 @@ describe("db dump integration", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const filePath = path.join(tmp.current, "dry.sql");
-      yield* dbDump(flags({ dryRun: true, local: Option.some(true), file: Option.some(filePath) }));
+      yield* dbDump(flags({ dryRun: true, file: Option.some(filePath) }));
       expect(out.stderrText).toContain("DRY RUN: *only* printing the pg_dump script to console.");
       expect(out.stderrText).toContain(`Dumped schema to`);
       expect(out.stderrText).toContain(filePath);
@@ -704,17 +692,17 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("treats an explicit --file '' as stdout on --dry-run (Go: len(path) > 0)", () => {
+  it.effect("treats an explicit --file '' as stdout on --dry-run", () => {
     const { layer, out, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ dryRun: true, local: Option.some(true), file: Option.some("") }));
+      yield* dbDump(flags({ dryRun: true, file: Option.some("") }));
       expect(out.stderrText).toContain("DRY RUN: *only* printing the pg_dump script to console.");
       expect(out.stderrText).not.toContain("Dumped schema to");
       expect(docker.lastOpts).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("validates the merged config before the --dry-run print (Go root PreRun order)", () => {
+  it.effect("validates the merged config before the --dry-run print", () => {
     const { layer, out } = setup({ isLocal: true, workdir: tmp.current });
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -724,9 +712,7 @@ describe("db dump integration", () => {
         path.join(tmp.current, "supabase", "config.toml"),
         ["[remotes.staging]", 'project_id = "staging"', ""].join("\n"),
       );
-      const exit = yield* dbDump(flags({ dryRun: true, local: Option.some(true) })).pipe(
-        Effect.exit,
-      );
+      const exit = yield* dbDump(flags({ dryRun: true })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toContain(
         "Invalid config for remotes.staging.project_id. Must be like: abcdefghijklmnopqrst",
@@ -738,7 +724,7 @@ describe("db dump integration", () => {
   it.effect("dumps schema from the local database to stdout", () => {
     const { layer, out, docker } = setup({ isLocal: true, stdout: "CREATE SCHEMA public;\n" });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ local: Option.some(true) }));
+      yield* dbDump(flags());
       expect(out.stderrText).toContain("Dumping schemas from local database...");
       expect(out.stdoutText).toBe("CREATE SCHEMA public;\n");
       expect(docker.lastOpts?.cmd).toEqual([
@@ -753,33 +739,10 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect(
-    "warns once on stderr that SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is removed in v3, keeping stdout clean",
-    () => {
-      const { layer, out } = setup({
-        isLocal: true,
-        stdout: "CREATE SCHEMA public;\n",
-        env: { SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION: "17.11.0.002" },
-      });
-      const consoleErrors: Array<string> = [];
-      const errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
-        consoleErrors.push(args.map((a) => String(a)).join(" "));
-      });
-      return Effect.gen(function* () {
-        yield* dbDump(flags({ local: Option.some(true) }));
-        const warning =
-          "WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.";
-        const stderrLines = [...out.stderrText.split("\n"), ...consoleErrors];
-        expect(stderrLines.filter((line) => line === warning)).toHaveLength(1);
-        expect(out.stdoutText).toBe("CREATE SCHEMA public;\n");
-      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())));
-    },
-  );
-
   it.effect("dumps only data with column inserts", () => {
     const { layer, out, docker } = setup({ isLocal: true, stdout: "INSERT INTO ...;\n" });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ dataOnly: Option.some(true), local: Option.some(true) }));
+      yield* dbDump(flags({ dataOnly: Option.some(true) }));
       expect(out.stderrText).toContain("Dumping data from local database...");
       expect(docker.lastOpts?.env["EXTRA_FLAGS"]).toBe("--column-inserts --rows-per-insert 100000");
     }).pipe(Effect.provide(layer));
@@ -788,9 +751,7 @@ describe("db dump integration", () => {
   it.effect("dumps only data without column inserts when --use-copy is set", () => {
     const { layer, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
-      yield* dbDump(
-        flags({ dataOnly: Option.some(true), useCopy: true, local: Option.some(true) }),
-      );
+      yield* dbDump(flags({ dataOnly: Option.some(true), useCopy: true }));
       expect(docker.lastOpts?.env["EXTRA_FLAGS"]).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
@@ -798,7 +759,7 @@ describe("db dump integration", () => {
   it.effect("dumps only roles", () => {
     const { layer, out, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ roleOnly: Option.some(true), local: Option.some(true) }));
+      yield* dbDump(flags({ roleOnly: Option.some(true) }));
       expect(out.stderrText).toContain("Dumping roles from local database...");
       expect(docker.lastOpts?.env["RESERVED_ROLES"]).toBeDefined();
     }).pipe(Effect.provide(layer));
@@ -807,7 +768,7 @@ describe("db dump integration", () => {
   it.effect("limits the dump to selected schemas", () => {
     const { layer, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ schema: ["public", "auth"], local: Option.some(true) }));
+      yield* dbDump(flags({ schema: ["public", "auth"] }));
       expect(docker.lastOpts?.env["EXTRA_FLAGS"]).toBe("--schema=public|auth");
     }).pipe(Effect.provide(layer));
   });
@@ -817,7 +778,7 @@ describe("db dump integration", () => {
     // `parseSchemaFlags`) and the env builder pipe-joins it.
     const { layer, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ schema: ["public", "auth"], local: Option.some(true) }));
+      yield* dbDump(flags({ schema: ["public", "auth"] }));
       expect(docker.lastOpts?.env["EXTRA_FLAGS"]).toBe("--schema=public|auth");
     }).pipe(Effect.provide(layer));
   });
@@ -829,7 +790,7 @@ describe("db dump integration", () => {
       workdir: tmp.current,
     });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ local: Option.some(true), file: Option.some("out.sql") }));
+      yield* dbDump(flags({ file: Option.some("out.sql") }));
       const path = yield* Path.Path;
       expect(yield* readUtf8(path.join(tmp.current, "out.sql"))).toBe("CREATE SCHEMA public;\n");
     }).pipe(Effect.provide(layer));
@@ -838,7 +799,7 @@ describe("db dump integration", () => {
   it.effect("honors --network-id over host networking", () => {
     const { layer, docker } = setup({ isLocal: true, networkId: "custom_net" });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ local: Option.some(true) }));
+      yield* dbDump(flags());
       expect(docker.lastOpts?.network).toEqual({ _tag: "named", name: "custom_net" });
     }).pipe(Effect.provide(layer));
   });
@@ -857,19 +818,11 @@ describe("db dump integration", () => {
           path.join(tmp.current, "supabase", ".env"),
           "SUPABASE_NETWORK_ID=dotenv-net\n",
         );
-        yield* dbDump(flags({ local: Option.some(true) }));
+        yield* dbDump(flags());
         expect(docker.lastOpts?.network).toEqual({ _tag: "named", name: "dotenv-net" });
       }).pipe((body) => withEnvVar("SUPABASE_NETWORK_ID", undefined, body), Effect.provide(layer));
     },
   );
-
-  it.effect("defaults to the linked connection when neither --local nor --db-url is set", () => {
-    const { layer, resolver } = setup({ conn: REMOTE_CONN, isLocal: false });
-    return Effect.gen(function* () {
-      yield* dbDump(flags({}));
-      expect(resolver.calls[0]).toMatchObject({ connType: "linked" });
-    }).pipe(Effect.provide(layer));
-  });
 
   it.effect("keeps an explicit local db-url on the bundled client path", () => {
     const { layer, bundled } = setup({
@@ -886,7 +839,10 @@ describe("db dump integration", () => {
     return Effect.gen(function* () {
       yield* dbDump(
         flags({
-          dbUrl: Option.some("postgresql://custom:secret@127.0.0.1:54322/custom"),
+          remote: Option.some({
+            _tag: "DbUrl",
+            url: "postgresql://custom:secret@127.0.0.1:54322/custom",
+          }),
         }),
       );
       expect(bundled.lastOpts?.env).toMatchObject({
@@ -910,7 +866,12 @@ describe("db dump integration", () => {
     const { layer, bundled } = setup({ conn, isLocal: false, platform: "win32", stdout: "" });
     return Effect.gen(function* () {
       yield* dbDump(
-        flags({ dbUrl: Option.some("postgresql://postgres:postgres@127.0.0.1:55432/postgres") }),
+        flags({
+          remote: Option.some({
+            _tag: "DbUrl",
+            url: "postgresql://postgres:postgres@127.0.0.1:55432/postgres",
+          }),
+        }),
       );
       expect(bundled.lastOpts?.runtime).toEqual({ kind: "container", engine: "docker" });
       expect(bundled.lastOpts?.network).toBe("host");
@@ -931,7 +892,12 @@ describe("db dump integration", () => {
       });
       return Effect.gen(function* () {
         yield* dbDump(
-          flags({ dbUrl: Option.some("postgresql://postgres:postgres@127.0.0.1:55432/postgres") }),
+          flags({
+            remote: Option.some({
+              _tag: "DbUrl",
+              url: "postgresql://postgres:postgres@127.0.0.1:55432/postgres",
+            }),
+          }),
         );
         expect(docker.lastOpts?.network).toEqual({ _tag: "named", name: "custom_net" });
         expect(docker.lastOpts?.env).toMatchObject({
@@ -968,7 +934,7 @@ describe("db dump integration", () => {
         },
         isLocal: false,
       });
-      yield* dbDump(flags({ linked: Option.some(true) })).pipe(Effect.provide(layer));
+      yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(Effect.provide(layer));
       expect(docker.lastOpts?.env).toMatchObject({
         PGHOST: REMOTE_CONN.host,
         PGSSLMODE: "verify-full",
@@ -997,7 +963,7 @@ describe("db dump integration", () => {
         conn: { ...REMOTE_CONN, sslmode: "verify-full", sslrootcert: missing },
         isLocal: false,
       });
-      const exit = yield* dbDump(flags({ linked: Option.some(true) })).pipe(
+      const exit = yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(
         Effect.provide(layer),
         Effect.exit,
       );
@@ -1013,7 +979,7 @@ describe("db dump integration", () => {
         isLocal: false,
       });
       return Effect.gen(function* () {
-        yield* dbDump(flags({ linked: Option.some(true) }));
+        yield* dbDump(flags({ remote: REMOTE_LINKED }));
         expect(docker.lastOpts?.env["PGSSLROOTCERT"]).toBe("/etc/ssl/certs/ca-certificates.crt");
         expect(docker.lastOpts?.binds).toEqual([]);
         expect(docker.lastOpts?.securityOpt).toEqual([]);
@@ -1030,7 +996,7 @@ describe("db dump integration", () => {
         platform: "win32",
         stdout: "",
       });
-      yield* dbDump(flags({ linked: Option.some(true) })).pipe(
+      yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(
         Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))),
       );
       expect(bundled.lastOpts?.runtime).toEqual({ kind: "container", engine: "docker" });
@@ -1051,7 +1017,7 @@ describe("db dump integration", () => {
       isLocal: false,
     });
     return Effect.gen(function* () {
-      const exit = yield* dbDump(flags({ linked: Option.some(true) })).pipe(Effect.exit);
+      const exit = yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(Effect.exit);
       expect(failMessage(exit)).toBe(
         "failed to read sslrootcert /certs/a:b/root.crt: a Docker bind mount cannot contain ':'",
       );
@@ -1095,7 +1061,7 @@ describe("db dump integration", () => {
           stdout: "",
         });
         return Effect.gen(function* () {
-          yield* dbDump(flags({ linked: Option.some(true) })).pipe(
+          yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(
             Effect.provide(withHostCaBundles(present)),
           );
           expect(bundled.lastOpts?.runtime).toEqual({ kind: "native" });
@@ -1160,7 +1126,7 @@ describe("db dump integration", () => {
             env,
             ...(major === undefined ? {} : { workdir: tmp.current }),
           });
-          yield* dbDump(flags({ linked: Option.some(true) })).pipe(
+          yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(
             Effect.provide(
               withHostCaBundles(["/etc/ssl/cert.pem"]).pipe(
                 Layer.provideMerge(Layer.mergeAll(layer, stackBackendLayer("stack"))),
@@ -1183,27 +1149,24 @@ describe("db dump integration", () => {
       isLocal: true,
     });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ local: Option.some(true) }));
+      yield* dbDump(flags());
       expect(docker.lastOpts?.env["PGSSLMODE"]).toBeUndefined();
       expect(docker.lastOpts?.env["PGSSLROOTCERT"]).toBeUndefined();
       expect(docker.lastOpts?.binds).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("caches the linked project even when connection resolution fails (Go PostRun)", () => {
-    // The project ref is resolved before the connection is built, and the
-    // linked-project cache is refreshed unconditionally afterward. So an
-    // IPv6/pooler/login-role failure during resolution still refreshes the
-    // linked-project cache, because the ref was already loaded — here from
-    // config.toml project_id.
+  it.effect("caches the linked project even when connection resolution fails", () => {
+    // The cache is refreshed unconditionally, so an IPv6/pooler/login-role failure
+    // during resolution still refreshes it, because the ref was already resolved.
     const { layer, cache, resolver } = setup({
       projectId: Option.some("abcdefghijklmnopqrst"),
       resolveFails: true,
     });
     return Effect.gen(function* () {
-      const exit = yield* dbDump(flags({ linked: Option.some(true) })).pipe(Effect.exit);
+      const exit = yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(resolver.calls[0]).toMatchObject({ connType: "linked" });
+      expect(resolver.calls[0]?.target.kind).toBe("linked");
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -1211,8 +1174,7 @@ describe("db dump integration", () => {
   it.effect(
     "caches the flag ref, not the workdir's own config ref, when resolution fails (regression)",
     () => {
-      // `linkedRefForCache` must check `flags.projectRef` before config.toml's
-      // `project_id`, so the flag still wins even when `resolve()` fails first.
+      // The flag wins over the project id even when the connection resolution fails first.
       const FLAG_REF = "flagflagflagflagflag";
       const { layer, cache } = setup({
         projectId: Option.some("abcdefghijklmnopqrst"),
@@ -1220,7 +1182,7 @@ describe("db dump integration", () => {
       });
       return Effect.gen(function* () {
         const exit = yield* dbDump(
-          flags({ linked: Option.some(true), projectRef: Option.some(FLAG_REF) }),
+          flags({ remote: Option.some({ _tag: "Ref", ref: FLAG_REF } as const) }),
         ).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         expect(cache.cached).toBe(true);
@@ -1231,94 +1193,33 @@ describe("db dump integration", () => {
   );
 
   it.effect("does not cache when the linked ref is unknown and resolution fails", () => {
-    // No config project_id or .temp/project-ref file, so the up-front pre-capture
-    // itself fails "not linked" before `resolve()` is reached; nothing is cached.
+    // No project id or .temp/project-ref file, so target resolution fails "not linked"
+    // before the connection is resolved; nothing is cached.
     const { layer, cache } = setup({ resolveFails: true, linkedFails: true });
     return Effect.gen(function* () {
-      const exit = yield* dbDump(flags({ linked: Option.some(true) })).pipe(Effect.exit);
+      const exit = yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("caches the linked project from the resolved ref on a successful dump", () => {
-    const { layer, cache } = setup({
-      conn: REMOTE_CONN,
-      isLocal: false,
-      ref: "abcdefghijklmnopqrst",
-      stdout: "CREATE SCHEMA public;\n",
-    });
-    return Effect.gen(function* () {
-      yield* dbDump(flags({ linked: Option.some(true) }));
-      expect(cache.cached).toBe(true);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("dumps the project given via --project-ref without a linked workdir", () => {
-    // No fixed `opts.ref`; only the flag can resolve a ref here.
-    const FLAG_REF = "flagflagflagflagflag";
-    const { layer, cache, resolver } = setup({
-      conn: REMOTE_CONN,
-      isLocal: false,
-      stdout: "CREATE SCHEMA public;\n",
-    });
-    return Effect.gen(function* () {
-      yield* dbDump(flags({ linked: Option.some(true), projectRef: Option.some(FLAG_REF) }));
-      expect(resolver.calls[0]?.linkedProjectRef).toEqual(Option.some(FLAG_REF));
-      expect(cache.cached).toBe(true);
-      expect(cache.cachedRef).toBe(FLAG_REF);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("--project-ref overrides an already-linked workdir's project ref", () => {
-    const FLAG_REF = "flagflagflagflagflag";
-    // A distinct fixed ref proves the flag, not the workdir's own ref, wins.
-    const { layer, cache } = setup({
-      conn: REMOTE_CONN,
-      isLocal: false,
-      ref: "abcdefghijklmnopqrst",
-      stdout: "CREATE SCHEMA public;\n",
-    });
-    return Effect.gen(function* () {
-      yield* dbDump(flags({ linked: Option.some(true), projectRef: Option.some(FLAG_REF) }));
-      expect(cache.cached).toBe(true);
-      expect(cache.cachedRef).toBe(FLAG_REF);
-      expect(cache.cachedRef).not.toBe("abcdefghijklmnopqrst");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect(
-    "rejects a malformed --project-ref on the linked path before resolving or caching",
-    () => {
-      // `RemoteTarget.load` validates before `resolver.resolve()` runs, so a malformed
-      // flag fails fast with no connection/API work and no cache write.
-      const { layer, cache, resolver } = setup();
-      return Effect.gen(function* () {
-        const exit = yield* dbDump(
-          flags({ linked: Option.some(true), projectRef: Option.some("BADREF") }),
-        ).pipe(Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        expect(failMessage(exit)).toBe(INVALID_PROJECT_REF_MESSAGE);
-        expect(resolver.calls).toEqual([]);
-        expect(cache.cached).toBe(false);
-      }).pipe(Effect.provide(layer));
+  describeDbTargetSelection("db dump", {
+    dbUrl: true,
+    workdir: () => tmp.current,
+    activeFlags: { "dry-run": true },
+    attempt: ({ workdir, target }) => {
+      const ctx = setup({ isLocal: true, workdir });
+      const branchApi = branchListApi();
+      return {
+        layer: Layer.merge(ctx.layer, branchApi.layer),
+        out: ctx.out,
+        run: dbDump(flags({ dryRun: true, ...target })),
+        target: () => ctx.resolver.calls[0]?.target,
+        cachedRef: () => ctx.cache.cachedRef,
+        branchLookups: () => branchApi.requests,
+        apiRequests: () => branchApi.requests,
+      };
     },
-  );
-
-  it.effect("rejects --project-ref combined with an explicit --local target", () => {
-    const FLAG_REF = "flagflagflagflagflag";
-    const { layer, resolver, cache } = setup({ isLocal: true });
-    return Effect.gen(function* () {
-      const exit = yield* dbDump(
-        flags({ local: Option.some(true), projectRef: Option.some(FLAG_REF) }),
-      ).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(failMessage(exit)).toBe(
-        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      );
-      expect(resolver.calls).toEqual([]);
-      expect(cache.cached).toBe(false);
-    }).pipe(Effect.provide(layer));
   });
 
   it.effect("writes the dump to --file and reports the absolute path on stderr", () => {
@@ -1326,7 +1227,7 @@ describe("db dump integration", () => {
     return Effect.gen(function* () {
       const path = yield* Path.Path;
       const filePath = path.join(tmp.current, "out.sql");
-      yield* dbDump(flags({ local: Option.some(true), file: Option.some(filePath) }));
+      yield* dbDump(flags({ file: Option.some(filePath) }));
       expect(yield* readUtf8(filePath)).toBe("CREATE SCHEMA public;\n");
       expect(out.stderrText).toContain(`Dumped schema to`);
       expect(out.stderrText).toContain(filePath);
@@ -1338,7 +1239,7 @@ describe("db dump integration", () => {
   it.effect("fails with exit 1 when the container exits non-zero", () => {
     const { layer } = setup({ isLocal: true, exitCode: 1, stdout: "partial\n" });
     return Effect.gen(function* () {
-      const exit = yield* dbDump(flags({ local: Option.some(true) })).pipe(Effect.exit);
+      const exit = yield* dbDump(flags()).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe("error running container: exit 1");
     }).pipe(Effect.provide(layer));
@@ -1365,10 +1266,10 @@ describe("db dump integration", () => {
       ],
     });
     return Effect.gen(function* () {
-      yield* dbDump(flags());
+      yield* dbDump(flags({ remote: REMOTE_LINKED }));
       expect(docker.allOpts).toHaveLength(2);
       expect(resolver.fallbackCalls).toHaveLength(1);
-      expect(resolver.fallbackCalls[0]).toMatchObject({ connType: "linked" });
+      expect(resolver.fallbackCalls[0]?.target).toMatchObject({ kind: "linked", ref: VALID_REF });
       expect(docker.allOpts[1]?.env["PGHOST"]).toBe(POOLER_CONN.host);
       expect(out.stderrText).toContain("does not support IPv6");
       expect(out.stderrText).toContain("Retrying via the IPv4 connection pooler.");
@@ -1387,7 +1288,7 @@ describe("db dump integration", () => {
       ],
     });
     return Effect.gen(function* () {
-      yield* dbDump(flags());
+      yield* dbDump(flags({ remote: REMOTE_LINKED }));
       expect(docker.allOpts[1]?.env).toMatchObject({
         PGHOST: POOLER_CONN.host,
         PGSSLMODE: "verify-full",
@@ -1403,7 +1304,7 @@ describe("db dump integration", () => {
       results: [{ exitCode: 1, stderr: IPV6_STDERR }],
     });
     return Effect.gen(function* () {
-      const exit = yield* dbDump(flags()).pipe(Effect.exit);
+      const exit = yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe("error running container: exit 1");
       expect(resolver.fallbackCalls).toHaveLength(1); // attempted
@@ -1419,7 +1320,7 @@ describe("db dump integration", () => {
       results: [{ exitCode: 1, stderr: "permission denied for schema public" }],
     });
     return Effect.gen(function* () {
-      const exit = yield* dbDump(flags()).pipe(Effect.exit);
+      const exit = yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe("error running container: exit 1");
       expect(docker.allOpts).toHaveLength(1);
@@ -1435,7 +1336,7 @@ describe("db dump integration", () => {
       results: [{ exitCode: 1, stderr: IPV6_STDERR }],
     });
     return Effect.gen(function* () {
-      const exit = yield* dbDump(flags()).pipe(Effect.exit);
+      const exit = yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe("error running container: exit 1");
       expect(resolver.fallbackCalls).toHaveLength(1);
@@ -1458,7 +1359,7 @@ describe("db dump integration", () => {
       ],
     });
     return Effect.gen(function* () {
-      const exit = yield* dbDump(flags()).pipe(Effect.exit);
+      const exit = yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe("error running container: exit 1");
       expect(docker.allOpts).toHaveLength(2); // original + failed retry
@@ -1474,7 +1375,7 @@ describe("db dump integration", () => {
       results: [{ exitCode: 1, stderr: "permission denied for schema public" }],
     });
     return Effect.gen(function* () {
-      const exit = yield* dbDump(flags()).pipe(Effect.exit);
+      const exit = yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failSuggestion(exit)).toBeUndefined();
     }).pipe(Effect.provide(layer));
@@ -1483,7 +1384,7 @@ describe("db dump integration", () => {
   it.effect("json mode: emits the SQL to stdout with no machine envelope", () => {
     const { layer, out } = setup({ format: "json", isLocal: true, stdout: "CREATE SCHEMA x;\n" });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ local: Option.some(true) }));
+      yield* dbDump(flags());
       expect(out.stdoutText).toBe("CREATE SCHEMA x;\n");
       expect(out.messages.find((m) => m.type === "success")).toBeUndefined();
     }).pipe(Effect.provide(layer));
@@ -1496,7 +1397,7 @@ describe("db dump integration", () => {
       stdout: "CREATE SCHEMA x;\n",
     });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ local: Option.some(true) }));
+      yield* dbDump(flags());
       expect(out.stdoutText).toBe("CREATE SCHEMA x;\n");
     }).pipe(Effect.provide(layer));
   });
@@ -1571,7 +1472,7 @@ describe("db dump integration", () => {
       env: { MSYSTEM: "" },
     });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ local: Option.some(true) }));
+      yield* dbDump(flags());
       expect(out.stdoutText).toBe(UNICODE_SQL);
       expect(out.stderrText).toContain("WARNING:");
       expect(out.stderrText).toContain(NON_ASCII_WARNING);
@@ -1587,7 +1488,7 @@ describe("db dump integration", () => {
       workdir: tmp.current,
     });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ local: Option.some(true), file: Option.some("out.sql") }));
+      yield* dbDump(flags({ file: Option.some("out.sql") }));
       const path = yield* Path.Path;
       expect(yield* readUtf8(path.join(tmp.current, "out.sql"))).toBe(UNICODE_SQL);
       expect(out.stderrText).not.toContain(NON_ASCII_WARNING);
@@ -1611,7 +1512,7 @@ describe("db dump integration", () => {
     it.effect(`stays silent ${scenario}`, () => {
       const { layer, out } = setup({ isLocal: true, stdout: UNICODE_SQL, ...over });
       return Effect.gen(function* () {
-        yield* dbDump(flags({ local: Option.some(true) }));
+        yield* dbDump(flags());
         expect(out.stdoutText).toBe(over.stdout ?? UNICODE_SQL);
         expect(out.stderrText).not.toContain(NON_ASCII_WARNING);
       }).pipe(Effect.provide(layer));
@@ -1623,7 +1524,7 @@ describe("db dump integration", () => {
       it.effect(`streams schema output through the ${runtime} stack tool`, () => {
         const { layer, out } = setup({ isLocal: true, stdout: "" });
         return Effect.gen(function* () {
-          yield* dbDump(flags({ local: Option.some(true) }));
+          yield* dbDump(flags());
           expect(out.stdoutText).toContain('CREATE TABLE IF NOT EXISTS "public"');
         }).pipe(
           Effect.provide(
@@ -1644,7 +1545,7 @@ describe("db dump permissions through the real resolver and cache", () => {
   const poolerRequest = `GET /v1/projects/${VALID_REF}/config/database/pooler`;
   const loginRoleRequest = `POST /v1/projects/${VALID_REF}/cli/login-role`;
 
-  it.effect("mints a login role and fills the cache for the default linked target", () => {
+  it.effect("mints a login role and fills the cache for a --remote=<ref> target", () => {
     const { layer, out, projectHttp } = setup({
       workdir: tmp.current,
       realLayers: true,
@@ -1654,7 +1555,9 @@ describe("db dump permissions through the real resolver and cache", () => {
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
-      yield* dbDump(flags({ projectRef: Option.some(VALID_REF) })).pipe(Effect.provide(layer));
+      yield* dbDump(flags({ remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const) })).pipe(
+        Effect.provide(layer),
+      );
       expect(out.stdoutText).toBe("CREATE SCHEMA x;\n");
       expect(asLines(requests)).toEqual([poolerRequest, loginRoleRequest]);
       expect(projectHttp.calls.map(({ method, url }) => `${method} ${url}`)).toEqual([
@@ -1663,14 +1566,14 @@ describe("db dump permissions through the real resolver and cache", () => {
       expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(true);
       assertPermissionDrift({
         command: "db dump",
-        activeFlags: { "project-ref": VALID_REF },
+        activeFlags: { remote: VALID_REF },
         requests: [...asRecordedRequests(requests), ...projectHttp.calls],
         exact: true,
       });
       // The resolve-phase calls belong to the database config block itself, not to the
       // fallback block, which declares the same operations.
       assertBlockDrift(dbConfig, {
-        activeFlags: { linked: true, "project-ref": VALID_REF },
+        activeFlags: { remote: VALID_REF },
         requests: asRecordedRequests(requests),
         exact: true,
       });
@@ -1688,50 +1591,52 @@ describe("db dump permissions through the real resolver and cache", () => {
       yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
       yield* dbDump(
         flags({
-          linked: Option.some(true),
-          projectRef: Option.some(VALID_REF),
+          remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
           password: Option.some("secret"),
         }),
       ).pipe(Effect.provide(layer));
       expect(asLines(requests)).toEqual([poolerRequest]);
       assertPermissionDrift({
         command: "db dump",
-        activeFlags: { linked: true, "project-ref": VALID_REF, password: true },
+        activeFlags: { remote: VALID_REF, password: true },
         requests: [...asRecordedRequests(requests), ...projectHttp.calls],
         exact: true,
       });
       // The resolve-phase calls belong to the database config block itself, not to the
       // fallback block, which declares the same operations.
       assertBlockDrift(dbConfig, {
-        activeFlags: { linked: true, "project-ref": VALID_REF, password: true },
+        activeFlags: { remote: VALID_REF, password: true },
         requests: asRecordedRequests(requests),
         exact: true,
       });
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
   });
 
-  it.effect("makes no Management API request for --local and caches nothing", () => {
-    const { layer, projectHttp } = setup({
-      workdir: tmp.current,
-      realLayers: true,
-      stdout: "CREATE SCHEMA x;\n",
-    });
-    const requests: Array<StubbedRequest> = [];
-    return Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      yield* stubManagementApi(requests, () => undefined);
-      yield* dbDump(flags({ local: Option.some(true) })).pipe(Effect.provide(layer));
-      expect(requests).toEqual([]);
-      expect(projectHttp.calls).toEqual([]);
-      expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(false);
-      assertPermissionDrift({
-        command: "db dump",
-        activeFlags: { local: true },
-        requests: [],
-        exact: true,
+  it.effect(
+    "makes no Management API request for the default local target and caches nothing",
+    () => {
+      const { layer, projectHttp } = setup({
+        workdir: tmp.current,
+        realLayers: true,
+        stdout: "CREATE SCHEMA x;\n",
       });
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
-  });
+      const requests: Array<StubbedRequest> = [];
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* stubManagementApi(requests, () => undefined);
+        yield* dbDump(flags()).pipe(Effect.provide(layer));
+        expect(requests).toEqual([]);
+        expect(projectHttp.calls).toEqual([]);
+        expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(false);
+        assertPermissionDrift({
+          command: "db dump",
+          activeFlags: {},
+          requests: [],
+          exact: true,
+        });
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    },
+  );
 
   it.effect("retries through the pooler after a container IPv6 failure", () => {
     const { layer, docker, projectHttp } = setup({
@@ -1746,52 +1651,21 @@ describe("db dump permissions through the real resolver and cache", () => {
     return Effect.gen(function* () {
       yield* reachableDirectHost;
       const fs = yield* FileSystem.FileSystem;
-      // No --project-ref: the linked ref comes from the saved file, so only the fallback block
+      // No --remote=<ref>: the linked ref comes from the saved file, so only the fallback block
       // accounts for the pooler config request.
       yield* fs.makeDirectory(`${tmp.current}/supabase/.temp`, { recursive: true });
       yield* fs.writeFileString(`${tmp.current}/supabase/.temp/project-ref`, VALID_REF);
       yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
-      yield* dbDump(flags()).pipe(Effect.provide(layer));
+      yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(Effect.provide(layer));
       expect(docker.allOpts).toHaveLength(2);
       expect(docker.allOpts[1]?.env["PGHOST"]).toBe("aws-0-us-east-1.pooler.supabase.com");
       expect(asLines(requests)).toEqual([loginRoleRequest, poolerRequest, loginRoleRequest]);
       assertPermissionDrift({
         command: "db dump",
+        activeFlags: { remote: true },
         requests: [...asRecordedRequests(requests), ...projectHttp.calls],
         exact: true,
       });
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
   });
-});
-
-describe("db dump target default warning", () => {
-  const tmp = useTempWorkdir("supabase-db-dump-warning-");
-  const selectors = [
-    { label: "--linked", over: { linked: Option.some(true) } },
-    { label: "--linked=false", over: { linked: Option.some(false) } },
-    { label: "--local", over: { local: Option.some(true) } },
-    { label: "--db-url", over: { dbUrl: Option.some("postgresql://u:p@h/db") } },
-    { label: "--project-ref", over: { projectRef: Option.some("flagflagflagflagflag") } },
-  ] as const;
-
-  const runWith = (linked: boolean) => (selector: (typeof selectors)[number] | undefined) =>
-    Effect.andThen(setLinkedRefFile(tmp.current, linked), () => {
-      const { layer, out } = setup({ conn: REMOTE_CONN, isLocal: false, workdir: tmp.current });
-      return dbDump(flags({ dryRun: true, ...selector?.over })).pipe(
-        Effect.provide(layer),
-        Effect.map(() => ({ stdout: out.stdoutText, stderr: out.stderrText })),
-      );
-    });
-
-  it.effect(
-    "warns on a bare run in a linked workdir and stays silent with every selector or when unlinked",
-    () =>
-      assertTargetDefaultWarning({
-        command: "db dump",
-        sameTarget: selectors[0],
-        selectors,
-        run: runWith(true),
-        runUnlinked: runWith(false),
-      }),
-  );
 });

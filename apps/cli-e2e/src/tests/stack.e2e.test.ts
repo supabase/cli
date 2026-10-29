@@ -1,7 +1,7 @@
-import { Effect, FileSystem, Path, Schema } from "effect";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { Effect, FileSystem, Path } from "effect";
 import { describe, expect, inject, test } from "vitest";
 import { createHarness, type CLIResult } from "@supabase/cli-test-helpers";
+import { getRequestLog } from "./request-log.ts";
 import { type CliExecError, execCli, runE2e, testBehaviour } from "./test-context.ts";
 import { ACCESS_TOKEN } from "./env.ts";
 
@@ -49,8 +49,6 @@ const testStack = testBehaviour.extend<StackFixtures>({
     );
   },
 });
-
-const RequestLog = Schema.Array(Schema.Struct({ method: Schema.String, pathname: Schema.String }));
 
 // `services` prints a static service matrix, so DOCKER_HOST is not needed.
 describe("services", () => {
@@ -161,9 +159,7 @@ describe("seed buckets", () => {
         );
         const result = yield* run(["seed", "buckets"]);
         expect(result.exitCode).toBe(0);
-        const requests = yield* HttpClient.get(`${apiUrl}/_ctrl/requests`).pipe(
-          Effect.flatMap(HttpClientResponse.schemaBodyJson(RequestLog)),
-        );
+        const requests = yield* getRequestLog(apiUrl);
         expect(
           requests.some((r) => r.method === "POST" && r.pathname === "/storage/v1/bucket"),
         ).toBe(true);

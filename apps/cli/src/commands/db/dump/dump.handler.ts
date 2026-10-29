@@ -2,17 +2,12 @@ import { Config, Effect, FileSystem, Option, Path, Predicate, Ref } from "effect
 import type { Stack } from "@supabase/stack/effect";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { RemoteTarget, type ResolvedRemoteTarget } from "../../../config/remote-target.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import type { DbConnType } from "../../../command-internal/db-target-flags.ts";
-import { warnLinkedTargetDefault } from "../../../command-internal/target-default-warning.ts";
-import {
-  loadProjectEnv,
-  readDbToml,
-  warnDeprecatedOrioleDBVersionEnv,
-} from "../../../command-internal/db-config.toml-read.ts";
+import { hostedMutationPreapproval } from "../../../command-internal/hosted-consent/hosted-consent.ts";
+import { resolveTarget } from "../../../command-internal/target/resolve-target.ts";
+import { loadProjectEnvValues, readDbToml } from "../../../command-internal/db-config.toml-read.ts";
 import { parseConnectionString } from "../../../command-internal/db-config.parse.ts";
 import { resolveDbImage } from "../../../command-internal/db-image.ts";
 import {
@@ -23,7 +18,7 @@ import { bold, yellow } from "../../../command-internal/colors.ts";
 import { DnsResolverFlag, NetworkIdFlag } from "../../../command-internal/global-flags.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
-import { cobraMutuallyExclusiveErrorMessage } from "../../../shared/cli/cobra-flag-groups.ts";
+import { mutuallyExclusiveFlagsMessage } from "../../../shared/cli/flag-groups.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import type { DbDumpFlags } from "./dump.command.ts";
 import {
@@ -55,8 +50,8 @@ import {
 } from "../../../command-internal/stack-local-database.ts";
 import { databaseArtifactPin } from "@supabase/stack/internal/artifacts";
 import { resolveBundledPostgresRuntime } from "../../../command-internal/bundled-postgres-client.ts";
-import { viperEnvStringWithProjectFallback } from "../../../command-internal/viper-env.ts";
-import { runWithPoolerFallback } from "../shared/pooler-fallback.ts";
+import { supabaseEnvStringWithProjectFallback } from "../../../command-internal/supabase-env.ts";
+import { orNoPoolerFallback, runWithPoolerFallback } from "../shared/pooler-fallback.ts";
 import {
   dumpDataScript,
   dumpRoleScript,
@@ -67,10 +62,9 @@ import {
  * Mutually-exclusive flag groups, in the established check order (the group
  * keys are sorted alphabetically). Each group's flags are in registration
  * order, matching the `[group]` in the error text; the set of violating
- * flags is alphabetised separately by `cobraMutuallyExclusiveErrorMessage`.
+ * flags is alphabetised separately by `mutuallyExclusiveFlagsMessage`.
  */
 const DUMP_EXCLUSIVE_GROUPS = [
-  ["db-url", "linked", "local"],
   ["keep-comments", "data-only"],
   ["role-only", "data-only"],
   ["schema", "role-only"],
@@ -100,7 +94,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
   const linkedRefForCache = yield* Ref.make<string | undefined>(undefined);
 
   yield* Effect.gen(function* () {
-    const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
+    const projectEnv = yield* loadProjectEnvValues(fs, path, cliSettings.workdir);
 
     // Resolves grouped boolean flags' effective values (default false) for code paths
     // that need the value, not just presence.
@@ -121,12 +115,6 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     //    string-slice when non-empty.
     const isSet = (name: (typeof DUMP_EXCLUSIVE_GROUPS)[number][number]): boolean => {
       switch (name) {
-        case "db-url":
-          return Option.isSome(flags.dbUrl);
-        case "linked":
-          return Option.isSome(flags.linked);
-        case "local":
-          return Option.isSome(flags.local);
         case "data-only":
           return Option.isSome(flags.dataOnly);
         case "role-only":
@@ -141,56 +129,26 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
       const set = group.filter(isSet);
       if (set.length > 1) {
         return yield* new DbDumpMutuallyExclusiveFlagsError({
-          message: cobraMutuallyExclusiveErrorMessage(group, set),
+          message: mutuallyExclusiveFlagsMessage(group, set),
         });
       }
     }
 
-    yield* warnLinkedTargetDefault({
-      command: "db dump",
-      targetSelected:
-        Option.isSome(flags.dbUrl) ||
-        Option.isSome(flags.linked) ||
-        Option.isSome(flags.local) ||
-        Option.isSome(flags.projectRef),
-    });
-    // 3. Resolve the connection: db-url > local > linked, defaulting to linked when
-    //    neither is set (unlike other db subcommands, which default to local).
-    const useLocal = Option.isNone(flags.dbUrl) && Option.isSome(flags.local);
-    const connType: DbConnType = Option.isSome(flags.dbUrl)
-      ? "db-url"
-      : useLocal
-        ? "local"
-        : "linked";
-    // `--project-ref` never implies `--linked`; see push.handler.ts's identical guard.
-    if (Option.isSome(flags.projectRef) && connType !== "linked") {
-      return yield* new DbDumpMutuallyExclusiveFlagsError({
-        message:
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      });
+    // 3. Resolve the target (`--remote` or an alias, else local) and connect to it.
+    const target = yield* resolveTarget(flags);
+    // The linked-project cache is refreshed unconditionally afterward, even on a
+    // connection-resolution failure.
+    if (target.kind === "linked") {
+      yield* Ref.set(linkedRefForCache, target.ref);
     }
-    // The project ref is resolved before the connection is built, and the
-    // linked-project cache is refreshed unconditionally afterward, even on a
-    // connection-resolution failure. `RemoteTarget.load` validates the ref up front so an
-    // unvalidated raw `--project-ref` is never stored for the cache finalizer.
-    let linkedTarget: ResolvedRemoteTarget | undefined;
-    if (connType === "linked") {
-      const remoteTarget = yield* RemoteTarget;
-      linkedTarget = yield* remoteTarget.load(flags.projectRef);
-      yield* Ref.set(linkedRefForCache, linkedTarget.ref);
-    }
-    const {
-      conn,
-      isLocal,
-      ref: resolvedRef,
-    } = yield* resolver.resolve({
-      dbUrl: flags.dbUrl,
-      connType,
+    const connectionInput = {
+      target,
       dnsResolver,
       password: flags.password,
-      linkedProjectRef: flags.projectRef,
-      target: linkedTarget,
-    });
+      hasPasswordFlag: true,
+      networkBanRemoval: yield* hostedMutationPreapproval,
+    };
+    const { conn, isLocal, ref: resolvedRef } = yield* resolver.resolveConnection(connectionInput);
     const db = isLocal ? "local" : "remote";
     // On the linked path, re-read config with the resolved ref so a matching
     // `[remotes.<ref>]` block overrides `db.major_version` for the pg_dump image.
@@ -203,11 +161,10 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     // Read before the dry-run print so an invalid merged config fails rather than
     // silently printing a script.
     const tomlValues = yield* readDbToml(fs, path, cliSettings.workdir, linkedRef);
-    yield* warnDeprecatedOrioleDBVersionEnv(tomlValues.envLookup);
 
     const backend = yield* currentStackBackend;
     const managedProject =
-      backend.kind === "stack" && connType === "local"
+      backend.kind === "stack" && target.kind === "local"
         ? yield* stackOpenReadyProject.pipe(
             Effect.mapError((cause) => new DbDumpRunError({ message: cause.message, cause })),
             Effect.map(Option.getOrUndefined),
@@ -215,7 +172,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
         : undefined;
     const managedStack: Stack | undefined = managedProject?.stack;
     const stackRuntime =
-      backend.kind === "stack" && connType === "local"
+      backend.kind === "stack" && target.kind === "local"
         ? yield* stackRequireProjectRuntime
         : undefined;
     const bundledRuntime =
@@ -224,7 +181,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
         : undefined;
     const useNativeClient = bundledRuntime?.kind === "native";
     const networkId = Option.getOrUndefined(networkIdFlag);
-    const envNetworkId = yield* viperEnvStringWithProjectFallback(
+    const envNetworkId = yield* supabaseEnvStringWithProjectFallback(
       "SUPABASE_NETWORK_ID",
       projectEnv,
     );
@@ -244,7 +201,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     const rewriteLoopbackTarget =
       backend.kind === "stack" ? managedStack === undefined : !dumpUsesHostNetwork;
     const dumpConn = useNativeClient
-      ? connType === "local"
+      ? target.kind === "local"
         ? dumpConnForHostClient(conn)
         : conn
       : rewriteLoopbackTarget
@@ -261,7 +218,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     const databasePin =
       backend.kind === "stack"
         ? yield* Effect.gen(function* () {
-            const saved = connType === "local" ? yield* stackProjectDatabasePin : undefined;
+            const saved = target.kind === "local" ? yield* stackProjectDatabasePin : undefined;
             return saved ?? (yield* databaseArtifactPin(String(tomlValues.majorVersion)));
           }).pipe(Effect.mapError((cause) => new DbDumpRunError({ message: cause.message, cause })))
         : undefined;
@@ -442,21 +399,11 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
       Effect.flatMap((dumped) =>
         runWithPoolerFallback({
           result: dumped,
-          connType,
+          connType: target.kind,
           host: conn.host,
           isLocal,
           projectHost: cliSettings.projectHost,
-          resolvePooler: () =>
-            resolver
-              .resolvePoolerFallback({
-                dbUrl: flags.dbUrl,
-                connType: "linked",
-                dnsResolver,
-                password: flags.password,
-                linkedProjectRef: flags.projectRef,
-                target: linkedTarget,
-              })
-              .pipe(Effect.orElseSucceed(() => Option.none())),
+          resolvePooler: () => orNoPoolerFallback(resolver.resolvePoolerFallback(connectionInput)),
           runWithConn: (c) => runContainer(mode.buildEnv(c, opt)),
           reprintOnRetry: output.raw(`Dumping ${mode.verb} from ${db} database...\n`, "stderr"),
         }),

@@ -48,7 +48,7 @@ describe("env-in-config-toml", () => {
           body: { message: "Invalid token" },
         });
 
-        const result = yield* run(["secrets", "list", "--project-ref", PROJECT_REF], {
+        const result = yield* run(["secrets", "list", `--remote=${PROJECT_REF}`], {
           env: ENV_PORTS,
         });
 

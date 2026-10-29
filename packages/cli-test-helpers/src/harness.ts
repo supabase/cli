@@ -201,9 +201,7 @@ const execEffect = Effect.fnUntraced(function* (
 
   // The CLI resolves its API base URL through the profile system, not
   // SUPABASE_API_URL: `CommandSettings` accepts a built-in profile name or a YAML
-  // file path, and the still-proxied Go binary reads the same file via
-  // SUPABASE_PROFILE. Write a temp profile file pointing at the replay server so
-  // both paths reach it.
+  // file path. Write a temp profile file pointing at the replay server.
   const profilePath = path.join(tmpdir(), `cli-e2e-profile-${randomUUID()}.yaml`);
   const url = harness.options.apiUrl;
   const profile = [

@@ -10,7 +10,7 @@ describe("branches", () => {
     testBehaviour("renders fixture data in output", ({ run, projectRef, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["branches", "list", "--project-ref", projectRef]);
+          const result = yield* run(["branches", "list", `--remote=${projectRef}`]);
           expect(result.exitCode).toBe(0);
           expect(result.stdout).toContain("NAME");
           expect(result.stdout).toContain("STATUS");
@@ -29,8 +29,7 @@ describe("branches", () => {
               "list",
               "--output",
               "json",
-              "--project-ref",
-              projectRef,
+              `--remote=${projectRef}`,
             ]);
             expect(result.exitCode).toBe(0);
             const parsed = yield* decodeJsonOutput(Schema.Unknown)(result.stdout);
@@ -43,7 +42,7 @@ describe("branches", () => {
     testBehaviour("includes debug output with --debug", ({ run, projectRef, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["branches", "list", "--debug", "--project-ref", projectRef]);
+          const result = yield* run(["branches", "list", "--debug", `--remote=${projectRef}`]);
           expect(result.exitCode).toBe(0);
           expect(result.stderr).toMatch(/HTTP.*GET:/);
         }),
@@ -58,7 +57,7 @@ describe("branches", () => {
             status: 401,
             body: { message: "Invalid token" },
           });
-          const result = yield* run(["branches", "list", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["branches", "list", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
         }),
@@ -73,7 +72,7 @@ describe("branches", () => {
             status: 403,
             body: { message: "Forbidden" },
           });
-          const result = yield* run(["branches", "list", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["branches", "list", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Forbidden");
         }),
@@ -88,7 +87,7 @@ describe("branches", () => {
             status: 429,
             body: { message: "Too Many Requests" },
           });
-          const result = yield* run(["branches", "list", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["branches", "list", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Too Many Requests");
         }),
@@ -103,7 +102,7 @@ describe("branches", () => {
             status: 500,
             body: { message: "Internal Server Error" },
           });
-          const result = yield* run(["branches", "list", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["branches", "list", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Internal Server Error");
         }),
@@ -120,8 +119,8 @@ describe("branches", () => {
             "branches",
             "create",
             BRANCH_NAME,
-            "--project-ref",
-            projectRef,
+            "--yes",
+            `--remote=${projectRef}`,
           ]);
           expect(result.exitCode).toBe(0);
           expect(result.stdout).toContain("Created preview branch:");
@@ -138,8 +137,8 @@ describe("branches", () => {
             "create",
             BRANCH_NAME,
             "--persistent",
-            "--project-ref",
-            projectRef,
+            "--yes",
+            `--remote=${projectRef}`,
           ]);
           expect(result.exitCode).toBe(0);
           expect(result.stdout).toContain("Created preview branch:");
@@ -156,8 +155,8 @@ describe("branches", () => {
             "create",
             BRANCH_NAME,
             "--with-data",
-            "--project-ref",
-            projectRef,
+            "--yes",
+            `--remote=${projectRef}`,
           ]);
           expect(result.exitCode).toBe(0);
           expect(result.stdout).toContain("Created preview branch:");
@@ -177,8 +176,8 @@ describe("branches", () => {
             "branches",
             "create",
             BRANCH_NAME,
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Branch name already in use");
@@ -198,8 +197,8 @@ describe("branches", () => {
             "branches",
             "create",
             BRANCH_NAME,
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Preview branching is not enabled");
@@ -221,8 +220,8 @@ describe("branches", () => {
             BRANCH_NAME,
             "--region",
             "invalid-region",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("--region");
@@ -242,8 +241,8 @@ describe("branches", () => {
             "branches",
             "create",
             BRANCH_NAME,
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
@@ -263,8 +262,8 @@ describe("branches", () => {
             "branches",
             "create",
             BRANCH_NAME,
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Forbidden");
@@ -284,8 +283,8 @@ describe("branches", () => {
             "branches",
             "create",
             BRANCH_NAME,
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Too Many Requests");
@@ -301,13 +300,7 @@ describe("branches", () => {
       ({ run, projectRef, signal }) =>
         runE2e(
           Effect.gen(function* () {
-            const result = yield* run([
-              "branches",
-              "get",
-              BRANCH_NAME,
-              "--project-ref",
-              projectRef,
-            ]);
+            const result = yield* run(["branches", "get", BRANCH_NAME, `--remote=${projectRef}`]);
             expect(result.exitCode).toBe(0);
             expect(result.stdout).toContain(BRANCH_NAME);
           }),
@@ -326,8 +319,7 @@ describe("branches", () => {
               BRANCH_NAME,
               "--output",
               "json",
-              "--project-ref",
-              projectRef,
+              `--remote=${projectRef}`,
             ]);
             expect(result.exitCode).toBe(0);
             const parsed = yield* decodeJsonOutput(Schema.Unknown)(result.stdout);
@@ -344,13 +336,7 @@ describe("branches", () => {
             status: 404,
             body: { message: "Branch not found" },
           });
-          const result = yield* run([
-            "branches",
-            "get",
-            "nonexistent",
-            "--project-ref",
-            PROJECT_REF,
-          ]);
+          const result = yield* run(["branches", "get", "nonexistent", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Branch not found");
         }),
@@ -365,7 +351,7 @@ describe("branches", () => {
             status: 401,
             body: { message: "Invalid token" },
           });
-          const result = yield* run(["branches", "get", BRANCH_NAME, "--project-ref", PROJECT_REF]);
+          const result = yield* run(["branches", "get", BRANCH_NAME, `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
         }),
@@ -384,8 +370,8 @@ describe("branches", () => {
             BRANCH_NAME,
             "--name",
             "renamed-branch",
-            "--project-ref",
-            projectRef,
+            "--yes",
+            `--remote=${projectRef}`,
           ]);
           expect(result.exitCode).toBe(0);
           expect(result.stderr).toContain("Updated preview branch:");
@@ -405,8 +391,8 @@ describe("branches", () => {
               BRANCH_NAME,
               "--git-branch",
               "feature/new",
-              "--project-ref",
-              projectRef,
+              "--yes",
+              `--remote=${projectRef}`,
             ]);
             expect(result.exitCode).toBe(0);
             expect(result.stderr).toContain("Updated preview branch:");
@@ -428,8 +414,8 @@ describe("branches", () => {
             "nonexistent",
             "--name",
             "new-name",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Branch not found");
@@ -451,8 +437,8 @@ describe("branches", () => {
             BRANCH_NAME,
             "--name",
             "new-name",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
@@ -470,8 +456,8 @@ describe("branches", () => {
             "branches",
             "pause",
             BRANCH_NAME,
-            "--project-ref",
-            projectRef,
+            "--yes",
+            `--remote=${projectRef}`,
           ]);
           expect(result.exitCode).toBe(0);
         }),
@@ -490,8 +476,8 @@ describe("branches", () => {
             "branches",
             "pause",
             "nonexistent",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Branch not found");
@@ -511,8 +497,8 @@ describe("branches", () => {
             "branches",
             "pause",
             BRANCH_NAME,
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
@@ -532,8 +518,8 @@ describe("branches", () => {
               "branches",
               "unpause",
               BRANCH_NAME,
-              "--project-ref",
-              projectRef,
+              "--yes",
+              `--remote=${projectRef}`,
             ]);
             expect(result.exitCode).toBe(0);
           }),
@@ -552,8 +538,8 @@ describe("branches", () => {
             "branches",
             "unpause",
             BRANCH_NAME,
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
@@ -573,8 +559,8 @@ describe("branches", () => {
               "branches",
               "delete",
               BRANCH_NAME,
-              "--project-ref",
-              projectRef,
+              "--yes",
+              `--remote=${projectRef}`,
             ]);
             expect(result.exitCode).toBe(0);
             expect(result.stderr).toContain("Deleted preview branch:");
@@ -594,8 +580,8 @@ describe("branches", () => {
             "branches",
             "delete",
             "nonexistent",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Branch not found");
@@ -615,8 +601,8 @@ describe("branches", () => {
             "branches",
             "delete",
             BRANCH_NAME,
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
@@ -630,7 +616,7 @@ describe("branches", () => {
     testBehaviour.skipIf(isRecording)("disables preview branching", ({ run, projectRef, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["branches", "disable", "--project-ref", projectRef]);
+          const result = yield* run(["branches", "disable", "--yes", `--remote=${projectRef}`]);
           expect(result.exitCode).toBe(0);
           expect(result.stdout).toContain("Disabled preview branching for project:");
         }),
@@ -645,7 +631,7 @@ describe("branches", () => {
             status: 401,
             body: { message: "Invalid token" },
           });
-          const result = yield* run(["branches", "disable", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["branches", "disable", "--yes", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
         }),

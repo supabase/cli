@@ -199,10 +199,15 @@ interface TenantObservations {
 /**
  * Probes `rest`, `auth` and `storage` on the project's tenant host, concurrently. A service that
  * answers 404 or an empty version is `Unreported`; a transport error or any other status is `Failed`.
+ * Without a key nothing is probed and every service is `Failed`.
  */
 export const probeTenantVersions = Effect.fn("TenantVersions.probe")(function* (
   opts: TenantVersionOptions,
 ) {
+  if (opts.serviceKey.length === 0) {
+    const skipped: HostedObservation = { _tag: "Failed", cause: "no API key to probe with" };
+    return { auth: skipped, rest: skipped, storage: skipped } satisfies TenantObservations;
+  }
   const [rest, auth, storage] = yield* Effect.all(
     [
       probeService(opts, "postgrest", "/rest/v1/", (response) => response.json, postgrestRaw),

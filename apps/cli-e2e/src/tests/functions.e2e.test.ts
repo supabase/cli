@@ -10,7 +10,7 @@ describe("functions", () => {
     testBehaviour("renders fixture data in output", ({ run, projectRef, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["functions", "list", "--project-ref", projectRef]);
+          const result = yield* run(["functions", "list", `--remote=${projectRef}`]);
           expect(result.exitCode).toBe(0);
           expect(result.stdout).toContain("NAME");
           expect(result.stdout).toContain("STATUS");
@@ -27,8 +27,7 @@ describe("functions", () => {
             "list",
             "--output",
             "json",
-            "--project-ref",
-            projectRef,
+            `--remote=${projectRef}`,
           ]);
           expect(result.exitCode).toBe(0);
           const parsed = yield* decodeJsonOutput(Schema.Unknown)(result.stdout);
@@ -41,7 +40,7 @@ describe("functions", () => {
     testBehaviour("includes debug output with --debug", ({ run, projectRef, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["functions", "list", "--debug", "--project-ref", projectRef]);
+          const result = yield* run(["functions", "list", "--debug", `--remote=${projectRef}`]);
           expect(result.exitCode).toBe(0);
           expect(result.stderr).toMatch(/HTTP.*GET:/);
         }),
@@ -56,7 +55,7 @@ describe("functions", () => {
             status: 401,
             body: { message: "Invalid token" },
           });
-          const result = yield* run(["functions", "list", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["functions", "list", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
         }),
         signal,
@@ -70,7 +69,7 @@ describe("functions", () => {
             status: 403,
             body: { message: "Forbidden" },
           });
-          const result = yield* run(["functions", "list", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["functions", "list", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Forbidden");
         }),
@@ -85,7 +84,7 @@ describe("functions", () => {
             status: 429,
             body: { message: "Too Many Requests" },
           });
-          const result = yield* run(["functions", "list", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["functions", "list", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Too Many Requests");
         }),
@@ -100,7 +99,7 @@ describe("functions", () => {
             status: 500,
             body: { message: "Internal Server Error" },
           });
-          const result = yield* run(["functions", "list", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["functions", "list", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Internal Server Error");
         }),
@@ -110,8 +109,8 @@ describe("functions", () => {
   });
 
   describe("functions:deploy", () => {
-    // Deploy requires the Go binary to bundle function files locally before any API call,
-    // so error injection tests pre-create the function with `functions new` first.
+    // Deploy bundles function files locally before any API call, so error injection tests
+    // pre-create the function with `functions new` first.
 
     testBehaviour("exits non-zero on 401", ({ run, apiUrl, signal }) =>
       runE2e(
@@ -126,8 +125,8 @@ describe("functions", () => {
             "deploy",
             FUNCTION_NAME,
             "--use-api",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
@@ -149,8 +148,8 @@ describe("functions", () => {
             "deploy",
             FUNCTION_NAME,
             "--use-api",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Forbidden");
@@ -172,8 +171,8 @@ describe("functions", () => {
             "deploy",
             FUNCTION_NAME,
             "--use-api",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Too Many Requests");
@@ -195,8 +194,8 @@ describe("functions", () => {
             "deploy",
             FUNCTION_NAME,
             "--use-api",
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Internal Server Error");
@@ -216,8 +215,8 @@ describe("functions", () => {
               "functions",
               "delete",
               FUNCTION_NAME,
-              "--project-ref",
-              projectRef,
+              "--yes",
+              `--remote=${projectRef}`,
             ]);
             expect(result.exitCode).toBe(0);
             expect(result.stdout).toContain("Deleted Function");
@@ -237,8 +236,8 @@ describe("functions", () => {
             "functions",
             "delete",
             FUNCTION_NAME,
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("does not exist");
@@ -258,8 +257,8 @@ describe("functions", () => {
             "functions",
             "delete",
             FUNCTION_NAME,
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
@@ -279,8 +278,8 @@ describe("functions", () => {
             "functions",
             "delete",
             FUNCTION_NAME,
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Forbidden");
@@ -300,8 +299,8 @@ describe("functions", () => {
             "functions",
             "delete",
             FUNCTION_NAME,
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Too Many Requests");
@@ -321,8 +320,8 @@ describe("functions", () => {
             "functions",
             "delete",
             FUNCTION_NAME,
-            "--project-ref",
-            PROJECT_REF,
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Internal Server Error");
@@ -343,8 +342,7 @@ describe("functions", () => {
               "download",
               FUNCTION_NAME,
               "--use-api",
-              "--project-ref",
-              projectRef,
+              `--remote=${projectRef}`,
             ]);
             expect(result.exitCode).toBe(0);
             expect(result.stderr).toContain("Downloaded Function");
@@ -365,8 +363,7 @@ describe("functions", () => {
             "download",
             FUNCTION_NAME,
             "--use-api",
-            "--project-ref",
-            PROJECT_REF,
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
@@ -387,8 +384,7 @@ describe("functions", () => {
             "download",
             FUNCTION_NAME,
             "--use-api",
-            "--project-ref",
-            PROJECT_REF,
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Forbidden");
@@ -409,8 +405,7 @@ describe("functions", () => {
             "download",
             FUNCTION_NAME,
             "--use-api",
-            "--project-ref",
-            PROJECT_REF,
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Function not found");
@@ -431,8 +426,7 @@ describe("functions", () => {
             "download",
             FUNCTION_NAME,
             "--use-api",
-            "--project-ref",
-            PROJECT_REF,
+            `--remote=${PROJECT_REF}`,
           ]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Internal Server Error");

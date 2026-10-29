@@ -16,12 +16,20 @@
     "!tools/**",
     // Last match wins across the whole list: keep bare re-exclusions after every
     // `!` entry that would otherwise re-include them.
+    "apps/cli-e2e/scripts/replay-serve.ts",
     "apps/cli-e2e/src/server/replay-server.ts",
     "apps/cli/src/shared/cli/bin.ts",
     "apps/cli/src/shared/compute/stacks/**",
     "apps/cli/src/shared/feedback/database.types.ts",
     "apps/cli/src/command-internal/db-bootstrap/local-db-running.integration.test.ts",
     "apps/cli/src/command-internal/db-bootstrap/local-db-running.ts",
+    "apps/cli/src/command-internal/config-validate.parity.unit.test.ts",
+    "apps/cli/src/command-internal/hosted-consent/hosted-consent-coverage.unit.test.ts",
+    "apps/cli/tests/helpers/config-goldens.ts",
+    "apps/cli/tests/helpers/config-values-layer.integration.test.ts",
+    "apps/cli/tests/helpers/db-target-selection.ts",
+    "apps/cli/tests/helpers/hosted-consent.ts",
+    "apps/cli/tests/helpers/hosted-target-selection.ts",
     "packages/api/src/generated/contracts.ts"
   ]
 }

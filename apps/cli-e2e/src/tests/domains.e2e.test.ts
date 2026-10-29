@@ -18,7 +18,7 @@ describe("domains", () => {
             body: { message: "Please enable custom domains first" },
           });
 
-          const result = yield* run(["domains", "get", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["domains", "get", `--remote=${PROJECT_REF}`]);
 
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("400");
@@ -30,7 +30,7 @@ describe("domains", () => {
     testBehaviour.skipIf(isRecording)("no custom domain", ({ run, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["domains", "get", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["domains", "get", `--remote=${PROJECT_REF}`]);
 
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("400");
@@ -42,7 +42,7 @@ describe("domains", () => {
     testBehaviour.skipIf(isRecording)("pending verification", ({ run, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["domains", "get", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["domains", "get", `--remote=${PROJECT_REF}`]);
 
           expect(result.exitCode).toBe(0);
           expect(result.stderr).toContain(
@@ -56,7 +56,7 @@ describe("domains", () => {
     testBehaviour.skipIf(isRecording)("verification completed", ({ run, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["domains", "get", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["domains", "get", `--remote=${PROJECT_REF}`]);
 
           expect(result.exitCode).toBe(0);
           expect(result.stderr).toContain(
@@ -73,10 +73,9 @@ describe("domains", () => {
           const result = yield* run([
             "domains",
             "get",
-            "--project-ref",
-            PROJECT_REF,
             "--output",
             "json",
+            `--remote=${PROJECT_REF}`,
           ]);
 
           expect(result.exitCode).toBe(0);
@@ -118,7 +117,7 @@ describe("domains", () => {
             body: { message: "Unauthorized" },
           });
 
-          const result = yield* run(["domains", "get", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["domains", "get", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("403");
         }),
@@ -134,7 +133,7 @@ describe("domains", () => {
             body: { message: "Unauthorized" },
           });
 
-          const result = yield* run(["domains", "get", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["domains", "get", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("401");
         }),
@@ -150,7 +149,7 @@ describe("domains", () => {
             body: { message: "Too Many Requests" },
           });
 
-          const result = yield* run(["domains", "get", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["domains", "get", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("429");
         }),
@@ -166,7 +165,7 @@ describe("domains", () => {
             body: { message: "Internal Server Error" },
           });
 
-          const result = yield* run(["domains", "get", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["domains", "get", `--remote=${PROJECT_REF}`]);
 
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("500");
@@ -183,7 +182,7 @@ describe("domains", () => {
             body: { message: "Bad Gateway" },
           });
 
-          const result = yield* run(["domains", "get", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["domains", "get", `--remote=${PROJECT_REF}`]);
 
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("502");
@@ -197,7 +196,7 @@ describe("domains", () => {
     testBehaviour("custom domain disabled", ({ run, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["domains", "reverify", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["domains", "reverify", `--remote=${PROJECT_REF}`]);
 
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("400");
@@ -209,7 +208,7 @@ describe("domains", () => {
     testBehaviour.skipIf(isRecording)("no custom domain", ({ run, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["domains", "reverify", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["domains", "reverify", `--remote=${PROJECT_REF}`]);
 
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("400");
@@ -221,7 +220,7 @@ describe("domains", () => {
     testBehaviour.skipIf(isRecording)("pending verification", ({ run, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["domains", "reverify", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["domains", "reverify", `--remote=${PROJECT_REF}`]);
 
           expect(result.exitCode).toBe(0);
           expect(result.stderr).toContain(
@@ -235,7 +234,7 @@ describe("domains", () => {
     testBehaviour.skipIf(isRecording)("verification completed", ({ run, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["domains", "reverify", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["domains", "reverify", `--remote=${PROJECT_REF}`]);
 
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("400");
@@ -248,7 +247,7 @@ describe("domains", () => {
     testBehaviour("custom domain disabled", ({ run, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["domains", "activate", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["domains", "activate", "--yes", `--remote=${PROJECT_REF}`]);
 
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("400");
@@ -260,7 +259,7 @@ describe("domains", () => {
     testBehaviour.skipIf(isRecording)("no custom domain", ({ run, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["domains", "activate", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["domains", "activate", "--yes", `--remote=${PROJECT_REF}`]);
 
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("400");
@@ -272,7 +271,7 @@ describe("domains", () => {
     testBehaviour.skipIf(isRecording)("pending verification", ({ run, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["domains", "activate", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["domains", "activate", "--yes", `--remote=${PROJECT_REF}`]);
 
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("400");
@@ -287,9 +286,9 @@ describe("domains", () => {
           const result = yield* run([
             "domains",
             "activate",
-            "--project-ref",
-            PROJECT_REF,
             "--debug",
+            "--yes",
+            `--remote=${PROJECT_REF}`,
           ]);
 
           expect(result.exitCode).not.toBe(0);
@@ -303,7 +302,7 @@ describe("domains", () => {
     testBehaviour.skipIf(isRecording)("verification completed", ({ run, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["domains", "activate", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["domains", "activate", "--yes", `--remote=${PROJECT_REF}`]);
 
           expect(result.exitCode).toBe(0);
           expect(result.stderr).toContain(`completed`);
@@ -316,7 +315,7 @@ describe("domains", () => {
     testBehaviour.skipIf(isRecording)("domain activated", ({ run, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["domains", "activate", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["domains", "activate", "--yes", `--remote=${PROJECT_REF}`]);
 
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("400");
@@ -330,7 +329,7 @@ describe("domains", () => {
     testBehaviour("custom domain disabled", ({ run, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["domains", "delete", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["domains", "delete", "--yes", `--remote=${PROJECT_REF}`]);
 
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("400");
@@ -342,7 +341,7 @@ describe("domains", () => {
     testBehaviour.skipIf(isRecording)("no custom domain", ({ run, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["domains", "delete", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["domains", "delete", "--yes", `--remote=${PROJECT_REF}`]);
 
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("400");
@@ -354,7 +353,7 @@ describe("domains", () => {
     testBehaviour.skipIf(isRecording)("pending verification", ({ run, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["domains", "delete", "--project-ref", PROJECT_REF]);
+          const result = yield* run(["domains", "delete", "--yes", `--remote=${PROJECT_REF}`]);
 
           expect(result.exitCode).toBe(0);
         }),

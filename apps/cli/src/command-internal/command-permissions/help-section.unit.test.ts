@@ -18,7 +18,6 @@ const projectRef = Flag.String("project-ref").pipe(Flag.optional);
 
 interface Declaration {
   readonly operations: ReadonlyArray<OperationEntry>;
-  readonly dbTargetDefault?: "local" | "linked";
 }
 
 function render(
@@ -570,55 +569,23 @@ describe("permission help section", () => {
       );
     });
 
-    it("says it is not needed with the other targets when the default is the linked project", () => {
+    const hiddenSwitch = (name: string) => switchFlag(name).pipe(Flag.withHidden);
+    const linkedOnly = {
+      operationId: "v1-list-all-projects",
+      kind: "required",
+      when: [{ dbTarget: ["linked"] }],
+    } as const satisfies OperationEntry;
+
+    it("says a linked-only call is only needed with --remote", () => {
       const text = render(
-        {
-          dbTargetDefault: "linked",
-          operations: [
-            {
-              operationId: "v1-list-all-projects",
-              kind: "required",
-              when: [{ dbTarget: ["linked"] }],
-            },
-          ],
-        },
-        catalogOf(
-          switchFlag("local"),
-          Flag.String("db-url").pipe(Flag.optional),
-          switchFlag("linked"),
-        ),
+        { operations: [linkedOnly] },
+        catalogOf(hiddenSwitch("local"), hiddenSwitch("linked")),
       );
 
       expect(text).toBe(
         lines(
           "PERMISSIONS",
-          "  Not needed with --local or --db-url.",
-          fga,
-          "    Required:",
-          "      projects_read",
-        ),
-      );
-    });
-
-    it("says it is only needed with --linked when the default is the local database", () => {
-      const text = render(
-        {
-          dbTargetDefault: "local",
-          operations: [
-            {
-              operationId: "v1-list-all-projects",
-              kind: "required",
-              when: [{ dbTarget: ["linked"] }],
-            },
-          ],
-        },
-        catalogOf(switchFlag("local"), switchFlag("linked")),
-      );
-
-      expect(text).toBe(
-        lines(
-          "PERMISSIONS",
-          "  Only needed with --linked.",
+          "  Only needed with --remote.",
           fga,
           "    Required:",
           "      projects_read",
@@ -628,18 +595,8 @@ describe("permission help section", () => {
 
     it("keeps the target in the heading when some entries do not depend on it", () => {
       const text = render(
-        {
-          dbTargetDefault: "linked",
-          operations: [
-            {
-              operationId: "v1-list-all-projects",
-              kind: "required",
-              when: [{ dbTarget: ["linked"] }],
-            },
-            { operationId: "v1-get-project", kind: "required" },
-          ],
-        },
-        catalogOf(switchFlag("local"), switchFlag("linked")),
+        { operations: [linkedOnly, { operationId: "v1-get-project", kind: "required" }] },
+        catalogOf(hiddenSwitch("local"), hiddenSwitch("linked")),
       );
 
       expect(text).toBe(
@@ -648,25 +605,30 @@ describe("permission help section", () => {
           fga,
           "    Required:",
           "      project_admin_read",
-          "    Required (remote only):",
+          "    Required with --remote:",
           "      projects_read",
         ),
       );
     });
 
     it("drops a target condition the command cannot vary", () => {
+      const text = render({ operations: [linkedOnly] });
+
+      expect(text).toBe(lines("PERMISSIONS", fga, "    Required:", "      projects_read"));
+    });
+
+    it("hedges an entry that depends on how --remote is given", () => {
       const text = render({
-        dbTargetDefault: "linked",
         operations: [
           {
             operationId: "v1-list-all-projects",
             kind: "required",
-            when: [{ dbTarget: ["linked"] }],
+            when: [{ selector: ["none", "bare"] }],
           },
         ],
       });
 
-      expect(text).toBe(lines("PERMISSIONS", fga, "    Required:", "      projects_read"));
+      expect(text).toBe(lines("PERMISSIONS", fga, "    May be required:", "      projects_read"));
     });
   });
 
@@ -1105,10 +1067,9 @@ describe("permission help section", () => {
       expect(groups.map(([, when]) => when)).toEqual([undefined, undefined]);
     });
 
-    it("names the linked project as the shared target when it is the default", () => {
+    it("names the linked project as the shared target when every entry needs it", () => {
       const { shared } = whenOf(
         {
-          dbTargetDefault: "linked",
           operations: [
             {
               operationId: "v1-list-all-projects",
@@ -1148,7 +1109,6 @@ describe("permission help section", () => {
     it("treats naming a target flag as selecting that target", () => {
       const { groups } = whenOf(
         {
-          dbTargetDefault: "local",
           operations: [
             { operationId: "v1-list-all-projects", kind: "required" },
             {
@@ -1168,14 +1128,13 @@ describe("permission help section", () => {
 
       expect(groups).toEqual([
         ["Required", undefined],
-        ["Required with --linked", [{ all: [{ target: ["linked"] }] }]],
+        ["Required with --remote", [{ all: [{ target: ["linked"] }] }]],
       ]);
     });
 
     it("names a target in a group's condition when not every entry depends on it", () => {
       const { shared, groups } = whenOf(
         {
-          dbTargetDefault: "local",
           operations: [
             {
               operationId: "v1-list-all-projects",
@@ -1189,7 +1148,7 @@ describe("permission help section", () => {
       );
 
       expect(shared).toBeUndefined();
-      expect(groups[1]).toEqual(["Required with --linked", [{ all: [{ target: ["linked"] }] }]]);
+      expect(groups[1]).toEqual(["Required with --remote", [{ all: [{ target: ["linked"] }] }]]);
     });
   });
 

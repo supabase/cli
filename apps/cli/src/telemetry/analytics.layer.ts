@@ -1,7 +1,7 @@
-import { legacyProjectStatePaths } from "../command-internal/legacy-project-state.paths.ts";
+import { legacyProjectStatePaths } from "../shared/config/legacy-project-state.paths.ts";
 import { Config, ConfigProvider, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
-import type { ProjectStateMode } from "../command-internal/project-state-mode.ts";
-import { readProjectLink } from "../command-internal/project-link.ts";
+import type { ProjectStateMode } from "../shared/config/project-state-mode.ts";
+import { readProjectLink } from "../shared/config/project-link.ts";
 import { aiToolLayer } from "../shared/telemetry/ai-tool.layer.ts";
 import { AiTool } from "../shared/telemetry/ai-tool.service.ts";
 import {

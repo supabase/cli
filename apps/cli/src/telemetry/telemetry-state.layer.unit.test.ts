@@ -4,6 +4,7 @@ import { DateTime, Effect, FileSystem, Layer, Path, Schema } from "effect";
 
 import { useTempWorkdir, withEnvVar } from "../../tests/helpers/command-mocks.ts";
 import { mockAnalytics } from "../../tests/helpers/mocks.ts";
+import { cliConfigProviderLayer } from "../shared/config/cli-config-provider.layer.ts";
 import { TelemetryRuntime } from "../shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../shared/telemetry/identity.ts";
 import {
@@ -12,6 +13,8 @@ import {
   setTelemetryEnabled,
 } from "./telemetry-state.layer.ts";
 import { TelemetryState } from "./telemetry-state.service.ts";
+
+const platformLayer = Layer.merge(BunServices.layer, cliConfigProviderLayer);
 
 const tempHome = useTempWorkdir("supabase-telemetry-");
 
@@ -45,6 +48,7 @@ function makeLayer(
     Layer.provide(BunServices.layer),
     Layer.provide(analytics.layer),
     Layer.provide(runtime.layer),
+    Layer.provideMerge(cliConfigProviderLayer),
   );
 }
 
@@ -184,13 +188,13 @@ describe("telemetryStateLayer.stitchLogin / clearDistinctId", () => {
   );
 });
 
-describe("loadOrCreateTelemetryState (Go decodeState parity: all-or-nothing recovery)", () => {
+describe("loadOrCreateTelemetryState (all-or-nothing recovery)", () => {
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 
   const runLoad = () =>
-    loadOrCreateTelemetryState().pipe(Effect.provide(BunServices.layer), withTempHome);
+    loadOrCreateTelemetryState().pipe(Effect.provide(platformLayer), withTempHome);
   const runLoadAt = (now: DateTime.Utc) =>
-    loadOrCreateTelemetryState({ now }).pipe(Effect.provide(BunServices.layer), withTempHome);
+    loadOrCreateTelemetryState({ now }).pipe(Effect.provide(platformLayer), withTempHome);
 
   it.effect("a bool-only file missing device_id/session_id is wholly regenerated", () =>
     Effect.gen(function* () {
@@ -344,7 +348,7 @@ describe("loadOrCreateTelemetryState (Go decodeState parity: all-or-nothing reco
   );
 
   it.effect(
-    "a Go-valid zone offset JS cannot parse (+24:00) still decodes and preserves the state",
+    "a valid zone offset JS cannot parse (+24:00) still decodes and preserves the state",
     () =>
       Effect.gen(function* () {
         yield* seedJson({
@@ -359,7 +363,7 @@ describe("loadOrCreateTelemetryState (Go decodeState parity: all-or-nothing reco
       }),
   );
 
-  it.effect("a Go-valid comma fractional-second separator decodes and preserves the state", () =>
+  it.effect("a valid comma fractional-second separator decodes and preserves the state", () =>
     Effect.gen(function* () {
       yield* seedJson({
         enabled: false,
@@ -402,7 +406,7 @@ describe("loadOrCreateTelemetryState (Go decodeState parity: all-or-nothing reco
     }),
   );
 
-  it.effect("a Go-exotic +05:60 offset participates in the expiry arithmetic", () =>
+  it.effect("an unusual +05:60 offset participates in the expiry arithmetic", () =>
     // `+05:60` normalizes to a 6-hour offset, so this instant is 2025-01-01T00:00:00Z — 10
     // minutes before `now`, so the session is retained. (JS `new Date` returns NaN for
     // minute-60 offsets, which would wrongly rotate it.)
@@ -451,7 +455,7 @@ describe("loadOrCreateTelemetryState (Go decodeState parity: all-or-nothing reco
     }),
   );
 
-  it.effect("consent-form unix millis beyond the JS Date range preserve the state like Go", () =>
+  it.effect("consent-form unix millis beyond the JS Date range preserve the state", () =>
     // A far-future instant (~year 287396): the elapsed-time comparison is hugely negative, so
     // the session is never expired and the state decodes. Kept as a plain number here since a
     // `Date`/`toISOString` round-trip throws beyond ±8.64e15.
@@ -469,7 +473,7 @@ describe("loadOrCreateTelemetryState (Go decodeState parity: all-or-nothing reco
     }),
   );
 
-  it.effect("consent-form unix millis beyond the int64 range regenerate everything like Go", () =>
+  it.effect("consent-form unix millis beyond the int64 range regenerate everything", () =>
     // A float/exponent token (`1e+100`) is rejected outright for an int64 field, so this
     // regenerates wholesale even though the file said "denied".
     Effect.gen(function* () {
@@ -486,7 +490,7 @@ describe("loadOrCreateTelemetryState (Go decodeState parity: all-or-nothing reco
     }),
   );
 
-  it.effect("consent-form unix millis at Go's int64 bounds preserve the state", () =>
+  it.effect("consent-form unix millis at the int64 bounds preserve the state", () =>
     // Hand-built JSON so the raw text pins the exact int64 max literal 9223372036854775807
     // (`JSON.stringify` of the rounded double would emit a different literal). The raw-token
     // check accepts it via exact BigInt bounds — the parsed double rounds to 2^63 and can't be
@@ -502,7 +506,7 @@ describe("loadOrCreateTelemetryState (Go decodeState parity: all-or-nothing reco
     }),
   );
 
-  it.effect("consent-form unix millis at Go's int64 min decode but expire the session", () =>
+  it.effect("consent-form unix millis at the int64 min decode but expire the session", () =>
     // int64 min -9223372036854775808 = -(2^63) is exactly representable as a double, so this
     // literal round-trips precisely. The instant is far past, so the file decodes
     // (enabled/device_id preserved, no wholesale regeneration) while the stale session id rotates.
@@ -517,7 +521,7 @@ describe("loadOrCreateTelemetryState (Go decodeState parity: all-or-nothing reco
     }),
   );
 
-  it.effect("consent-form unix millis written as an exponent token regenerate like Go", () =>
+  it.effect("consent-form unix millis written as an exponent token regenerate", () =>
     Effect.gen(function* () {
       yield* writeTelemetryFile(
         '{"consent":"denied","device_id":"d","session_id":"s","session_last_active":1e3}',
@@ -529,7 +533,7 @@ describe("loadOrCreateTelemetryState (Go decodeState parity: all-or-nothing reco
     }),
   );
 
-  it.effect("consent-form unix millis written as an integer-valued float regenerate like Go", () =>
+  it.effect("consent-form unix millis written as an integer-valued float regenerate", () =>
     Effect.gen(function* () {
       yield* writeTelemetryFile(
         '{"consent":"denied","device_id":"d","session_id":"s","session_last_active":1750000000000.0}',
@@ -541,7 +545,7 @@ describe("loadOrCreateTelemetryState (Go decodeState parity: all-or-nothing reco
     }),
   );
 
-  it.effect("consent-form unix millis one past int64 max regenerate exactly like Go", () =>
+  it.effect("consent-form unix millis one past int64 max regenerate", () =>
     // 9223372036854775808 parses to the same double as the int64 max literal 9223372036854775807
     // (both round to 2^63), so only the raw token can tell them apart.
     Effect.gen(function* () {
@@ -569,7 +573,7 @@ describe("loadOrCreateTelemetryState (Go decodeState parity: all-or-nothing reco
     }),
   );
 
-  it.effect("a schema_version written as an integer-valued float regenerates like Go", () =>
+  it.effect("a schema_version written as an integer-valued float regenerates", () =>
     // `schema_version` is an int field, where the token `1.0` is rejected, so the whole file is
     // malformed and regenerated even though `JSON.parse` reads it as 1.
     Effect.gen(function* () {
@@ -583,7 +587,7 @@ describe("loadOrCreateTelemetryState (Go decodeState parity: all-or-nothing reco
     }),
   );
 
-  it.effect("a schema_version beyond the int64 range regenerates everything like Go", () =>
+  it.effect("a schema_version beyond the int64 range regenerates everything", () =>
     Effect.gen(function* () {
       yield* seedJson({
         enabled: false,
@@ -599,7 +603,7 @@ describe("loadOrCreateTelemetryState (Go decodeState parity: all-or-nothing reco
     }),
   );
 
-  describe("duplicate root keys (Go per-occurrence decoding)", () => {
+  describe("duplicate root keys (per-occurrence decoding)", () => {
     it.effect("a wrong-typed earlier consent regenerates even when the final one is valid", () =>
       Effect.gen(function* () {
         yield* writeTelemetryFile(
@@ -634,7 +638,7 @@ describe("loadOrCreateTelemetryState (Go decodeState parity: all-or-nothing reco
       }),
     );
 
-    it.effect("a non-integer earlier schema_version token regenerates like Go", () =>
+    it.effect("a non-integer earlier schema_version token regenerates", () =>
       // `1e3` is rejected for the int field on its first occurrence; the valid `2` after it
       // cannot save the file.
       Effect.gen(function* () {
@@ -723,7 +727,7 @@ describe("loadOrCreateTelemetryState (Go decodeState parity: all-or-nothing reco
       }),
     );
 
-    it.effect("an escaped duplicate key is unescaped before field matching, like Go", () =>
+    it.effect("an escaped duplicate key is unescaped before field matching", () =>
       // Key tokens are unescaped before field matching, so `"\u0063onsent":false` is a
       // wrong-typed `consent` occurrence.
       Effect.gen(function* () {
@@ -738,9 +742,9 @@ describe("loadOrCreateTelemetryState (Go decodeState parity: all-or-nothing reco
   });
 });
 
-describe("exact int64 schema_version round-trip (Go json.Marshal parity)", () => {
+describe("exact int64 schema_version round-trip", () => {
   const runLoad = () =>
-    loadOrCreateTelemetryState().pipe(Effect.provide(BunServices.layer), withTempHome);
+    loadOrCreateTelemetryState().pipe(Effect.provide(platformLayer), withTempHome);
 
   // File contents are hand-built strings: `JSON.stringify(9007199254740993)`
   // would round inside the test itself, hiding exactly the bug under test.
@@ -752,7 +756,7 @@ describe("exact int64 schema_version round-trip (Go json.Marshal parity)", () =>
       ),
     );
 
-  it.effect("a valid schema_version above 2^53 is persisted verbatim, like Go's int64", () =>
+  it.effect("a valid schema_version above 2^53 is persisted verbatim", () =>
     Effect.gen(function* () {
       yield* writeTelemetryFile(yield* fileWith("9007199254740993"));
       yield* runLoad();
@@ -774,14 +778,14 @@ describe("exact int64 schema_version round-trip (Go json.Marshal parity)", () =>
   it.effect("setTelemetryEnabled's rewrite also preserves the exact token", () =>
     Effect.gen(function* () {
       yield* writeTelemetryFile(yield* fileWith("9007199254740993"));
-      yield* setTelemetryEnabled(true).pipe(Effect.provide(BunServices.layer), withTempHome);
+      yield* setTelemetryEnabled(true).pipe(Effect.provide(platformLayer), withTempHome);
       const written = yield* readTelemetryFile;
       expect(written).toContain('"enabled":true');
       expect(written).toContain('"schema_version":9007199254740993');
     }),
   );
 
-  it.effect("a zero schema_version still falls back to the current constant, like Go", () =>
+  it.effect("a zero schema_version still falls back to the current constant", () =>
     Effect.gen(function* () {
       yield* writeTelemetryFile(yield* fileWith("0"));
       const state = yield* runLoad();

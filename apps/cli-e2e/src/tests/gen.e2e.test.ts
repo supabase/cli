@@ -17,7 +17,7 @@ describe("gen", () => {
           Effect.gen(function* () {
             // #5212 — with CLAUDECODE=1, piped/redirected output must not include the
             // plugin hint (would break `gen types > file.ts` and similar captures).
-            const result = yield* run(["gen", "types", "--project-id", projectRef], {
+            const result = yield* run(["gen", "types", `--remote=${projectRef}`], {
               env: { CLAUDECODE: "1" },
             });
             expect(result.exitCode).toBe(0);
@@ -35,7 +35,7 @@ describe("gen", () => {
       ({ run, projectRef, signal }) =>
         runE2e(
           Effect.gen(function* () {
-            const result = yield* run(["gen", "types", "--debug", "--project-id", projectRef]);
+            const result = yield* run(["gen", "types", "--debug", `--remote=${projectRef}`]);
             expect(result.exitCode).toBe(0);
             expect(result.stderr).toMatch(/HTTP.*GET:/);
           }),
@@ -50,7 +50,7 @@ describe("gen", () => {
             status: 401,
             body: { message: "Invalid token" },
           });
-          const result = yield* run(["gen", "types", "--project-id", PROJECT_REF]);
+          const result = yield* run(["gen", "types", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Invalid token");
         }),
@@ -65,7 +65,7 @@ describe("gen", () => {
             status: 403,
             body: { message: "Forbidden" },
           });
-          const result = yield* run(["gen", "types", "--project-id", PROJECT_REF]);
+          const result = yield* run(["gen", "types", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Forbidden");
         }),
@@ -80,7 +80,7 @@ describe("gen", () => {
             status: 404,
             body: { message: "Project not found" },
           });
-          const result = yield* run(["gen", "types", "--project-id", PROJECT_REF]);
+          const result = yield* run(["gen", "types", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
           expect(result.stderr).toContain("Project not found");
         }),
@@ -88,14 +88,18 @@ describe("gen", () => {
       ),
     );
 
-    testBehaviour("exits non-zero with no data source specified", ({ runNoProjectId, signal }) =>
-      runE2e(
-        Effect.gen(function* () {
-          const result = yield* runNoProjectId(["gen", "types"]);
-          expect(result.exitCode).not.toBe(0);
-        }),
-        signal,
-      ),
+    testBehaviour(
+      "exits non-zero when the local stack is not running",
+      ({ runNoProjectId, signal }) =>
+        runE2e(
+          Effect.gen(function* () {
+            const result = yield* runNoProjectId(["gen", "types"]);
+            expect(result.exitCode).not.toBe(0);
+            expect(result.stderr).toContain("Target: local stack");
+            expect(result.stderr).toContain("supabase start is not running");
+          }),
+          signal,
+        ),
     );
   });
 

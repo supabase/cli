@@ -59,7 +59,7 @@ describe("project discovery and lazy env resolution", () => {
       }),
     ));
 
-  test("search: false only checks cwd itself, matching Go's exact-workdir resolution", () =>
+  test("search: false only checks cwd itself", () =>
     runConfigEffect(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -192,7 +192,7 @@ describe("project discovery and lazy env resolution", () => {
       }),
     ));
 
-  test("parses a multiline double-quoted .env value (godotenv/Go parity)", () =>
+  test("parses a multiline double-quoted .env value", () =>
     runConfigEffect(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -265,7 +265,7 @@ describe("project discovery and lazy env resolution", () => {
       }),
     ));
 
-  test("skipEnvLocal ignores .env.local entirely, matching Go's SUPABASE_ENV=test gate", () =>
+  test("skipEnvLocal ignores .env.local entirely", () =>
     runConfigEffect(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -451,7 +451,7 @@ jwt_secret = "env(PREVIEW_JWT_SECRET)"
       }),
     ));
 
-  test("resolveCliConfigValue preserves env() literal when the env var is missing (Go parity)", () =>
+  test("resolveCliConfigValue preserves env() literal when the env var is missing", () =>
     runConfigEffect(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -483,7 +483,7 @@ jwt_secret = "env(MISSING_SECRET)"
       }),
     ));
 
-  test("resolveCliConfigValue preserves env() literal when the env var is present but empty (Go parity)", () =>
+  test("resolveCliConfigValue preserves env() literal when the env var is present but empty", () =>
     runConfigEffect(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -610,7 +610,7 @@ jwt_secret = "env(lowercase_secret)"
       }),
     ));
 
-  test("resolveCliConfigValue resolves a lowercase-named env() reference when goViperCompat is true", () =>
+  test("resolveCliConfigValue resolves a lowercase-named env() reference when cliCompat is true", () =>
     runConfigEffect(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -639,7 +639,7 @@ jwt_secret = "env(lowercase_secret)"
           loaded!.config.auth.jwt_secret,
           projectEnv!,
           "auth.jwt_secret",
-          { goViperCompat: true },
+          { cliCompat: true },
         );
 
         expect(Redacted.isRedacted(resolved)).toBe(true);

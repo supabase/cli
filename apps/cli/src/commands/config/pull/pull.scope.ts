@@ -79,13 +79,13 @@ export interface ResolveConfigPullDestinationInput {
   readonly interpolatedRemotes: unknown;
   readonly projectRef: string;
   /**
-   * The branch name the target was resolved from, when `--project-ref` named one by name rather
+   * The branch name the target was resolved from, when `--remote` named one by name rather
    * than UUID; `undefined` for a ref-shaped, linked-fallback, or UUID branch target (a UUID is
    * never a good label).
    */
   readonly branchLabelCandidate: string | undefined;
   /**
-   * Whether `--project-ref` named a branch at all, by name or UUID — distinct from
+   * Whether `--remote` named a branch at all, by name or UUID — distinct from
    * `branchLabelCandidate`: a UUID branch target still creates a `[remotes.*]` block, falling
    * back to the resolved ref as its label.
    */
@@ -217,6 +217,6 @@ export function resolveConfigPullDestination(
     });
   }
 
-  // Otherwise: a ref-shaped --project-ref or linked-fallback target writes to the config root.
+  // Otherwise: a ref-shaped --remote or linked-fallback target writes to the config root.
   return { ok: true, destination: { kind: "root" } };
 }

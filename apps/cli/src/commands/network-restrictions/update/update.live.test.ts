@@ -60,6 +60,7 @@ function updateArgs(cidrs: AllowedCidrs, flags: ReadonlyArray<string>): string[]
   return [
     "network-restrictions",
     "update",
+    "--yes",
     ...[...cidrs.v4, ...cidrs.v6].flatMap((cidr) => ["--db-allow-cidr", cidr]),
     ...flags,
   ];

@@ -14,6 +14,7 @@ import {
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
 import { snippetsList } from "./list.handler.ts";
@@ -70,7 +71,7 @@ const EMPTY_RESPONSE: SnippetsResponse = {
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   response?: unknown;
   status?: number;
   network?: "fail";
@@ -95,7 +96,7 @@ function setup(opts: SetupOpts = {}) {
     cliSettings,
     telemetry: telemetry.layer,
     linkedProjectCache: cache.layer,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api, telemetry, cache };
 }
@@ -104,7 +105,7 @@ describe("snippets list integration", () => {
   it.effect("renders an ASCII table in text mode with all six columns", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* snippetsList({ projectRef: Option.none() });
+      yield* snippetsList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("ID");
       expect(out.stdoutText).toContain("NAME");
       expect(out.stdoutText).toContain("VISIBILITY");
@@ -117,23 +118,20 @@ describe("snippets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect(
-    "preserves literal `|` characters in snippet name and owner username (Go parity)",
-    () => {
-      const { layer, out } = setup({ response: PIPE_RESPONSE });
-      return Effect.gen(function* () {
-        yield* snippetsList({ projectRef: Option.none() });
-        expect(out.stdoutText).toContain("name|with|pipes");
-        expect(out.stdoutText).toContain("user|name");
-        expect(out.stdoutText).not.toContain("\\|");
-      }).pipe(Effect.provide(layer));
-    },
-  );
+  it.effect("preserves literal `|` characters in snippet name and owner username", () => {
+    const { layer, out } = setup({ response: PIPE_RESPONSE });
+    return Effect.gen(function* () {
+      yield* snippetsList({ remote: Option.none(), projectRef: Option.none() });
+      expect(out.stdoutText).toContain("name|with|pipes");
+      expect(out.stdoutText).toContain("user|name");
+      expect(out.stdoutText).not.toContain("\\|");
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("formats RFC3339 timestamps as UTC YYYY-MM-DD HH:MM:SS", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* snippetsList({ projectRef: Option.none() });
+      yield* snippetsList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("2023-10-13 17:48:58");
     }).pipe(Effect.provide(layer));
   });
@@ -141,7 +139,7 @@ describe("snippets list integration", () => {
   it.effect("leaves a non-RFC3339 inserted_at string untouched", () => {
     const { layer, out } = setup({ response: RAW_TIMESTAMP_RESPONSE });
     return Effect.gen(function* () {
-      yield* snippetsList({ projectRef: Option.none() });
+      yield* snippetsList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("not-an-rfc3339");
       // The valid updated_at is still formatted.
       expect(out.stdoutText).toContain("2023-10-13 17:48:58");
@@ -151,7 +149,7 @@ describe("snippets list integration", () => {
   it.effect("emits a success event with the full response under --output-format=json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
-      yield* snippetsList({ projectRef: Option.none() });
+      yield* snippetsList({ remote: Option.none(), projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       expect(success?.data).toEqual(SINGLE_RESPONSE);
@@ -179,7 +177,7 @@ describe("snippets list integration", () => {
     };
     const { layer, out } = setup({ format: "json", response: body });
     return Effect.gen(function* () {
-      yield* snippetsList({ projectRef: Option.none() });
+      yield* snippetsList({ remote: Option.none(), projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(toJson(success?.data)).toBe(toJson(body));
     }).pipe(Effect.provide(layer));
@@ -188,7 +186,7 @@ describe("snippets list integration", () => {
   it.effect("keeps an empty data array empty under json", () => {
     const { layer, out } = setup({ format: "json", response: EMPTY_RESPONSE });
     return Effect.gen(function* () {
-      yield* snippetsList({ projectRef: Option.none() });
+      yield* snippetsList({ remote: Option.none(), projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(toJson(success?.data)).toBe('{"data":[]}');
     }).pipe(Effect.provide(layer));
@@ -201,7 +199,7 @@ describe("snippets list integration", () => {
         response: { data: [{ ...SNIPPET_BASE, owner: null, updated_by: null }] },
       });
       return Effect.gen(function* () {
-        yield* snippetsList({ projectRef: Option.none() });
+        yield* snippetsList({ remote: Option.none(), projectRef: Option.none() });
         const row = out.stdoutText.split("\n").find((line) => line.includes(SNIPPET_ID));
         const cells = row?.split("|").map((cell) => cell.trim());
         expect(cells?.[1]).toBe("Create table");
@@ -215,7 +213,7 @@ describe("snippets list integration", () => {
       response: { data: [{ ...SNIPPET_BASE, visibility: "team" }] },
     });
     return Effect.gen(function* () {
-      yield* snippetsList({ projectRef: Option.none() });
+      yield* snippetsList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("team");
     }).pipe(Effect.provide(layer));
   });
@@ -223,7 +221,9 @@ describe("snippets list integration", () => {
   it.effect("fails with a decode network error when the body does not match the contract", () => {
     const { layer } = setup({ response: { data: [{ id: SNIPPET_ID }] } });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(snippetsList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        snippetsList({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toMatchObject({
@@ -237,15 +237,15 @@ describe("snippets list integration", () => {
   it.effect("emits a result event under --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
-      yield* snippetsList({ projectRef: Option.none() });
+      yield* snippetsList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.messages.some((m) => m.type === "success")).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("Go --output=json emits alphabetically-keyed JSON, preserving empty arrays", () => {
-    const { layer, out } = setup({ goOutput: "json", response: EMPTY_RESPONSE });
+  it.effect("--output=json emits alphabetically-keyed JSON, preserving empty arrays", () => {
+    const { layer, out } = setup({ outputFlag: "json", response: EMPTY_RESPONSE });
     return Effect.gen(function* () {
-      yield* snippetsList({ projectRef: Option.none() });
+      yield* snippetsList({ remote: Option.none(), projectRef: Option.none() });
       // Raw-HTTP bypass echoes whatever the API sent — no `nullForEmptyArrays`
       // coercion (real responses always send `[]`, never null).
       expect(out.stdoutText).toBe(`{
@@ -255,47 +255,51 @@ describe("snippets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("Go --output=yaml emits a `data:` block", () => {
-    const { layer, out } = setup({ goOutput: "yaml" });
+  it.effect("--output=yaml emits a `data:` block", () => {
+    const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
-      yield* snippetsList({ projectRef: Option.none() });
+      yield* snippetsList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("data:");
       expect(out.stdoutText).toContain(SNIPPET_ID);
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("Go --output=toml fails like Go when a snippet carries a description", () => {
+  it.effect("--output=toml fails when a snippet carries a description", () => {
     // The nullable `description` field can't be represented in TOML, so this
     // fails whenever any snippet has a `description` key (present-with-value
     // or explicit null).
-    const { layer } = setup({ goOutput: "toml" });
+    const { layer } = setup({ outputFlag: "toml" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(snippetsList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        snippetsList({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
         expect(causeText).toContain("SnippetsTomlEncodeError");
         expect(causeText).toContain(
-          "failed to output toml: toml: cannot encode a map with non-string key type",
+          "failed to output toml: cannot encode a map with non-string keys",
         );
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("Go --output=toml encodes an empty snippet list", () => {
-    const { layer, out } = setup({ goOutput: "toml", response: EMPTY_RESPONSE });
+  it.effect("--output=toml encodes an empty snippet list", () => {
+    const { layer, out } = setup({ outputFlag: "toml", response: EMPTY_RESPONSE });
     return Effect.gen(function* () {
-      yield* snippetsList({ projectRef: Option.none() });
+      yield* snippetsList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toBe("Data = []\n");
     }).pipe(Effect.provide(layer));
   });
 
   it.effect(
-    "Go --output=env fails with SnippetsEnvNotSupportedError, flushes telemetry+cache, and does not call the API",
+    "--output=env fails with SnippetsEnvNotSupportedError, flushes telemetry+cache, and does not call the API",
     () => {
-      const { layer, api, telemetry, cache } = setup({ goOutput: "env" });
+      const { layer, api, telemetry, cache } = setup({ outputFlag: "env" });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(snippetsList({ projectRef: Option.none() }));
+        const exit = yield* Effect.exit(
+          snippetsList({ remote: Option.none(), projectRef: Option.none() }),
+        );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const causeText = Cause.pretty(exit.cause);
@@ -309,19 +313,19 @@ describe("snippets list integration", () => {
     },
   );
 
-  it.effect("Go --output=pretty falls through to the text renderer", () => {
-    const { layer, out } = setup({ goOutput: "pretty" });
+  it.effect("--output=pretty falls through to the text renderer", () => {
+    const { layer, out } = setup({ outputFlag: "pretty" });
     return Effect.gen(function* () {
-      yield* snippetsList({ projectRef: Option.none() });
+      yield* snippetsList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("VISIBILITY");
       expect(out.stdoutText).toContain(SNIPPET_ID);
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("Go --output wins over --output-format when both are set", () => {
-    const { layer, out } = setup({ format: "json", goOutput: "yaml" });
+  it.effect("--output wins over --output-format when both are set", () => {
+    const { layer, out } = setup({ format: "json", outputFlag: "yaml" });
     return Effect.gen(function* () {
-      yield* snippetsList({ projectRef: Option.none() });
+      yield* snippetsList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("data:");
       expect(out.stdoutText.startsWith("{")).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -330,22 +334,25 @@ describe("snippets list integration", () => {
   it.effect("passes the resolved project_ref as a `project_ref` query parameter", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* snippetsList({ projectRef: Option.none() });
+      yield* snippetsList({ remote: Option.none(), projectRef: Option.none() });
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.urlWithParams).toContain(`/v1/snippets?project_ref=${VALID_REF}`);
       assertPermissionDrift({ command: "snippets list", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("uses --project-ref flag value over the resolver's linked-project default", () => {
+  it.effect("uses the --remote=<ref> value over the resolver's linked-project default", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* snippetsList({ projectRef: Option.some(flagRef) });
+      yield* snippetsList({
+        remote: Option.some({ _tag: "Ref", ref: flagRef }),
+        projectRef: Option.none(),
+      });
       expect(api.requests[0]?.urlWithParams).toContain(`project_ref=${flagRef}`);
       assertPermissionDrift({
         command: "snippets list",
-        activeFlags: { "project-ref": true },
+        activeFlags: { remote: flagRef },
         requests: api.requests,
         exact: true,
       });
@@ -387,7 +394,7 @@ describe("snippets list integration", () => {
       const fs = yield* FileSystem.FileSystem;
       const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
       expect(yield* fs.exists(cachePath)).toBe(false);
-      yield* snippetsList({ projectRef: Option.none() });
+      yield* snippetsList({ remote: Option.none(), projectRef: Option.none() });
       expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
         ref: VALID_REF,
       });
@@ -402,7 +409,9 @@ describe("snippets list integration", () => {
   it.effect("fails with SnippetsListUnexpectedStatusError on HTTP 503", () => {
     const { layer } = setup({ status: 503 });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(snippetsList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        snippetsList({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
@@ -415,7 +424,9 @@ describe("snippets list integration", () => {
   it.effect("fails with SnippetsListNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(snippetsList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        snippetsList({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
@@ -428,7 +439,7 @@ describe("snippets list integration", () => {
   it.effect("flushes telemetry and writes linked-project cache on success", () => {
     const { layer, telemetry, cache } = setup();
     return Effect.gen(function* () {
-      yield* snippetsList({ projectRef: Option.none() });
+      yield* snippetsList({ remote: Option.none(), projectRef: Option.none() });
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -437,7 +448,7 @@ describe("snippets list integration", () => {
   it.effect("flushes telemetry and writes linked-project cache even on API failure", () => {
     const { layer, telemetry, cache } = setup({ status: 500 });
     return Effect.gen(function* () {
-      yield* Effect.exit(snippetsList({ projectRef: Option.none() }));
+      yield* Effect.exit(snippetsList({ remote: Option.none(), projectRef: Option.none() }));
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -446,8 +457,15 @@ describe("snippets list integration", () => {
   it.effect("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
     const { layer, out } = setup({ format: "json", status: 503 });
     return Effect.gen(function* () {
-      yield* snippetsList({ projectRef: Option.none() }).pipe(withJsonErrorHandling);
+      yield* snippetsList({ remote: Option.none(), projectRef: Option.none() }).pipe(
+        withJsonErrorHandling,
+      );
       expect(out.messages.some((m) => m.type === "fail")).toBe(true);
     }).pipe(Effect.provide(layer));
+  });
+
+  describeHostedTargetSelection("snippets list", {
+    respond: (request) => Effect.succeed(jsonResponse(request, 200, SINGLE_RESPONSE)),
+    run: (flags) => snippetsList(flags),
   });
 });
