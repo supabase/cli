@@ -43,7 +43,7 @@ formatting without disabling safe compaction.
 
 | What                                                                                                                                                                                                                                                                              | When                                    |
 | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
-| `docker`/`podman` container recreate for the local `db` (+ satellite restarts, Kong reload) — the same primitives `db start`/`db reset` use, via `resetLocalDatabase`                                                                                                             | a local target with `--reset`           |
+| `docker`/`podman` container recreate for the local `db` (+ satellite stop/restart, Kong reload) — the same primitives `db start`/`db reset` use, via `resetLocalDatabase`                                                                                                         | a local target with `--reset`           |
 | Local database auto-start via `startLocalDatabase` — absent `db` container: started; present but not running: removed with `docker container rm -f` (data volume kept) and started, as `db start` does; in Bitbucket Pipelines it fails with a `supabase stop` suggestion instead | the local `db` container is not running |
 
 ## Environment Variables
