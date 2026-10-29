@@ -10464,6 +10464,18 @@ components:
           maximum: 9007199254740991
           description: If `null`, the value is automatically configured to 10.
           nullable: true
+        db_pool_max_lifetime:
+          type: integer
+          minimum: 0
+          maximum: 3600
+          description: If `null`, the value is automatically configured to 1800.
+          nullable: true
+        db_pool_max_idletime:
+          type: integer
+          minimum: 0
+          maximum: 60
+          description: If `null`, the value is automatically configured to 30.
+          nullable: true
         jwt_secret:
           type: string
       required:
@@ -10472,6 +10484,8 @@ components:
         - db_extra_search_path
         - db_pool
         - db_pool_acquisition_timeout
+        - db_pool_max_lifetime
+        - db_pool_max_idletime
     V1UpdatePostgrestConfigBody:
       type: object
       properties:
@@ -10488,6 +10502,14 @@ components:
           minimum: 0
           maximum: 1000
         db_pool_acquisition_timeout:
+          type: integer
+          minimum: 0
+          maximum: 60
+        db_pool_max_lifetime:
+          type: integer
+          minimum: 0
+          maximum: 3600
+        db_pool_max_idletime:
           type: integer
           minimum: 0
           maximum: 60
@@ -10520,12 +10542,26 @@ components:
           maximum: 9007199254740991
           description: If `null`, the value is automatically configured to 10.
           nullable: true
+        db_pool_max_lifetime:
+          type: integer
+          minimum: 0
+          maximum: 3600
+          description: If `null`, the value is automatically configured to 1800.
+          nullable: true
+        db_pool_max_idletime:
+          type: integer
+          minimum: 0
+          maximum: 60
+          description: If `null`, the value is automatically configured to 30.
+          nullable: true
       required:
         - db_schema
         - max_rows
         - db_extra_search_path
         - db_pool
         - db_pool_acquisition_timeout
+        - db_pool_max_lifetime
+        - db_pool_max_idletime
     V1ProjectRefResponse_Output:
       type: object
       properties:
