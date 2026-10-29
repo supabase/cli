@@ -78,6 +78,7 @@ test("applies a test-written migration to the remote database", ({
           "db",
           "query",
           `drop table if exists e2e_up_${version}`,
+          "--yes",
           `--remote=${project.dbUrl}`,
         ]);
         requireLiveSuccess(dropped, "db query cleanup after migration up");

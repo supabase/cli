@@ -46,7 +46,7 @@ test(
             "create table if not exists public.cli_live_roundtrip (id int);\n",
           );
           const repairResult = yield* cliEffect(
-            ["migration", "repair", version, "--status", "applied", ...targetArgs],
+            ["migration", "repair", version, "--status", "applied", "--yes", ...targetArgs],
             { cwd: seedDir },
           );
           requireLiveSuccess(repairResult, "migration repair setup");
@@ -65,7 +65,7 @@ test(
 
         const revert = Effect.gen(function* () {
           const reverted = yield* cliEffect(
-            ["migration", "repair", version, "--status", "reverted", ...targetArgs],
+            ["migration", "repair", version, "--status", "reverted", "--yes", ...targetArgs],
             { cwd: seedDir },
           );
           if (

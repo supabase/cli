@@ -29,6 +29,7 @@ test("pulls the remote schema into an initial migration", ({
           "db",
           "query",
           `create table if not exists ${marker} (id int)`,
+          "--yes",
           `--remote=${project.dbUrl}`,
         ]);
         requireLiveSuccess(seeded, "db query setup for db pull");

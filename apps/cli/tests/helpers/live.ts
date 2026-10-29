@@ -286,6 +286,7 @@ export function removePostgresConfigLiveOverride(
         cli([
           "postgres-config",
           "delete",
+          "--yes",
           "--config",
           key,
           ...experimentalProjectLiveFlags(project),
