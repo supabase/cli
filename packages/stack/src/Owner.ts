@@ -579,24 +579,22 @@ const makeOwner = Effect.fn("Owner.make")(function* (
         Effect.flatMap((next) => mergeInputs(next, inputs)),
         Effect.flatMap(requireInputs),
       );
+    const backendFor = (name: string): NetworkEndpoint["backend"] =>
+      orchestrator.acquire(id, name !== "inspector", `traffic on endpoint ${name}`).pipe(
+        Effect.andThen(recipe.endpoint(name)),
+        Effect.map(backendAddress),
+        Effect.mapError((cause) =>
+          cause instanceof ProxyError ? cause : new ProxyError({ message: cause.message, cause }),
+        ),
+      );
     const endpoints = Object.fromEntries(
       endpointNames(initial).map((name) => {
-        const shared = sharedRoutes(initial, name, routeKeys);
+        const shared = sharedRoutes(initial, name, routeKeys, backendFor);
         const join = joinRoutes(initial, name);
         const endpoint: NetworkEndpoint = {
           protocol: name === "http" ? "http" : "tcp",
           port: endpointPort(initial, name),
-          backend: orchestrator
-            .acquire(id, name !== "inspector", `traffic on endpoint ${name}`)
-            .pipe(
-              Effect.andThen(recipe.endpoint(name)),
-              Effect.map(backendAddress),
-              Effect.mapError((cause) =>
-                cause instanceof ProxyError
-                  ? cause
-                  : new ProxyError({ message: cause.message, cause }),
-              ),
-            ),
+          backend: backendFor(name),
           enabled,
           ...(freshWrites(initial, name) ? { freshWrites: true } : {}),
           ...(shared === undefined ? {} : { shared }),

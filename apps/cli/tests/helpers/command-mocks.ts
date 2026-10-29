@@ -56,10 +56,8 @@ import {
   LoginVerificationError,
 } from "../../src/commands/login/login.errors.ts";
 import { CommandSettings } from "../../src/config/command-settings.service.ts";
-import {
-  PGDATA_BASELINE_MARKER_NAME,
-  PGDATA_PATH,
-} from "../../src/command-internal/db-bootstrap/pgdata-snapshot.ts";
+import { PGDATA_BASELINE_MARKER_NAME } from "../../src/command-internal/db-bootstrap/pgdata-snapshot.ts";
+import { POSTGRES_DATA_DIR } from "../../src/command-internal/db-bootstrap/postgres.service.ts";
 import { remoteTargetLayer } from "../../src/config/remote-target.layer.ts";
 import { LocalDockerEngine } from "../../src/command-internal/db-bootstrap/local-db-running.ts";
 import { LinkedProjectCache } from "../../src/telemetry/linked-project-cache.service.ts";
@@ -106,7 +104,7 @@ export const mockLinkedProjectCacheLayer = Layer.succeed(LinkedProjectCache, {
  * socket. Direct-path tests provide their own definitive `LocalDockerEngine`.
  */
 export const mockLocalDockerEngineUnavailableLayer = Layer.succeed(LocalDockerEngine, {
-  containerExists: () => Effect.succeed(Option.none()),
+  inspectContainer: () => Effect.succeed(Option.none()),
 });
 
 export const mockTelemetryStateLayer = Layer.succeed(TelemetryState, {
@@ -1308,7 +1306,7 @@ export function mockDockerDaemonCliSpawner(
         const container = containers.get(id);
         const received = yield* readStdin(command);
         const isSecret = containerPath === "" || containerPath === "/";
-        const isStamp = containerPath === PGDATA_PATH;
+        const isStamp = containerPath === POSTGRES_DATA_DIR;
         const failed =
           (isStamp && opts.failStamp === true) ||
           (!isSecret && !isStamp && opts.failCopyIn === true);
@@ -1381,7 +1379,7 @@ export function mockDockerDaemonCliSpawner(
         const dest = args[2] ?? "";
         const containerPath = dest.slice(dest.indexOf(":") + 1);
         if (containerPath === "" || containerPath === "/") return "cp-secret";
-        return containerPath === PGDATA_PATH ? "cp-stamp" : "cp-in";
+        return containerPath === POSTGRES_DATA_DIR ? "cp-stamp" : "cp-in";
       }
       if (args[2] === "-") return "cp-out";
       return "cp-secret";

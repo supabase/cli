@@ -1,8 +1,9 @@
 /**
  * The single bring-up sequence for the local Postgres container, shared by `supabase start` and
- * `db start`: volume probe, image resolve and network ensure, create and start, health wait
- * (swallowed only for `fromBackup`), fresh-volume setup (skipped for `fromBackup`), then
- * `initCurrentBranch`. `--ignore-health-check` and rollback are the caller's concern.
+ * `db start`: volume probe, image resolve and network ensure, create (probing a reused volume's
+ * data directory before start) and start, health wait (swallowed only for `fromBackup`), setup
+ * when the volume is new or its data directory was never initialised (skipped for `fromBackup`),
+ * then `initCurrentBranch`. `--ignore-health-check` and rollback are the caller's concern.
  *
  * `resolvePostgresImage` and `setup.jwks` are caller-supplied `Effect`s because `db start`
  * resolves them lazily while `supabase start` threads values it already resolved.
@@ -27,6 +28,7 @@ import type { DockerRun } from "../docker-run.service.ts";
 import {
   ensureNetwork,
   createContainer,
+  postgresDataInitialized,
   volumeExists,
   COMPOSE_PROJECT_LABEL,
   type ContainerCreateError,
@@ -72,6 +74,13 @@ class StartBackupVolumeExistsError extends Data.TaggedError("StartBackupVolumeEx
   }
 }
 
+/** The refusal for `--from-backup` against an existing data volume. */
+export const backupVolumeExistsError = () =>
+  new StartBackupVolumeExistsError({
+    message: "backup volume already exists",
+    suggestion: `Run ${aqua("supabase stop --no-backup")} to remove existing docker volumes.`,
+  });
+
 /** Every failure {@link startDatabase} itself can produce, independent of the caller's own `E`. */
 export type StartDatabaseError =
   | NetworkCreateError
@@ -109,9 +118,10 @@ export interface StartDatabaseInput<E> {
   readonly webhooksEnabled: boolean;
   readonly setup: FreshDbSetupInput<E>;
   /**
-   * Reports whether the volume was freshly created, for the caller's own rollback logic. Fired
-   * once after the pre-create refuse guards pass, so rollback never treats a leftover sibling
-   * volume as this run's fresh data.
+   * Reports whether the volume holds no initialised data, for the caller's own rollback logic.
+   * Fires `false` for an existing volume once the pre-create refuse guards pass, so rollback never
+   * treats a leftover sibling volume as this run's fresh data, then `true` if the container's data
+   * directory turns out to be uninitialised.
    */
   readonly onFreshVolumeResolved: (isFreshVolume: boolean) => void;
 }
@@ -141,32 +151,29 @@ export const startDatabase = <E>(
     // `docker network create` are idempotent, so creating either first would make "did this
     // volume already exist" unobservable and could leave a network behind for a request the
     // guard below is about to reject.
-    const isFreshVolume = !(yield* volumeExists(spawner, input.dbContainerId));
+    const volumeExisted = yield* volumeExists(spawner, input.dbContainerId);
     const fromBackup = input.postgresSpec.fromBackup;
     yield* Effect.annotateCurrentSpan({
-      "db.fresh_volume": isFreshVolume,
+      "db.volume_existed": volumeExisted,
       "db.from_backup": fromBackup !== undefined,
     });
 
-    if (!isFreshVolume && fromBackup !== undefined) {
+    if (volumeExisted && fromBackup !== undefined) {
       // Refused before any container or network is created, and before freshness is published,
       // so rollback cannot prune it.
-      return yield* new StartBackupVolumeExistsError({
-        message: "backup volume already exists",
-        suggestion: `Run ${aqua("supabase stop --no-backup")} to remove existing docker volumes.`,
-      });
+      return yield* backupVolumeExistsError();
     }
 
     // Print this before image resolve so a flag-off cold/failed pull still
     // follows the established progress order.
     yield* output.raw(
-      isFreshVolume ? START_STARTING_DATABASE_MESSAGE : START_STARTING_DATABASE_FROM_BACKUP_MESSAGE,
+      volumeExisted ? START_STARTING_DATABASE_FROM_BACKUP_MESSAGE : START_STARTING_DATABASE_MESSAGE,
       "stderr",
     );
 
     const resolvedPostgresImage = yield* input.resolvePostgresImage;
 
-    input.onFreshVolumeResolved(isFreshVolume);
+    input.onFreshVolumeResolved(!volumeExisted);
 
     // Runs once per `start` run rather than once per container — see `ensureNetwork`'s own doc
     // comment — but kept after the volume probe/guard above, never before it.
@@ -179,7 +186,25 @@ export const startDatabase = <E>(
       ...input.postgresSpec,
       image: resolvedPostgresImage,
     });
-    yield* createContainer(spawner, postgresSpec, input.containerOpts);
+    // A reused volume with no `PG_VERSION` was never initialised, so it still needs the
+    // fresh-volume setup. Published before `docker start` so a failed start rolls the volume back.
+    let dataInitialized = true;
+    yield* createContainer(
+      spawner,
+      postgresSpec,
+      input.containerOpts,
+      volumeExisted
+        ? (containerId) =>
+            postgresDataInitialized(spawner, containerId).pipe(
+              Effect.map((initialized) => {
+                dataInitialized = initialized;
+                if (!initialized) input.onFreshVolumeResolved(true);
+              }),
+            )
+        : undefined,
+    );
+    const isFreshVolume = !volumeExisted || !dataInitialized;
+    yield* Effect.annotateCurrentSpan({ "db.fresh_volume": isFreshVolume });
 
     // A host connect, not Docker's HEALTHCHECK: that needs `docker exec`, which nested or
     // sandboxed Docker cannot do.

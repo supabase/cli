@@ -1,6 +1,6 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://supabase.com/docs/cli/project-config.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://supabase.com/schemas/project-config/v1.json",
   "title": "Supabase hosted project config (ProjectConfig)",
   "description": "The sparse, hosted-project subset of CliConfig that a Supabase project manages.",
   "type": "object",
@@ -15,19 +15,19 @@
         },
         "schemas": {
           "type": "array",
+          "default": ["public", "graphql_public"],
           "items": {
             "type": "string",
             "description": "Schemas to expose in your API. Tables, views and stored procedures in this schema will get API endpoints."
-          },
-          "default": ["public", "graphql_public"]
+          }
         },
         "extra_search_path": {
           "type": "array",
+          "default": ["public", "extensions"],
           "items": {
             "type": "string",
             "description": "Extra schemas to add to the search_path of every request."
-          },
-          "default": ["public", "extensions"]
+          }
         },
         "max_rows": {
           "type": "number",
@@ -56,12 +56,12 @@
         },
         "additional_redirect_urls": {
           "type": "array",
+          "description": "A list of exact URLs that auth providers are permitted to redirect to post authentication.",
+          "default": ["https://127.0.0.1:3000"],
           "items": {
             "type": "string",
             "description": "A URL that auth providers are permitted to redirect to."
-          },
-          "description": "A list of exact URLs that auth providers are permitted to redirect to post authentication.",
-          "default": ["https://127.0.0.1:3000"]
+          }
         },
         "jwt_expiry": {
           "type": "number",
@@ -1599,19 +1599,19 @@
             },
             "allowed_cidrs": {
               "type": "array",
+              "description": "Allowed IPv4 CIDR blocks.",
+              "default": ["0.0.0.0/0"],
               "items": {
                 "type": "string"
-              },
-              "description": "Allowed IPv4 CIDR blocks.",
-              "default": ["0.0.0.0/0"]
+              }
             },
             "allowed_cidrs_v6": {
               "type": "array",
+              "description": "Allowed IPv6 CIDR blocks.",
+              "default": ["::/0"],
               "items": {
                 "type": "string"
-              },
-              "description": "Allowed IPv6 CIDR blocks.",
-              "default": ["::/0"]
+              }
             }
           },
           "additionalProperties": true
@@ -1673,12 +1673,12 @@
               },
               "allowed_mime_types": {
                 "type": "array",
+                "description": "The list of allowed MIME types for the bucket.",
+                "default": [],
                 "items": {
                   "type": "string",
                   "description": "A MIME type allowed for the bucket."
-                },
-                "description": "The list of allowed MIME types for the bucket.",
-                "default": []
+                }
               },
               "objects_path": {
                 "type": "string",
@@ -1815,11 +1815,11 @@
             },
             "exclude": {
               "type": "array",
+              "description": "Patterns for paths to leave out of the uploaded build context, read the way\n`.gitignore` reads them: a pattern without `/` matches that name at any depth,\none with `/` is anchored at the compute's source directory, a trailing `/`\nmatches directories only, and `**` spans directories. Excluding a directory\nexcludes everything under it; re-inclusion (`!`) is not supported. Only the\npatterns recorded here are excluded, so a compute with no list uploads its source\ndirectory whole.",
+              "examples": [["node_modules", ".env"]],
               "items": {
                 "type": "string"
-              },
-              "description": "Patterns for paths to leave out of the uploaded build context, read the way\n`.gitignore` reads them: a pattern without `/` matches that name at any depth,\none with `/` is anchored at the compute's source directory, a trailing `/`\nmatches directories only, and `**` spans directories. Excluding a directory\nexcludes everything under it; re-inclusion (`!`) is not supported. Only the\npatterns recorded here are excluded, so a compute with no list uploads its source\ndirectory whole.",
-              "examples": [["node_modules", ".env"]]
+              }
             }
           },
           "additionalProperties": true
