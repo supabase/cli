@@ -33,6 +33,7 @@ captures `cli_login_completed`.
 | ---------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------- |
 | `SUPABASE_ACCESS_TOKEN`                        | non-interactive token source                           | no (falls back to `--token` → piped stdin → browser flow) |
 | `SUPABASE_NO_KEYRING`                          | disables the OS keyring, forcing the file fallback     | no                                                        |
+| `SUPABASE_API_MAX_RETRIES`                     | Management API profile lookup retries (`0` = none)     | no (falls back to 5)                                      |
 | `CLAUDECODE` / `CLAUDE_CODE`                   | enables the Claude Code plugin hint (TTY stdout only)  | no                                                        |
 | `DO_NOT_TRACK` / `SUPABASE_TELEMETRY_DISABLED` | suppress analytics delivery (state file still written) | no                                                        |
 
