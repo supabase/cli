@@ -54,6 +54,8 @@ export interface DbTomlValues {
    */
   readonly envLookup: (name: EnvOverrideName) => string | undefined;
   readonly apiSchemas: ReadonlyArray<string>;
+  /** Schemas the Data API serves; empty when `[api].enabled` is false. */
+  readonly exposedSchemas: ReadonlyArray<string>;
   /** `[db] port`, default 54322 (`packages/config/src/db.ts`). */
   readonly port: number;
   /** `[db] shadow_port`, default 54320. */
@@ -1066,6 +1068,7 @@ const ENV_OVERRIDE_NAMES = [
   "SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS",
   "SUPABASE_API_AUTO_EXPOSE_NEW_TABLES",
   "SUPABASE_API_SCHEMAS",
+  "SUPABASE_API_ENABLED",
   "SUPABASE_EXPERIMENTAL_PG_DELTA",
 ] as const;
 
@@ -2187,10 +2190,22 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     });
   }
 
+  const apiEnabled = yield* resolveBoolOrFail(
+    "api.enabled",
+    apiRaw?.["enabled"],
+    true,
+    lookup,
+    remoteWins("api.enabled") ? undefined : envOverride("SUPABASE_API_ENABLED"),
+  );
+  const exposedSchemas = apiEnabled
+    ? [...new Set(apiSchemas.map((schema) => schema.trim()).filter((schema) => schema.length > 0))]
+    : [];
+
   const values: DbTomlValues = {
     projectEnv,
     envLookup: envOverride,
     apiSchemas,
+    exposedSchemas,
     port,
     shadowPort,
     password: passwordRaw !== undefined ? expandEnv(passwordRaw, lookup) : DEFAULT_PASSWORD,
