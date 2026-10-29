@@ -1,5 +1,6 @@
 dist/
 dist-node/
+dist-perry/
 coverage/
 supabase/
 !docs/supabase/

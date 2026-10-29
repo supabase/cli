@@ -28,6 +28,7 @@
     "build:go-sidecar": "mkdir -p dist && cp ../cli-go/supabase-go dist/supabase-go",
     "build:binary": "bun scripts/build-binary.ts",
     "build:node": "mkdir -p dist-node && cp ../cli-go/supabase-go dist-node/supabase-go && bun scripts/build-node.ts",
+    "build:perry": "mkdir -p dist-perry && cp ../cli-go/supabase-go dist-perry/supabase-go && bun scripts/build-perry.ts",
     "build:shim": "bun build src/shared/cli/bin.ts --outfile dist/supabase.js --target node",
     "docs:spec": "bun scripts/generate-docs-spec.ts",
     "dev": "bun src/main.ts",
