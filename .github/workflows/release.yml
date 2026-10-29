@@ -378,12 +378,12 @@ jobs:
       SLACK_RELEASE_WEBHOOK: ${{ secrets.SLACK_RELEASE_WEBHOOK }}
 
   # Pages when the release shipped but the supabase.com publish did not. The docs job's
-  # continue-on-error hides its own failures, so its report step exports `failed`; the job result
-  # covers a job that dies before reporting.
+  # continue-on-error hides its own failures, so its report step exports `failed`; a job that ran
+  # without exporting `failed=false` (timeout, crash before the report step) counts as failed.
   notify-slack-publish-failure:
     name: Notify Slack (publish failure)
     needs: [plan, docs]
-    if: ${{ !cancelled() && needs.plan.outputs.dry_run != 'true' && (needs.docs.outputs.failed == 'true' || needs.docs.result == 'failure') }}
+    if: ${{ !cancelled() && needs.plan.outputs.dry_run != 'true' && needs.docs.result != 'skipped' && needs.docs.outputs.failed != 'false' }}
     uses: ./.github/workflows/slack-notify.yml
     with:
       package: Supabase CLI

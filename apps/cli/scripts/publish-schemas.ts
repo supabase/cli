@@ -5,15 +5,17 @@
  *
  *   bun scripts/publish-schemas.ts --version <version>
  *
- * Lower versions of a schema are frozen: only the highest `v<N>.json` per schema is written, and
- * the run refuses when the target already serves a higher one. A relative `--schemas-dir` resolves
- * against the repository root. A release that changes no schema opens or updates nothing.
+ * Lower versions of a schema are frozen: only the highest `v<N>.json` per schema is written. The
+ * run refuses when the base branch already serves a higher version, or when the publishing branch
+ * changes anything other than the current versions. A relative `--schemas-dir` resolves against the
+ * repository root. A release that changes no schema opens or updates nothing.
  */
 import { BunFileSystem, BunPath } from "@effect/platform-bun";
+import { $ } from "bun";
 import { Console, Data, Effect, FileSystem, JsonSchema, Layer, Path, Schema } from "effect";
 import process from "node:process";
 import { parseArgs } from "node:util";
-import { publishPullRequest } from "./publish-pull-request.ts";
+import { publishPullRequest, shell } from "./publish-pull-request.ts";
 
 const PUBLISHED_PATH = "apps/www/public/schemas";
 const VERSION_FILE = /^v([1-9]\d*)\.json$/;
@@ -98,6 +100,8 @@ const validateCurrentSchema = ({ name, version, file }: CurrentSchema) =>
 
 const writeCurrentSchemas = (
   repo: string,
+  base: string,
+  branch: string,
   schemas: ReadonlyArray<CurrentSchema>,
   checkoutDir: string,
 ) =>
@@ -105,9 +109,21 @@ const writeCurrentSchemas = (
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const published = (name: string) => path.join(checkoutDir, PUBLISHED_PATH, name);
+    const prefix = `${PUBLISHED_PATH}/`;
 
+    const listing = yield* shell(() =>
+      $`git -C ${checkoutDir} -c core.quotePath=false ls-tree -r --name-only origin/${base} -- ${PUBLISHED_PATH}`.text(),
+    );
+    const servedPaths = listing
+      .split("\n")
+      .filter((line) => line.startsWith(prefix))
+      .map((line) => line.slice(prefix.length));
     for (const { name, version } of schemas) {
-      const served = versionsIn(yield* listDirectory(published(name)));
+      const served = versionsIn(
+        servedPaths
+          .filter((file) => file.startsWith(`${name}/`))
+          .map((file) => file.slice(name.length + 1)),
+      );
       const newest = Math.max(version, ...served);
       if (newest > version) {
         return yield* new PublishRefused({
@@ -118,6 +134,24 @@ const writeCurrentSchemas = (
     for (const { name, version, file } of schemas) {
       yield* fs.makeDirectory(published(name), { recursive: true });
       yield* fs.copyFile(file, path.join(published(name), `v${version}.json`));
+    }
+
+    yield* shell(() => $`git -C ${checkoutDir} add -- ${PUBLISHED_PATH}`);
+    const changed = yield* shell(() =>
+      $`git -C ${checkoutDir} -c core.quotePath=false diff --cached --name-only --no-renames origin/${base} -- ${PUBLISHED_PATH}`.text(),
+    );
+    const current = new Set(
+      schemas.map(({ name, version }) => `${prefix}${name}/v${version}.json`),
+    );
+    const unexpected = changed
+      .split("\n")
+      .filter((line) => line !== "" && !current.has(line))
+      .map((line) => line.slice(prefix.length))
+      .sort();
+    if (unexpected.length > 0) {
+      return yield* new PublishRefused({
+        reason: `${branch} also changes ${unexpected.join(", ")} against ${base}, and only the current schema versions may change. Delete ${branch} in ${repo} and rerun the publish.`,
+      });
     }
   });
 
@@ -152,7 +186,7 @@ const main = Effect.gen(function* () {
     base,
     branch,
     stagedPath: PUBLISHED_PATH,
-    write: (checkoutDir) => writeCurrentSchemas(repo, schemas, checkoutDir),
+    write: (checkoutDir) => writeCurrentSchemas(repo, base, branch, schemas, checkoutDir),
     commitMessage: `chore: update cli config schemas to v${version}`,
     pullRequestTitle: "chore: update cli config schemas",
     pullRequestBody: [

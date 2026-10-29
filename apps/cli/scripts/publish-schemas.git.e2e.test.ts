@@ -53,12 +53,15 @@ const writeFiles = (directory: string, files: Record<string, string>) =>
 
 /**
  * A local bare repository standing in for supabase/supabase, seeded on `master`, and a schemas
- * directory to publish from. git reaches the bare repository through env-only URL rewriting and
- * `gh` is a recording fake.
+ * directory to publish from. `branch` adds a `cli/schemas` branch cut from the seed and
+ * `targetAfterBranch` a later `master` commit. git reaches the bare repository through env-only URL
+ * rewriting and `gh` is a recording fake.
  */
 const harness = (options: {
   readonly target: Record<string, string>;
   readonly local: Record<string, string>;
+  readonly branch?: Record<string, string>;
+  readonly targetAfterBranch?: Record<string, string>;
   readonly openPulls?: string;
 }) =>
   Effect.gen(function* () {
@@ -79,14 +82,27 @@ const harness = (options: {
         return result.stdout;
       });
 
+    const commitAndPush = (branch: string, message: string, files: Record<string, string>) =>
+      Effect.gen(function* () {
+        yield* writeFiles(seed, files);
+        yield* git(seed, "add", "-A");
+        yield* git(seed, ...SEED_IDENTITY, "commit", "--quiet", "-m", message);
+        yield* git(seed, "push", "--quiet", bare, branch);
+      });
+
     yield* fs.makeDirectory(seed);
     yield* fs.makeDirectory(tmp);
-    yield* writeFiles(seed, { "README.md": "# supabase", ...options.target });
     yield* git(root, "init", "--quiet", "--bare", "--initial-branch=master", bare);
     yield* git(seed, "init", "--quiet", "--initial-branch=master");
-    yield* git(seed, "add", "-A");
-    yield* git(seed, ...SEED_IDENTITY, "commit", "--quiet", "-m", "seed");
-    yield* git(seed, "push", "--quiet", bare, "master");
+    yield* commitAndPush("master", "seed", { "README.md": "# supabase", ...options.target });
+    if (options.branch) {
+      yield* git(seed, "switch", "--quiet", "--create", "cli/schemas");
+      yield* commitAndPush("cli/schemas", "branch", options.branch);
+      yield* git(seed, "switch", "--quiet", "master");
+    }
+    if (options.targetAfterBranch) {
+      yield* commitAndPush("master", "master moves on", options.targetAfterBranch);
+    }
 
     yield* writeFiles(schemasDir, options.local);
     yield* writeFiles(bin, { gh: fakeGh });
@@ -118,6 +134,8 @@ const harness = (options: {
         Effect.map((text) => text.trim().split("\n")),
       ),
       show: (ref: string, file: string) => git(bare, "show", `${ref}:${PUBLISHED}/${file}`),
+      revision: (ref: string) =>
+        git(bare, "rev-parse", "--verify", ref).pipe(Effect.map((text) => text.trim())),
       commitSubject: (ref: string) => git(bare, "log", "-1", "--format=%an: %s", ref),
       leftoverTempEntries: fs.readDirectory(tmp),
       ghCalls: fs
@@ -246,6 +264,95 @@ describe("publish-schemas.ts against a local stand-in for supabase/supabase", ()
         expect(yield* target.branches).toEqual(["master"]);
         expect(yield* target.ghCalls).toEqual([]);
         expect(yield* target.leftoverTempEntries).toEqual([]);
+      }).pipe(Effect.provide(platformLayer)),
+    60_000,
+  );
+
+  it.live(
+    "refuses a version below one master gained after cli/schemas was cut, leaving the branch untouched",
+    () =>
+      Effect.gen(function* () {
+        const target = yield* harness({
+          target: {},
+          branch: { [`${PUBLISHED}/config/v1.json`]: schemaText("config", 1, "stale branch") },
+          targetAfterBranch: { [`${PUBLISHED}/config/v2.json`]: schemaText("config", 2, "served") },
+          local: { "config/v1.json": schemaText("config", 1, "local") },
+        });
+        const branchTip = yield* target.revision("cli/schemas");
+
+        const { exitCode, stdout, stderr } = yield* target.publish;
+
+        expect(exitCode).toBe(1);
+        expect(stdout).toBe("");
+        expect(stderr).toBe(
+          "Refusing to publish: supabase/supabase already serves config/v2.json, so writing config/v1.json would modify a frozen version.\n",
+        );
+        expect(yield* target.revision("cli/schemas")).toBe(branchTip);
+        expect(yield* target.ghCalls).toEqual([]);
+        expect(yield* target.leftoverTempEntries).toEqual([]);
+      }).pipe(Effect.provide(platformLayer)),
+    60_000,
+  );
+
+  it.live(
+    "refuses to publish when cli/schemas edits a frozen version, leaving the branch untouched",
+    () =>
+      Effect.gen(function* () {
+        const target = yield* harness({
+          target: {
+            [`${PUBLISHED}/supabase-lock/v1.json`]: schemaText("supabase-lock", 1, "frozen"),
+          },
+          branch: {
+            [`${PUBLISHED}/supabase-lock/v1.json`]: schemaText(
+              "supabase-lock",
+              1,
+              "edited on branch",
+            ),
+          },
+          local: {
+            "supabase-lock/v1.json": schemaText("supabase-lock", 1, "frozen"),
+            "supabase-lock/v2.json": schemaText("supabase-lock", 2, "current"),
+          },
+        });
+        const branchTip = yield* target.revision("cli/schemas");
+
+        const { exitCode, stdout, stderr } = yield* target.publish;
+
+        expect(exitCode).toBe(1);
+        expect(stdout).toBe("");
+        expect(stderr).toBe(
+          "Refusing to publish: cli/schemas also changes supabase-lock/v1.json against master, and only the current schema versions may change. Delete cli/schemas in supabase/supabase and rerun the publish.\n",
+        );
+        expect(yield* target.revision("cli/schemas")).toBe(branchTip);
+        expect(yield* target.ghCalls).toEqual([]);
+        expect(yield* target.leftoverTempEntries).toEqual([]);
+      }).pipe(Effect.provide(platformLayer)),
+    60_000,
+  );
+
+  it.live(
+    "publishes over an older edit of a current version as one new commit on the existing branch",
+    () =>
+      Effect.gen(function* () {
+        const config = schemaText("config", 1, "new");
+        const target = yield* harness({
+          target: { [`${PUBLISHED}/config/v1.json`]: schemaText("config", 1, "published") },
+          branch: { [`${PUBLISHED}/config/v1.json`]: schemaText("config", 1, "older edit") },
+          local: { "config/v1.json": config },
+        });
+        const branchTip = yield* target.revision("cli/schemas");
+
+        const { exitCode, stdout, stderr } = yield* target.publish;
+
+        expect(exitCode, stderr).toBe(0);
+        expect(stdout).toContain("Pushed cli/schemas to supabase/supabase");
+        expect(yield* target.show("cli/schemas", "config/v1.json")).toBe(config);
+        expect(yield* target.revision("cli/schemas^")).toBe(branchTip);
+        expect((yield* target.ghCalls).map((call) => call.split(" ", 2).join(" "))).toEqual([
+          "pr list",
+          "pr create",
+          "pr merge",
+        ]);
       }).pipe(Effect.provide(platformLayer)),
     60_000,
   );
