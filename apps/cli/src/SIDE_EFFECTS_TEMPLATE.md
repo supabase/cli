@@ -62,7 +62,7 @@
 | -------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------- |
 | `SUPABASE_ACCESS_TOKEN`    | auth token (bypasses credential file/keyring lookup)               | no (falls back to keyring → `~/.supabase/access-token`) |
 | `SUPABASE_PROFILE`         | built-in profile name or YAML file path                            | no (falls back to `~/.supabase/profile` -> `supabase`)  |
-| `SUPABASE_API_MAX_RETRIES` | Management API retries after the first attempt (`0` = one attempt) | no (falls back to 5)                                    |
+| `SUPABASE_API_MAX_RETRIES` | Management API client retries (`0` = none); excludes command loops | no (falls back to 5)                                    |
 
 ## Exit Codes
 
