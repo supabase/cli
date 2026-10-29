@@ -62,6 +62,8 @@ export interface DbConfigFlags {
 export interface ResolvedDbConfig {
   readonly conn: PgConnInput;
   readonly isLocal: boolean;
+  /** Schemas the local config exposes through the Data API; set on the `--local` and `--db-url` paths. */
+  readonly exposedSchemas?: ReadonlyArray<string>;
   /**
    * The resolved linked project ref (`--linked` path only; `None` for `--local` / `--db-url`).
    * Lets the caller re-read config with the ref applied so a matching `[remotes.<ref>]` block can

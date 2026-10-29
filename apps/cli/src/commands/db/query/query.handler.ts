@@ -14,7 +14,8 @@ import {
   sanitizeErrorBody,
   unexpectedStatusMessage,
 } from "../../../command-internal/http-errors.ts";
-import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
+import { DbConnection } from "../../../command-internal/db-connection.service.ts";
+import type { ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import { AgentFlag, DnsResolverFlag, OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Random } from "../../../shared/runtime/random.service.ts";
@@ -122,7 +123,7 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
     });
 
   const runLocal = (
-    target: { readonly conn: PgConnInput; readonly isLocal: boolean },
+    target: Pick<ResolvedDbConfig, "conn" | "isLocal" | "exposedSchemas">,
     sql: string,
     format: ResolvedFormat,
     agentMode: boolean,
@@ -147,12 +148,16 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
         }
 
         // Agent mode runs a best-effort RLS advisory check (only rendered in JSON).
-        const advisory = agentMode
-          ? yield* session.queryRaw(RLS_CHECK_SQL).pipe(
-              Effect.map((rls) => buildRlsAdvisory(rls.rows.map((row) => String(row[0] ?? "")))),
-              Effect.orElseSucceed(() => Option.none<Advisory>()),
-            )
-          : Option.none<Advisory>();
+        const schemas = target.exposedSchemas;
+        const advisory =
+          agentMode && schemas !== undefined && schemas.length > 0
+            ? yield* session.query(RLS_CHECK_SQL, [schemas]).pipe(
+                Effect.map((rows) =>
+                  buildRlsAdvisory(rows.map((row) => String(row["table_name"] ?? ""))),
+                ),
+                Effect.orElseSucceed(() => Option.none<Advisory>()),
+              )
+            : Option.none<Advisory>();
 
         yield* emit(
           format,

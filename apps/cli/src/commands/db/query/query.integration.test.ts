@@ -77,7 +77,11 @@ const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 const failMessage = (exit: Exit.Exit<unknown, { readonly message: string }>): string | undefined =>
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error.message : undefined;
 
-function mockResolver(isLocal = true, resolveFails = false) {
+function mockResolver(
+  isLocal = true,
+  resolveFails = false,
+  exposedSchemas: ReadonlyArray<string> | undefined = ["public"],
+) {
   return Layer.succeed(DbConfigResolver, {
     resolve: () =>
       resolveFails
@@ -86,7 +90,7 @@ function mockResolver(isLocal = true, resolveFails = false) {
               message: "failed to parse connection string: invalid dsn",
             }),
           )
-        : Effect.succeed({ conn: LOCAL_CONN, isLocal }),
+        : Effect.succeed({ conn: LOCAL_CONN, isLocal, exposedSchemas }),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 }
@@ -94,6 +98,7 @@ function mockResolver(isLocal = true, resolveFails = false) {
 function mockDbConnection(opts: {
   result?: QueryResult;
   rlsTables?: ReadonlyArray<string>;
+  rlsParams?: Array<ReadonlyArray<unknown> | undefined>;
   rlsFails?: boolean;
   queryFails?: boolean;
 }) {
@@ -102,19 +107,16 @@ function mockDbConnection(opts: {
       Effect.succeed({
         exec: () => Effect.void,
         execBatch: () => Effect.void,
-        query: () => Effect.succeed([]),
+        query: (sql, params) => {
+          if (sql !== RLS_CHECK_SQL) return Effect.succeed([]);
+          opts.rlsParams?.push(params);
+          return opts.rlsFails === true
+            ? Effect.fail(new DbExecError({ message: "advisory failed" }))
+            : Effect.succeed((opts.rlsTables ?? []).map((table) => ({ table_name: table })));
+        },
         extensionExists: () => Effect.succeed(false),
         copyToCsv: () => Effect.succeed(new Uint8Array()),
-        queryRaw: (sql: string) => {
-          if (sql === RLS_CHECK_SQL) {
-            return opts.rlsFails === true
-              ? Effect.fail(new DbExecError({ message: "advisory failed" }))
-              : Effect.succeed({
-                  fields: ["format"],
-                  rows: (opts.rlsTables ?? []).map((table) => [table]),
-                  commandTag: `SELECT ${(opts.rlsTables ?? []).length}`,
-                });
-          }
+        queryRaw: () => {
           return opts.queryFails === true
             ? Effect.fail(new DbExecError({ message: "failed to execute query: boom" }))
             : Effect.succeed(opts.result ?? { fields: [], rows: [], commandTag: "CREATE TABLE" });
@@ -190,6 +192,7 @@ function mockStdin(opts: { isTTY?: boolean; piped?: string }) {
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   isLocal?: boolean;
+  exposedSchemas?: ReadonlyArray<string>;
   agent?: "auto" | "yes" | "no";
   goOutput?: "env" | "json" | "pretty" | "toml" | "yaml" | "table" | "csv";
   aiTool?: string;
@@ -197,6 +200,7 @@ interface SetupOpts {
   piped?: string;
   result?: QueryResult;
   rlsTables?: ReadonlyArray<string>;
+  rlsParams?: Array<ReadonlyArray<unknown> | undefined>;
   rlsFails?: boolean;
   queryFails?: boolean;
   linkedStatus?: number;
@@ -267,7 +271,7 @@ function setup(opts: SetupOpts = {}) {
           dbConnection: mockDbConnection(opts),
           env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
         })
-      : mockResolver(opts.isLocal, opts.resolveFails),
+      : mockResolver(opts.isLocal, opts.resolveFails, opts.exposedSchemas),
     mockDbConnection(opts),
     mockProjectRef(opts.unlinked, opts.refReadFails),
     mockStdin({ isTTY: opts.stdinTTY, piped: opts.piped }),
@@ -597,6 +601,33 @@ describe("db query integration", () => {
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
       expect(yield* decodeJson(out.stdoutText)).toHaveProperty(["advisory", "id"], "rls_disabled");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("checks the configured exposed schemas for the RLS advisory", () => {
+    const rlsParams: Array<ReadonlyArray<unknown> | undefined> = [];
+    const { layer } = setup({
+      result: SELECT_RESULT,
+      agent: "yes",
+      exposedSchemas: ["app", "public"],
+      rlsParams,
+    });
+    return Effect.gen(function* () {
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      expect(rlsParams).toEqual([[["app", "public"]]]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("omits the advisory when the Data API is disabled", () => {
+    const { layer, out } = setup({
+      result: SELECT_RESULT,
+      agent: "yes",
+      exposedSchemas: [],
+      rlsTables: ["public.users"],
+    });
+    return Effect.gen(function* () {
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      expect(yield* decodeJson(out.stdoutText)).not.toHaveProperty("advisory");
     }).pipe(Effect.provide(layer));
   });
 
