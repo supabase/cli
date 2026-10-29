@@ -2594,6 +2594,215 @@ orioledb_version = "15.1.0.150"
     ));
 });
 
+describe("config io [auth.email|sms] enabled replaces enable_signup", () => {
+  let warnings: Array<string> = [];
+  let errorSpy: MockInstance<typeof console.error> | undefined;
+
+  function captureWarnings() {
+    warnings = [];
+    errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
+      warnings.push(args.map((a) => String(a)).join(" "));
+    });
+  }
+
+  afterEach(() => {
+    errorSpy?.mockRestore();
+    errorSpy = undefined;
+  });
+
+  function loadToml(contents: string, options?: InternalLoadCliConfigOptions) {
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { join } = yield* Path.Path;
+      const cwd = yield* makeTempProject();
+      const path = yield* configTomlPath(cwd);
+      yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+      yield* fs.writeFileString(path, contents);
+
+      return yield* loadCliConfigFile(path, options);
+    });
+  }
+
+  const STAGING_REF = "stagingrefaaaaaaaaaa";
+
+  const deprecation = (path: string) =>
+    `WARN: ${path}.enable_signup is deprecated and will be removed in v4, use ${path}.enabled instead.`;
+
+  type Section = "email" | "sms";
+
+  test.each<{ section: Section; value: boolean }>([
+    { section: "email", value: false },
+    { section: "email", value: true },
+    { section: "sms", value: true },
+  ])("decodes a legacy auth.$section.enable_signup = $value and warns once", ({ section, value }) =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        captureWarnings();
+        const loaded = yield* loadToml(
+          `project_id = "abc123"
+
+[auth.${section}]
+enable_signup = ${value}
+`,
+        );
+
+        expect(loaded.config.auth[section].enable_signup).toBe(value);
+        expect(warnings).toEqual([deprecation(`auth.${section}`)]);
+      }),
+    ),
+  );
+
+  test.each<{ section: Section; value: boolean }>([
+    { section: "email", value: false },
+    { section: "sms", value: true },
+  ])(
+    "folds auth.$section.enabled = $value into enable_signup without a warning",
+    ({ section, value }) =>
+      runConfigEffect(
+        Effect.gen(function* () {
+          captureWarnings();
+          const loaded = yield* loadToml(
+            `project_id = "abc123"
+
+[auth.${section}]
+enabled = ${value}
+`,
+          );
+
+          expect(loaded.config.auth[section].enable_signup).toBe(value);
+          expect(loaded.document).toHaveProperty(`auth.${section}.enable_signup`, value);
+          expect(loaded.document).not.toHaveProperty(`auth.${section}.enabled`);
+          expect(warnings).toEqual([]);
+        }),
+      ),
+  );
+
+  test.each<{ section: Section; enabled: boolean }>([
+    { section: "email", enabled: false },
+    { section: "email", enabled: true },
+    { section: "sms", enabled: true },
+    { section: "sms", enabled: false },
+  ])(
+    "lets auth.$section.enabled = $enabled beat a disagreeing enable_signup, and still warns",
+    ({ section, enabled }) =>
+      runConfigEffect(
+        Effect.gen(function* () {
+          captureWarnings();
+          const loaded = yield* loadToml(
+            `project_id = "abc123"
+
+[auth.${section}]
+enabled = ${enabled}
+enable_signup = ${!enabled}
+`,
+          );
+
+          expect(loaded.config.auth[section].enable_signup).toBe(enabled);
+          expect(warnings).toEqual([deprecation(`auth.${section}`)]);
+        }),
+      ),
+  );
+
+  test("defaults email on and sms off, with no warning, when neither key is set", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        captureWarnings();
+        const loaded = yield* loadToml(`project_id = "abc123"\n`);
+
+        expect(loaded.config.auth.email.enable_signup).toBe(true);
+        expect(loaded.config.auth.sms.enable_signup).toBe(false);
+        expect(warnings).toEqual([]);
+      }),
+    ));
+
+  test("names the remote block in the warning for a legacy key under [remotes.*]", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        captureWarnings();
+        const loaded = yield* loadToml(
+          `project_id = "abc123"
+
+[remotes.staging]
+project_id = "${STAGING_REF}"
+
+[remotes.staging.auth.sms]
+enable_signup = true
+`,
+        );
+
+        expect(loaded.config.remotes.staging?.auth.sms.enable_signup).toBe(true);
+        expect(warnings).toEqual([deprecation("remotes.staging.auth.sms")]);
+      }),
+    ));
+
+  test("folds enabled inside an unselected [remotes.*] block", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        captureWarnings();
+        const loaded = yield* loadToml(
+          `project_id = "abc123"
+
+[remotes.staging]
+project_id = "${STAGING_REF}"
+
+[remotes.staging.auth.email]
+enabled = false
+`,
+        );
+
+        expect(loaded.config.remotes.staging?.auth.email.enable_signup).toBe(false);
+        expect(warnings).toEqual([]);
+      }),
+    ));
+
+  test("a selected remote's legacy enable_signup beats the base's enabled", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        captureWarnings();
+        const loaded = yield* loadToml(
+          `project_id = "abc123"
+
+[auth.email]
+enabled = false
+
+[remotes.staging]
+project_id = "${STAGING_REF}"
+
+[remotes.staging.auth.email]
+enable_signup = true
+`,
+          { projectRef: STAGING_REF },
+        );
+
+        expect(loaded.appliedRemote).toBe("staging");
+        expect(loaded.config.auth.email.enable_signup).toBe(true);
+        expect(warnings).toEqual([deprecation("remotes.staging.auth.email")]);
+      }),
+    ));
+
+  test("resolves enabled = env(...) and records the environment origin at enable_signup", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        captureWarnings();
+        yield* stubEnv("SUPABASE_PROVIDER_ENABLED_ENV_TEST", "false");
+        const loaded = yield* loadToml(
+          `project_id = "abc123"
+
+[auth.email]
+enabled = "env(SUPABASE_PROVIDER_ENABLED_ENV_TEST)"
+`,
+        );
+
+        expect(loaded.config.auth.email.enable_signup).toBe(false);
+        expect(cliConfigValueSourceAt(loaded, ["auth", "email", "enable_signup"])).toBe(
+          "environment",
+        );
+        expect(cliConfigValueSourceAt(loaded, ["auth", "email", "enabled"])).toBeUndefined();
+        expect(warnings).toEqual([]);
+      }),
+    ));
+});
+
 describe("config io deprecated [auth.external.{linkedin,slack}] back-compat", () => {
   let warnings: Array<string> = [];
   let errorSpy: MockInstance<typeof console.error> | undefined;
@@ -2928,6 +3137,18 @@ describe("decodeCliConfigDocumentForValidationEffect", () => {
           { goViperCompat: true, path: "supabase/config.toml", format: "toml" },
         );
         expect(config.project_id).toBe("abc123");
+      }),
+    ));
+
+  test("accepts an unfolded auth.{email,sms}.enabled, as a pull-edited document carries it", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const config = yield* decodeCliConfigDocumentForValidationEffect(
+          { project_id: "abc123", auth: { email: { enabled: false }, sms: { enabled: true } } },
+          { goViperCompat: true, path: "supabase/config.toml", format: "toml" },
+        );
+        expect(config.auth.email.enabled).toBe(false);
+        expect(config.auth.sms.enabled).toBe(true);
       }),
     ));
 

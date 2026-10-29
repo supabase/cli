@@ -35,7 +35,11 @@ import { shouldSearchAncestors } from "../../../command-internal/workdir-search.
 import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
 import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
 import { collectDotenvPrivateKeys } from "../../../command-internal/vault-decrypt.ts";
-import { configApiScope, configScopeLine } from "../config.format.ts";
+import {
+  configApiScope,
+  configProviderDisableWarnings,
+  configScopeLine,
+} from "../config.format.ts";
 import { loadLocalConfig } from "../config.load.ts";
 import { configProjectConfigTry } from "../config.project-config.ts";
 import { configReadStatusMessage } from "../config.read-status.ts";
@@ -326,14 +330,14 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     // `promptYesNo` scans piped stdin on a non-TTY before falling back to the default.
     const defaultProceed =
       yes || (tty.stdinIsTty && output.interactive && output.format === "text");
-    const keep = (name: string) =>
+    const keep = (name: string, forceNoDefault = false) =>
       Effect.gen(function* () {
         const item = cost.get(name);
         const title =
           item === undefined
             ? `Do you want to push ${name} config to remote?`
             : `Enabling ${item.name} will cost you ${item.price}. Keep it enabled?`;
-        const confirmed = yield* confirm(title, defaultProceed);
+        const confirmed = yield* confirm(title, defaultProceed && !forceNoDefault);
         if (!confirmed && output.format === "text" && (!tty.stdinIsTty || !output.interactive)) {
           yield* output.raw(
             tty.stdinIsTty
@@ -478,7 +482,11 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
           }),
           "stderr",
         );
-        if (yield* keep(pushPromptKey(resource))) {
+        const warnings = configProviderDisableWarnings(communicated);
+        for (const warning of warnings) {
+          yield* output.raw(`${warning}\n`, "stderr");
+        }
+        if (yield* keep(pushPromptKey(resource), warnings.length > 0)) {
           yield* write(body).pipe(
             Effect.withSpan("config.push.updateResource", {
               attributes: { "config.resource": resource },

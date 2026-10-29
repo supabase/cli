@@ -1,4 +1,7 @@
-import { normalizeDeprecatedOrioleDBVersion } from "@supabase/config/internal";
+import {
+  normalizeDeprecatedOrioleDBVersion,
+  normalizeDeprecatedProviderSignupKeys,
+} from "@supabase/config/internal";
 import { Config, Effect, Match, FileSystem, Option, Path } from "effect";
 import * as SmolToml from "smol-toml";
 import {
@@ -1166,7 +1169,10 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     });
     // Same per-section promotion as the config loader, before the remote merge; the loader owns
     // the deprecation warning.
-    doc = asRecord(normalizeDeprecatedOrioleDBVersion(doc).document);
+    doc = asRecord(
+      normalizeDeprecatedProviderSignupKeys(normalizeDeprecatedOrioleDBVersion(doc).document)
+        .document,
+    );
   }
   // `SUPABASE_DB_*` env vars override the matching `[db]` field before the TOML
   // value/default.

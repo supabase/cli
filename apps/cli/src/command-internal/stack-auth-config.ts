@@ -1,6 +1,6 @@
 import type { CliConfig } from "@supabase/config";
 import type { ServiceCreation } from "@supabase/stack/effect";
-import { Effect } from "effect";
+import { Effect, Struct } from "effect";
 import type { ResolvedAuthExternalProvider } from "./local-config-values.ts";
 import { passwordRequirementsToChar } from "./password-requirements.ts";
 
@@ -89,7 +89,7 @@ export const resolveAuthConfig = Effect.fn("StackAuthConfig.resolve")(
             ]),
           ),
         },
-        sms: passThrough<AuthSettings["sms"]>()(auth.sms),
+        sms: passThrough<AuthSettings["sms"]>()(Struct.omit(auth.sms, ["enabled"])),
         ...(auth.captcha === undefined
           ? {}
           : { captcha: passThrough<AuthSettings["captcha"]>()(auth.captcha) }),

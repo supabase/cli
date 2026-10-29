@@ -2961,6 +2961,40 @@ describe("readDbToml remoteOverrideKeys — auth.captcha.provider / auth.email.t
   );
 });
 
+describe("readDbToml remoteOverrideKeys — auth.{email,sms}.enabled", () => {
+  const ref = "abcdefghijklmnopqrst";
+
+  it.effect.each([
+    { section: "email", key: "enabled" },
+    { section: "sms", key: "enabled" },
+    { section: "email", key: "enable_signup" },
+    { section: "sms", key: "enable_signup" },
+  ])(
+    "tracks a matched remote's auth.$section.$key as the canonical enable_signup",
+    ({ section, key }) => {
+      return withConfig(
+        [
+          `[auth.${section}]`,
+          "enabled = true",
+          "[remotes.prod]",
+          `project_id = "${ref}"`,
+          `[remotes.prod.auth.${section}]`,
+          `${key} = false`,
+          "",
+        ].join("\n"),
+      ).pipe(
+        Effect.flatMap((dir) => readRef(dir, ref)),
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.appliedRemote).toBe("prod");
+            expect(v.remoteOverrideKeys.has(`auth.${section}.enable_signup`)).toBe(true);
+          }),
+        ),
+      );
+    },
+  );
+});
+
 describe("readDbToml OrioleDB telemetry", () => {
   const recordedAfterRead = (workdir: string) =>
     Effect.gen(function* () {

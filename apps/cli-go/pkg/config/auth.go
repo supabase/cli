@@ -240,6 +240,8 @@ type (
 	}
 
 	email struct {
+		// Enabled is the preferred spelling of EnableSignup; load folds it into EnableSignup.
+		Enabled              *bool                    `toml:"-" json:"enabled"`
 		EnableSignup         bool                     `toml:"enable_signup" json:"enable_signup"`
 		DoubleConfirmChanges bool                     `toml:"double_confirm_changes" json:"double_confirm_changes"`
 		EnableConfirmations  bool                     `toml:"enable_confirmations" json:"enable_confirmations"`
@@ -275,6 +277,8 @@ type (
 	}
 
 	sms struct {
+		// Enabled is the preferred spelling of EnableSignup; load folds it into EnableSignup.
+		Enabled             *bool             `toml:"-" json:"enabled"`
 		EnableSignup        bool              `toml:"enable_signup" json:"enable_signup"`
 		EnableConfirmations bool              `toml:"enable_confirmations" json:"enable_confirmations"`
 		Template            string            `toml:"template" json:"template"`

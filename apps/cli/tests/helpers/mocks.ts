@@ -219,6 +219,7 @@ export function mockOutput(
     promptSelectResponses?: ReadonlyArray<string>;
     promptPasswordResponses?: ReadonlyArray<string>;
     promptConfirmResponses?: ReadonlyArray<boolean>;
+    promptConfirmAcceptsDefault?: boolean;
   } = {},
 ) {
   const messages: OutputMessage[] = [];
@@ -404,6 +405,7 @@ export function mockOutput(
                 )
               : Effect.succeed(
                   promptConfirmResponses.shift() ??
+                    (opts.promptConfirmAcceptsDefault ? promptOptions?.defaultValue : undefined) ??
                     opts.confirmLogout ??
                     opts.confirmRelogin ??
                     true,

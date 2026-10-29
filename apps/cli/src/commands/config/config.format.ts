@@ -152,6 +152,37 @@ export function configRenderChangeLines(changes: ReadonlyArray<ConfigChange>): s
     .join("");
 }
 
+const PROVIDER_DISABLE_WARNINGS: ReadonlyArray<{
+  readonly path: ReadonlyArray<string>;
+  readonly warning: string;
+}> = [
+  {
+    path: ["auth", "email", "enable_signup"],
+    warning:
+      "Warning: auth.email.enabled = false turns off the email provider, so existing users can no longer sign in with email (password, magic link or OTP). To block new signups only, set auth.enable_signup = false and keep auth.email.enabled = true.",
+  },
+  {
+    path: ["auth", "sms", "enable_signup"],
+    warning:
+      "Warning: auth.sms.enabled = false turns off the phone provider, so existing users can no longer sign in with a phone number (password or SMS OTP). To block new signups only, set auth.enable_signup = false and keep auth.sms.enabled = true.",
+  },
+];
+
+/** Warnings for declared changes that turn an enabled email or phone provider off. */
+export function configProviderDisableWarnings(
+  changes: ReadonlyArray<ConfigChange>,
+): ReadonlyArray<string> {
+  return changes.flatMap((change) =>
+    change.declared && change.local === false && change.remote === true
+      ? PROVIDER_DISABLE_WARNINGS.filter(
+          ({ path }) =>
+            path.length === change.path.length &&
+            path.every((segment, index) => segment === change.path[index]),
+        ).map(({ warning }) => warning)
+      : [],
+  );
+}
+
 export function configMaskedCaveat(masked: ReadonlyArray<ReadonlyArray<string>>): string {
   return `${configPlural(masked.length, "credential value", "credential values")} not compared (masked by the API): ${masked.map(configRenderPath).join(", ")}`;
 }

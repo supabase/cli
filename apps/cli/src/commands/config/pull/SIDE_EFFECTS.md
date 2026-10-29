@@ -105,7 +105,11 @@ exit `0`: neither is a failure.
 
 ## Output
 
-Diagnostics on **stderr**: `Pulling config from <target> → <destination>` (the destination echoed
+Diagnostics on **stderr**: when the config file still spells `[auth.email]`/`[auth.sms]`
+`enable_signup`, a `WARN: auth.email.enable_signup is deprecated and will be removed in v4, use
+auth.email.enabled instead.` line from the config load (pull only ever writes the spelling the
+destination already uses, or `enabled` for a new key); then `Pulling config from <target> →
+<destination>` (the destination echoed
 BEFORE any network call — `config root` or `[remotes.<label>]`), then
 `Comparison scope: <blocks>` once the response arrives (same line `config diff` prints). The
 confirmation prompt and the change-set body are on **stdout**, followed by the payload.
@@ -155,7 +159,9 @@ remote_env_reference | unwritable | would_invalidate | declined | dry_run`; a ch
 `written: true` ALSO carries `document_path` — the exact destination-prefixed segment path
 `applyConfigEdits` wrote to, e.g.
 `["remotes", "staging", "api", "max_rows"]` — absent from every unwritten entry, since nothing
-landed anywhere for those), `warnings[]` (`{kind, path?, missing_fields?}` — `missing_fields` only
+landed anywhere for those; for `auth.email.enable_signup`/`auth.sms.enable_signup` it ends in
+`enabled` unless the destination section already spells the deprecated `enable_signup`, while the
+change's own `path` stays `enable_signup`), `warnings[]` (`{kind, path?, missing_fields?}` — `missing_fields` only
 on a `would_invalidate` warning: `[{path, env_variable?}]`, the field(s) the schema-validation gate
 found still missing/invalid under that warning's `path`, naming the env var to set when a field's
 local spelling is an unresolved `env(VAR)` reference), `masked[]`, `unmanaged[]`, and `counts` (per class + `total`, plus

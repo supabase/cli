@@ -217,10 +217,32 @@ prompt); `[content]` is a mailer template/notification body with no config path 
 own; `[group-write]` is an undeclared companion the endpoint required alongside a
 declared change, sent at its schema default because the read didn't report the
 project's current value for it. Secret values never appear in output. Every block ends
-on a blank line. Experimental prints `Enabling webhooks for project: <ref>`. The
-per-service confirmations use a clack confirm widget with a yes default in interactive
+on a blank line. Experimental prints `Enabling webhooks for project: <ref>`.
+
+When a push would turn the email or phone provider off — `auth.email.enable_signup` or
+`auth.sms.enable_signup` (spelled `auth.email.enabled`/`auth.sms.enabled` in the file) going
+from `true` to `false` — the matching warning line prints on stderr after the `[update]`
+blocks and before the auth confirmation — one line per path, email first. Request bodies,
+JSON payloads, exit codes, and telemetry are unchanged:
+
+```
+Warning: auth.email.enabled = false turns off the email provider, so existing users can no longer sign in with email (password, magic link or OTP). To block new signups only, set auth.enable_signup = false and keep auth.email.enabled = true.
+Warning: auth.sms.enabled = false turns off the phone provider, so existing users can no longer sign in with a phone number (password or SMS OTP). To block new signups only, set auth.enable_signup = false and keep auth.sms.enabled = true.
+```
+
+A file that still spells `[auth.email] enable_signup` or `[auth.sms] enable_signup` (any value,
+top level or in a `[remotes.*]` block) also prints `WARN: auth.email.enable_signup is deprecated
+and will be removed in v4, use auth.email.enabled instead.` on stderr when the config loads
+(`remotes.<name>.auth.sms.enable_signup` and so on for the other forms). Both spellings decode
+to the same `enable_signup` value and `[update]` block path; `enabled` wins when both are set.
+
+The auth confirmation that follows a warning defaults to **no**: interactive text output
+renders the clack confirm with a No default, and `--yes` renders `<title> [y/N] y`.
+
+The per-service confirmations use a clack confirm widget with a yes default in interactive
 text output; piped text input renders `<title> [y/N] `. For resource confirmations,
-`--yes` renders `<title> [Y/n] y` in every output mode and TTY shape. Piped answers also echo the question and answer to stderr in machine modes,
+`--yes` renders `<title> [Y/n] y` in every output mode and TTY shape, except the warned
+auth confirmation above. Piped answers also echo the question and answer to stderr in machine modes,
 matching `--yes`; stdout remains structured. With TTY stdin and redirected text stdout,
 no prompt is rendered and a skipped message explains how to approve with `--yes`.
 Non-TTY text declines also print `Skipped <name>: no affirmative confirmation received.

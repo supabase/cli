@@ -1279,6 +1279,112 @@ orioledb_version = "15.1.0.150"
 	})
 }
 
+func TestProviderEnabledConfig(t *testing.T) {
+	// Phone signup stays off unless an SMS provider is configured to deliver the OTP.
+	const twilio = `
+[auth.sms.twilio]
+enabled = true
+account_sid = "AC123"
+message_service_sid = "MG123"
+auth_token = "token"
+`
+	load := func(t *testing.T, projectId, toml string) config {
+		t.Helper()
+		config := NewConfig()
+		config.ProjectId = projectId
+		fsys := fs.MapFS{"supabase/config.toml": &fs.MapFile{Data: []byte(toml)}}
+		require.NoError(t, config.Load("", fsys))
+		return config
+	}
+
+	t.Run("folds enabled into enable_signup for email and sms", func(t *testing.T) {
+		config := load(t, "", `
+[auth.email]
+enabled = false
+
+[auth.sms]
+enabled = true
+`+twilio)
+		assert.False(t, config.Auth.Email.EnableSignup)
+		assert.True(t, config.Auth.Sms.EnableSignup)
+	})
+
+	t.Run("keeps template defaults when neither key is set", func(t *testing.T) {
+		config := load(t, "", "")
+		assert.True(t, config.Auth.Email.EnableSignup)
+		assert.False(t, config.Auth.Sms.EnableSignup)
+	})
+
+	t.Run("still honors the deprecated enable_signup alone", func(t *testing.T) {
+		config := load(t, "", `
+[auth.email]
+enable_signup = false
+
+[auth.sms]
+enable_signup = true
+`+twilio)
+		assert.False(t, config.Auth.Email.EnableSignup)
+		assert.True(t, config.Auth.Sms.EnableSignup)
+	})
+
+	for _, tc := range []struct {
+		name  string
+		toml  string
+		email bool
+		sms   bool
+	}{
+		{
+			name: "enabled false beats enable_signup true",
+			toml: `
+[auth.email]
+enabled = false
+enable_signup = true
+
+[auth.sms]
+enabled = false
+enable_signup = true
+` + twilio,
+			email: false,
+			sms:   false,
+		},
+		{
+			name: "enabled true beats enable_signup false",
+			toml: `
+[auth.email]
+enabled = true
+enable_signup = false
+
+[auth.sms]
+enabled = true
+enable_signup = false
+` + twilio,
+			email: true,
+			sms:   true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config := load(t, "", tc.toml)
+			assert.Equal(t, tc.email, config.Auth.Email.EnableSignup)
+			assert.Equal(t, tc.sms, config.Auth.Sms.EnableSignup)
+		})
+	}
+
+	t.Run("applies enabled from a matching [remotes.*] block", func(t *testing.T) {
+		config := load(t, "abcdefghijklmnopqrst", `
+[remotes.staging]
+project_id = "abcdefghijklmnopqrst"
+
+[remotes.staging.auth.email]
+enabled = false
+
+[remotes.staging.auth.sms]
+enabled = true
+`+twilio)
+		assert.False(t, config.Auth.Email.EnableSignup)
+		assert.True(t, config.Auth.Sms.EnableSignup)
+	})
+}
+
 func TestLoadLinkedStateFiles(t *testing.T) {
 	linkedFiles := fs.MapFS{
 		"supabase/.temp/pooler-url":           &fs.MapFile{Data: []byte("postgresql://postgres.decoy:[YOUR-PASSWORD]@pooler.example.com:6543/postgres")},

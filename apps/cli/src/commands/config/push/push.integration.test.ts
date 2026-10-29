@@ -15,6 +15,7 @@ import {
 } from "effect";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import { vi } from "vitest";
 
 import {
   mockAnalytics,
@@ -255,6 +256,8 @@ function setup(opts: {
   readonly format?: "text" | "json" | "stream-json";
   readonly yes?: boolean;
   readonly confirm?: ReadonlyArray<boolean>;
+  /** Models a user pressing Enter on every interactive confirm: the prompt's own default wins. */
+  readonly acceptPromptDefault?: boolean;
   readonly promptFail?: boolean;
   readonly interactive?: boolean;
   /** stdin interactivity; defaults to a TTY so prompt-driven tests reach the confirm. */
@@ -292,6 +295,7 @@ function setup(opts: {
   const out = mockOutput({
     format: opts.format ?? "text",
     promptConfirmResponses: opts.confirm,
+    promptConfirmAcceptsDefault: opts.acceptPromptDefault,
     ...(opts.pickerAndRealCache === true ? { promptSelectResponses: [REF] } : {}),
     promptConfirmFail: opts.promptFail,
     interactive:
@@ -777,6 +781,95 @@ max_rows = 1000
       });
     }
   }
+
+  describe("email provider disable", () => {
+    const DISABLE_TOML = 'project_id = "test"\n[auth.email]\nenabled = false\n';
+    const ENABLE_TOML = 'project_id = "test"\n[auth.email]\nenabled = true\n';
+    const EMAIL_WARNING =
+      "Warning: auth.email.enabled = false turns off the email provider, so existing users can no longer sign in with email";
+    const emailDisabledRemote = {
+      status: 200,
+      body: v2Response({
+        attributes: (a) => ({
+          ...a,
+          auth: { ...asJsonRecord(a["auth"]), external_email_enabled: false },
+        }),
+      }),
+    } as const;
+    const authPatch = (api: ReturnType<typeof setup>["api"]) =>
+      api.requests.find((r) => r.method === "PATCH" && r.url.includes("/config/auth"));
+
+    it.effect("--yes warns after the update block, then pushes with a [y/N] echo", () => {
+      const { layer, out, api } = setup({ toml: DISABLE_TOML, yes: true });
+      return Effect.gen(function* () {
+        yield* configPush({ projectRef: Option.none() });
+        const block = out.stderrText.indexOf("auth.email.enable_signup [update]");
+        const warning = out.stderrText.indexOf(EMAIL_WARNING);
+        const prompt = out.stderrText.indexOf(
+          "Do you want to push auth config to remote? [y/N] y\n",
+        );
+        expect(block).toBeGreaterThanOrEqual(0);
+        expect(warning).toBeGreaterThan(block);
+        expect(prompt).toBeGreaterThan(warning);
+        expect(authPatch(api)?.body).toEqual({ external_email_enabled: false });
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("the deprecated enable_signup still pushes the disable and warns on stderr", () => {
+      const { layer, out, api } = setup({
+        toml: 'project_id = "test"\n[auth.email]\nenable_signup = false\n',
+        yes: true,
+      });
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      return Effect.gen(function* () {
+        yield* configPush({ projectRef: Option.none() });
+        expect(errorSpy.mock.calls.map((call) => String(call[0]))).toEqual([
+          "WARN: auth.email.enable_signup is deprecated and will be removed in v4, use auth.email.enabled instead.",
+        ]);
+        expect(out.stderrText).toContain(EMAIL_WARNING);
+        expect(authPatch(api)?.body).toEqual({ external_email_enabled: false });
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())));
+    });
+
+    it.effect("pressing Enter on the interactive prompt skips the auth write", () => {
+      const { layer, out, api } = setup({ toml: DISABLE_TOML, acceptPromptDefault: true });
+      return Effect.gen(function* () {
+        yield* configPush({ projectRef: Option.none() });
+        expect(out.stderrText).toContain(EMAIL_WARNING);
+        expect(authPatch(api)).toBeUndefined();
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect(
+      "re-enabling the provider with --yes keeps the [Y/n] echo and prints no warning",
+      () => {
+        const { layer, out, api } = setup({
+          toml: ENABLE_TOML,
+          yes: true,
+          v2: emailDisabledRemote,
+        });
+        return Effect.gen(function* () {
+          yield* configPush({ projectRef: Option.none() });
+          expect(out.stderrText).toContain("Do you want to push auth config to remote? [Y/n] y\n");
+          expect(out.stderrText).not.toContain("Warning:");
+          expect(authPatch(api)?.body).toEqual({ external_email_enabled: true });
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.effect("pressing Enter when re-enabling the provider still pushes", () => {
+      const { layer, out, api } = setup({
+        toml: ENABLE_TOML,
+        acceptPromptDefault: true,
+        v2: emailDisabledRemote,
+      });
+      return Effect.gen(function* () {
+        yield* configPush({ projectRef: Option.none() });
+        expect(out.stderrText).not.toContain("Warning:");
+        expect(authPatch(api)?.body).toEqual({ external_email_enabled: true });
+      }).pipe(Effect.provide(layer));
+    });
+  });
 
   it.effect(
     "non-interactive text output with TTY stdin skips when the prompt is unavailable",

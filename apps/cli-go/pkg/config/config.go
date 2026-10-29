@@ -821,6 +821,7 @@ func (c *config) load(v *viper.Viper) error {
 	}); err != nil {
 		return errors.Errorf("failed to parse config: %w", err)
 	}
+	c.normalizeProviderEnabled()
 	// Manually parse config to map
 	c.Storage.AnalyticsBuckets.Buckets = map[string]struct{}{}
 	for key := range v.GetStringMap("storage.analytics.buckets") {
@@ -837,6 +838,17 @@ func (c *config) load(v *viper.Viper) error {
 	}
 	c.EdgeRuntime.Secrets = secrets
 	return nil
+}
+
+// normalizeProviderEnabled folds the preferred `auth.{email,sms}.enabled` key into the
+// legacy `enable_signup` field; the new key wins when both are set.
+func (c *config) normalizeProviderEnabled() {
+	if c.Auth.Email.Enabled != nil {
+		c.Auth.Email.EnableSignup = *c.Auth.Email.Enabled
+	}
+	if c.Auth.Sms.Enabled != nil {
+		c.Auth.Sms.EnableSignup = *c.Auth.Sms.Enabled
+	}
 }
 
 func (c *config) newDecodeHook(fs ...mapstructure.DecodeHookFunc) mapstructure.DecodeHookFunc {
