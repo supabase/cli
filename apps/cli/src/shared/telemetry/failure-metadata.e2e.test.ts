@@ -34,9 +34,9 @@ describe("failed command telemetry", () => {
       args: [
         "db",
         "query",
-        "--db-url",
-        "postgres://postgres:postgres@127.0.0.1:1/postgres",
         "select 1",
+        "--yes",
+        "--remote=postgres://postgres:postgres@127.0.0.1:1/postgres",
       ],
       command: "db query",
       accessToken: "",
@@ -48,6 +48,24 @@ describe("failed command telemetry", () => {
         suggestion_type: "update_config",
       },
       rawErrors: ["failed to connect", "127.0.0.1", "select 1"],
+    },
+    {
+      args: [
+        "db",
+        "query",
+        "select 1",
+        "--remote=postgres://postgres:postgres@127.0.0.1:1/postgres",
+      ],
+      command: "db query",
+      accessToken: "",
+      expected: {
+        error_kind: "user_actionable",
+        error_category: "consent_required",
+        error_fingerprint: "tag:HostedMutationConsentRequiredError",
+        has_suggestion: true,
+        suggestion_type: "provide_flags",
+      },
+      rawErrors: ["127.0.0.1", "select 1"],
     },
   ])("emits sanitized metadata from the compiled CLI ($command)", (testCase) =>
     Effect.gen(function* () {

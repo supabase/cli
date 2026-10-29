@@ -1,15 +1,22 @@
 import { unusedStackServices } from "../../tests/helpers/unused-stack.ts";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { CliConfigSchema, type CliConfig } from "@supabase/config";
+import { stringify as stringifyToml } from "smol-toml";
 import { Effect, Exit, FileSystem, Layer, Path, Schema } from "effect";
 
-import { withConfigEnv, mockCommandSettings } from "../../tests/helpers/command-mocks.ts";
+import { withEnvVar, mockCommandSettings } from "../../tests/helpers/command-mocks.ts";
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
 import { readDbToml } from "./db-config.toml-read.ts";
 import { resolveStorageCredentials } from "./storage-credentials.ts";
 import { resolveLocalConfigValues } from "./local-config-values.ts";
 import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
+import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
+
+const stringifyJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 /**
  * Cross-caller parity coverage: for a table of shared misconfigurations, drives both real
@@ -25,40 +32,31 @@ import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
  * the `baseConfig`/`WORKDIR` pattern from `local-config-values.unit.test.ts`.
  */
 
-const withConfig = Effect.fnUntraced(function* (content: string) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const dir = yield* fs.makeTempDirectory({ prefix: "config-validate-parity-" });
-  yield* fs.makeDirectory(path.join(dir, "supabase"), { recursive: true });
-  yield* fs.writeFileString(path.join(dir, "supabase", "config.toml"), content);
+function withConfig(content: string) {
+  const dir = mkdtempSync(join(tmpdir(), "config-validate-parity-"));
+  mkdirSync(join(dir, "supabase"), { recursive: true });
+  writeFileSync(join(dir, "supabase", "config.toml"), content);
   return dir;
-});
-
-const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
-const removeDir = (dir: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    yield* fs.remove(dir, { recursive: true, force: true });
-  });
+}
 
 const readD = (workdir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     return yield* readDbToml(fs, path, workdir);
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(Layer.merge(BunServices.layer, cliConfigValuesTestLayer)));
 
 /** Drives D's real pipeline and asserts the failure message contains `message`. */
 function failsWithD(tomlLines: ReadonlyArray<string>, message: string) {
   return Effect.gen(function* () {
-    const dir = yield* withConfig(tomlLines.join("\n"));
+    const dir = withConfig(tomlLines.join("\n"));
     const exit = yield* readD(dir).pipe(Effect.exit);
     expect(Exit.isFailure(exit), `D: expected failure containing: ${message}`).toBe(true);
     if (Exit.isFailure(exit)) {
-      expect(yield* encodeJson(exit.cause)).toContain(message);
+      expect(stringifyJson(exit.cause)).toContain(message);
     }
-    yield* removeDir(dir);
-  }).pipe(Effect.provide(BunServices.layer));
+    rmSync(dir, { recursive: true, force: true });
+  });
 }
 
 const decodeConfig = Schema.decodeUnknownSync(CliConfigSchema);
@@ -69,19 +67,19 @@ function baseConfig(overrides: Record<string, unknown> = {}): CliConfig {
 }
 
 /** Drives L's real pipeline and asserts the failure message contains `message`. */
-const failsWithL = Effect.fnUntraced(function* (
+function failsWithL(
   overrides: Record<string, unknown>,
   message: string,
   document?: Readonly<Record<string, unknown>>,
 ) {
-  const config = baseConfig(overrides);
-  const error = yield* Effect.flip(
-    resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document).pipe(
-      Effect.provide(BunServices.layer),
-    ),
-  );
-  expect(error.message).toContain(message);
-});
+  return Effect.gen(function* () {
+    const config = baseConfig(overrides);
+    const error = yield* Effect.flip(
+      resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, document),
+    );
+    expect(error.message).toContain(message);
+  }).pipe(Effect.provide(BunServices.layer));
+}
 
 interface ParityScenario {
   readonly name: string;
@@ -298,12 +296,26 @@ const scenarios: ReadonlyArray<ParityScenario> = [
     message:
       "Webhooks cannot be deactivated. [experimental.webhooks] enabled can either be true or left undefined",
   },
+  {
+    name: "custom auth.external provider enabled without client_id",
+    toml: ["[auth.external.my_oidc]", "enabled = true"],
+    overrides: {},
+    document: { auth: { external: { my_oidc: { enabled: true } } } },
+    message: "Missing required field in config: auth.external.my_oidc.client_id",
+  },
+  {
+    name: "custom auth.external provider enabled without secret",
+    toml: ["[auth.external.my_oidc]", "enabled = true", 'client_id = "cid"'],
+    overrides: {},
+    document: { auth: { external: { my_oidc: { enabled: true, client_id: "cid" } } } },
+    message: "Missing required field in config: auth.external.my_oidc.secret",
+  },
 ];
 
 // Explicitly skipped (only one caller runs the branch, or the branch isn't exercised the same
 // way by both — see the module header in `config-validate.ts` for the full out-of-scope list):
-// - `remotes[*].project_id`, `auth.sms`, `auth.external` — D-only, never part of the shared
-// validator (`ConfigValidationInput` has no fields for these at all).
+// - `remotes[*].project_id` — D-only, never part of the shared validator
+// (`ConfigValidationInput` has no field for it).
 // - `project_id`, `studio`, `local_smtp` — L-only, D has no equivalent sections. `api.tls`
 // presence is D-skipped for the same reason but is shared with S via
 // `validateApiTlsPresence` — see the S block below.
@@ -324,13 +336,14 @@ describe("validateResolvedConfig cross-caller parity (D vs L)", () => {
 // assert the identical message, so the shared branches cannot drift.
 describe("shared api + auth validation branches, cross-caller parity (S vs L)", () => {
   /** Drives S's real pipeline (`resolveStorageCredentials`, local branch) to failure. */
-  const failsWithS = (config: CliConfig, message: string) =>
+  const failsWithS = (overrides: Record<string, unknown>, message: string) =>
     Effect.gen(function* () {
-      const dir = yield* withConfig("");
-      const exit = yield* resolveStorageCredentials({ projectRef: "", config }).pipe(
+      const dir = withConfig(stringifyToml({ project_id: "test", ...overrides }));
+      const exit = yield* resolveStorageCredentials({ projectRef: "" }).pipe(
         Effect.provide(
           Layer.mergeAll(
             unusedStackServices,
+            cliConfigValuesTestLayer,
             BunServices.layer,
             runtimeInfoLayer,
             mockCommandSettings({ workdir: dir }),
@@ -345,36 +358,31 @@ describe("shared api + auth validation branches, cross-caller parity (S vs L)", 
       );
       expect(Exit.isFailure(exit), `S: expected failure containing: ${message}`).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(yield* encodeJson(exit.cause)).toContain(message);
+        expect(stringifyJson(exit.cause)).toContain(message);
       }
-      yield* removeDir(dir);
-    }).pipe(Effect.provide(BunServices.layer));
+      rmSync(dir, { recursive: true, force: true });
+    });
 
   // Ambient SUPABASE_API_* / SUPABASE_AUTH_* values would override the config
   // under test, so pin every participating key to unset for the duration of
   // each scenario.
   const isolated = <A, E, R>(body: Effect.Effect<A, E, R>) =>
-    withConfigEnv(
-      Object.fromEntries(
-        [
-          "SUPABASE_API_PORT",
-          "SUPABASE_API_ENABLED",
-          "SUPABASE_API_TLS_ENABLED",
-          "SUPABASE_API_TLS_CERT_PATH",
-          "SUPABASE_API_TLS_KEY_PATH",
-          "SUPABASE_AUTH_JWT_SECRET",
-          "SUPABASE_AUTH_SERVICE_ROLE_KEY",
-        ].map((name) => [name, ""]),
-      ),
-      body,
-    );
+    [
+      "SUPABASE_API_PORT",
+      "SUPABASE_API_ENABLED",
+      "SUPABASE_API_TLS_ENABLED",
+      "SUPABASE_API_TLS_CERT_PATH",
+      "SUPABASE_API_TLS_KEY_PATH",
+      "SUPABASE_AUTH_JWT_SECRET",
+      "SUPABASE_AUTH_SERVICE_ROLE_KEY",
+    ].reduce((inner, name) => withEnvVar(name, undefined, inner), body);
 
   it.effect("api.port = 0 with the API enabled: S and L fail with the same message", () =>
     isolated(
       Effect.gen(function* () {
         const message = "Missing required field in config: api.port";
         yield* failsWithL({ api: { port: 0 } }, message);
-        yield* failsWithS(baseConfig({ api: { port: 0 } }), message);
+        yield* failsWithS({ api: { port: 0 } }, message);
       }),
     ),
   );
@@ -384,10 +392,7 @@ describe("shared api + auth validation branches, cross-caller parity (S vs L)", 
       Effect.gen(function* () {
         const message = "Missing required field in config: api.tls.key_path";
         yield* failsWithL({ api: { tls: { enabled: true, cert_path: "kong.crt" } } }, message);
-        yield* failsWithS(
-          baseConfig({ api: { tls: { enabled: true, cert_path: "kong.crt" } } }),
-          message,
-        );
+        yield* failsWithS({ api: { tls: { enabled: true, cert_path: "kong.crt" } } }, message);
       }),
     ),
   );
@@ -397,21 +402,17 @@ describe("shared api + auth validation branches, cross-caller parity (S vs L)", 
       Effect.gen(function* () {
         const message = "Invalid config for auth.jwt_secret. Must be at least 16 characters";
         yield* failsWithL({ auth: { jwt_secret: "short" } }, message);
-        yield* failsWithS(baseConfig({ auth: { jwt_secret: "short" } }), message);
+        yield* failsWithS({ auth: { jwt_secret: "short" } }, message);
       }),
     ),
   );
 
-  it.effect(
-    "undecryptable encrypted: auth.service_role_key: S and L fail with the same message",
-    () =>
-      isolated(
-        Effect.gen(function* () {
-          const message = "failed to parse config";
-          const auth = { service_role_key: "encrypted:not-a-real-ciphertext" };
-          yield* failsWithL({ auth }, message);
-          yield* failsWithS(baseConfig({ auth }), message);
-        }),
+  it.effect("undecryptable encrypted: auth.service_role_key fails S at resolvedConfig load", () =>
+    isolated(
+      failsWithS(
+        { auth: { service_role_key: "encrypted:not-a-real-ciphertext" } },
+        "failed to parse config",
       ),
+    ),
   );
 });

@@ -8,7 +8,6 @@ on:
   # jactionlint ignore=dangerous-triggers
   workflow_run:
     workflows:
-      - CI
       - Test
       - AI Review
       - GitHub Scripts CI

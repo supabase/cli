@@ -6,8 +6,8 @@ import { commandPlatformApiFactoryLayer } from "../auth/command-platform-api-fac
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
 import { commandSettingsLayer } from "../config/command-settings.layer.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
-import { remoteTargetLayer } from "../config/remote-target.layer.ts";
-import { RemoteTarget } from "../config/remote-target.service.ts";
+import { projectRefLayer } from "../config/project-ref.layer.ts";
+import { ProjectRefResolver } from "../config/project-ref.service.ts";
 import { debugLoggerLayer } from "./debug-logger.layer.ts";
 import { IdentityStitch, identityStitchLayer } from "./identity-stitch.ts";
 import { httpClientLayer } from "../auth/http-debug.layer.ts";
@@ -22,7 +22,7 @@ import { StackApi, stackApiLayer } from "./stack-api.ts";
 /**
  * Runtime layer for the commands that talk to the Storage gateway directly:
  * `seed buckets` and `storage ls/cp/mv/rm`. The Management API client is lazy,
- * so the local path (no `--linked`) never resolves a token or requires login.
+ * so the local default (no `--remote`) never resolves a token or requires login.
  *
  * `HttpClient` is exposed at the top level because the Storage gateway needs
  * it directly, not through the typed Management API client.
@@ -35,7 +35,7 @@ export function storageGatewayRuntimeLayer(subcommand: ReadonlyArray<string>) {
     Layer.provide(debugLoggerLayer),
   );
   // Token resolution is deferred until `factory.make` is first called, on the
-  // `--linked` branch.
+  // hosted-target branch.
   const platformApiFactory = commandPlatformApiFactoryLayer.pipe(
     Layer.provide(credentials),
     Layer.provide(cliSettings),
@@ -47,7 +47,7 @@ export function storageGatewayRuntimeLayer(subcommand: ReadonlyArray<string>) {
     cliSettings,
     platformApiFactory,
     httpClient,
-    remoteTargetLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliSettings)),
+    projectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliSettings)),
     linkedProjectCacheLayer.pipe(
       Layer.provide(credentials),
       Layer.provide(cliSettings),
@@ -74,7 +74,7 @@ export function storageGatewayRuntimeLayer(subcommand: ReadonlyArray<string>) {
 type StorageGatewayServices =
   | CommandPlatformApiFactory
   | CommandSettings
-  | RemoteTarget
+  | ProjectRefResolver
   | LinkedProjectCache
   | TelemetryState
   | IdentityStitch

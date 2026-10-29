@@ -2,7 +2,8 @@ import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { aqua } from "../../../command-internal/colors.ts";
-import { RemoteTarget } from "../../../config/remote-target.service.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Stdin } from "../../../shared/runtime/stdin.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
@@ -20,12 +21,11 @@ export const encryptionUpdateRootKey = Effect.fn("encryption.update-root-key")(f
 ) {
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* RemoteTarget;
   const stdin = yield* Stdin;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
-  const { ref } = yield* resolver.resolve(flags.projectRef);
+  const ref = yield* resolveProjectTarget(flags);
 
   // In text mode, the piped-input path writes the prompt to stderr and echoes a
   // trailing newline to stdout after reading; on a TTY the masked prompt uses
@@ -41,6 +41,8 @@ export const encryptionUpdateRootKey = Effect.fn("encryption.update-root-key")(f
 
   // Runs on both success and failure.
   yield* Effect.gen(function* () {
+    yield* requireHostedMutationConsent({ action: "Replace the project's root encryption key" });
+
     const updating =
       output.format === "text" ? yield* output.task("Updating root key...") : undefined;
     const response = yield* api.v1.updatePgsodiumConfig({ ref, root_key: rootKey }).pipe(

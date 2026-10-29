@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Path, Redacted, Result, Schema } from "effect";
+import { Effect, FileSystem, Option, Path, Redacted, Result, Schema } from "effect";
 import { type DatabaseInstance, type Stack } from "@supabase/stack/effect";
 import type { ArtifactPin, ArtifactSelection } from "@supabase/stack/internal/artifacts";
 import { CommandSettings } from "../config/command-settings.service.ts";
@@ -241,7 +241,10 @@ export const stackAcquireShadowDatabase = Effect.fn("StackShadow.acquire")(funct
     majorVersion: input.setup.majorVersion,
     orioledbVersion: input.db.orioledb_version,
     services: input.context?.config.local?.services,
-    appliedRemote: input.context?.loaded?.appliedRemote,
+    appliedRemote:
+      input.context === undefined
+        ? undefined
+        : Option.getOrUndefined(input.context.resolvedConfig.appliedRemote),
   }).pipe(
     Effect.mapError(
       (error) =>

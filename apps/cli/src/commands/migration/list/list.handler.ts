@@ -1,31 +1,29 @@
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Path } from "effect";
 
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
-import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { renderGlamourTable } from "../../../output/glamour-table.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
-import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
-import { warnLinkedTargetDefault } from "../../../command-internal/target-default-warning.ts";
+import { hostedMutationPreapproval } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import {
   listRemoteMigrations,
   loadLocalVersions,
 } from "../../../command-internal/migration-history.ts";
+import {
+  resolveTarget,
+  type ResolvedTarget,
+} from "../../../command-internal/target/resolve-target.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
-import { MigrationPasswordFlagsError, MigrationTargetFlagsError } from "../migration.errors.ts";
 import type { MigrationListFlags } from "./list.command.ts";
 import { makeMigrationListRows, migrationListTableCells } from "./list.format.ts";
 
-const LIST_HEADERS = ["Local", "Remote", "Time (UTC)"] as const;
+const listHeaders = (target: ResolvedTarget) =>
+  ["Local", target.kind === "local" ? "Local DB" : "Remote", "Time (UTC)"] as const;
 
-const runList = Effect.fnUntraced(function* (
-  flags: MigrationListFlags,
-  target: ReturnType<typeof resolveDbTargetFlags>,
-) {
+const runList = Effect.fnUntraced(function* (flags: MigrationListFlags) {
   const output = yield* Output;
   const resolver = yield* DbConfigResolver;
   const connection = yield* DbConnection;
@@ -34,51 +32,19 @@ const runList = Effect.fnUntraced(function* (
   const path = yield* Path.Path;
   const dnsResolver = yield* DnsResolverFlag;
 
-  // Mutually-exclusive flag groups, checked target group first, then {db-url,
-  // password}; `setFlags` is already sorted, matching the established error format.
-  if (target.setFlags.length > 1) {
-    return yield* new MigrationTargetFlagsError({
-      message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
-    });
-  }
-  if (Option.isSome(flags.dbUrl) && Option.isSome(flags.password)) {
-    return yield* new MigrationPasswordFlagsError({
-      message:
-        "if any flags in the group [db-url password] are set none of the others can be; [db-url password] were all set",
-    });
-  }
-
-  // `--project-ref` never implies `--linked` and must not be silently
-  // discarded on a non-linked target; see push.handler.ts's identical guard.
-  if (Option.isSome(flags.projectRef) && (target.connType ?? "linked") !== "linked") {
-    return yield* new MigrationTargetFlagsError({
-      message:
-        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-    });
-  }
-
-  const remoteTarget = yield* RemoteTarget;
-  const linkedTarget =
-    (target.connType ?? "linked") === "linked"
-      ? yield* remoteTarget.load(flags.projectRef)
-      : undefined;
+  const target = yield* resolveTarget(flags);
 
   const listBody = Effect.gen(function* () {
-    const cfg = yield* resolver.resolve({
-      dbUrl: flags.dbUrl,
-      connType: target.connType ?? "linked",
+    const cfg = yield* resolver.resolveConnection({
+      target,
       dnsResolver,
       password: flags.password,
-      linkedProjectRef: flags.projectRef,
-      target: linkedTarget,
+      hasPasswordFlag: true,
+      networkBanRemoval: yield* hostedMutationPreapproval,
     });
 
     const remote = yield* Effect.scoped(
       Effect.gen(function* () {
-        yield* output.raw(
-          `Connecting to ${cfg.isLocal ? "local" : "remote"} database...\n`,
-          "stderr",
-        );
         const session = yield* connection.connect(cfg.conn, {
           isLocal: cfg.isLocal,
           dnsResolver,
@@ -99,28 +65,22 @@ const runList = Effect.fnUntraced(function* (
       "migration.count": rows.length,
     });
     if (output.format === "text") {
-      yield* output.raw(renderGlamourTable([...LIST_HEADERS], migrationListTableCells(rows)));
+      yield* output.raw(
+        renderGlamourTable([...listHeaders(target)], migrationListTableCells(rows)),
+      );
     } else {
       yield* output.success("Migrations listed", { migrations: rows });
     }
   });
 
-  // `--linked` resolves the project ref and writes the linked-project cache; `--local`
-  // / `--db-url` leave the ref empty.
-  if (linkedTarget !== undefined) {
+  if (target.kind === "linked") {
     const linkedProjectCache = yield* LinkedProjectCache;
-    return yield* listBody.pipe(Effect.ensuring(linkedProjectCache.cache(linkedTarget.ref)));
+    return yield* listBody.pipe(Effect.ensuring(linkedProjectCache.cache(target.ref)));
   }
   return yield* listBody;
 });
 
 export const migrationList = Effect.fn("migration.list")(function* (flags: MigrationListFlags) {
   const telemetryState = yield* TelemetryState;
-  const cliArgs = yield* CliArgs;
-  const target = resolveDbTargetFlags(cliArgs.args);
-  yield* warnLinkedTargetDefault({
-    command: "migration list",
-    targetSelected: target.connType !== undefined || Option.isSome(flags.projectRef),
-  });
-  yield* runList(flags, target).pipe(Effect.ensuring(telemetryState.flush));
+  yield* runList(flags).pipe(Effect.ensuring(telemetryState.flush));
 });

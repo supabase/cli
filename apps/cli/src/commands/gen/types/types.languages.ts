@@ -122,7 +122,7 @@ export const GEN_TYPES_LANGUAGE_FLAG_NAMES: ReadonlyArray<string> = GEN_TYPES_LA
   (option) => option.name,
 );
 
-/** Language flags that consume the next argv token, for the pflag-style scans in the handler. */
+/** Language flags that consume the next argv token, for the argv scans in the handler. */
 export const GEN_TYPES_LANGUAGE_VALUE_FLAG_NAMES: ReadonlyArray<string> =
   GEN_TYPES_LANGUAGE_OPTIONS.filter((option) => option.kind !== "boolean").map(
     (option) => option.name,

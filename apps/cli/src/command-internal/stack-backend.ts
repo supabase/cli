@@ -9,12 +9,12 @@ import {
   type Path,
 } from "effect";
 import { extractCommandPath, hasRootVersionFlag } from "../shared/cli/run.ts";
-import type { ExperimentalFeatureFlagError } from "./experimental-feature.ts";
+import type { ExperimentalFeatureFlagError } from "../shared/config/experimental-feature.ts";
 import {
   projectStateMode,
   type ProjectStateMode,
   softProjectStateMode,
-} from "./project-state-mode.ts";
+} from "../shared/config/project-state-mode.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -89,7 +89,6 @@ export const resolveProjectStateSelection = Effect.fn("ProjectState.resolveSelec
   function* (input: {
     readonly args: ReadonlyArray<string>;
     readonly cwd: string;
-    readonly env: Readonly<Record<string, string | undefined>>;
   }): Effect.fn.Return<
     {
       readonly projectState: Exit.Exit<ProjectStateMode, ExperimentalFeatureFlagError> | undefined;

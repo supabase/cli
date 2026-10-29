@@ -12,15 +12,20 @@ import type {
 } from "@supabase/stack/effect";
 
 import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
+import { commandRuntimeLayer } from "../../src/shared/runtime/command-runtime.layer.ts";
 import { CommandPlatformApi } from "../../src/auth/command-platform-api.service.ts";
 import { CommandPlatformApiFactory } from "../../src/auth/command-platform-api-factory.service.ts";
 import { ProjectRefNotLinkedError } from "../../src/config/project-ref.errors.ts";
 import { unusedGateway } from "./unused-stack.ts";
-import { generateGoJwt } from "../../src/command-internal/go-jwt.ts";
-import { YesFlag } from "../../src/command-internal/global-flags.ts";
+import { ProjectRefResolver } from "../../src/config/project-ref.service.ts";
+import { generateLocalJwt } from "../../src/command-internal/local-jwt.ts";
+import { OutputFlag, YesFlag } from "../../src/command-internal/global-flags.ts";
+import { TargetPolicy } from "../../src/command-internal/target/target-policy.ts";
+import { commandTargetLayer } from "../../src/shared/output/command-target.layer.ts";
 import { StackApi } from "../../src/command-internal/stack-api.ts";
 import { stackBackendLayer } from "../../src/command-internal/stack-backend.ts";
 import type { OutputFormat } from "../../src/shared/output/types.ts";
+import { cliConfigValuesTestLayer } from "./config-values-layer.ts";
 import { mockOutput, mockRuntimeInfo, mockStdin, mockTty } from "./mocks.ts";
 import { unusedStackServices } from "./unused-stack.ts";
 import {
@@ -35,7 +40,6 @@ import {
 } from "./command-mocks.ts";
 import { projectResponse, realLinkedProjectCache } from "./permission-real-layers.ts";
 import { selection } from "./pins.ts";
-import { stubRemoteTarget } from "./remote-target.ts";
 
 interface StorageRoute {
   readonly method: string;
@@ -68,6 +72,7 @@ export interface SetupStorageOptions {
   readonly stdinIsTty?: boolean;
   readonly pipedAnswers?: ReadonlyArray<string>;
   readonly cliArgs?: ReadonlyArray<string>;
+  readonly commandPath?: ReadonlyArray<string>;
   readonly projectRef?: string;
   readonly apiKeys?: ReadonlyArray<{
     name: string;
@@ -75,6 +80,8 @@ export interface SetupStorageOptions {
     type?: string | null;
     secret_jwt_template?: Record<string, unknown> | null;
   }>;
+  /** The linked project's branches, answering a `--remote=<branch>` lookup. */
+  readonly branches?: ReadonlyArray<Record<string, unknown>>;
   readonly linkedFails?: boolean;
   readonly explicitWorkdir?: boolean;
   readonly stackBackend?: boolean;
@@ -108,8 +115,8 @@ const stackCredentials = {
   databasePassword: "postgres",
   publishableKey: "sb_publishable_storage_test",
   secretKey: "sb_secret_storage_test",
-  anonKey: generateGoJwt(STORAGE_TEST_JWT_SECRET, "anon"),
-  serviceRoleKey: generateGoJwt(STORAGE_TEST_JWT_SECRET, "service_role"),
+  anonKey: generateLocalJwt(STORAGE_TEST_JWT_SECRET, "anon"),
+  serviceRoleKey: generateLocalJwt(STORAGE_TEST_JWT_SECRET, "service_role"),
   jwks: JSON.stringify({
     keys: [{ kty: "oct", k: Buffer.from(STORAGE_TEST_JWT_SECRET).toString("base64url") }],
   }),
@@ -306,47 +313,12 @@ export function buildStorageStackApi(
   return { layer, stackCalls: { findStack: findStackCalls } };
 }
 
-/**
- * Builds the layer and recorded state for a `storage` command integration test:
- * a recording `HttpClient` for the Storage gateway, an on-disk `config.toml`,
- * project-ref resolution, tracked telemetry/linked-project cache, and a lazy
- * Management API factory for api-keys.
- */
-export function setupStorage(workdir: string, opts: SetupStorageOptions) {
-  /* The fixture files are written once per setup, on first use: later acquisitions of the
-     returned layers never rewrite what a test changed since. */
-  const writeWorkdirFiles = Effect.runSync(
-    Effect.cached(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        if (opts.toml !== undefined) {
-          yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
-          yield* fs.writeFileString(path.join(workdir, "supabase", "config.toml"), opts.toml);
-        }
-        for (const [rel, content] of Object.entries(opts.files ?? {})) {
-          const abs = path.join(workdir, rel);
-          yield* fs.makeDirectory(path.dirname(abs), { recursive: true });
-          yield* fs.writeFileString(abs, content);
-        }
-      }),
-    ),
-  );
-  const workdirFiles = Layer.effectDiscard(writeWorkdirFiles).pipe(
-    Layer.provide(BunServices.layer),
-  );
-
-  const out = mockOutput({
-    format: opts.format ?? "text",
-    promptConfirmResponses: opts.confirm,
-    promptConfirmFail: opts.promptConfirmFail,
-  });
-
+/** A recording `HttpClient` that answers Storage requests from `routes`, first match first. */
+function recordingStorageHttp(routes: ReadonlyArray<StorageRoute>) {
   const requests: Array<RecordedStorageRequest> = [];
   const consumed = new Set<number>();
-  const routes = opts.routes ?? [];
 
-  const httpLayer = Layer.succeed(
+  const layer = Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) => {
       let body: unknown;
@@ -394,6 +366,95 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
     }),
   );
 
+  return { layer, requests };
+}
+
+/** Storage requests that change state; the object and vector list endpoints are POST reads. */
+const isStorageWrite = (request: { readonly method: string; readonly url: string }) =>
+  request.method !== "GET" &&
+  !request.url.includes("/storage/v1/object/list/") &&
+  !request.url.includes("/storage/v1/vector/ListVectorBuckets");
+
+const STORAGE_TEST_API_KEYS = [
+  {
+    name: "service_role",
+    api_key: "test-service-role-key",
+    type: "secret",
+    secret_jwt_template: { role: "service_role" },
+  },
+];
+
+const STORAGE_TEST_BRANCH_REF = "branchprojectrefabcd";
+
+/** A linked-project branch row for the `branches` option. */
+export const storageTestBranch = (name: string): Record<string, unknown> => ({
+  id: "11111111-2222-4333-8444-555555555555",
+  name,
+  project_ref: STORAGE_TEST_BRANCH_REF,
+  parent_project_ref: VALID_REF,
+  is_default: false,
+  persistent: false,
+  status: "MIGRATIONS_PASSED",
+  created_at: "2026-05-27T01:02:03Z",
+  updated_at: "2026-05-27T01:02:04Z",
+  with_data: true,
+});
+
+/** `describeHostedConsent` api option answering the api-keys lookup a hosted Storage run makes. */
+export const storageConsentApi = {
+  byMethod: { GET: { status: 200, body: STORAGE_TEST_API_KEYS } },
+} as const;
+
+/** The Storage services a handler needs under `describeHostedConsent`, plus its write count. */
+export function storageConsentServices(workdir: string, routes: ReadonlyArray<StorageRoute>) {
+  const http = recordingStorageHttp(routes);
+  const layer = Layer.mergeAll(
+    http.layer,
+    cliConfigValuesTestLayer,
+    unusedStackServices,
+    buildStorageStackApi(workdir, undefined).layer,
+  );
+  return { layer, writes: () => http.requests.filter(isStorageWrite).length };
+}
+
+/**
+ * Builds the layer and recorded state for a `storage` command integration test:
+ * a recording `HttpClient` for the Storage gateway, an on-disk `config.toml`,
+ * project-ref resolution, tracked telemetry/linked-project cache, and a lazy
+ * Management API factory for api-keys.
+ */
+export function setupStorage(workdir: string, opts: SetupStorageOptions) {
+  /* The fixture files are written once per setup, on first use: later acquisitions of the
+     returned layers never rewrite what a test changed since. */
+  const writeWorkdirFiles = Effect.runSync(
+    Effect.cached(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        if (opts.toml !== undefined) {
+          yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+          yield* fs.writeFileString(path.join(workdir, "supabase", "config.toml"), opts.toml);
+        }
+        for (const [rel, content] of Object.entries(opts.files ?? {})) {
+          const abs = path.join(workdir, rel);
+          yield* fs.makeDirectory(path.dirname(abs), { recursive: true });
+          yield* fs.writeFileString(abs, content);
+        }
+      }),
+    ),
+  );
+  const workdirFiles = Layer.effectDiscard(writeWorkdirFiles).pipe(
+    Layer.provide(BunServices.layer),
+  );
+
+  const out = mockOutput({
+    format: opts.format ?? "text",
+    promptConfirmResponses: opts.confirm,
+    promptConfirmFail: opts.promptConfirmFail,
+  });
+
+  const { layer: httpLayer, requests } = recordingStorageHttp(opts.routes ?? []);
+
   const telemetry = mockTelemetryStateTracked();
   const linkedCache = mockLinkedProjectCacheTracked();
 
@@ -402,34 +463,27 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
     new ProjectRefNotLinkedError({
       message: "Cannot find project ref. Have you run supabase link?",
     });
-  const remoteTargetLayer = stubRemoteTarget({
+  const projectRefLayer = Layer.succeed(ProjectRefResolver, {
     resolve: () =>
       opts.linkedFails === true ? Effect.fail(notLinked()) : Effect.succeed(projectRefRef),
+    resolveRef: (flagValue: Option.Option<string>) =>
+      Option.isSome(flagValue) && flagValue.value.length > 0
+        ? Effect.succeed({ ref: flagValue.value, source: "flag" as const, matchesLinkedRef: false })
+        : opts.linkedFails === true
+          ? Effect.fail(notLinked())
+          : Effect.succeed({ ref: projectRefRef, source: "file" as const, matchesLinkedRef: true }),
     resolveForLink: () =>
       opts.linkedFails === true ? Effect.fail(notLinked()) : Effect.succeed(projectRefRef),
     resolveOptional: () => Effect.succeed(Option.some(projectRefRef)),
     // An explicit `--project-ref` flag takes precedence and short-circuits before
     // `linkedFails`, so a test can resolve a ref even for an "unlinked" workdir.
-    load: (flagValue: Option.Option<string>) =>
-      Option.isSome(flagValue) && flagValue.value.length > 0
-        ? Effect.succeed(flagValue.value)
-        : opts.linkedFails === true
-          ? Effect.fail(notLinked())
-          : Effect.succeed(projectRefRef),
-    prompt: () => Effect.succeed(projectRefRef),
+    promptProjectRef: () => Effect.succeed(projectRefRef),
   });
 
-  const defaultApiKeys = [
-    {
-      name: "service_role",
-      api_key: "test-service-role-key",
-      type: "secret",
-      secret_jwt_template: { role: "service_role" },
-    },
-  ];
   const managementApi = mockCommandPlatformApiService({
     v1: {
-      getProjectApiKeys: () => Effect.succeed(opts.apiKeys ?? defaultApiKeys),
+      getProjectApiKeys: () => Effect.succeed(opts.apiKeys ?? STORAGE_TEST_API_KEYS),
+      listAllBranches: () => Effect.succeed(opts.branches ?? []),
     },
   });
 
@@ -442,7 +496,7 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
                 ? jsonResponse(request, 200, projectResponse(projectRefRef))
                 : request.method === "GET" &&
                     request.url.endsWith(`/v1/projects/${projectRefRef}/api-keys`)
-                  ? jsonResponse(request, 200, opts.apiKeys ?? defaultApiKeys)
+                  ? jsonResponse(request, 200, opts.apiKeys ?? STORAGE_TEST_API_KEYS)
                   : jsonResponse(request, 404, { message: "no mock route" }),
             ),
         })
@@ -456,6 +510,9 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
 
   const layer = Layer.mergeAll(
     out.layer,
+    commandTargetLayer.pipe(Layer.provide(out.layer)),
+    Layer.succeed(TargetPolicy, { group: "selectable", consent: "no" }),
+    Layer.succeed(OutputFlag, opts.format === "json" ? Option.some("json") : Option.none()),
     httpLayer,
     telemetry.layer,
     recorded === undefined
@@ -463,7 +520,8 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
       : realLinkedProjectCache({ httpClient: recorded.httpClientLayer, cliSettings }),
     cliSettings,
     BunServices.layer,
-    remoteTargetLayer,
+    cliConfigValuesTestLayer,
+    projectRefLayer,
     recorded === undefined
       ? Layer.succeed(CommandPlatformApiFactory, {
           make: CommandPlatformApi.pipe(Effect.provide(managementApi.layer)),
@@ -482,6 +540,9 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
     mockRuntimeInfo({ cwd: workdir }),
     // `resolveYes` scans the raw argv for an explicit `--yes=false`.
     Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
+    opts.commandPath === undefined
+      ? Layer.empty
+      : commandRuntimeLayer(opts.commandPath).pipe(Layer.provide(BunServices.layer)),
     unusedStackServices,
     stackApi.layer,
     ...(opts.stackBackend === true ? [stackBackendLayer("stack")] : []),
@@ -502,5 +563,6 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
     linkedCache,
     stackCalls: stackApi.stackCalls,
     managementRequests: recorded?.requests ?? [],
+    managementCalls: managementApi.requests,
   };
 }

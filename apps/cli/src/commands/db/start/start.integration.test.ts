@@ -30,6 +30,7 @@ import {
 import { EXEC_FAILED_STATE } from "../../../../tests/helpers/docker-health.ts";
 import { observeMakeDirectory, startLockState } from "../../../../tests/helpers/start-lock.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import { configValuesLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
 import {
   mockCommandSettings,
@@ -533,6 +534,7 @@ function setup(opts: SetupOpts = {}) {
   const layer = Layer.mergeAll(
     BunServices.layer,
     out.layer,
+    configValuesLayer({ output: out.layer }),
     cliSettings,
     telemetry.layer,
     child.layer,
@@ -1476,7 +1478,7 @@ describe("db start", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
+          expect(message).toContain("CliConfigValueError");
           expect(message).toContain("auth.rate_limit");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1509,7 +1511,7 @@ describe("db start", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
+          expect(message).toContain("CliConfigValueError");
           expect(message).toContain(dottedFieldPath);
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1532,7 +1534,7 @@ describe("db start", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
+          expect(message).toContain("CliConfigValueError");
           expect(message).toContain(dottedFieldPath);
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1555,7 +1557,7 @@ describe("db start", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
+          expect(message).toContain("CliConfigValueError");
           expect(message).toContain(dottedFieldPath);
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1575,7 +1577,7 @@ describe("db start", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
+          expect(message).toContain("CliConfigValueError");
           expect(message).toContain("storage.enabled");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1600,7 +1602,7 @@ describe("db start", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
+          expect(message).toContain("CliConfigValueError");
           expect(message).toContain(dottedFieldPath);
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1660,7 +1662,7 @@ describe("db start", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
+          expect(message).toContain("CliConfigValueError");
           expect(message).toContain("auth.jwt_expiry");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1680,7 +1682,7 @@ describe("db start", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
+          expect(message).toContain("CliConfigValueError");
           expect(message).toContain("api.port");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1716,7 +1718,7 @@ describe("db start", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
+          expect(message).toContain("CliConfigValueError");
           expect(message).toContain(dottedFieldPath);
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1724,77 +1726,68 @@ describe("db start", () => {
     },
   );
 
-  it.effect(
-    "fails on an invalid auth.passkey.enabled even when auth is disabled, matching Go's Config.Load",
-    () => {
-      // auth.passkey has no @supabase/config schema, so the malformed value must live in
-      // config.toml directly — an env override would never reach the raw-document read that
-      // decodes it.
-      const { layer, child } = setup({
-        configContents:
-          'project_id = "test"\n[auth]\nenabled = false\n[auth.passkey]\nenabled = "bad"\n',
-      });
-      return Effect.gen(function* () {
-        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
-          expect(message).toContain("auth.passkey");
-        }
-        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-      });
-    },
-  );
+  it.effect("fails on an invalid auth.passkey.enabled even when auth is disabled", () => {
+    // auth.passkey has no @supabase/config schema, so the malformed value must live in
+    // config.toml directly — an env override would never reach the raw-document read that
+    // decodes it.
+    const { layer, child } = setup({
+      configContents:
+        'project_id = "test"\n[auth]\nenabled = false\n[auth.passkey]\nenabled = "bad"\n',
+    });
+    return Effect.gen(function* () {
+      const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const message = Cause.pretty(exit.cause);
+        expect(message).toContain("CliConfigValueError");
+        expect(message).toContain("auth.passkey");
+      }
+      expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+    });
+  });
+
+  it.effect("fails on an invalid auth.external.<custom>.enabled even when auth is disabled", () => {
+    // auth.external is a dynamic provider map; an unmodeled key like "custom" is silently
+    // dropped by @supabase/config's schema, so the malformed value must live in config.toml
+    // directly.
+    const { layer, child } = setup({
+      configContents:
+        'project_id = "test"\n[auth]\nenabled = false\n[auth.external.custom]\nenabled = "bad"\n',
+    });
+    return Effect.gen(function* () {
+      const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const message = Cause.pretty(exit.cause);
+        expect(message).toContain("CliConfigValueError");
+        expect(message).toContain("auth.external");
+      }
+      expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+    });
+  });
+
+  it.effect("fails on a malformed SUPABASE_AUTH_HOOK_SEND_EMAIL_ENABLED override", () => {
+    // The [auth.hook.send_email] section must be present for the env override to reach the
+    // decode — an absent section decodes a schema default that erases the presence signal
+    // the override needs.
+    const { layer, child } = setup({
+      configContents: 'project_id = "test"\n[auth.hook.send_email]\nenabled = false\n',
+      projectEnvContents: "SUPABASE_AUTH_HOOK_SEND_EMAIL_ENABLED=bogus\n",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const message = Cause.pretty(exit.cause);
+        expect(message).toContain("CliConfigValueError");
+        expect(message).toContain("auth.hook");
+      }
+      expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+    });
+  });
 
   it.effect(
-    "fails on an invalid auth.external.<custom>.enabled even when auth is disabled, matching Go's Config.Load",
-    () => {
-      // auth.external is a dynamic provider map; an unmodeled key like "custom" is silently
-      // dropped by @supabase/config's schema, so the malformed value must live in config.toml
-      // directly.
-      const { layer, child } = setup({
-        configContents:
-          'project_id = "test"\n[auth]\nenabled = false\n[auth.external.custom]\nenabled = "bad"\n',
-      });
-      return Effect.gen(function* () {
-        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
-          expect(message).toContain("auth.external");
-        }
-        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-      });
-    },
-  );
-
-  it.effect(
-    "fails on a malformed SUPABASE_AUTH_HOOK_SEND_EMAIL_ENABLED override, matching Go's Config.Load",
-    () => {
-      // The [auth.hook.send_email] section must be present for the env override to reach the
-      // decode — an absent section decodes a schema default that erases the presence signal
-      // the override needs.
-      const { layer, child } = setup({
-        configContents: 'project_id = "test"\n[auth.hook.send_email]\nenabled = false\n',
-        projectEnvContents: "SUPABASE_AUTH_HOOK_SEND_EMAIL_ENABLED=bogus\n",
-      });
-      return Effect.gen(function* () {
-        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
-          expect(message).toContain("auth.hook");
-        }
-        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-      });
-    },
-  );
-
-  it.effect(
-    "fails on a malformed SUPABASE_AUTH_EMAIL_SMTP_PORT override even when auth is disabled, matching Go's Config.Load",
+    "fails on a malformed SUPABASE_AUTH_EMAIL_SMTP_PORT override even when auth is disabled",
     () => {
       // [auth.email.smtp] must be present in config.toml for the env override to reach the
       // decode.
@@ -1808,7 +1801,7 @@ describe("db start", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
+          expect(message).toContain("CliConfigValueError");
           expect(message).toContain("auth.email.smtp");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1831,27 +1824,24 @@ describe("db start", () => {
     },
   );
 
-  it.effect(
-    "fails on a malformed SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED override, matching Go's Config.Load",
-    () => {
-      // [storage.image_transformation] must be present in config.toml for the env override to
-      // reach the decode.
-      const { layer, child } = setup({
-        configContents: 'project_id = "test"\n[storage.image_transformation]\nenabled = true\n',
-        projectEnvContents: "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED=bogus\n",
-      });
-      return Effect.gen(function* () {
-        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
-          expect(message).toContain("storage.image_transformation.enabled");
-        }
-        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-      });
-    },
-  );
+  it.effect("fails on a malformed SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED override", () => {
+    // [storage.image_transformation] must be present in config.toml for the env override to
+    // reach the decode.
+    const { layer, child } = setup({
+      configContents: 'project_id = "test"\n[storage.image_transformation]\nenabled = true\n',
+      projectEnvContents: "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED=bogus\n",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const message = Cause.pretty(exit.cause);
+        expect(message).toContain("CliConfigValueError");
+        expect(message).toContain("storage.image_transformation.enabled");
+      }
+      expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+    });
+  });
 
   it.effect(
     "ignores SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED when [storage.image_transformation] is absent from config.toml",
@@ -1867,27 +1857,24 @@ describe("db start", () => {
     },
   );
 
-  it.effect(
-    "fails on a malformed SUPABASE_DB_SSL_ENFORCEMENT_ENABLED override, matching Go's Config.Load",
-    () => {
-      // [db.ssl_enforcement] must be present in config.toml for the env override to reach the
-      // decode (a presence-gated pointer field, unlike the plain-bool db.network_restrictions.enabled).
-      const { layer, child } = setup({
-        configContents: 'project_id = "test"\n[db.ssl_enforcement]\nenabled = true\n',
-        projectEnvContents: "SUPABASE_DB_SSL_ENFORCEMENT_ENABLED=bogus\n",
-      });
-      return Effect.gen(function* () {
-        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
-          expect(message).toContain("db.ssl_enforcement.enabled");
-        }
-        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-      });
-    },
-  );
+  it.effect("fails on a malformed SUPABASE_DB_SSL_ENFORCEMENT_ENABLED override", () => {
+    // [db.ssl_enforcement] must be present in config.toml for the env override to reach the
+    // decode (a presence-gated pointer field, unlike the plain-bool db.network_restrictions.enabled).
+    const { layer, child } = setup({
+      configContents: 'project_id = "test"\n[db.ssl_enforcement]\nenabled = true\n',
+      projectEnvContents: "SUPABASE_DB_SSL_ENFORCEMENT_ENABLED=bogus\n",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const message = Cause.pretty(exit.cause);
+        expect(message).toContain("CliConfigValueError");
+        expect(message).toContain("db.ssl_enforcement.enabled");
+      }
+      expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+    });
+  });
 
   it.effect(
     "fails on a malformed SUPABASE_DB_SSL_ENFORCEMENT_ENABLED override even when Postgres is already running",
@@ -1902,7 +1889,7 @@ describe("db start", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
+          expect(message).toContain("CliConfigValueError");
           expect(message).toContain("db.ssl_enforcement.enabled");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1983,66 +1970,24 @@ describe("db start", () => {
   );
 
   it.effect(
-    "prints @supabase/config's deprecated-[inbucket]-section WARN only once on a fresh, not-already-running start",
+    "fails before creating any container when config.toml uses the removed [inbucket] section",
     () => {
-      // The deprecation WARN is Console.error-pinned to the real console, not this file's
-      // Output service, so it must be observed with a raw console.error spy, like
-      // stop/status's identical tests.
-      const { layer } = setup({
+      const { layer, child } = setup({
         configContents: 'project_id = "test"\n[inbucket]\n',
         route: freshVolumeRoute(defaultRoute()),
       });
-      const warnings: Array<string> = [];
-      const errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
-        warnings.push(args.map((a) => String(a)).join(" "));
-      });
       return Effect.gen(function* () {
-        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        const inbucketWarnings = warnings.filter((m) =>
-          m.includes(
-            "WARN: config section [inbucket] is deprecated and will be removed in v3, use [local_smtp] instead.",
-          ),
-        );
-        expect(inbucketWarnings).toHaveLength(1);
-      }).pipe(Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())));
-    },
-  );
-
-  it.effect.each([
-    {
-      with: "alone",
-      env: { SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION: "17.11.0.002" },
-      expectedTag: "17.11.0.002-orioledb",
-    },
-    {
-      with: "and SUPABASE_DB_ORIOLEDB_VERSION (wins)",
-      env: {
-        SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION: "17.11.0.002",
-        SUPABASE_DB_ORIOLEDB_VERSION: "17.11.0.003",
-      },
-      expectedTag: "17.11.0.003-orioledb",
-    },
-  ])(
-    "selects the OrioleDB image with SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION $with, warning once that it is removed in v3",
-    ({ env, expectedTag }) => {
-      for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
-      const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
-      const warnings: Array<string> = [];
-      const errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
-        warnings.push(args.map((a) => String(a)).join(" "));
+        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const message = Cause.pretty(exit.cause);
+          expect(message).toContain("DbConfigLoadError");
+          expect(message).toContain(
+            "[inbucket] in supabase/config.toml is no longer supported. Use [local_smtp] instead.",
+          );
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
       });
-      return Effect.gen(function* () {
-        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        const image = createArgs(child.spawned)?.find((arg) => arg.includes("supabase/postgres:"));
-        expect(image).toContain(expectedTag);
-        expect(
-          warnings.filter(
-            (m) =>
-              m ===
-              "WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.",
-          ),
-        ).toHaveLength(1);
-      }).pipe(Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())));
     },
   );
 
@@ -2063,34 +2008,28 @@ describe("db start", () => {
     });
   });
 
-  it.effect(
-    "warns when auth.sms.enable_signup is true but no SMS provider is enabled, matching Go's (s *sms) validate()",
-    () => {
-      const { layer, out } = setup({
-        configContents: 'project_id = "test"\n[auth.sms]\nenable_signup = true\n',
-        route: freshVolumeRoute(defaultRoute()),
-      });
-      return Effect.gen(function* () {
-        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(out.stderrText).toContain("WARN: no SMS provider is enabled. Disabling phone login");
-      });
-    },
-  );
+  it.effect("warns when auth.sms.enable_signup is true but no SMS provider is enabled", () => {
+    const { layer, out } = setup({
+      configContents: 'project_id = "test"\n[auth.sms]\nenable_signup = true\n',
+      route: freshVolumeRoute(defaultRoute()),
+    });
+    return Effect.gen(function* () {
+      yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(out.stderrText).toContain("WARN: no SMS provider is enabled. Disabling phone login");
+    });
+  });
 
-  it.effect(
-    "does not warn about SMS when auth is disabled, matching Go's Enabled-gated (s *sms) validate()",
-    () => {
-      const { layer, out } = setup({
-        configContents:
-          'project_id = "test"\n[auth]\nenabled = false\n[auth.sms]\nenable_signup = true\n',
-        route: freshVolumeRoute(defaultRoute()),
-      });
-      return Effect.gen(function* () {
-        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(out.stderrText).not.toContain("no SMS provider is enabled");
-      });
-    },
-  );
+  it.effect("does not warn about SMS when auth is disabled", () => {
+    const { layer, out } = setup({
+      configContents:
+        'project_id = "test"\n[auth]\nenabled = false\n[auth.sms]\nenable_signup = true\n',
+      route: freshVolumeRoute(defaultRoute()),
+    });
+    return Effect.gen(function* () {
+      yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(out.stderrText).not.toContain("no SMS provider is enabled");
+    });
+  });
 
   it.effect(
     "does not add the Linux-only host.docker.internal extra host on a non-Linux platform",
