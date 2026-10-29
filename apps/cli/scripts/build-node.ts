@@ -3,17 +3,17 @@ import { localBuildDefine } from "./compile-options.ts";
 
 /**
  * Bundles the CLI for Node.js into `dist-node/main.js`, run via `pnpm build:node`. The keyring
- * native addons are emitted beside the bundle, which loads them from there at runtime.
+ * native addons and libpg-query's wasm are emitted beside the bundle, which loads them from there.
  */
 const outdir = "dist-node";
 
 /**
- * Embeds libpg-query's wasm bytes in the bundle. Bun loads the parser's CommonJS entry for Node,
- * which pins the wasm to the build host's path, and emits the patched file import with a path
- * relative to the working directory.
+ * Ships libpg-query's wasm beside the bundle and loads it from there. Bun loads the parser's
+ * CommonJS entry for Node, which pins the wasm to the build host's path, and emits the patched file
+ * import with a path relative to the working directory.
  */
-const embedLibPgQueryWasm: Bun.BunPlugin = {
-  name: "embed-libpg-query-wasm",
+const libPgQueryWasmBesideBundle: Bun.BunPlugin = {
+  name: "libpg-query-wasm-beside-bundle",
   setup(build) {
     build.onResolve({ filter: /^@libpg-query\/parser$/ }, (args) => ({
       path: Bun.resolveSync("@libpg-query/parser/wasm/index.js", args.importer),
@@ -22,17 +22,16 @@ const embedLibPgQueryWasm: Bun.BunPlugin = {
       args.importer.endsWith("/@libpg-query/parser/wasm/index.js")
         ? {
             path: Bun.fileURLToPath(new URL(args.path, Bun.pathToFileURL(args.importer))),
-            namespace: "wasm-bytes",
+            namespace: "beside-bundle",
           }
         : undefined,
     );
-    build.onLoad({ filter: /.*/, namespace: "wasm-bytes" }, (args) =>
-      Bun.file(args.path)
-        .bytes()
-        .then((bytes) => ({
-          loader: "js",
-          contents: `export default Buffer.from("${bytes.toBase64()}", "base64");`,
-        })),
+    build.onLoad({ filter: /.*/, namespace: "beside-bundle" }, (args) =>
+      Bun.write(`${outdir}/libpg-query.wasm`, Bun.file(args.path)).then(() => ({
+        loader: "js",
+        contents: `import { fileURLToPath } from "node:url";
+export default fileURLToPath(new URL("./libpg-query.wasm", import.meta.url));`,
+      })),
     );
   },
 };
@@ -43,7 +42,7 @@ const result = await Bun.build({
   target: "node",
   format: "esm",
   external: ["oxfmt"],
-  plugins: [embedLibPgQueryWasm],
+  plugins: [libPgQueryWasmBesideBundle],
   define: await Effect.runPromise(localBuildDefine),
 });
 for (const log of result.logs) {
