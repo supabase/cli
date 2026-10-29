@@ -2634,7 +2634,7 @@ describe("config io [auth.email|sms] enabled replaces enable_signup", () => {
     { section: "email", value: false },
     { section: "email", value: true },
     { section: "sms", value: true },
-  ])("decodes a legacy auth.$section.enable_signup = $value and warns once", ({ section, value }) =>
+  ])("decodes a legacy $section enable_signup = $value and warns once", ({ section, value }) =>
     runConfigEffect(
       Effect.gen(function* () {
         captureWarnings();
@@ -2655,26 +2655,24 @@ enable_signup = ${value}
   test.each<{ section: Section; value: boolean }>([
     { section: "email", value: false },
     { section: "sms", value: true },
-  ])(
-    "folds auth.$section.enabled = $value into enable_signup without a warning",
-    ({ section, value }) =>
-      runConfigEffect(
-        Effect.gen(function* () {
-          captureWarnings();
-          const loaded = yield* loadToml(
-            `project_id = "abc123"
+  ])("folds $section enabled = $value into enable_signup without a warning", ({ section, value }) =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        captureWarnings();
+        const loaded = yield* loadToml(
+          `project_id = "abc123"
 
 [auth.${section}]
 enabled = ${value}
 `,
-          );
+        );
 
-          expect(loaded.config.auth[section].enable_signup).toBe(value);
-          expect(loaded.document).toHaveProperty(`auth.${section}.enable_signup`, value);
-          expect(loaded.document).not.toHaveProperty(`auth.${section}.enabled`);
-          expect(warnings).toEqual([]);
-        }),
-      ),
+        expect(loaded.config.auth[section].enable_signup).toBe(value);
+        expect(loaded.document).toHaveProperty(`auth.${section}.enable_signup`, value);
+        expect(loaded.document).not.toHaveProperty(`auth.${section}.enabled`);
+        expect(warnings).toEqual([]);
+      }),
+    ),
   );
 
   test.each<{ section: Section; enabled: boolean }>([
@@ -2683,7 +2681,7 @@ enabled = ${value}
     { section: "sms", enabled: true },
     { section: "sms", enabled: false },
   ])(
-    "lets auth.$section.enabled = $enabled beat a disagreeing enable_signup, and still warns",
+    "lets $section enabled = $enabled beat a disagreeing enable_signup, and still warns",
     ({ section, enabled }) =>
       runConfigEffect(
         Effect.gen(function* () {
@@ -2801,6 +2799,101 @@ enabled = "env(SUPABASE_PROVIDER_ENABLED_ENV_TEST)"
         expect(warnings).toEqual([]);
       }),
     ));
+});
+
+describe("config io deprecation warnings escape control characters in remote labels", () => {
+  let warnings: Array<string> = [];
+  let errorSpy: MockInstance<typeof console.error> | undefined;
+
+  function captureWarnings() {
+    warnings = [];
+    errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
+      warnings.push(args.map((a) => String(a)).join(" "));
+    });
+  }
+
+  afterEach(() => {
+    errorSpy?.mockRestore();
+    errorSpy = undefined;
+  });
+
+  function loadRemoteToml(label: string, body: string) {
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { join } = yield* Path.Path;
+      const cwd = yield* makeTempProject();
+      const path = yield* configTomlPath(cwd);
+      yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+      yield* fs.writeFileString(
+        path,
+        `project_id = "abc123"
+
+[remotes."${label}"]
+project_id = "stagingrefaaaaaaaaaa"
+
+${body}`,
+      );
+
+      return yield* loadCliConfigFile(path);
+    });
+  }
+
+  const tomlEscape = (code: number) => `\\u${code.toString(16).padStart(4, "0")}`;
+
+  test.each([
+    {
+      kind: "[inbucket] section",
+      body: (label: string) => `[remotes."${label}".inbucket]\nport = 54324\n`,
+      warning: (shown: string) =>
+        `WARN: config section [remotes.${shown}.inbucket] is deprecated and will be removed in v3, use [remotes.${shown}.local_smtp] instead.`,
+    },
+    {
+      kind: "experimental.orioledb_version",
+      body: (label: string) =>
+        `[remotes."${label}".experimental]\norioledb_version = "15.1.0.150"\n`,
+      warning: (shown: string) =>
+        `WARN: remotes.${shown}.experimental.orioledb_version is deprecated and will be removed in v3, use remotes.${shown}.db.orioledb_version instead.`,
+    },
+    {
+      kind: "auth.email.enable_signup",
+      body: (label: string) => `[remotes."${label}".auth.email]\nenable_signup = true\n`,
+      warning: (shown: string) =>
+        `WARN: remotes.${shown}.auth.email.enable_signup is deprecated and will be removed in v4, use remotes.${shown}.auth.email.enabled instead.`,
+    },
+  ])("prints an ESC in the remote label of a deprecated $kind warning as \\u001b", (fixture) =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        captureWarnings();
+        yield* loadRemoteToml(`a${tomlEscape(0x1b)}b`, fixture.body(`a${tomlEscape(0x1b)}b`));
+
+        expect(warnings).toEqual([fixture.warning("a\\u001bb")]);
+        expect(warnings.join("")).not.toContain(String.fromCodePoint(0x1b));
+      }),
+    ),
+  );
+
+  test.each([
+    { name: "LF", code: 0x0a, shown: "\\u000a", escaped: true },
+    { name: "ESC", code: 0x1b, shown: "\\u001b", escaped: true },
+    { name: "the last C0 character", code: 0x1f, shown: "\\u001f", escaped: true },
+    { name: "space", code: 0x20, shown: " ", escaped: false },
+    { name: "DEL", code: 0x7f, shown: "\\u007f", escaped: true },
+    { name: "the last C1 character", code: 0x9f, shown: "\\u009f", escaped: true },
+    { name: "NBSP", code: 0xa0, shown: String.fromCodePoint(0xa0), escaped: false },
+  ])("renders $name in a remote label as its escaped or literal form", ({ code, shown, escaped }) =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        captureWarnings();
+        const label = `a${tomlEscape(code)}b`;
+        yield* loadRemoteToml(label, `[remotes."${label}".auth.sms]\nenable_signup = true\n`);
+
+        expect(warnings).toEqual([
+          `WARN: remotes.a${shown}b.auth.sms.enable_signup is deprecated and will be removed in v4, use remotes.a${shown}b.auth.sms.enabled instead.`,
+        ]);
+        expect(warnings.join("").includes(String.fromCodePoint(code))).toBe(!escaped);
+      }),
+    ),
+  );
 });
 
 describe("config io deprecated [auth.external.{linkedin,slack}] back-compat", () => {

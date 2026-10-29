@@ -790,6 +790,13 @@ func mergeRemoteConfig(v *viper.Viper, remote map[string]any) error {
 	for _, k := range u.AllKeys() {
 		v.Set(k, u.Get(k))
 	}
+	// A remote's own enable_signup must beat the base layer's enabled, which normalizeProviderEnabled prefers.
+	for _, provider := range []string{"auth.email", "auth.sms"} {
+		legacy, preferred := provider+".enable_signup", provider+".enabled"
+		if u.IsSet(legacy) && !u.IsSet(preferred) {
+			v.Set(preferred, u.Get(legacy))
+		}
+	}
 	if key := "db.seed.enabled"; !u.IsSet(key) {
 		v.Set(key, false)
 	}

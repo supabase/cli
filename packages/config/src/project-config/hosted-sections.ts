@@ -23,7 +23,7 @@ export type HostedSectionKey = (typeof HOSTED_SECTION_KEYS)[number];
  * `enabled`/`port`, the `db.migrations`/`db.seed` subtrees, every config-side `realtime.*` field,
  * `db.orioledb_version` (plus its deprecated `experimental.orioledb_version` alias — a document
  * that hasn't gone through the loader's deprecation normalization can still carry it), the
- * `auth.{email,sms}.enabled` aliases the loader folds into `enable_signup`, local-only
+ * `auth.{email,sms}.enabled` aliases `fromConfigDocument` folds into `enable_signup`, local-only
  * `experimental.*` engine/backend selection, and the whole top-level `local` section.
  *
  * `db.major_version` and `db.pooler`'s other three fields (`pool_mode`, `default_pool_size`,

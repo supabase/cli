@@ -34,6 +34,6 @@ export {
   normalizeDeprecatedOrioleDBVersion,
   normalizeDeprecatedProviderSignupKeys,
   parseCliConfigDocument,
-  PROVIDER_SIGNUP_ALIASES,
 } from "./io.ts";
+export { PROVIDER_SIGNUP_ALIASES } from "./lib/provider-signup.ts";
 export { CliConfigWriteError } from "./errors.ts";

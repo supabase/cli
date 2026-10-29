@@ -302,6 +302,7 @@ const expectedPureGraphFiles = [
   "sparse.ts",
   "schema-metadata.ts",
   "lib/env.ts",
+  "lib/provider-signup.ts",
   "lib/resolve.ts",
   "lib/schema.ts",
   "lib/secret-paths.ts",

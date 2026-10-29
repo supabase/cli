@@ -238,6 +238,20 @@ describe("published JSON Schema documents", () => {
     expect(JSON.stringify(toProjectConfigJsonSchema())).not.toContain('"x-secret"');
   });
 
+  test.each(["email", "sms"])(
+    "describes project config auth.%s.enable_signup like the CLI enabled alias, not as deprecated",
+    (section) => {
+      const cli = at(toCliConfigJsonSchema(), "properties", "auth", "properties", section);
+      const project = at(toProjectConfigJsonSchema(), "properties", "auth", "properties", section);
+
+      const enabledDescription = at(cli, "properties", "enabled").description;
+      expect(enabledDescription).toBeTypeOf("string");
+      expect(enabledDescription).not.toContain("Deprecated");
+      expect(at(project, "properties", "enable_signup").description).toBe(enabledDescription);
+      expect(at(cli, "properties", "enable_signup").description).toContain("Deprecated");
+    },
+  );
+
   test("custom annotations other than x-secret are not published", () => {
     const deferredSecret = toPublishedJsonSchemaDocument(
       Schema.Struct({ token: env({ secret: true }) }),

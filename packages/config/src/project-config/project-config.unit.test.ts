@@ -189,6 +189,64 @@ describe("fromConfigDocument", () => {
     expect(fromConfigDocument({})).toEqual({});
   });
 
+  test.each([
+    {
+      scenario: "a sparse email enabled = false",
+      operand: { auth: { email: { enabled: false } } },
+      section: "email",
+      expected: false,
+    },
+    {
+      scenario: "a sparse sms enabled = true",
+      operand: { auth: { sms: { enabled: true } } },
+      section: "sms",
+      expected: true,
+    },
+    {
+      scenario: "a decoded email whose only provider key is enabled = false",
+      operand: decodeCliConfig({ auth: { email: { enabled: false } } }),
+      section: "email",
+      expected: false,
+    },
+    {
+      scenario: "a decoded sms whose only provider key is enabled = true",
+      operand: decodeCliConfig({
+        auth: {
+          sms: {
+            enabled: true,
+            twilio: {
+              enabled: true,
+              account_sid: "AC123",
+              message_service_sid: "MG123",
+              auth_token: "token",
+            },
+          },
+        },
+      }),
+      section: "sms",
+      expected: true,
+    },
+    {
+      scenario: "an email enabled = false next to enable_signup = true",
+      operand: { auth: { email: { enabled: false, enable_signup: true } } },
+      section: "email",
+      expected: false,
+    },
+    {
+      scenario: "an sms enabled = true next to enable_signup = false",
+      operand: { auth: { sms: { enabled: true, enable_signup: false } } },
+      section: "sms",
+      expected: true,
+    },
+  ] as const)(
+    "projects $scenario to enable_signup = $expected and drops enabled",
+    ({ operand, section, expected }) => {
+      const projected = fromConfigDocument(operand);
+      expect(projected.auth?.[section]?.enable_signup).toBe(expected);
+      expect(projected.auth?.[section]).not.toHaveProperty("enabled");
+    },
+  );
+
   test("result carries no _apiResponse own property", () => {
     const projected = fromConfigDocument(getDefaultCliConfig());
     expect(Object.getOwnPropertyNames(projected)).not.toContain("_apiResponse");

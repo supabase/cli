@@ -2970,7 +2970,7 @@ describe("readDbToml remoteOverrideKeys — auth.{email,sms}.enabled", () => {
     { section: "email", key: "enable_signup" },
     { section: "sms", key: "enable_signup" },
   ])(
-    "tracks a matched remote's auth.$section.$key as the canonical enable_signup",
+    "tracks a matched remote's $section $key as the canonical enable_signup",
     ({ section, key }) => {
       return withConfig(
         [

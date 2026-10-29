@@ -1383,6 +1383,77 @@ enabled = true
 		assert.False(t, config.Auth.Email.EnableSignup)
 		assert.True(t, config.Auth.Sms.EnableSignup)
 	})
+
+	enableSignup := func(config config, provider string) bool {
+		if provider == "email" {
+			return config.Auth.Email.EnableSignup
+		}
+		return config.Auth.Sms.EnableSignup
+	}
+
+	for _, tc := range []struct {
+		name   string
+		base   string
+		remote string
+		want   bool
+	}{
+		{
+			name:   "remote enable_signup true beats base enabled false",
+			base:   "enabled = false",
+			remote: "enable_signup = true",
+			want:   true,
+		},
+		{
+			name:   "remote enable_signup false beats base enabled true",
+			base:   "enabled = true",
+			remote: "enable_signup = false",
+			want:   false,
+		},
+		{
+			name:   "remote enabled false beats base enable_signup true",
+			base:   "enable_signup = true",
+			remote: "enabled = false",
+			want:   false,
+		},
+		{
+			name:   "remote enabled beats its own enable_signup",
+			base:   "enabled = true",
+			remote: "enabled = false\nenable_signup = true",
+			want:   false,
+		},
+	} {
+		for _, provider := range []string{"email", "sms"} {
+			t.Run(tc.name+" for "+provider, func(t *testing.T) {
+				config := load(t, "abcdefghijklmnopqrst", fmt.Sprintf(`
+[auth.%[1]s]
+%[2]s
+
+[remotes.staging]
+project_id = "abcdefghijklmnopqrst"
+
+[remotes.staging.auth.%[1]s]
+%[3]s
+`, provider, tc.base, tc.remote)+twilio)
+				assert.Equal(t, tc.want, enableSignup(config, provider))
+			})
+		}
+	}
+
+	for _, provider := range []string{"email", "sms"} {
+		t.Run("ignores enable_signup from a remote for another project for "+provider, func(t *testing.T) {
+			config := load(t, "abcdefghijklmnopqrst", fmt.Sprintf(`
+[auth.%[1]s]
+enabled = true
+
+[remotes.other]
+project_id = "tsrqponmlkjihgfedcba"
+
+[remotes.other.auth.%[1]s]
+enable_signup = false
+`, provider)+twilio)
+			assert.True(t, enableSignup(config, provider))
+		})
+	}
 }
 
 func TestLoadLinkedStateFiles(t *testing.T) {

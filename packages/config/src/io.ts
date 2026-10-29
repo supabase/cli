@@ -20,6 +20,7 @@ import {
   CliConfigWriteError,
 } from "./errors.ts";
 import { interpolateEnvReferencesAgainstSchema } from "./lib/env.ts";
+import { PROVIDER_SIGNUP_ALIASES } from "./lib/provider-signup.ts";
 import { findCliProjectPaths } from "./paths.ts";
 import { setOwnProperty } from "./sparse.ts";
 import { loadCliProjectEnvironment } from "./project.ts";
@@ -351,12 +352,6 @@ export function normalizeDeprecatedOrioleDBVersion(
   return { document: normalized, deprecatedPaths };
 }
 
-/** `[auth.email]`/`[auth.sms]` keys where the preferred `enabled` replaces the legacy `enable_signup`. */
-export const PROVIDER_SIGNUP_ALIASES = [
-  { path: ["auth", "email"], preferred: "enabled", legacy: "enable_signup" },
-  { path: ["auth", "sms"], preferred: "enabled", legacy: "enable_signup" },
-] as const;
-
 export interface NormalizedProviderSignupDocument {
   readonly document: unknown;
   /**
@@ -642,6 +637,19 @@ export const configTomlPath = Effect.fnUntraced(function* (cwd: string) {
   return configTomlPathWith(path, project?.projectRoot ?? cwd);
 });
 
+/** Renders C0, DEL and C1 characters as `\uXXXX` so a `[remotes.<name>]` label can't inject terminal escapes into a warning. */
+function escapeControlCharacters(text: string): string {
+  let escaped = "";
+  for (const character of text) {
+    const code = character.codePointAt(0) ?? 0;
+    escaped +=
+      code < 0x20 || (code >= 0x7f && code <= 0x9f)
+        ? `\\u${code.toString(16).padStart(4, "0")}`
+        : character;
+  }
+  return escaped;
+}
+
 export const loadCliConfigFile = Effect.fn("CliConfig.loadFile")(function* (
   filePath: string,
   options?: InternalLoadCliConfigOptions,
@@ -664,21 +672,24 @@ export const loadCliConfigFile = Effect.fn("CliConfig.loadFile")(function* (
   // is ambient) so a caller wrapping this in a deferred/buffered console can't delay or
   // swallow it.
   for (const section of deprecatedSections) {
-    const replacement = section.replace(/inbucket$/, "local_smtp");
+    const shown = escapeControlCharacters(section);
+    const replacement = shown.replace(/inbucket$/, "local_smtp");
     yield* Console.error(
-      `WARN: config section [${section}] is deprecated and will be removed in v3, use [${replacement}] instead.`,
+      `WARN: config section [${shown}] is deprecated and will be removed in v3, use [${replacement}] instead.`,
     ).pipe(Effect.provideService(Console.Console, globalThis.console));
   }
   for (const path of deprecatedOrioleDBPaths) {
-    const replacement = path.replace(/experimental\.orioledb_version$/, "db.orioledb_version");
+    const shown = escapeControlCharacters(path);
+    const replacement = shown.replace(/experimental\.orioledb_version$/, "db.orioledb_version");
     yield* Console.error(
-      `WARN: ${path} is deprecated and will be removed in v3, use ${replacement} instead.`,
+      `WARN: ${shown} is deprecated and will be removed in v3, use ${replacement} instead.`,
     ).pipe(Effect.provideService(Console.Console, globalThis.console));
   }
   for (const path of deprecatedProviderSignupPaths) {
-    const replacement = path.replace(/enable_signup$/, "enabled");
+    const shown = escapeControlCharacters(path);
+    const replacement = shown.replace(/enable_signup$/, "enabled");
     yield* Console.error(
-      `WARN: ${path} is deprecated and will be removed in v4, use ${replacement} instead.`,
+      `WARN: ${shown} is deprecated and will be removed in v4, use ${replacement} instead.`,
     ).pipe(Effect.provideService(Console.Console, globalThis.console));
   }
 
