@@ -4,6 +4,24 @@
  */
 
 import { createHash } from "node:crypto";
+
+import { BunServices } from "@effect/platform-bun";
+import {
+  Cause,
+  Config,
+  ConfigProvider,
+  Console,
+  Data,
+  Effect,
+  Layer,
+  Option,
+  PlatformError,
+  Predicate,
+  Stream,
+} from "effect";
+import { FetchHttpClient, HttpClient, HttpClientRequest, type HttpClientError } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+
 import {
   MIRROR_PRODUCERS,
   NATIVE_TARGETS,
@@ -27,10 +45,8 @@ const SLIM_IMAGE_PREFIX = `${SOURCE_REGISTRY}/`;
 
 type NativeTargetName = SlimNativeTarget;
 
-/** Overridable so an integration test can point at a local fixture server instead of GitHub. */
-const RELEASES_API =
-  process.env.SLIM_SERVICES_RELEASES_API ??
-  "https://api.github.com/repos/supabase/slim-services/releases";
+/** Overridable via `SLIM_SERVICES_RELEASES_API` so an integration test can point at a local fixture server instead of GitHub. */
+const DEFAULT_RELEASES_API = "https://api.github.com/repos/supabase/slim-services/releases";
 const RELEASE_DOWNLOAD_BASE = "https://github.com/supabase/slim-services/releases/download";
 
 /** Bounded retry for `waitForExpectedRelease`: 6 attempts, 10s apart, by default. */
@@ -41,13 +57,49 @@ const S3_WAIT_ATTEMPTS = 20;
 const DEFAULT_S3_WAIT_INTERVAL_MS = 30_000;
 const MAX_TIMER_DELAY_MS = 2 ** 31 - 1; // setTimeout's own ceiling.
 
+class CatalogIoError extends Data.TaggedError("CatalogIoError")<{ readonly message: string }> {}
+
+class CatalogPayloadError extends InvalidPayloadError {
+  readonly _tag = "CatalogPayloadError";
+}
+
+type CatalogFailure = CatalogPayloadError | CatalogIoError;
+
+/* A helper's `InvalidPayloadError` is a failure; any other throw is rethrown as a defect. */
+const attempt = <A>(evaluate: () => A): Effect.Effect<A, CatalogPayloadError> =>
+  Effect.try({
+    try: evaluate,
+    catch: (cause) => {
+      if (cause instanceof InvalidPayloadError) return new CatalogPayloadError(cause.message);
+      throw cause;
+    },
+  });
+
+const foreignFailure = (cause: unknown): CatalogIoError =>
+  new CatalogIoError({ message: cause instanceof Error ? cause.message : String(cause) });
+
+const platformFailure = (error: PlatformError.PlatformError): CatalogIoError =>
+  foreignFailure(error.cause instanceof Error ? error.cause : error);
+
+/* An unparsable URL fails as `fetch` reports it; any other failure by its fetch cause. */
+const httpFailure = (error: HttpClientError.HttpClientError): CatalogIoError =>
+  Predicate.isTagged(error.reason, "InvalidUrlError")
+    ? new CatalogIoError({ message: "fetch() URL is invalid" })
+    : foreignFailure(error.cause instanceof Error ? error.cause : error);
+
+/* `undefined` only when unset: the CLI's provider keeps an empty value, as `process.env` does. */
+const readEnv = (name: string): Effect.Effect<string | undefined, CatalogIoError> =>
+  Config.option(Config.String(name)).pipe(
+    Effect.map(Option.getOrUndefined),
+    Effect.mapError((error) => new CatalogIoError({ message: error.message })),
+  );
+
 /**
- * Parses a millisecond wait-interval override from `envVar` fresh on every call, not once at
- * module load, so a test can set it right before spawning. Unset keeps `fallback`; anything else
- * must be a non-negative integer of at most `MAX_TIMER_DELAY_MS`, or this throws.
+ * Parses a millisecond wait-interval override `raw`, the value of `envVar`. Unset keeps
+ * `fallback`; anything else must be a non-negative integer of at most `MAX_TIMER_DELAY_MS`, or
+ * this throws.
  */
-function waitIntervalMs(envVar: string, fallback: number): number {
-  const raw = process.env[envVar];
+function waitIntervalMs(envVar: string, raw: string | undefined, fallback: number): number {
   if (raw === undefined) return fallback;
   const value = Number(raw);
   if (!/^(0|[1-9][0-9]*)$/.test(raw) || value > MAX_TIMER_DELAY_MS) {
@@ -58,15 +110,19 @@ function waitIntervalMs(envVar: string, fallback: number): number {
   return value;
 }
 
-const expectReleaseIntervalMs = (): number =>
-  waitIntervalMs("SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS", DEFAULT_EXPECT_RELEASE_INTERVAL_MS);
-const s3WaitIntervalMs = (): number =>
-  waitIntervalMs("SLIM_UPDATES_S3_WAIT_MS", DEFAULT_S3_WAIT_INTERVAL_MS);
+const configuredWaitMs = (
+  envVar: string,
+  fallback: number,
+): Effect.Effect<number, CatalogFailure> =>
+  readEnv(envVar).pipe(
+    Effect.flatMap((raw) => attempt(() => waitIntervalMs(envVar, raw, fallback))),
+  );
 
-/** Real delay, for a caller that didn't override `wait`. */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+const expectReleaseIntervalMs = configuredWaitMs(
+  "SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS",
+  DEFAULT_EXPECT_RELEASE_INTERVAL_MS,
+);
+const s3WaitIntervalMs = configuredWaitMs("SLIM_UPDATES_S3_WAIT_MS", DEFAULT_S3_WAIT_INTERVAL_MS);
 
 type BoundedCheck<T> =
   | { readonly kind: "done"; readonly value: T }
@@ -78,21 +134,21 @@ type BoundedWaitOutcome<T> =
   | { readonly status: "timed-out" }
   | { readonly status: "failed"; readonly message: string };
 
-/** Calls `check` up to `attempts` times, waiting between, until it reports `done` or `failed`. */
-async function boundedWait<T>(
-  check: () => Promise<BoundedCheck<T>>,
-  wait: (ms: number) => Promise<void>,
+/** Runs `check` up to `attempts` times, waiting between, until it reports `done` or `failed`. */
+const boundedWait = Effect.fnUntraced(function* <T, E>(
+  check: Effect.Effect<BoundedCheck<T>, E>,
+  wait: (ms: number) => Effect.Effect<void>,
   attempts: number,
   intervalMs: number,
-): Promise<BoundedWaitOutcome<T>> {
+): Effect.fn.Return<BoundedWaitOutcome<T>, E> {
   for (let attempt = 0; attempt < attempts; attempt++) {
-    const result = await check();
+    const result = yield* check;
     if (result.kind === "done") return { status: "done", value: result.value };
     if (result.kind === "failed") return { status: "failed", message: result.message };
-    if (attempt < attempts - 1) await wait(intervalMs);
+    if (attempt < attempts - 1) yield* wait(intervalMs);
   }
   return { status: "timed-out" };
-}
+});
 
 /**
  * A GitHub Actions workflow-command line, `message` run through the workflow-command data
@@ -227,12 +283,18 @@ export type RevisionResolution =
  */
 export interface RevisionIo {
   /** Tags of every published, non-draft release — a draft is not yet a committed revision. */
-  readonly listReleaseTags: () => Promise<ReadonlyArray<string>>;
-  readonly fetchChecksums: (service: string, releaseVersion: string) => Promise<string | undefined>;
-  readonly imageDigest: (service: string, releaseVersion: string) => Promise<string | undefined>;
-  readonly s3Sha256: (url: string) => Promise<string | undefined>;
+  readonly listReleaseTags: Effect.Effect<ReadonlyArray<string>, CatalogFailure>;
+  readonly fetchChecksums: (
+    service: string,
+    releaseVersion: string,
+  ) => Effect.Effect<string | undefined, CatalogFailure>;
+  readonly imageDigest: (
+    service: string,
+    releaseVersion: string,
+  ) => Effect.Effect<string | undefined, CatalogFailure>;
+  readonly s3Sha256: (url: string) => Effect.Effect<string | undefined, CatalogFailure>;
   /** Overridable real delay between the S3-mirror wait's bounded attempts. */
-  readonly wait?: (ms: number) => Promise<void>;
+  readonly wait?: (ms: number) => Effect.Effect<void>;
   /**
    * Raw contents of a native target's `.manifest.json` release asset, for a derived service's
    * `upstream_image` (or `source_image` on an image-derived build, e.g. postgrest's Linux
@@ -242,7 +304,7 @@ export interface RevisionIo {
     service: string,
     releaseVersion: string,
     target: NativeTargetName,
-  ) => Promise<string | undefined>;
+  ) => Effect.Effect<string | undefined, CatalogFailure>;
   /**
    * Raw contents of a mirrored service's `<service>-<upstreamVersion>.oci-provenance.json`
    * release asset, whose `source` field is the mirrored upstream image.
@@ -251,7 +313,7 @@ export interface RevisionIo {
     service: string,
     releaseVersion: string,
     upstreamVersion: string,
-  ) => Promise<string | undefined>;
+  ) => Effect.Effect<string | undefined, CatalogFailure>;
 }
 
 function desiredImage(service: string, releaseVersion: string, digest: string): string {
@@ -269,16 +331,16 @@ function desiredImage(service: string, releaseVersion: string, digest: string): 
  * With `requiredRevision` given (`--release`), that revision must already be committed; it is
  * never "highest at apply time". Without it, the highest committed revision of `upstream` is used.
  */
-export async function resolveRevisionPin(
+export const resolveRevisionPin = Effect.fnUntraced(function* (
   service: string,
   upstream: string,
   io: RevisionIo,
   requiredRevision?: number,
-): Promise<RevisionResolution> {
+): Effect.fn.Return<RevisionResolution, CatalogFailure> {
   const tagPattern = releaseTagPattern(service, upstream);
   const seenRevisions = new Set<number>();
   let highest: number | undefined;
-  for (const tag of await io.listReleaseTags()) {
+  for (const tag of yield* io.listReleaseTags) {
     const match = tagPattern.exec(tag);
     if (match === null) continue;
     const revision = Number(match[1]);
@@ -306,7 +368,7 @@ export async function resolveRevisionPin(
   }
 
   const releaseVersion = `${upstream}-r${target}`;
-  const checksums = await io.fetchChecksums(service, releaseVersion);
+  const checksums = yield* io.fetchChecksums(service, releaseVersion);
   if (checksums === undefined) {
     return {
       status: "incomplete",
@@ -316,7 +378,9 @@ export async function resolveRevisionPin(
 
   const parsedSums = parseSha256Sums(checksums);
   if (parsedSums.kind === "malformed") {
-    throw new InvalidPayloadError(`${service}-${releaseVersion}: ${parsedSums.message}.`);
+    return yield* Effect.fail(
+      new CatalogPayloadError(`${service}-${releaseVersion}: ${parsedSums.message}.`),
+    );
   }
   const natives: Record<string, { archive: string; manifest: string }> = {};
   for (const target of NATIVE_TARGETS) {
@@ -334,7 +398,7 @@ export async function resolveRevisionPin(
     natives[target] = { archive, manifest };
   }
 
-  const digest = await io.imageDigest(service, releaseVersion);
+  const digest = yield* io.imageDigest(service, releaseVersion);
   if (digest === undefined || !DIGEST_PATTERN.test(digest)) {
     return {
       status: "lookup-failed",
@@ -350,11 +414,11 @@ export async function resolveRevisionPin(
     for (const part of ["archive", "manifest"] as const) {
       const url = nativeObjectUrl(service, releaseVersion, files[part]);
       const expected = natives[target]?.[part] as string;
-      const outcome = await boundedWait<true>(
-        async () => {
-          const actual = await io.s3Sha256(url);
+      const outcome = yield* boundedWait(
+        Effect.gen(function* (): Effect.fn.Return<BoundedCheck<true>, CatalogFailure> {
+          const actual = yield* io.s3Sha256(url);
           if (actual === undefined) {
-            console.log(
+            yield* Console.log(
               `Waiting for the S3 mirror of ${service}-${releaseVersion} ${target} (${part})...`,
             );
             return { kind: "retry" };
@@ -366,10 +430,10 @@ export async function resolveRevisionPin(
             };
           }
           return { kind: "done", value: true };
-        },
-        io.wait ?? sleep,
+        }),
+        io.wait ?? Effect.sleep,
         S3_WAIT_ATTEMPTS,
-        s3WaitIntervalMs(),
+        yield* s3WaitIntervalMs,
       );
       if (outcome.status === "failed") {
         return { status: "stale", message: outcome.message };
@@ -388,11 +452,11 @@ export async function resolveRevisionPin(
     pin: {
       upstreamVersion: upstream,
       revision: target,
-      image: desiredImage(service, releaseVersion, digest),
+      image: yield* attempt(() => desiredImage(service, releaseVersion, digest)),
       natives: natives as Record<NativeTargetName, { archive: string; manifest: string }>,
     },
   };
-}
+});
 
 function parseJsonRecord(raw: string): Record<string, unknown> | undefined {
   let parsed: unknown;
@@ -429,70 +493,84 @@ function validateUpstreamImage(image: string, context: string): string {
  * whose manifests disagree fails instead of silently picking one. Only manual mode
  * (`refreshCatalogPin`) calls this.
  */
-async function resolveUpstreamImage(
+const resolveUpstreamImage = Effect.fnUntraced(function* (
   service: string,
   releaseVersion: string,
   upstreamVersion: string,
   io: RevisionIo,
-): Promise<string> {
+) {
   if (MIRROR_PRODUCERS.has(service)) {
-    const provenance = await io.fetchProvenance(service, releaseVersion, upstreamVersion);
+    const provenance = yield* io.fetchProvenance(service, releaseVersion, upstreamVersion);
     if (provenance === undefined) {
-      throw new InvalidPayloadError(`${service}-${releaseVersion} has no oci-provenance asset.`);
+      return yield* Effect.fail(
+        new CatalogPayloadError(`${service}-${releaseVersion} has no oci-provenance asset.`),
+      );
     }
     const name = `${service}-${upstreamVersion}.oci-provenance.json`;
-    const checksums = await io.fetchChecksums(service, releaseVersion);
+    const checksums = yield* io.fetchChecksums(service, releaseVersion);
     const parsed = parseSha256Sums(checksums ?? "");
     if (parsed.kind === "malformed") {
-      throw new InvalidPayloadError(`${service}-${releaseVersion}: ${parsed.message}.`);
+      return yield* Effect.fail(
+        new CatalogPayloadError(`${service}-${releaseVersion}: ${parsed.message}.`),
+      );
     }
     const expected = parsed.sums.get(name);
     if (expected === undefined) {
-      throw new InvalidPayloadError(
-        `${service}-${releaseVersion} SHA256SUMS has no line for ${name}.`,
+      return yield* Effect.fail(
+        new CatalogPayloadError(`${service}-${releaseVersion} SHA256SUMS has no line for ${name}.`),
       );
     }
     if (createHash("sha256").update(provenance).digest("hex") !== expected) {
-      throw new InvalidPayloadError(
-        `${service}-${releaseVersion} ${name} does not match SHA256SUMS.`,
+      return yield* Effect.fail(
+        new CatalogPayloadError(`${service}-${releaseVersion} ${name} does not match SHA256SUMS.`),
       );
     }
     const source = stringField(parseJsonRecord(provenance), "source");
     if (source === undefined) {
-      throw new InvalidPayloadError(
-        `${service}-${releaseVersion} oci-provenance has no 'source' field.`,
+      return yield* Effect.fail(
+        new CatalogPayloadError(
+          `${service}-${releaseVersion} oci-provenance has no 'source' field.`,
+        ),
       );
     }
-    return validateUpstreamImage(normalizeUpstreamImage(source), `${service}-${releaseVersion}`);
+    return yield* attempt(() =>
+      validateUpstreamImage(normalizeUpstreamImage(source), `${service}-${releaseVersion}`),
+    );
   }
 
   const values = new Set<string>();
   for (const target of NATIVE_TARGETS) {
-    const manifest = await io.fetchManifest(service, releaseVersion, target);
+    const manifest = yield* io.fetchManifest(service, releaseVersion, target);
     if (manifest === undefined) {
-      throw new InvalidPayloadError(
-        `${service}-${releaseVersion}-${target} has no manifest asset.`,
+      return yield* Effect.fail(
+        new CatalogPayloadError(`${service}-${releaseVersion}-${target} has no manifest asset.`),
       );
     }
     const record = parseJsonRecord(manifest);
     const value = stringField(record, "upstream_image") ?? stringField(record, "source_image");
     if (value === undefined) {
-      throw new InvalidPayloadError(
-        `${service}-${releaseVersion}-${target} manifest has neither 'upstream_image' nor 'source_image'.`,
+      return yield* Effect.fail(
+        new CatalogPayloadError(
+          `${service}-${releaseVersion}-${target} manifest has neither 'upstream_image' nor 'source_image'.`,
+        ),
       );
     }
     values.add(normalizeUpstreamImage(value));
   }
   if (values.size !== 1) {
-    throw new InvalidPayloadError(
-      `${service}-${releaseVersion} manifests disagree on the upstream image: ${[...values]
-        .sort()
-        .map((value) => JSON.stringify(value))
-        .join(", ")}.`,
+    return yield* Effect.fail(
+      new CatalogPayloadError(
+        `${service}-${releaseVersion} manifests disagree on the upstream image: ${[...values]
+          .sort()
+          .map((value) => JSON.stringify(value))
+          .join(", ")}.`,
+      ),
     );
   }
-  return validateUpstreamImage([...values][0] as string, `${service}-${releaseVersion}`);
-}
+  return yield* attempt(() =>
+    validateUpstreamImage([...values][0] as string, `${service}-${releaseVersion}`),
+  );
+});
 
 /**
  * Serializes a resolved pin into the object literal `Artifacts.ts` embeds, in catalog order.
@@ -740,6 +818,14 @@ function writePin(
     changed = true;
   }
   return { source: next, changed };
+}
+
+function insertLinePin(source: string, insertAt: number, pin: CatalogPin): string {
+  return (
+    source.slice(0, insertAt) +
+    `, ${JSON.stringify(pin.upstreamVersion)}: ${serializePin(pin)}` +
+    source.slice(insertAt)
+  );
 }
 
 /**
@@ -1018,14 +1104,14 @@ export function planSlimUpdates(
  * `plan-updates` transport — this function plus the CLI's file/stdout wiring — without a network
  * call, the same pattern `RevisionIo.listReleaseTags` already uses.
  */
-export async function planUpdatesForService(input: {
+export const planUpdatesForService = Effect.fnUntraced(function* (input: {
   readonly catalog: string;
   readonly service: string;
-  readonly listReleaseTags: () => Promise<ReadonlyArray<string>>;
-}): Promise<PlanSlimUpdatesResult> {
-  const releaseTags = await input.listReleaseTags();
-  return planSlimUpdates(input.catalog, input.service, releaseTags);
-}
+  readonly listReleaseTags: Effect.Effect<ReadonlyArray<string>, CatalogFailure>;
+}) {
+  const releaseTags = yield* input.listReleaseTags;
+  return yield* attempt(() => planSlimUpdates(input.catalog, input.service, releaseTags));
+});
 
 export interface WaitForExpectedReleaseResult {
   readonly visible: boolean;
@@ -1042,29 +1128,30 @@ export interface WaitForExpectedReleaseResult {
  * (parsed fresh by `expectReleaseIntervalMs` on every call this default reaches), since a
  * subprocess can't be handed a function.
  */
-export async function waitForExpectedRelease(
+export const waitForExpectedRelease = Effect.fnUntraced(function* (
   service: string,
   releaseVersion: string,
   io: {
-    readonly listReleaseTags: () => Promise<ReadonlyArray<string>>;
-    readonly wait: (ms: number) => Promise<void>;
+    readonly listReleaseTags: Effect.Effect<ReadonlyArray<string>, CatalogFailure>;
+    readonly wait: (ms: number) => Effect.Effect<void>;
   },
   attempts: number = EXPECT_RELEASE_ATTEMPTS,
-  intervalMs: number = expectReleaseIntervalMs(),
-): Promise<WaitForExpectedReleaseResult> {
+  intervalMs?: number,
+): Effect.fn.Return<WaitForExpectedReleaseResult, CatalogFailure> {
+  const interval = intervalMs ?? (yield* expectReleaseIntervalMs);
   const expectedTag = `${service}-${releaseVersion}`;
   let tags: ReadonlyArray<string> = [];
-  const outcome = await boundedWait<true>(
-    async () => {
-      tags = await io.listReleaseTags();
+  const outcome = yield* boundedWait(
+    Effect.gen(function* (): Effect.fn.Return<BoundedCheck<true>, CatalogFailure> {
+      tags = yield* io.listReleaseTags;
       return tags.includes(expectedTag) ? { kind: "done", value: true } : { kind: "retry" };
-    },
+    }),
     io.wait,
     attempts,
-    intervalMs,
+    interval,
   );
   return { visible: outcome.status === "done", tags };
-}
+});
 
 export interface CatalogRefreshResult {
   readonly source: string;
@@ -1078,53 +1165,59 @@ export interface CatalogRefreshResult {
  * version). `upstream` and `release` are mutually exclusive. Pure aside from `io`: callers own
  * reading and writing `Artifacts.ts`.
  */
-export async function refreshCatalogPin(input: {
+export const refreshCatalogPin = Effect.fnUntraced(function* (input: {
   readonly catalog: string;
   readonly service: string;
   readonly upstream?: string;
   readonly release?: string;
   readonly io: RevisionIo;
-}): Promise<CatalogRefreshResult> {
+}): Effect.fn.Return<CatalogRefreshResult, CatalogFailure> {
   if (input.upstream !== undefined && input.release !== undefined) {
-    throw new InvalidPayloadError("--upstream and --release are mutually exclusive.");
+    return yield* Effect.fail(
+      new CatalogPayloadError("--upstream and --release are mutually exclusive."),
+    );
   }
   if (input.upstream !== undefined && !UPSTREAM_VERSION_PATTERN.test(input.upstream)) {
-    throw new InvalidPayloadError(`invalid --upstream '${input.upstream}'`);
+    return yield* Effect.fail(new CatalogPayloadError(`invalid --upstream '${input.upstream}'`));
   }
 
   let upstream = input.upstream;
   let requiredRevision: number | undefined;
   if (input.release !== undefined) {
     if (!RELEASE_VERSION_PATTERN.test(input.release)) {
-      throw new InvalidPayloadError(`invalid --release '${input.release}'`);
+      return yield* Effect.fail(new CatalogPayloadError(`invalid --release '${input.release}'`));
     }
     const match = /^(.+)-r(0|[1-9][0-9]*)$/.exec(input.release) as RegExpExecArray;
     upstream = match[1];
     requiredRevision = Number(match[2]);
   }
 
-  const entry = selectEntry(input.catalog, input.service, upstream);
+  const entry = yield* attempt(() => selectEntry(input.catalog, input.service, upstream));
   if (entry.kind === "unmodelled-service") {
-    throw new InvalidPayloadError(`${CATALOG_PATH} has no slim entry for ${input.service}.`);
+    return yield* Effect.fail(
+      new CatalogPayloadError(`${CATALOG_PATH} has no slim entry for ${input.service}.`),
+    );
   }
   if (entry.kind === "unmodelled-release-line") {
-    throw new InvalidPayloadError(
-      `${input.service} ${upstream ?? ""} is not on a release line ${CATALOG_PATH} carries (${entry.known.join(", ")}).`,
+    return yield* Effect.fail(
+      new CatalogPayloadError(
+        `${input.service} ${upstream ?? ""} is not on a release line ${CATALOG_PATH} carries (${entry.known.join(", ")}).`,
+      ),
     );
   }
   const resolvedUpstream = upstream ?? entry.version;
-  const resolution = await resolveRevisionPin(
+  const resolution = yield* resolveRevisionPin(
     input.service,
     resolvedUpstream,
     input.io,
     requiredRevision,
   );
   if (resolution.status !== "resolved") {
-    throw new InvalidPayloadError(resolution.message);
+    return yield* Effect.fail(new CatalogPayloadError(resolution.message));
   }
   const pin: CatalogPin = {
     ...resolution.pin,
-    upstreamImage: await resolveUpstreamImage(
+    upstreamImage: yield* resolveUpstreamImage(
       input.service,
       `${resolution.pin.upstreamVersion}-r${resolution.pin.revision}`,
       resolvedUpstream,
@@ -1133,10 +1226,7 @@ export async function refreshCatalogPin(input: {
   };
   if (entry.kind === "new-line") {
     return {
-      source:
-        input.catalog.slice(0, entry.insertAt) +
-        `, ${JSON.stringify(pin.upstreamVersion)}: ${serializePin(pin)}` +
-        input.catalog.slice(entry.insertAt),
+      source: insertLinePin(input.catalog, entry.insertAt, pin),
       update: {
         service: input.service,
         version: resolvedUpstream,
@@ -1157,33 +1247,60 @@ export async function refreshCatalogPin(input: {
       target: entry.kind,
     },
   };
-}
+});
 
-function githubHeaders(): Record<string, string> {
+const githubHeaders = Effect.fnUntraced(function* () {
   const headers: Record<string, string> = {
     Accept: "application/vnd.github+json",
     "User-Agent": "supabase-cli-catalog-sync",
   };
-  const token = process.env.GITHUB_TOKEN;
+  const token = yield* readEnv("GITHUB_TOKEN");
   if (token !== undefined && token !== "") headers.Authorization = `Bearer ${token}`;
   return headers;
+});
+
+const isOk = (status: number): boolean => status >= 200 && status <= 299;
+
+/*
+ * Bun's `Response.json()`: an empty 204/205 (null-body) response throws, any other empty body is
+ * `null`, and malformed JSON fails with the parser's own `SyntaxError` message.
+ */
+function parseJsonBody(status: number, body: ArrayBuffer): unknown {
+  if (body.byteLength === 0) {
+    if (status === 204 || status === 205) throw new SyntaxError("Unexpected end of JSON input");
+    return null;
+  }
+  return JSON.parse(new TextDecoder().decode(body));
 }
 
 /** Tags of every published, non-draft `supabase/slim-services` release. A draft is never a committed revision. */
-async function listReleaseTags(): Promise<ReadonlyArray<string>> {
+const githubReleaseTags = Effect.fnUntraced(function* (
+  client: HttpClient.HttpClient,
+): Effect.fn.Return<ReadonlyArray<string>, CatalogFailure> {
+  const releasesApi = (yield* readEnv("SLIM_SERVICES_RELEASES_API")) ?? DEFAULT_RELEASES_API;
   const tags: string[] = [];
   for (let page = 1; ; page++) {
-    const response = await fetch(`${RELEASES_API}?per_page=100&page=${page}`, {
-      headers: githubHeaders(),
-    });
-    if (!response.ok) {
-      throw new InvalidPayloadError(
-        `slim-services releases list failed (HTTP ${response.status}).`,
+    const response = yield* client
+      .execute(
+        HttpClientRequest.get(`${releasesApi}?per_page=100&page=${page}`, {
+          headers: yield* githubHeaders(),
+        }),
+      )
+      .pipe(Effect.mapError(httpFailure));
+    if (!isOk(response.status)) {
+      return yield* Effect.fail(
+        new CatalogPayloadError(`slim-services releases list failed (HTTP ${response.status}).`),
       );
     }
-    const batch: unknown = await response.json();
+    const body = yield* response.arrayBuffer.pipe(Effect.mapError(httpFailure));
+    const batch: unknown = yield* Effect.try({
+      try: () => parseJsonBody(response.status, body),
+      catch: foreignFailure,
+    });
     if (!Array.isArray(batch)) {
-      throw new InvalidPayloadError("Malformed slim-services releases response.");
+      return yield* Effect.fail(
+        new CatalogPayloadError("Malformed slim-services releases response."),
+      );
     }
     for (const item of batch) {
       const record = item as { tag_name?: unknown; draft?: unknown } | null;
@@ -1194,83 +1311,126 @@ async function listReleaseTags(): Promise<ReadonlyArray<string>> {
     if (batch.length < 100) break;
   }
   return tags;
-}
+});
 
-async function fetchChecksums(
+const fetchChecksums = Effect.fnUntraced(function* (
+  client: HttpClient.HttpClient,
   service: string,
   releaseVersion: string,
-): Promise<string | undefined> {
-  const response = await fetch(`${RELEASE_DOWNLOAD_BASE}/${service}-${releaseVersion}/SHA256SUMS`);
+): Effect.fn.Return<string | undefined, CatalogFailure> {
+  const response = yield* client
+    .get(`${RELEASE_DOWNLOAD_BASE}/${service}-${releaseVersion}/SHA256SUMS`)
+    .pipe(Effect.mapError(httpFailure));
   if (response.status === 404) return undefined;
-  if (!response.ok) {
-    throw new InvalidPayloadError(
-      `SHA256SUMS download failed for ${service}-${releaseVersion} (HTTP ${response.status}).`,
+  if (!isOk(response.status)) {
+    return yield* Effect.fail(
+      new CatalogPayloadError(
+        `SHA256SUMS download failed for ${service}-${releaseVersion} (HTTP ${response.status}).`,
+      ),
     );
   }
-  return response.text();
-}
+  return yield* response.text.pipe(Effect.mapError(httpFailure));
+});
 
-async function imageDigest(service: string, releaseVersion: string): Promise<string | undefined> {
-  const reference = `${SLIM_IMAGE_PREFIX}${service}:${releaseVersion}`;
-  const proc = Bun.spawn(["regctl", "manifest", "head", reference], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, , exit] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-  const digest = stdout.trim();
-  return exit === 0 && DIGEST_PATTERN.test(digest) ? digest : undefined;
-}
+const imageDigest = Effect.fnUntraced(
+  function* (
+    spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+    service: string,
+    releaseVersion: string,
+  ) {
+    const reference = `${SLIM_IMAGE_PREFIX}${service}:${releaseVersion}`;
+    const handle = yield* spawner.spawn(
+      ChildProcess.make("regctl", ["manifest", "head", reference], {
+        detached: false,
+        stdin: "ignore",
+      }),
+    );
+    const [stdout, , exitedZero] = yield* Effect.all(
+      [
+        Stream.mkUint8Array(handle.stdout).pipe(
+          Effect.map((bytes) => new TextDecoder().decode(bytes)),
+        ),
+        Stream.runDrain(handle.stderr),
+        /* A signal-terminated regctl counts as failed, as a non-zero exit does. */
+        handle.exitCode.pipe(
+          Effect.map((code) => code === 0),
+          Effect.orElseSucceed(() => false),
+        ),
+      ],
+      { concurrency: "unbounded" },
+    );
+    const digest = stdout.trim();
+    return exitedZero && DIGEST_PATTERN.test(digest) ? digest : undefined;
+  },
+  Effect.scoped,
+  Effect.mapError(platformFailure),
+);
 
-async function s3Sha256(url: string): Promise<string | undefined> {
-  const response = await fetch(url);
-  if (!response.ok) return undefined;
+const s3Sha256 = Effect.fnUntraced(function* (client: HttpClient.HttpClient, url: string) {
+  const response = yield* client.get(url);
+  if (!isOk(response.status)) return undefined;
   const hasher = new Bun.CryptoHasher("sha256");
-  hasher.update(new Uint8Array(await response.arrayBuffer()));
+  hasher.update(new Uint8Array(yield* response.arrayBuffer));
   return hasher.digest("hex");
-}
+}, Effect.mapError(httpFailure));
 
-async function fetchManifest(
+const fetchManifest = Effect.fnUntraced(function* (
+  client: HttpClient.HttpClient,
   service: string,
   releaseVersion: string,
   target: NativeTargetName,
-): Promise<string | undefined> {
+): Effect.fn.Return<string | undefined, CatalogFailure> {
   const files = nativeFileNames(service, releaseVersion, target);
-  const response = await fetch(
-    `${RELEASE_DOWNLOAD_BASE}/${service}-${releaseVersion}/${files.manifest}`,
-  );
+  const response = yield* client
+    .get(`${RELEASE_DOWNLOAD_BASE}/${service}-${releaseVersion}/${files.manifest}`)
+    .pipe(Effect.mapError(httpFailure));
   if (response.status === 404) return undefined;
-  if (!response.ok) {
-    throw new InvalidPayloadError(
-      `manifest download failed for ${service}-${releaseVersion} ${target} (HTTP ${response.status}).`,
+  if (!isOk(response.status)) {
+    return yield* Effect.fail(
+      new CatalogPayloadError(
+        `manifest download failed for ${service}-${releaseVersion} ${target} (HTTP ${response.status}).`,
+      ),
     );
   }
-  return response.text();
-}
+  return yield* response.text.pipe(Effect.mapError(httpFailure));
+});
 
-async function fetchProvenance(
+const fetchProvenance = Effect.fnUntraced(function* (
+  client: HttpClient.HttpClient,
   service: string,
   releaseVersion: string,
   upstreamVersion: string,
-): Promise<string | undefined> {
-  const response = await fetch(
-    `${RELEASE_DOWNLOAD_BASE}/${service}-${releaseVersion}/${service}-${upstreamVersion}.oci-provenance.json`,
-  );
+): Effect.fn.Return<string | undefined, CatalogFailure> {
+  const response = yield* client
+    .get(
+      `${RELEASE_DOWNLOAD_BASE}/${service}-${releaseVersion}/${service}-${upstreamVersion}.oci-provenance.json`,
+    )
+    .pipe(Effect.mapError(httpFailure));
   if (response.status === 404) return undefined;
-  if (!response.ok) {
-    throw new InvalidPayloadError(
-      `oci-provenance download failed for ${service}-${releaseVersion} (HTTP ${response.status}).`,
+  if (!isOk(response.status)) {
+    return yield* Effect.fail(
+      new CatalogPayloadError(
+        `oci-provenance download failed for ${service}-${releaseVersion} (HTTP ${response.status}).`,
+      ),
     );
   }
-  return response.text();
-}
+  return yield* response.text.pipe(Effect.mapError(httpFailure));
+});
 
-function defaultRevisionIo(): RevisionIo {
-  return { listReleaseTags, fetchChecksums, imageDigest, s3Sha256, fetchManifest, fetchProvenance };
-}
+const defaultRevisionIo = Effect.gen(function* () {
+  const client = yield* HttpClient.HttpClient;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  return {
+    listReleaseTags: githubReleaseTags(client),
+    fetchChecksums: (service, releaseVersion) => fetchChecksums(client, service, releaseVersion),
+    imageDigest: (service, releaseVersion) => imageDigest(spawner, service, releaseVersion),
+    s3Sha256: (url) => s3Sha256(client, url),
+    fetchManifest: (service, releaseVersion, target) =>
+      fetchManifest(client, service, releaseVersion, target),
+    fetchProvenance: (service, releaseVersion, upstreamVersion) =>
+      fetchProvenance(client, service, releaseVersion, upstreamVersion),
+  } satisfies RevisionIo;
+});
 
 function parseFlags(argv: ReadonlyArray<string>): ReadonlyMap<string, string> {
   const flags = new Map<string, string>();
@@ -1290,34 +1450,45 @@ function parseFlags(argv: ReadonlyArray<string>): ReadonlyMap<string, string> {
   return flags;
 }
 
-async function runManual(argv: ReadonlyArray<string>): Promise<void> {
-  const flags = parseFlags(argv);
+/* `Bun.file`/`Bun.write`, not `FileSystem`: a missing `--output` directory is created, and errors keep Bun's text. */
+const readText = (path: string): Effect.Effect<string, CatalogIoError> =>
+  Effect.tryPromise({ try: () => Bun.file(path).text(), catch: foreignFailure });
+
+const writeText = (path: string, content: string): Effect.Effect<void, CatalogIoError> =>
+  Effect.tryPromise({ try: () => Bun.write(path, content), catch: foreignFailure }).pipe(
+    Effect.asVoid,
+  );
+
+const runManual = Effect.fnUntraced(function* (argv: ReadonlyArray<string>) {
+  const flags = yield* attempt(() => parseFlags(argv));
   const service = flags.get("service");
   if (service === undefined) {
-    throw new InvalidPayloadError(
-      "Usage: sync-artifacts-catalog.ts --service <service> [--upstream <U> | --release <U>-r<N>]",
+    return yield* Effect.fail(
+      new CatalogPayloadError(
+        "Usage: sync-artifacts-catalog.ts --service <service> [--upstream <U> | --release <U>-r<N>]",
+      ),
     );
   }
   const catalogPath = CATALOG_PATH;
-  const catalog = await Bun.file(catalogPath).text();
-  const result = await refreshCatalogPin({
+  const catalog = yield* readText(catalogPath);
+  const result = yield* refreshCatalogPin({
     catalog,
     service,
     upstream: flags.get("upstream"),
     release: flags.get("release"),
-    io: defaultRevisionIo(),
+    io: yield* defaultRevisionIo,
   });
   if (result.update === undefined) {
-    console.log(`${service} already pins the highest committed revision.`);
+    yield* Console.log(`${service} already pins the highest committed revision.`);
     return;
   }
-  await Bun.write(catalogPath, result.source);
-  console.log(
+  yield* writeText(catalogPath, result.source);
+  yield* Console.log(
     result.update.previousVersion === undefined
       ? `Added ${service} ${result.update.target} ${result.update.version} r${result.update.revision}.`
       : `Pinned ${service} ${result.update.target} ${result.update.previousVersion} -> ${result.update.version} r${result.update.revision}.`,
   );
-}
+});
 
 /**
  * Line-oriented encoding of one `SlimUpdate`, for a bash loop: `kind`, `branch`, `title` and
@@ -1334,6 +1505,36 @@ function updateLine(update: SlimUpdate): string {
     update.toRelease,
     update.fromRelease ?? "",
   ].join("\x1f");
+}
+
+function parsePlanUpdatesFlags(argv: ReadonlyArray<string>) {
+  const flags = parseFlags(argv);
+  const service = flags.get("service");
+  const output = flags.get("output");
+  const expectRelease = flags.get("expect-release");
+  if (service === undefined || output === undefined) {
+    throw new InvalidPayloadError(
+      "Usage: sync-artifacts-catalog.ts plan-updates --service <service> --output <path> " +
+        "[--format lines] [--expect-release <U>-r<N>]",
+    );
+  }
+  if (!SERVICE_NAME_PATTERN.test(service)) {
+    throw new InvalidPayloadError(`invalid --service ${JSON.stringify(service)}`);
+  }
+  const format = flags.get("format") ?? "json";
+  if (format !== "json" && format !== "lines") {
+    throw new InvalidPayloadError(`invalid --format '${format}' (expected 'json' or 'lines')`);
+  }
+  if (expectRelease !== undefined && !RELEASE_VERSION_PATTERN.test(expectRelease)) {
+    throw new InvalidPayloadError(`invalid --expect-release ${JSON.stringify(expectRelease)}`);
+  }
+  return { service, output, expectRelease, format };
+}
+
+function planContent(updates: ReadonlyArray<SlimUpdate>, format: string): string {
+  return format === "lines"
+    ? updates.map((update) => `${updateLine(update)}\n`).join("")
+    : `${JSON.stringify(updates)}\n`;
 }
 
 /**
@@ -1355,61 +1556,42 @@ function updateLine(update: SlimUpdate): string {
  * the bounded retries: this mode throws instead of planning, so `main()`'s handler reports an
  * actionable `::error ::` and exits non-zero, and no `--output` file is written.
  */
-export async function runPlanUpdates(
+export const runPlanUpdates = Effect.fnUntraced(function* (
   argv: ReadonlyArray<string>,
-  io: {
-    readonly listReleaseTags: () => Promise<ReadonlyArray<string>>;
-    readonly wait?: (ms: number) => Promise<void>;
-  } = { listReleaseTags },
-): Promise<void> {
-  const flags = parseFlags(argv);
-  const service = flags.get("service");
-  const output = flags.get("output");
-  const expectRelease = flags.get("expect-release");
-  if (service === undefined || output === undefined) {
-    throw new InvalidPayloadError(
-      "Usage: sync-artifacts-catalog.ts plan-updates --service <service> --output <path> " +
-        "[--format lines] [--expect-release <U>-r<N>]",
-    );
-  }
-  if (!SERVICE_NAME_PATTERN.test(service)) {
-    throw new InvalidPayloadError(`invalid --service ${JSON.stringify(service)}`);
-  }
-  const format = flags.get("format") ?? "json";
-  if (format !== "json" && format !== "lines") {
-    throw new InvalidPayloadError(`invalid --format '${format}' (expected 'json' or 'lines')`);
-  }
-  if (expectRelease !== undefined && !RELEASE_VERSION_PATTERN.test(expectRelease)) {
-    throw new InvalidPayloadError(`invalid --expect-release ${JSON.stringify(expectRelease)}`);
-  }
+  io?: {
+    readonly listReleaseTags: Effect.Effect<ReadonlyArray<string>, CatalogFailure>;
+    readonly wait?: (ms: number) => Effect.Effect<void>;
+  },
+) {
+  const { service, output, expectRelease, format } = yield* attempt(() =>
+    parsePlanUpdatesFlags(argv),
+  );
 
-  let listReleaseTags = io.listReleaseTags;
+  let listReleaseTags = io?.listReleaseTags ?? githubReleaseTags(yield* HttpClient.HttpClient);
   if (expectRelease !== undefined) {
-    const waited = await waitForExpectedRelease(service, expectRelease, {
-      listReleaseTags: io.listReleaseTags,
-      wait: io.wait ?? sleep,
+    const waited = yield* waitForExpectedRelease(service, expectRelease, {
+      listReleaseTags,
+      wait: io?.wait ?? Effect.sleep,
     });
     if (!waited.visible) {
-      throw new InvalidPayloadError(
-        `${service}-${expectRelease} is not visible yet from the slim-services releases API; re-run this workflow once it has propagated.`,
+      return yield* Effect.fail(
+        new CatalogPayloadError(
+          `${service}-${expectRelease} is not visible yet from the slim-services releases API; re-run this workflow once it has propagated.`,
+        ),
       );
     }
     // Reuses the listing the successful attempt already fetched, instead of listing again.
-    listReleaseTags = async () => waited.tags;
+    listReleaseTags = Effect.succeed(waited.tags);
   }
 
-  const catalog = await Bun.file(CATALOG_PATH).text();
-  const { updates, warnings } = await planUpdatesForService({ catalog, service, listReleaseTags });
-  for (const warning of warnings) console.log(warning);
-  const content =
-    format === "lines"
-      ? updates.map((update) => `${updateLine(update)}\n`).join("")
-      : `${JSON.stringify(updates)}\n`;
-  await Bun.write(output, content);
-}
+  const catalog = yield* readText(CATALOG_PATH);
+  const { updates, warnings } = yield* planUpdatesForService({ catalog, service, listReleaseTags });
+  for (const warning of warnings) yield* Console.log(warning);
+  yield* writeText(output, planContent(updates, format));
+});
 
-async function runValidatePayload(argv: ReadonlyArray<string>): Promise<void> {
-  const flags = parseFlags(argv);
+const runValidatePayload = Effect.fnUntraced(function* (argv: ReadonlyArray<string>) {
+  const flags = yield* attempt(() => parseFlags(argv));
   const service = flags.get("service");
   const upstream = flags.get("upstream");
   const revision = flags.get("revision");
@@ -1420,45 +1602,65 @@ async function runValidatePayload(argv: ReadonlyArray<string>): Promise<void> {
     revision === undefined ||
     release === undefined
   ) {
-    throw new InvalidPayloadError(
-      "Usage: sync-artifacts-catalog.ts validate-payload --service <service> --upstream <U> --revision <N> --release <R>",
+    return yield* Effect.fail(
+      new CatalogPayloadError(
+        "Usage: sync-artifacts-catalog.ts validate-payload --service <service> --upstream <U> --revision <N> --release <R>",
+      ),
     );
   }
-  const payload = validateSlimReleasePublishedPayload({
-    service,
-    upstream_version: upstream,
-    revision,
-    release_version: release,
-  });
-  console.log(`service=${payload.service}`);
-  console.log(`upstream_version=${payload.upstream_version}`);
-  console.log(`revision=${payload.revision}`);
-  console.log(`release_version=${payload.release_version}`);
-}
+  const payload = yield* attempt(() =>
+    validateSlimReleasePublishedPayload({
+      service,
+      upstream_version: upstream,
+      revision,
+      release_version: release,
+    }),
+  );
+  yield* Console.log(`service=${payload.service}`);
+  yield* Console.log(`upstream_version=${payload.upstream_version}`);
+  yield* Console.log(`revision=${payload.revision}`);
+  yield* Console.log(`release_version=${payload.release_version}`);
+});
 
-async function main(argv: ReadonlyArray<string>): Promise<void> {
+const main = Effect.fnUntraced(function* (argv: ReadonlyArray<string>) {
   if (argv[0] === "validate-payload") {
-    await runValidatePayload(argv.slice(1));
+    yield* runValidatePayload(argv.slice(1));
     return;
   }
   if (argv[0] === "plan-updates") {
-    await runPlanUpdates(argv.slice(1));
+    yield* runPlanUpdates(argv.slice(1));
     return;
   }
   if (argv[0]?.startsWith("--") === true) {
-    await runManual(argv);
+    yield* runManual(argv);
     return;
   }
 
-  throw new InvalidPayloadError(
-    "Usage: sync-artifacts-catalog.ts --service <service> [--upstream <U> | --release <U>-r<N>], " +
-      "or validate-payload / plan-updates --service <service>",
+  return yield* Effect.fail(
+    new CatalogPayloadError(
+      "Usage: sync-artifacts-catalog.ts --service <service> [--upstream <U> | --release <U>-r<N>], " +
+        "or validate-payload / plan-updates --service <service>",
+    ),
   );
-}
+});
 
 if (import.meta.main) {
-  main(process.argv.slice(2)).catch((error: unknown) => {
-    console.log(workflowCommand("error", error instanceof Error ? error.message : String(error)));
-    process.exit(1);
-  });
+  await Effect.runPromise(
+    main(process.argv.slice(2)).pipe(
+      Effect.catchCause((cause) => {
+        const error = Cause.squash(cause);
+        return Console.log(
+          workflowCommand("error", error instanceof Error ? error.message : String(error)),
+        ).pipe(Effect.andThen(Effect.sync(() => process.exit(1))));
+      }),
+      Effect.provide(
+        Layer.mergeAll(
+          BunServices.layer,
+          FetchHttpClient.layer,
+          Layer.succeed(HttpClient.TracerPropagationEnabled, false),
+          ConfigProvider.layer(ConfigProvider.fromEnv({ preserveEmptyStrings: true })),
+        ),
+      ),
+    ),
+  );
 }

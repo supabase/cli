@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+
+import { BunServices } from "@effect/platform-bun";
+import { Effect, Exit, FileSystem, Path, Stream } from "effect";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { InvalidPayloadError, nativeFileNames, nativeObjectUrl } from "./slim-mirror-payload.ts";
 import {
@@ -48,43 +49,45 @@ function matchingS3(
     byUrl.set(nativeObjectUrl(service, releaseVersion, files.archive), digests[target].archive);
     byUrl.set(nativeObjectUrl(service, releaseVersion, files.manifest), digests[target].manifest);
   }
-  return async (url) => byUrl.get(url);
+  return (url) => Effect.sync(() => byUrl.get(url));
 }
 
 /** A `fetchManifest` returning a derived service's `upstream_image`, for every native target. */
 const manifestWithUpstreamImage =
   (image: string): RevisionIo["fetchManifest"] =>
-  async () =>
-    JSON.stringify({ upstream_image: image });
+  () =>
+    Effect.succeed(JSON.stringify({ upstream_image: image }));
 
-const unusedFetchManifest: RevisionIo["fetchManifest"] = async () => {
-  throw new Error("fetchManifest should not be called for this service");
-};
-const unusedFetchProvenance: RevisionIo["fetchProvenance"] = async () => {
-  throw new Error("fetchProvenance should not be called for this service");
-};
+const unusedFetchManifest: RevisionIo["fetchManifest"] = () =>
+  Effect.die(new Error("fetchManifest should not be called for this service"));
+const unusedFetchProvenance: RevisionIo["fetchProvenance"] = () =>
+  Effect.die(new Error("fetchProvenance should not be called for this service"));
 
 /**
  * Runs the repo's pinned `oxfmt` binary over `source`, the way `slim-release-published.yml`
  * formats the catalog after every write, so parsing tests exercise real formatter output
  * (line-wrapping, trailing commas) instead of a hand-written single-line literal.
  */
-async function formatWithOxfmt(source: string): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "sync-artifacts-catalog-"));
-  const filePath = join(dir, "Artifacts.ts");
-  try {
-    await writeFile(filePath, source);
-    const proc = Bun.spawn(["node_modules/.bin/oxfmt", "--config", ".oxfmtrc.json", filePath], {
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
-    if (exitCode !== 0) throw new Error(`oxfmt failed: ${stderr}`);
-    return await readFile(filePath, "utf8");
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-}
+const formatWithOxfmt = Effect.fnUntraced(function* (source: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const dir = yield* fs.makeTempDirectoryScoped({ prefix: "sync-artifacts-catalog-" });
+  const filePath = path.join(dir, "Artifacts.ts");
+  yield* fs.writeFileString(filePath, source);
+  const proc = yield* spawner.spawn(
+    ChildProcess.make("node_modules/.bin/oxfmt", ["--config", ".oxfmtrc.json", filePath], {
+      detached: false,
+      stdin: "ignore",
+    }),
+  );
+  const [stderr, exitCode] = yield* Effect.all(
+    [Stream.mkString(Stream.decodeText(proc.stderr)), proc.exitCode],
+    { concurrency: "unbounded" },
+  );
+  if (exitCode !== 0) return yield* Effect.die(new Error(`oxfmt failed: ${stderr}`));
+  return yield* fs.readFileString(filePath);
+}, Effect.scoped);
 
 /**
  * A resolved `ArtifactPin` literal, for fixtures that exercise refreshing an already-resolved
@@ -698,509 +701,609 @@ describe("planSlimUpdates", () => {
 });
 
 describe("planUpdatesForService (the plan-updates transport's IO seam)", () => {
-  test("an ignored tag alongside a valid update: the valid record comes back, plus a separate warning", async () => {
-    const result = await planUpdatesForService({
-      catalog: postgresPlannerFixture,
-      service: "postgres",
-      listReleaseTags: async () => [
-        "postgres-17.11.0.002-r0",
-        "postgres-18.0.0.001-r0", // ignored: no line 18
-      ],
-    });
+  test("an ignored tag alongside a valid update: the valid record comes back, plus a separate warning", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const result = yield* planUpdatesForService({
+          catalog: postgresPlannerFixture,
+          service: "postgres",
+          listReleaseTags: Effect.succeed([
+            "postgres-17.11.0.002-r0",
+            "postgres-18.0.0.001-r0", // ignored: no line 18
+          ]),
+        });
 
-    expect(result.warnings).toEqual([
-      "::warning ::postgres 18.0.0.001 is not on a release line packages/stack/src/Artifacts.ts carries for it; ignoring postgres-18.0.0.001-r0.",
-    ]);
-    expect(result.updates).toEqual([
-      {
-        kind: "upgrade",
-        line: "17",
-        branch: "slim-bump/postgres-17",
-        title: "chore(stack): bump postgres to 17.11.0.002-r0",
-        fromRelease: "17.6.1.168-r1",
-        toUpstream: "17.11.0.002",
-        toRelease: "17.11.0.002-r0",
-      },
-    ]);
-  });
+        expect(result.warnings).toEqual([
+          "::warning ::postgres 18.0.0.001 is not on a release line packages/stack/src/Artifacts.ts carries for it; ignoring postgres-18.0.0.001-r0.",
+        ]);
+        expect(result.updates).toEqual([
+          {
+            kind: "upgrade",
+            line: "17",
+            branch: "slim-bump/postgres-17",
+            title: "chore(stack): bump postgres to 17.11.0.002-r0",
+            fromRelease: "17.6.1.168-r1",
+            toUpstream: "17.11.0.002",
+            toRelease: "17.11.0.002-r0",
+          },
+        ]);
+      }),
+    ));
 });
 
 describe("waitForExpectedRelease", () => {
-  test("visible on the first listing: returns immediately without waiting", async () => {
+  test("visible on the first listing: returns immediately without waiting", () => {
     let calls = 0;
     const waits: number[] = [];
-    const result = await waitForExpectedRelease(
-      "postgrest",
-      "v16.4-r1",
-      {
-        listReleaseTags: async () => {
-          calls += 1;
-          return ["postgrest-v16.4-r1"];
-        },
-        wait: async (ms) => {
-          waits.push(ms);
-        },
-      },
-      6,
-      10_000,
-    );
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const result = yield* waitForExpectedRelease(
+          "postgrest",
+          "v16.4-r1",
+          {
+            listReleaseTags: Effect.sync(() => {
+              calls += 1;
+              return ["postgrest-v16.4-r1"];
+            }),
+            wait: (ms) =>
+              Effect.sync(() => {
+                waits.push(ms);
+              }),
+          },
+          6,
+          10_000,
+        );
 
-    expect(result).toEqual({ visible: true, tags: ["postgrest-v16.4-r1"] });
-    expect(calls).toBe(1);
-    expect(waits).toEqual([]);
+        expect(result).toEqual({ visible: true, tags: ["postgrest-v16.4-r1"] });
+        expect(calls).toBe(1);
+        expect(waits).toEqual([]);
+      }),
+    );
   });
 
-  test("visible on a later listing: re-lists and waits between attempts until it appears", async () => {
+  test("visible on a later listing: re-lists and waits between attempts until it appears", () => {
     let calls = 0;
     const waits: number[] = [];
-    const result = await waitForExpectedRelease(
-      "postgrest",
-      "v16.4-r1",
-      {
-        listReleaseTags: async () => {
-          calls += 1;
-          return calls < 3 ? ["postgrest-v16.4-r0"] : ["postgrest-v16.4-r0", "postgrest-v16.4-r1"];
-        },
-        wait: async (ms) => {
-          waits.push(ms);
-        },
-      },
-      6,
-      10_000,
-    );
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const result = yield* waitForExpectedRelease(
+          "postgrest",
+          "v16.4-r1",
+          {
+            listReleaseTags: Effect.sync(() => {
+              calls += 1;
+              return calls < 3
+                ? ["postgrest-v16.4-r0"]
+                : ["postgrest-v16.4-r0", "postgrest-v16.4-r1"];
+            }),
+            wait: (ms) =>
+              Effect.sync(() => {
+                waits.push(ms);
+              }),
+          },
+          6,
+          10_000,
+        );
 
-    expect(result).toEqual({ visible: true, tags: ["postgrest-v16.4-r0", "postgrest-v16.4-r1"] });
-    expect(calls).toBe(3);
-    expect(waits).toEqual([10_000, 10_000]);
+        expect(result).toEqual({
+          visible: true,
+          tags: ["postgrest-v16.4-r0", "postgrest-v16.4-r1"],
+        });
+        expect(calls).toBe(3);
+        expect(waits).toEqual([10_000, 10_000]);
+      }),
+    );
   });
 
-  test("never visible: exhausts every bounded attempt, waiting between but not after the last", async () => {
+  test("never visible: exhausts every bounded attempt, waiting between but not after the last", () => {
     let calls = 0;
     const waits: number[] = [];
-    const result = await waitForExpectedRelease(
-      "postgrest",
-      "v16.4-r1",
-      {
-        listReleaseTags: async () => {
-          calls += 1;
-          return ["postgrest-v16.4-r0"];
-        },
-        wait: async (ms) => {
-          waits.push(ms);
-        },
-      },
-      3,
-      10,
-    );
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const result = yield* waitForExpectedRelease(
+          "postgrest",
+          "v16.4-r1",
+          {
+            listReleaseTags: Effect.sync(() => {
+              calls += 1;
+              return ["postgrest-v16.4-r0"];
+            }),
+            wait: (ms) =>
+              Effect.sync(() => {
+                waits.push(ms);
+              }),
+          },
+          3,
+          10,
+        );
 
-    expect(result).toEqual({ visible: false, tags: ["postgrest-v16.4-r0"] });
-    expect(calls).toBe(3);
-    expect(waits).toEqual([10, 10]);
+        expect(result).toEqual({ visible: false, tags: ["postgrest-v16.4-r0"] });
+        expect(calls).toBe(3);
+        expect(waits).toEqual([10, 10]);
+      }),
+    );
   });
 });
 
 describe("runPlanUpdates (the actual plan-updates CLI mode, not just the pure planner)", () => {
-  test("an ignored tag, a valid upgrade, and the expected dispatched release: --output gets only the valid record, the warning reaches stdout, and the process exits 0", async () => {
-    // Real catalog, real "postgrest" pin — a local fixture server stands in for the releases API
-    // (`SLIM_SERVICES_RELEASES_API`), so this exercises the real subprocess: the CLI's argv
-    // parsing, `--expect-release`'s visibility wait, the network lister, and the file/stdout
-    // wiring together, not just the pure planner or an in-process stub.
-    const catalog = await Bun.file(CATALOG_PATH).text();
-    const pinMatch =
-      /definition\(\s*"postgrest",\s*\{\s*upstreamVersion:\s*"([^"]+)",\s*revision:\s*(\d+)/.exec(
-        catalog,
-      );
-    if (pinMatch === null) throw new Error("postgrest pin not found in the real catalog");
-    const pinnedUpstream = pinMatch[1] as string;
-    const pinnedRevision = Number(pinMatch[2]);
-    // Higher than any real pinned postgrest version, so it always plans as an upgrade.
-    const dispatchedRelease = "v999.0-r0";
+  test("an ignored tag, a valid upgrade, and the expected dispatched release: --output gets only the valid record, the warning reaches stdout, and the process exits 0", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        // Real catalog, real "postgrest" pin — a local fixture server stands in for the releases API
+        // (`SLIM_SERVICES_RELEASES_API`), so this exercises the real subprocess: the CLI's argv
+        // parsing, `--expect-release`'s visibility wait, the network lister, and the file/stdout
+        // wiring together, not just the pure planner or an in-process stub.
+        const catalog = yield* fs.readFileString(CATALOG_PATH);
+        const pinMatch =
+          /definition\(\s*"postgrest",\s*\{\s*upstreamVersion:\s*"([^"]+)",\s*revision:\s*(\d+)/.exec(
+            catalog,
+          );
+        if (pinMatch === null) throw new Error("postgrest pin not found in the real catalog");
+        const pinnedUpstream = pinMatch[1] as string;
+        const pinnedRevision = Number(pinMatch[2]);
+        // Higher than any real pinned postgrest version, so it always plans as an upgrade.
+        const dispatchedRelease = "v999.0-r0";
 
-    const server = Bun.serve({
-      port: 0,
-      fetch: () =>
-        Response.json([
-          { tag_name: `postgrest-${pinnedUpstream}-orioledb-r0`, draft: false }, // ignored
-          { tag_name: `postgrest-${dispatchedRelease}`, draft: false }, // the valid upgrade
-        ]),
-    });
-    const dir = await mkdtemp(join(tmpdir(), "plan-updates-subprocess-"));
-    const outputPath = join(dir, "slim-updates.tsv");
-    try {
-      const proc = Bun.spawn(
-        [
-          "bun",
-          ".github/scripts/sync-artifacts-catalog.ts",
-          "plan-updates",
-          "--service",
-          "postgrest",
-          "--format",
-          "lines",
-          "--expect-release",
-          dispatchedRelease,
-          "--output",
-          outputPath,
-        ],
-        {
-          stdout: "pipe",
-          stderr: "pipe",
-          env: {
-            ...globalThis.process.env,
-            SLIM_SERVICES_RELEASES_API: `http://127.0.0.1:${server.port}`,
-          },
-        },
-      );
-      const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+        const server = yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            Bun.serve({
+              port: 0,
+              fetch: () =>
+                Response.json([
+                  { tag_name: `postgrest-${pinnedUpstream}-orioledb-r0`, draft: false }, // ignored
+                  { tag_name: `postgrest-${dispatchedRelease}`, draft: false }, // the valid upgrade
+                ]),
+            }),
+          ),
+          (server) => Effect.promise(() => server.stop(true)),
+        );
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "plan-updates-subprocess-" });
+        const outputPath = path.join(dir, "slim-updates.tsv");
+        const proc = yield* spawner.spawn(
+          ChildProcess.make(
+            "bun",
+            [
+              ".github/scripts/sync-artifacts-catalog.ts",
+              "plan-updates",
+              "--service",
+              "postgrest",
+              "--format",
+              "lines",
+              "--expect-release",
+              dispatchedRelease,
+              "--output",
+              outputPath,
+            ],
+            {
+              detached: false,
+              stdin: "ignore",
+              extendEnv: true,
+              env: { SLIM_SERVICES_RELEASES_API: `http://127.0.0.1:${server.port}` },
+            },
+          ),
+        );
+        const [stdout, exitCode] = yield* Effect.all(
+          [Stream.mkString(Stream.decodeText(proc.stdout)), proc.exitCode.pipe(Effect.map(Number))],
+          { concurrency: "unbounded" },
+        );
 
-      expect(exitCode).toBe(0);
-      expect(stdout).toContain(
-        `::warning ::postgrest ${pinnedUpstream}-orioledb is not a comparable version; ignoring.`,
-      );
-      const content = await readFile(outputPath, "utf8");
-      expect(content).toBe(
-        `upgrade\x1fslim-bump/postgrest\x1fchore(stack): bump postgrest to ${dispatchedRelease}\x1f${dispatchedRelease}\x1f${pinnedUpstream}-r${pinnedRevision}\n`,
-      );
-    } finally {
-      await server.stop(true);
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
+        expect(exitCode).toBe(0);
+        expect(stdout).toContain(
+          `::warning ::postgrest ${pinnedUpstream}-orioledb is not a comparable version; ignoring.`,
+        );
+        const content = yield* fs.readFileString(outputPath);
+        expect(content).toBe(
+          `upgrade\x1fslim-bump/postgrest\x1fchore(stack): bump postgrest to ${dispatchedRelease}\x1f${dispatchedRelease}\x1f${pinnedUpstream}-r${pinnedRevision}\n`,
+        );
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    ));
 
-  test("the expected dispatched release never becomes visible: the process exits non-zero with an actionable error, and writes no output file", async () => {
-    const server = Bun.serve({
-      port: 0,
-      fetch: () => Response.json([{ tag_name: "postgrest-v16.4-r0", draft: false }]),
-    });
-    const dir = await mkdtemp(join(tmpdir(), "plan-updates-subprocess-never-"));
-    const outputPath = join(dir, "slim-updates.tsv");
-    try {
-      const proc = Bun.spawn(
-        [
-          "bun",
-          ".github/scripts/sync-artifacts-catalog.ts",
-          "plan-updates",
-          "--service",
-          "postgrest",
-          "--format",
-          "lines",
-          "--expect-release",
-          "v999.0-r0",
-          "--output",
-          outputPath,
-        ],
-        {
-          stdout: "pipe",
-          stderr: "pipe",
-          env: {
-            ...globalThis.process.env,
-            SLIM_SERVICES_RELEASES_API: `http://127.0.0.1:${server.port}`,
-            SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS: "5",
-          },
-        },
-      );
-      const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+  test("the expected dispatched release never becomes visible: the process exits non-zero with an actionable error, and writes no output file", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const server = yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            Bun.serve({
+              port: 0,
+              fetch: () => Response.json([{ tag_name: "postgrest-v16.4-r0", draft: false }]),
+            }),
+          ),
+          (server) => Effect.promise(() => server.stop(true)),
+        );
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "plan-updates-subprocess-never-" });
+        const outputPath = path.join(dir, "slim-updates.tsv");
+        const proc = yield* spawner.spawn(
+          ChildProcess.make(
+            "bun",
+            [
+              ".github/scripts/sync-artifacts-catalog.ts",
+              "plan-updates",
+              "--service",
+              "postgrest",
+              "--format",
+              "lines",
+              "--expect-release",
+              "v999.0-r0",
+              "--output",
+              outputPath,
+            ],
+            {
+              detached: false,
+              stdin: "ignore",
+              extendEnv: true,
+              env: {
+                SLIM_SERVICES_RELEASES_API: `http://127.0.0.1:${server.port}`,
+                SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS: "5",
+              },
+            },
+          ),
+        );
+        const [stdout, exitCode] = yield* Effect.all(
+          [Stream.mkString(Stream.decodeText(proc.stdout)), proc.exitCode.pipe(Effect.map(Number))],
+          { concurrency: "unbounded" },
+        );
 
-      expect(exitCode).toBe(1);
-      expect(stdout).toContain("::error ::");
-      expect(stdout).toContain("postgrest-v999.0-r0 is not visible yet");
-      await expect(readFile(outputPath, "utf8")).rejects.toThrow();
-    } finally {
-      await server.stop(true);
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
+        expect(exitCode).toBe(1);
+        expect(stdout).toContain("::error ::");
+        expect(stdout).toContain("postgrest-v999.0-r0 is not visible yet");
+        expect(Exit.isFailure(yield* Effect.exit(fs.readFileString(outputPath)))).toBe(true);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    ));
 
-  test("a missing --output exits non-zero before any network call", async () => {
-    const proc = Bun.spawn(
-      ["bun", ".github/scripts/sync-artifacts-catalog.ts", "plan-updates", "--service", "auth"],
-      { stdout: "pipe", stderr: "pipe" },
-    );
-    const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+  test("a missing --output exits non-zero before any network call", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const proc = yield* spawner.spawn(
+          ChildProcess.make(
+            "bun",
+            [".github/scripts/sync-artifacts-catalog.ts", "plan-updates", "--service", "auth"],
+            { detached: false, stdin: "ignore" },
+          ),
+        );
+        const [stdout, exitCode] = yield* Effect.all(
+          [Stream.mkString(Stream.decodeText(proc.stdout)), proc.exitCode.pipe(Effect.map(Number))],
+          { concurrency: "unbounded" },
+        );
 
-    expect(exitCode).toBe(1);
-    expect(stdout).toContain(
-      "Usage: sync-artifacts-catalog.ts plan-updates --service <service> --output <path>",
-    );
-  });
+        expect(exitCode).toBe(1);
+        expect(stdout).toContain(
+          "Usage: sync-artifacts-catalog.ts plan-updates --service <service> --output <path>",
+        );
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    ));
 
-  test("a newline-bearing --service is rejected before any listing or wait", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "plan-updates-bad-service-"));
-    const outputPath = join(dir, "slim-updates.tsv");
-    try {
-      const proc = Bun.spawn(
-        [
-          "bun",
-          ".github/scripts/sync-artifacts-catalog.ts",
-          "plan-updates",
-          "--service",
-          "auth\n::error ::injected",
-          "--output",
-          outputPath,
-        ],
-        { stdout: "pipe", stderr: "pipe" },
-      );
-      const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+  test("a newline-bearing --service is rejected before any listing or wait", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "plan-updates-bad-service-" });
+        const outputPath = path.join(dir, "slim-updates.tsv");
+        const proc = yield* spawner.spawn(
+          ChildProcess.make(
+            "bun",
+            [
+              ".github/scripts/sync-artifacts-catalog.ts",
+              "plan-updates",
+              "--service",
+              "auth\n::error ::injected",
+              "--output",
+              outputPath,
+            ],
+            { detached: false, stdin: "ignore" },
+          ),
+        );
+        const [stdout, exitCode] = yield* Effect.all(
+          [Stream.mkString(Stream.decodeText(proc.stdout)), proc.exitCode.pipe(Effect.map(Number))],
+          { concurrency: "unbounded" },
+        );
 
-      expect(exitCode).toBe(1);
-      expect(stdout).toContain("invalid --service");
-      await expect(readFile(outputPath, "utf8")).rejects.toThrow();
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
+        expect(exitCode).toBe(1);
+        expect(stdout).toContain("invalid --service");
+        expect(Exit.isFailure(yield* Effect.exit(fs.readFileString(outputPath)))).toBe(true);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    ));
 
-  test("a newline-bearing --format is rejected, producing a single ::error :: line (not JSON.stringify'd; the boundary encoder is what protects it)", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "plan-updates-bad-format-"));
-    const outputPath = join(dir, "slim-updates.tsv");
-    try {
-      const proc = Bun.spawn(
-        [
-          "bun",
-          ".github/scripts/sync-artifacts-catalog.ts",
-          "plan-updates",
-          "--service",
-          "auth",
-          "--output",
-          outputPath,
-          "--format",
-          "lines\n::error ::injected",
-        ],
-        { stdout: "pipe", stderr: "pipe" },
-      );
-      const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+  test("a newline-bearing --format is rejected, producing a single ::error :: line (not JSON.stringify'd; the boundary encoder is what protects it)", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "plan-updates-bad-format-" });
+        const outputPath = path.join(dir, "slim-updates.tsv");
+        const proc = yield* spawner.spawn(
+          ChildProcess.make(
+            "bun",
+            [
+              ".github/scripts/sync-artifacts-catalog.ts",
+              "plan-updates",
+              "--service",
+              "auth",
+              "--output",
+              outputPath,
+              "--format",
+              "lines\n::error ::injected",
+            ],
+            { detached: false, stdin: "ignore" },
+          ),
+        );
+        const [stdout, exitCode] = yield* Effect.all(
+          [Stream.mkString(Stream.decodeText(proc.stdout)), proc.exitCode.pipe(Effect.map(Number))],
+          { concurrency: "unbounded" },
+        );
 
-      expect(exitCode).toBe(1);
-      const lines = stdout.trimEnd().split("\n");
-      expect(lines).toHaveLength(1);
-      expect(lines[0]).toMatch(/^::error ::/);
-      expect(lines[0]).toContain("%0A");
-      await expect(readFile(outputPath, "utf8")).rejects.toThrow();
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
+        expect(exitCode).toBe(1);
+        const lines = stdout.trimEnd().split("\n");
+        expect(lines).toHaveLength(1);
+        expect(lines[0]).toMatch(/^::error ::/);
+        expect(lines[0]).toContain("%0A");
+        expect(Exit.isFailure(yield* Effect.exit(fs.readFileString(outputPath)))).toBe(true);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    ));
 
   test.each(["5ms", "9".repeat(309)])(
     "an invalid SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS (%s) exits non-zero with a configuration error",
-    async (waitMs) => {
-      const proc = Bun.spawn(
-        [
-          "bun",
-          ".github/scripts/sync-artifacts-catalog.ts",
-          "plan-updates",
-          "--service",
-          "postgrest",
-          "--expect-release",
-          "v999.0-r0",
-          "--output",
-          join(await mkdtemp(join(tmpdir(), "plan-updates-bad-wait-")), "slim-updates.tsv"),
-        ],
-        {
-          stdout: "pipe",
-          stderr: "pipe",
-          env: { ...globalThis.process.env, SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS: waitMs },
-        },
-      );
-      const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+    (waitMs) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const proc = yield* spawner.spawn(
+            ChildProcess.make(
+              "bun",
+              [
+                ".github/scripts/sync-artifacts-catalog.ts",
+                "plan-updates",
+                "--service",
+                "postgrest",
+                "--expect-release",
+                "v999.0-r0",
+                "--output",
+                path.join(
+                  yield* fs.makeTempDirectory({ prefix: "plan-updates-bad-wait-" }),
+                  "slim-updates.tsv",
+                ),
+              ],
+              {
+                detached: false,
+                stdin: "ignore",
+                extendEnv: true,
+                env: { SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS: waitMs },
+              },
+            ),
+          );
+          const [stdout, exitCode] = yield* Effect.all(
+            [
+              Stream.mkString(Stream.decodeText(proc.stdout)),
+              proc.exitCode.pipe(Effect.map(Number)),
+            ],
+            { concurrency: "unbounded" },
+          );
 
-      expect(exitCode).toBe(1);
-      expect(stdout).toContain("SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS");
-      expect(stdout).toContain("non-negative integer");
-    },
+          expect(exitCode).toBe(1);
+          expect(stdout).toContain("SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS");
+          expect(stdout).toContain("non-negative integer");
+        }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      ),
   );
 });
 
 describe("refreshCatalogPin", () => {
-  test("refreshes a service to the highest revision of its currently pinned upstream", async () => {
+  test("refreshes a service to the highest revision of its currently pinned upstream", () => {
     const digests = nativeDigests("g");
     const io: RevisionIo = {
-      listReleaseTags: async () => ["analytics-v1.50.9-r0", "analytics-v1.50.9-r1"],
-      fetchChecksums: async () => checksumsFor("analytics", "v1.50.9-r1", digests),
-      imageDigest: async () => digest("h"),
+      listReleaseTags: Effect.succeed(["analytics-v1.50.9-r0", "analytics-v1.50.9-r1"]),
+      fetchChecksums: () => Effect.succeed(checksumsFor("analytics", "v1.50.9-r1", digests)),
+      imageDigest: () => Effect.succeed(digest("h")),
       s3Sha256: matchingS3("analytics", "v1.50.9-r1", digests),
       fetchManifest: manifestWithUpstreamImage("supabase/logflare:1.50.9"),
       fetchProvenance: unusedFetchProvenance,
     };
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const result = yield* refreshCatalogPin({ catalog: fixture, service: "analytics", io });
 
-    const result = await refreshCatalogPin({ catalog: fixture, service: "analytics", io });
-
-    expect(result.update).toEqual({
-      service: "analytics",
-      version: "v1.50.9",
-      revision: 1,
-      previousVersion: "v1.50.9",
-      target: "default",
-    });
-    expect(result.source).toContain("revision: 1");
-    expect(result.source).toContain(
-      `image: "ghcr.io/supabase/cli/analytics:v1.50.9-r1@${digest("h")}"`,
+        expect(result.update).toEqual({
+          service: "analytics",
+          version: "v1.50.9",
+          revision: 1,
+          previousVersion: "v1.50.9",
+          target: "default",
+        });
+        expect(result.source).toContain("revision: 1");
+        expect(result.source).toContain(
+          `image: "ghcr.io/supabase/cli/analytics:v1.50.9-r1@${digest("h")}"`,
+        );
+        expect(result.source).toContain('upstreamImage: "supabase/logflare:1.50.9"');
+      }),
     );
-    expect(result.source).toContain('upstreamImage: "supabase/logflare:1.50.9"');
   });
 
-  test("a resolved pin survives real formatting and can be refreshed again", async () => {
+  test("a resolved pin survives real formatting and can be refreshed again", () => {
     const first = nativeDigests("i");
     const firstIo: RevisionIo = {
-      listReleaseTags: async () => ["postgrest-v16.2-r0"],
-      fetchChecksums: async () => checksumsFor("postgrest", "v16.2-r0", first),
-      imageDigest: async () => digest("j"),
+      listReleaseTags: Effect.succeed(["postgrest-v16.2-r0"]),
+      fetchChecksums: () => Effect.succeed(checksumsFor("postgrest", "v16.2-r0", first)),
+      imageDigest: () => Effect.succeed(digest("j")),
       s3Sha256: matchingS3("postgrest", "v16.2-r0", first),
       fetchManifest: manifestWithUpstreamImage("postgrest/postgrest:v16.2"),
       fetchProvenance: unusedFetchProvenance,
     };
-    const written = await refreshCatalogPin({
-      catalog: fixture,
-      service: "postgrest",
-      io: firstIo,
-    });
-    expect(written.update?.revision).toBe(0);
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const written = yield* refreshCatalogPin({
+          catalog: fixture,
+          service: "postgrest",
+          io: firstIo,
+        });
+        expect(written.update?.revision).toBe(0);
 
-    const formatted = await formatWithOxfmt(written.source);
-    // The formatter actually wrapped the literal onto several lines with trailing commas;
-    // otherwise this test would not be exercising what it claims to.
-    expect(formatted.split("\n").length).toBeGreaterThan(written.source.split("\n").length);
+        const formatted = yield* formatWithOxfmt(written.source);
+        // The formatter actually wrapped the literal onto several lines with trailing commas;
+        // otherwise this test would not be exercising what it claims to.
+        expect(formatted.split("\n").length).toBeGreaterThan(written.source.split("\n").length);
 
-    const second = nativeDigests("k");
-    const secondIo: RevisionIo = {
-      listReleaseTags: async () => ["postgrest-v16.2-r0", "postgrest-v16.2-r1"],
-      fetchChecksums: async () => checksumsFor("postgrest", "v16.2-r1", second),
-      imageDigest: async () => digest("l"),
-      s3Sha256: matchingS3("postgrest", "v16.2-r1", second),
-      fetchManifest: manifestWithUpstreamImage("postgrest/postgrest:v16.2"),
-      fetchProvenance: unusedFetchProvenance,
-    };
-    const refreshed = await refreshCatalogPin({
-      catalog: formatted,
-      service: "postgrest",
-      io: secondIo,
-    });
+        const second = nativeDigests("k");
+        const secondIo: RevisionIo = {
+          listReleaseTags: Effect.succeed(["postgrest-v16.2-r0", "postgrest-v16.2-r1"]),
+          fetchChecksums: () => Effect.succeed(checksumsFor("postgrest", "v16.2-r1", second)),
+          imageDigest: () => Effect.succeed(digest("l")),
+          s3Sha256: matchingS3("postgrest", "v16.2-r1", second),
+          fetchManifest: manifestWithUpstreamImage("postgrest/postgrest:v16.2"),
+          fetchProvenance: unusedFetchProvenance,
+        };
+        const refreshed = yield* refreshCatalogPin({
+          catalog: formatted,
+          service: "postgrest",
+          io: secondIo,
+        });
 
-    expect(refreshed.update).toEqual({
-      service: "postgrest",
-      version: "v16.2",
-      revision: 1,
-      previousVersion: "v16.2",
-      target: "default",
-    });
-    expect(refreshed.source).toContain("revision: 1");
-    expect(refreshed.source).toContain(second["darwin-arm64"].archive);
-    expect(refreshed.source).toContain('upstreamImage: "postgrest/postgrest:v16.2"');
+        expect(refreshed.update).toEqual({
+          service: "postgrest",
+          version: "v16.2",
+          revision: 1,
+          previousVersion: "v16.2",
+          target: "default",
+        });
+        expect(refreshed.source).toContain("revision: 1");
+        expect(refreshed.source).toContain(second["darwin-arm64"].archive);
+        expect(refreshed.source).toContain('upstreamImage: "postgrest/postgrest:v16.2"');
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
   });
 
-  test("refreshes the Postgres 15 additional pin, including after formatting", async () => {
+  test("refreshes the Postgres 15 additional pin, including after formatting", () => {
     const digests = nativeDigests("m");
     const io: RevisionIo = {
-      listReleaseTags: async () => ["postgres-15.14.1.168-r0"],
-      fetchChecksums: async () => checksumsFor("postgres", "15.14.1.168-r0", digests),
-      imageDigest: async () => digest("n"),
+      listReleaseTags: Effect.succeed(["postgres-15.14.1.168-r0"]),
+      fetchChecksums: () => Effect.succeed(checksumsFor("postgres", "15.14.1.168-r0", digests)),
+      imageDigest: () => Effect.succeed(digest("n")),
       s3Sha256: matchingS3("postgres", "15.14.1.168-r0", digests),
       fetchManifest: manifestWithUpstreamImage("supabase/postgres:15.14.1.168"),
       fetchProvenance: unusedFetchProvenance,
     };
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const written = yield* refreshCatalogPin({
+          catalog: fixture,
+          service: "postgres",
+          upstream: "15.14.1.168",
+          io,
+        });
+        expect(written.update).toEqual({
+          service: "postgres",
+          version: "15.14.1.168",
+          revision: 0,
+          previousVersion: "15.14.1.168",
+          target: "additional",
+        });
+        // The default (17.x) postgres line is untouched.
+        expect(written.source).toContain(postgres17Image);
 
-    const written = await refreshCatalogPin({
-      catalog: fixture,
-      service: "postgres",
-      upstream: "15.14.1.168",
-      io,
-    });
-    expect(written.update).toEqual({
-      service: "postgres",
-      version: "15.14.1.168",
-      revision: 0,
-      previousVersion: "15.14.1.168",
-      target: "additional",
-    });
-    // The default (17.x) postgres line is untouched.
-    expect(written.source).toContain(postgres17Image);
+        const formatted = yield* formatWithOxfmt(written.source);
+        const nextDigests = nativeDigests("o");
+        const nextIo: RevisionIo = {
+          listReleaseTags: Effect.succeed(["postgres-15.14.1.168-r0", "postgres-15.14.1.168-r1"]),
+          fetchChecksums: () =>
+            Effect.succeed(checksumsFor("postgres", "15.14.1.168-r1", nextDigests)),
+          imageDigest: () => Effect.succeed(digest("p")),
+          s3Sha256: matchingS3("postgres", "15.14.1.168-r1", nextDigests),
+          fetchManifest: manifestWithUpstreamImage("supabase/postgres:15.14.1.168"),
+          fetchProvenance: unusedFetchProvenance,
+        };
 
-    const formatted = await formatWithOxfmt(written.source);
-    const nextDigests = nativeDigests("o");
-    const nextIo: RevisionIo = {
-      listReleaseTags: async () => ["postgres-15.14.1.168-r0", "postgres-15.14.1.168-r1"],
-      fetchChecksums: async () => checksumsFor("postgres", "15.14.1.168-r1", nextDigests),
-      imageDigest: async () => digest("p"),
-      s3Sha256: matchingS3("postgres", "15.14.1.168-r1", nextDigests),
-      fetchManifest: manifestWithUpstreamImage("supabase/postgres:15.14.1.168"),
-      fetchProvenance: unusedFetchProvenance,
-    };
+        const refreshed = yield* refreshCatalogPin({
+          catalog: formatted,
+          service: "postgres",
+          upstream: "15.14.1.168",
+          io: nextIo,
+        });
 
-    const refreshed = await refreshCatalogPin({
-      catalog: formatted,
-      service: "postgres",
-      upstream: "15.14.1.168",
-      io: nextIo,
-    });
-
-    expect(refreshed.update).toEqual({
-      service: "postgres",
-      version: "15.14.1.168",
-      revision: 1,
-      previousVersion: "15.14.1.168",
-      target: "additional",
-    });
-    expect(refreshed.source).toContain(postgres17Image);
-    expect(refreshed.source).toContain(nextDigests["linux-arm64"].manifest);
-    expect(refreshed.source).toContain('upstreamImage: "supabase/postgres:15.14.1.168"');
+        expect(refreshed.update).toEqual({
+          service: "postgres",
+          version: "15.14.1.168",
+          revision: 1,
+          previousVersion: "15.14.1.168",
+          target: "additional",
+        });
+        expect(refreshed.source).toContain(postgres17Image);
+        expect(refreshed.source).toContain(nextDigests["linux-arm64"].manifest);
+        expect(refreshed.source).toContain('upstreamImage: "supabase/postgres:15.14.1.168"');
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
   });
 
-  test("moves the Postgres 15 additional pin to a new upstream version, updating its key", async () => {
+  test("moves the Postgres 15 additional pin to a new upstream version, updating its key", () => {
     const digests = nativeDigests("u");
     const io: RevisionIo = {
-      listReleaseTags: async () => ["postgres-15.19.0.002-r0"],
-      fetchChecksums: async () => checksumsFor("postgres", "15.19.0.002-r0", digests),
-      imageDigest: async () => digest("v"),
+      listReleaseTags: Effect.succeed(["postgres-15.19.0.002-r0"]),
+      fetchChecksums: () => Effect.succeed(checksumsFor("postgres", "15.19.0.002-r0", digests)),
+      imageDigest: () => Effect.succeed(digest("v")),
       s3Sha256: matchingS3("postgres", "15.19.0.002-r0", digests),
       fetchManifest: manifestWithUpstreamImage("supabase/postgres:15.19.0.002"),
       fetchProvenance: unusedFetchProvenance,
     };
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const written = yield* refreshCatalogPin({
+          catalog: fixture,
+          service: "postgres",
+          upstream: "15.19.0.002",
+          io,
+        });
+        expect(written.update).toEqual({
+          service: "postgres",
+          version: "15.19.0.002",
+          revision: 0,
+          previousVersion: "15.14.1.168",
+          target: "additional",
+        });
+        // The old key is gone; the new key matches the resolved pin's `upstreamVersion`.
+        expect(written.source).not.toContain('"15.14.1.168"');
+        expect(written.source).toContain('"15.19.0.002": { upstreamVersion: "15.19.0.002"');
+        // The default (17.x) postgres line is untouched.
+        expect(written.source).toContain(postgres17Image);
 
-    const written = await refreshCatalogPin({
-      catalog: fixture,
-      service: "postgres",
-      upstream: "15.19.0.002",
-      io,
-    });
-    expect(written.update).toEqual({
-      service: "postgres",
-      version: "15.19.0.002",
-      revision: 0,
-      previousVersion: "15.14.1.168",
-      target: "additional",
-    });
-    // The old key is gone; the new key matches the resolved pin's `upstreamVersion`.
-    expect(written.source).not.toContain('"15.14.1.168"');
-    expect(written.source).toContain('"15.19.0.002": { upstreamVersion: "15.19.0.002"');
-    // The default (17.x) postgres line is untouched.
-    expect(written.source).toContain(postgres17Image);
+        // The renamed key resolves the entry again after real formatting, e.g. for a later hotfix.
+        const formatted = yield* formatWithOxfmt(written.source);
+        const nextDigests = nativeDigests("w");
+        const nextIo: RevisionIo = {
+          listReleaseTags: Effect.succeed(["postgres-15.19.0.002-r0", "postgres-15.19.0.002-r1"]),
+          fetchChecksums: () =>
+            Effect.succeed(checksumsFor("postgres", "15.19.0.002-r1", nextDigests)),
+          imageDigest: () => Effect.succeed(digest("x")),
+          s3Sha256: matchingS3("postgres", "15.19.0.002-r1", nextDigests),
+          fetchManifest: manifestWithUpstreamImage("supabase/postgres:15.19.0.002"),
+          fetchProvenance: unusedFetchProvenance,
+        };
+        const refreshed = yield* refreshCatalogPin({
+          catalog: formatted,
+          service: "postgres",
+          upstream: "15.19.0.002",
+          io: nextIo,
+        });
 
-    // The renamed key resolves the entry again after real formatting, e.g. for a later hotfix.
-    const formatted = await formatWithOxfmt(written.source);
-    const nextDigests = nativeDigests("w");
-    const nextIo: RevisionIo = {
-      listReleaseTags: async () => ["postgres-15.19.0.002-r0", "postgres-15.19.0.002-r1"],
-      fetchChecksums: async () => checksumsFor("postgres", "15.19.0.002-r1", nextDigests),
-      imageDigest: async () => digest("x"),
-      s3Sha256: matchingS3("postgres", "15.19.0.002-r1", nextDigests),
-      fetchManifest: manifestWithUpstreamImage("supabase/postgres:15.19.0.002"),
-      fetchProvenance: unusedFetchProvenance,
-    };
-    const refreshed = await refreshCatalogPin({
-      catalog: formatted,
-      service: "postgres",
-      upstream: "15.19.0.002",
-      io: nextIo,
-    });
-
-    expect(refreshed.update).toEqual({
-      service: "postgres",
-      version: "15.19.0.002",
-      revision: 1,
-      previousVersion: "15.19.0.002",
-      target: "additional",
-    });
-    expect(refreshed.source).toContain(nextDigests["linux-arm64"].manifest);
-    expect(refreshed.source).toContain('upstreamImage: "supabase/postgres:15.19.0.002"');
+        expect(refreshed.update).toEqual({
+          service: "postgres",
+          version: "15.19.0.002",
+          revision: 1,
+          previousVersion: "15.19.0.002",
+          target: "additional",
+        });
+        expect(refreshed.source).toContain(nextDigests["linux-arm64"].manifest);
+        expect(refreshed.source).toContain('upstreamImage: "supabase/postgres:15.19.0.002"');
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
   });
 });
 
@@ -1209,81 +1312,85 @@ describe("refreshCatalogPin keeps every OrioleDB build", () => {
     const release = `${upstream}-orioledb-r${revision}`;
     const digests = nativeDigests(seed);
     return {
-      listReleaseTags: async () =>
+      listReleaseTags: Effect.succeed(
         Array.from({ length: revision + 1 }, (_, n) => `postgres-${upstream}-orioledb-r${n}`),
-      fetchChecksums: async () => checksumsFor("postgres", release, digests),
-      imageDigest: async () => digest(seed),
+      ),
+      fetchChecksums: () => Effect.succeed(checksumsFor("postgres", release, digests)),
+      imageDigest: () => Effect.succeed(digest(seed)),
       s3Sha256: matchingS3("postgres", release, digests),
       fetchManifest: manifestWithUpstreamImage(`supabase/postgres:${upstream}-orioledb`),
       fetchProvenance: unusedFetchProvenance,
     };
   };
 
-  test("inserts the first OrioleDB pin, hotfixes it, then adds a newer build beside it", async () => {
-    const added = await refreshCatalogPin({
-      catalog: fixture,
-      service: "postgres",
-      release: "17.11.0.002-orioledb-r0",
-      io: orioleIo(0, "oriole-0"),
-    });
+  test("inserts the first OrioleDB pin, hotfixes it, then adds a newer build beside it", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const added = yield* refreshCatalogPin({
+          catalog: fixture,
+          service: "postgres",
+          release: "17.11.0.002-orioledb-r0",
+          io: orioleIo(0, "oriole-0"),
+        });
 
-    expect(added.update).toEqual({
-      service: "postgres",
-      version: "17.11.0.002-orioledb",
-      revision: 0,
-      target: "additional",
-    });
-    expect(added.source).toContain(postgres17Image);
-    expect(added.source).toContain('"15.14.1.168": { upstreamVersion: "15.14.1.168"');
-    expect(added.source).toContain(
-      '"17.11.0.002-orioledb": { upstreamVersion: "17.11.0.002-orioledb"',
-    );
+        expect(added.update).toEqual({
+          service: "postgres",
+          version: "17.11.0.002-orioledb",
+          revision: 0,
+          target: "additional",
+        });
+        expect(added.source).toContain(postgres17Image);
+        expect(added.source).toContain('"15.14.1.168": { upstreamVersion: "15.14.1.168"');
+        expect(added.source).toContain(
+          '"17.11.0.002-orioledb": { upstreamVersion: "17.11.0.002-orioledb"',
+        );
 
-    const formatted = await formatWithOxfmt(added.source);
-    const hotfixed = await refreshCatalogPin({
-      catalog: formatted,
-      service: "postgres",
-      release: "17.11.0.002-orioledb-r1",
-      io: orioleIo(1, "oriole-1"),
-    });
+        const formatted = yield* formatWithOxfmt(added.source);
+        const hotfixed = yield* refreshCatalogPin({
+          catalog: formatted,
+          service: "postgres",
+          release: "17.11.0.002-orioledb-r1",
+          io: orioleIo(1, "oriole-1"),
+        });
 
-    expect(hotfixed.update).toEqual({
-      service: "postgres",
-      version: "17.11.0.002-orioledb",
-      revision: 1,
-      previousVersion: "17.11.0.002-orioledb",
-      target: "additional",
-    });
-    expect(hotfixed.source).toContain(postgres17Image);
-    expect(hotfixed.source).toContain(
-      `"ghcr.io/supabase/cli/postgres:17.11.0.002-orioledb-r1@${digest("oriole-1")}"`,
-    );
-    expect(hotfixed.source).not.toContain(digest("oriole-0"));
+        expect(hotfixed.update).toEqual({
+          service: "postgres",
+          version: "17.11.0.002-orioledb",
+          revision: 1,
+          previousVersion: "17.11.0.002-orioledb",
+          target: "additional",
+        });
+        expect(hotfixed.source).toContain(postgres17Image);
+        expect(hotfixed.source).toContain(
+          `"ghcr.io/supabase/cli/postgres:17.11.0.002-orioledb-r1@${digest("oriole-1")}"`,
+        );
+        expect(hotfixed.source).not.toContain(digest("oriole-0"));
 
-    const newer = await refreshCatalogPin({
-      catalog: await formatWithOxfmt(hotfixed.source),
-      service: "postgres",
-      release: "17.12.0.001-orioledb-r0",
-      io: orioleIo(0, "oriole-next", "17.12.0.001"),
-    });
+        const newer = yield* refreshCatalogPin({
+          catalog: yield* formatWithOxfmt(hotfixed.source),
+          service: "postgres",
+          release: "17.12.0.001-orioledb-r0",
+          io: orioleIo(0, "oriole-next", "17.12.0.001"),
+        });
 
-    expect(newer.update).toEqual({
-      service: "postgres",
-      version: "17.12.0.001-orioledb",
-      revision: 0,
-      target: "additional",
-    });
-    expect(newer.source).toContain(
-      `"ghcr.io/supabase/cli/postgres:17.11.0.002-orioledb-r1@${digest("oriole-1")}"`,
-    );
-    expect(newer.source).toContain(
-      `"ghcr.io/supabase/cli/postgres:17.12.0.001-orioledb-r0@${digest("oriole-next")}"`,
-    );
-  });
+        expect(newer.update).toEqual({
+          service: "postgres",
+          version: "17.12.0.001-orioledb",
+          revision: 0,
+          target: "additional",
+        });
+        expect(newer.source).toContain(
+          `"ghcr.io/supabase/cli/postgres:17.11.0.002-orioledb-r1@${digest("oriole-1")}"`,
+        );
+        expect(newer.source).toContain(
+          `"ghcr.io/supabase/cli/postgres:17.12.0.001-orioledb-r0@${digest("oriole-next")}"`,
+        );
+      }).pipe(Effect.provide(BunServices.layer)),
+    ));
 });
 
 describe("resolveRevisionPin waits for the S3 mirror", () => {
-  test("waits while one S3 object is missing, then resolves once it appears", async () => {
+  test("waits while one S3 object is missing, then resolves once it appears", () => {
     const digests = nativeDigests("s3-wait");
     const releaseVersion = "v16.2-r0";
     const missingUrl = nativeObjectUrl(
@@ -1295,213 +1402,246 @@ describe("resolveRevisionPin waits for the S3 mirror", () => {
     let missingCalls = 0;
     const waits: number[] = [];
     const io: RevisionIo = {
-      listReleaseTags: async () => [`postgrest-${releaseVersion}`],
-      fetchChecksums: async () => checksumsFor("postgrest", releaseVersion, digests),
-      imageDigest: async () => digest("s3-wait-digest"),
-      s3Sha256: async (url) => {
-        if (url === missingUrl) {
-          missingCalls += 1;
-          if (missingCalls < 2) return undefined;
-        }
-        return present(url);
-      },
+      listReleaseTags: Effect.succeed([`postgrest-${releaseVersion}`]),
+      fetchChecksums: () => Effect.succeed(checksumsFor("postgrest", releaseVersion, digests)),
+      imageDigest: () => Effect.succeed(digest("s3-wait-digest")),
+      s3Sha256: (url) =>
+        Effect.gen(function* () {
+          if (url === missingUrl) {
+            missingCalls += 1;
+            if (missingCalls < 2) return undefined;
+          }
+          return yield* present(url);
+        }),
       fetchManifest: unusedFetchManifest,
       fetchProvenance: unusedFetchProvenance,
-      wait: async (ms) => {
-        waits.push(ms);
-      },
+      wait: (ms) =>
+        Effect.sync(() => {
+          waits.push(ms);
+        }),
     };
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const resolution = yield* resolveRevisionPin("postgrest", "v16.2", io);
 
-    const resolution = await resolveRevisionPin("postgrest", "v16.2", io);
-
-    expect(resolution.status).toBe("resolved");
-    expect(missingCalls).toBe(2);
-    expect(waits).toHaveLength(1);
+        expect(resolution.status).toBe("resolved");
+        expect(missingCalls).toBe(2);
+        expect(waits).toHaveLength(1);
+      }),
+    );
   });
 
-  test("fails immediately on a digest mismatch, without waiting", async () => {
+  test("fails immediately on a digest mismatch, without waiting", () => {
     const digests = nativeDigests("s3-mismatch");
     const releaseVersion = "v16.2-r0";
     const waits: number[] = [];
     const io: RevisionIo = {
-      listReleaseTags: async () => [`postgrest-${releaseVersion}`],
-      fetchChecksums: async () => checksumsFor("postgrest", releaseVersion, digests),
-      imageDigest: async () => digest("s3-mismatch-digest"),
-      s3Sha256: async () => hex("wrong-bytes"),
+      listReleaseTags: Effect.succeed([`postgrest-${releaseVersion}`]),
+      fetchChecksums: () => Effect.succeed(checksumsFor("postgrest", releaseVersion, digests)),
+      imageDigest: () => Effect.succeed(digest("s3-mismatch-digest")),
+      s3Sha256: () => Effect.succeed(hex("wrong-bytes")),
       fetchManifest: unusedFetchManifest,
       fetchProvenance: unusedFetchProvenance,
-      wait: async (ms) => {
-        waits.push(ms);
-      },
+      wait: (ms) =>
+        Effect.sync(() => {
+          waits.push(ms);
+        }),
     };
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const resolution = yield* resolveRevisionPin("postgrest", "v16.2", io);
 
-    const resolution = await resolveRevisionPin("postgrest", "v16.2", io);
-
-    expect(resolution.status).toBe("stale");
-    if (resolution.status !== "stale") throw new Error("expected status 'stale'");
-    expect(resolution.message).toContain("digest mismatch");
-    expect(waits).toEqual([]);
+        expect(resolution.status).toBe("stale");
+        if (resolution.status !== "stale") throw new Error("expected status 'stale'");
+        expect(resolution.message).toContain("digest mismatch");
+        expect(waits).toEqual([]);
+      }),
+    );
   });
 
-  test("fails after the bounded attempts when an S3 object never appears, with an actionable message", async () => {
+  test("fails after the bounded attempts when an S3 object never appears, with an actionable message", () => {
     const digests = nativeDigests("s3-never");
     const releaseVersion = "v16.2-r0";
     const waits: number[] = [];
     const io: RevisionIo = {
-      listReleaseTags: async () => [`postgrest-${releaseVersion}`],
-      fetchChecksums: async () => checksumsFor("postgrest", releaseVersion, digests),
-      imageDigest: async () => digest("s3-never-digest"),
-      s3Sha256: async () => undefined,
+      listReleaseTags: Effect.succeed([`postgrest-${releaseVersion}`]),
+      fetchChecksums: () => Effect.succeed(checksumsFor("postgrest", releaseVersion, digests)),
+      imageDigest: () => Effect.succeed(digest("s3-never-digest")),
+      s3Sha256: () => Effect.undefined,
       fetchManifest: unusedFetchManifest,
       fetchProvenance: unusedFetchProvenance,
-      wait: async (ms) => {
-        waits.push(ms);
-      },
+      wait: (ms) =>
+        Effect.sync(() => {
+          waits.push(ms);
+        }),
     };
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const resolution = yield* resolveRevisionPin("postgrest", "v16.2", io);
 
-    const resolution = await resolveRevisionPin("postgrest", "v16.2", io);
-
-    expect(resolution.status).toBe("stale");
-    if (resolution.status !== "stale") throw new Error("expected status 'stale'");
-    expect(resolution.message).toContain("mirror-slim-image.yml");
-    expect(resolution.message).toContain("hasn't finished");
-    expect(waits.length).toBeGreaterThan(0);
+        expect(resolution.status).toBe("stale");
+        if (resolution.status !== "stale") throw new Error("expected status 'stale'");
+        expect(resolution.message).toContain("mirror-slim-image.yml");
+        expect(resolution.message).toContain("hasn't finished");
+        expect(waits.length).toBeGreaterThan(0);
+      }),
+    );
   });
 });
 
 describe("refreshCatalogPin --release", () => {
-  test("pins the requested committed release, not the highest one", async () => {
+  test("pins the requested committed release, not the highest one", () => {
     const digests = nativeDigests("release-0");
     const io: RevisionIo = {
-      listReleaseTags: async () => ["postgrest-v16.2-r0", "postgrest-v16.2-r1"],
-      fetchChecksums: async () => checksumsFor("postgrest", "v16.2-r0", digests),
-      imageDigest: async () => digest("release-digest-0"),
+      listReleaseTags: Effect.succeed(["postgrest-v16.2-r0", "postgrest-v16.2-r1"]),
+      fetchChecksums: () => Effect.succeed(checksumsFor("postgrest", "v16.2-r0", digests)),
+      imageDigest: () => Effect.succeed(digest("release-digest-0")),
       s3Sha256: matchingS3("postgrest", "v16.2-r0", digests),
       fetchManifest: manifestWithUpstreamImage("postgrest/postgrest:v16.2"),
       fetchProvenance: unusedFetchProvenance,
     };
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const result = yield* refreshCatalogPin({
+          catalog: fixture,
+          service: "postgrest",
+          release: "v16.2-r0",
+          io,
+        });
 
-    const result = await refreshCatalogPin({
-      catalog: fixture,
-      service: "postgrest",
-      release: "v16.2-r0",
-      io,
-    });
-
-    expect(result.update).toEqual({
-      service: "postgrest",
-      version: "v16.2",
-      revision: 0,
-      previousVersion: "v16.2",
-      target: "default",
-    });
+        expect(result.update).toEqual({
+          service: "postgrest",
+          version: "v16.2",
+          revision: 0,
+          previousVersion: "v16.2",
+          target: "default",
+        });
+      }),
+    );
   });
 
-  test("fails when the requested release is not committed", async () => {
+  test("fails when the requested release is not committed", () => {
     const io: RevisionIo = {
-      listReleaseTags: async () => ["postgrest-v16.2-r0"],
-      fetchChecksums: async () => undefined,
-      imageDigest: async () => undefined,
-      s3Sha256: async () => undefined,
+      listReleaseTags: Effect.succeed(["postgrest-v16.2-r0"]),
+      fetchChecksums: () => Effect.undefined,
+      imageDigest: () => Effect.undefined,
+      s3Sha256: () => Effect.undefined,
       fetchManifest: unusedFetchManifest,
       fetchProvenance: unusedFetchProvenance,
     };
 
-    await expect(
-      refreshCatalogPin({ catalog: fixture, service: "postgrest", release: "v16.2-r1", io }),
+    return expect(
+      Effect.runPromise(
+        refreshCatalogPin({ catalog: fixture, service: "postgrest", release: "v16.2-r1", io }),
+      ),
     ).rejects.toThrow(InvalidPayloadError);
   });
 
-  test("rejects --upstream and --release given together", async () => {
+  test("rejects --upstream and --release given together", () => {
     const io: RevisionIo = {
-      listReleaseTags: async () => [],
-      fetchChecksums: async () => undefined,
-      imageDigest: async () => undefined,
-      s3Sha256: async () => undefined,
+      listReleaseTags: Effect.succeed([]),
+      fetchChecksums: () => Effect.undefined,
+      imageDigest: () => Effect.undefined,
+      s3Sha256: () => Effect.undefined,
       fetchManifest: unusedFetchManifest,
       fetchProvenance: unusedFetchProvenance,
     };
 
-    await expect(
-      refreshCatalogPin({
-        catalog: fixture,
-        service: "postgrest",
-        upstream: "v16.2",
-        release: "v16.2-r0",
-        io,
-      }),
+    return expect(
+      Effect.runPromise(
+        refreshCatalogPin({
+          catalog: fixture,
+          service: "postgrest",
+          upstream: "v16.2",
+          release: "v16.2-r0",
+          io,
+        }),
+      ),
     ).rejects.toThrow(InvalidPayloadError);
   });
 });
 
 describe("refreshCatalogPin backfills upstreamImage", () => {
-  test("resolves a derived service's upstreamImage from its per-target manifests", async () => {
+  test("resolves a derived service's upstreamImage from its per-target manifests", () => {
     const digests = nativeDigests("y");
     const io: RevisionIo = {
-      listReleaseTags: async () => ["analytics-v1.50.9-r0", "analytics-v1.50.9-r1"],
-      fetchChecksums: async () => checksumsFor("analytics", "v1.50.9-r1", digests),
-      imageDigest: async () => digest("z"),
+      listReleaseTags: Effect.succeed(["analytics-v1.50.9-r0", "analytics-v1.50.9-r1"]),
+      fetchChecksums: () => Effect.succeed(checksumsFor("analytics", "v1.50.9-r1", digests)),
+      imageDigest: () => Effect.succeed(digest("z")),
       s3Sha256: matchingS3("analytics", "v1.50.9-r1", digests),
-      fetchManifest: async () => JSON.stringify({ upstream_image: "supabase/logflare:1.50.9" }),
+      fetchManifest: () =>
+        Effect.succeed(JSON.stringify({ upstream_image: "supabase/logflare:1.50.9" })),
       fetchProvenance: unusedFetchProvenance,
     };
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const result = yield* refreshCatalogPin({ catalog: fixture, service: "analytics", io });
 
-    const result = await refreshCatalogPin({ catalog: fixture, service: "analytics", io });
-
-    expect(result.source).toContain('upstreamImage: "supabase/logflare:1.50.9"');
+        expect(result.source).toContain('upstreamImage: "supabase/logflare:1.50.9"');
+      }),
+    );
   });
 
-  test("falls back to source_image when a target's manifest has no upstream_image (image-derived build)", async () => {
+  test("falls back to source_image when a target's manifest has no upstream_image (image-derived build)", () => {
     const digests = nativeDigests("aa");
     const io: RevisionIo = {
-      listReleaseTags: async () => ["analytics-v1.50.9-r0"],
-      fetchChecksums: async () => checksumsFor("analytics", "v1.50.9-r0", digests),
-      imageDigest: async () => digest("ab"),
+      listReleaseTags: Effect.succeed(["analytics-v1.50.9-r0"]),
+      fetchChecksums: () => Effect.succeed(checksumsFor("analytics", "v1.50.9-r0", digests)),
+      imageDigest: () => Effect.succeed(digest("ab")),
       s3Sha256: matchingS3("analytics", "v1.50.9-r0", digests),
-      fetchManifest: async () => JSON.stringify({ source_image: "supabase/logflare:1.50.9" }),
+      fetchManifest: () =>
+        Effect.succeed(JSON.stringify({ source_image: "supabase/logflare:1.50.9" })),
       fetchProvenance: unusedFetchProvenance,
     };
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const result = yield* refreshCatalogPin({ catalog: fixture, service: "analytics", io });
 
-    const result = await refreshCatalogPin({ catalog: fixture, service: "analytics", io });
-
-    expect(result.source).toContain('upstreamImage: "supabase/logflare:1.50.9"');
+        expect(result.source).toContain('upstreamImage: "supabase/logflare:1.50.9"');
+      }),
+    );
   });
 
-  test("strips a docker.io prefix and a digest from the resolved upstreamImage", async () => {
+  test("strips a docker.io prefix and a digest from the resolved upstreamImage", () => {
     const digests = nativeDigests("ac");
     const io: RevisionIo = {
-      listReleaseTags: async () => ["analytics-v1.50.9-r0"],
-      fetchChecksums: async () => checksumsFor("analytics", "v1.50.9-r0", digests),
-      imageDigest: async () => digest("ad"),
+      listReleaseTags: Effect.succeed(["analytics-v1.50.9-r0"]),
+      fetchChecksums: () => Effect.succeed(checksumsFor("analytics", "v1.50.9-r0", digests)),
+      imageDigest: () => Effect.succeed(digest("ad")),
       s3Sha256: matchingS3("analytics", "v1.50.9-r0", digests),
-      fetchManifest: async () =>
-        JSON.stringify({ upstream_image: "docker.io/supabase/logflare:1.50.9@sha256:deadbeef" }),
+      fetchManifest: () =>
+        Effect.succeed(
+          JSON.stringify({ upstream_image: "docker.io/supabase/logflare:1.50.9@sha256:deadbeef" }),
+        ),
       fetchProvenance: unusedFetchProvenance,
     };
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const result = yield* refreshCatalogPin({ catalog: fixture, service: "analytics", io });
 
-    const result = await refreshCatalogPin({ catalog: fixture, service: "analytics", io });
-
-    expect(result.source).toContain('upstreamImage: "supabase/logflare:1.50.9"');
+        expect(result.source).toContain('upstreamImage: "supabase/logflare:1.50.9"');
+      }),
+    );
   });
 
-  test("fails loudly when a derived service's manifests disagree across native targets", async () => {
+  test("fails loudly when a derived service's manifests disagree across native targets", () => {
     const digests = nativeDigests("ae");
     let call = 0;
     const io: RevisionIo = {
-      listReleaseTags: async () => ["analytics-v1.50.9-r0"],
-      fetchChecksums: async () => checksumsFor("analytics", "v1.50.9-r0", digests),
-      imageDigest: async () => digest("af"),
+      listReleaseTags: Effect.succeed(["analytics-v1.50.9-r0"]),
+      fetchChecksums: () => Effect.succeed(checksumsFor("analytics", "v1.50.9-r0", digests)),
+      imageDigest: () => Effect.succeed(digest("af")),
       s3Sha256: matchingS3("analytics", "v1.50.9-r0", digests),
-      fetchManifest: async () => {
+      fetchManifest: () => {
         call += 1;
-        return JSON.stringify({ upstream_image: `supabase/logflare:1.50.${call}` });
+        return Effect.succeed(JSON.stringify({ upstream_image: `supabase/logflare:1.50.${call}` }));
       },
       fetchProvenance: unusedFetchProvenance,
     };
 
-    await expect(refreshCatalogPin({ catalog: fixture, service: "analytics", io })).rejects.toThrow(
-      /manifests disagree/,
-    );
+    return expect(
+      Effect.runPromise(refreshCatalogPin({ catalog: fixture, service: "analytics", io })),
+    ).rejects.toThrow(/manifests disagree/);
   });
 
   const mirroredIo = (provenanceLine: (provenance: string) => string | undefined): RevisionIo => {
@@ -1509,24 +1649,29 @@ describe("refreshCatalogPin backfills upstreamImage", () => {
     const provenance = JSON.stringify({ source: "docker.io/timberio/vector:0.53.0-alpine" });
     const line = provenanceLine(provenance);
     return {
-      listReleaseTags: async () => ["vector-0.53.0-r0"],
-      fetchChecksums: async () =>
-        [checksumsFor("vector", "0.53.0-r0", digests), line]
-          .filter((entry) => entry !== undefined)
-          .join("\n"),
-      imageDigest: async () => digest("ah"),
+      listReleaseTags: Effect.succeed(["vector-0.53.0-r0"]),
+      fetchChecksums: () =>
+        Effect.succeed(
+          [checksumsFor("vector", "0.53.0-r0", digests), line]
+            .filter((entry) => entry !== undefined)
+            .join("\n"),
+        ),
+      imageDigest: () => Effect.succeed(digest("ah")),
       s3Sha256: matchingS3("vector", "0.53.0-r0", digests),
       fetchManifest: unusedFetchManifest,
-      fetchProvenance: async () => provenance,
+      fetchProvenance: () => Effect.succeed(provenance),
     };
   };
 
-  test("resolves a mirrored service's upstreamImage from its oci-provenance source", async () => {
+  test("resolves a mirrored service's upstreamImage from its oci-provenance source", () => {
     const io = mirroredIo((provenance) => `${hex(provenance)}  vector-0.53.0.oci-provenance.json`);
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const result = yield* refreshCatalogPin({ catalog: vectorFixture, service: "vector", io });
 
-    const result = await refreshCatalogPin({ catalog: vectorFixture, service: "vector", io });
-
-    expect(result.source).toContain('upstreamImage: "timberio/vector:0.53.0-alpine"');
+        expect(result.source).toContain('upstreamImage: "timberio/vector:0.53.0-alpine"');
+      }),
+    );
   });
 
   test.each([
@@ -1536,77 +1681,85 @@ describe("refreshCatalogPin backfills upstreamImage", () => {
       () => `${hex("other")}  vector-0.53.0.oci-provenance.json`,
       /does not match SHA256SUMS/,
     ],
-  ])("rejects an oci-provenance file that %s", async (_name, line, message) => {
-    await expect(
-      refreshCatalogPin({ catalog: vectorFixture, service: "vector", io: mirroredIo(line) }),
-    ).rejects.toThrow(message);
-  });
+  ])("rejects an oci-provenance file that %s", (_name, line, message) =>
+    expect(
+      Effect.runPromise(
+        refreshCatalogPin({ catalog: vectorFixture, service: "vector", io: mirroredIo(line) }),
+      ),
+    ).rejects.toThrow(message),
+  );
 
-  test("rejects a manifest upstream_image carrying a quote or template expression, writing nothing", async () => {
+  test("rejects a manifest upstream_image carrying a quote or template expression, writing nothing", () => {
     const digests = nativeDigests("ak");
     const io: RevisionIo = {
-      listReleaseTags: async () => ["analytics-v1.50.9-r0"],
-      fetchChecksums: async () => checksumsFor("analytics", "v1.50.9-r0", digests),
-      imageDigest: async () => digest("al"),
+      listReleaseTags: Effect.succeed(["analytics-v1.50.9-r0"]),
+      fetchChecksums: () => Effect.succeed(checksumsFor("analytics", "v1.50.9-r0", digests)),
+      imageDigest: () => Effect.succeed(digest("al")),
       s3Sha256: matchingS3("analytics", "v1.50.9-r0", digests),
-      fetchManifest: async () =>
-        JSON.stringify({ upstream_image: 'supabase/logflare:1.50.9"] }; import("evil"); //' }),
+      fetchManifest: () =>
+        Effect.succeed(
+          JSON.stringify({ upstream_image: 'supabase/logflare:1.50.9"] }; import("evil"); //' }),
+        ),
       fetchProvenance: unusedFetchProvenance,
     };
 
-    await expect(refreshCatalogPin({ catalog: fixture, service: "analytics", io })).rejects.toThrow(
-      InvalidPayloadError,
-    );
+    return expect(
+      Effect.runPromise(refreshCatalogPin({ catalog: fixture, service: "analytics", io })),
+    ).rejects.toThrow(InvalidPayloadError);
   });
 });
 
 describe("against the real catalog", () => {
-  test("a real catalog entry survives real formatting and can be refreshed again", async () => {
-    const catalog = await Bun.file(CATALOG_PATH).text();
-    const pinnedVersion = /definition\(\s*"auth",\s*\{\s*upstreamVersion:\s*"([^"]+)"/.exec(
-      catalog,
-    )?.[1];
-    if (pinnedVersion === undefined) throw new Error("auth pin not found in the real catalog");
+  test("a real catalog entry survives real formatting and can be refreshed again", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const catalog = yield* fs.readFileString(CATALOG_PATH);
+        const pinnedVersion = /definition\(\s*"auth",\s*\{\s*upstreamVersion:\s*"([^"]+)"/.exec(
+          catalog,
+        )?.[1];
+        if (pinnedVersion === undefined) throw new Error("auth pin not found in the real catalog");
 
-    const first = nativeDigests("q");
-    const firstIo: RevisionIo = {
-      listReleaseTags: async () => [`auth-${pinnedVersion}-r0`],
-      fetchChecksums: async () => checksumsFor("auth", `${pinnedVersion}-r0`, first),
-      imageDigest: async () => digest("r"),
-      s3Sha256: matchingS3("auth", `${pinnedVersion}-r0`, first),
-      fetchManifest: manifestWithUpstreamImage(`supabase/gotrue:${pinnedVersion}`),
-      fetchProvenance: unusedFetchProvenance,
-    };
-    const written = await refreshCatalogPin({ catalog, service: "auth", io: firstIo });
-    expect(written.update?.revision).toBe(0);
+        const first = nativeDigests("q");
+        const firstIo: RevisionIo = {
+          listReleaseTags: Effect.succeed([`auth-${pinnedVersion}-r0`]),
+          fetchChecksums: () => Effect.succeed(checksumsFor("auth", `${pinnedVersion}-r0`, first)),
+          imageDigest: () => Effect.succeed(digest("r")),
+          s3Sha256: matchingS3("auth", `${pinnedVersion}-r0`, first),
+          fetchManifest: manifestWithUpstreamImage(`supabase/gotrue:${pinnedVersion}`),
+          fetchProvenance: unusedFetchProvenance,
+        };
+        const written = yield* refreshCatalogPin({ catalog, service: "auth", io: firstIo });
+        expect(written.update?.revision).toBe(0);
 
-    const formatted = await formatWithOxfmt(written.source);
-    expect(formatted).toContain(`upstreamVersion: "${pinnedVersion}"`);
+        const formatted = yield* formatWithOxfmt(written.source);
+        expect(formatted).toContain(`upstreamVersion: "${pinnedVersion}"`);
 
-    const second = nativeDigests("s");
-    const secondIo: RevisionIo = {
-      listReleaseTags: async () => [`auth-${pinnedVersion}-r0`, `auth-${pinnedVersion}-r1`],
-      fetchChecksums: async () => checksumsFor("auth", `${pinnedVersion}-r1`, second),
-      imageDigest: async () => digest("t"),
-      s3Sha256: matchingS3("auth", `${pinnedVersion}-r1`, second),
-      fetchManifest: manifestWithUpstreamImage(`supabase/gotrue:${pinnedVersion}`),
-      fetchProvenance: unusedFetchProvenance,
-    };
-    const refreshed = await refreshCatalogPin({
-      catalog: formatted,
-      service: "auth",
-      io: secondIo,
-    });
+        const second = nativeDigests("s");
+        const secondIo: RevisionIo = {
+          listReleaseTags: Effect.succeed([`auth-${pinnedVersion}-r0`, `auth-${pinnedVersion}-r1`]),
+          fetchChecksums: () => Effect.succeed(checksumsFor("auth", `${pinnedVersion}-r1`, second)),
+          imageDigest: () => Effect.succeed(digest("t")),
+          s3Sha256: matchingS3("auth", `${pinnedVersion}-r1`, second),
+          fetchManifest: manifestWithUpstreamImage(`supabase/gotrue:${pinnedVersion}`),
+          fetchProvenance: unusedFetchProvenance,
+        };
+        const refreshed = yield* refreshCatalogPin({
+          catalog: formatted,
+          service: "auth",
+          io: secondIo,
+        });
 
-    expect(refreshed.update).toEqual({
-      service: "auth",
-      version: pinnedVersion,
-      revision: 1,
-      previousVersion: pinnedVersion,
-      target: "default",
-    });
-    expect(refreshed.source).toContain("revision: 1");
-    expect(refreshed.source).toContain(second["darwin-arm64"].manifest);
-    expect(refreshed.source).toContain(`upstreamImage: "supabase/gotrue:${pinnedVersion}"`);
-  });
+        expect(refreshed.update).toEqual({
+          service: "auth",
+          version: pinnedVersion,
+          revision: 1,
+          previousVersion: pinnedVersion,
+          target: "default",
+        });
+        expect(refreshed.source).toContain("revision: 1");
+        expect(refreshed.source).toContain(second["darwin-arm64"].manifest);
+        expect(refreshed.source).toContain(`upstreamImage: "supabase/gotrue:${pinnedVersion}"`);
+      }).pipe(Effect.provide(BunServices.layer)),
+    ));
 });

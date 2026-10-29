@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
+import { Effect } from "effect";
+
 import {
   copyImage,
   copyNatives,
@@ -99,9 +101,9 @@ describe("parseNatives", () => {
 });
 
 describe("verifyDigest", () => {
-  test("accepts a matching head", async () => {
-    const run: RunCommand = async () => ok(`${DIGEST}\n`);
-    await verifyDigest({
+  test("accepts a matching head", () => {
+    const run: RunCommand = () => Promise.resolve(ok(`${DIGEST}\n`));
+    return verifyDigest({
       reference: "ghcr.io/supabase/cli/postgrest:v16.2",
       digest: DIGEST,
       run,
@@ -109,9 +111,9 @@ describe("verifyDigest", () => {
     });
   });
 
-  test("rejects a mismatch", async () => {
-    const run: RunCommand = async () => ok(`${OTHER}\n`);
-    await expect(
+  test("rejects a mismatch", () => {
+    const run: RunCommand = () => Promise.resolve(ok(`${OTHER}\n`));
+    return expect(
       verifyDigest({
         reference: "ghcr.io/supabase/cli/postgrest:v16.2",
         digest: DIGEST,
@@ -121,261 +123,355 @@ describe("verifyDigest", () => {
     ).rejects.toThrow(InvalidPayloadError);
   });
 
-  test("re-reads a stale tag until it converges", async () => {
+  test("re-reads a stale tag until it converges", () => {
     const heads = [fail("not found [http 404]"), ok(`${OTHER}\n`), ok(`${DIGEST}\n`)];
     let reads = 0;
-    const run: RunCommand = async () => heads[reads++] ?? fail("unexpected read");
-    await verifyDigest({
-      reference: "public.ecr.aws/supabase/cli/postgrest:v16.2",
-      digest: DIGEST,
-      run,
-      attempts: 5,
-      sleep: async () => undefined,
-      log: () => undefined,
-    });
-    expect(reads).toBe(3);
+    const run: RunCommand = () => Promise.resolve(heads[reads++] ?? fail("unexpected read"));
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        yield* Effect.promise(() =>
+          verifyDigest({
+            reference: "public.ecr.aws/supabase/cli/postgrest:v16.2",
+            digest: DIGEST,
+            run,
+            attempts: 5,
+            sleep: () => Promise.resolve(),
+            log: () => undefined,
+          }),
+        );
+        expect(reads).toBe(3);
+      }),
+    );
   });
 
-  test("reports the last mismatch once attempts are exhausted", async () => {
+  test("reports the last mismatch once attempts are exhausted", () => {
     let reads = 0;
-    const run: RunCommand = async () => {
+    const run: RunCommand = () => {
       reads++;
-      return ok(`${OTHER}\n`);
+      return Promise.resolve(ok(`${OTHER}\n`));
     };
-    await expect(
-      verifyDigest({
-        reference: "public.ecr.aws/supabase/cli/postgrest:v16.2",
-        digest: DIGEST,
-        run,
-        attempts: 3,
-        sleep: async () => undefined,
-        log: () => undefined,
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        yield* Effect.promise(() =>
+          Promise.resolve(
+            expect(
+              verifyDigest({
+                reference: "public.ecr.aws/supabase/cli/postgrest:v16.2",
+                digest: DIGEST,
+                run,
+                attempts: 3,
+                sleep: () => Promise.resolve(),
+                log: () => undefined,
+              }),
+            ).rejects.toThrow(`resolves to ${OTHER}, expected ${DIGEST}`),
+          ),
+        );
+        expect(reads).toBe(3);
       }),
-    ).rejects.toThrow(`resolves to ${OTHER}, expected ${DIGEST}`);
-    expect(reads).toBe(3);
+    );
   });
 
-  test("fails on the first read when the head errors for another reason", async () => {
+  test("fails on the first read when the head errors for another reason", () => {
     let reads = 0;
-    const run: RunCommand = async () => {
+    const run: RunCommand = () => {
       reads++;
-      return fail("unauthorized [http 401]");
+      return Promise.resolve(fail("unauthorized [http 401]"));
     };
-    await expect(
-      verifyDigest({
-        reference: "public.ecr.aws/supabase/cli/postgrest:v16.2",
-        digest: DIGEST,
-        run,
-        attempts: 5,
-        sleep: async () => undefined,
-        log: () => undefined,
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        yield* Effect.promise(() =>
+          Promise.resolve(
+            expect(
+              verifyDigest({
+                reference: "public.ecr.aws/supabase/cli/postgrest:v16.2",
+                digest: DIGEST,
+                run,
+                attempts: 5,
+                sleep: () => Promise.resolve(),
+                log: () => undefined,
+              }),
+            ).rejects.toThrow("unauthorized [http 401]"),
+          ),
+        );
+        expect(reads).toBe(1);
       }),
-    ).rejects.toThrow("unauthorized [http 401]");
-    expect(reads).toBe(1);
+    );
   });
 
-  test("rejects a non-integer attempt count before reading", async () => {
+  test("rejects a non-integer attempt count before reading", () => {
     let reads = 0;
-    const run: RunCommand = async () => {
+    const run: RunCommand = () => {
       reads++;
-      return ok(`${OTHER}\n`);
+      return Promise.resolve(ok(`${OTHER}\n`));
     };
-    await expect(
-      verifyDigest({
-        reference: "public.ecr.aws/supabase/cli/postgrest:v16.2",
-        digest: DIGEST,
-        run,
-        attempts: Number.NaN,
-        log: () => undefined,
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        yield* Effect.promise(() =>
+          Promise.resolve(
+            expect(
+              verifyDigest({
+                reference: "public.ecr.aws/supabase/cli/postgrest:v16.2",
+                digest: DIGEST,
+                run,
+                attempts: Number.NaN,
+                log: () => undefined,
+              }),
+            ).rejects.toThrow(InvalidPayloadError),
+          ),
+        );
+        expect(reads).toBe(0);
       }),
-    ).rejects.toThrow(InvalidPayloadError);
-    expect(reads).toBe(0);
+    );
   });
 });
 
 describe("ensureEcrPublicRepo", () => {
-  test("no-ops when the repository exists", async () => {
-    const run: RunCommand = async () => ok();
+  test("no-ops when the repository exists", () => {
+    const run: RunCommand = () => Promise.resolve(ok());
     const logs: string[] = [];
-    await ensureEcrPublicRepo({
-      service: "postgrest",
-      run,
-      log: (message) => logs.push(message),
-    });
-    expect(logs).toEqual(["ECR Public repository cli/postgrest exists"]);
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        yield* Effect.promise(() =>
+          ensureEcrPublicRepo({
+            service: "postgrest",
+            run,
+            log: (message) => logs.push(message),
+          }),
+        );
+        expect(logs).toEqual(["ECR Public repository cli/postgrest exists"]);
+      }),
+    );
   });
 
-  test("creates a missing repository", async () => {
-    const run: RunCommand = async (argv) =>
-      argv.includes("describe-repositories") ? fail("not found") : ok();
+  test("creates a missing repository", () => {
+    const run: RunCommand = (argv) =>
+      Promise.resolve(argv.includes("describe-repositories") ? fail("not found") : ok());
     const logs: string[] = [];
-    await ensureEcrPublicRepo({
-      service: "postgrest",
-      run,
-      log: (message) => logs.push(message),
-    });
-    expect(logs).toEqual(["created ECR Public repository cli/postgrest"]);
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        yield* Effect.promise(() =>
+          ensureEcrPublicRepo({
+            service: "postgrest",
+            run,
+            log: (message) => logs.push(message),
+          }),
+        );
+        expect(logs).toEqual(["created ECR Public repository cli/postgrest"]);
+      }),
+    );
   });
 
-  test("treats a create race as success", async () => {
-    const run: RunCommand = async () => fail("RepositoryAlreadyExistsException");
+  test("treats a create race as success", () => {
+    const run: RunCommand = () => Promise.resolve(fail("RepositoryAlreadyExistsException"));
     const logs: string[] = [];
-    await ensureEcrPublicRepo({
-      service: "auth",
-      run,
-      log: (message) => logs.push(message),
-    });
-    expect(logs).toEqual(["ECR Public repository cli/auth was created concurrently"]);
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        yield* Effect.promise(() =>
+          ensureEcrPublicRepo({
+            service: "auth",
+            run,
+            log: (message) => logs.push(message),
+          }),
+        );
+        expect(logs).toEqual(["ECR Public repository cli/auth was created concurrently"]);
+      }),
+    );
   });
 
-  test("fails when create is denied", async () => {
-    const run: RunCommand = async () => fail("AccessDenied");
-    await expect(
+  test("fails when create is denied", () => {
+    const run: RunCommand = () => Promise.resolve(fail("AccessDenied"));
+    return expect(
       ensureEcrPublicRepo({ service: "postgrest", run, log: () => undefined }),
     ).rejects.toThrow(/CreateRepository/);
   });
 });
 
 describe("copyImage", () => {
-  test("copies by digest with referrers", async () => {
+  test("copies by digest with referrers", () => {
     const calls: string[][] = [];
-    const run: RunCommand = async (argv) => {
+    const run: RunCommand = (argv) => {
       calls.push([...argv]);
-      return ok();
+      return Promise.resolve(ok());
     };
-    await copyImage({
-      source: "ghcr.io/supabase/cli/postgrest:v16.2",
-      destination: "public.ecr.aws/supabase/cli/postgrest:v16.2",
-      digest: DIGEST,
-      run,
-    });
-    expect(calls).toEqual([
-      [
-        "regctl",
-        "image",
-        "copy",
-        "--referrers",
-        "--digest-tags",
-        digestReference("ghcr.io/supabase/cli/postgrest:v16.2", DIGEST),
-        "public.ecr.aws/supabase/cli/postgrest:v16.2",
-      ],
-    ]);
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        yield* Effect.promise(() =>
+          copyImage({
+            source: "ghcr.io/supabase/cli/postgrest:v16.2",
+            destination: "public.ecr.aws/supabase/cli/postgrest:v16.2",
+            digest: DIGEST,
+            run,
+          }),
+        );
+        expect(calls).toEqual([
+          [
+            "regctl",
+            "image",
+            "copy",
+            "--referrers",
+            "--digest-tags",
+            digestReference("ghcr.io/supabase/cli/postgrest:v16.2", DIGEST),
+            "public.ecr.aws/supabase/cli/postgrest:v16.2",
+          ],
+        ]);
+      }),
+    );
   });
 });
 
 describe("copyNatives", () => {
-  test("copies each matching source and continues after a missing tag", async () => {
+  test("copies each matching source and continues after a missing tag", () => {
     const calls: string[][] = [];
-    const run: RunCommand = async (argv) => {
+    const run: RunCommand = (argv) => {
       calls.push([...argv]);
-      if (argv[1] === "manifest" && String(argv[3]).includes("linux-amd64")) return fail("missing");
-      if (argv[1] === "manifest") return ok(`${DIGEST}\n`);
-      return ok();
+      if (argv[1] === "manifest" && String(argv[3]).includes("linux-amd64"))
+        return Promise.resolve(fail("missing"));
+      if (argv[1] === "manifest") return Promise.resolve(ok(`${DIGEST}\n`));
+      return Promise.resolve(ok());
     };
     const warnings: string[] = [];
-    const failed = await copyNatives({
-      service: "postgrest",
-      natives: [
-        { tag: "v16.2-native-linux-arm64", digest: DIGEST },
-        { tag: "v16.2-native-linux-amd64", digest: DIGEST },
-      ],
-      run,
-      log: (message) => {
-        warnings.push(message);
-      },
-    });
-    expect(failed).toBe(1);
-    expect(calls).toEqual([
-      ["regctl", "manifest", "head", "ghcr.io/supabase/cli/postgrest:v16.2-native-linux-arm64"],
-      [
-        "regctl",
-        "image",
-        "copy",
-        `ghcr.io/supabase/cli/postgrest@${DIGEST}`,
-        "public.ecr.aws/supabase/cli/postgrest:v16.2-native-linux-arm64",
-      ],
-      ["regctl", "manifest", "head", "ghcr.io/supabase/cli/postgrest:v16.2-native-linux-amd64"],
-    ]);
-    expect(warnings.some((line) => line.includes("linux-amd64 is missing"))).toBe(true);
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const failed = yield* Effect.promise(() =>
+          copyNatives({
+            service: "postgrest",
+            natives: [
+              { tag: "v16.2-native-linux-arm64", digest: DIGEST },
+              { tag: "v16.2-native-linux-amd64", digest: DIGEST },
+            ],
+            run,
+            log: (message) => {
+              warnings.push(message);
+            },
+          }),
+        );
+        expect(failed).toBe(1);
+        expect(calls).toEqual([
+          ["regctl", "manifest", "head", "ghcr.io/supabase/cli/postgrest:v16.2-native-linux-arm64"],
+          [
+            "regctl",
+            "image",
+            "copy",
+            `ghcr.io/supabase/cli/postgrest@${DIGEST}`,
+            "public.ecr.aws/supabase/cli/postgrest:v16.2-native-linux-arm64",
+          ],
+          ["regctl", "manifest", "head", "ghcr.io/supabase/cli/postgrest:v16.2-native-linux-amd64"],
+        ]);
+        expect(warnings.some((line) => line.includes("linux-amd64 is missing"))).toBe(true);
+      }),
+    );
   });
 
-  test("skips a digest mismatch without copying", async () => {
+  test("skips a digest mismatch without copying", () => {
     const calls: string[][] = [];
-    const run: RunCommand = async (argv) => {
+    const run: RunCommand = (argv) => {
       calls.push([...argv]);
-      return argv[1] === "manifest" ? ok(`${OTHER}\n`) : fail("should not copy");
+      return Promise.resolve(argv[1] === "manifest" ? ok(`${OTHER}\n`) : fail("should not copy"));
     };
-    const failed = await copyNatives({
-      service: "postgrest",
-      natives: [{ tag: "v16.2-native-linux-arm64", digest: DIGEST }],
-      run,
-      log: () => undefined,
-    });
-    expect(failed).toBe(1);
-    expect(calls).toEqual([
-      ["regctl", "manifest", "head", "ghcr.io/supabase/cli/postgrest:v16.2-native-linux-arm64"],
-    ]);
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const failed = yield* Effect.promise(() =>
+          copyNatives({
+            service: "postgrest",
+            natives: [{ tag: "v16.2-native-linux-arm64", digest: DIGEST }],
+            run,
+            log: () => undefined,
+          }),
+        );
+        expect(failed).toBe(1);
+        expect(calls).toEqual([
+          ["regctl", "manifest", "head", "ghcr.io/supabase/cli/postgrest:v16.2-native-linux-arm64"],
+        ]);
+      }),
+    );
   });
 });
 
 describe("main", () => {
-  test("validate writes GitHub outputs", async () => {
+  test("validate writes GitHub outputs", () => {
     const fields: Record<string, string> = {};
-    const code = await main(["validate"], {
-      env: {
-        EVENT_NAME: "workflow_dispatch",
-        SERVICE: "postgrest",
-        VERSION: "v16.2",
-        DIGEST,
-      },
-      run: async () => fail("unused"),
-      writeOutput: (next) => {
-        Object.assign(fields, next);
-      },
-    });
-    expect(code).toBe(0);
-    expect(fields["destination"]).toBe("public.ecr.aws/supabase/cli/postgrest:v16.2");
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const code = yield* Effect.promise(() =>
+          main(["validate"], {
+            env: {
+              EVENT_NAME: "workflow_dispatch",
+              SERVICE: "postgrest",
+              VERSION: "v16.2",
+              DIGEST,
+            },
+            run: () => Promise.resolve(fail("unused")),
+            writeOutput: (next) => {
+              Object.assign(fields, next);
+            },
+          }),
+        );
+        expect(code).toBe(0);
+        expect(fields["destination"]).toBe("public.ecr.aws/supabase/cli/postgrest:v16.2");
+      }),
+    );
   });
 
-  test("verify-digest re-reads up to ATTEMPTS times", async () => {
+  test("verify-digest re-reads up to ATTEMPTS times", () => {
     const heads = [ok(`${OTHER}\n`), ok(`${DIGEST}\n`)];
     let reads = 0;
-    const code = await main(["verify-digest"], {
-      env: {
-        REFERENCE: "public.ecr.aws/supabase/cli/postgrest:v16.2",
-        DIGEST,
-        ATTEMPTS: "2",
-      },
-      run: async () => heads[reads++] ?? fail("unexpected read"),
-      sleep: async () => undefined,
-      log: () => undefined,
-    });
-    expect(code).toBe(0);
-    expect(reads).toBe(2);
-  });
-
-  test("copy-natives no-ops without a dispatch payload", async () => {
-    const logs: string[] = [];
-    const code = await main(["copy-natives"], {
-      env: { EVENT_NAME: "workflow_dispatch", SERVICE: "postgrest", VERSION: "v16.2" },
-      run: async () => fail("unused"),
-      log: (message) => logs.push(message),
-    });
-    expect(code).toBe(0);
-    expect(logs).toEqual(["no native artifacts in payload"]);
-  });
-
-  test("copy-natives reads natives from the dispatch event", async () => {
-    const natives = await nativesFromEvent(
-      { EVENT_NAME: "repository_dispatch", GITHUB_EVENT_PATH: "event.json" },
-      "v16.2",
-      async () =>
-        JSON.stringify({
-          client_payload: { natives: [{ tag: "v16.2-native-linux-arm64", digest: DIGEST }] },
-        }),
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const code = yield* Effect.promise(() =>
+          main(["verify-digest"], {
+            env: {
+              REFERENCE: "public.ecr.aws/supabase/cli/postgrest:v16.2",
+              DIGEST,
+              ATTEMPTS: "2",
+            },
+            run: () => Promise.resolve(heads[reads++] ?? fail("unexpected read")),
+            sleep: () => Promise.resolve(),
+            log: () => undefined,
+          }),
+        );
+        expect(code).toBe(0);
+        expect(reads).toBe(2);
+      }),
     );
-    expect(natives).toEqual([{ tag: "v16.2-native-linux-arm64", digest: DIGEST }]);
   });
+
+  test("copy-natives no-ops without a dispatch payload", () => {
+    const logs: string[] = [];
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const code = yield* Effect.promise(() =>
+          main(["copy-natives"], {
+            env: { EVENT_NAME: "workflow_dispatch", SERVICE: "postgrest", VERSION: "v16.2" },
+            run: () => Promise.resolve(fail("unused")),
+            log: (message) => logs.push(message),
+          }),
+        );
+        expect(code).toBe(0);
+        expect(logs).toEqual(["no native artifacts in payload"]);
+      }),
+    );
+  });
+
+  test("copy-natives reads natives from the dispatch event", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const natives = yield* Effect.promise(() =>
+          nativesFromEvent(
+            { EVENT_NAME: "repository_dispatch", GITHUB_EVENT_PATH: "event.json" },
+            "v16.2",
+            () =>
+              Promise.resolve(
+                JSON.stringify({
+                  client_payload: {
+                    natives: [{ tag: "v16.2-native-linux-arm64", digest: DIGEST }],
+                  },
+                }),
+              ),
+          ),
+        );
+        expect(natives).toEqual([{ tag: "v16.2-native-linux-arm64", digest: DIGEST }]);
+      }),
+    ));
 });
 
 const ARCHIVE_BLOB = `sha256:${"1".repeat(64)}`;
@@ -427,15 +523,16 @@ describe("fetchNatives", () => {
   ) => {
     const files: Record<string, string> = {};
     const calls: string[][] = [];
-    const run: RunCommand = async (argv) => {
+    const run: RunCommand = (argv) => {
       calls.push([...argv]);
-      if (argv[1] === "manifest" && argv[2] === "head") return ok(`${overrides.head ?? DIGEST}\n`);
-      return argv[1] === "manifest" ? ok(ociManifest) : fail("unexpected");
+      if (argv[1] === "manifest" && argv[2] === "head")
+        return Promise.resolve(ok(`${overrides.head ?? DIGEST}\n`));
+      return Promise.resolve(argv[1] === "manifest" ? ok(ociManifest) : fail("unexpected"));
     };
     return {
       calls,
       run,
-      runToFile: async (argv: ReadonlyArray<string>, outputPath: string) => {
+      runToFile: (argv: ReadonlyArray<string>, outputPath: string) => {
         calls.push([...argv, `> ${outputPath}`]);
         const digest = argv[4];
         files[outputPath] =
@@ -445,116 +542,153 @@ describe("fetchNatives", () => {
             : digest === CHECKSUM_BLOB
               ? `${ARCHIVE_SHA}  postgrest-v16.2-linux-arm64.tar.zst\n`
               : "archive-bytes";
-        return ok();
+        return Promise.resolve(ok());
       },
-      readText: async (path: string) => files[path] ?? "",
-      sha256File: async () => overrides.sha ?? ARCHIVE_SHA,
+      readText: (path: string) => Promise.resolve(files[path] ?? ""),
+      sha256File: () => Promise.resolve(overrides.sha ?? ARCHIVE_SHA),
       mkdir: () => undefined,
       log: () => undefined,
     };
   };
 
-  test("downloads the triplet under release asset names and verifies it", async () => {
+  test("downloads the triplet under release asset names and verifies it", () => {
     const deps = io();
-    const fetched = await fetchNatives({
-      service: "postgrest",
-      version: "v16.2",
-      natives: [{ tag: "v16.2-native-linux-arm64", digest: DIGEST }],
-      outputDir: "/tmp/natives",
-      ...deps,
-    });
-    expect(fetched).toEqual([
-      { target: "linux-arm64", files: nativeFileNames("postgrest", "v16.2", "linux-arm64") },
-    ]);
-    expect(deps.calls[0]).toEqual([
-      "regctl",
-      "manifest",
-      "head",
-      "ghcr.io/supabase/cli/postgrest:v16.2-native-linux-arm64",
-    ]);
-    expect(deps.calls[1]).toEqual([
-      "regctl",
-      "manifest",
-      "get",
-      `ghcr.io/supabase/cli/postgrest@${DIGEST}`,
-      "--format",
-      "raw-body",
-    ]);
-    expect(deps.calls[2]).toEqual([
-      "regctl",
-      "blob",
-      "get",
-      "ghcr.io/supabase/cli/postgrest",
-      ARCHIVE_BLOB,
-      "> /tmp/natives/linux-arm64/postgrest-v16.2-linux-arm64.tar.zst",
-    ]);
-  });
-
-  test("skips a native whose tag no longer resolves to the dispatched digest", async () => {
-    const deps = io({ head: OTHER });
-    const fetched = await fetchNatives({
-      service: "postgrest",
-      version: "v16.2",
-      natives: [{ tag: "v16.2-native-linux-arm64", digest: DIGEST }],
-      outputDir: "/tmp/natives",
-      ...deps,
-    });
-    expect(fetched).toEqual([]);
-    expect(deps.calls).toHaveLength(1);
-  });
-
-  test("keeps the first entry for a repeated target and never refetches it", async () => {
-    const deps = io();
-    const fetched = await fetchNatives({
-      service: "postgrest",
-      version: "v16.2",
-      natives: [
-        { tag: "v16.2-native-linux-arm64", digest: DIGEST },
-        { tag: "v16.2-native-linux-arm64", digest: OTHER },
-      ],
-      outputDir: "/tmp/natives",
-      ...deps,
-    });
-    expect(fetched.map((item) => item.target)).toEqual(["linux-arm64"]);
-    expect(deps.calls.filter((argv) => argv[1] === "manifest" && argv[2] === "head")).toHaveLength(
-      1,
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const fetched = yield* Effect.promise(() =>
+          fetchNatives({
+            service: "postgrest",
+            version: "v16.2",
+            natives: [{ tag: "v16.2-native-linux-arm64", digest: DIGEST }],
+            outputDir: "/tmp/natives",
+            ...deps,
+          }),
+        );
+        expect(fetched).toEqual([
+          { target: "linux-arm64", files: nativeFileNames("postgrest", "v16.2", "linux-arm64") },
+        ]);
+        expect(deps.calls[0]).toEqual([
+          "regctl",
+          "manifest",
+          "head",
+          "ghcr.io/supabase/cli/postgrest:v16.2-native-linux-arm64",
+        ]);
+        expect(deps.calls[1]).toEqual([
+          "regctl",
+          "manifest",
+          "get",
+          `ghcr.io/supabase/cli/postgrest@${DIGEST}`,
+          "--format",
+          "raw-body",
+        ]);
+        expect(deps.calls[2]).toEqual([
+          "regctl",
+          "blob",
+          "get",
+          "ghcr.io/supabase/cli/postgrest",
+          ARCHIVE_BLOB,
+          "> /tmp/natives/linux-arm64/postgrest-v16.2-linux-arm64.tar.zst",
+        ]);
+      }),
     );
   });
 
-  test("drops a target whose manifest is not JSON", async () => {
-    const fetched = await fetchNatives({
-      service: "postgrest",
-      version: "v16.2",
-      natives: [{ tag: "v16.2-native-linux-arm64", digest: DIGEST }],
-      outputDir: "/tmp/natives",
-      ...io({ manifest: "{not json" }),
-    });
-    expect(fetched).toEqual([]);
-    expect(nativeTripletDigests("<html>")).toBeUndefined();
-  });
-
-  test("drops a target whose archive does not match its sums file", async () => {
-    const fetched = await fetchNatives({
-      service: "postgrest",
-      version: "v16.2",
-      natives: [{ tag: "v16.2-native-linux-arm64", digest: DIGEST }],
-      outputDir: "/tmp/natives",
-      ...io({ sha: "e".repeat(64) }),
-    });
-    expect(fetched).toEqual([]);
-  });
-
-  test("drops a target whose manifest names another release", async () => {
-    const fetched = await fetchNatives({
-      service: "postgrest",
-      version: "v16.2",
-      natives: [{ tag: "v16.2-native-linux-arm64", digest: DIGEST }],
-      outputDir: "/tmp/natives",
-      ...io({
-        manifest: JSON.stringify({ service: "postgrest", version: "v16.1", target: "linux-arm64" }),
+  test("skips a native whose tag no longer resolves to the dispatched digest", () => {
+    const deps = io({ head: OTHER });
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const fetched = yield* Effect.promise(() =>
+          fetchNatives({
+            service: "postgrest",
+            version: "v16.2",
+            natives: [{ tag: "v16.2-native-linux-arm64", digest: DIGEST }],
+            outputDir: "/tmp/natives",
+            ...deps,
+          }),
+        );
+        expect(fetched).toEqual([]);
+        expect(deps.calls).toHaveLength(1);
       }),
+    );
+  });
+
+  test("keeps the first entry for a repeated target and never refetches it", () => {
+    const deps = io();
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const fetched = yield* Effect.promise(() =>
+          fetchNatives({
+            service: "postgrest",
+            version: "v16.2",
+            natives: [
+              { tag: "v16.2-native-linux-arm64", digest: DIGEST },
+              { tag: "v16.2-native-linux-arm64", digest: OTHER },
+            ],
+            outputDir: "/tmp/natives",
+            ...deps,
+          }),
+        );
+        expect(fetched.map((item) => item.target)).toEqual(["linux-arm64"]);
+        expect(
+          deps.calls.filter((argv) => argv[1] === "manifest" && argv[2] === "head"),
+        ).toHaveLength(1);
+      }),
+    );
+  });
+
+  test("drops a target whose manifest is not JSON", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fetched = yield* Effect.promise(() =>
+          fetchNatives({
+            service: "postgrest",
+            version: "v16.2",
+            natives: [{ tag: "v16.2-native-linux-arm64", digest: DIGEST }],
+            outputDir: "/tmp/natives",
+            ...io({ manifest: "{not json" }),
+          }),
+        );
+        expect(fetched).toEqual([]);
+        expect(nativeTripletDigests("<html>")).toBeUndefined();
+      }),
+    ));
+
+  test("drops a target whose archive does not match its sums file", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fetched = yield* Effect.promise(() =>
+          fetchNatives({
+            service: "postgrest",
+            version: "v16.2",
+            natives: [{ tag: "v16.2-native-linux-arm64", digest: DIGEST }],
+            outputDir: "/tmp/natives",
+            ...io({ sha: "e".repeat(64) }),
+          }),
+        );
+        expect(fetched).toEqual([]);
+      }),
+    ));
+
+  test("drops a target whose manifest names another release", () => {
+    const manifest = JSON.stringify({
+      service: "postgrest",
+      version: "v16.1",
+      target: "linux-arm64",
     });
-    expect(fetched).toEqual([]);
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const fetched = yield* Effect.promise(() =>
+          fetchNatives({
+            service: "postgrest",
+            version: "v16.2",
+            natives: [{ tag: "v16.2-native-linux-arm64", digest: DIGEST }],
+            outputDir: "/tmp/natives",
+            ...io({ manifest }),
+          }),
+        );
+        expect(fetched).toEqual([]);
+      }),
+    );
   });
 });
 
@@ -563,138 +697,160 @@ describe("uploadNativesS3", () => {
     { target: "linux-arm64", files: nativeFileNames("postgrest", "v16.2", "linux-arm64") },
   ];
 
-  test("copies archive, manifest, then sums and verifies anonymous reads", async () => {
+  test("copies archive, manifest, then sums and verifies anonymous reads", () => {
     const calls: string[][] = [];
     const checked: string[] = [];
-    await uploadNativesS3({
-      service: "postgrest",
-      version: "v16.2",
-      inputDir: "/tmp/natives",
-      fetched,
-      run: async (argv) => {
-        calls.push([...argv]);
-        return ok();
-      },
-      httpStatus: async (url, method) => {
-        checked.push(`${method} ${url}`);
-        return url.endsWith("/") ? 403 : 200;
-      },
-      log: () => undefined,
-    });
-    expect(calls.map((argv) => argv.at(-1))).toEqual([
-      "s3://supabase-cli-artifacts/postgrest/v16.2/postgrest-v16.2-linux-arm64.tar.zst",
-      "s3://supabase-cli-artifacts/postgrest/v16.2/postgrest-v16.2-linux-arm64.manifest.json",
-      "s3://supabase-cli-artifacts/postgrest/v16.2/postgrest-v16.2-linux-arm64.SHA256SUMS",
-    ]);
-    expect(calls[0]).toContain("/tmp/natives/linux-arm64/postgrest-v16.2-linux-arm64.tar.zst");
-    expect(calls.every((argv) => argv[1] === "s3" && argv[2] === "cp")).toBe(true);
-    expect(checked).toEqual([
-      "HEAD https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com/postgrest/v16.2/postgrest-v16.2-linux-arm64.tar.zst",
-      "HEAD https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com/postgrest/v16.2/postgrest-v16.2-linux-arm64.manifest.json",
-      "HEAD https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com/postgrest/v16.2/postgrest-v16.2-linux-arm64.SHA256SUMS",
-      "GET https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com/",
-    ]);
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        yield* Effect.promise(() =>
+          uploadNativesS3({
+            service: "postgrest",
+            version: "v16.2",
+            inputDir: "/tmp/natives",
+            fetched,
+            run: (argv) => {
+              calls.push([...argv]);
+              return Promise.resolve(ok());
+            },
+            httpStatus: (url, method) => {
+              checked.push(`${method} ${url}`);
+              return Promise.resolve(url.endsWith("/") ? 403 : 200);
+            },
+            log: () => undefined,
+          }),
+        );
+        expect(calls.map((argv) => argv.at(-1))).toEqual([
+          "s3://supabase-cli-artifacts/postgrest/v16.2/postgrest-v16.2-linux-arm64.tar.zst",
+          "s3://supabase-cli-artifacts/postgrest/v16.2/postgrest-v16.2-linux-arm64.manifest.json",
+          "s3://supabase-cli-artifacts/postgrest/v16.2/postgrest-v16.2-linux-arm64.SHA256SUMS",
+        ]);
+        expect(calls[0]).toContain("/tmp/natives/linux-arm64/postgrest-v16.2-linux-arm64.tar.zst");
+        expect(calls.every((argv) => argv[1] === "s3" && argv[2] === "cp")).toBe(true);
+        expect(checked).toEqual([
+          "HEAD https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com/postgrest/v16.2/postgrest-v16.2-linux-arm64.tar.zst",
+          "HEAD https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com/postgrest/v16.2/postgrest-v16.2-linux-arm64.manifest.json",
+          "HEAD https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com/postgrest/v16.2/postgrest-v16.2-linux-arm64.SHA256SUMS",
+          "GET https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com/",
+        ]);
+      }),
+    );
   });
 
-  test("fails when an object is not publicly readable", async () => {
-    await expect(
+  test("fails when an object is not publicly readable", () =>
+    expect(
       uploadNativesS3({
         service: "postgrest",
         version: "v16.2",
         inputDir: "/tmp/natives",
         fetched,
-        run: async () => ok(),
-        httpStatus: async () => 403,
+        run: () => Promise.resolve(ok()),
+        httpStatus: () => Promise.resolve(403),
         log: () => undefined,
       }),
-    ).rejects.toThrow(/not publicly readable/);
-  });
+    ).rejects.toThrow(/not publicly readable/));
 
-  test("fails when the bucket starts listing", async () => {
-    await expect(
+  test("fails when the bucket starts listing", () =>
+    expect(
       uploadNativesS3({
         service: "postgrest",
         version: "v16.2",
         inputDir: "/tmp/natives",
         fetched,
-        run: async () => ok(),
-        httpStatus: async () => 200,
+        run: () => Promise.resolve(ok()),
+        httpStatus: () => Promise.resolve(200),
         log: () => undefined,
       }),
-    ).rejects.toThrow(/listing must stay closed/);
-  });
+    ).rejects.toThrow(/listing must stay closed/));
 });
 
 describe("main fetch-natives", () => {
-  test("writes count=0 without a dispatch payload", async () => {
+  test("writes count=0 without a dispatch payload", () => {
     const fields: Record<string, string> = {};
-    const code = await main(["fetch-natives"], {
-      env: {
-        EVENT_NAME: "workflow_dispatch",
-        SERVICE: "postgrest",
-        VERSION: "v16.2",
-        OUTPUT_DIR: "/tmp/natives",
-      },
-      run: async () => fail("unused"),
-      log: () => undefined,
-      writeOutput: (next) => {
-        Object.assign(fields, next);
-      },
-    });
-    expect(code).toBe(0);
-    expect(fields).toEqual({ count: "0", targets: "" });
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const code = yield* Effect.promise(() =>
+          main(["fetch-natives"], {
+            env: {
+              EVENT_NAME: "workflow_dispatch",
+              SERVICE: "postgrest",
+              VERSION: "v16.2",
+              OUTPUT_DIR: "/tmp/natives",
+            },
+            run: () => Promise.resolve(fail("unused")),
+            log: () => undefined,
+            writeOutput: (next) => {
+              Object.assign(fields, next);
+            },
+          }),
+        );
+        expect(code).toBe(0);
+        expect(fields).toEqual({ count: "0", targets: "" });
+      }),
+    );
   });
 
-  test("exits 1 when the payload names natives but none can be verified", async () => {
+  test("exits 1 when the payload names natives but none can be verified", () => {
     const fields: Record<string, string> = {};
     const event = JSON.stringify({
       client_payload: { natives: [{ tag: "v16.2-native-linux-arm64", digest: DIGEST }] },
     });
-    const code = await main(["fetch-natives"], {
-      env: {
-        EVENT_NAME: "repository_dispatch",
-        GITHUB_EVENT_PATH: "/tmp/event.json",
-        SERVICE: "postgrest",
-        VERSION: "v16.2",
-        OUTPUT_DIR: "/tmp/natives",
-      },
-      run: async () => fail("manifest unknown"),
-      readText: async () => event,
-      log: () => undefined,
-      writeOutput: (next) => {
-        Object.assign(fields, next);
-      },
-    });
-    expect(code).toBe(1);
-    expect(fields).toEqual({ count: "0", targets: "" });
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const code = yield* Effect.promise(() =>
+          main(["fetch-natives"], {
+            env: {
+              EVENT_NAME: "repository_dispatch",
+              GITHUB_EVENT_PATH: "/tmp/event.json",
+              SERVICE: "postgrest",
+              VERSION: "v16.2",
+              OUTPUT_DIR: "/tmp/natives",
+            },
+            run: () => Promise.resolve(fail("manifest unknown")),
+            readText: () => Promise.resolve(event),
+            log: () => undefined,
+            writeOutput: (next) => {
+              Object.assign(fields, next);
+            },
+          }),
+        );
+        expect(code).toBe(1);
+        expect(fields).toEqual({ count: "0", targets: "" });
+      }),
+    );
   });
 });
 
 describe("main upload-natives-s3", () => {
-  test("uploads every target listed in TARGETS", async () => {
+  test("uploads every target listed in TARGETS", () => {
     const uploaded: string[] = [];
-    const code = await main(["upload-natives-s3"], {
-      env: {
-        SERVICE: "postgrest",
-        VERSION: "v16.2",
-        INPUT_DIR: "/tmp/natives",
-        TARGETS: "linux-arm64, darwin-arm64",
-      },
-      run: async (argv) => {
-        uploaded.push(String(argv.at(-1)));
-        return ok();
-      },
-      httpStatus: async (url) => (url.endsWith("/") ? 403 : 200),
-      log: () => undefined,
-    });
-    expect(code).toBe(0);
-    expect(uploaded).toEqual([
-      "s3://supabase-cli-artifacts/postgrest/v16.2/postgrest-v16.2-linux-arm64.tar.zst",
-      "s3://supabase-cli-artifacts/postgrest/v16.2/postgrest-v16.2-linux-arm64.manifest.json",
-      "s3://supabase-cli-artifacts/postgrest/v16.2/postgrest-v16.2-linux-arm64.SHA256SUMS",
-      "s3://supabase-cli-artifacts/postgrest/v16.2/postgrest-v16.2-darwin-arm64.tar.zst",
-      "s3://supabase-cli-artifacts/postgrest/v16.2/postgrest-v16.2-darwin-arm64.manifest.json",
-      "s3://supabase-cli-artifacts/postgrest/v16.2/postgrest-v16.2-darwin-arm64.SHA256SUMS",
-    ]);
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const code = yield* Effect.promise(() =>
+          main(["upload-natives-s3"], {
+            env: {
+              SERVICE: "postgrest",
+              VERSION: "v16.2",
+              INPUT_DIR: "/tmp/natives",
+              TARGETS: "linux-arm64, darwin-arm64",
+            },
+            run: (argv) => {
+              uploaded.push(String(argv.at(-1)));
+              return Promise.resolve(ok());
+            },
+            httpStatus: (url) => Promise.resolve(url.endsWith("/") ? 403 : 200),
+            log: () => undefined,
+          }),
+        );
+        expect(code).toBe(0);
+        expect(uploaded).toEqual([
+          "s3://supabase-cli-artifacts/postgrest/v16.2/postgrest-v16.2-linux-arm64.tar.zst",
+          "s3://supabase-cli-artifacts/postgrest/v16.2/postgrest-v16.2-linux-arm64.manifest.json",
+          "s3://supabase-cli-artifacts/postgrest/v16.2/postgrest-v16.2-linux-arm64.SHA256SUMS",
+          "s3://supabase-cli-artifacts/postgrest/v16.2/postgrest-v16.2-darwin-arm64.tar.zst",
+          "s3://supabase-cli-artifacts/postgrest/v16.2/postgrest-v16.2-darwin-arm64.manifest.json",
+          "s3://supabase-cli-artifacts/postgrest/v16.2/postgrest-v16.2-darwin-arm64.SHA256SUMS",
+        ]);
+      }),
+    );
   });
 });
