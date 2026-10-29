@@ -164,8 +164,9 @@ local path), gated on a native storage-health check: absent (any inspect error, 
 just "not found") skips buckets without failing; present-but-unhealthy waits up to a
 **hardcoded 30 seconds** (independent of `db.health_timeout`) and, on timeout, **fails
 the whole reset** (not just "skip buckets"). On PG15, a failure or interrupt before the final
-restart runs the same restart + Kong reload once before the original error surfaces (a restore
-failure only warns).
+restart inspects `supabase_db_<project>` and, unless Docker reports it missing or stopped, runs the
+same restart + Kong reload once before the original error surfaces (a restore failure only warns);
+otherwise the satellites stay stopped with a warning to run `supabase stop && supabase start`.
 
 ## API Routes
 
