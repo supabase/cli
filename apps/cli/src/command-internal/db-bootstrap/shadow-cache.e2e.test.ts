@@ -46,7 +46,7 @@ const STACK_PORT_ASSIGNMENT =
  */
 const SHADOW_PORT_CANDIDATE_COUNT = 8;
 
-const DIFF_ARGS = ["db", "diff", "--local", "--use-pg-delta"] as const;
+const DIFF_ARGS = ["db", "diff", "--use-pg-delta"] as const;
 
 /** `shadow-cache.ts`'s published artifact name — `shadow-baseline-<16 hex key>.tar`. */
 const BASELINE_TAR_PATTERN = /^shadow-baseline-[0-9a-f]{16}\.tar$/u;
@@ -192,7 +192,7 @@ describe("shadow baseline cache (e2e, local Docker stack)", () => {
           expect(shadowPortCandidates).toHaveLength(SHADOW_PORT_CANDIDATE_COUNT);
 
           // Same drift setup as `db/diff/diff.declarative.e2e.test.ts`: create a fresh function
-          // directly in the local database so `db diff --local` has real, deterministic SQL to
+          // directly in the local database so `db diff` has real, deterministic SQL to
           // produce — the byte-identity of that output across cold/warm runs is the actual
           // user-visible contract here. Schema files can't supply this drift since the next engine
           // ignores `schema_paths` when building its migrations baseline.
@@ -205,7 +205,6 @@ describe("shadow baseline cache (e2e, local Docker stack)", () => {
 returns void
 language sql
 as $$ select 1; $$;`,
-                "--local",
               ],
               { cwd: projectDir, home: homeDir },
             ),

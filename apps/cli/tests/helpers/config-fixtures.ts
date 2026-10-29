@@ -96,7 +96,7 @@ export function v2ProjectConfigResponse(
       sms_messagebird_originator: null,
       sms_textlocal_sender: null,
       sms_vonage_from: null,
-      sms_autoconfirm: false,
+      sms_autoconfirm: true,
       sms_max_frequency: 5,
       sms_otp_exp: 60,
       sms_otp_length: 6,

@@ -8,8 +8,10 @@ import {
   computeRoute,
   COMPUTE_PROJECT_REF,
 } from "../../../../../tests/helpers/compute.ts";
+import { describeComputeTargetSelection } from "../../../../../tests/helpers/compute-target-selection.ts";
 import { assertPermissionDrift } from "../../../../../tests/helpers/permission-drift.ts";
 import { projectResponse } from "../../../../../tests/helpers/permission-real-layers.ts";
+import { resolveWorkdir } from "../../../../config/command-settings.layer.ts";
 import { ProjectRefNotLinkedError } from "../../../../config/project-ref.errors.ts";
 import { ComputeEnvNotSupportedError } from "../compute.errors.ts";
 import {
@@ -61,7 +63,7 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeList({ projectRef: Option.none() });
+        yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
         const stdout = out.stdoutText;
         expect(stdout).toContain("NAME");
@@ -111,7 +113,7 @@ describe("compute list", () => {
 
       return yield* Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        yield* computeList({ projectRef: Option.none() });
+        yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
         expect(http.routeKeys).toEqual([
           "GET /v1/projects",
@@ -140,7 +142,7 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeList({ projectRef: Option.none() });
+        yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
         const row = out.stdoutText.split("\n").find((line) => line.includes("ghost"));
         expect(row).toBeDefined();
@@ -172,7 +174,7 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeList({ projectRef: Option.none() });
+        yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stderrText).toContain("stray");
         expect(out.stderrText).toContain("guess the runtime");
@@ -208,7 +210,7 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeList({ projectRef: Option.none() });
+        yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stderrText).toContain("spare, stray are deployed but not in");
         expect(out.stderrText).toContain("guess the runtime");
@@ -233,7 +235,7 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeList({ projectRef: Option.none() });
+        yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stdoutText).toContain("deleting");
       }).pipe(Effect.provide(layer));
@@ -257,7 +259,7 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeList({ projectRef: Option.none() });
+        yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stderrText).toContain("no source in this project");
         expect(out.stderrText).not.toContain("guess the runtime");
@@ -274,7 +276,7 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeList({ projectRef: Option.none() });
+        yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stdoutText).toContain(
           "No compute found. Scaffold one with supabase compute new <name>.",
@@ -298,7 +300,7 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeList({ projectRef: Option.none() });
+        yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
         const success = out.messages.findLast(
           (message) => message.type === "success" && message.data !== undefined,
@@ -332,12 +334,12 @@ describe("compute list", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.effect("serialises the inventory for the Go -o flag", () =>
+  it.effect("serialises the inventory for the -o flag", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
         workdir: repo.dir,
-        goOutput: "json",
+        outputFlag: "json",
         routes: {
           [listRoute]: {
             status: 200,
@@ -347,7 +349,7 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeList({ projectRef: Option.none() });
+        yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
         // `-o` payloads own stdout outright: no clack success line may share it.
         const parsed = yield* Schema.decodeEffect(
@@ -367,12 +369,14 @@ describe("compute list", () => {
       const repo = yield* project();
       const { layer, http } = setupCompute({
         workdir: repo.dir,
-        goOutput: "env",
+        outputFlag: "env",
         routes: { [listRoute]: { status: 200, body: { data: [] } } },
       });
 
       return yield* Effect.gen(function* () {
-        const error = yield* computeList({ projectRef: Option.none() }).pipe(Effect.flip);
+        const error = yield* computeList({ remote: Option.none(), projectRef: Option.none() }).pipe(
+          Effect.flip,
+        );
 
         expect(error).toBeInstanceOf(ComputeEnvNotSupportedError);
         expect(http.routeKeys).toEqual([]);
@@ -402,7 +406,9 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        const error = yield* computeList({ projectRef: Option.none() }).pipe(Effect.flip);
+        const error = yield* computeList({ remote: Option.none(), projectRef: Option.none() }).pipe(
+          Effect.flip,
+        );
 
         expect(error).toBeInstanceOf(ComputeUnavailableError);
       }).pipe(Effect.provide(layer));
@@ -428,7 +434,9 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        const error = yield* computeList({ projectRef: Option.none() }).pipe(Effect.flip);
+        const error = yield* computeList({ remote: Option.none(), projectRef: Option.none() }).pipe(
+          Effect.flip,
+        );
 
         expect(error).toBeInstanceOf(ComputeUnavailableError);
         expect(error).not.toBeInstanceOf(ComputeProjectNotFoundError);
@@ -455,7 +463,9 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        const error = yield* computeList({ projectRef: Option.none() }).pipe(Effect.flip);
+        const error = yield* computeList({ remote: Option.none(), projectRef: Option.none() }).pipe(
+          Effect.flip,
+        );
 
         assert.instanceOf(error, ComputeRouteNotFoundError);
         expect(error).not.toBeInstanceOf(ComputeProjectNotFoundError);
@@ -480,7 +490,9 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        const error = yield* computeList({ projectRef: Option.none() }).pipe(Effect.flip);
+        const error = yield* computeList({ remote: Option.none(), projectRef: Option.none() }).pipe(
+          Effect.flip,
+        );
 
         expect(error).toBeInstanceOf(ComputeProjectNotFoundError);
         expect(error).toMatchObject({ suggestion: expect.stringContaining("supabase link") });
@@ -497,7 +509,9 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        const error = yield* computeList({ projectRef: Option.none() }).pipe(Effect.flip);
+        const error = yield* computeList({ remote: Option.none(), projectRef: Option.none() }).pipe(
+          Effect.flip,
+        );
 
         expect(error).toBeInstanceOf(ComputeApiUnexpectedStatusError);
         expect(http.routeKeys).toEqual([listRoute]);
@@ -510,7 +524,7 @@ describe("compute list", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.effect("uses an explicit --project-ref without a linked project", () =>
+  it.effect("uses an explicit --remote=<ref> without a linked project", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({
@@ -522,13 +536,16 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeList({ projectRef: Option.some("qrstuvwxyzabcdefghij") });
+        yield* computeList({
+          remote: Option.some({ _tag: "Ref", ref: "qrstuvwxyzabcdefghij" }),
+          projectRef: Option.none(),
+        });
 
         expect(http.routeKeys).toEqual(["GET /v2/projects/qrstuvwxyzabcdefghij/compute"]);
         assertPermissionDrift({
           command: "compute list",
           variant: { computeEnabled: true },
-          activeFlags: { "project-ref": "qrstuvwxyzabcdefghij" },
+          activeFlags: { remote: "qrstuvwxyzabcdefghij" },
           requests: http.driftRequests,
           exact: true,
         });
@@ -542,7 +559,9 @@ describe("compute list", () => {
       const { layer } = setupCompute({ workdir: repo.dir, linked: false });
 
       return yield* Effect.gen(function* () {
-        const error = yield* computeList({ projectRef: Option.none() }).pipe(Effect.flip);
+        const error = yield* computeList({ remote: Option.none(), projectRef: Option.none() }).pipe(
+          Effect.flip,
+        );
 
         expect(error).toBeInstanceOf(ProjectRefNotLinkedError);
       }).pipe(Effect.provide(layer));
@@ -570,7 +589,7 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeList({ projectRef: Option.none() });
+        yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stdoutText).toContain("scaffolded");
         expect(out.stdoutText).not.toContain("No compute found");
@@ -596,7 +615,7 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeList({ projectRef: Option.none() });
+        yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
         const success = out.messages.findLast(
           (message) => message.type === "success" && message.data !== undefined,
@@ -614,7 +633,7 @@ describe("compute list", () => {
       const repo = yield* project();
       const { layer, out } = setupCompute({
         workdir: repo.dir,
-        goOutput: "toml",
+        outputFlag: "toml",
         routes: {
           [listRoute]: {
             status: 200,
@@ -626,7 +645,7 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeList({ projectRef: Option.none() });
+        yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stdoutText).toContain("project_ref = ");
         expect(out.stdoutText).not.toContain("undefined");
@@ -639,7 +658,7 @@ describe("compute list", () => {
       const repo = yield* project();
       const { layer, out } = setupCompute({
         workdir: repo.dir,
-        goOutput: "yaml",
+        outputFlag: "yaml",
         routes: {
           [listRoute]: {
             status: 200,
@@ -649,7 +668,7 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeList({ projectRef: Option.none() });
+        yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stdoutText).toContain("project_ref:");
         expect(out.stdoutText).toContain("name: api");
@@ -663,12 +682,12 @@ describe("compute list", () => {
   // other resource command, including this one, renders text for them too.
   it.effect.each(["pretty", "table", "csv"] as const)(
     "renders text rather than TOML for -o %s",
-    (goOutput) =>
+    (outputFlag) =>
       Effect.gen(function* () {
         const repo = yield* project();
         const { layer, out } = setupCompute({
           workdir: repo.dir,
-          goOutput,
+          outputFlag,
           routes: {
             [listRoute]: {
               status: 200,
@@ -678,7 +697,7 @@ describe("compute list", () => {
         });
 
         return yield* Effect.gen(function* () {
-          yield* computeList({ projectRef: Option.none() });
+          yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
           expect(out.stdoutText).toContain("NAME");
           expect(out.stdoutText).not.toContain("project_ref = ");
@@ -692,15 +711,13 @@ describe("compute list", () => {
       const { layer, telemetry } = setupCompute({ workdir: repo.dir });
 
       return yield* Effect.gen(function* () {
-        yield* computeList({ projectRef: Option.none() }).pipe(Effect.flip);
+        yield* computeList({ remote: Option.none(), projectRef: Option.none() }).pipe(Effect.flip);
 
         expect(telemetry.flushed).toBe(true);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  // The default workdir resolution only probes config.toml, so a config.json-only
-  // project invoked from a subdirectory relies on this second climb to be found.
   it.effect(
     "discovers a config.json-only project's [compute.*] entry from a subdirectory when --workdir is defaulted",
     () =>
@@ -718,14 +735,15 @@ describe("compute list", () => {
         const sub = path.join(created.dir, "nested", "dir");
         yield* fs.makeDirectory(sub, { recursive: true });
 
+        const resolved = yield* resolveWorkdir(Option.none(), Option.none(), sub, path);
         const { layer, out } = setupCompute({
-          workdir: sub,
-          explicitWorkdir: false,
+          workdir: resolved.workdir,
+          explicitWorkdir: resolved.explicit,
           routes: { [listRoute]: { status: 200, body: { data: [] } } },
         });
 
         return yield* Effect.gen(function* () {
-          yield* computeList({ projectRef: Option.none() });
+          yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
           const row = out.stdoutText.split("\n").find((line) => line.includes("api"));
           expect(row).toBeDefined();
@@ -759,11 +777,16 @@ describe("compute list", () => {
         });
 
         return yield* Effect.gen(function* () {
-          yield* computeList({ projectRef: Option.none() });
+          yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
           expect(out.stdoutText).not.toContain("api");
           expect(out.stdoutText).toContain("No compute found.");
         }).pipe(Effect.provide(layer));
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
+});
+
+describeComputeTargetSelection("compute list", {
+  routes: (ref) => ({ [`GET /v2/projects/${ref}/compute`]: { status: 200, body: { data: [] } } }),
+  run: (flags) => computeList(flags),
 });

@@ -9,7 +9,7 @@ import type {
 } from "../config/project-ref.errors.ts";
 import type { ProfileLoadError } from "./profile-load.ts";
 import type { ApiMaxRetriesError } from "../config/command-settings.layer.ts";
-import type { LinkedProjectRefReadError } from "./project-link.ts";
+import type { LinkedProjectRefReadError } from "../shared/config/project-link.ts";
 import type { DbConnectError } from "./db-connection.errors.ts";
 import type { LocalDbRunningError } from "./db-bootstrap/local-db-running.ts";
 import type {
@@ -25,8 +25,14 @@ import type {
   DbConfigPoolerLoginError,
   DbConfigUnbanNetworkError,
   DbConfigUnbanStatusError,
+  LinkedDbNetworkBannedError,
 } from "./db-config.errors.ts";
-import type { DbConfigFlags, ResolvedDbConfig } from "./db-config.types.ts";
+import type { DbConnectionInput, ResolvedDbConnection } from "./db-config.types.ts";
+import type {
+  CliConfigFlagConflictError,
+  CliConfigValueError,
+} from "../config/cli-config.errors.ts";
+import type { TargetPasswordConflictError } from "./target/target.errors.ts";
 
 /** Every error the resolver can raise across the direct / local / linked paths. */
 export type DbConfigError =
@@ -34,6 +40,8 @@ export type DbConfigError =
   | DbConfigParseUrlError
   | DbConfigLibpqEnvError
   | DbConfigLoadError
+  | CliConfigValueError
+  | CliConfigFlagConflictError
   | LocalDbRunningError
   | ProjectRefNotLinkedError
   | InvalidProjectRefError
@@ -50,36 +58,40 @@ export type DbConfigError =
   | HttpBody.HttpBodyError
   | DbConfigIpv6Error
   | DbConfigConnectTempRoleError
+  | LinkedDbNetworkBannedError
+  | TargetPasswordConflictError
   | DbConfigPoolerLoginError
   | DbConnectError
   // The `--linked` path resolves the access token lazily via
-  // `CommandPlatformApiFactory.make` (only when minting a temp login role), so the
+  // `CommandPlatformApiFactory.make` (when minting a temp login role), so the
   // auth-required / invalid-token / api-config errors surface from the resolver effect — not a
-  // layer-build channel. `--linked --password` skips `make` entirely and never raises these.
+  // layer-build channel. `--linked --password` never raises these: a failed `make` only skips
+  // the pooler-config fallback.
   | CommandPlatformApiFactoryError
   // The lazy linked runtime rebuilds `commandSettingsLayer`, whose strict
   // profile and `SUPABASE_API_MAX_RETRIES` checks can fail inside the resolver effect the same way.
   | ProfileLoadError
   | ApiMaxRetriesError;
 
-// The `--linked` path builds a lazy Management API runtime (so `--local`/`--db-url` never
-// resolve an access token) and provides every one of its own requirements from the resolver's
-// captured context, so `resolve`'s R stays `never`. Access-token resolution is deferred to
-// first API use, so its auth-required error surfaces through the resolver effect (folded into
-// `DbConfigError`) rather than a layer-build error channel.
+// The `--linked` path builds a lazy Management API runtime (so `--local`/`--db-url` never need an
+// access token) from the resolver's captured context, so `resolve`'s R stays `never` and the
+// auth-required error surfaces through the resolver effect, not a layer-build error channel.
 interface DbConfigResolverShape {
-  readonly resolve: (flags: DbConfigFlags) => Effect.Effect<ResolvedDbConfig, DbConfigError>;
+  /** Connects to a resolved target (local, `--db-url` or the linked temp role) and announces it. */
+  readonly resolveConnection: (
+    input: DbConnectionInput,
+  ) => Effect.Effect<ResolvedDbConnection, DbConfigError>;
   /**
    * Resolves the IPv4 transaction pooler connection for a linked dump's container-level
-   * fallback. Returns `None` when the path is not pooler-eligible (`--linked` only) or no
-   * pooler URL is configured, so the caller keeps the original error.
+   * fallback. Returns `None` when the target is not the linked project or no pooler URL is
+   * configured, so the caller keeps the original error.
    */
   readonly resolvePoolerFallback: (
-    flags: DbConfigFlags,
+    input: DbConnectionInput,
   ) => Effect.Effect<Option.Option<PgConnInput>, DbConfigError>;
 }
 
-/** Resolves a Postgres connection from the `--db-url` / `--local` / `--linked` flags. */
+/** Resolves a Postgres connection for a resolved `local`, `db-url` or `linked` target. */
 export class DbConfigResolver extends Context.Service<DbConfigResolver, DbConfigResolverShape>()(
   "supabase/cli/DbConfigResolver",
 ) {}

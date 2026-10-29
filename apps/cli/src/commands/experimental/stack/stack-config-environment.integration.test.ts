@@ -8,6 +8,7 @@ import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts"
 import { mockCommandSettings, withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
 import { loadStackConfig } from "../../../command-internal/stack-config.ts";
 import { createStackConfigProject } from "../../../../tests/helpers/stack-config.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 
 const project = (
   config: string,
@@ -25,6 +26,7 @@ const load = (projectRoot: string) =>
         BunServices.layer,
         runtimeInfoLayer,
         mockCommandSettings({ workdir: projectRoot }),
+        cliConfigValuesTestLayer,
       ),
     ),
   );

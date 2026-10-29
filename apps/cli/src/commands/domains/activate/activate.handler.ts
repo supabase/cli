@@ -1,13 +1,13 @@
-import { Effect, Option } from "effect";
+import { Effect } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { RemoteTarget } from "../../../config/remote-target.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
-import { warnIncludeRawOutputDeprecated } from "../domains.deprecation.ts";
 import { emitHostnameResult } from "../domains.emit.ts";
 import { mapDomainsHttpError } from "../domains.errors.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { gateMapError } from "../../../command-internal/upgrade-suggest.ts";
 import type { DomainsActivateFlags } from "./activate.command.ts";
 
@@ -18,15 +18,17 @@ export const domainsActivate = Effect.fn("domains.activate")(function* (
 ) {
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* RemoteTarget;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
-  yield* warnIncludeRawOutputDeprecated(flags.includeRawOutput);
-
-  const { ref } = yield* resolver.resolve(flags.projectRef);
+  const ref = yield* resolveProjectTarget(flags);
 
   yield* Effect.gen(function* () {
+    yield* requireHostedMutationConsent({
+      action: "Activate the custom hostname",
+      details: ["Third-party auth providers stop working on the Supabase-provisioned subdomain."],
+    });
+
     const activating =
       output.format === "text" ? yield* output.task("Activating custom hostname...") : undefined;
     const response = yield* api.v1.activateCustomHostname({ ref }).pipe(
@@ -35,9 +37,6 @@ export const domainsActivate = Effect.fn("domains.activate")(function* (
     );
     yield* activating?.clear ?? Effect.void;
 
-    yield* emitHostnameResult(
-      response,
-      Option.getOrElse(flags.includeRawOutput, () => false),
-    );
+    yield* emitHostnameResult(response);
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });

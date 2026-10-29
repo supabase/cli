@@ -5,20 +5,29 @@ import { withPermissions } from "../../../command-internal/command-permissions/c
 import {
   compose,
   withCondition,
-  withDbTarget,
+  withContext,
 } from "../../../command-internal/command-permissions/model.ts";
-import { dbConfig, dbConfigLinked } from "../../../command-internal/db-config.layer.ts";
+import {
+  dbConfig,
+  dbConfigLinked,
+  dbConfigNamedProject,
+} from "../../../command-internal/db-config.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { CliConfigKeys } from "../../../config/cli-config-keys.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { parseSchemaFlags } from "../../../command-internal/schema-flags.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { dbDiff } from "./diff.handler.ts";
 import { dbDiffRuntimeLayer } from "./diff.layers.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { targetFlags } from "../../../command-internal/target/target-flags.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
-  // The four engine flags are a mutually-exclusive group, and `--use-migra` defaults to true, so
-  // they are modelled as `Option` to track whether the flag was passed: the mutex check and
-  // `resolveDiffEngine`'s `useMigraChanged` key off whether it was passed, not its value.
+  // The engine flags are a mutually-exclusive group, modelled as `Option` so the mutex check keys
+  // off whether the flag was passed; engine selection uses its value.
   useMigra: Flag.Boolean("use-migra").pipe(
     Flag.withDescription("Use migra to generate schema diff."),
     Flag.optional,
@@ -27,20 +36,17 @@ const config = {
     Flag.withDescription("Use pgAdmin to generate schema diff."),
     Flag.optional,
   ),
+  // Kept parsed (and hidden) only so using it produces an actionable removal error instead of
+  // an unknown-flag parse error; see diff.handler.ts.
   usePgSchema: Flag.Boolean("use-pg-schema").pipe(
-    // Deprecated in favor of the pg-delta engine (or the default migra engine): pg-schema-diff
-    // has no TS/container equivalent, so this stays proxied — see SIDE_EFFECTS.md. This
-    // description-only notice isn't enforced by the flag framework; see diff.handler.ts's
-    // runtime warning for the enforced half.
-    Flag.withDescription(
-      "Use pg-schema-diff to generate schema diff. Deprecated: use the pg-delta engine ([experimental.pgdelta] enabled = true / --use-pg-delta) or the default migra engine instead.",
-    ),
+    Flag.withDescription("Removed: use the default pg-delta engine or --use-migra instead."),
     Flag.optional,
+    Flag.withHidden,
   ),
-  usePgDelta: Flag.Boolean("use-pg-delta").pipe(
-    Flag.withDescription("Use pg-delta to generate schema diff."),
-    Flag.optional,
-  ),
+  usePgDelta: CliConfigKeys.experimental.pgdelta.enabled.flag({
+    name: "use-pg-delta",
+    description: "Use pg-delta to generate schema diff.",
+  }),
   strictCoverage: Flag.Boolean("strict-coverage").pipe(
     Flag.withDescription(
       "Fail when bundled pg-delta finds schema objects it cannot manage instead of leaving them unmanaged.",
@@ -48,11 +54,15 @@ const config = {
     Flag.withDefault(false),
   ),
   from: Flag.String("from").pipe(
-    Flag.withDescription("Diff from local, linked, migrations, or a Postgres URL."),
+    Flag.withDescription(
+      "Diff from local, migrations, remote (always the linked project), a project ref, a branch, or a Postgres URL.",
+    ),
     Flag.optional,
   ),
   to: Flag.String("to").pipe(
-    Flag.withDescription("Diff to local, linked, migrations, or a Postgres URL."),
+    Flag.withDescription(
+      "Diff to local, migrations, remote (always the linked project), a project ref, a branch, or a Postgres URL.",
+    ),
     Flag.optional,
   ),
   output: Flag.String("output").pipe(
@@ -62,28 +72,7 @@ const config = {
     ),
     Flag.optional,
   ),
-  dbUrl: Flag.String("db-url").pipe(
-    Flag.withDescription(
-      "Diffs against the database specified by the connection string (must be percent-encoded).",
-    ),
-    Flag.optional,
-  ),
-  // The target flags form a mutually-exclusive group; modelled as `Option` so
-  // the mutex check tracks whether a flag was passed. `--local` defaults to true
-  // via the target resolver's fall-through.
-  linked: Flag.Boolean("linked").pipe(
-    Flag.withDescription("Diffs local migration files against the linked project."),
-    Flag.optional,
-  ),
-  local: Flag.Boolean("local").pipe(
-    Flag.withDescription("Diffs local migration files against the local database."),
-    Flag.optional,
-  ),
-  // Overrides the linked project ref; the same flag exists on `config push`.
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...targetFlags({ subject: "database", dbUrl: true }),
   file: Flag.String("file").pipe(
     Flag.withAlias("f"),
     Flag.withDescription(
@@ -106,37 +95,52 @@ const config = {
 
 export type DbDiffFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-// An explicit `--from`/`--to linked` side resolves the linked project without `--linked`.
+// An explicit `--from`/`--to` of `remote` or the deprecated `linked` resolves the linked project.
 const explicitLinkedSide = (flag: "from" | "to") =>
-  withCondition(compose(dbConfigLinked, linkedProjectCache), { flag, oneOf: ["linked"] });
+  withCondition(compose(dbConfigLinked, linkedProjectCache), { flag, oneOf: ["linked", "remote"] });
+
+// Conditions can't tell a ref or branch from `local`, `migrations` or a URL; any value declares it.
+const explicitNamedProjectSide = (flag: "from" | "to") =>
+  withContext(
+    withCondition(compose(dbConfigNamedProject, linkedProjectCache), { flag, present: true }),
+    `--${flag} is a project ref or branch name, not local, migrations, remote or a URL`,
+  );
+
+const explicitBranchSide = (flag: "from" | "to") =>
+  ({
+    operationId: "v1-list-all-branches",
+    kind: "required",
+    when: [{ flag, present: true }],
+    context: `--${flag} is a branch name or UUID, not local, migrations, remote, a project ref or a URL`,
+  }) as const;
 
 export const dbDiffCommand = Command.make("diff", config).pipe(
   Command.withDescription(
-    "Compares a shadow built from supabase/migrations with a live database (--local by default, --linked, or --db-url). Declarative files under supabase/schemas are not part of this baseline. Output is printed by default; in normal mode, -f names and saves the complete diff as a migration and does not filter objects. Explicit --from/--to output is flattened review SQL, not a portable apply script.",
+    "Compares a shadow built from supabase/migrations with a live database (the local database by default, or the one --remote selects). Declarative files under supabase/schemas are not part of this baseline. Output is printed by default; in normal mode, -f names and saves the complete diff as a migration and does not filter objects. Explicit --from/--to output is flattened review SQL, not a portable apply script.",
   ),
-  Command.withShortDescription("Diffs the local database for schema changes"),
+  Command.withShortDescription("Diffs a database for schema changes"),
   withPermissions(
-    withDbTarget(
-      compose(
-        {
-          operations: [],
-          noApiEffectFlags: [
-            "use-migra",
-            "use-pgadmin",
-            "use-pg-schema",
-            "use-pg-delta",
-            "strict-coverage",
-            "output",
-            "file",
-            "schema",
-          ],
-        },
-        dbConfig,
-        withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
-        explicitLinkedSide("from"),
-        explicitLinkedSide("to"),
-      ),
-      { default: "local" },
+    compose(
+      {
+        operations: [explicitBranchSide("from"), explicitBranchSide("to")],
+        noApiEffectFlags: [
+          "use-migra",
+          "use-pgadmin",
+          "use-pg-schema",
+          "use-pg-delta",
+          "strict-coverage",
+          "output",
+          "file",
+          "schema",
+        ],
+      },
+      dbConfig,
+      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      explicitLinkedSide("from"),
+      explicitLinkedSide("to"),
+      explicitNamedProjectSide("from"),
+      explicitNamedProjectSide("to"),
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>
@@ -151,18 +155,20 @@ export const dbDiffCommand = Command.make("diff", config).pipe(
           from: flags.from,
           to: flags.to,
           output: flags.output,
-          "db-url": flags.dbUrl,
-          linked: flags.linked,
-          local: flags.local,
-          "project-ref": flags.projectRef,
           file: flags.file,
           schema: flags.schema,
         },
-        // No established telemetry-safety baseline for --project-ref, so it stays redacted.
         aliases: { o: "output", f: "file", s: "schema" },
       }),
       withJsonErrorHandling,
     ),
   ),
   Command.provide(dbDiffRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
+  withTargetPolicy({
+    group: "selectable",
+    consent: "none",
+    consentExemptReason: "reads the target and writes only local migration files",
+  }),
 );

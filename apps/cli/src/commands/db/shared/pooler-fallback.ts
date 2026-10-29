@@ -3,13 +3,16 @@ import { Effect, Option } from "effect";
 import { Output } from "../../../shared/output/output.service.ts";
 import { isIPv6ConnectivityError } from "../../../command-internal/connect-errors.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
-import type { DbConnType } from "../../../command-internal/db-target-flags.ts";
+import type { ResolvedTarget } from "../../../command-internal/target/resolve-target.ts";
 import {
   isDirectDbHost,
   runWithPoolerFallback as runWithSharedPoolerFallback,
 } from "../../../command-internal/pooler-fallback.ts";
 
-export { emitPoolerFallbackWarning } from "../../../command-internal/pooler-fallback.ts";
+export {
+  emitPoolerFallbackWarning,
+  orNoPoolerFallback,
+} from "../../../command-internal/pooler-fallback.ts";
 
 /** The exit/stderr pair a dump attempt surfaces for pooler-fallback classification. */
 interface PoolerFallbackResult {
@@ -18,14 +21,14 @@ interface PoolerFallbackResult {
 }
 
 /**
- * A dump/diff is only rerouted through the pooler when it's a `--linked` run against a
+ * A dump/diff is only rerouted through the pooler when the target is the linked project, on a
  * direct Supabase DB host (`db.<ref>.<projectHost>`, never local/pooler); the `!isLocal`
  * check is belt-and-braces since a direct-host match already implies non-local. Shared by
  * the result-based dump/pull retry ({@link runWithPoolerFallback}) and the error-based diff
  * retry in `db pull`, each ANDing in its own IPv6 classification of the relevant error.
  */
 export const isDirectLinkedHost = (params: {
-  readonly connType: DbConnType;
+  readonly connType: ResolvedTarget["kind"];
   readonly host: string;
   readonly isLocal: boolean;
   readonly projectHost: string;
@@ -41,21 +44,25 @@ export const isDirectLinkedHost = (params: {
  * warning and retries once via `runWithConn`. Otherwise returns the original `result`
  * unchanged, so the caller's failure classification always reads the correct stderr.
  */
-export const runWithPoolerFallback = Effect.fn("PoolerFallback.run")(function* <E, RRun>(params: {
+export const runWithPoolerFallback = Effect.fn("PoolerFallback.run")(function* <
+  E,
+  RRun,
+  EP,
+>(params: {
   /** The first attempt's result; returned unchanged when no fallback fires. */
   readonly result: PoolerFallbackResult;
-  readonly connType: DbConnType;
+  readonly connType: ResolvedTarget["kind"];
   /** The direct connection host that failed (`resolved.conn.host`). */
   readonly host: string;
   readonly isLocal: boolean;
   /** `cliSettings.projectHost` — the direct-DB-host suffix (`supabase.co`/`.red`). */
   readonly projectHost: string;
   /**
-   * Resolves the IPv4 pooler connection, already error-neutralized to `None` (a resolution
-   * failure means "no fallback"). A thunk, since resolving the pooler creates a temp role —
-   * it only runs once the eligibility gate passes, never on the happy path.
+   * Resolves the IPv4 pooler connection; a failure means "no fallback" except an unapproved
+   * network-ban removal, which propagates. A thunk, since resolving the pooler creates a temp
+   * role — it only runs once the eligibility gate passes, never on the happy path.
    */
-  readonly resolvePooler: () => Effect.Effect<Option.Option<PgConnInput>>;
+  readonly resolvePooler: () => Effect.Effect<Option.Option<PgConnInput>, EP>;
   /** Re-runs the dump against a connection (`db dump`/`db pull` each adapt their runner). */
   readonly runWithConn: (conn: PgConnInput) => Effect.Effect<PoolerFallbackResult, E, RRun>;
   /** `db dump` re-prints "Dumping ..." on retry; `db pull` passes `Effect.void`. */

@@ -1,17 +1,19 @@
 import { Argument, Command, Flag } from "effect/cli";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
-import {
-  compose,
-  withCondition,
-  withDbTarget,
-} from "../../../command-internal/command-permissions/model.ts";
+import { compose, withCondition } from "../../../command-internal/command-permissions/model.ts";
 import { dbConfig } from "../../../command-internal/db-config.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { CliConfigKeys } from "../../../config/cli-config-keys.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { migrationDbRuntimeLayer } from "../migration.layers.ts";
 import { migrationRepair } from "./repair.handler.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { targetFlags } from "../../../command-internal/target/target-flags.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   versions: Argument.String("version").pipe(
@@ -21,49 +23,31 @@ const config = {
   status: Flag.Literals("status", ["applied", "reverted"] as const).pipe(
     Flag.withDescription("Version status to update."),
   ),
-  dbUrl: Flag.String("db-url").pipe(
-    Flag.withDescription(
-      "Repairs migrations of the database specified by the connection string (must be percent-encoded).",
-    ),
-    Flag.optional,
-  ),
-  linked: Flag.Boolean("linked").pipe(
-    Flag.withDescription("Repairs the migration history of the linked project."),
-    Flag.withDefault(true),
-  ),
-  local: Flag.Boolean("local").pipe(
-    Flag.withDescription("Repairs the migration history of the local database."),
-    Flag.withDefault(false),
-  ),
-  // TS-only override of the linked project ref — see push.command.ts (db push).
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
-  password: Flag.String("password").pipe(
-    Flag.withAlias("p"),
-    Flag.withDescription("Password to your remote Postgres database."),
-    Flag.optional,
-  ),
+  ...targetFlags({ subject: "database", dbUrl: true }),
+  password: CliConfigKeys.linkedDb.password.flag({
+    name: "password",
+    alias: "p",
+    description:
+      "Database password for the project selected with --remote. Not used for the local database or a database URL.",
+  }),
 } as const;
 
 export const migrationRepairCommand = Command.make("repair", config).pipe(
   Command.withDescription("Repair the migration history table."),
   Command.withShortDescription("Repair the migration history table"),
   withPermissions(
-    withDbTarget(
-      compose(
-        { operations: [], noApiEffectFlags: ["status"] },
-        dbConfig,
-        withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
-      ),
-      { default: "linked" },
+    compose(
+      { operations: [], noApiEffectFlags: ["status"] },
+      dbConfig,
+      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>
     migrationRepair({
       versions: flags.versions.map(String),
       status: flags.status,
+      remote: flags.remote,
       dbUrl: flags.dbUrl,
       linked: flags.linked,
       local: flags.local,
@@ -73,15 +57,10 @@ export const migrationRepairCommand = Command.make("repair", config).pipe(
       withCommandTelemetry({
         flags: {
           status: flags.status,
-          "db-url": flags.dbUrl,
-          linked: flags.linked,
-          local: flags.local,
-          "project-ref": flags.projectRef,
           // `password` is a credential — always reaches telemetry as `<redacted>`.
           password: flags.password,
         },
-        // --status is auto-detected as safe via config below; password and
-        // --project-ref stay redacted.
+        // --status is auto-detected as safe via config below; password stays redacted.
         config,
         aliases: { p: "password" },
       }),
@@ -89,4 +68,7 @@ export const migrationRepairCommand = Command.make("repair", config).pipe(
     ),
   ),
   Command.provide(migrationDbRuntimeLayer(["migration", "repair"])),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
+  withTargetPolicy({ group: "selectable", consent: "no" }),
 );

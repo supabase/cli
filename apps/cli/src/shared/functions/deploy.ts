@@ -28,29 +28,26 @@ import {
 } from "effect";
 import * as HttpBody from "effect/http/HttpBody";
 import * as HttpClientError from "effect/http/HttpClientError";
-import { promptYesNo } from "../../command-internal/prompt-yes-no.ts";
 import { bitbucketCloneDir } from "../../command-internal/bitbucket-pipeline.ts";
-import { CONTEXT_CANCELED_MESSAGE } from "../output/errors.ts";
+import { requireHostedMutationConsent } from "../../command-internal/hosted-consent/hosted-consent.ts";
 import { Output } from "../output/output.service.ts";
-import { bold } from "../../command-internal/colors.ts";
-import { viperEnvStringWithProjectFallback } from "../../command-internal/viper-env.ts";
+import { supabaseEnvStringWithProjectFallback } from "../../command-internal/supabase-env.ts";
 import { findGitRootPath } from "../git/git-root.ts";
 import {
-  cobraMutuallyExclusiveErrorMessage,
+  mutuallyExclusiveFlagsMessage,
   explicitBooleanLongFlag,
   hasExplicitLongFlag,
   lastExplicitLongFlagValue,
-} from "../cli/cobra-flag-groups.ts";
+} from "../cli/flag-groups.ts";
 import {
   edgeRuntimeImage,
-  FUNCTIONS_BUNDLER_MUTEX_GROUP,
+  FUNCTIONS_DEPLOY_BUNDLER_MUTEX_GROUP,
   invalidFunctionSlugDetail,
   validateFunctionSlugMessage,
 } from "./functions.shared.ts";
 import { slimImagesEnabled } from "../services/slim-images.ts";
 import {
   ConflictingFunctionDeployFlagsError,
-  FunctionDeployCancelledError,
   FunctionDeployError,
   FunctionImportMapSyntaxError,
   FunctionImportNotDirectoryError,
@@ -71,8 +68,9 @@ import {
   toDockerPath,
   toSlash,
 } from "./functions-docker.ts";
-import { loadFunctionsCliConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
+import { loadFunctionsCliConfig, type FunctionsLocalConfigLoader } from "./functions-config.ts";
 import { FunctionsApiStatusError, FunctionsApiTransportError } from "./functions-api.errors.ts";
+import { ambientEnvironment } from "../config/cli-config-provider.layer.ts";
 
 const COMPRESSED_ESZIP_MAGIC = "EZBR";
 const DEPLOY_RATE_LIMIT_MAX_RETRIES = 8;
@@ -88,7 +86,6 @@ export function shouldChmodBundleOutputDirectory(platform: NodeJS.Platform) {
 
 interface FunctionsDeployFlags {
   readonly functionNames: ReadonlyArray<string>;
-  readonly projectRef: Option.Option<string>;
   readonly noVerifyJwt: boolean;
   readonly useApi: boolean;
   readonly importMap: Option.Option<string>;
@@ -106,17 +103,13 @@ interface DeployFunctionsDependencies<ResolveError, ResolveRequirements> {
   readonly supabaseDir: string;
   readonly dashboardUrl: string;
   /**
-   * `undefined` for library callers; the CLI injects
-   * `functionsGoConfigCompat` so this file never imports the command tree
-   * directly — see {@link FunctionsGoConfigCompat}.
+   * The CLI injects `functionsLocalConfigLoader` so this file never imports the
+   * command tree directly — see {@link FunctionsLocalConfigLoader}.
    */
-  readonly goConfigCompat: FunctionsGoConfigCompat | undefined;
-  readonly yes?: boolean;
+  readonly localConfigLoader: FunctionsLocalConfigLoader;
   readonly rawArgs: ReadonlyArray<string>;
   readonly edgeRuntimeVersion: string;
-  readonly resolveProjectRef: (
-    projectRef: Option.Option<string>,
-  ) => Effect.Effect<string, ResolveError, ResolveRequirements>;
+  readonly resolveProjectRef: Effect.Effect<string, ResolveError, ResolveRequirements>;
   /**
    * Optional shell-specific styling hooks. All default to identity (plain text); keeping them
    * injected keeps this shared module free of CLI-specific rendering.
@@ -303,7 +296,7 @@ function isDenoConfigFile(path: Path.Path, pathname: string) {
 
 /**
  * Presence-based `Option.some(value)` when `--<flagName>` was passed
- * explicitly after `commandPath`, matching cobra's `Changed()`;
+ * explicitly after `commandPath`;
  * `Option.none()` otherwise. Used only by `deployFunctions`'s
  * `--no-verify-jwt` override below — kept private per this file's own
  * "used by one command only -> keep it in the command's own directory" rule.
@@ -321,8 +314,7 @@ function explicitBooleanFlag(
  * Must stay in sync with `CLI_WORKDIR_LABEL`
  * (`command-internal/docker-ids.ts:95`) — same string literal, kept as a
  * separate copy here rather than imported so `shared/` does not depend on the
- * command tree (this file has no Go equivalent for the other two
- * labels either). Read back by `cleanupStartSecrets` so a later
+ * command tree. Read back by `cleanupStartSecrets` so a later
  * `stop`/`rollbackStart` can reclaim this container's staged-secret
  * directory using its OWN workdir rather than the caller's cwd.
  */
@@ -384,7 +376,7 @@ export function pruneRedundantDockerBinds(
   return entries.filter((entry) => !isCovered(entry)).map((entry) => entry.bind);
 }
 
-function dockerNpmEnv(env: NodeJS.ProcessEnv = process.env): ReadonlyArray<string> {
+function dockerNpmEnv(env: NodeJS.ProcessEnv = ambientEnvironment()): ReadonlyArray<string> {
   return dockerNpmEnvNames.flatMap((name) => {
     const value = env[name];
     return value === undefined || value === "" ? [] : [name];
@@ -738,7 +730,7 @@ function substituteImportMapValue(
       continue;
     }
     // Import-maps spec (implemented by Deno): a key matches exactly, or as a prefix only when it
-    // ends with "/" — see go-cli-divergences.md for why this differs from a naive prefix match.
+    // ends with "/", unlike a naive prefix match.
     if (prefix.endsWith("/")) {
       // Spec normalization: a `/`-suffixed key whose address lacks a trailing
       // `/` is an invalid mapping — dropped, not concatenated.
@@ -1584,8 +1576,8 @@ const bundleFunctionWithDocker = Effect.fn("functions.deploy.bundleWithDocker")(
     .makeTempDirectory({ directory: outputRoot, prefix: outputPrefix })
     .pipe(Effect.mapError(unknownHostError(path.join(outputRoot, outputPrefix))));
   try {
-    // Go passes 0777 to MkdirAll, which Windows ignores. Calling chmod separately
-    // adds an NTFS WRITE_ATTRIBUTES requirement that the Go CLI does not have.
+    // Windows ignores the 0777 mode on mkdir; calling chmod separately
+    // would add an NTFS WRITE_ATTRIBUTES requirement.
     if (shouldChmodBundleOutputDirectory(process.platform)) {
       yield* fs.chmod(outputDir, 0o777).pipe(Effect.mapError(hostError(outputDir)));
     }
@@ -2125,11 +2117,13 @@ export const resolveFunctionConfigs = Effect.fn("functions.deploy.resolveConfigs
     readonly rawConfigFunctions: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
     readonly importMapOverride: Option.Option<string>;
     readonly noVerifyJwtOverride: Option.Option<boolean>;
+    /** Skips the fallback-import-map warning, for a resolve whose result is discarded. */
+    readonly quiet?: boolean;
   }) {
     const output = yield* Output;
     const path = yield* Path.Path;
     const functionsDir = path.join(input.projectRoot, SUPABASE_FUNCTIONS_DIR);
-    const seenDeprecatedImportMap = new Set<string>();
+    const unsupportedImportMaps = new Map<string, string>();
     const seenFallbackImportMap = new Set<string>();
     const resolved: ResolvedDeployFunctionConfig[] = [];
 
@@ -2187,20 +2181,23 @@ export const resolveFunctionConfigs = Effect.fn("functions.deploy.resolveConfigs
           const functionDir = path.dirname(entrypoint);
           const denoJson = path.join(functionDir, "deno.json");
           const denoJsonc = path.join(functionDir, "deno.jsonc");
-          const deprecatedImportMap = path.join(functionDir, "import_map.json");
+          const unsupportedImportMap = path.join(functionDir, "import_map.json");
 
           if (yield* isFile(denoJson)) {
             importMap = denoJson;
           } else if (yield* isFile(denoJsonc)) {
             importMap = denoJsonc;
-          } else if (yield* isFile(deprecatedImportMap)) {
-            importMap = deprecatedImportMap;
-            seenDeprecatedImportMap.add(slug);
-          } else if (fallbackExists) {
-            if (fallbackExists) {
-              importMap = fallbackImportMapPath;
-              seenFallbackImportMap.add(slug);
+          } else if (
+            // An entrypoint directly under `functions/` shares its directory with the fallback map.
+            unsupportedImportMap !== path.resolve(fallbackImportMapPath) &&
+            (yield* isFile(unsupportedImportMap))
+          ) {
+            if (enabled) {
+              unsupportedImportMaps.set(slug, unsupportedImportMap);
             }
+          } else if (fallbackExists) {
+            importMap = fallbackImportMapPath;
+            seenFallbackImportMap.add(slug);
           }
         }
       }
@@ -2220,14 +2217,21 @@ export const resolveFunctionConfigs = Effect.fn("functions.deploy.resolveConfigs
       });
     }
 
-    if (seenDeprecatedImportMap.size > 0) {
-      yield* output.raw(
-        `WARNING: import_map.json is deprecated and will be removed in v3, use deno.json instead. Functions using it: ${[...seenDeprecatedImportMap].join(", ")}\n`,
-        "stderr",
-      );
+    const [firstUnsupported] = unsupportedImportMaps;
+    if (firstUnsupported !== undefined) {
+      const [slug, importMapPath] = firstUnsupported;
+      const relativePath = path
+        .relative(input.supabaseDir, importMapPath)
+        .split(path.sep)
+        .join("/");
+      const configPath = relativePath.startsWith("../") ? relativePath : `./${relativePath}`;
+      return yield* new FunctionDeployError({
+        message: `import_map.json in a function directory is no longer supported: ${[...unsupportedImportMaps.keys()].join(", ")}`,
+        suggestion: `Rename it to deno.json, or set functions.${slug}.import_map = "${configPath}" in config.toml to keep the file.`,
+      });
     }
 
-    if (seenFallbackImportMap.size > 0) {
+    if (seenFallbackImportMap.size > 0 && input.quiet !== true) {
       yield* output.raw(
         `WARNING: Functions using fallback import map: ${[...seenFallbackImportMap].join(", ")}\n`,
         "stderr",
@@ -2419,34 +2423,27 @@ const deployViaDocker = Effect.fn("functions.deploy.viaDocker")(function* (
   }
 });
 
-const pruneFunctions = Effect.fn("functions.deploy.prune")(function* (
+const findPruneCandidates = Effect.fn("functions.deploy.pruneCandidates")(function* (
   projectRef: string,
   configs: ReadonlyArray<ResolvedDeployFunctionConfig>,
   api: ApiClient,
-  yes: boolean,
 ) {
-  const output = yield* Output;
   const remoteFunctions = yield* listRemoteFunctions(api, projectRef);
   const localSlugs = new Set(configs.map((config) => config.slug));
-  const toDelete = remoteFunctions
+  return remoteFunctions
     .filter((remote) => remote.status !== "REMOVED" && !localSlugs.has(remote.slug))
     .map((remote) => remote.slug);
+});
 
+const pruneFunctions = Effect.fn("functions.deploy.prune")(function* (
+  projectRef: string,
+  toDelete: ReadonlyArray<string>,
+  api: ApiClient,
+) {
+  const output = yield* Output;
   if (toDelete.length === 0) {
     yield* output.raw("No Functions to prune.\n", "stderr");
     return;
-  }
-
-  // Header, one ` • <bold slug>` line per function, and a trailing blank line before the [y/N]
-  // choices. Routed through `promptYesNo` so `--yes`/`SUPABASE_YES` auto-confirms with the
-  // stderr echo, and a non-TTY stdin still honors a piped `y`/`n` answer.
-  const prompt = `${[
-    "Do you want to delete the following Functions from your project?",
-    ...toDelete.map((slug) => ` • ${bold(slug)}`),
-  ].join("\n")}\n\n`;
-  const confirmed = yield* promptYesNo(output, yes, prompt, false);
-  if (!confirmed) {
-    return yield* new FunctionDeployCancelledError({ message: CONTEXT_CANCELED_MESSAGE });
   }
 
   for (const slug of toDelete) {
@@ -2454,6 +2451,28 @@ const pruneFunctions = Effect.fn("functions.deploy.prune")(function* (
     yield* deleteRemoteFunction(api, projectRef, slug);
   }
 });
+
+const functionCount = (count: number) => `${count} ${count === 1 ? "Function" : "Functions"}`;
+
+const requireDeployConsent = (toDeploy: ReadonlyArray<string>, toPrune: ReadonlyArray<string>) =>
+  requireHostedMutationConsent({
+    action: [
+      ...(toDeploy.length > 0 ? [`Deploy ${functionCount(toDeploy.length)}`] : []),
+      ...(toPrune.length > 0
+        ? [
+            `${toDeploy.length > 0 ? "delete" : "Delete"} ${functionCount(toPrune.length)} with --prune`,
+          ]
+        : []),
+    ].join(" and "),
+    details: [
+      ...(toDeploy.length > 0
+        ? ["Functions to deploy:", ...toDeploy.map((slug) => ` • ${slug}`)]
+        : []),
+      ...(toPrune.length > 0
+        ? ["Functions to delete (not found locally):", ...toPrune.map((slug) => ` • ${slug}`)]
+        : []),
+    ],
+  });
 
 export const deployFunctions = Effect.fn("functions.deploy")(function* <
   ResolveError,
@@ -2486,7 +2505,7 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
 
   if (changedModes.length > 1) {
     return yield* new ConflictingFunctionDeployFlagsError({
-      message: cobraMutuallyExclusiveErrorMessage(FUNCTIONS_BUNDLER_MUTEX_GROUP, changedModes),
+      message: mutuallyExclusiveFlagsMessage(FUNCTIONS_DEPLOY_BUNDLER_MUTEX_GROUP, changedModes),
     });
   }
 
@@ -2503,7 +2522,7 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
     });
   }
 
-  const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);
+  const projectRef = yield* dependencies.resolveProjectRef;
   // `@supabase/config` merges the matching `[remotes.*]` block over the base config, so this
   // already reflects any remote function/edge_runtime overrides, through the same
   // `Config.Validate`/dotenv/env-override pipeline `start`/`stop`/`status` use (see
@@ -2512,7 +2531,7 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
   const context = yield* loadFunctionsCliConfig({
     projectRoot: dependencies.projectRoot,
     projectRef,
-    goConfigCompat: dependencies.goConfigCompat,
+    localConfigLoader: dependencies.localConfigLoader,
   });
 
   if (flags.functionNames.length > 0) {
@@ -2530,7 +2549,7 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
   // `--debug=false` must resolve to `false` — a plain presence check would get that backwards
   // (same rule as `download.ts`'s own `--debug` read).
   const debugEnabled = explicitBooleanLongFlag(dependencies.rawArgs, "debug") ?? false;
-  const deployConfig = context.loaded?.config;
+  const deployConfig = context.loaded.config;
   const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersion(
     context.denoVersion,
     dependencies.edgeRuntimeVersion,
@@ -2538,13 +2557,11 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
   const configFunctions = yield* inferFunctionsManifest({
     cwd: dependencies.projectRoot,
     config: deployConfig,
-    // Matches `loadFunctionsCliConfig`'s own options above: no ancestor directory is searched
-    // past `dependencies.projectRoot` for either load, so they can never resolve two
-    // different projects.
-    search: dependencies.goConfigCompat === undefined,
+    // The resolved config never searches ancestors, so manifest inference must not either.
+    search: false,
   });
-  const configDeclaredFunctions = deployConfig?.functions ?? {};
-  const rawConfigFunctions = rawFunctionConfigRecord(context.loaded?.document);
+  const configDeclaredFunctions = deployConfig.functions;
+  const rawConfigFunctions = rawFunctionConfigRecord(context.loaded.document);
   yield* validateConfigFunctionSlugs(configDeclaredFunctions);
   const slugs =
     flags.functionNames.length > 0
@@ -2575,6 +2592,14 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
   });
   const dashboardUrl = `${dependencies.dashboardUrl}/project/${projectRef}/functions`;
 
+  const toDeploy = configs.filter((config) => config.enabled).map((config) => config.slug);
+  const toPrune = flags.prune
+    ? yield* findPruneCandidates(projectRef, configs, dependencies.api)
+    : [];
+  if (toDeploy.length > 0 || toPrune.length > 0) {
+    yield* requireDeployConsent(toDeploy, toPrune);
+  }
+
   const deployWithApi = deployViaApi(
     projectRef,
     dependencies.projectRoot,
@@ -2582,23 +2607,18 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
     dependencies.api,
     jobs,
   ).pipe(
-    Effect.as(true),
+    Effect.as(Option.none<string>()),
     Effect.catchIf(
       (error): error is NoFunctionsToDeployError => error instanceof NoFunctionsToDeployError,
       (error) =>
-        (output.format === "text"
-          ? output.raw(`${error.message}\n`, "stderr")
-          : output.success(error.message, {
-              project_ref: projectRef,
-              functions: uniqueSlugs,
-              dashboard_url: dashboardUrl,
-            })
-        ).pipe(Effect.as(false)),
+        (output.format === "text" ? output.raw(`${error.message}\n`, "stderr") : Effect.void).pipe(
+          Effect.as(Option.some(error.message)),
+        ),
     ),
   );
 
   const styleWarning = dependencies.styleWarning ?? ((text: string) => text);
-  const deployed = useLocalBundler
+  const nothingToDeployMessage = useLocalBundler
     ? yield* Effect.gen(function* () {
         if (!(yield* isDockerRunning())) {
           yield* output.raw(`${styleWarning("WARNING:")} Docker is not running\n`, "stderr");
@@ -2607,17 +2627,12 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
 
         // `lastExplicitLongFlagValue` preserves the "explicitly cleared" vs "never touched"
         // distinction `resolveDockerNetworkMode` needs — see that function's own doc comment.
-        // `SUPABASE_NETWORK_ID` (env or project dotenv) is CLI-only, `undefined` for library
-        // callers.
         const networkMode = resolveDockerNetworkMode({
           explicit: lastExplicitLongFlagValue(dependencies.rawArgs, [], "network-id"),
-          envOverride:
-            context.projectEnvValues === undefined
-              ? undefined
-              : yield* viperEnvStringWithProjectFallback(
-                  "SUPABASE_NETWORK_ID",
-                  context.projectEnvValues,
-                ),
+          envNetworkId: yield* supabaseEnvStringWithProjectFallback(
+            "SUPABASE_NETWORK_ID",
+            context.projectEnvValues,
+          ),
           projectId: context.projectId,
         });
         yield* deployViaDocker({
@@ -2632,30 +2647,31 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
           styleEmphasis,
           projectEnvValues: context.projectEnvValues,
         });
-        return true;
+        return Option.none<string>();
       })
     : yield* deployWithApi;
 
-  if (!deployed) {
-    return;
-  }
-
-  if (output.format === "text") {
+  if (output.format === "text" && Option.isNone(nothingToDeployMessage)) {
     // Joins the raw `slugs` list, not the deduped set, so `functions deploy foo foo` prints
     // "foo, foo".
     yield* output.raw(
       `Deployed Functions on project ${styleIdentifier(projectRef)}: ${slugs.join(", ")}\n`,
     );
     yield* output.raw(`You can inspect your deployment in the Dashboard: ${dashboardUrl}\n`);
-  } else {
-    yield* output.success("Deployed Functions.", {
-      project_ref: projectRef,
-      functions: uniqueSlugs,
-      dashboard_url: dashboardUrl,
-    });
   }
 
   if (flags.prune) {
-    yield* pruneFunctions(projectRef, configs, dependencies.api, dependencies.yes ?? false);
+    yield* pruneFunctions(projectRef, toPrune, dependencies.api);
+  }
+
+  if (output.format !== "text") {
+    yield* output.success(
+      Option.getOrElse(nothingToDeployMessage, () => "Deployed Functions."),
+      {
+        project_ref: projectRef,
+        functions: uniqueSlugs,
+        dashboard_url: dashboardUrl,
+      },
+    );
   }
 });

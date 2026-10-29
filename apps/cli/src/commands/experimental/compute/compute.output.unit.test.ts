@@ -1,22 +1,37 @@
 import { Option } from "effect";
 import { describe, expect, it } from "vitest";
-import { computeProjectRefSuffix } from "./compute.output.ts";
+import { computeRemoteSuffix } from "./compute.output.ts";
 
-describe("computeProjectRefSuffix", () => {
-  it("carries an explicit --project-ref into the suggestion", () => {
-    expect(computeProjectRefSuffix(Option.some("abcdefghijklmnopqrst"))).toBe(
-      " --project-ref abcdefghijklmnopqrst",
+const REF = "abcdefghijklmnopqrst";
+const none = { remote: Option.none(), projectRef: Option.none() } as const;
+
+describe("computeRemoteSuffix", () => {
+  it("carries an explicit --remote=<ref> into the suggestion", () => {
+    expect(
+      computeRemoteSuffix({ ...none, remote: Option.some({ _tag: "Ref", ref: REF }) }, REF),
+    ).toBe(` --remote=${REF}`);
+  });
+
+  it("carries the deprecated --project-ref as --remote=<ref>", () => {
+    expect(computeRemoteSuffix({ ...none, projectRef: Option.some(REF) }, REF)).toBe(
+      ` --remote=${REF}`,
     );
   });
 
-  it("adds nothing when the ref came from the link", () => {
-    expect(computeProjectRefSuffix(Option.none())).toBe("");
+  it("carries a branch as the ref it resolved to", () => {
+    expect(
+      computeRemoteSuffix(
+        { ...none, remote: Option.some({ _tag: "Branch", name: "staging" }) },
+        REF,
+      ),
+    ).toBe(` --remote=${REF}`);
   });
 
-  // `--project-ref ""` resolves from the environment or the linked-project file,
-  // so echoing the flag back would suggest a command ending in a valueless
-  // `--project-ref` that cannot be pasted and re-run.
-  it("adds nothing when the flag was supplied empty", () => {
-    expect(computeProjectRefSuffix(Option.some(""))).toBe("");
+  it("adds nothing when the ref came from the link", () => {
+    expect(computeRemoteSuffix(none, REF)).toBe("");
+  });
+
+  it("adds nothing for a bare --remote, which names the linked project", () => {
+    expect(computeRemoteSuffix({ ...none, remote: Option.some({ _tag: "Linked" }) }, REF)).toBe("");
   });
 });
