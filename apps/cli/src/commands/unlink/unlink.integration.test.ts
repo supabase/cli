@@ -1,5 +1,5 @@
-import { LegacyProjectState } from "../../command-internal/legacy-project-state.service.ts";
-import { legacyProjectStateLayer } from "../../command-internal/legacy-project-state.layer.ts";
+import { LegacyProjectState } from "../../shared/config/legacy-project-state.service.ts";
+import { legacyProjectStateLayer } from "../../shared/config/legacy-project-state.layer.ts";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { holdLock } from "@supabase/stack/effect";
@@ -34,12 +34,10 @@ import {
   mockCommandPlatformApiService,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  withConfigEnv,
 } from "../../../tests/helpers/command-mocks.ts";
-import { writeProjectLink } from "../../command-internal/project-link.ts";
-import {
-  projectStateMode,
-  projectStateModeLayer,
-} from "../../command-internal/project-state-mode.ts";
+import { writeProjectLink } from "../../shared/config/project-link.ts";
+import { projectStateMode, projectStateModeLayer } from "../../shared/config/project-state-mode.ts";
 import { unlink } from "./unlink.handler.ts";
 
 const tempRoot = useTempWorkdir("supabase-unlink-int-");
@@ -248,10 +246,10 @@ describe("unlink integration", () => {
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const mode = yield* projectStateMode({
-        cwd: workdir,
-        env: { SUPABASE_EXPERIMENTAL_STACK: "maybe" },
-      }).pipe(Effect.exit);
+      const mode = yield* withConfigEnv(
+        { SUPABASE_EXPERIMENTAL_STACK: "maybe" },
+        projectStateMode({ cwd: workdir }),
+      ).pipe(Effect.exit);
       yield* seedProjectRef(workdir, VALID_REF);
       yield* writeProjectLink(workdir, {
         project: { ref: VALID_REF },
@@ -263,7 +261,7 @@ describe("unlink integration", () => {
 
       expect(error).toMatchObject({
         _tag: "ExperimentalFeatureFlagError",
-        message: "SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set",
+        message: expect.stringContaining(`Invalid SUPABASE_EXPERIMENTAL_STACK="maybe"`),
       });
       expect(yield* tempDirExists(workdir)).toBe(true);
       expect(yield* fs.exists(path.join(workdir, "supabase", ".link.json"))).toBe(true);

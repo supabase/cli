@@ -4,12 +4,12 @@ import { CommandCredentials } from "../../auth/command-credentials.service.ts";
 import { CredentialDeleteError } from "../../auth/errors.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { ProjectRefNotLinkedError } from "../../config/project-ref.errors.ts";
-import { PROJECT_NOT_LINKED_MESSAGE } from "../../config/remote-target.service.ts";
+import { PROJECT_NOT_LINKED_MESSAGE } from "../../config/project-ref.service.ts";
 import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../shared/output/output.service.ts";
-import { LegacyProjectState } from "../../command-internal/legacy-project-state.service.ts";
-import { currentProjectStateMode } from "../../command-internal/project-state-mode.ts";
-import { readProjectLink, removeProjectLink } from "../../command-internal/project-link.ts";
+import { LegacyProjectState } from "../../shared/config/legacy-project-state.service.ts";
+import { currentProjectStateMode } from "../../shared/config/project-state-mode.ts";
+import { readProjectLink, removeProjectLink } from "../../shared/config/project-link.ts";
 import { withProjectLease } from "../../command-internal/stack-lock.ts";
 import { UnlinkRefReadError, UnlinkTempRemovalError } from "./unlink.errors.ts";
 

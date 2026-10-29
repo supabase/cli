@@ -1,7 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { beforeAll, describe, expect, it } from "@effect/vitest";
 import { Config, Effect, FileSystem, Option, Path, PlatformError } from "effect";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 /**
  * Guards the telemetry identity of every CLI error: the string passed to
@@ -10,9 +10,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
  * fingerprints, undetected until dashboards look wrong.
  *
  * Enumerates every production tagged-error tag under `apps/cli/src` and
- * `packages/config/src`, resolving tags built via template interpolation
- * (`mintConfigTargetErrors`) at runtime by constructing each class — see
- * {@link collectComputedTagDeclarations}. Compares the set against the committed
+ * `packages/config/src` and compares the set against the committed
  * `__fixtures__/error-tags.txt` snapshot.
  *
  * Known gap: the snapshot is a set, not an owner-to-tag mapping, so two classes swapping tags
@@ -40,19 +38,6 @@ const TEST_FILE_SUFFIXES = [
   ".e2e.test.ts",
   ".live.test.ts",
 ] as const;
-
-/**
- * Files whose tags `mintConfigTargetErrors` computes via template interpolation, resolved at
- * runtime instead of by static regex. Also the list {@link collectStaticDeclarations} skips to
- * avoid double-counting. Paths are relative to `cliSrcDir`.
- */
-const COMPUTED_TAG_SOURCE_FILES: ReadonlyArray<string> = [
-  "commands/config/pull/pull.errors.ts",
-  "commands/config/diff/diff.errors.ts",
-  "commands/config/push/push.errors.ts",
-  "commands/pull/pull.errors.ts",
-];
-const computedTagSourceFileSet = new Set(COMPUTED_TAG_SOURCE_FILES);
 
 interface TaggedErrorDeclaration {
   readonly className: string;
@@ -83,19 +68,13 @@ function isProductionSourceFile(filePath: string): boolean {
   return !TEST_FILE_SUFFIXES.some((suffix) => filePath.endsWith(suffix));
 }
 
-/**
- * Statically regexes every `Data.TaggedError("...")` string-literal declaration out of the
- * given production files, skipping `COMPUTED_TAG_SOURCE_FILES` (those come from
- * {@link collectComputedTagDeclarations} instead) so a file never contributes twice.
- */
-const collectStaticDeclarations = (filePaths: ReadonlyArray<string>, rootDir: string) =>
+/** The `Data.TaggedError("...")` declarations in the given production files. */
+const collectDeclarations = (filePaths: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const declarations: Array<TaggedErrorDeclaration> = [];
     for (const filePath of filePaths) {
-      const relativeToRoot = path.relative(rootDir, filePath);
-      if (rootDir === cliSrcDir && computedTagSourceFileSet.has(relativeToRoot)) continue;
       const source = yield* fs.readFileString(filePath);
       for (const match of source.matchAll(TAGGED_ERROR_PATTERN)) {
         declarations.push({
@@ -108,35 +87,6 @@ const collectStaticDeclarations = (filePaths: ReadonlyArray<string>, rootDir: st
     return declarations;
   });
 
-/**
- * Runtime half of the computed-tag guard: imports each `COMPUTED_TAG_SOURCE_FILES` module,
- * constructs every exported class, and reads its real, fully-interpolated `_tag` off the
- * instance — a source-text regex can't see `` Data.TaggedError(`${prefix}...`) ``.
- *
- * `new Export({})` is safe because every export here is a `Data.TaggedError`-derived class
- * whose generated constructor assigns whatever properties are present without validating them.
- */
-const collectComputedTagDeclarations = Effect.gen(function* () {
-  const path = yield* Path.Path;
-  const declarations: Array<TaggedErrorDeclaration> = [];
-  for (const relativeFile of COMPUTED_TAG_SOURCE_FILES) {
-    const moduleUrl = pathToFileURL(path.join(cliSrcDir, relativeFile)).href;
-    const module: Record<string, unknown> = yield* Effect.tryPromise(() => import(moduleUrl));
-    for (const [exportName, exportValue] of Object.entries(module)) {
-      if (typeof exportValue !== "function") continue;
-      const constructed = yield* Effect.try(() => {
-        const Ctor = exportValue as new (args: Record<string, unknown>) => { _tag?: unknown };
-        return new Ctor({})._tag;
-      }).pipe(Effect.option);
-      if (Option.isNone(constructed)) continue; // Not a constructible Data.TaggedError-shaped export.
-      const tag = constructed.value;
-      if (typeof tag !== "string") continue;
-      declarations.push({ className: exportName, tag, file: `apps/cli/src/${relativeFile}` });
-    }
-  }
-  return declarations;
-});
-
 /** Shared comparator for the fixture and the live scan, so a `localeCompare`-vs-default-sort
  * mismatch can't make the comparison lie. */
 function compareTags(a: string, b: string): number {
@@ -148,16 +98,14 @@ const readSnapshotTags = Effect.gen(function* () {
   return (yield* fs.readFileString(fixturePath)).split(/\r?\n/).filter((line) => line.length > 0);
 });
 
-/** Every production `Data.TaggedError` declaration, static and computed alike. */
+/** Every production `Data.TaggedError` declaration. */
 const collectProductionDeclarations = Effect.gen(function* () {
   const cliFiles = (yield* walk(cliSrcDir)).filter(isProductionSourceFile);
   const externalFiles = (yield* walk(externalConfigSrcDir)).filter(isProductionSourceFile);
-  const staticDeclarations = [
-    ...(yield* collectStaticDeclarations(cliFiles, cliSrcDir)),
-    ...(yield* collectStaticDeclarations(externalFiles, externalConfigSrcDir)),
+  return [
+    ...(yield* collectDeclarations(cliFiles)),
+    ...(yield* collectDeclarations(externalFiles)),
   ];
-  const computedDeclarations = yield* collectComputedTagDeclarations;
-  return [...staticDeclarations, ...computedDeclarations];
 });
 
 /**

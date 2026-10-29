@@ -12,6 +12,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   projectResponse,
@@ -40,7 +41,7 @@ const tempRoot = useTempWorkdir("supabase-sso-show-int-");
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   status?: number;
   body?: unknown;
   network?: "fail";
@@ -65,18 +66,19 @@ function setup(opts: SetupOpts = {}) {
     telemetry: telemetry.layer,
     linkedProjectCache: cache.layer,
     analytics,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
 
   return { layer, out, api, analytics, telemetry, cache };
 }
 
 describe("sso show integration", () => {
-  it.effect("rejects bad UUID with Go-format message", () => {
+  it.effect("rejects bad UUID with the formatted message", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         ssoShow({
+          remote: Option.none(),
           projectRef: Option.none(),
           providerId: "not-a-uuid",
           metadata: false,
@@ -95,6 +97,7 @@ describe("sso show integration", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -110,6 +113,7 @@ describe("sso show integration", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         ssoShow({
+          remote: Option.none(),
           projectRef: Option.none(),
           providerId: VALID_PROVIDER_ID,
           metadata: false,
@@ -130,6 +134,7 @@ describe("sso show integration", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         ssoShow({
+          remote: Option.none(),
           projectRef: Option.none(),
           providerId: VALID_PROVIDER_ID,
           metadata: false,
@@ -149,6 +154,7 @@ describe("sso show integration", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         ssoShow({
+          remote: Option.none(),
           projectRef: Option.none(),
           providerId: VALID_PROVIDER_ID,
           metadata: false,
@@ -161,11 +167,12 @@ describe("sso show integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("Go --output=env returns env-not-supported error with Go-format message", () => {
-    const { layer } = setup({ goOutput: "env" });
+  it.effect("--output=env returns env-not-supported error with the formatted message", () => {
+    const { layer } = setup({ outputFlag: "env" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         ssoShow({
+          remote: Option.none(),
           projectRef: Option.none(),
           providerId: VALID_PROVIDER_ID,
           metadata: false,
@@ -180,10 +187,11 @@ describe("sso show integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("Go --output=json encodes response with Go's HTML escaping", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+  it.effect("--output=json encodes response with HTML escaping", () => {
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -195,10 +203,11 @@ describe("sso show integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("Go --output=yaml encodes the provider with yaml.v3's byte shape", () => {
-    const { layer, out } = setup({ goOutput: "yaml" });
+  it.effect("--output=yaml encodes the provider with the established byte shape", () => {
+    const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -220,10 +229,11 @@ updatedat: "2023-03-28T13:50:14.464Z"
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("Go --output=toml encodes the provider with BurntSushi's byte shape", () => {
-    const { layer, out } = setup({ goOutput: "toml" });
+  it.effect("--output=toml encodes the provider with the established byte shape", () => {
+    const { layer, out } = setup({ outputFlag: "toml" });
     return Effect.gen(function* () {
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -247,6 +257,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -256,10 +267,11 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("Go --output=pretty matches text mode", () => {
-    const { layer, out } = setup({ goOutput: "pretty" });
+  it.effect("--output=pretty matches text mode", () => {
+    const { layer, out } = setup({ outputFlag: "pretty" });
     return Effect.gen(function* () {
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -272,6 +284,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
     const { layer, out, api } = setup();
     return Effect.gen(function* () {
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: true,
@@ -293,6 +306,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
     const { layer, out } = setup({ body: { id: VALID_PROVIDER_ID } });
     return Effect.gen(function* () {
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: true,
@@ -301,11 +315,12 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("does NOT fire cli_upgrade_suggested on 404 (Go's `show` omits it)", () => {
+  it.effect("does NOT fire cli_upgrade_suggested on 404", () => {
     const { layer, analytics } = setup({ status: 404, body: {} });
     return Effect.gen(function* () {
       yield* Effect.exit(
         ssoShow({
+          remote: Option.none(),
           projectRef: Option.none(),
           providerId: VALID_PROVIDER_ID,
           metadata: false,
@@ -319,6 +334,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
     const { layer, telemetry, cache } = setup();
     return Effect.gen(function* () {
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -332,6 +348,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -374,6 +391,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
       const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
       expect(yield* fs.exists(cachePath)).toBe(false);
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -390,4 +408,10 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
       assertPermissionDrift({ command: "sso show", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedTargetSelection("sso show", {
+  operands: [VALID_PROVIDER_ID],
+  respond: (request) => Effect.succeed(jsonResponse(request, 200, PROVIDER)),
+  run: (flags) => ssoShow({ ...flags, providerId: VALID_PROVIDER_ID, metadata: false }),
 });

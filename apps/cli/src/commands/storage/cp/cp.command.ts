@@ -2,7 +2,8 @@ import { Effect } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
-import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
@@ -10,16 +11,10 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
 import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-runtime.layer.ts";
 import { storageInvalidJobsMessage } from "../storage.errors.ts";
-import { parseUintBase0 } from "../../../command-internal/parse-uint.ts";
-import {
-  STORAGE_PERMISSIONS,
-  StorageLinkedFlagDef,
-  StorageLocalFlagDef,
-  StorageProjectRefFlagDef,
-  assertStorageTargetsExclusive,
-  warnStorageTargetDefault,
-} from "../storage.flags.ts";
+import { parseUintBase0 } from "../../../shared/config/parse-uint.ts";
+import { STORAGE_PERMISSIONS, storageTargetFlags } from "../storage.flags.ts";
 import { storageCp } from "./cp.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 // Effect CLI renders no flag defaults, so the established `(default …)` tokens are written into
 // the descriptions below (`--content-type`'s actual runtime default is `""` for auto-detect).
@@ -45,8 +40,8 @@ const config = {
     // `withMetavar` keeps the `--jobs, -j integer` help token.
     Flag.withMetavar("integer"),
     Flag.withDescription("Maximum number of parallel jobs. (default 1)"),
-    // `--jobs` is a pflag-style uint: a non-uint token must fail at parse time, before the
-    // experimental gate, the handler, or any telemetry, with pflag's exact message and original
+    // `--jobs` is a uint: a non-uint token must fail at parse time, before the
+    // experimental gate, the handler, or any telemetry, with the exact message and original
     // spelling preserved. `Flag.Int` loses that fidelity (`-0` normalizes to negative zero,
     // which a `value < 0` check would wrongly accept), so this parses the raw token with
     // `parseUintBase0` instead; it must sit before `Flag.optional`, which passes `InvalidValue`
@@ -63,9 +58,7 @@ const config = {
     ),
     Flag.optional,
   ),
-  linked: StorageLinkedFlagDef,
-  local: StorageLocalFlagDef,
-  projectRef: StorageProjectRefFlagDef,
+  ...storageTargetFlags,
   src: Argument.String("src").pipe(Argument.withDescription("Source path to copy from.")),
   dst: Argument.String("dst").pipe(Argument.withDescription("Destination path to copy to.")),
 } as const;
@@ -97,26 +90,19 @@ export const storageCpCommand = Command.make("cp", config).pipe(
   ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
-      // Gate before the mutex check below; see requireExperimental's doc comment for why. A
-      // non-uint `--jobs` never reaches here — `Flag.mapTryCatch` rejects it at parse time.
+      // A non-uint `--jobs` never reaches here: `Flag.mapTryCatch` rejects it at parse time.
       yield* requireExperimental;
-      const cliArgs = yield* CliArgs;
-      yield* assertStorageTargetsExclusive(cliArgs.args);
-      yield* warnStorageTargetDefault("storage cp", cliArgs.args, flags.projectRef);
       const telemetryFlags = {
         recursive: flags.recursive,
         cacheControl: flags.cacheControl,
         contentType: flags.contentType,
         jobs: flags.jobs,
-        linked: flags.linked,
-        local: flags.local,
-        "project-ref": flags.projectRef,
       };
-      return yield* storageCp(flags).pipe(
-        // Not in the safe-flags allowlist, so `--project-ref` stays redacted.
-        withCommandTelemetry({ flags: telemetryFlags }),
-      );
+      return yield* storageCp(flags).pipe(withCommandTelemetry({ flags: telemetryFlags }));
     }).pipe(withJsonErrorHandling),
   ),
   Command.provide(storageGatewayRuntimeLayer(["storage", "cp"])),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
+  withTargetPolicy({ group: "selectable", consent: "no" }),
 );

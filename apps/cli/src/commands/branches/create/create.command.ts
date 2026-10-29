@@ -1,17 +1,18 @@
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
-import { Layer } from "effect";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
-import { projectRefPicker } from "../../../config/remote-target.layer.ts";
+import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { upgradeSuggestion } from "../../../command-internal/upgrade-suggest.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { branchesCreate } from "./create.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
+import { branchesParentTarget } from "../branches.target.ts";
 
 const BRANCH_REGIONS = [
   "ap-east-1",
@@ -60,10 +61,7 @@ const config = {
     Argument.withDescription("Name for the new branch."),
     Argument.optional,
   ),
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags({ parent: true }),
   region: Flag.Literals("region", BRANCH_REGIONS).pipe(
     Flag.withDescription("Select a region to deploy the branch database."),
     Flag.optional,
@@ -111,17 +109,15 @@ export const branchesCreateCommand = Command.make("create", config).pipe(
         ],
         noApiEffectFlags: ["region", "size", "persistent", "notify-url", "git-branch"],
       },
+      branchesParentTarget,
       projectRefPicker,
       upgradeSuggestion,
       linkedProjectCache,
     ),
   ),
   Command.withHandler((flags) =>
-    branchesCreate(flags).pipe(
-      withCommandTelemetry({ flags, safeFlags: ["project-ref"], config }),
-      withJsonErrorHandling,
-    ),
+    branchesCreate(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),
-  // `stdinLayer` lets the confirmation prompt read piped stdin via `promptYesNo` on a non-TTY.
-  Command.provide(Layer.mergeAll(managementApiRuntimeLayer(["branches", "create"]), stdinLayer)),
+  Command.provide(managementApiRuntimeLayer(["branches", "create"])),
+  withTargetPolicy({ group: "hosted", consent: "yes" }),
 );

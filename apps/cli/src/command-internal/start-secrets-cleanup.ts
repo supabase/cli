@@ -1,6 +1,6 @@
 import { Effect, FileSystem, Path } from "effect";
 
-import { legacyProjectStatePaths } from "./legacy-project-state.paths.ts";
+import { legacyProjectStatePaths } from "../shared/config/legacy-project-state.paths.ts";
 
 import type { ContainerIdName } from "./docker-lifecycle.ts";
 

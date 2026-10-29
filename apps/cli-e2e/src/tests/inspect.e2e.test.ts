@@ -37,17 +37,19 @@ const SUBCOMMANDS = [
 ] as const;
 
 describe("inspect:flags", () => {
-  testBehaviour("rejects --db-url with --local", async ({ run, workspace, pgMockPort }) => {
+  testBehaviour("rejects --remote with --local", async ({ run, workspace, pgMockPort }) => {
     setupInspectWorkspace(workspace.path, pgMockPort);
     const result = await run([
       "inspect",
       "db",
       "db-stats",
-      "--db-url",
-      "postgresql://postgres:postgres@localhost:5432/postgres",
       "--local",
+      "--remote=postgresql://postgres:postgres@localhost:5432/postgres",
     ]);
     expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain(
+      "Only one of --remote, --linked, --db-url and --local can be set; got --remote and --local.",
+    );
   });
 });
 
@@ -58,7 +60,7 @@ for (const { name, fixtureKey, assertValue } of SUBCOMMANDS) {
       async ({ run, workspace, apiUrl, pgMockPort }) => {
         setupInspectWorkspace(workspace.path, pgMockPort);
         await setPgFixture(apiUrl, fixtureKey);
-        const result = await run(["inspect", "db", name, "--local"]);
+        const result = await run(["inspect", "db", name]);
         expect(result.exitCode).toBe(0);
         expect(result.stdout).toContain(assertValue);
       },
@@ -69,8 +71,7 @@ for (const { name, fixtureKey, assertValue } of SUBCOMMANDS) {
         "inspect",
         "db",
         name,
-        "--db-url",
-        "postgresql://postgres:postgres@localhost:1/postgres",
+        "--remote=postgresql://postgres:postgres@localhost:1/postgres",
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).not.toBe("");
@@ -82,7 +83,7 @@ describe("inspect:report", () => {
   testBehaviour("saves CSV files on success", async ({ run, workspace, pgMockPort }) => {
     setupInspectWorkspace(workspace.path, pgMockPort);
     const outDir = join(workspace.path, "report-out");
-    const result = await run(["inspect", "report", "--local", "--output-dir", outDir]);
+    const result = await run(["inspect", "report", "--output-dir", outDir]);
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toContain("Reports saved to");
     const subdirs = readdirSync(outDir);
@@ -97,8 +98,7 @@ describe("inspect:report", () => {
     const result = await run([
       "inspect",
       "report",
-      "--db-url",
-      "postgresql://postgres:postgres@localhost:1/postgres",
+      "--remote=postgresql://postgres:postgres@localhost:1/postgres",
     ]);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).not.toBe("");
