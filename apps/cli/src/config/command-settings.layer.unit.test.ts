@@ -263,6 +263,53 @@ describe("commandSettingsLayer", () => {
     );
   });
 
+  it.effect("debug logs a missing persisted profile file as the default profile", () => {
+    const home = path.join(tempRoot.current, "home");
+    const profilePath = path.join(home, ".supabase", "profile");
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const rawError = yield* fs.readFileString(profilePath).pipe(Effect.flip);
+      const config = yield* Effect.provide(
+        Effect.service(CommandSettings),
+        makeLayer({ home, cwd: tempRoot.current, debug: true }),
+      );
+      const logged = stderr.mock.calls.map(([chunk]) => String(chunk)).join("");
+      expect(config.profile).toBe("supabase");
+      expect(logged).toContain(`No profile file at ${profilePath}; using the default profile.\n`);
+      expect(logged).not.toContain(rawError.message);
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => stderr.mockRestore())),
+      Effect.provide(BunServices.layer),
+    );
+  });
+
+  it.effect(
+    "debug logs the read error, not the missing-file line, for an unreadable profile",
+    () => {
+      const home = path.join(tempRoot.current, "home");
+      const profilePath = path.join(home, ".supabase", "profile");
+      const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.makeDirectory(profilePath, { recursive: true });
+        const rawError = yield* fs.readFileString(profilePath).pipe(Effect.flip);
+        const config = yield* Effect.provide(
+          Effect.service(CommandSettings),
+          makeLayer({ home, cwd: tempRoot.current, debug: true }),
+        );
+        const logged = stderr.mock.calls.map(([chunk]) => String(chunk)).join("");
+        expect(rawError.reason._tag).not.toBe("NotFound");
+        expect(config.profile).toBe("supabase");
+        expect(logged).toContain(`${rawError.message}\n`);
+        expect(logged).not.toContain("No profile file at");
+      }).pipe(
+        Effect.ensuring(Effect.sync(() => stderr.mockRestore())),
+        Effect.provide(BunServices.layer),
+      );
+    },
+  );
+
   it.effect("flag and env take precedence over the persisted profile file", () => {
     const home = path.join(tempRoot.current, "home");
     return Effect.gen(function* () {

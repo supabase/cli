@@ -1,5 +1,4 @@
-import type { ErrorObject, ValidateFunction } from "ajv";
-import Ajv2020 from "ajv/dist/2020";
+import Ajv, { type ErrorObject, type ValidateFunction } from "ajv";
 import { Result, Schema, SchemaIssue } from "effect";
 import { describe, expect, test } from "vitest";
 import { CliConfigSchema, toCliConfigJsonSchema } from "./base.ts";
@@ -25,7 +24,7 @@ const isNode = (value: unknown): value is Node =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 const DATA_KEYWORDS = new Set(["default", "examples", "enum", "const"]);
-const SCHEMA_MAP_KEYWORDS = new Set(["properties", "patternProperties", "$defs"]);
+const SCHEMA_MAP_KEYWORDS = new Set(["properties", "patternProperties", "definitions"]);
 
 type Path = ReadonlyArray<string | number>;
 
@@ -77,11 +76,7 @@ const patternOf = (node: Node): string => {
   return node.pattern;
 };
 
-// $schema is dropped so the tests do not depend on which draft the header names.
-const compile = (document: Node): ValidateFunction => {
-  const schema = Object.fromEntries(Object.entries(document).filter(([key]) => key !== "$schema"));
-  return new Ajv2020({ strict: false }).compile(schema);
-};
+const compile = (document: Node): ValidateFunction => new Ajv({ strict: false }).compile(document);
 
 const errorsFor = (validate: ValidateFunction, value: unknown): ReadonlyArray<ErrorObject> =>
   validate(value) ? [] : [...(validate.errors ?? [])];
@@ -633,11 +628,21 @@ describe("toPublishedJsonSchemaDocument acceptEnvReferences", () => {
     const Port = Schema.Finite.annotate({ identifier: "Port" });
     const Flag = Schema.Boolean.annotate({ identifier: "Flag" });
     const document = publish(Schema.Struct({ a: Port, b: Port, c: Flag }), true);
-    expect(at(document, "$defs", "Port").anyOf).toEqual([{ type: "number" }, envBranch]);
-    expect(at(document, "$defs", "Flag").anyOf).toEqual([{ type: "boolean" }, envBranch]);
+    expect(at(document, "definitions", "Port").anyOf).toEqual([{ type: "number" }, envBranch]);
+    expect(at(document, "definitions", "Flag").anyOf).toEqual([{ type: "boolean" }, envBranch]);
     const validate = compile(document);
     expect(errorsFor(validate, { a: "env(A)", b: 2, c: "env(C)" })).toEqual([]);
     expect(failingPaths(validate, { a: "x", b: 2, c: true })).toContain("/a");
+  });
+
+  test("renders shared definitions under draft-07 `definitions` with matching refs", () => {
+    const Port = Schema.Finite.annotate({ identifier: "Port" });
+    const document = publish(Schema.Struct({ a: Port, b: Port }), true);
+    expect(document.$schema).toBe("http://json-schema.org/draft-07/schema#");
+    expect(document).not.toHaveProperty("$defs");
+    expect(Object.keys(at(document, "definitions"))).toEqual(["Port"]);
+    expect(at(document, "properties", "a")).toEqual({ $ref: "#/definitions/Port" });
+    expect(JSON.stringify(document)).not.toContain("#/$defs/");
   });
 
   test("the project config schema carries no env-reference branch", () => {

@@ -1296,7 +1296,7 @@ describe("db reset", () => {
               Layer.merge(
                 layer,
                 Layer.succeed(LocalDockerEngine, {
-                  containerExists: () => Effect.succeed(Option.some(false)),
+                  inspectContainer: () => Effect.succeed(Option.some({ exists: false })),
                 }),
               ),
             ),
