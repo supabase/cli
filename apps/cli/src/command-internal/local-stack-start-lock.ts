@@ -8,8 +8,8 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
+import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 import { aqua } from "./colors.ts";
-import { DebugLogger } from "./debug-logger.service.ts";
 
 const SUBJECT = "the start lock";
 const NO_WAIT = "0 millis";

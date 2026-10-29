@@ -13,6 +13,10 @@
       "vaultNames": []
     },
     "denoVersion": 2,
+    "exposedSchemas": [
+      "public",
+      "base_api"
+    ],
     "majorVersion": 17,
     "migrationsEnabled": true,
     "orioledbVersion": null,

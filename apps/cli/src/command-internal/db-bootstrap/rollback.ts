@@ -64,7 +64,7 @@ export const rollbackStart = (
 
 const writeStderrLine = (message: string) =>
   Effect.sync(() => {
-    globalThis.process.stderr.write(`${message}\n`);
+    process.stderr.write(`${message}\n`);
   });
 
 /** Resolves whether the resource is gone; a missing resource counts, any other failure is logged. */
