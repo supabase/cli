@@ -3,12 +3,12 @@ import { expect, it } from "@effect/vitest";
 import { Context, Data, Deferred, Effect, Fiber, FileSystem, Hash, Layer, Path, Ref } from "effect";
 import { randomUUID } from "node:crypto";
 import * as Net from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- fixture retains an idle HTTP connection.
-import { createServer } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- real socket fixture.
+import { createServer, type RequestListener } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- real socket fixture.
 import { HttpBody, HttpClient } from "effect/http";
 import * as Network from "./Network.ts";
 import * as PortReservations from "./namespace/PortReservations.ts";
 import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
-import { freshWrites } from "./host/Endpoints.ts";
+import { freshWrites, joinRoutes, sharedRoutes } from "./host/Endpoints.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 
 const makeTestState = (root: string) =>
@@ -45,34 +45,37 @@ const reservedPort = (root: string, stackId: string, key: string) =>
 
 class FixtureError extends Data.TaggedError("FixtureError")<{ readonly message: string }> {}
 
-const backend = Effect.acquireRelease(
-  Effect.callback<
-    { host: string; port: number; server: ReturnType<typeof createServer> },
-    FixtureError
-  >((resume) => {
-    const server = createServer((request, response) => {
-      response.end(`backend:${request.url ?? "/"}`);
-    });
-    const onError = (cause: Error) =>
-      resume(Effect.fail(new FixtureError({ message: cause.message })));
-    server.once("error", onError);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (address === null || typeof address === "string")
-        resume(Effect.fail(new FixtureError({ message: "no address" })));
-      else resume(Effect.succeed({ host: "127.0.0.1", port: address.port, server }));
-    });
-    return Effect.sync(() => {
-      server.off("error", onError);
-      server.close();
-    });
-  }),
-  ({ server }) =>
-    Effect.callback<void>((resume) => {
-      server.close(() => resume(Effect.void));
-      return Effect.void;
+const backendWith = (handler: RequestListener) =>
+  Effect.acquireRelease(
+    Effect.callback<
+      { host: string; port: number; server: ReturnType<typeof createServer> },
+      FixtureError
+    >((resume) => {
+      const server = createServer(handler);
+      const onError = (cause: Error) =>
+        resume(Effect.fail(new FixtureError({ message: cause.message })));
+      server.once("error", onError);
+      server.listen(0, "127.0.0.1", () => {
+        const address = server.address();
+        if (address === null || typeof address === "string")
+          resume(Effect.fail(new FixtureError({ message: "no address" })));
+        else resume(Effect.succeed({ host: "127.0.0.1", port: address.port, server }));
+      });
+      return Effect.sync(() => {
+        server.off("error", onError);
+        server.close();
+      });
     }),
-);
+    ({ server }) =>
+      Effect.callback<void>((resume) => {
+        server.close(() => resume(Effect.void));
+        return Effect.void;
+      }),
+  );
+
+const backend = backendWith((request, response) => {
+  response.end(`backend:${request.url ?? "/"}`);
+});
 
 const request = (host: string, port: number, path: string) =>
   Effect.gen(function* () {
@@ -570,6 +573,147 @@ it.live("wakes a sleeping backend when a request reaches its joined route", () =
       const address = yield* rest.address("api", "host");
       expect(yield* request(address.host, address.port, "/mcp")).toBe("backend:/api/mcp");
       yield* Deferred.await(woken).pipe(Effect.timeout("2 seconds"));
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+/** Answers with its own name and what a gateway route forwarded to it. */
+const echo =
+  (name: string): RequestListener =>
+  (incoming, response) => {
+    response.end(
+      JSON.stringify({
+        backend: name,
+        url: incoming.url,
+        authorization: incoming.headers.authorization,
+        profile: incoming.headers["content-profile"],
+        prefix: incoming.headers["x-forwarded-prefix"],
+      }),
+    );
+  };
+
+it.live("serves legacy Kong's gateway routes while each service runs", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-gateway-routes-" });
+      const state = yield* makeTestState(root);
+      yield* state.save(stack("stack"));
+      const api = yield* backendWith(echo("api"));
+      const admin = yield* backendWith(echo("admin"));
+      const keys = {
+        publishableKey: "sb_publishable_example",
+        secretKey: "sb_secret_example",
+        anonKey: "anon.jwt.value",
+        serviceRoleKey: "service.role.jwt",
+      };
+      const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+      const register = (service: "rest" | "auth" | "pgmeta" | "analytics" | "pooler") =>
+        network
+          .register({
+            id: service,
+            endpoints: {
+              http: {
+                ...endpoint(api, Effect.succeed(true)),
+                shared: sharedRoutes({ service }, "http", keys, (name) =>
+                  Effect.succeed(name === "admin" ? admin : api),
+                ),
+                join: joinRoutes({ service }, "http"),
+              },
+            },
+          })
+          .pipe(Effect.tap((namespace) => namespace.bind));
+      const rest = yield* register("rest");
+      for (const service of ["auth", "pgmeta", "analytics"] as const) yield* register(service);
+      const address = yield* rest.address("http", "host");
+      const send = (path: string, headers: Readonly<Record<string, string>> = {}) =>
+        Effect.gen(function* () {
+          const client = yield* HttpClient.HttpClient;
+          const response = yield* client.get(`http://${address.host}:${address.port}${path}`, {
+            headers,
+          });
+          return response.status === 404 ? 404 : yield* response.json;
+        }).pipe(Effect.provide(NodeHttpClient.layerNodeHttp));
+      const publishable = { apikey: keys.publishableKey };
+
+      expect(yield* send("/graphql/v1", publishable)).toEqual({
+        backend: "api",
+        url: "/rpc/graphql",
+        authorization: "Bearer anon.jwt.value",
+        profile: "graphql_public",
+        prefix: "/graphql/v1",
+      });
+      expect(yield* send("/graphql/v1", { ...publishable, "content-profile": "app" })).toEqual(
+        expect.objectContaining({ profile: "app" }),
+      );
+      expect(yield* send("/rest-admin/v1/ready")).toEqual({
+        backend: "admin",
+        url: "/ready",
+        prefix: "/rest-admin/v1/",
+      });
+      for (const path of [
+        "/auth/v1/verify?token=t&type=magiclink",
+        "/auth/v1/callback?code=c",
+        "/auth/v1/authorize?provider=github",
+      ])
+        expect(yield* send(path, publishable)).toEqual({
+          backend: "api",
+          url: path.slice("/auth/v1".length),
+          prefix: path.split("?", 1)[0],
+        });
+      expect(yield* send("/auth/v1/user", publishable)).toEqual(
+        expect.objectContaining({ url: "/user", authorization: "Bearer anon.jwt.value" }),
+      );
+      expect(yield* send("/.well-known/oauth-authorization-server")).toEqual({
+        backend: "api",
+        url: "/.well-known/oauth-authorization-server",
+        prefix: "/.well-known/oauth-authorization-server",
+      });
+      expect(yield* send("/pg/tables")).toEqual({ backend: "api", url: "/tables", prefix: "/pg/" });
+      expect(yield* send("/analytics/v1/health")).toEqual(
+        expect.objectContaining({ url: "/health", prefix: "/analytics/v1/" }),
+      );
+      expect(yield* send("/pooler/v2/tenants")).toBe(404);
+      yield* register("pooler");
+      expect(yield* send("/pooler/v2/tenants")).toEqual(
+        expect.objectContaining({ url: "/v2/tenants", prefix: "/pooler/v2/" }),
+      );
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("keeps a dedicated listener's client X-Forwarded headers without Kong's gateway set", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-dedicated-headers-" });
+      const state = yield* makeTestState(root);
+      yield* state.save(stack("stack"));
+      const target = yield* backendWith((incoming, response) => {
+        response.end(JSON.stringify(incoming.headers));
+      });
+      const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+      const studio = yield* network.register({
+        id: "studio",
+        endpoints: { http: endpoint(target, Effect.succeed(true)) },
+      });
+      yield* studio.bind;
+      const address = yield* studio.address("http", "host");
+      const client = yield* HttpClient.HttpClient;
+      const response = yield* client.get(`http://${address.host}:${address.port}/`, {
+        headers: { "x-forwarded-proto": "https", "x-forwarded-host": "spoofed.example" },
+      });
+      const headers = yield* response.json;
+      expect(headers).toEqual(
+        expect.objectContaining({
+          "x-forwarded-proto": "https",
+          "x-forwarded-host": "spoofed.example",
+          "x-forwarded-for": "127.0.0.1",
+          "x-real-ip": "127.0.0.1",
+        }),
+      );
+      for (const name of ["x-forwarded-port", "x-forwarded-path", "x-forwarded-prefix"])
+        expect(headers).not.toHaveProperty(name);
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );

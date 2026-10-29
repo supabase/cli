@@ -4,7 +4,7 @@ import { containerRuntimeNotFoundMessage } from "./container-cli.ts";
 import { SUGGEST_DOCKER_INSTALL, isDockerDaemonUnreachable } from "./docker-suggest.ts";
 
 describe("isDockerDaemonUnreachable", () => {
-  it("detects the docker/podman daemon-down CLI messages (Go's IsErrConnectionFailed)", () => {
+  it("detects the docker/podman daemon-down CLI messages", () => {
     expect(
       isDockerDaemonUnreachable(
         "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
@@ -35,7 +35,7 @@ describe("isDockerDaemonUnreachable", () => {
     expect(isDockerDaemonUnreachable("")).toBe(false);
   });
 
-  it("exposes Go's install hint verbatim", () => {
+  it("exposes the install hint verbatim", () => {
     expect(SUGGEST_DOCKER_INSTALL).toContain("https://docs.docker.com/desktop");
   });
 });

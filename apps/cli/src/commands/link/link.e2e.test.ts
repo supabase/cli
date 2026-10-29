@@ -8,7 +8,7 @@ const TEST_TOKEN = "sbp_" + "a".repeat(40);
 describe("supabase link", () => {
   // Golden-path surface test: in a real subprocess with no TTY, no --project-ref
   // and no SUPABASE_PROJECT_ID, ref resolution fails before any API call with the
-  // cobra-style required-flag error. Validates dispatch + ref-resolution wiring
+  // required-flag error. Validates dispatch + ref-resolution wiring
   // without needing a network fixture.
   it.live(
     "without a resolvable project ref exits 1 with the required-flag error",
@@ -21,6 +21,26 @@ describe("supabase link", () => {
           });
           expect(exitCode).toBe(1);
           expect(`${stdout}${stderr}`).toContain(`required flag(s) "project-ref" not set`);
+        }),
+      ),
+    E2E_TIMEOUT_MS,
+  );
+
+  it.live(
+    "warns that --password is ignored before the missing access token fails the command",
+    () =>
+      withTempHome((home) =>
+        Effect.gen(function* () {
+          const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
+            ["link", "--project-ref", "abcdefghijklmnopqrst", "--password", "hunter2"],
+            { home: home.dir },
+          );
+          expect(exitCode).toBe(1);
+          expect(`${stdout}${stderr}`).toContain(
+            "link ignores --password; remove it from your scripts.",
+          );
+          expect(stderr).toContain("Access token not provided");
+          expect(`${stdout}${stderr}`).not.toContain("hunter2");
         }),
       ),
     E2E_TIMEOUT_MS,

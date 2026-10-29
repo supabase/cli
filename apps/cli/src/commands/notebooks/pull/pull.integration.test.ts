@@ -23,7 +23,12 @@ const SALES_ID = "44444444-4444-4444-8444-444444444444";
 const ERRORS_ID = "55555555-5555-4555-8555-555555555555";
 
 function flags(overrides: Partial<NotebooksPullFlags> = {}): NotebooksPullFlags {
-  return { notebookId: Option.none(), projectRef: Option.none(), ...overrides };
+  return {
+    notebookId: Option.none(),
+    remote: Option.none(),
+    projectRef: Option.none(),
+    ...overrides,
+  };
 }
 
 const temp = useTempWorkdir("supabase-notebooks-pull-");
@@ -359,7 +364,7 @@ describe("notebooks pull", () => {
     const repo = project();
     const { layer, out } = setupNotebooks({
       workdir: repo.dir,
-      goOutput: "json",
+      outputFlag: "json",
       routes: {
         [`GET ${notebooksRoute()}`]: { status: 200, body: notebookListPage({ notebooks: [] }) },
       },

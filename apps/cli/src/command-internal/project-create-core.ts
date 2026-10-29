@@ -4,9 +4,16 @@ import { Effect, Option } from "effect";
 import { CommandPlatformApi } from "../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { OutputFlag } from "./global-flags.ts";
+import { requireHostedMutationConsent } from "./hosted-consent/hosted-consent.ts";
+import type { HostedMutationConsent } from "./hosted-consent/hosted-consent.token.ts";
 import { Output } from "../shared/output/output.service.ts";
-import { encodeEnv, encodeGoJson } from "./go-output.encoders.ts";
-import { encodeGoToml, encodeGoYaml, goString, goStruct } from "./go-struct-output.encoders.ts";
+import { encodeEnv, encodeSortedJson } from "./output.encoders.ts";
+import {
+  encodeStructToml,
+  encodeStructYaml,
+  shapeString,
+  shapeStruct,
+} from "./struct-output.encoders.ts";
 import { sanitizeErrorBody } from "./http-errors.ts";
 import {
   ProjectsCreateNetworkError,
@@ -27,15 +34,15 @@ import {
 type CreateInput = typeof V1CreateAProjectInput.Type;
 
 /** Struct spec driving `-o yaml|toml` key casing for `projects create`'s raw response. */
-const GO_PROJECT_RESPONSE = goStruct([
-  ["created_at", goString],
-  ["id", goString],
-  ["name", goString],
-  ["organization_id", goString],
-  ["organization_slug", goString],
-  ["ref", goString],
-  ["region", goString],
-  ["status", goString],
+const PROJECT_RESPONSE_SHAPE = shapeStruct([
+  ["created_at", shapeString],
+  ["id", shapeString],
+  ["name", shapeString],
+  ["organization_id", shapeString],
+  ["organization_slug", shapeString],
+  ["ref", shapeString],
+  ["region", shapeString],
+  ["status", shapeString],
 ]);
 
 export interface ProjectCreateInput {
@@ -53,6 +60,8 @@ export interface ProjectCreateInput {
    * `bootstrap` suppresses it since it emits its own top-level result instead.
    */
   readonly emitStructuredResult: boolean;
+  /** Proof the caller already confirmed the create; without it the core asks before the POST. */
+  readonly consent?: HostedMutationConsent;
 }
 
 /** Formats `key: value`, padding `key:` to width 20. */
@@ -72,7 +81,7 @@ export const projectCreateCore = Effect.fn("ProjectCreate.run")(function* (
   input: ProjectCreateInput,
 ) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
 
@@ -120,6 +129,12 @@ export const projectCreateCore = Effect.fn("ProjectCreate.run")(function* (
     ...(input.templateUrl !== undefined ? { template_url: input.templateUrl } : {}),
   };
 
+  if (input.consent === undefined) {
+    yield* requireHostedMutationConsent({
+      action: `Create project "${name}" in organization ${orgId}`,
+    });
+  }
+
   const creating = output.format === "text" ? yield* output.task("Creating project...") : undefined;
 
   // `executeRaw` skips output decoding so the created project is emitted as the API returned it,
@@ -158,20 +173,20 @@ export const projectCreateCore = Effect.fn("ProjectCreate.run")(function* (
   const projectUrl = `${dashboardUrlForProfile(cliSettings.profile)}/project/${id}`;
   yield* output.raw(`Created a new project at ${projectUrl}\n`, "stderr");
 
-  const goFmt = Option.getOrUndefined(goOutputFlag);
-  if (goFmt === "json") {
-    yield* output.raw(encodeGoJson(created));
+  const outputFlagFormat = Option.getOrUndefined(outputFlag);
+  if (outputFlagFormat === "json") {
+    yield* output.raw(encodeSortedJson(created));
     return result;
   }
-  if (goFmt === "yaml") {
-    yield* output.raw(encodeGoYaml(created, GO_PROJECT_RESPONSE));
+  if (outputFlagFormat === "yaml") {
+    yield* output.raw(encodeStructYaml(created, PROJECT_RESPONSE_SHAPE));
     return result;
   }
-  if (goFmt === "toml") {
-    yield* output.raw(encodeGoToml(created, GO_PROJECT_RESPONSE));
+  if (outputFlagFormat === "toml") {
+    yield* output.raw(encodeStructToml(created, PROJECT_RESPONSE_SHAPE));
     return result;
   }
-  if (goFmt === "env") {
+  if (outputFlagFormat === "env") {
     yield* output.raw(encodeEnv(created) + "\n");
     return result;
   }

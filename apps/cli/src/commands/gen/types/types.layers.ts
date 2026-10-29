@@ -5,8 +5,8 @@ import { commandPlatformApiFactoryLayer } from "../../../auth/command-platform-a
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
 import { commandSettingsLayer } from "../../../config/command-settings.layer.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { remoteTargetLayer } from "../../../config/remote-target.layer.ts";
-import { RemoteTarget } from "../../../config/remote-target.service.ts";
+import { projectRefLayer } from "../../../config/project-ref.layer.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { dbConfigLayer } from "../../../command-internal/db-config.layer.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { dbConnectionLayer } from "../../../command-internal/db-connection.sql-pg.layer.ts";
@@ -26,7 +26,7 @@ import { GenTypesGenerator } from "./types.generator.service.ts";
 /**
  * Avoids `managementApiRuntimeLayer`, which eagerly builds the platform API client and
  * requires an access token before the handler can choose the local/db-url branch — `gen types
- * --local`/`--db-url` don't use the Management API.
+ * --local`/`--remote=<url>` don't use the Management API.
  */
 export const genTypesRuntimeLayer = (() => {
   const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
@@ -57,7 +57,7 @@ export const genTypesRuntimeLayer = (() => {
     generator,
     cliSettings,
     platformApiFactory,
-    remoteTargetLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliSettings)),
+    projectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliSettings)),
     linkedProjectCacheLayer.pipe(
       Layer.provide(credentials),
       Layer.provide(cliSettings),
@@ -84,7 +84,7 @@ export const genTypesRuntimeLayer = (() => {
 type GenTypesServices =
   | CommandPlatformApiFactory
   | CommandSettings
-  | RemoteTarget
+  | ProjectRefResolver
   | DbConfigResolver
   | DbConnection
   | GenTypesGenerator

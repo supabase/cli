@@ -6,8 +6,9 @@ configuration may change incompatibly while experimental. The family is opt in. 
 `SUPABASE_EXPERIMENTAL_COMPUTE=1` or by setting `compute = true` under
 `[experimental]` in `supabase/config.toml`.
 
-The environment variable accepts `1` to enable and `0` to disable. When it is
-unset or empty, the config file is used; any other non-empty value reports an
+The environment variable accepts a boolean (`1`, `t`, `T`, `TRUE`, `true`, `True` / `0`, `f`, `F`, `FALSE`, `false`, `False`;
+other casings such as `tRue` fail) to enable or disable the family. When it is unset or empty, the config file is used; any
+non-boolean value reports an
 invalid feature-flag value on Compute paths (including their completion), root
 help, or root-level completion before a subcommand is chosen.
 Unrelated commands do not resolve the Compute flag. Unreadable or malformed
@@ -46,3 +47,9 @@ settings into an ignored file. To deploy a source directory without a Compute
 configuration entry, `compute push` requires an explicit `--exposure public` or
 `--exposure private`. Record the entry in the authoritative config to persist
 its deployment settings.
+
+`compute push` and `compute delete` change the remote project, so both ask for
+confirmation first, and both default to no. `compute delete` asks for the
+compute's name to be typed back. Pass `--yes`, or set `SUPABASE_YES` in your
+shell, to confirm in scripts and CI; without it, a run that cannot prompt fails
+before changing anything.

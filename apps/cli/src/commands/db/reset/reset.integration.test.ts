@@ -2,8 +2,10 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
+  Deferred,
   Effect,
   Exit,
+  Fiber,
   FileSystem,
   Layer,
   Option,
@@ -50,6 +52,11 @@ import {
   sequentialExecBatch,
   transportFailure,
 } from "../../../../tests/helpers/command-mocks.ts";
+import {
+  NO_TARGET,
+  describeDbTargetSelection,
+} from "../../../../tests/helpers/db-target-selection.ts";
+import { branchListApi } from "../../../../tests/helpers/remote-selection.ts";
 import { EXEC_FAILED_STATE } from "../../../../tests/helpers/docker-health.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
@@ -62,6 +69,12 @@ import {
   stubManagementApi,
   type StubbedRequest,
 } from "../../../../tests/helpers/permission-real-layers.ts";
+import {
+  cliConfigValuesTestLayer,
+  configValuesLayer,
+  flagInput,
+} from "../../../../tests/helpers/config-values-layer.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
 import {
   legacyStateAccesses,
@@ -71,18 +84,23 @@ import {
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
-import { PROJECT_NOT_LINKED_MESSAGE } from "../../../config/remote-target.service.ts";
+import {
+  ProjectRefResolver,
+  PROJECT_NOT_LINKED_MESSAGE,
+} from "../../../config/project-ref.service.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
   DebugFlag,
   DnsResolverFlag,
   ExperimentalFlag,
   NetworkIdFlag,
+  OutputFlag,
   YesFlag,
 } from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { dockerRunLayer } from "../../../command-internal/docker-run.layer.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
+import { projectStateModeLayer } from "../../../shared/config/project-state-mode.ts";
 import { StackApi } from "../../../command-internal/stack-api.ts";
 import {
   StackCatalogSetup,
@@ -98,9 +116,13 @@ import {
   type Observation,
 } from "@supabase/stack/effect";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
+import type {
+  DbConnectionInput,
+  ResolvedDbConnection,
+} from "../../../command-internal/db-config.types.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { DbConfigConnectTempRoleError } from "../../../command-internal/db-config.errors.ts";
-import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
+import { generateLocalJwt } from "../../../command-internal/local-jwt.ts";
 import { LocalDockerEngine } from "../../../command-internal/db-bootstrap/local-db-running.ts";
 import { DbConnectError, DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import {
@@ -114,7 +136,6 @@ import { database15, selection } from "../../../../tests/helpers/pins.ts";
 import { seedLock, unbundled } from "../../../../tests/helpers/stack-lock.ts";
 import { classifyCliErrorActionability } from "../../../shared/telemetry/error-actionability.ts";
 import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
-import { stubRemoteTarget } from "../../../../tests/helpers/remote-target.ts";
 
 const LIST_MIGRATIONS =
   "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version";
@@ -130,20 +151,19 @@ const CONN: PgConnInput = {
   database: "postgres",
 };
 
+const REMOTE_LINKED: DbResetFlags["remote"] = Option.some({ _tag: "Linked" });
+
 const DEFAULT_FLAGS: DbResetFlags = {
-  dbUrl: Option.none(),
-  linked: false,
-  local: false,
-  projectRef: Option.none(),
-  noSeed: false,
-  sqlPaths: [],
+  ...NO_TARGET,
+  noSeed: Option.none(),
+  sqlPaths: Option.none(),
   version: Option.none(),
   last: Option.none(),
 };
 
 /**
- * Tracks every `resolve`/`resolvePoolerFallback` call so tests can prove a connection was
- * resolved exactly once per reset.
+ * Tracks every `resolveConnection`/`resolvePoolerFallback` call so tests can prove a connection
+ * was resolved exactly once per reset.
  */
 function mockResolver(opts: {
   isLocal: boolean;
@@ -152,31 +172,27 @@ function mockResolver(opts: {
   resolveFails?: boolean;
 }) {
   let calls = 0;
+  const inputs: Array<DbConnectionInput> = [];
   const layer = Layer.succeed(DbConfigResolver, {
-    resolve: (flags: DbConfigFlags) => {
+    resolveConnection: (input: DbConnectionInput) => {
       calls++;
-      // A threaded `--project-ref` flag takes the same precedence a real resolver gives it, so
-      // a test can prove the flag (not just `opts.ref`) drives the resolved ref.
-      const linkedProjectRef = flags.linkedProjectRef ?? Option.none();
-      const resolvedRef =
-        Option.isSome(linkedProjectRef) && linkedProjectRef.value.length > 0
-          ? linkedProjectRef.value
-          : opts.ref;
+      inputs.push(input);
+      const resolvedRef = input.target.kind === "linked" ? input.target.ref : opts.ref;
       return opts.resolveFails === true
         ? Effect.fail(
             new DbConfigConnectTempRoleError({
               message: "failed to create login role: network error",
             }),
           )
-        : Effect.succeed(
-            (opts.omitRef === true
-              ? { conn: CONN, isLocal: opts.isLocal }
-              : {
-                  conn: CONN,
-                  isLocal: opts.isLocal,
-                  ref: resolvedRef !== undefined ? Option.some(resolvedRef) : Option.none(),
-                }) satisfies ResolvedDbConfig,
-          );
+        : Effect.succeed({
+            conn: CONN,
+            isLocal: opts.isLocal,
+            ref:
+              opts.omitRef === true || resolvedRef === undefined
+                ? Option.none()
+                : Option.some(resolvedRef),
+            target: input.target,
+          } satisfies ResolvedDbConnection);
     },
     resolvePoolerFallback: () => {
       calls++;
@@ -187,6 +203,9 @@ function mockResolver(opts: {
     layer,
     get calls() {
       return calls;
+    },
+    get inputs() {
+      return inputs;
     },
   };
 }
@@ -299,6 +318,8 @@ type RouteResult = {
   readonly exitCode?: number;
   readonly stdout?: ReadonlyArray<string>;
   readonly stderr?: ReadonlyArray<string>;
+  /* The exit code resolves only once this completes, so a test can hold a spawn in flight. */
+  readonly exitAfter?: Effect.Effect<void>;
 };
 
 function mockContainerCliSpawner(route: (args: ReadonlyArray<string>) => RouteResult) {
@@ -329,7 +350,9 @@ function mockContainerCliSpawner(route: (args: ReadonlyArray<string>) => RouteRe
           stdout: Stream.fromIterable(stdoutBytes),
           stderr: Stream.fromIterable(stderrBytes),
           all: Stream.empty,
-          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(result.exitCode ?? 0)),
+          exitCode: (result.exitAfter ?? Effect.void).pipe(
+            Effect.as(ChildProcessSpawner.ExitCode(result.exitCode ?? 0)),
+          ),
           isRunning: Effect.succeed(false),
           stdin: Sink.drain,
           kill: () => Effect.void,
@@ -536,7 +559,7 @@ const RESET_STACK_CREDENTIALS: StackCredentials = {
   publishableKey: "publishable-key",
   secretKey: "secret-key",
   anonKey: "anon-key",
-  serviceRoleKey: generateGoJwt(RESET_JWT, "service_role"),
+  serviceRoleKey: generateLocalJwt(RESET_JWT, "service_role"),
   jwks: '{"keys":[]}',
   gotrueJwtKeys: "[]",
   remoteJwks: "[]",
@@ -913,6 +936,10 @@ function setup(
     execFailsMessage?: string;
     neverConnectable?: boolean;
     yes?: boolean;
+    interactive?: boolean;
+    noSeed?: boolean;
+    sqlPaths?: ReadonlyArray<string>;
+    env?: Readonly<Record<string, string>>;
     omitRef?: boolean;
     resolveFails?: boolean;
     // Local-reset-only knobs.
@@ -935,8 +962,8 @@ function setup(
     replicationSlotCounts?: ReadonlyArray<number>;
     replicationSlotQueryFails?: boolean;
     failStatement?: { readonly sql: string; readonly code?: string; readonly message: string };
-    // Simulates an unlinked workdir: `RemoteTarget.load` fails with `ProjectRefNotLinkedError`
-    // absent an explicit `--project-ref` flag, instead of falling back to `opts.ref`.
+    // Simulates an unlinked workdir: the project-ref resolver fails with `ProjectRefNotLinkedError`
+    // absent an explicit `--remote=<ref>`, instead of falling back to `opts.ref`.
     linkedFails?: boolean;
     stackBackend?: boolean;
     stackDatabaseReady?: boolean;
@@ -975,12 +1002,16 @@ function setup(
     }),
   ).pipe(Layer.provide(BunServices.layer));
 
-  const out = mockOutput({ format: opts.format ?? "text", promptConfirmResponses: opts.confirm });
+  const out = mockOutput({
+    format: opts.format ?? "text",
+    interactive: opts.interactive,
+    promptConfirmResponses: opts.confirm,
+  });
   const conn = mockConnection(opts);
   const telemetry = mockTelemetryStateTracked();
   const linkedCache = mockLinkedProjectCacheTracked();
   // The local-reset bucket-seed core statically requires the (lazy) Management-API factory,
-  // though `--local` never invokes it.
+  // though a local reset never invokes it.
   const platformApi = mockCommandPlatformApiService({});
   const resolver = mockResolver({
     isLocal: opts.isLocal ?? false,
@@ -1039,8 +1070,18 @@ function setup(
         );
   const projectHttp = recordingProjectHttpClient(VALID_REF);
   const recorder = recordingFileSystem();
+  const seedFlagInputs = [
+    ...(opts.noSeed === true ? [flagInput("db.seed.enabled", "no-seed", false)] : []),
+    ...(opts.sqlPaths === undefined
+      ? []
+      : [
+          flagInput("db.seed.sql_paths", "sql-paths", opts.sqlPaths),
+          flagInput("db.seed.enabled", "sql-paths", true),
+        ]),
+  ];
   const layer = Layer.mergeAll(
     out.layer,
+    configValuesLayer({ output: out.layer, flags: seedFlagInputs, env: opts.env }),
     conn.layer,
     opts.realLayers === true
       ? realDbConfigResolver({
@@ -1064,25 +1105,29 @@ function setup(
     // real pipe for the non-interactive bucket-seed prompts instead.
     mockTty({ stdinIsTty: opts.stdinIsTty ?? true }),
     mockStdin(opts.stdinIsTty ?? true, opts.pipedStdin),
-    // `RemoteTarget.load` gives an explicit `--project-ref` flag top precedence, mirrored here so a
-    // test can prove the flag (not just `opts.ref`) drives the linked ref.
-    stubRemoteTarget({
-      resolve: () => Effect.succeed(opts.ref ?? VALID_REF),
+    Layer.succeed(ProjectRefResolver, {
+      resolve: () => Effect.die("resolve is not used by this test"),
       resolveForLink: () => Effect.succeed(opts.ref ?? VALID_REF),
-      resolveOptional: () => Effect.succeed(Option.some(opts.ref ?? VALID_REF)),
-      load: (flagValue: Option.Option<string>) =>
+      resolveRef: (flagValue: Option.Option<string>) =>
         Option.isSome(flagValue) && flagValue.value.length > 0
-          ? Effect.succeed(flagValue.value)
+          ? Effect.succeed({ ref: flagValue.value, source: "flag", matchesLinkedRef: false })
           : opts.linkedFails === true
             ? Effect.fail(new ProjectRefNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }))
-            : Effect.succeed(opts.ref ?? VALID_REF),
-      prompt: () => Effect.succeed(opts.ref ?? VALID_REF),
+            : Effect.succeed({
+                ref: opts.ref ?? VALID_REF,
+                source: "file",
+                matchesLinkedRef: true,
+              }),
+      resolveOptional: () => Effect.succeed(Option.some(opts.ref ?? VALID_REF)),
+      promptProjectRef: () => Effect.succeed(opts.ref ?? VALID_REF),
     }),
     Layer.succeed(CommandPlatformApiFactory, {
       make: CommandPlatformApi.pipe(Effect.provide(platformApi.layer)),
     }),
-    Layer.succeed(CliArgs, { args: opts.args ?? ["db", "reset", "--linked"] }),
+    Layer.succeed(CliArgs, { args: opts.args ?? ["db", "reset", "--remote"] }),
     Layer.succeed(YesFlag, opts.yes ?? false),
+    Layer.succeed(OutputFlag, Option.none()),
+    Layer.succeed(TargetPolicy, { group: "selectable", consent: "no" }),
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(ExperimentalFlag, opts.experimental ?? false),
     Layer.succeed(DebugFlag, opts.debug ?? false),
@@ -1094,7 +1139,7 @@ function setup(
         })
       : linkedCache.layer,
     ...(opts.stackBackend === true && catalog !== undefined
-      ? [stackBackendLayer("stack"), stackApi.layer, catalog.layer]
+      ? [stackBackendLayer("stack"), projectStateModeLayer("stack"), stackApi.layer, catalog.layer]
       : []),
   ).pipe(Layer.provide(workdirLayer));
   return {
@@ -1109,6 +1154,7 @@ function setup(
     catalogApplied: catalog?.applied ?? [],
     requests,
     projectHttp,
+    platformApi,
     accessed: recorder.accessed,
   };
 }
@@ -1127,7 +1173,7 @@ describe("db reset", () => {
     it.effect("recreates the container, waits healthy, and runs the setup pipeline", () => {
       const { layer, out, child, telemetry } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
       });
       return withEnvVar(
@@ -1193,13 +1239,12 @@ describe("db reset", () => {
             ...migrationFile("20240101000000", "create table version_one_marker ();"),
             ...migrationFile("20240202000000", "create table version_two_marker ();"),
           },
-          args: ["db", "reset", "--local"],
+          args: ["db", "reset"],
           isLocal: true,
         });
         return Effect.gen(function* () {
           yield* dbReset({
             ...DEFAULT_FLAGS,
-            local: true,
             version: Option.some("20240101000000"),
           }).pipe(Effect.provide(layer));
           expect(conn.execs.some((sql) => sql.includes("create table version_one_marker ()"))).toBe(
@@ -1219,7 +1264,7 @@ describe("db reset", () => {
           ...migrationFile("20240101000000", "create table pg15_marker ();"),
           "supabase/seed.sql": "insert into pg15_seed_marker values (1);",
         },
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
       });
       return Effect.gen(function* () {
@@ -1233,29 +1278,79 @@ describe("db reset", () => {
 
     it.effect("skips seeding with --no-seed on a local reset", () => {
       const { layer, conn } = setup(tmp.current, {
+        noSeed: true,
         toml: 'project_id = "test"\n',
         files: { "supabase/seed.sql": "insert into t values (1);" },
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
       });
       return Effect.gen(function* () {
-        yield* dbReset({ ...DEFAULT_FLAGS, local: true, noSeed: true }).pipe(Effect.provide(layer));
+        yield* dbReset({ ...DEFAULT_FLAGS, noSeed: Option.some(true) }).pipe(Effect.provide(layer));
         expect(conn.execs.some((sql) => sql.includes("insert into t values (1)"))).toBe(false);
       });
     });
 
-    it.effect("seeds from --sql-paths overriding config on a local reset", () => {
+    it.effect(
+      "seeds on a local reset when SUPABASE_DB_SEED_ENABLED beats a disabled config",
+      () => {
+        const { layer, conn } = setup(tmp.current, {
+          env: { SUPABASE_DB_SEED_ENABLED: "true" },
+          toml: 'project_id = "test"\n\n[db.seed]\nenabled = false\n',
+          files: { "supabase/seed.sql": "insert into t values (3);" },
+          args: ["db", "reset"],
+          isLocal: true,
+        });
+        return Effect.gen(function* () {
+          yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          expect(conn.execs.some((sql) => sql.includes("insert into t values (3)"))).toBe(true);
+        });
+      },
+    );
+
+    it.effect("skips seeding on a local reset when SUPABASE_DB_SEED_ENABLED is false", () => {
       const { layer, conn } = setup(tmp.current, {
-        toml: 'project_id = "test"\n\n[db.seed]\nenabled = false\n',
-        files: { "supabase/custom-seed.sql": "insert into t values (2);" },
-        args: ["db", "reset", "--local"],
+        env: { SUPABASE_DB_SEED_ENABLED: "false" },
+        toml: 'project_id = "test"\n',
+        files: { "supabase/seed.sql": "insert into t values (4);" },
+        args: ["db", "reset"],
+        isLocal: true,
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(conn.execs.some((sql) => sql.includes("insert into t values (4)"))).toBe(false);
+      });
+    });
+
+    it.effect("lets --sql-paths beat SUPABASE_DB_SEED_ENABLED=false on a local reset", () => {
+      const { layer, conn } = setup(tmp.current, {
+        env: { SUPABASE_DB_SEED_ENABLED: "false" },
+        sqlPaths: ["custom-seed.sql"],
+        toml: 'project_id = "test"\n',
+        files: { "supabase/custom-seed.sql": "insert into t values (5);" },
+        args: ["db", "reset"],
         isLocal: true,
       });
       return Effect.gen(function* () {
         yield* dbReset({
           ...DEFAULT_FLAGS,
-          local: true,
-          sqlPaths: ["custom-seed.sql"],
+          sqlPaths: Option.some(["custom-seed.sql"]),
+        }).pipe(Effect.provide(layer));
+        expect(conn.execs.some((sql) => sql.includes("insert into t values (5)"))).toBe(true);
+      });
+    });
+
+    it.effect("seeds from --sql-paths overriding config on a local reset", () => {
+      const { layer, conn } = setup(tmp.current, {
+        sqlPaths: ["custom-seed.sql"],
+        toml: 'project_id = "test"\n\n[db.seed]\nenabled = false\n',
+        files: { "supabase/custom-seed.sql": "insert into t values (2);" },
+        args: ["db", "reset"],
+        isLocal: true,
+      });
+      return Effect.gen(function* () {
+        yield* dbReset({
+          ...DEFAULT_FLAGS,
+          sqlPaths: Option.some(["custom-seed.sql"]),
         }).pipe(Effect.provide(layer));
         expect(conn.execs.some((sql) => sql.includes("insert into t values (2)"))).toBe(true);
       });
@@ -1266,7 +1361,7 @@ describe("db reset", () => {
       () => {
         const { layer, child } = setup(tmp.current, {
           toml: 'project_id = "test"\n',
-          args: ["db", "reset", "--local"],
+          args: ["db", "reset"],
           isLocal: true,
           routeOpts: { running: false },
         });
@@ -1286,7 +1381,7 @@ describe("db reset", () => {
       () => {
         const { layer, child } = setup(tmp.current, {
           toml: 'project_id = "test"\n',
-          args: ["db", "reset", "--local"],
+          args: ["db", "reset"],
           isLocal: true,
           routeOpts: { running: true },
         });
@@ -1296,7 +1391,7 @@ describe("db reset", () => {
               Layer.merge(
                 layer,
                 Layer.succeed(LocalDockerEngine, {
-                  containerExists: () => Effect.succeed(Option.some(false)),
+                  inspectContainer: () => Effect.succeed(Option.some({ exists: false })),
                 }),
               ),
             ),
@@ -1314,7 +1409,7 @@ describe("db reset", () => {
     it.effect("resets the stack database without Compose volume recreate", () => {
       const { layer, child, stackApi, catalogApplied, out } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
         stackBackend: true,
       });
@@ -1337,14 +1432,14 @@ describe("db reset", () => {
     it.effect("a stack reset never reads or writes supabase/.temp", () => {
       const { layer, accessed } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
         stackBackend: true,
       });
       return Effect.gen(function* () {
         yield* seedLegacyStateDecoys(tmp.current);
         yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(accessed.some((entry) => entry.endsWith("config.toml"))).toBe(true);
+        expect(accessed.some((entry) => entry.endsWith("supabase.lock"))).toBe(true);
         expect(legacyStateAccesses(accessed)).toEqual([]);
       });
     });
@@ -1370,7 +1465,7 @@ describe("db reset", () => {
         );
         const { layer, catalogApplied } = setup(tmp.current, {
           toml,
-          args: ["db", "reset", "--local"],
+          args: ["db", "reset"],
           isLocal: true,
           stackBackend: true,
           stackPostgresOnly: true,
@@ -1404,7 +1499,7 @@ describe("db reset", () => {
           );
           const { layer } = setup(tmp.current, {
             toml,
-            args: ["db", "reset", "--local"],
+            args: ["db", "reset"],
             isLocal: true,
             stackBackend: true,
           });
@@ -1429,7 +1524,7 @@ describe("db reset", () => {
     it.effect("preserves the existing stack composition while rebuilding the database", () => {
       const { layer, catalogApplied } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
         stackBackend: true,
       });
@@ -1442,7 +1537,7 @@ describe("db reset", () => {
     it.effect("keeps a service excluded from the saved stack out of schema provisioning", () => {
       const { layer, catalogApplied } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
         stackBackend: true,
         stackStorageState: "disabled",
@@ -1456,7 +1551,7 @@ describe("db reset", () => {
     it.effect("provisions configured service schemas for a postgres-only stack", () => {
       const { layer, catalogApplied } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
         stackBackend: true,
         stackPostgresOnly: true,
@@ -1470,7 +1565,7 @@ describe("db reset", () => {
     it.effect("skips schemas for services disabled in config on a postgres-only stack", () => {
       const { layer, catalogApplied } = setup(tmp.current, {
         toml: 'project_id = "test"\n[storage]\nenabled = false\n',
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
         stackBackend: true,
         stackPostgresOnly: true,
@@ -1486,7 +1581,7 @@ describe("db reset", () => {
         toml: 'project_id = "test"\n',
         files: { ...migrationFile("20240101000000", "create table stack_reset_failure ();") },
         execFailsOn: "create table stack_reset_failure",
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
         stackBackend: true,
       });
@@ -1510,7 +1605,7 @@ describe("db reset", () => {
           "[auth]",
           'jwt_secret = "super-secret-jwt-token-with-at-least-32-characters-long"',
         ].join("\n"),
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
         yes: true,
         stackBackend: true,
@@ -1545,16 +1640,16 @@ describe("db reset", () => {
         expect(
           requests.some(
             (request) =>
-              request.authorization === `Bearer ${generateGoJwt(RESET_JWT, "service_role")}`,
+              request.authorization === `Bearer ${generateLocalJwt(RESET_JWT, "service_role")}`,
           ),
         ).toBe(true);
       });
     });
 
-    it.effect("fails --local reset when the stack database is not running", () => {
+    it.effect("fails a default local reset when the stack database is not running", () => {
       const { layer, stackApi } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
         stackBackend: true,
         stackDatabaseReady: false,
@@ -1570,7 +1665,7 @@ describe("db reset", () => {
     it.effect("reports a stack whose owner is absent as not running", () => {
       const { layer, stackApi } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
         stackBackend: true,
         stackStatusFailure: new StackError({
@@ -1594,7 +1689,7 @@ describe("db reset", () => {
         "Stack test is served by release 1.0.0+old, but this client is release 1.0.0+new; stop or destroy the stack (both work across releases) and retry";
       const { layer, stackApi } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
         stackBackend: true,
         stackStatusFailure: new StackError({
@@ -1613,7 +1708,7 @@ describe("db reset", () => {
     it.effect("reports a database that becomes unavailable after the reset as not running", () => {
       const { layer, stackApi } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
         stackBackend: true,
         stackUnavailableAfterReset: true,
@@ -1636,7 +1731,7 @@ describe("db reset", () => {
       const client = recordingStackStorageHttpClient();
       const { layer } = setup(tmp.current, {
         toml: BUCKET_TOML,
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
         yes: true,
         stackBackend: true,
@@ -1651,7 +1746,7 @@ describe("db reset", () => {
         );
         expect(
           client.requests.some(
-            (r) => r.authorization === `Bearer ${generateGoJwt(RESET_JWT, "service_role")}`,
+            (r) => r.authorization === `Bearer ${generateLocalJwt(RESET_JWT, "service_role")}`,
           ),
         ).toBe(true);
       });
@@ -1663,7 +1758,7 @@ describe("db reset", () => {
         const client = recordingStackStorageHttpClient();
         const { layer, out } = setup(tmp.current, {
           toml: BUCKET_TOML,
-          args: ["db", "reset", "--local"],
+          args: ["db", "reset"],
           isLocal: true,
           stackBackend: true,
           stackStorageState: "disabled",
@@ -1677,10 +1772,10 @@ describe("db reset", () => {
           );
           expect(out.stderrText).toContain(
             "Set [storage] enabled = true in supabase/config.toml, run supabase stack stop " +
-              "followed by supabase stack start without -x storage, then supabase seed buckets --local.",
+              "followed by supabase stack start without -x storage, then supabase seed buckets.",
           );
           expect(out.stderrText).not.toContain(
-            "Run supabase seed buckets --local once Storage is available.",
+            "Run supabase seed buckets once Storage is available.",
           );
           expect(client.requests).toHaveLength(0);
         });
@@ -1693,7 +1788,7 @@ describe("db reset", () => {
         const client = recordingStackStorageHttpClient();
         const { layer, out } = setup(tmp.current, {
           toml: 'project_id = "test"\n',
-          args: ["db", "reset", "--local"],
+          args: ["db", "reset"],
           isLocal: true,
           stackBackend: true,
           stackStorageState: "disabled",
@@ -1714,7 +1809,7 @@ describe("db reset", () => {
         const client = recordingStackStorageHttpClient();
         const { layer, out } = setup(tmp.current, {
           toml: BUCKET_TOML,
-          args: ["db", "reset", "--local"],
+          args: ["db", "reset"],
           isLocal: true,
           stackBackend: true,
           stackStorageState: "stopped",
@@ -1726,9 +1821,7 @@ describe("db reset", () => {
           expect(out.stderrText).toContain(
             "WARNING: skipped seeding storage buckets: Storage is stopped for this stack.",
           );
-          expect(out.stderrText).toContain(
-            "Run supabase seed buckets --local once Storage is available.",
-          );
+          expect(out.stderrText).toContain("Run supabase seed buckets once Storage is available.");
           expect(client.requests).toHaveLength(0);
         });
       },
@@ -1740,7 +1833,7 @@ describe("db reset", () => {
         const client = recordingStackStorageHttpClient();
         const { layer } = setup(tmp.current, {
           toml: BUCKET_TOML,
-          args: ["db", "reset", "--local"],
+          args: ["db", "reset"],
           isLocal: true,
           yes: true,
           stackBackend: true,
@@ -1755,7 +1848,7 @@ describe("db reset", () => {
           );
           expect(
             client.requests.some(
-              (r) => r.authorization === `Bearer ${generateGoJwt(RESET_JWT, "service_role")}`,
+              (r) => r.authorization === `Bearer ${generateLocalJwt(RESET_JWT, "service_role")}`,
             ),
           ).toBe(true);
         });
@@ -1766,7 +1859,7 @@ describe("db reset", () => {
       const client = recordingStackStorageHttpClient();
       const { layer, out } = setup(tmp.current, {
         toml: BUCKET_TOML,
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
         yes: true,
         stackBackend: true,
@@ -1781,7 +1874,7 @@ describe("db reset", () => {
         );
         expect(
           client.requests.some(
-            (r) => r.authorization === `Bearer ${generateGoJwt(RESET_JWT, "service_role")}`,
+            (r) => r.authorization === `Bearer ${generateLocalJwt(RESET_JWT, "service_role")}`,
           ),
         ).toBe(true);
         expect(out.stderrText).not.toContain("skipped seeding storage buckets");
@@ -1794,7 +1887,7 @@ describe("db reset", () => {
         const client = recordingStackStorageHttpClientBucketCreateFails(500);
         const { layer, out } = setup(tmp.current, {
           toml: BUCKET_TOML,
-          args: ["db", "reset", "--local"],
+          args: ["db", "reset"],
           isLocal: true,
           yes: true,
           stackBackend: true,
@@ -1806,9 +1899,7 @@ describe("db reset", () => {
           const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
           expect(Exit.isSuccess(exit)).toBe(true);
           expect(out.stderrText).toContain("WARNING: skipped seeding storage buckets:");
-          expect(out.stderrText).toContain(
-            "Run supabase seed buckets --local once Storage is available.",
-          );
+          expect(out.stderrText).toContain("Run supabase seed buckets once Storage is available.");
           expect(out.stderrText).toContain("Finished ");
         });
       },
@@ -1820,7 +1911,7 @@ describe("db reset", () => {
         const client = recordingStackStorageHttpClientBucketListTransportFails();
         const { layer, out } = setup(tmp.current, {
           toml: BUCKET_TOML,
-          args: ["db", "reset", "--local"],
+          args: ["db", "reset"],
           isLocal: true,
           yes: true,
           stackBackend: true,
@@ -1832,9 +1923,7 @@ describe("db reset", () => {
           const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
           expect(Exit.isSuccess(exit)).toBe(true);
           expect(out.stderrText).toContain("WARNING: skipped seeding storage buckets:");
-          expect(out.stderrText).toContain(
-            "Run supabase seed buckets --local once Storage is available.",
-          );
+          expect(out.stderrText).toContain("Run supabase seed buckets once Storage is available.");
           expect(out.stderrText).toContain("Finished ");
         });
       },
@@ -1845,7 +1934,7 @@ describe("db reset", () => {
       () => {
         const { layer, out } = setup(tmp.current, {
           toml: BUCKET_TOML,
-          args: ["db", "reset", "--local"],
+          args: ["db", "reset"],
           isLocal: true,
           stackBackend: true,
           stackStorageState: "failed",
@@ -1855,7 +1944,7 @@ describe("db reset", () => {
         return Effect.gen(function* () {
           yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
           expect(out.stderrText).toContain(
-            "WARNING: skipped seeding storage buckets: Storage failed to start for this stack: boom. Run supabase seed buckets --local once Storage is available.",
+            "WARNING: skipped seeding storage buckets: Storage failed to start for this stack: boom. Run supabase seed buckets once Storage is available.",
           );
           expect(out.stderrText).not.toContain("Storage is failed");
         });
@@ -1867,7 +1956,7 @@ describe("db reset", () => {
       () => {
         const { layer, out } = setup(tmp.current, {
           toml: BUCKET_TOML,
-          args: ["db", "reset", "--local"],
+          args: ["db", "reset"],
           isLocal: true,
           stackBackend: true,
           stackStorageState: "dormant",
@@ -1879,9 +1968,7 @@ describe("db reset", () => {
           expect(out.stderrText).toContain(
             "WARNING: skipped seeding storage buckets: The stack exposes no Storage endpoint.",
           );
-          expect(out.stderrText).toContain(
-            "Run supabase seed buckets --local once Storage is available.",
-          );
+          expect(out.stderrText).toContain("Run supabase seed buckets once Storage is available.");
         });
       },
     );
@@ -1892,7 +1979,7 @@ describe("db reset", () => {
         const client = recordingStackStorageHttpClient();
         const { layer, out } = setup(tmp.current, {
           toml: 'project_id = "test"\n',
-          args: ["db", "reset", "--local"],
+          args: ["db", "reset"],
           isLocal: true,
           stackBackend: true,
           stackStorageState: "dormant",
@@ -1913,14 +2000,17 @@ describe("db reset", () => {
       () => {
         const { layer, child } = setup(tmp.current, {
           toml: 'project_id = "unterminated\n',
-          args: ["db", "reset", "--local"],
+          args: ["db", "reset"],
           isLocal: true,
         });
         return Effect.gen(function* () {
           const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(Cause.pretty(exit.cause)).toContain("failed to load config");
+            expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toMatchObject({
+              _tag: "DbConfigLoadError",
+              message: expect.stringContaining("failed to load config"),
+            });
           }
           expect(child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "rm")).toBe(
             false,
@@ -1932,7 +2022,7 @@ describe("db reset", () => {
     it.effect("seeds buckets after a local reset when storage is ready", () => {
       const { layer, child } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
       });
       return Effect.gen(function* () {
@@ -1950,7 +2040,7 @@ describe("db reset", () => {
     it.effect("skips bucket seeding when storage is absent (any inspect error)", () => {
       const { layer, out } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
         routeOpts: { storageMissing: true },
       });
@@ -1965,7 +2055,7 @@ describe("db reset", () => {
       () => {
         const { layer, out, requests } = setup(tmp.current, {
           toml: 'project_id = "test"\n[storage.buckets.images]\n',
-          args: ["db", "reset", "--local"],
+          args: ["db", "reset"],
           isLocal: true,
           storageRoutes: [
             {
@@ -1999,7 +2089,7 @@ describe("db reset", () => {
       () => {
         const { layer, out, requests } = setup(tmp.current, {
           toml: 'project_id = "test"\n[storage.vector]\nenabled = true\n[storage.vector.buckets.embeddings]\n',
-          args: ["db", "reset", "--local"],
+          args: ["db", "reset"],
           isLocal: true,
           storageRoutes: [
             { method: "GET", match: "/storage/v1/bucket", body: [] },
@@ -2031,7 +2121,7 @@ describe("db reset", () => {
       const { layer, out, requests } = setup(tmp.current, {
         toml: 'project_id = "test"\n[storage.vector]\nenabled = true\n[storage.vector.buckets.embeddings]\n',
         files: { "supabase/.env": "SUPABASE_YES=true\n" },
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
         storageRoutes: [
           { method: "GET", match: "/storage/v1/bucket", body: [] },
@@ -2066,7 +2156,7 @@ describe("db reset", () => {
     it.effect("prunes a stale vector bucket when a piped y answers the confirmation", () => {
       const { layer, out, requests } = setup(tmp.current, {
         toml: 'project_id = "test"\n[storage.vector]\nenabled = true\n[storage.vector.buckets.embeddings]\n',
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
         pipedStdin: "y\n",
         stdinIsTty: false,
@@ -2098,7 +2188,7 @@ describe("db reset", () => {
     it.effect("uses the detected git branch in the Finished line", () => {
       const { layer, out } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
       });
       return withConfigEnv(
@@ -2114,21 +2204,21 @@ describe("db reset", () => {
     it.effect("emits a json result for a local reset", () => {
       const { layer, out } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
         format: "json",
       });
       return Effect.gen(function* () {
         yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         const success = out.messages.find((m) => m.type === "success");
-        expect(success?.data?.["target"]).toBe("local");
+        expect(success?.data).toEqual({ version: "" });
       });
     });
 
     it.effect("still flushes telemetry when the recreate itself fails", () => {
       const { layer, telemetry } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
         route: (args) => {
           if (args[0] === "container" && args[1] === "rm") {
@@ -2146,13 +2236,318 @@ describe("db reset", () => {
         expect(telemetry.flushed).toBe(true);
       });
     });
+
+    it.effect("stops the satellites before removing the database container", () => {
+      const { layer, child } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        const dbRemoval = child.spawned.findIndex(
+          (s) => s.args[0] === "container" && s.args[1] === "rm",
+        );
+        expect(dbRemoval).toBeGreaterThan(-1);
+        const stoppedBeforeRemoval = child.spawned
+          .slice(0, dbRemoval)
+          .filter((s) => s.args[0] === "stop")
+          .map((s) => s.args[1]);
+        expect(stoppedBeforeRemoval).toHaveLength(4);
+        const lastSetupJob = child.spawned.findLastIndex((s) => s.args[0] === "run");
+        expect(lastSetupJob).toBeGreaterThan(dbRemoval);
+        expect(child.spawned.findIndex((s) => s.args[0] === "restart")).toBeGreaterThan(
+          lastSetupJob,
+        );
+        expect(stoppedBeforeRemoval).toEqual(
+          expect.arrayContaining([
+            "supabase_storage_test",
+            "supabase_auth_test",
+            "supabase_realtime_test",
+            "supabase_pooler_test",
+          ]),
+        );
+      });
+    });
+
+    it.effect("restarts the stopped satellites when the reset fails after stopping them", () => {
+      const { layer, out, child } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        route: (args) => (args[0] === "run" ? { exitCode: 1 } : defaultLocalResetRoute()(args)),
+      });
+      return Effect.gen(function* () {
+        const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("error running container: exit 1");
+        }
+        expect(out.stderrText).not.toContain("Restarting containers...");
+        expect(child.spawned.filter((s) => s.args[0] === "stop")).toHaveLength(4);
+        expect(restartedContainers(child.spawned)).toHaveLength(4);
+        expect(restartedContainers(child.spawned)).toEqual(
+          expect.arrayContaining([
+            "supabase_storage_test",
+            "supabase_auth_test",
+            "supabase_realtime_test",
+            "supabase_pooler_test",
+          ]),
+        );
+      });
+    });
+
+    it.effect("restores the satellites without touching the database when a stop fails", () => {
+      const { layer, child } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        route: (args) =>
+          args[0] === "stop" && args[1] === "supabase_auth_test"
+            ? { exitCode: 1, stderr: ["Error: cannot stop"] }
+            : defaultLocalResetRoute()(args),
+      });
+      return Effect.gen(function* () {
+        const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("failed to stop supabase_auth_test");
+        }
+        expect(child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "rm")).toBe(
+          false,
+        );
+        expect(restartedContainers(child.spawned)).toHaveLength(4);
+      });
+    });
+
+    it.effect("warns and keeps the original failure when restoring the satellites fails", () => {
+      const { layer, out } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        route: (args) =>
+          args[0] === "run"
+            ? { exitCode: 1 }
+            : defaultLocalResetRoute({ restartFails: ["supabase_storage_test"] })(args),
+      });
+      return Effect.gen(function* () {
+        const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("error running container: exit 1");
+        }
+        expect(out.messages).toContainEqual(
+          expect.objectContaining({
+            type: "warn",
+            message: expect.stringContaining("failed to restart supabase_storage_test"),
+          }),
+        );
+      });
+    });
+
+    it.effect(
+      "leaves the satellites stopped when the reset is interrupted right after removing the database",
+      () =>
+        Effect.gen(function* () {
+          const removingVolume = yield* Deferred.make<void>();
+          const base = defaultLocalResetRoute();
+          let dbRemoved = false;
+          const { layer, out, child } = setup(tmp.current, {
+            toml: 'project_id = "test"\n',
+            args: ["db", "reset", "--local"],
+            isLocal: true,
+            route: (args) => {
+              if (args[0] === "container" && args[1] === "rm") dbRemoved = true;
+              if (args[0] === "volume" && args[1] === "rm") {
+                return {
+                  exitAfter: Deferred.succeed(removingVolume, undefined).pipe(
+                    Effect.andThen(Effect.never),
+                  ),
+                };
+              }
+              if (
+                dbRemoved &&
+                args[0] === "container" &&
+                args[1] === "inspect" &&
+                args[2] === DB_ID
+              ) {
+                return { exitCode: 1, stderr: [`Error: No such container: ${DB_ID}`] };
+              }
+              return base(args);
+            },
+          });
+          const fiber = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.forkChild);
+          yield* Deferred.await(removingVolume);
+          yield* Fiber.interrupt(fiber);
+          const exit = yield* Fiber.await(fiber);
+
+          expect(Exit.hasInterrupts(exit)).toBe(true);
+          expect(restartedContainers(child.spawned)).toHaveLength(0);
+          expect(kongReloadCalls(child.spawned)).toHaveLength(0);
+          expect(out.messages).toContainEqual(
+            expect.objectContaining({
+              type: "warn",
+              message:
+                "The local database is not running, so storage, auth, realtime and the pooler were left stopped.\nRun supabase stop && supabase start to bring the local stack back.",
+            }),
+          );
+        }),
+    );
+
+    it.effect(
+      "leaves the satellites stopped when the recreated database exits before it is ready",
+      () => {
+        const base = defaultLocalResetRoute();
+        let dbCreated = false;
+        const { layer, out, child } = setup(tmp.current, {
+          toml: 'project_id = "test"\n',
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          route: (args) => {
+            if (args[0] === "create") dbCreated = true;
+            if (
+              dbCreated &&
+              args[0] === "container" &&
+              args[1] === "inspect" &&
+              args[2] === DB_ID
+            ) {
+              return { stdout: [STOPPED_STATE] };
+            }
+            return base(args);
+          },
+        });
+        return Effect.gen(function* () {
+          const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(Cause.pretty(exit.cause)).toContain("container is not running: exited");
+          }
+          expect(dbSetupJobCalls(child.spawned)).toHaveLength(0);
+          expect(restartedContainers(child.spawned)).toHaveLength(0);
+          expect(kongReloadCalls(child.spawned)).toHaveLength(0);
+          expect(out.messages).toContainEqual(
+            expect.objectContaining({
+              type: "warn",
+              message: expect.stringContaining("The local database is not running"),
+            }),
+          );
+        });
+      },
+    );
+
+    it.effect(
+      "restores the satellites when the database cannot be inspected after a failure",
+      () => {
+        const base = defaultLocalResetRoute();
+        let setupStarted = false;
+        const { layer, out, child } = setup(tmp.current, {
+          toml: 'project_id = "test"\n',
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          route: (args) => {
+            if (args[0] === "run") {
+              setupStarted = true;
+              return { exitCode: 1 };
+            }
+            if (
+              setupStarted &&
+              args[0] === "container" &&
+              args[1] === "inspect" &&
+              args[2] === DB_ID
+            ) {
+              return { exitCode: 1, stderr: ["Error: permission denied"] };
+            }
+            return base(args);
+          },
+        });
+        return Effect.gen(function* () {
+          const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(Cause.pretty(exit.cause)).toContain("error running container: exit 1");
+          }
+          expect(restartedContainers(child.spawned)).toHaveLength(4);
+          expect(kongReloadCalls(child.spawned)).toHaveLength(1);
+          expect(out.messages).not.toContainEqual(
+            expect.objectContaining({
+              type: "warn",
+              message: expect.stringContaining("not running"),
+            }),
+          );
+        });
+      },
+    );
+
+    it.effect(
+      "keeps the gateway advice when the Kong reload fails while restoring after a failure",
+      () => {
+        const { layer, out, child } = setup(tmp.current, {
+          toml: 'project_id = "test"\n',
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          route: (args) =>
+            args[0] === "run"
+              ? { exitCode: 1 }
+              : defaultLocalResetRoute({ kongReloadFails: true })(args),
+        });
+        return Effect.gen(function* () {
+          const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(Cause.pretty(exit.cause)).toContain("error running container: exit 1");
+          }
+          expect(restartedContainers(child.spawned)).toHaveLength(4);
+          expect(out.messages).toContainEqual(
+            expect.objectContaining({
+              type: "warn",
+              message: expect.stringContaining(
+                "Local services restarted, but API routes may return 502 until the gateway reloads.",
+              ),
+            }),
+          );
+        });
+      },
+    );
+
+    it.effect("resets the database when a satellite is excluded from the stack", () => {
+      const realtimeMissing = (args: ReadonlyArray<string>) =>
+        (args[0] === "stop" || args[0] === "restart") && args[1] === "supabase_realtime_test";
+      const { layer, out, child } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        route: (args) =>
+          realtimeMissing(args)
+            ? { exitCode: 1, stderr: [`Error: No such container: ${args[1] ?? ""}`] }
+            : defaultLocalResetRoute()(args),
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(out.stderrText).toContain("Finished supabase db reset.\n");
+        expect(child.spawned.filter((s) => s.args[0] === "stop").map((s) => s.args[1])).toEqual(
+          expect.arrayContaining([
+            "supabase_storage_test",
+            "supabase_auth_test",
+            "supabase_pooler_test",
+          ]),
+        );
+        expect(restartedContainers(child.spawned)).toEqual(
+          expect.arrayContaining([
+            "supabase_storage_test",
+            "supabase_auth_test",
+            "supabase_pooler_test",
+          ]),
+        );
+        expect(kongReloadCalls(child.spawned)).toHaveLength(1);
+      });
+    });
   });
 
   describe("local reset — Kong reload", () => {
     it.effect("fails the whole command with the exact suggestion when Kong reload fails", () => {
-      const { layer } = setup(tmp.current, {
+      const { layer, child } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
         routeOpts: { kongReloadFails: true },
       });
@@ -2172,13 +2567,15 @@ describe("db reset", () => {
             suggestion: expect.stringContaining(`docker restart ${KONG_ID}`),
           });
         }
+        expect(restartedContainers(child.spawned)).toHaveLength(4);
+        expect(kongReloadCalls(child.spawned)).toHaveLength(1);
       });
     });
 
     it.effect("skips the reload without failing when Kong is excluded from the stack", () => {
       const { layer, out, child } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
         routeOpts: { kongMissing: true },
       });
@@ -2192,7 +2589,7 @@ describe("db reset", () => {
     it.effect("skips the reload without failing when Kong is present but stopped", () => {
       const { layer, out, child } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
         routeOpts: { kongNotRunning: true },
       });
@@ -2204,9 +2601,9 @@ describe("db reset", () => {
     });
 
     it.effect("fails the command when a satellite restart fails", () => {
-      const { layer } = setup(tmp.current, {
+      const { layer, child } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
         routeOpts: { restartFails: ["supabase_storage_test"] },
       });
@@ -2216,6 +2613,7 @@ describe("db reset", () => {
         if (Exit.isFailure(exit)) {
           expect(Cause.pretty(exit.cause)).toContain("failed to restart supabase_storage_test");
         }
+        expect(restartedContainers(child.spawned)).toHaveLength(4);
       });
     });
   });
@@ -2248,7 +2646,7 @@ describe("db reset", () => {
       () => {
         const { layer, out, child, conn } = setup(tmp.current, {
           toml: PG14_TOML,
-          args: ["db", "reset", "--local"],
+          args: ["db", "reset"],
           isLocal: true,
         });
         return Effect.gen(function* () {
@@ -2285,37 +2683,34 @@ describe("db reset", () => {
       },
     );
 
-    it.effect(
-      "attaches Go's ExecBatch error context to a failed DROP/CREATE DATABASE statement",
-      () => {
-        // Built as a migration file and run through a batch executor, so a failure gets the same
-        // rich context (`At statement: <index>` + statement text) a real migration failure would.
-        const { layer } = setup(tmp.current, {
-          toml: PG14_TOML,
-          args: ["db", "reset", "--local"],
-          isLocal: true,
-          failStatement: {
-            sql: "CREATE DATABASE postgres WITH OWNER postgres",
-            message: "permission denied to create database",
-          },
-        });
-        return Effect.gen(function* () {
-          const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) {
-            const causeText = Cause.pretty(exit.cause);
-            expect(causeText).toContain("permission denied to create database");
-            expect(causeText).toContain("At statement: 1");
-            expect(causeText).toContain("CREATE DATABASE postgres WITH OWNER postgres");
-          }
-        });
-      },
-    );
+    it.effect("attaches the batch error context to a failed DROP/CREATE DATABASE statement", () => {
+      // Built as a migration file and run through a batch executor, so a failure gets the same
+      // rich context (`At statement: <index>` + statement text) a real migration failure would.
+      const { layer } = setup(tmp.current, {
+        toml: PG14_TOML,
+        args: ["db", "reset"],
+        isLocal: true,
+        failStatement: {
+          sql: "CREATE DATABASE postgres WITH OWNER postgres",
+          message: "permission denied to create database",
+        },
+      });
+      return Effect.gen(function* () {
+        const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("permission denied to create database");
+          expect(causeText).toContain("At statement: 1");
+          expect(causeText).toContain("CREATE DATABASE postgres WITH OWNER postgres");
+        }
+      });
+    });
 
     it.effect("swallows a disconnect-clients failure when the code is invalid_catalog_name", () => {
       const { layer, conn } = setup(tmp.current, {
         toml: PG14_TOML,
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
         failStatement: {
           sql: "ALTER DATABASE postgres ALLOW_CONNECTIONS false",
@@ -2334,7 +2729,7 @@ describe("db reset", () => {
     it.effect("surfaces a disconnect-clients failure for any other error code", () => {
       const { layer } = setup(tmp.current, {
         toml: PG14_TOML,
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
         failStatement: {
           sql: "ALTER DATABASE postgres ALLOW_CONNECTIONS false",
@@ -2354,7 +2749,7 @@ describe("db reset", () => {
     it.effect("swallows a disconnect-clients failure that is not a PgError at all", () => {
       const { layer, conn } = setup(tmp.current, {
         toml: PG14_TOML,
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
         failStatement: {
           sql: "ALTER DATABASE postgres ALLOW_CONNECTIONS false",
@@ -2377,7 +2772,7 @@ describe("db reset", () => {
         // `isSqlState(code)` before comparing against `3D000`, not just `code !== undefined`.
         const { layer, conn } = setup(tmp.current, {
           toml: PG14_TOML,
-          args: ["db", "reset", "--local"],
+          args: ["db", "reset"],
           isLocal: true,
           failStatement: {
             sql: "ALTER DATABASE postgres ALLOW_CONNECTIONS false",
@@ -2399,7 +2794,7 @@ describe("db reset", () => {
       () => {
         const { layer, conn } = setup(tmp.current, {
           toml: PG14_TOML,
-          args: ["db", "reset", "--local"],
+          args: ["db", "reset"],
           isLocal: true,
           replicationSlotCounts: [2, 1, 0],
         });
@@ -2415,7 +2810,7 @@ describe("db reset", () => {
     it.effect("fails permanently (no retry) when counting replication slots itself fails", () => {
       const { layer, conn } = setup(tmp.current, {
         toml: PG14_TOML,
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
         replicationSlotQueryFails: true,
       });
@@ -2436,7 +2831,7 @@ describe("db reset", () => {
       () => {
         const { layer } = setup(tmp.current, {
           toml: PG14_TOML,
-          args: ["db", "reset", "--local"],
+          args: ["db", "reset"],
           isLocal: true,
           replicationSlotCounts: [1],
         });
@@ -2453,13 +2848,14 @@ describe("db reset", () => {
 
     it.effect("passes --no-seed and the resolved version to the final MigrateAndSeed step", () => {
       const { layer, conn } = setup(tmp.current, {
+        noSeed: true,
         toml: PG14_TOML,
         files: { "supabase/seed.sql": "insert into t values (9);" },
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
       });
       return Effect.gen(function* () {
-        yield* dbReset({ ...DEFAULT_FLAGS, local: true, noSeed: true }).pipe(Effect.provide(layer));
+        yield* dbReset({ ...DEFAULT_FLAGS, noSeed: Option.some(true) }).pipe(Effect.provide(layer));
         expect(conn.execs.some((sql) => sql.includes("insert into t values (9)"))).toBe(false);
       });
     });
@@ -2471,7 +2867,7 @@ describe("db reset", () => {
           ...migrationFile("20240101000000", "create table pg14_marker ();"),
           "supabase/seed.sql": "insert into pg14_seed_marker values (1);",
         },
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
       });
       return Effect.gen(function* () {
@@ -2490,7 +2886,7 @@ describe("db reset", () => {
           "20240101000000",
           "select net.http_post(url := 'https://example.com');",
         ),
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
       });
       return Effect.gen(function* () {
@@ -2516,7 +2912,7 @@ describe("db reset", () => {
       // `supabase start`, surfacing as drift in the next engine's shadow baseline.
       const { layer, conn } = setup(tmp.current, {
         toml: PG14_TOML,
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
       });
       return Effect.gen(function* () {
@@ -2541,13 +2937,12 @@ describe("db reset", () => {
             ...migrationFile("20240101000000", "create table version_one_marker ();"),
             ...migrationFile("20240202000000", "create table version_two_marker ();"),
           },
-          args: ["db", "reset", "--local"],
+          args: ["db", "reset"],
           isLocal: true,
         });
         return Effect.gen(function* () {
           yield* dbReset({
             ...DEFAULT_FLAGS,
-            local: true,
             version: Option.some("20240101000000"),
           }).pipe(Effect.provide(layer));
           expect(conn.execs.some((sql) => sql.includes("create table version_one_marker ()"))).toBe(
@@ -2565,7 +2960,7 @@ describe("db reset", () => {
       () => {
         const { layer, conn } = setup(tmp.current, {
           toml: PG14_TOML,
-          args: ["db", "reset", "--local"],
+          args: ["db", "reset"],
           isLocal: true,
         });
         return Effect.gen(function* () {
@@ -2583,9 +2978,9 @@ describe("db reset", () => {
         // `checkDbToml`) into the final `migrateAndSeed` call — the raw `["schema.sql"]` pattern
         // would glob-match against the workdir root instead of `supabase/schema.sql`.
         const { layer, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n[db]\nmajor_version = 14\n[db.migrations]\nschema_paths = ["schema.sql"]\n',
+          toml: 'project_id = "test"\n[db]\nmajor_version = 14\n[db.migrations]\nschema_paths = ["schema.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
           files: { "supabase/schema.sql": "create table schema_paths_marker ();" },
-          args: ["db", "reset", "--local"],
+          args: ["db", "reset"],
           isLocal: true,
           experimental: true,
         });
@@ -2603,7 +2998,7 @@ describe("db reset", () => {
     it.live("a database that never accepts connections fails the whole recreate", () => {
       const { layer } = setup(tmp.current, {
         toml: `project_id = "test"\n${FAST_HEALTH_TOML}`,
-        args: ["db", "reset", "--local"],
+        args: ["db", "reset"],
         isLocal: true,
         neverConnectable: true,
       });
@@ -2618,7 +3013,7 @@ describe("db reset", () => {
     it.effect("fails a remote reset on a malformed config.toml", () => {
       const { layer } = setup(tmp.current, { toml: 'project_id = "unterminated\n' });
       return Effect.gen(function* () {
-        const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+        const exit = yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(
           Effect.provide(layer),
           Effect.exit,
         );
@@ -2629,7 +3024,7 @@ describe("db reset", () => {
       });
     });
 
-    it.effect("loads a Go-style env() boolean in config for a remote reset", () => {
+    it.effect("loads an env() boolean in config for a remote reset", () => {
       // Regression: `enabled = "env(VAR)"` must load via env-expansion + boolean
       // parsing (`checkDbToml`) instead of the strict @supabase/config
       // loader rejecting it.
@@ -2637,26 +3032,16 @@ describe("db reset", () => {
         toml: 'project_id = "test"\n\n[db.migrations]\nenabled = "env(MIGRATIONS_ENABLED)"\n',
         files: migrationFile("20240101000000"),
         confirm: [true],
+        env: { MIGRATIONS_ENABLED: "true" },
       });
       return withEnvVar(
         "MIGRATIONS_ENABLED",
         "true",
         Effect.gen(function* () {
-          yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+          yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
           expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
         }),
       ).pipe((body) => withConfigEnv({ MIGRATIONS_ENABLED: "true" }, body));
-    });
-
-    it.effect("rejects mutually exclusive target flags", () => {
-      const { layer } = setup(tmp.current, {
-        toml: 'project_id = "test"\n',
-        args: ["db", "reset", "--linked", "--local"],
-      });
-      return Effect.gen(function* () {
-        const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-      });
     });
 
     it.effect("rejects --version together with --last", () => {
@@ -2664,7 +3049,7 @@ describe("db reset", () => {
       return Effect.gen(function* () {
         const exit = yield* dbReset({
           ...DEFAULT_FLAGS,
-          linked: true,
+          remote: REMOTE_LINKED,
           version: Option.some("20240101000000"),
           last: Option.some(1),
         }).pipe(Effect.provide(layer), Effect.exit);
@@ -2678,7 +3063,7 @@ describe("db reset", () => {
       return Effect.gen(function* () {
         const exit = yield* dbReset({
           ...DEFAULT_FLAGS,
-          linked: true,
+          remote: REMOTE_LINKED,
           version: Option.some("not-a-number"),
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
@@ -2696,7 +3081,7 @@ describe("db reset", () => {
       return Effect.gen(function* () {
         const exit = yield* dbReset({
           ...DEFAULT_FLAGS,
-          linked: true,
+          remote: REMOTE_LINKED,
           version: Option.some("20240101000000"),
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
@@ -2713,7 +3098,7 @@ describe("db reset", () => {
       return Effect.gen(function* () {
         const exit = yield* dbReset({
           ...DEFAULT_FLAGS,
-          linked: true,
+          remote: REMOTE_LINKED,
           version: Option.some("99999999999999999999"),
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
@@ -2734,27 +3119,11 @@ describe("db reset", () => {
       return Effect.gen(function* () {
         yield* dbReset({
           ...DEFAULT_FLAGS,
-          linked: true,
+          remote: REMOTE_LINKED,
           version: Option.some(""),
         }).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("Resetting remote database...");
         expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
-      });
-    });
-
-    it.effect("returns context canceled when the reset prompt is declined", () => {
-      const { layer, conn } = setup(tmp.current, {
-        toml: 'project_id = "test"\n',
-        confirm: [false],
-      });
-      return Effect.gen(function* () {
-        const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
-          Effect.provide(layer),
-          Effect.exit,
-        );
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain("context canceled");
-        expect(conn.execs).toHaveLength(0);
       });
     });
 
@@ -2768,7 +3137,7 @@ describe("db reset", () => {
         confirm: [true],
       });
       return Effect.gen(function* () {
-        yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+        yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("Resetting remote database...");
         expect(out.stderrText).not.toContain("Connecting to");
         expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
@@ -2782,7 +3151,7 @@ describe("db reset", () => {
       const { layer, conn, projectHttp } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
         files: migrationFile("20240101000000"),
-        args: ["db", "reset", "--linked", "--project-ref", VALID_REF],
+        args: ["db", "reset", `--remote=${VALID_REF}`],
         confirm: [true],
         realLayers: true,
       });
@@ -2792,8 +3161,7 @@ describe("db reset", () => {
         yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
         yield* dbReset({
           ...DEFAULT_FLAGS,
-          linked: true,
-          projectRef: Option.some(VALID_REF),
+          remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
         }).pipe(Effect.provide(layer));
         expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
           `GET /v1/projects/${VALID_REF}/config/database/pooler`,
@@ -2806,7 +3174,7 @@ describe("db reset", () => {
         expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(true);
         assertPermissionDrift({
           command: "db reset",
-          activeFlags: { linked: true, "project-ref": VALID_REF },
+          activeFlags: { remote: VALID_REF },
           requests: [...asRecordedRequests(requests), ...projectHttp.calls],
           exact: true,
         });
@@ -2842,11 +3210,11 @@ describe("db reset", () => {
     });
 
     it.effect(
-      "makes no Management API request for --local through the real resolver and cache",
+      "makes no Management API request for the default local target through the real resolver and cache",
       () => {
         const { layer, projectHttp } = setup(tmp.current, {
           toml: 'project_id = "test"\n',
-          args: ["db", "reset", "--local"],
+          args: ["db", "reset"],
           realLayers: true,
         });
         const requests: Array<StubbedRequest> = [];
@@ -2856,7 +3224,7 @@ describe("db reset", () => {
           Effect.gen(function* () {
             const fs = yield* FileSystem.FileSystem;
             yield* stubManagementApi(requests, () => undefined);
-            yield* dbReset({ ...DEFAULT_FLAGS, local: true }).pipe(Effect.provide(layer));
+            yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
             expect(requests).toEqual([]);
             expect(projectHttp.calls).toEqual([]);
             expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(
@@ -2864,7 +3232,7 @@ describe("db reset", () => {
             );
             assertPermissionDrift({
               command: "db reset",
-              activeFlags: { local: true },
+              activeFlags: {},
               requests: [],
               exact: true,
             });
@@ -2885,7 +3253,7 @@ describe("db reset", () => {
         confirm: [true],
       });
       return Effect.gen(function* () {
-        const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+        const exit = yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(
           Effect.provide(layer),
           Effect.exit,
         );
@@ -2903,7 +3271,7 @@ describe("db reset", () => {
         confirm: [true],
       });
       return Effect.gen(function* () {
-        const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+        const exit = yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(
           Effect.provide(layer),
           Effect.exit,
         );
@@ -2917,17 +3285,23 @@ describe("db reset", () => {
       });
     });
 
-    it.effect("auto-confirms a remote reset via SUPABASE_YES set only in the project .env", () => {
-      const { layer, conn } = setup(tmp.current, {
-        toml: 'project_id = "test"\n',
-        files: { "supabase/.env": "SUPABASE_YES=true\n" },
-        // No `confirm` responses: the prompt must auto-confirm.
-      });
-      return Effect.gen(function* () {
-        yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
-        expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
-      });
-    });
+    it.effect(
+      "asks once before a remote reset when SUPABASE_YES is set only in the project .env",
+      () => {
+        const { layer, out, conn } = setup(tmp.current, {
+          toml: 'project_id = "test"\n',
+          files: { "supabase/.env": "SUPABASE_YES=true\n" },
+          confirm: [true],
+        });
+        return withEmptyConfigEnv(
+          Effect.gen(function* () {
+            yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
+            expect(out.promptConfirmCalls).toHaveLength(1);
+            expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
+          }),
+        );
+      },
+    );
 
     it.effect("still caches the linked ref when DB-config resolution fails", () => {
       const { layer, linkedCache } = setup(tmp.current, {
@@ -2935,74 +3309,13 @@ describe("db reset", () => {
         resolveFails: true,
       });
       return Effect.gen(function* () {
-        const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+        const exit = yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(
           Effect.provide(layer),
           Effect.exit,
         );
         expect(Exit.isFailure(exit)).toBe(true);
         expect(linkedCache.cached).toBe(true);
         expect(linkedCache.cachedRef).toBe(VALID_REF);
-      });
-    });
-
-    it.effect("resets the project given via --project-ref without a linked workdir", () => {
-      const FLAG_REF = "flagflagflagflagflag";
-      const { layer, conn, linkedCache } = setup(tmp.current, {
-        toml: 'project_id = "test"\n',
-        confirm: [true],
-        linkedFails: true,
-      });
-      return Effect.gen(function* () {
-        yield* dbReset({
-          ...DEFAULT_FLAGS,
-          linked: true,
-          projectRef: Option.some(FLAG_REF),
-        }).pipe(Effect.provide(layer));
-        expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
-        expect(linkedCache.cached).toBe(true);
-        expect(linkedCache.cachedRef).toBe(FLAG_REF);
-      });
-    });
-
-    it.effect("--project-ref overrides an already-linked workdir's project ref", () => {
-      const FLAG_REF = "flagflagflagflagflag";
-      const { layer, linkedCache } = setup(tmp.current, {
-        toml: 'project_id = "test"\n',
-        ref: VALID_REF,
-        confirm: [true],
-      });
-      return Effect.gen(function* () {
-        yield* dbReset({
-          ...DEFAULT_FLAGS,
-          linked: true,
-          projectRef: Option.some(FLAG_REF),
-        }).pipe(Effect.provide(layer));
-        expect(linkedCache.cached).toBe(true);
-        expect(linkedCache.cachedRef).toBe(FLAG_REF);
-        expect(linkedCache.cachedRef).not.toBe(VALID_REF);
-      });
-    });
-
-    it.effect("rejects --project-ref on the default local target", () => {
-      const FLAG_REF = "flagflagflagflagflag";
-      const { layer, conn, resolver, linkedCache } = setup(tmp.current, {
-        toml: 'project_id = "test"\n',
-        args: ["db", "reset"],
-      });
-      return Effect.gen(function* () {
-        const exit = yield* dbReset({
-          ...DEFAULT_FLAGS,
-          projectRef: Option.some(FLAG_REF),
-        }).pipe(Effect.provide(layer), Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          expect(Cause.pretty(exit.cause)).toContain(
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-          );
-        }
-        expect(conn.execs).toEqual([]);
-        expect(resolver.calls).toBe(0);
-        expect(linkedCache.cached).toBe(false);
       });
     });
 
@@ -3018,7 +3331,7 @@ describe("db reset", () => {
       return Effect.gen(function* () {
         yield* dbReset({
           ...DEFAULT_FLAGS,
-          linked: true,
+          remote: REMOTE_LINKED,
           version: Option.some("20240101000000"),
         }).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("Resetting remote database to version: 20240101000000");
@@ -3039,7 +3352,7 @@ describe("db reset", () => {
       });
       return Effect.gen(function* () {
         // last=1 → revert the most recent → reset to version 20240101000000.
-        yield* dbReset({ ...DEFAULT_FLAGS, linked: true, last: Option.some(1) }).pipe(
+        yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED, last: Option.some(1) }).pipe(
           Effect.provide(layer),
         );
         expect(out.stderrText).toContain("Resetting remote database to version: 20240101000000");
@@ -3054,7 +3367,7 @@ describe("db reset", () => {
       });
       return Effect.gen(function* () {
         // last=2 with 2 local migrations → revert all → version "-".
-        yield* dbReset({ ...DEFAULT_FLAGS, linked: true, last: Option.some(2) }).pipe(
+        yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED, last: Option.some(2) }).pipe(
           Effect.provide(layer),
         );
         expect(out.stderrText).toContain("Resetting remote database to version: -");
@@ -3063,6 +3376,7 @@ describe("db reset", () => {
 
     it.effect("skips seeding with --no-seed", () => {
       const { layer, out } = setup(tmp.current, {
+        noSeed: true,
         toml: 'project_id = "test"\n',
         files: {
           ...migrationFile("20240101000000"),
@@ -3071,7 +3385,7 @@ describe("db reset", () => {
         confirm: [true],
       });
       return Effect.gen(function* () {
-        yield* dbReset({ ...DEFAULT_FLAGS, linked: true, noSeed: true }).pipe(
+        yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED, noSeed: Option.some(true) }).pipe(
           Effect.provide(layer),
         );
         expect(out.stderrText).not.toContain("Seeding data from");
@@ -3081,8 +3395,6 @@ describe("db reset", () => {
     it.effect(
       "applies configured schema files instead of replaying migrations on an experimental remote reset",
       () => {
-        // `--linked=false` still selects the linked/remote target, exercised here alongside the
-        // schema-files branch itself.
         const { layer, out, conn, resolver, linkedCache } = setup(tmp.current, {
           toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
           files: {
@@ -3091,12 +3403,14 @@ describe("db reset", () => {
             "supabase/seed.sql": "insert into t values (1);",
           },
           experimental: true,
-          args: ["db", "reset", "--linked=false"],
+          args: ["db", "reset", "--remote"],
           confirm: [true],
           ref: VALID_REF,
         });
         return Effect.gen(function* () {
-          yield* dbReset({ ...DEFAULT_FLAGS, linked: false }).pipe(Effect.provide(layer));
+          yield* dbReset({ ...DEFAULT_FLAGS, remote: Option.some({ _tag: "Linked" }) }).pipe(
+            Effect.provide(layer),
+          );
           expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(true);
           expect(conn.execs.some((s) => s.includes("create table migrated_table"))).toBe(false);
           expect(out.stderrText).not.toContain("Applying migration");
@@ -3112,7 +3426,7 @@ describe("db reset", () => {
       "applies schema files across multiple schema_paths patterns in declaration order, sorted within each pattern",
       () => {
         const { layer, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["zz/*.sql", "aa/*.sql"]\n',
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["zz/*.sql", "aa/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
           files: {
             "supabase/zz/b.sql": "create table zz_b ();",
             "supabase/zz/a.sql": "create table zz_a ();",
@@ -3123,7 +3437,7 @@ describe("db reset", () => {
           confirm: [true],
         });
         return Effect.gen(function* () {
-          yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+          yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
           const order = conn.execs
             .map((s) => /create table (\w+) \(\)/.exec(s)?.[1])
             .filter((name): name is string => name !== undefined);
@@ -3136,7 +3450,7 @@ describe("db reset", () => {
       "expands a schema_paths directory entry to its nested .sql files on an experimental remote reset",
       () => {
         const { layer, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["some-dir"]\n',
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["some-dir"]\n\n[experimental.pgdelta]\nenabled = false\n',
           files: {
             "supabase/some-dir/01_top.sql": "create table dir_top ();",
             "supabase/some-dir/nested/02_nested.sql": "create table dir_nested ();",
@@ -3145,7 +3459,7 @@ describe("db reset", () => {
           confirm: [true],
         });
         return Effect.gen(function* () {
-          yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+          yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
           expect(conn.execs.some((s) => s.includes("create table dir_top"))).toBe(true);
           expect(conn.execs.some((s) => s.includes("create table dir_nested"))).toBe(true);
         });
@@ -3153,16 +3467,16 @@ describe("db reset", () => {
     );
 
     it.effect(
-      "silently applies nothing when schema_paths is unset on an experimental remote reset (Go's undocumented default-config behavior)",
+      "silently applies nothing when schema_paths is unset on an experimental remote reset",
       () => {
         const { layer, out, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n',
+          toml: 'project_id = "test"\n\n[experimental.pgdelta]\nenabled = false\n',
           files: migrationFile("20240101000000", "create table migrated_table ();"),
           experimental: true,
           confirm: [true],
         });
         return Effect.gen(function* () {
-          yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+          yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
           expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
           expect(conn.execs.some((s) => s.includes("create table migrated_table"))).toBe(false);
           expect(out.stderrText).not.toContain("Applying migration");
@@ -3171,10 +3485,10 @@ describe("db reset", () => {
     );
 
     it.effect(
-      "replays migrations instead of schema files on an experimental remote reset when pg-delta is enabled",
+      "replays migrations instead of schema files on an experimental remote reset when no pg-delta config is set (pg-delta is the default)",
       () => {
         const { layer, out, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n\n[experimental.pgdelta]\nenabled = true\n',
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
           files: {
             "supabase/schemas/01_users.sql": "create table schema_users ();",
             ...migrationFile("20240101000000", "create table migrated_table ();"),
@@ -3183,10 +3497,46 @@ describe("db reset", () => {
           confirm: [true],
         });
         return Effect.gen(function* () {
-          yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+          yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
           expect(conn.execs.some((s) => s.includes("create table migrated_table"))).toBe(true);
           expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
           expect(out.stderrText).toContain("Applying migration");
+          const warning = out.stderrText.indexOf(
+            "[db.migrations].schema_paths is not applied while pg-delta is enabled",
+          );
+          expect(warning).toBeGreaterThanOrEqual(0);
+          expect(warning).toBeLessThan(out.stderrText.indexOf("Resetting remote database"));
+        });
+      },
+    );
+
+    it.live(
+      "warns before the prompt that schema_paths is ignored on an experimental remote reset with migrations disabled",
+      () => {
+        const { layer, out, conn } = setup(tmp.current, {
+          toml: 'project_id = "test"\n\n[db.migrations]\nenabled = false\nschema_paths = ["schemas/*.sql"]\n',
+          files: {
+            "supabase/schemas/01_users.sql": "create table schema_users ();",
+            ...migrationFile("20240101000000", "create table migrated_table ();"),
+          },
+          experimental: true,
+          confirm: [false],
+        });
+        return Effect.gen(function* () {
+          // Declining the prompt proves the warning was printed before it.
+          const exit = yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(
+            Effect.provide(layer),
+            Effect.exit,
+          );
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (!Exit.isFailure(exit)) return;
+          expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toMatchObject({
+            _tag: "HostedMutationDeclinedError",
+          });
+          expect(out.stderrText).toContain(
+            "[db.migrations].schema_paths is not applied while pg-delta is enabled",
+          );
+          expect(conn.execs).toEqual([]);
         });
       },
     );
@@ -3195,7 +3545,7 @@ describe("db reset", () => {
       "replays migrations instead of schema files on an experimental remote reset with a resolved version",
       () => {
         const { layer, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
           files: {
             "supabase/schemas/01_users.sql": "create table schema_users ();",
             ...migrationFile("20240101000000", "create table migrated_table ();"),
@@ -3206,7 +3556,7 @@ describe("db reset", () => {
         return Effect.gen(function* () {
           yield* dbReset({
             ...DEFAULT_FLAGS,
-            linked: true,
+            remote: REMOTE_LINKED,
             version: Option.some("20240101000000"),
           }).pipe(Effect.provide(layer));
           expect(conn.execs.some((s) => s.includes("create table migrated_table"))).toBe(true);
@@ -3219,12 +3569,12 @@ describe("db reset", () => {
       "fails an experimental remote reset when no schema_paths pattern matches anything",
       () => {
         const { layer, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["nomatch/*.sql"]\n',
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["nomatch/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
           experimental: true,
           confirm: [true],
         });
         return Effect.gen(function* () {
-          const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+          const exit = yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(
             Effect.provide(layer),
             Effect.exit,
           );
@@ -3248,7 +3598,7 @@ describe("db reset", () => {
       "ignores a partial schema_paths glob failure once at least one pattern matches",
       () => {
         const { layer, out, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql", "typo/*.sql"]\n',
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql", "typo/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
           files: {
             "supabase/schemas/01_users.sql": "create table schema_users ();",
             // Present so the seed glob's own "no files matched" warning doesn't show up here too.
@@ -3258,7 +3608,7 @@ describe("db reset", () => {
           confirm: [true],
         });
         return Effect.gen(function* () {
-          yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+          yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
           expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(true);
           expect(out.stderrText).not.toContain("no files matched pattern");
         });
@@ -3266,10 +3616,10 @@ describe("db reset", () => {
     );
 
     it.effect(
-      "attaches Go's schema-file suggestion when a schema file fails to apply on an experimental remote reset",
+      "attaches the schema-file suggestion when a schema file fails to apply on an experimental remote reset",
       () => {
         const { layer } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
           files: { "supabase/schemas/01_users.sql": "not valid sql;" },
           experimental: true,
           confirm: [true],
@@ -3277,7 +3627,7 @@ describe("db reset", () => {
           execFailsMessage: 'syntax error at or near "not"',
         });
         return Effect.gen(function* () {
-          const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+          const exit = yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(
             Effect.provide(layer),
             Effect.exit,
           );
@@ -3341,7 +3691,7 @@ describe("db reset", () => {
       "does not attach the schema-file suggestion when a schema file cannot be READ on an experimental remote reset",
       () => {
         const { layer, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
           experimental: true,
           confirm: [true],
         });
@@ -3352,7 +3702,7 @@ describe("db reset", () => {
           yield* fs.makeDirectory(path.dirname(schemaFile), { recursive: true });
           yield* fs.writeFileString(schemaFile, "create table schema_users ();");
           const deniedFs = yield* denyAccess(schemaFile, "readFileString", 0o644);
-          const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+          const exit = yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(
             Effect.provideService(FileSystem.FileSystem, deniedFs),
             Effect.provide(layer),
             Effect.exit,
@@ -3379,7 +3729,7 @@ describe("db reset", () => {
       "fails an experimental remote reset (without silently succeeding) when a matched schema_paths directory cannot be walked",
       () => {
         const { layer, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas"]\n',
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas"]\n\n[experimental.pgdelta]\nenabled = false\n',
           experimental: true,
           confirm: [true],
         });
@@ -3393,7 +3743,7 @@ describe("db reset", () => {
             "create table schema_users ();",
           );
           const deniedFs = yield* denyAccess(schemasDir, "readDirectory", 0o755);
-          const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+          const exit = yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(
             Effect.provideService(FileSystem.FileSystem, deniedFs),
             Effect.provide(layer),
             Effect.exit,
@@ -3421,7 +3771,7 @@ describe("db reset", () => {
       "takes the native experimental schema-files path via SUPABASE_EXPERIMENTAL in the project .env",
       () => {
         const { layer, out, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
           files: {
             "supabase/.env": "SUPABASE_EXPERIMENTAL=true\n",
             "supabase/schemas/01_users.sql": "create table schema_users ();",
@@ -3432,7 +3782,7 @@ describe("db reset", () => {
         });
         return withEmptyConfigEnv(
           Effect.gen(function* () {
-            yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+            yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
             expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(true);
             expect(conn.execs.some((s) => s.includes("create table migrated_table"))).toBe(false);
             expect(out.stderrText).not.toContain("Applying migration");
@@ -3441,13 +3791,13 @@ describe("db reset", () => {
       },
     );
 
-    it.effect("attaches the Go seed-flag conflict suggestion to --no-seed + --sql-paths", () => {
+    it.effect("attaches the seed-flag conflict suggestion to --no-seed + --sql-paths", () => {
       const { layer } = setup(tmp.current, { toml: 'project_id = "test"\n' });
       return Effect.gen(function* () {
         const exit = yield* dbReset({
           ...DEFAULT_FLAGS,
-          noSeed: true,
-          sqlPaths: ["seed.sql"],
+          noSeed: Option.some(true),
+          sqlPaths: Option.some(["seed.sql"]),
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
@@ -3460,20 +3810,24 @@ describe("db reset", () => {
     });
 
     it.effect(
-      "applies configured schema files and skips seeding on an experimental remote --db-url reset",
+      "applies configured schema files and skips seeding on an experimental --remote=<db-url> reset",
       () => {
         const { layer, conn, resolver } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
+          noSeed: true,
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
           files: { "supabase/schemas/01_users.sql": "create table schema_users ();" },
           experimental: true,
-          args: ["db", "reset", "--db-url", "postgresql://db.example.com:5432/postgres"],
+          args: ["db", "reset", "--remote=postgresql://db.example.com:5432/postgres"],
           confirm: [true],
         });
         return Effect.gen(function* () {
           yield* dbReset({
             ...DEFAULT_FLAGS,
-            dbUrl: Option.some("postgresql://db.example.com:5432/postgres"),
-            noSeed: true,
+            remote: Option.some({
+              _tag: "DbUrl",
+              url: "postgresql://db.example.com:5432/postgres",
+            }),
+            noSeed: Option.some(true),
           }).pipe(Effect.provide(layer));
           expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(true);
           expect(conn.execs.some((s) => s.includes("insert into"))).toBe(false);
@@ -3486,13 +3840,16 @@ describe("db reset", () => {
       const { layer, out, conn } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
         files: migrationFile("20240101000000"),
-        args: ["db", "reset", "--db-url", "postgresql://localhost:54322/postgres"],
+        args: ["db", "reset", "--remote=postgresql://localhost:54322/postgres"],
         isLocal: true,
       });
       return Effect.gen(function* () {
         yield* dbReset({
           ...DEFAULT_FLAGS,
-          dbUrl: Option.some("postgresql://localhost:54322/postgres"),
+          remote: Option.some({
+            _tag: "DbUrl",
+            url: "postgresql://localhost:54322/postgres",
+          } as const),
           version: Option.some("20240101000000"),
         }).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("Resetting local database to version: 20240101000000");
@@ -3500,11 +3857,11 @@ describe("db reset", () => {
       });
     });
 
-    it.effect("resets a remote --db-url target without loading a remote config override", () => {
+    it.effect("resets a --remote=<db-url> target without loading a remote config override", () => {
       const { layer, out, conn } = setup(tmp.current, {
         // No config file → embedded defaults (migrations + seed enabled).
         files: migrationFile("20240101000000"),
-        args: ["db", "reset", "--db-url", "postgresql://db.example.com:5432/postgres"],
+        args: ["db", "reset", "--remote=postgresql://db.example.com:5432/postgres"],
         isLocal: false,
         omitRef: true,
         confirm: [true],
@@ -3512,7 +3869,10 @@ describe("db reset", () => {
       return Effect.gen(function* () {
         yield* dbReset({
           ...DEFAULT_FLAGS,
-          dbUrl: Option.some("postgresql://db.example.com:5432/postgres"),
+          remote: Option.some({
+            _tag: "DbUrl",
+            url: "postgresql://db.example.com:5432/postgres",
+          } as const),
         }).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("Resetting remote database...");
         expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
@@ -3526,7 +3886,7 @@ describe("db reset", () => {
         ref: VALID_REF,
       });
       return Effect.gen(function* () {
-        yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+        yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("Loading config override: [remotes.preview]");
       });
     });
@@ -3541,7 +3901,7 @@ describe("db reset", () => {
         confirm: [true],
       });
       return Effect.gen(function* () {
-        yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+        yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
         expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
         expect(out.stderrText).not.toContain("Applying migration");
         expect(out.stderrText).not.toContain("Seeding data from");
@@ -3556,26 +3916,174 @@ describe("db reset", () => {
         yes: true,
       });
       return Effect.gen(function* () {
-        yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+        yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
         const success = out.messages.find((m) => m.type === "success");
-        expect(success?.data?.["target"]).toBe("remote");
+        expect(success?.data).toEqual({ version: "" });
       });
     });
 
-    it.effect("emits a json result for a confirmed remote reset", () => {
-      const { layer, out } = setup(tmp.current, {
-        toml: 'project_id = "test"\n',
-        files: migrationFile("20240101000000"),
-        format: "json",
+    describe("seeding into a target that matched a [remotes.*] block", () => {
+      const REMOTE_TOML = `project_id = "base"\n\n[remotes.preview]\nproject_id = "${VALID_REF}"\n`;
+      const remoteSeed = (
+        opts: {
+          yes?: boolean;
+          confirm?: ReadonlyArray<boolean>;
+          env?: Readonly<Record<string, string>>;
+          sqlPaths?: ReadonlyArray<string>;
+          remoteBlock?: string;
+        } = {},
+      ) =>
+        setup(tmp.current, {
+          toml: `${REMOTE_TOML}${opts.remoteBlock ?? ""}`,
+          files: {
+            ...migrationFile("20240101000000"),
+            "supabase/seed.sql": "insert into t values (1);",
+            "supabase/custom-seed.sql": "insert into t values (2);",
+          },
+          sqlPaths: "sqlPaths" in opts ? opts.sqlPaths : ["custom-seed.sql"],
+          yes: opts.yes,
+          confirm: opts.confirm,
+          env: opts.env,
+        });
+      const flags = {
+        ...DEFAULT_FLAGS,
+        remote: REMOTE_LINKED,
+        sqlPaths: Option.some(["custom-seed.sql"]),
+      };
+      const seeded = (out: { readonly stderrText: string }) =>
+        out.stderrText.includes("Seeding data from supabase/custom-seed.sql...");
+      const SEED_PLAN = "seed 1 file into [remotes.preview] (seeding enabled by --sql-paths)";
+
+      it.effect("names the seed files and the matched remote in the single reset question", () => {
+        const { layer, out } = remoteSeed({ confirm: [true] });
+        return Effect.gen(function* () {
+          yield* dbReset(flags).pipe(Effect.provide(layer));
+          expect(out.promptConfirmCalls).toHaveLength(1);
+          expect(out.promptConfirmCalls[0]?.opts?.defaultValue).toBe(false);
+          expect(out.stderrText).toContain(SEED_PLAN);
+          expect(seeded(out)).toBe(true);
+        });
       });
-      return Effect.gen(function* () {
-        // json mode's default-false prompt has no confirm response, so it declines and cancels.
-        const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
-          Effect.provide(layer),
-          Effect.exit,
+
+      it.effect("proceeds without asking under --yes", () => {
+        const { layer, out } = remoteSeed({ yes: true });
+        return Effect.gen(function* () {
+          yield* dbReset(flags).pipe(Effect.provide(layer));
+          expect(out.promptConfirmCalls).toHaveLength(0);
+          expect(out.stderrText).toContain("Confirmed by --yes: Reset the remote database");
+          expect(seeded(out)).toBe(true);
+        });
+      });
+
+      it.effect("names the seed in the single question when the matched remote enables it", () => {
+        const { layer, out } = remoteSeed({
+          confirm: [true],
+          remoteBlock: "\n[remotes.preview.db.seed]\nenabled = true\n",
+          sqlPaths: undefined,
+        });
+        return Effect.gen(function* () {
+          yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
+          expect(out.promptConfirmCalls).toHaveLength(1);
+          expect(out.stderrText).toContain("seed 1 file into [remotes.preview]");
+          expect(out.stderrText).toContain("Seeding data from supabase/seed.sql...");
+        });
+      });
+
+      it.effect("leaves seeding out of the question when the matched remote disables it", () => {
+        const { layer, out } = setup(tmp.current, {
+          toml: REMOTE_TOML,
+          files: migrationFile("20240101000000"),
+          confirm: [true],
+        });
+        return Effect.gen(function* () {
+          yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
+          expect(out.promptConfirmCalls).toHaveLength(1);
+          expect(out.stderrText).not.toContain("seed 1 file");
+          expect(out.stderrText).not.toContain("Seeding data from");
+        });
+      });
+
+      it.effect("names the seed without a remote when the target matched no remote block", () => {
+        const { layer, out } = setup(tmp.current, {
+          toml: 'project_id = "test"\n',
+          files: {
+            ...migrationFile("20240101000000"),
+            "supabase/custom-seed.sql": "insert into t values (2);",
+          },
+          sqlPaths: ["custom-seed.sql"],
+          confirm: [true],
+        });
+        return Effect.gen(function* () {
+          yield* dbReset(flags).pipe(Effect.provide(layer));
+          expect(out.promptConfirmCalls).toHaveLength(1);
+          expect(out.stderrText).toContain("seed 1 file\n");
+          expect(out.stderrText).not.toContain("[remotes.");
+          expect(seeded(out)).toBe(true);
+        });
+      });
+
+      it.effect("SUPABASE_DB_SEED_ENABLED beats the remote's disabled default", () => {
+        const { layer, out } = remoteSeed({
+          confirm: [true],
+          env: { SUPABASE_DB_SEED_ENABLED: "true" },
+          sqlPaths: undefined,
+        });
+        return Effect.gen(function* () {
+          yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
+          expect(out.promptConfirmCalls).toHaveLength(1);
+          expect(out.stderrText).toContain("seed 1 file into [remotes.preview]");
+        });
+      });
+    });
+
+    describe("the apply step in the single reset question", () => {
+      const remoteReset = (toml: string, extra: { experimental?: boolean } = {}) =>
+        setup(tmp.current, {
+          toml,
+          files: {
+            ...migrationFile("20240101000000"),
+            "supabase/schemas/01_users.sql": "create table schema_users ();",
+          },
+          confirm: [true],
+          ref: VALID_REF,
+          ...extra,
+        });
+
+      it.effect("names the local migrations when migrations are enabled", () => {
+        const { layer, out } = remoteReset('project_id = "test"\n');
+        return Effect.gen(function* () {
+          yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
+          expect(out.stderrText).toContain("drop every user schema\napply local migrations\n");
+          expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
+        });
+      });
+
+      it.effect("names no apply step when migrations are disabled", () => {
+        const { layer, out } = remoteReset(
+          'project_id = "test"\n\n[db.migrations]\nenabled = false\n',
         );
-        expect(Exit.isFailure(exit)).toBe(true);
-        expect(out).toBeDefined();
+        return Effect.gen(function* () {
+          yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
+          expect(out.promptConfirmCalls).toHaveLength(1);
+          expect(out.stderrText).toContain("drop every user schema");
+          expect(out.stderrText).not.toContain("apply local migrations");
+          expect(out.stderrText).not.toContain("apply the declarative schema files");
+          expect(out.stderrText).not.toContain("Applying migration");
+        });
+      });
+
+      it.effect("names the schema files instead of the migrations when they apply", () => {
+        const { layer, out } = remoteReset(
+          'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
+          { experimental: true },
+        );
+        return Effect.gen(function* () {
+          yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
+          expect(out.stderrText).toContain(
+            "drop every user schema\napply the declarative schema files\n",
+          );
+          expect(out.stderrText).not.toContain("apply local migrations");
+        });
       });
     });
 
@@ -3584,9 +4092,9 @@ describe("db reset", () => {
       return Effect.gen(function* () {
         const exit = yield* dbReset({
           ...DEFAULT_FLAGS,
-          linked: true,
-          noSeed: true,
-          sqlPaths: ["seed.sql"],
+          remote: REMOTE_LINKED,
+          noSeed: Option.some(true),
+          sqlPaths: Option.some(["seed.sql"]),
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
@@ -3600,8 +4108,8 @@ describe("db reset", () => {
       return Effect.gen(function* () {
         const exit = yield* dbReset({
           ...DEFAULT_FLAGS,
-          linked: true,
-          sqlPaths: [""],
+          remote: REMOTE_LINKED,
+          sqlPaths: Option.some([""]),
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
@@ -3617,20 +4125,21 @@ describe("db reset", () => {
       return Effect.gen(function* () {
         const exit = yield* dbReset({
           ...DEFAULT_FLAGS,
-          linked: true,
+          remote: REMOTE_LINKED,
           last: Option.some(-1),
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const causeText = Cause.pretty(exit.cause);
           expect(causeText).toContain("invalid argument");
-          expect(causeText).toContain("strconv.ParseUint");
+          expect(causeText).toContain("expected an unsigned integer");
         }
       });
     });
 
     it.effect("seeds an absolute --sql-paths file on a remote reset", () => {
       const { layer, out } = setup(tmp.current, {
+        sqlPaths: [`${tmp.current}/external-seed.sql`],
         toml: 'project_id = "test"\n',
         files: migrationFile("20240101000000"),
         confirm: [true],
@@ -3642,8 +4151,8 @@ describe("db reset", () => {
         yield* fs.writeFileString(absSeed, "insert into t values (3);");
         yield* dbReset({
           ...DEFAULT_FLAGS,
-          linked: true,
-          sqlPaths: [absSeed],
+          remote: REMOTE_LINKED,
+          sqlPaths: Option.some([absSeed]),
         }).pipe(Effect.provide(layer));
         // Seed paths are reported forward-slashed on every platform, drive letter included.
         expect(out.stderrText).toContain(
@@ -3654,6 +4163,7 @@ describe("db reset", () => {
 
     it.effect("warns and seeds from --sql-paths overriding config on a remote reset", () => {
       const { layer, out } = setup(tmp.current, {
+        sqlPaths: ["custom-seed.sql"],
         // Seed disabled in config — --sql-paths must force-enable it.
         toml: 'project_id = "test"\n\n[db.seed]\nenabled = false\n',
         files: {
@@ -3665,8 +4175,8 @@ describe("db reset", () => {
       return Effect.gen(function* () {
         yield* dbReset({
           ...DEFAULT_FLAGS,
-          linked: true,
-          sqlPaths: ["custom-seed.sql"],
+          remote: REMOTE_LINKED,
+          sqlPaths: Option.some(["custom-seed.sql"]),
         }).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("--sql-paths overrides [db.seed].sql_paths");
         expect(out.stderrText).toContain("Seeding data from supabase/custom-seed.sql...");
@@ -3677,7 +4187,8 @@ describe("db reset", () => {
       "seeds from --sql-paths on an experimental remote reset, independently of the schema-files apply",
       () => {
         const { layer, out, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
+          sqlPaths: ["custom-seed.sql"],
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
           files: {
             "supabase/schemas/01_users.sql": "create table schema_users ();",
             "supabase/custom-seed.sql": "insert into t values (2);",
@@ -3688,8 +4199,8 @@ describe("db reset", () => {
         return Effect.gen(function* () {
           yield* dbReset({
             ...DEFAULT_FLAGS,
-            linked: true,
-            sqlPaths: ["custom-seed.sql"],
+            remote: REMOTE_LINKED,
+            sqlPaths: Option.some(["custom-seed.sql"]),
           }).pipe(Effect.provide(layer));
           expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(true);
           expect(out.stderrText).toContain("Seeding data from supabase/custom-seed.sql...");
@@ -3697,4 +4208,74 @@ describe("db reset", () => {
       },
     );
   });
+
+  describeDbTargetSelection("db reset", {
+    dbUrl: true,
+    workdir: () => tmp.current,
+    around: (row) => withEnvVar("GITHUB_HEAD_REF", undefined, row),
+    attempt: ({ workdir, args, target }) => {
+      const ctx = setup(workdir, {
+        toml: 'project_id = "test"\n',
+        files: { "supabase/seed.sql": "select 1;\n" },
+        args,
+        confirm: [true],
+        isLocal: Option.isNone(target.remote) && !target.linked,
+      });
+      const branchApi = branchListApi();
+      return {
+        layer: Layer.merge(ctx.layer, branchApi.layer),
+        out: ctx.out,
+        run: dbReset({ ...DEFAULT_FLAGS, ...target }),
+        target: () => ctx.resolver.inputs[0]?.target,
+        cachedRef: () => ctx.linkedCache.cachedRef,
+        branchLookups: () => branchApi.requests,
+        apiRequests: () => [...branchApi.requests, ...ctx.platformApi.requests],
+      };
+    },
+  });
+});
+
+describeHostedConsent("db reset", {
+  setup: (workdir) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const dir = `${workdir}/supabase/migrations`;
+      yield* fs.makeDirectory(dir, { recursive: true });
+      yield* fs.writeFileString(`${dir}/20240101000000_test.sql`, "create table t ();");
+    }),
+  invoke: ({ workdir }) => {
+    const conn = mockConnection();
+    const child = mockContainerCliSpawner(defaultLocalResetRoute());
+    const stackApi = mockResetStackApi({ workdir, ready: true });
+    return {
+      run: dbReset({
+        ...DEFAULT_FLAGS,
+        remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            mockResolver({ isLocal: false, ref: VALID_REF }).layer,
+            conn.layer,
+            cliConfigValuesTestLayer,
+            child.layer,
+            mockLocalDockerEngineUnavailableLayer,
+            alwaysReadyHttpClientLayer,
+            dockerRunLayer.pipe(
+              Layer.provide(child.layer),
+              Layer.provide(mockProcessControl().layer),
+            ),
+            Layer.succeed(DnsResolverFlag, "native"),
+            Layer.succeed(NetworkIdFlag, Option.none()),
+            Layer.succeed(ExperimentalFlag, false),
+            Layer.succeed(DebugFlag, false),
+            stackBackendLayer("legacy"),
+            stackApi.layer,
+            Layer.succeed(StackCatalogSetup, { apply: () => Effect.void }),
+          ),
+        ),
+      ),
+      mutations: () => conn.execs.length,
+    };
+  },
 });
