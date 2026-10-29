@@ -178,12 +178,24 @@ function dbSetupJobCalls(spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray<Spa
   return spawned.filter((s) => s.args[0] === "run" && s.args[1] === "--rm");
 }
 
+/** The rollback's closing step; nothing else in `db start` prunes networks. */
 function rollbackWasAttempted(spawned: ReadonlyArray<SpawnRecord>): boolean {
-  return spawned.some((s) => s.args[0] === "container" && s.args[1] === "prune");
+  return spawned.some((s) => s.args[0] === "network" && s.args[1] === "prune");
 }
 
-function volumePruneWasAttempted(spawned: ReadonlyArray<SpawnRecord>): boolean {
-  return spawned.some((s) => s.args[0] === "volume" && s.args[1] === "prune");
+const TEARDOWN_VERBS: ReadonlySet<string | undefined> = new Set(["rm", "stop", "kill", "prune"]);
+
+/** Every command that stops, removes, or prunes something, in spawn order. */
+function teardownCommands(spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray<string> {
+  return spawned
+    .filter((s) => TEARDOWN_VERBS.has(s.args[0]) || TEARDOWN_VERBS.has(s.args[1]))
+    .map((s) => s.args.join(" "));
+}
+
+function volumeRemovals(spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray<ReadonlyArray<string>> {
+  return spawned
+    .filter((s) => s.args[0] === "volume" && (s.args[1] === "rm" || s.args[1] === "prune"))
+    .map((s) => s.args);
 }
 
 /** Stateful default route: only created containers inspect successfully, matching Docker across initial state detection and post-create health waits. Existing volume by default (a restart). */
@@ -327,16 +339,20 @@ function leftBehindDbRoute(
   };
 }
 
+/** The project's other services are up: `docker ps` lists them by the project label. */
+function otherServicesRunningRoute(
+  base: (args: ReadonlyArray<string>) => RouteResult,
+): (args: ReadonlyArray<string>) => RouteResult {
+  return (args) =>
+    args[0] === "ps"
+      ? { stdout: ["a1b2c3\tsupabase_auth_test\t", "d4e5f6\tsupabase_rest_test\t"] }
+      : base(args);
+}
+
 function containerRemovals(
   spawned: ReadonlyArray<SpawnRecord>,
 ): ReadonlyArray<ReadonlyArray<string>> {
   return spawned.filter((s) => s.args[0] === "container" && s.args[1] === "rm").map((s) => s.args);
-}
-
-function volumeRemovalWasAttempted(spawned: ReadonlyArray<SpawnRecord>): boolean {
-  return spawned.some(
-    (s) => s.args[0] === "volume" && (s.args[1] === "rm" || s.args[1] === "prune"),
-  );
 }
 
 type DbProbePath = "Engine API" | "container CLI";
@@ -655,7 +671,7 @@ describe("db start", () => {
           expect(containerRemovals(child.spawned)).toEqual([
             ["container", "rm", "-f", DB_CONTAINER],
           ]);
-          expect(volumeRemovalWasAttempted(child.spawned)).toBe(false);
+          expect(volumeRemovals(child.spawned)).toEqual([]);
           expect(rollbackWasAttempted(child.spawned)).toBe(false);
           expect(containerNameFromCreateArgs(createArgs(child.spawned) ?? [])).toBe(DB_CONTAINER);
           expect(dbSetupJobCalls(child.spawned)).toHaveLength(0);
@@ -685,12 +701,78 @@ describe("db start", () => {
           });
           expect(out.stderrText).not.toContain("already running");
           expect(containerRemovals(child.spawned)).toEqual([]);
-          expect(volumeRemovalWasAttempted(child.spawned)).toBe(false);
+          expect(volumeRemovals(child.spawned)).toEqual([]);
           expect(createArgs(child.spawned)).toBeUndefined();
           expect(yield* currentBranchExists(tempRoot.current)).toBe(false);
         });
       },
     );
+
+    it.effect.each(["Engine API", "container CLI"] as const)(
+      "--from-backup against the %s-reported stopped container fails before removing anything",
+      (probe) => {
+        const { route, engine } = leftBehindDbProbe(probe, "exited");
+        const { layer, child } = setup({ route, projectId: DB_PROJECT_ID });
+        return Effect.gen(function* () {
+          const error = yield* dbStart(flags("/abs/host/backup.sql")).pipe(
+            Effect.provide(engine === undefined ? layer : Layer.mergeAll(layer, engine)),
+            Effect.flip,
+          );
+          expect(error).toMatchObject({
+            _tag: "StartBackupVolumeExistsError",
+            message: "backup volume already exists",
+            suggestion: expect.stringContaining("supabase stop --no-backup"),
+          });
+          expect(teardownCommands(child.spawned)).toEqual([]);
+          expect(createArgs(child.spawned)).toBeUndefined();
+          expect(yield* currentBranchExists(tempRoot.current)).toBe(false);
+        }).pipe(withEmptyConfigEnv);
+      },
+    );
+
+    for (const [probe, route, outcome, volumeRemoval] of [
+      [
+        "initialised",
+        (base: ReturnType<typeof defaultRoute>) => base,
+        "removes only the db container and unused networks",
+        [],
+      ],
+      [
+        "uninitialised",
+        uninitialisedDataDirRoute,
+        "removes only the db container, its volume and unused networks",
+        [`volume rm -f ${DB_CONTAINER}`],
+      ],
+    ] as const) {
+      it.effect(
+        `a failed bring-up over a stopped db container on an ${probe} data directory ${outcome}, leaving the project's running services alone`,
+        () => {
+          const { layer, child } = setup({
+            route: route(
+              dbStartFailsRoute(
+                otherServicesRunningRoute(
+                  leftBehindDbRoute({ Running: false, Status: "exited" }, defaultRoute()),
+                ),
+              ),
+            ),
+            projectId: DB_PROJECT_ID,
+          });
+          return Effect.gen(function* () {
+            const error = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
+            expect(error).toBeInstanceOf(ContainerStartError);
+            // The first removal recovers the stopped container; the second is the rollback of
+            // the replacement that failed to start.
+            expect(teardownCommands(child.spawned)).toEqual([
+              `container rm -f ${DB_CONTAINER}`,
+              `container rm -f ${DB_CONTAINER}`,
+              ...volumeRemoval,
+              "network prune --force --filter label=com.supabase.cli.project=test",
+            ]);
+            expect(yield* currentBranchExists(tempRoot.current)).toBe(false);
+          }).pipe(withEmptyConfigEnv);
+        },
+      );
+    }
 
     it.effect("an empty BITBUCKET_CLONE_DIR does not count as Bitbucket Pipelines", () => {
       const { route } = leftBehindDbProbe("container CLI", "exited");
@@ -836,7 +918,7 @@ describe("db start", () => {
           expect(Cause.pretty(exit.cause)).toContain("DbConfigLoadError");
         }
         // The container is already created/healthy by the time JWKS resolution runs, so the
-        // rollback still tears it down.
+        // rollback still removes it.
         expect(rollbackWasAttempted(child.spawned)).toBe(true);
       }).pipe(
         Effect.ensuring(
@@ -922,10 +1004,9 @@ describe("db start", () => {
           suggestion: expect.stringContaining("supabase stop --no-backup"),
         });
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-        // The volume this guard detected must never be pruned, even though the rollback still
-        // removes everything else on failure.
+        // The rollback must never remove the volume this guard detected.
         expect(rollbackWasAttempted(child.spawned)).toBe(true);
-        expect(volumePruneWasAttempted(child.spawned)).toBe(false);
+        expect(volumeRemovals(child.spawned)).toEqual([]);
       });
     },
   );
@@ -1021,15 +1102,15 @@ describe("db start", () => {
       const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(rollbackWasAttempted(child.spawned)).toBe(true);
-      // This run's fresh volume means the rollback prunes it too — the "backup volume already
-      // exists" test above covers the non-pruning case.
-      expect(volumePruneWasAttempted(child.spawned)).toBe(true);
+      // This run's fresh volume means the rollback removes it too — the "backup volume already
+      // exists" test above covers the non-removing case.
+      expect(volumeRemovals(child.spawned)).toEqual([["volume", "rm", "-f", DB_CONTAINER]]);
       expect(yield* currentBranchExists(tempRoot.current)).toBe(false);
     });
   });
 
   it.live(
-    "honors a SUPABASE_DEBUG set only in the project .env: the rollback's Pruned reports fire without --debug",
+    "honors a SUPABASE_DEBUG set only in the project .env: the rollback's Pruned network report fires without --debug",
     () => {
       // A shell SUPABASE_DEBUG (even "false") would suppress the project .env value, so clear
       // it first.
@@ -1051,7 +1132,7 @@ describe("db start", () => {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         expect(rollbackWasAttempted(child.spawned)).toBe(true);
-        expect(writes.some((chunk) => chunk.includes("Pruned containers:"))).toBe(true);
+        expect(writes.some((chunk) => chunk.includes("Pruned network:"))).toBe(true);
       }).pipe(
         withEmptyConfigEnv,
         Effect.ensuring(
@@ -1088,16 +1169,17 @@ describe("db start", () => {
         yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("Initialising schema...");
         expect(dbSetupJobCalls(child.spawned)).toHaveLength(3);
-        expect(volumePruneWasAttempted(child.spawned)).toBe(false);
+        expect(volumeRemovals(child.spawned)).toEqual([]);
         expect(yield* readCurrentBranch(tempRoot.current)).toBe("main");
       });
     });
 
-    for (const [probe, route, volumePruned] of [
+    for (const [probe, route, volumeRemoved] of [
       ["uninitialised", uninitialisedDataDirRoute, true],
       ["initialised", (base: ReturnType<typeof defaultRoute>) => base, false],
     ] as const) {
-      const rollbackOutcome = volumePruned ? "and prunes" : "without pruning";
+      const rollbackOutcome = volumeRemoved ? "and removes" : "without removing";
+      const expectedVolumeRemovals = volumeRemoved ? [["volume", "rm", "-f", DB_CONTAINER]] : [];
 
       it.live(
         `rolls back ${rollbackOutcome} the volume when Postgres never becomes healthy on an ${probe} data directory`,
@@ -1111,7 +1193,7 @@ describe("db start", () => {
             const error = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
             expect(error).toBeInstanceOf(HealthCheckTimeoutError);
             expect(rollbackWasAttempted(child.spawned)).toBe(true);
-            expect(volumePruneWasAttempted(child.spawned)).toBe(volumePruned);
+            expect(volumeRemovals(child.spawned)).toEqual(expectedVolumeRemovals);
           });
         },
       );
@@ -1129,7 +1211,7 @@ describe("db start", () => {
               ),
             });
             expect(rollbackWasAttempted(child.spawned)).toBe(true);
-            expect(volumePruneWasAttempted(child.spawned)).toBe(volumePruned);
+            expect(volumeRemovals(child.spawned)).toEqual(expectedVolumeRemovals);
           });
         },
       );
@@ -2047,7 +2129,7 @@ describe("db start", () => {
       const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(rollbackWasAttempted(child.spawned)).toBe(true);
-      expect(volumePruneWasAttempted(child.spawned)).toBe(true);
+      expect(volumeRemovals(child.spawned)).toEqual([["volume", "rm", "-f", DB_CONTAINER]]);
     });
   });
 

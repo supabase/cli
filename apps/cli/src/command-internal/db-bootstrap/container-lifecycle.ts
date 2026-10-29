@@ -336,7 +336,7 @@ export class VolumeInspectError extends Data.TaggedError("VolumeInspectError")<{
 }
 
 /** Docker's/Podman's "no such volume" stderr shape for `volume inspect`. */
-function isVolumeNotFoundMessage(message: string): boolean {
+export function isVolumeNotFoundMessage(message: string): boolean {
   return /no such volume/iu.test(message);
 }
 

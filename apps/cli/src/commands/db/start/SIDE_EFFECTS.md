@@ -21,7 +21,8 @@ existence-only wrapper `isLocalDbRunning`). A running container short-circuits t
 running". A container that exists but is not running (`created`, `exited`, …) is removed with
 `docker container rm -f supabase_db_<project>` — only the db container, with the named data
 volume kept and the project's other services left alone — and then brought up like an absent one;
-the reused-volume data-directory probe decides whether setup runs. In Bitbucket Pipelines
+the reused-volume data-directory probe decides whether setup runs. `--from-backup` against such a
+container fails with `backup volume already exists` (step 3) before the container is removed. In Bitbucket Pipelines
 (`BITBUCKET_CLONE_DIR` set) removal is skipped, since the lack of named volumes would make it
 destructive: the command fails with `<container> container is not running: <state>` and a
 `supabase stop` suggestion instead. The bring-up that follows an "absent" answer (or that
@@ -85,10 +86,13 @@ composition reuses too — see that command's `SIDE_EFFECTS.md`):
    leaves `starting`, the container stops running, or Docker cannot launch its health check. Never
    fails the command, whatever the outcome, and is not covered by the rollback below.
 
-Any failure from step 1 onward rolls back via `rollbackStart` (stop + prune every
-container/network this project's label matches; volumes are pruned too, but ONLY when the
-volume was confirmed fresh this run, including a reused volume the probe found uninitialised, even
-when `docker start` then fails).
+Any failure from step 1 onward prints `Stopping containers...` to stderr and rolls back via
+`rollbackDatabaseStart`, which only touches what this command creates: the db container
+(`docker container rm -f`), the db volume (`docker volume rm -f supabase_db_<project>`, ONLY when
+the volume was confirmed fresh this run, including a reused volume the probe found uninitialised,
+even when `docker start` then fails), and unused project-labelled networks
+(`docker network prune`). The project's other containers and volumes are left alone. A rollback
+failure is logged to stderr and never replaces the original error.
 
 ## Files Read
 
@@ -125,20 +129,20 @@ native container command in this codebase — never `supabase-go` — except the
 db state probe, which prefers a direct Engine-API request (see "API Routes") and
 only spawns on fallback.
 
-| Command                                                                                                                          | When                                                                                                                                                       |
-| -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `docker container inspect supabase_db_<project>`                                                                                 | the db state probe — only when the direct Engine-API request (active local socket/named pipe) gives no definitive answer                                   |
-| `docker container rm -f supabase_db_<project>`                                                                                   | the db container exists but is not running, outside Bitbucket Pipelines — the data volume is kept                                                          |
-| `docker network create --label ... <networkId>`                                                                                  | when not already running, unless `--network-id` names a built-in network                                                                                   |
-| `docker volume inspect supabase_db_<project>`                                                                                    | when not already running — the pre-create fresh-volume probe                                                                                               |
-| `docker image inspect` / `docker pull` (registry-fallback resolve)                                                               | when not already running — resolves the Postgres image                                                                                                     |
-| `docker volume create --label ...`                                                                                               | when not already running, unless a `--from-backup` restore onto an existing volume (fails first)                                                           |
-| `docker create` + optional `docker cp - <id>:/` + `docker start`                                                                 | when not already running — `cp` streams one in-memory tar archive containing the pgsodium root key at its exact path when the selected entrypoint needs it |
-| `docker cp <id>:/var/lib/postgresql/data/PG_VERSION -`                                                                           | when the volume already existed, between `docker create` and `docker start` — the data-directory probe; its stdout is discarded                            |
-| `docker container inspect` (repeated)                                                                                            | readiness polling every 500ms up to `db.health_timeout`, then health-settle polling every 1s for up to 15s                                                 |
-| `docker logs <id>`                                                                                                               | on a health-check timeout (either path — swallowed or not)                                                                                                 |
-| `docker run --rm ...`                                                                                                            | fresh volume, no `--from-backup`, `db.major_version >= 15`: up to 3 one-shot migrate jobs (realtime/storage/auth)                                          |
-| `docker ps` / `docker stop` / `docker container prune` / `docker volume prune` (fresh-volume runs only) / `docker network prune` | on ANY failure from network-ensure through `_current_branch` — the rollback                                                                                |
+| Command                                                                                            | When                                                                                                                                                       |
+| -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `docker container inspect supabase_db_<project>`                                                   | the db state probe — only when the direct Engine-API request (active local socket/named pipe) gives no definitive answer                                   |
+| `docker container rm -f supabase_db_<project>`                                                     | the db container exists but is not running, outside Bitbucket Pipelines — the data volume is kept                                                          |
+| `docker network create --label ... <networkId>`                                                    | when not already running, unless `--network-id` names a built-in network                                                                                   |
+| `docker volume inspect supabase_db_<project>`                                                      | when not already running — the pre-create fresh-volume probe                                                                                               |
+| `docker image inspect` / `docker pull` (registry-fallback resolve)                                 | when not already running — resolves the Postgres image                                                                                                     |
+| `docker volume create --label ...`                                                                 | when not already running, unless a `--from-backup` restore onto an existing volume (fails first)                                                           |
+| `docker create` + optional `docker cp - <id>:/` + `docker start`                                   | when not already running — `cp` streams one in-memory tar archive containing the pgsodium root key at its exact path when the selected entrypoint needs it |
+| `docker cp <id>:/var/lib/postgresql/data/PG_VERSION -`                                             | when the volume already existed, between `docker create` and `docker start` — the data-directory probe; its stdout is discarded                            |
+| `docker container inspect` (repeated)                                                              | readiness polling every 500ms up to `db.health_timeout`, then health-settle polling every 1s for up to 15s                                                 |
+| `docker logs <id>`                                                                                 | on a health-check timeout (either path — swallowed or not)                                                                                                 |
+| `docker run --rm ...`                                                                              | fresh volume, no `--from-backup`, `db.major_version >= 15`: up to 3 one-shot migrate jobs (realtime/storage/auth)                                          |
+| `docker container rm -f` / `docker volume rm -f` (fresh-volume runs only) / `docker network prune` | on ANY failure from network-ensure through `_current_branch` — the rollback                                                                                |
 
 ## API Routes
 

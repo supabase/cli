@@ -57,8 +57,8 @@ import { buildLocalDbContainerInputs } from "./local-container-inputs.ts";
 import { removeContainer } from "./container-lifecycle.ts";
 import { awaitDockerHealthSettled } from "./health-check.ts";
 import { localDbState } from "./local-db-running.ts";
-import { rollbackStart } from "./rollback.ts";
-import { startDatabase } from "./start-database.ts";
+import { rollbackDatabaseStart } from "./rollback.ts";
+import { backupVolumeExistsError, startDatabase } from "./start-database.ts";
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -106,7 +106,7 @@ const startLocalDatabaseInScope = Effect.fn("DbBootstrap.startLocalDatabase")(fu
   // `isLocalDbRunning`'s best-effort read, which swallows config errors.
   const dbTomlValues = yield* checkDbToml(fs, path, cliSettings.workdir);
 
-  // Threaded into `rollbackStart`'s own teardown (gates its `Pruned …:` stderr reports) and into
+  // Threaded into `rollbackDatabaseStart`'s own teardown (gates its `Pruned …:` stderr reports) and into
   // `buildLocalDbContainerInputs`'s own `setup.debug`, so a failed fresh-volume migrate job tees
   // its own stderr. Resolved with the `SUPABASE_DEBUG` shell/project-`.env` fallback, not the
   // bare flag.
@@ -668,6 +668,12 @@ const startLocalDatabaseInScope = Effect.fn("DbBootstrap.startLocalDatabase")(fu
         ? fromBackupFlag
         : path.join(runtimeInfo.cwd, fromBackupFlag);
 
+  // A stopped container's named volume always exists, so a restore is refused before the
+  // container is removed.
+  if (recoverStopped && fromBackup !== undefined) {
+    return yield* backupVolumeExistsError();
+  }
+
   // Not running → bring up the container natively. `context` (loaded eagerly above) is threaded
   // through as `preloadedContext` so this call reuses it instead of calling
   // `loadLocalProjectContext` a second time, which would double-print deprecated-config-section
@@ -710,8 +716,7 @@ const startLocalDatabaseInScope = Effect.fn("DbBootstrap.startLocalDatabase")(fu
 
   // Runs the exact start-database sequence (network -> volume probe -> container create+start
   // -> health wait -> fresh-volume setup -> `_current_branch`) — shared with `supabase start`,
-  // see `startDatabase`'s own header. Any failure rolls back via the same `Effect.onError`
-  // wrapper `supabase start` uses.
+  // see `startDatabase`'s own header. Any failure rolls back only what `db start` creates.
   yield* startDatabase(spawner, {
     fs,
     path,
@@ -735,7 +740,7 @@ const startLocalDatabaseInScope = Effect.fn("DbBootstrap.startLocalDatabase")(fu
     },
   }).pipe(
     Effect.onError(() =>
-      rollbackStart(spawner, filterValue, isFreshVolume, cliSettings.workdir, debug),
+      rollbackDatabaseStart(spawner, filterValue, dbContainerId, isFreshVolume, debug),
     ),
   );
 

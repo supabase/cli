@@ -807,6 +807,10 @@ describe("postgresDataInitialized", () => {
       'error during connect: Head "http://%2Fvar%2Frun%2Fdocker.sock/_ping": dial unix /var/run/docker.sock: connect: no such file or directory\n',
     "a Docker socket that does not exist when requesting the PG_VERSION archive":
       'error during connect: Head "http://%2Fvar%2Frun%2Fdocker.sock/v1.47/containers/container-id-pg/archive?path=%2Fvar%2Flib%2Fpostgresql%2Fdata%2FPG_VERSION": dial unix /var/run/docker.sock: connect: no such file or directory\n',
+    "a Podman socket that does not exist":
+      'Error: unable to connect to Podman socket: Get "http://d/v5.2.0/libpod/_ping": dial unix /run/user/1000/podman/podman.sock: connect: no such file or directory\n',
+    "a Podman socket that does not exist when requesting the PG_VERSION archive":
+      'Error: unable to connect to Podman socket: Get "http://d/v5.2.0/libpod/containers/container-id-pg/archive?path=%2Fvar%2Flib%2Fpostgresql%2Fdata%2FPG_VERSION": dial unix /run/user/1000/podman/podman.sock: connect: no such file or directory\n',
     "a Docker config warning beside an unrelated PG_VERSION error":
       "WARNING: Error loading config file: open /home/me/.docker/config.json: no such file or directory\nError response from daemon: permission denied reading /var/lib/postgresql/data/PG_VERSION\n",
     "empty stderr": "",
