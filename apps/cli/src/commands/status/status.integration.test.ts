@@ -39,6 +39,11 @@ import {
   useTempWorkdir,
   withEnvVar,
 } from "../../../tests/helpers/command-mocks.ts";
+import {
+  EXEC_FAILED_STATE,
+  PROBE_TIMEOUT_OUTPUT,
+  inspectedState,
+} from "../../../tests/helpers/docker-health.ts";
 import { assertPermissionDrift } from "../../../tests/helpers/permission-drift.ts";
 import type { CommandPlatformApiFactoryError } from "../../auth/command-platform-api-factory.service.ts";
 import { CommandPlatformApiFactory } from "../../auth/command-platform-api-factory.service.ts";
@@ -1028,6 +1033,39 @@ content_path = "./supabase/templates/password_changed_notification.html"
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("StatusDbNotReadyError");
       }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("reports a db whose health check cannot exec as running, with a stderr warning", () => {
+    const { layer, out } = setup({ route: defaultRoute({ dbInspectStdout: EXEC_FAILED_STATE }) });
+    return Effect.gen(function* () {
+      yield* writeConfig();
+      yield* status(flags());
+      expect(out.stderrText).toContain("WARNING:");
+      expect(out.stderrText).toContain("Readiness of supabase_db_demo was not verified.");
+      expect(out.stdoutText).toContain("⛁ Database");
+      expect(out.stdoutText).not.toContain("WARNING");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("still fails a db whose last health probe timed out, naming the probe", () => {
+    const { layer, out } = setup({
+      route: defaultRoute({
+        dbInspectStdout: inspectedState({
+          health: "unhealthy",
+          probes: [{ exitCode: -1, output: PROBE_TIMEOUT_OUTPUT }],
+        }),
+      }),
+    });
+    return Effect.gen(function* () {
+      yield* writeConfig();
+      const error = yield* status(flags()).pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "StatusDbNotReadyError",
+        message:
+          "supabase_db_demo container is not ready: unhealthy (last health check exit code -1: Health check exceeded timeout (2s))",
+      });
+      expect(out.stderrText).not.toContain("Docker cannot run health checks");
     }).pipe(Effect.provide(layer));
   });
 

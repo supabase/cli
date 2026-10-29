@@ -87,6 +87,7 @@ const makeProcess = Effect.fnUntraced(function* (
   docker: DockerModel,
   supabaseHome: string,
   projectId: string,
+  format: "text" | "json" | "stream-json" = "text",
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -97,7 +98,7 @@ const makeProcess = Effect.fnUntraced(function* (
     `project_id = "${projectId}"\n`,
   );
 
-  const out = mockOutput({ format: "text" });
+  const out = mockOutput({ format });
   const waiting = yield* Deferred.make<void>();
   const output = Layer.effect(
     Output,
@@ -404,6 +405,33 @@ describe("project lifecycle lock", () => {
       expect(docker.networkNames()).toEqual([NETWORK]);
     }).pipe(Effect.provide(BunServices.layer)),
   );
+
+  for (const format of ["json", "stream-json"] as const) {
+    it.effect(`keeps the waiting line out of ${format} output while waiting for the lock`, () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-lifecycle-home-" });
+        const networkCreated = yield* pause();
+        const docker = dockerModel({
+          after: (args) => (isNetworkCreate(args) ? networkCreated.hold : Effect.void),
+        });
+        const owner = yield* makeProcess(docker, home, "demo");
+        const waiter = yield* makeProcess(docker, home, "demo", format);
+
+        yield* runStart(owner);
+        yield* Deferred.await(networkCreated.reached);
+        const blocked = yield* start(startFlags).pipe(
+          Effect.provide(waiter.layer),
+          Effect.flip,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Effect.raceFirst(Effect.forever(TestClock.adjust("1 minute")), Fiber.await(blocked));
+
+        expect(yield* Fiber.join(blocked)).toBeInstanceOf(ProjectLifecycleLockBusyError);
+        expect(waiter.out.rawChunks).toEqual([]);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+  }
 
   it.effect("fails before any Docker command when the lock directory cannot be created", () =>
     Effect.gen(function* () {

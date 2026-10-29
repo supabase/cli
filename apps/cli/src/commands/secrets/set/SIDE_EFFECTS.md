@@ -11,8 +11,8 @@
 | `<workdir>/supabase/.temp/project-ref`         | plain text                | when `--project-ref` and `SUPABASE_PROJECT_ID` are both unset                                                                                            |
 | `<workdir>/supabase/.temp/linked-project.json` | JSON                      | existence check before the cache fill (in `Effect.ensuring` after the project ref resolves)                                                              |
 | `<workdir>/supabase/config.toml`               | TOML                      | always (for `[edge_runtime.secrets]`) — via `@supabase/config`'s `loadCliConfig`; a parse failure is logged to the debug logger and tolerated, not fatal |
-| `<workdir>/.env`                               | dotenv                    | always — context for `env(VAR)` interpolation in `[edge_runtime.secrets]` values                                                                         |
-| `<workdir>/.env.local`                         | dotenv                    | always — overrides `.env` for `env(VAR)` interpolation context                                                                                           |
+| `<workdir>/supabase/.env`                      | dotenv                    | once a config file is found — context for `env(VAR)` interpolation in `[edge_runtime.secrets]` values                                                    |
+| `<workdir>/supabase/.env.local`                | dotenv                    | once a config file is found — overrides `.env` for `env(VAR)` interpolation context                                                                      |
 | `<env-file>` (absolute or CWD-relative)        | dotenv                    | when `--env-file` flag is provided                                                                                                                       |
 
 ## Files Written
@@ -37,7 +37,7 @@
 | `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                                                                                                                                                                                     | no (falls back to keyring → `~/.supabase/access-token`)                    |
 | `SUPABASE_PROFILE`      | selects API base URL: `supabase` → `api.supabase.com`, `supabase-staging` → `api.supabase.green`, `supabase-local` → `http://localhost:8080`. May alternatively be a filesystem path to a YAML profile with at least `api_url:` and optional `name:` (used by the cli-e2e test harness). | no (defaults to `supabase`)                                                |
 | `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset                                                                                                                                                                                                                                       | no (also reads `<workdir>/supabase/.temp/project-ref` then prompts on TTY) |
-| `SUPABASE_WORKDIR`      | base directory for the `.temp/project-ref` lookup                                                                                                                                                                                                                                        | no (walks up from CWD looking for `supabase/config.toml`)                  |
+| `SUPABASE_WORKDIR`      | base directory for the `.temp/project-ref` lookup; when set, also for `supabase/config.toml` and its `.env` files                                                                                                                                                                        | no (walks up from CWD looking for `supabase/config.toml`)                  |
 | `env(VAR)` references   | values matching `env(NAME)` in `[edge_runtime.secrets]` are resolved against the loaded env. Missing variables preserve the literal verbatim.                                                                                                                                            | —                                                                          |
 
 ## Exit Codes
@@ -47,6 +47,7 @@
 | `0`  | success — secrets set on the linked project                                             |
 | `1`  | `AccessTokenRequiredError` — no token in env/keyring/file                               |
 | `1`  | `InvalidAccessTokenError` — token violates `^sbp_(oauth_\|v0_)?[a-f0-9]{40}$`           |
+| `1`  | `SecretsSetWorkdirError` — `--workdir`/`SUPABASE_WORKDIR` isn't an existing directory   |
 | `1`  | `ProjectRefNotLinkedError` — `--project-ref` unset, env/file empty, and stdin not a TTY |
 | `1`  | `InvalidProjectRefError` — resolved ref violates `^[a-z]{20}$`                          |
 | `1`  | `SecretsNoArgumentsError` — no positional pairs and no entries from env-file or config  |
@@ -83,6 +84,7 @@ One `result` NDJSON event on success containing `{project_ref, count}`.
 - Source order for merging entries: `[edge_runtime.secrets]` from `config.toml` (only resolved entries — see below) → `--env-file` (overrides config) → CLI args (overrides env-file).
 - `SUPABASE_`-prefixed entries are skipped post-merge with a stderr warning.
 - Secrets are POSTed in batches of 100 (the API's per-request cap); every batch is validated before the first POST. When no secrets remain after filtering, the command fails with `SecretsNoArgumentsError` and makes no POST (the cache fill still runs).
+- In the `config.toml` and `.env` rows, `<workdir>` is the explicit `--workdir`/`SUPABASE_WORKDIR`, used as-is with no ancestor climb. Without one, those files come from the nearest ancestor of CWD holding `supabase/config.json` or `supabase/config.toml` (a nearer `config.json` wins).
 - `[edge_runtime.secrets]` from config.toml is read via `@supabase/config`'s `loadCliConfig` + `resolveCliConfigSubtree`. Resolved secret values arrive wrapped in `Redacted<string>`; unresolved `env(VAR)` literals (env var unset) stay as plain strings and are filtered out at the handler (secrets whose value never resolved past the literal `env(VAR)` form are dropped).
 - A malformed `config.toml` does **not** abort the command — the error is logged to the debug logger and the command proceeds. `--env-file` and positional `NAME=VALUE` secrets always still apply. What happens to config-declared secrets depends on the failure class: a raw TOML/JSON syntax error drops everything (no `EdgeRuntime.Secrets`), but a schema-type error on an _unrelated_ field (e.g. `analytics.port` being a string) still leaves a valid `[edge_runtime.secrets]` section usable — the handler recovers it by re-decoding just that subtree. Pass `--debug` to see the logged parse error.
 - Sends `User-Agent: SupabaseCLI/<version>` and Bearer auth. No `X-Supabase-Command` headers.

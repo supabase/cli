@@ -84,7 +84,7 @@ export const holdProjectLifecycleLock = Effect.fn("ProjectLifecycleLock.hold")(f
         Effect.gen(function* () {
           if (!waited) {
             waited = true;
-            yield* output.raw(waitingLine, "stderr");
+            if (output.format === "text") yield* output.raw(waitingLine, "stderr");
           }
           const elapsed = (yield* Clock.currentTimeMillis) - started;
           yield* hold(

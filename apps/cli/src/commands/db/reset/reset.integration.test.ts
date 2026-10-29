@@ -50,6 +50,7 @@ import {
   sequentialExecBatch,
   transportFailure,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { EXEC_FAILED_STATE } from "../../../../tests/helpers/docker-health.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   asRecordedRequests,
@@ -101,7 +102,7 @@ import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/
 import { DbConfigConnectTempRoleError } from "../../../command-internal/db-config.errors.ts";
 import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
 import { LocalDockerEngine } from "../../../command-internal/db-bootstrap/local-db-running.ts";
-import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
+import { DbConnectError, DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import {
   DbConnection,
   type PgConnInput,
@@ -207,6 +208,8 @@ function mockConnection(
     /** When set, an `exec` whose SQL contains this substring fails instead of succeeding. */
     execFailsOn?: string;
     execFailsMessage?: string;
+    /** Refuses every connect, so the local recreate's Postgres readiness probe never succeeds. */
+    neverConnectable?: boolean;
   } = {},
 ) {
   const execs: Array<string> = [];
@@ -214,6 +217,9 @@ function mockConnection(
   let replicationCallIndex = 0;
   const layer = Layer.succeed(DbConnection, {
     connect: () => {
+      if (opts.neverConnectable === true) {
+        return Effect.fail(new DbConnectError({ message: "connection refused" }));
+      }
       const session: DbSession = {
         extensionExists: () => Effect.succeed(false),
         copyToCsv: () => Effect.succeed(new Uint8Array()),
@@ -283,7 +289,6 @@ const KONG_ID = `supabase_kong_${PROJECT_ID}`;
 const STORAGE_ID = `supabase_storage_${PROJECT_ID}`;
 
 const HEALTHY_STATE = '{"Running":true,"Status":"running","Health":{"Status":"healthy"}}';
-const STARTING_STATE = '{"Running":true,"Status":"running","Health":{"Status":"starting"}}';
 const STOPPED_STATE = '{"Running":false,"Status":"exited"}';
 
 interface SpawnRecord {
@@ -381,7 +386,6 @@ const dbSetupJobCalls = (spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray<Spa
 
 interface DefaultRouteOpts {
   readonly running?: boolean;
-  readonly neverHealthy?: boolean;
   readonly kongMissing?: boolean;
   readonly kongNotRunning?: boolean;
   readonly kongReloadFails?: boolean;
@@ -431,7 +435,6 @@ function defaultLocalResetRoute(opts: DefaultRouteOpts = {}) {
       }
       if (opts.running === false)
         return { exitCode: 1, stderr: [`Error: No such container: ${id}`] };
-      if (opts.neverHealthy === true) return { stdout: [STARTING_STATE] };
       return { stdout: [HEALTHY_STATE] };
     }
     if (args[0] === "logs") return { exitCode: 0 };
@@ -908,6 +911,7 @@ function setup(
     remoteSeeds?: Readonly<Record<string, string>>;
     execFailsOn?: string;
     execFailsMessage?: string;
+    neverConnectable?: boolean;
     yes?: boolean;
     omitRef?: boolean;
     resolveFails?: boolean;
@@ -1159,6 +1163,28 @@ describe("db reset", () => {
     });
 
     it.effect(
+      "recreates when Docker cannot exec the database's health check but it accepts connections",
+      () => {
+        const base = defaultLocalResetRoute();
+        const { layer, out, child } = setup(tmp.current, {
+          toml: 'project_id = "test"\n',
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          route: (args) =>
+            args[0] === "container" && args[1] === "inspect" && args[2] === DB_ID
+              ? { stdout: [EXEC_FAILED_STATE] }
+              : base(args),
+        });
+        return Effect.gen(function* () {
+          yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+
+          expect(dbSetupJobCalls(child.spawned)).toHaveLength(3);
+          expect(out.stderrText).toContain("Finished supabase db reset.\n");
+        });
+      },
+    );
+
+    it.effect(
       "passes the resolved --version through to the setup pipeline's seed/migrate step",
       () => {
         const { layer, conn } = setup(tmp.current, {
@@ -1270,7 +1296,7 @@ describe("db reset", () => {
               Layer.merge(
                 layer,
                 Layer.succeed(LocalDockerEngine, {
-                  containerExists: () => Effect.succeed(Option.some(false)),
+                  inspectContainer: () => Effect.succeed(Option.some({ exists: false })),
                 }),
               ),
             ),
@@ -2196,6 +2222,28 @@ describe("db reset", () => {
 
   describe("local reset — PG14", () => {
     it.effect(
+      "resets when Docker cannot exec the restarted database's health check but it accepts connections",
+      () => {
+        const base = defaultLocalResetRoute();
+        const { layer, out, child } = setup(tmp.current, {
+          toml: PG14_TOML,
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          route: (args) =>
+            args[0] === "container" && args[1] === "inspect" && args[2] === DB_ID
+              ? { stdout: [EXEC_FAILED_STATE] }
+              : base(args),
+        });
+        return Effect.gen(function* () {
+          yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+
+          expect(restartedContainers(child.spawned)).toContain(DB_ID);
+          expect(out.stderrText).toContain("Finished supabase db reset.\n");
+        });
+      },
+    );
+
+    it.effect(
       "recreates via the four-statement DROP/CREATE sequence, then initDatabase + RestartDatabase",
       () => {
         const { layer, out, child, conn } = setup(tmp.current, {
@@ -2552,12 +2600,12 @@ describe("db reset", () => {
   });
 
   describe("local reset — health timeouts", () => {
-    it.live("a container health-check timeout fails the whole recreate", () => {
+    it.live("a database that never accepts connections fails the whole recreate", () => {
       const { layer } = setup(tmp.current, {
         toml: `project_id = "test"\n${FAST_HEALTH_TOML}`,
         args: ["db", "reset", "--local"],
         isLocal: true,
-        routeOpts: { neverHealthy: true },
+        neverConnectable: true,
       });
       return Effect.gen(function* () {
         const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);

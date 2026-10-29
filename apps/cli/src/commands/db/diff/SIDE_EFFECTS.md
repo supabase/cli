@@ -72,7 +72,7 @@ it, and JSON `null` disables formatting without disabling safe compaction.
   (`pgdelta-next-shadow.layer.ts`), which builds on the same shadow-baseline cache
   primitives (`acquireShadowDatabase`), with no declarative-schema-override branch.
   `--use-pgadmin` provisions its OWN shadow via a
-  narrower composition — `createShadowDatabase` -> health-wait -> `migrateShadowDatabase`
+  narrower composition — `createShadowDatabase` -> readiness wait (host Postgres connect probe) -> `migrateShadowDatabase`
   directly (`diff.handler.ts`'s pgadmin branch) — with no declarative-schema-override branch and
   no `targetUrlOverride`.
 - When `[experimental].stack` / `SUPABASE_EXPERIMENTAL_STACK=1` is on, `--local` inspects the

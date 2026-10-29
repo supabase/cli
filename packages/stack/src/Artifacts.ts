@@ -127,23 +127,23 @@ const definitions: Readonly<Record<ArtifactKind, ArtifactDefinition>> = {
   database: definition(
     "postgres",
     {
-      upstreamVersion: "17.11.0.007",
+      upstreamVersion: "17.11.0.011",
       revision: 0,
       image:
-        "ghcr.io/supabase/cli/postgres:17.11.0.007-r0@sha256:320b6fad223dfb8ff40a1893936232d34cd47c0f4f807e79741017ac3c1974a2",
-      upstreamImage: "supabase/postgres:17.11.0.007",
+        "ghcr.io/supabase/cli/postgres:17.11.0.011-r0@sha256:9a0eae54eb663be4b8a021382e9d290eb1960398d3b9825856b81d6944c48834",
+      upstreamImage: "supabase/postgres:17.11.0.011",
       natives: {
         "darwin-arm64": {
-          archive: "ad0f293a750ea2e2d0c4f2c342a703d923fa1d3da3b1e1427722f760f2520cbc",
-          manifest: "e3998a69465ccc774d5a938b48d35b4e720f51557cab69358228502c4e1093fc",
+          archive: "de01b042eb3da72a3bce4b00b8f07e4b22545d9a2aad83d5b312918eadb39f44",
+          manifest: "8298f20dac793bb997a3d0110bca2f7296ed038d18ded274a43317360955cbaf",
         },
         "linux-amd64": {
-          archive: "0496408934df764c3a90a83aa49599cb374eab638f85cc8a5d45f07e965d0812",
-          manifest: "789d555736087fb7699c75c9047272e41021f9813ecc47d453c0ab59d4bc0ce3",
+          archive: "986389e7cdfc81e30c5b2f8e3e15bca98377374c1124b80d1740d0035e657128",
+          manifest: "10ba0c16e8c5160be1dc7cf4e3698e661c8bd3bf7353b6f78e7022d9cf6a5591",
         },
         "linux-arm64": {
-          archive: "b16c21eb7b86aee84ceadc0834f4639de851a0b56244984057a1d299fb54583c",
-          manifest: "6e91bb3eba59bf5e9c31b6a5ce66d66a1cbaa87f3bbfc41542e0c540c2d6303d",
+          archive: "0baab2d07d1437c640aeed7cf60a851c1f81cb85426c8fe5ebfb7ac6ee06dbd0",
+          manifest: "ae8de4c02229ac55f5db9edd54cb01a674a3d06a858187245af97353707f4556",
         },
       },
     },
@@ -157,24 +157,24 @@ const definitions: Readonly<Record<ArtifactKind, ArtifactDefinition>> = {
       "bin/psql",
     ],
     {
-      "15.19.0.008": {
-        upstreamVersion: "15.19.0.008",
+      "15.19.0.011": {
+        upstreamVersion: "15.19.0.011",
         revision: 0,
         image:
-          "ghcr.io/supabase/cli/postgres:15.19.0.008-r0@sha256:a3d0932e880417c1c729c9344febd787d6e5b810e53a563cb8752b6467cf8fdf",
-        upstreamImage: "supabase/postgres:15.19.0.008",
+          "ghcr.io/supabase/cli/postgres:15.19.0.011-r0@sha256:867906556504e326ae1ea67efb61d817aa5c071c6a0b366f7c8da20b5a269eab",
+        upstreamImage: "supabase/postgres:15.19.0.011",
         natives: {
           "darwin-arm64": {
-            archive: "32bb35483a40d11797fab1d17fd454d01bbeaf1c235d18547890766f73003a1b",
-            manifest: "4c4d840eda2beaaf5ae0f0607ae34243b949762a0f32bd1a32aef3db16acac73",
+            archive: "0a6cdf221771ee7e110d5d07433a38151134391634c986a19f7b8688eaa80f0c",
+            manifest: "89f598712ea2038c8a232842ea54909c729b44c22d429c5afdfc79b6734513c3",
           },
           "linux-amd64": {
-            archive: "1b116cf465d4331b982e814c78e3c871bcd8de834540bdf1be263280e1721402",
-            manifest: "226724e98aff3f0ceffc9af0b0906f030612244cd07da41ba71c46dd2295f87c",
+            archive: "18c110a3977c155393bdcbf8e3bd11d65b8f3525890289cc75ac6136bb8b1af1",
+            manifest: "2454007798b77b086709ab4c1ef802ab545feb5150d6b2c37a2eb5c3dd720873",
           },
           "linux-arm64": {
-            archive: "dc10516c0969357f8c877b981063696c493f701df26a32ac12dbce921ec3da7f",
-            manifest: "2cc1196fc4c31b79fe2ca2529ba6b42794e7440c30f9213aa9b31129a02afb7c",
+            archive: "74ee731a86e350ee4a48e18b7bb7cdd39133f0a1f1910ac5588287b0436ed350",
+            manifest: "37afcfc17233af73ae2a4fb491c58d121280b4341af4554ab4d568adc3132442",
           },
         },
       },
@@ -262,6 +262,48 @@ const definitions: Readonly<Record<ArtifactKind, ArtifactDefinition>> = {
           },
         },
       },
+      "17.11.0.008-orioledb": {
+        upstreamVersion: "17.11.0.008-orioledb",
+        revision: 0,
+        image:
+          "ghcr.io/supabase/cli/postgres:17.11.0.008-orioledb-r0@sha256:99d6197f871836ca0db2780d6394a3e906581a9afacc135a4aed64ad2440e3d3",
+        upstreamImage: "supabase/postgres:17.11.0.008-orioledb",
+        natives: {
+          "darwin-arm64": {
+            archive: "2d226fa1638651e93f2b093d1db29385b9994370e3600441202fe0916cf0f83a",
+            manifest: "27bf40f038982607558233465e8c582d58620d2d7c22cf2efa32de086a34aa84",
+          },
+          "linux-amd64": {
+            archive: "807f8e70001ce2c7d770e2e93187cd5b88d00351d2f0e69aecc7ed994ebfb662",
+            manifest: "f1fa6e01e1230b66bad4e3b4d097b0ad9802a93e97b102a6114f1c04e0f7e024",
+          },
+          "linux-arm64": {
+            archive: "5dae0486dc909c0831b73b29edd8bfe84904781796d5cfd9ca5d4b0946e6f741",
+            manifest: "21287142ea7a0df316ae83acf796e76704e53d0db254dad8a43cab0897346d02",
+          },
+        },
+      },
+      "17.11.0.011-orioledb": {
+        upstreamVersion: "17.11.0.011-orioledb",
+        revision: 0,
+        image:
+          "ghcr.io/supabase/cli/postgres:17.11.0.011-orioledb-r0@sha256:4fd10c449c500bac93c5b481e5fd1243a88cd5e73dccff114c07502ca6efc903",
+        upstreamImage: "supabase/postgres:17.11.0.011-orioledb",
+        natives: {
+          "darwin-arm64": {
+            archive: "9bfcbf53f022134a7cf59118614d76f58f99601024c7da1dcc02c469e20e0dce",
+            manifest: "051a0903da4a114c506ccb5aa3882226fccc696399b9bdc0fa319b7673d430c0",
+          },
+          "linux-amd64": {
+            archive: "dc1b6ed700c84b487348885a0a30ebaf9d1a51d273ca3fa61f52ab7c5020a7d8",
+            manifest: "fe7de179c5c0557239fcef08afbcc2d881ba440e0241db211d7de39af010f908",
+          },
+          "linux-arm64": {
+            archive: "42140929c1fb386fbbb80af2d1fba005990c85f5e25434949ae0d5011ea7ecf6",
+            manifest: "d6bc300af6ded866b47c945cb65d861f99c607b9d7c703710e75e32b9fd9c9ab",
+          },
+        },
+      },
     },
   ),
   rest: definition(
@@ -317,23 +359,23 @@ const definitions: Readonly<Record<ArtifactKind, ArtifactDefinition>> = {
   realtime: definition(
     "realtime",
     {
-      upstreamVersion: "v2.148.6",
+      upstreamVersion: "v2.149.2",
       revision: 0,
       image:
-        "ghcr.io/supabase/cli/realtime:v2.148.6-r0@sha256:402bb27f5b93d61a6836ff510b68beaf67c81d9e17d89c2d50249c5182fa2025",
-      upstreamImage: "supabase/realtime:v2.148.6",
+        "ghcr.io/supabase/cli/realtime:v2.149.2-r0@sha256:7338e6bdb3e4a91bb503ec4f54ab048805ee86b503cbe2a7bb982da4d46ba356",
+      upstreamImage: "supabase/realtime:v2.149.2",
       natives: {
         "darwin-arm64": {
-          archive: "a7ca530f027afa5ee0253d900bf9c90bea9baabf266de8df400d3fe796934345",
-          manifest: "4ba74da13bbd111ab2b70abc540b3ad80da0315a48923322da0fe8fcc65d894a",
+          archive: "63d5d2297cffc86981900c96d51428cc7b95ce525d87636fb20a9140f5a467d0",
+          manifest: "736d13224220c1cc8ee02741eaadde8a1503b826c406ef3f20cacd36c4e3613c",
         },
         "linux-amd64": {
-          archive: "68078e35ad75cadbd9699acc8aa3f8e964decdb62f645b5792e99bd4bbe6ac72",
-          manifest: "63e6580b7d17b4fc30d8edd51284a1f04a8b4228f78c8ced78dbb012f2b2cd18",
+          archive: "8845ef50a4f20baa786d8bd4ce8dd58508354591102e8d65f49e576239774128",
+          manifest: "604b892726c1e159a90a7edf93cc9194eba98cdfb4bb9275c099e9a7c2ef723b",
         },
         "linux-arm64": {
-          archive: "1fe3a26371868a98e3873132bb4a1e694c6ba2100563448541b9906a852ed72e",
-          manifest: "e6d6b8ace916a56fe2f125e31f6198c99d4605f4d3de31e6f1848183920e024d",
+          archive: "923fd2735a69554dece6e287a52f66b91935a7dc725e36e580d6ba9add869d6f",
+          manifest: "59f2c400f2a797dac2d04d8c48a32f9bf14d4d0069f41fd07c8e3fc8d9dfb1e3",
         },
       },
     },
@@ -343,23 +385,23 @@ const definitions: Readonly<Record<ArtifactKind, ArtifactDefinition>> = {
   storage: definition(
     "storage",
     {
-      upstreamVersion: "v1.84.32",
+      upstreamVersion: "v1.84.36",
       revision: 0,
       image:
-        "ghcr.io/supabase/cli/storage:v1.84.32-r0@sha256:b65495254e52145cf309510841743d29b7df846652d2b8d4c62bd924570a3d65",
-      upstreamImage: "supabase/storage-api:v1.84.32",
+        "ghcr.io/supabase/cli/storage:v1.84.36-r0@sha256:9eb28fa8a52f99fbf6aaeec8d079daa31d9d067e68a7c539cfb8871860f9dddc",
+      upstreamImage: "supabase/storage-api:v1.84.36",
       natives: {
         "darwin-arm64": {
-          archive: "7984f217144871d99ef1cb060681189aa1f6ae40462390ff300fd669dcd7c5c3",
-          manifest: "ed900feb7147c65d382bdff3f4d8e2df9a439790bf1b0fa362a098806dcc9d86",
+          archive: "8ee898d729877351d92e687fc8f3864b0ab5ef4370f0b54b9de047c2b525175d",
+          manifest: "5fd3d7e4cf1158360f22d5fde8870d85edadf395e11ff8df290cd67382a81fba",
         },
         "linux-amd64": {
-          archive: "7272e4dd27115ac3355850351bee8a8a44d27f10560e71f975c604d132fecd66",
-          manifest: "bf9d3f866927a0be4fea09737dcf97099b72ac8b941354da728080f82da2d9d9",
+          archive: "84445a8ef385b453fa1c7d0909b38fa9f93c3e2fb9096b3acaae04fd6e9a7657",
+          manifest: "4d90b1cc5355975d036cd47ca42bb3ac6cd7d467cf5706f56603bf9c97a3f9fd",
         },
         "linux-arm64": {
-          archive: "651ea554ad28d3aabbf23a85b643e2bbfaece2f87dfd2f8fb0f34efcc4edf673",
-          manifest: "da97b95ae9591a6226f38e5d748da216754db05c7eed4a068b397bab1fb7c092",
+          archive: "5239ee032f36191f6b5162b0924dd62e31aa972bdd0a9d6cdbcbced648d8ec74",
+          manifest: "dac73ba2310a97726e4ad9894f1ebb51fd2e5dbd05a061106c8209f2e1ecc963",
         },
       },
     },

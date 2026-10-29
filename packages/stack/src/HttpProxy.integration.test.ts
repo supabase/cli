@@ -608,6 +608,144 @@ it.live("tells upstreams the client address", () =>
 const headerOf = (value: string | ReadonlyArray<string> | undefined) =>
   value === undefined || typeof value === "string" ? value : value.join(", ");
 
+it.live("tells upstreams the scheme, host, port, path and stripped prefix the client reached", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const forwarded = (
+        headers: Readonly<Record<string, string | ReadonlyArray<string> | undefined>>,
+      ) => ({
+        proto: headerOf(headers["x-forwarded-proto"]),
+        host: headerOf(headers["x-forwarded-host"]),
+        port: headerOf(headers["x-forwarded-port"]),
+        path: headerOf(headers["x-forwarded-path"]),
+        prefix: headerOf(headers["x-forwarded-prefix"]),
+      });
+      const backend = createServer((incoming, response) => {
+        response.end(JSON.stringify(forwarded(incoming.headers)));
+      });
+      const sockets = new WebSocketServer({ server: backend });
+      const upgraded = yield* Deferred.make<ReturnType<typeof forwarded>, HttpProxyTestError>();
+      sockets.on("connection", (socket, incoming) => {
+        Deferred.doneUnsafe(upgraded, Effect.succeed(forwarded(incoming.headers)));
+        socket.close();
+      });
+      const backendAddress = yield* listen(backend, { beforeClose: () => sockets.close() });
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      const target = Effect.succeed(backendAddress);
+      yield* proxy.setRoutes([
+        { id: "functions", prefix: "/functions/v1", upstreamPrefix: "/", gateway: true, target },
+        {
+          id: "graphql",
+          prefix: "/graphql/v1",
+          upstreamPrefix: "/rpc/graphql",
+          forwardedPrefix: "/graphql/v1",
+          gateway: true,
+          target,
+        },
+        { id: "studio", prefix: "/", target },
+      ]);
+      const spoofed = {
+        "x-forwarded-proto": "https",
+        "x-forwarded-host": "spoofed.example",
+        "x-forwarded-port": "443",
+        "x-forwarded-path": "/spoofed",
+        "x-forwarded-prefix": "/spoofed",
+      };
+      const send = (path: string, headers: Readonly<Record<string, string>>) =>
+        request(proxy.port, path, new Uint8Array(), headers, "GET").pipe(
+          Effect.provide(NodeHttpClient.layerNodeHttp),
+          Effect.map(({ body }) => JSON.parse(new TextDecoder().decode(body))),
+        );
+      const port = String(proxy.port);
+
+      expect(yield* send("/functions/v1/hello?name=x", spoofed)).toEqual({
+        proto: "http",
+        host: "127.0.0.1",
+        port,
+        path: "/functions/v1/hello",
+        prefix: "/functions/v1/",
+      });
+      expect(yield* send("/functions/v1/hello", { host: "LOCALHOST.:54321" })).toEqual(
+        expect.objectContaining({ host: "localhost" }),
+      );
+      expect(yield* send("/graphql/v1", {})).toEqual(
+        expect.objectContaining({ path: "/graphql/v1", prefix: "/graphql/v1" }),
+      );
+      /* A dedicated listener's route is not Kong's, so it adds none of them. */
+      expect(yield* send("/project/default", { host: "Studio.Example.test:9999" })).toEqual({
+        proto: undefined,
+        host: undefined,
+        port: undefined,
+        path: undefined,
+        prefix: undefined,
+      });
+
+      const client = new WebSocket(`ws://127.0.0.1:${proxy.port}/functions/v1/socket`, {
+        headers: spoofed,
+      });
+      client.on("error", (cause) =>
+        Deferred.doneUnsafe(
+          upgraded,
+          Effect.fail(new HttpProxyTestError({ message: cause.message, cause })),
+        ),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(() => client.terminate()));
+      expect(yield* Deferred.await(upgraded).pipe(Effect.timeout("10 seconds"))).toEqual({
+        proto: "http",
+        host: "127.0.0.1",
+        port,
+        path: "/functions/v1/socket",
+        prefix: "/functions/v1/",
+      });
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("adds a route's default headers only when the client sent none", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const backend = createServer((incoming, response) => {
+        response.end(
+          JSON.stringify({ url: incoming.url, profile: incoming.headers["content-profile"] }),
+        );
+      });
+      const backendAddress = yield* listen(backend);
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      yield* proxy.setRoutes([
+        {
+          id: "graphql",
+          prefix: "/graphql/v1",
+          upstreamPrefix: "/rpc/graphql",
+          addHeaders: { "content-profile": "graphql_public" },
+          target: Effect.succeed(backendAddress),
+        },
+        {
+          id: "mixed",
+          prefix: "/mixed",
+          upstreamPrefix: "/rpc/graphql",
+          addHeaders: { "Content-Profile": "graphql_public" },
+          target: Effect.succeed(backendAddress),
+        },
+      ]);
+      const send = (headers: Readonly<Record<string, string>>, path = "/graphql/v1") =>
+        request(proxy.port, path, new Uint8Array(), headers).pipe(
+          Effect.provide(NodeHttpClient.layerNodeHttp),
+          Effect.map(({ body }) => JSON.parse(new TextDecoder().decode(body))),
+        );
+
+      expect(yield* send({})).toEqual({ url: "/rpc/graphql", profile: "graphql_public" });
+      expect(yield* send({ "Content-Profile": "private" })).toEqual({
+        url: "/rpc/graphql",
+        profile: "private",
+      });
+      expect(yield* send({ "content-profile": "private" }, "/mixed")).toEqual({
+        url: "/rpc/graphql",
+        profile: "private",
+      });
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.live("returns a gateway error naming the route and cause when a target cannot wake", () => {
   const logs: Array<string> = [];
   return Effect.scoped(

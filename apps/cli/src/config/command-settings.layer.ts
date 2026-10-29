@@ -47,7 +47,13 @@ function resolveProfile(
         Effect.tap(() => debugLogger.debug(`Loading profile from file: ${filePath}`)),
         Effect.map(Option.some),
         Effect.catch((error) =>
-          debugLogger.debug(unknownMessage(error)).pipe(Effect.as(Option.none<string>())),
+          debugLogger
+            .debug(
+              error.reason._tag === "NotFound"
+                ? `No profile file at ${filePath}; using the default profile.`
+                : unknownMessage(error),
+            )
+            .pipe(Effect.as(Option.none<string>())),
         ),
       );
       token = Option.match(content, {

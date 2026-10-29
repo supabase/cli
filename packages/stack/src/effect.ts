@@ -91,6 +91,7 @@ export { holdExclusiveLock } from "./StackNamespace.ts";
 /** Whether a lock acquisition failure means another holder kept the lock for the whole budget. */
 export { isLockBusy } from "./StackNamespace.ts";
 export {
+  HOSTED_LOCK_SCHEMA_URL,
   Lock,
   LOCK_SCHEMA_URL,
   LockInvalidError,

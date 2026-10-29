@@ -2,8 +2,10 @@ import { BunServices } from "@effect/platform-bun";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import {
   Cause,
+  Deferred,
   Effect,
   Exit,
+  Fiber,
   FileSystem,
   Layer,
   Option,
@@ -16,6 +18,7 @@ import {
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vitest";
 
 import {
@@ -23,6 +26,7 @@ import {
   mockProcessControl,
   mockRuntimeInfo,
 } from "../../../../tests/helpers/mocks.ts";
+import { EXEC_FAILED_STATE } from "../../../../tests/helpers/docker-health.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
 import {
@@ -42,6 +46,8 @@ import {
 } from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { LocalDockerEngine } from "../../../command-internal/db-bootstrap/local-db-running.ts";
+import { ContainerStartError } from "../../../command-internal/db-bootstrap/container-lifecycle.ts";
+import { HealthCheckTimeoutError } from "../../../command-internal/db-bootstrap/health-check.ts";
 import { DbConnectError } from "../../../command-internal/db-connection.errors.ts";
 import { DbConnection, type DbSession } from "../../../command-internal/db-connection.service.ts";
 import { dockerRunLayer } from "../../../command-internal/docker-run.layer.ts";
@@ -57,6 +63,8 @@ import {
 } from "../../../command-internal/stack-catalog-setup.ts";
 import {
   StackError,
+  holdExclusiveLock,
+  isLockBusy,
   type DatabaseInstance,
   type ServiceCreation,
   type ServiceCreationInput,
@@ -167,16 +175,28 @@ function dbSetupJobCalls(spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray<Spa
   return spawned.filter((s) => s.args[0] === "run" && s.args[1] === "--rm");
 }
 
+/** The rollback's closing step; nothing else in `db start` prunes networks. */
 function rollbackWasAttempted(spawned: ReadonlyArray<SpawnRecord>): boolean {
-  return spawned.some((s) => s.args[0] === "container" && s.args[1] === "prune");
+  return spawned.some((s) => s.args[0] === "network" && s.args[1] === "prune");
 }
 
-function volumePruneWasAttempted(spawned: ReadonlyArray<SpawnRecord>): boolean {
-  return spawned.some((s) => s.args[0] === "volume" && s.args[1] === "prune");
+const TEARDOWN_VERBS: ReadonlySet<string | undefined> = new Set(["rm", "stop", "kill", "prune"]);
+
+/** Every command that stops, removes, or prunes something, in spawn order. */
+function teardownCommands(spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray<string> {
+  return spawned
+    .filter((s) => TEARDOWN_VERBS.has(s.args[0]) || TEARDOWN_VERBS.has(s.args[1]))
+    .map((s) => s.args.join(" "));
+}
+
+function volumeRemovals(spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray<ReadonlyArray<string>> {
+  return spawned
+    .filter((s) => s.args[0] === "volume" && (s.args[1] === "rm" || s.args[1] === "prune"))
+    .map((s) => s.args);
 }
 
 /** Stateful default route: only created containers inspect successfully, matching Docker across initial state detection and post-create health waits. Existing volume by default (a restart). */
-function defaultRoute(opts: { readonly neverHealthy?: boolean } = {}) {
+function defaultRoute() {
   const created = new Set<string>();
   return (args: ReadonlyArray<string>): RouteResult => {
     if (args[0] === "image" && args[1] === "inspect") return { exitCode: 0 };
@@ -196,7 +216,6 @@ function defaultRoute(opts: { readonly neverHealthy?: boolean } = {}) {
       if (!created.has(id)) {
         return { exitCode: 1, stderr: [`Error: No such container: ${id}`] };
       }
-      if (opts.neverHealthy === true) return { stdout: [STARTING_STATE] };
       return { stdout: [HEALTHY_STATE] };
     }
     if (args[0] === "logs") return { exitCode: 0 };
@@ -217,6 +236,55 @@ function freshVolumeRoute(
   };
 }
 
+/** Docker's answer when the created Postgres container's data directory holds no `PG_VERSION`, i.e. `initdb` never ran. */
+function uninitialisedDataDirRoute(
+  base: (args: ReadonlyArray<string>) => RouteResult,
+): (args: ReadonlyArray<string>) => RouteResult {
+  return (args) => {
+    const source = args[1];
+    if (
+      args[0] === "cp" &&
+      source?.endsWith(":/var/lib/postgresql/data/PG_VERSION") === true &&
+      args[2] === "-"
+    ) {
+      return {
+        exitCode: 1,
+        stderr: [
+          `Error response from daemon: Could not find the file /var/lib/postgresql/data/PG_VERSION in container ${source.split(":")[0]}`,
+        ],
+      };
+    }
+    return base(args);
+  };
+}
+
+/** `docker start` of the Postgres container exits non-zero, as when the runtime cannot launch it. */
+function dbStartFailsRoute(
+  base: (args: ReadonlyArray<string>) => RouteResult,
+): (args: ReadonlyArray<string>) => RouteResult {
+  return (args) =>
+    args[0] === "start" && args[1] === fakeContainerId(DB_CONTAINER)
+      ? {
+          exitCode: 1,
+          stderr: [
+            "Error response from daemon: failed to create task for container: OCI runtime create failed",
+          ],
+        }
+      : base(args);
+}
+
+/** Docker's HEALTHCHECK can never launch on this host, so every created container reports exec-failed health. */
+function execFailedHealthRoute(
+  base: (args: ReadonlyArray<string>) => RouteResult,
+): (args: ReadonlyArray<string>) => RouteResult {
+  return (args) => {
+    const result = base(args);
+    return args[0] === "container" && args[1] === "inspect" && result.stdout?.[0] === HEALTHY_STATE
+      ? { stdout: [EXEC_FAILED_STATE] }
+      : result;
+  };
+}
+
 /**
  * Makes `isLocalDbRunning`'s pre-bring-up `container inspect` succeed unconditionally,
  * simulating an already-up local db — the already-running short-circuit returns before any
@@ -229,6 +297,79 @@ function alreadyRunningRoute(
     if (args[0] === "container" && args[1] === "inspect") return { stdout: [HEALTHY_STATE] };
     return base(args);
   };
+}
+
+const DB_PROJECT_ID = Option.some("test");
+const DB_CONTAINER = "supabase_db_test";
+const BITBUCKET_ENV = "BITBUCKET_CLONE_DIR=/opt/atlassian/pipelines/agent/build\n";
+
+interface DbContainerState {
+  readonly Running: boolean;
+  readonly Status: string;
+}
+
+/**
+ * A db container left behind in `state`: `container inspect` reports it as a real `docker
+ * container inspect` array payload until `container rm` removes it, and a same-name `create`
+ * conflicts until then, as Docker's name uniqueness would.
+ */
+function leftBehindDbRoute(
+  state: DbContainerState,
+  base: (args: ReadonlyArray<string>) => RouteResult,
+): (args: ReadonlyArray<string>) => RouteResult {
+  let removed = false;
+  return (args) => {
+    if (args[0] === "container" && args[1] === "rm" && args.includes(DB_CONTAINER)) {
+      removed = true;
+      return { exitCode: 0 };
+    }
+    if (!removed && args[0] === "container" && args[1] === "inspect" && args[2] === DB_CONTAINER) {
+      return { stdout: [JSON.stringify([{ State: state }])] };
+    }
+    if (!removed && args[0] === "create" && containerNameFromCreateArgs(args) === DB_CONTAINER) {
+      return {
+        exitCode: 125,
+        stderr: [`Conflict. The container name "/${DB_CONTAINER}" is already in use`],
+      };
+    }
+    return base(args);
+  };
+}
+
+/** The project's other services are up: `docker ps` lists them by the project label. */
+function otherServicesRunningRoute(
+  base: (args: ReadonlyArray<string>) => RouteResult,
+): (args: ReadonlyArray<string>) => RouteResult {
+  return (args) =>
+    args[0] === "ps"
+      ? { stdout: ["a1b2c3\tsupabase_auth_test\t", "d4e5f6\tsupabase_rest_test\t"] }
+      : base(args);
+}
+
+function containerRemovals(
+  spawned: ReadonlyArray<SpawnRecord>,
+): ReadonlyArray<ReadonlyArray<string>> {
+  return spawned.filter((s) => s.args[0] === "container" && s.args[1] === "rm").map((s) => s.args);
+}
+
+type DbProbePath = "Engine API" | "container CLI";
+
+/**
+ * Makes the chosen probe path the only one that can see the left-behind container: the Engine
+ * row leaves the container CLI answering "no such container", so only the Engine answer can
+ * trigger the stopped-container handling.
+ */
+function leftBehindDbProbe(probe: DbProbePath, status: string) {
+  const state = { Running: false, Status: status };
+  return probe === "Engine API"
+    ? {
+        route: defaultRoute(),
+        engine: Layer.succeed(LocalDockerEngine, {
+          inspectContainer: () =>
+            Effect.succeed(Option.some({ exists: true, running: false, status })),
+        }),
+      }
+    : { route: leftBehindDbRoute(state, defaultRoute()), engine: undefined };
 }
 
 /**
@@ -304,6 +445,8 @@ interface SetupOpts {
   readonly projectEnvContents?: string;
   readonly skipConfig?: boolean;
   readonly workdir?: string;
+  /** The `SUPABASE_PROJECT_ID` the db state probe resolves; defaults to `mockCommandSettings`' own. */
+  readonly projectId?: Option.Option<string>;
   readonly cwd?: string;
   readonly platform?: NodeJS.Platform;
   readonly networkId?: string;
@@ -311,8 +454,10 @@ interface SetupOpts {
   readonly experimental?: boolean;
   /** `--debug`. Defaults to `false`. */
   readonly debug?: boolean;
-  /** Number of initial `DbConnection.connect` attempts that fail before succeeding. */
+  /** Number of consecutive `DbConnection.connect` attempts that fail, from `connectFailuresStartAt`. */
   readonly connectFailures?: number;
+  /** 1-based attempt number of the first failing connect. Attempt 1 is the Postgres readiness probe. Defaults to 1. */
+  readonly connectFailuresStartAt?: number;
   /** Whether the mocked connect failures are dial-level (`retryable`). Defaults to `true`. */
   readonly connectFailuresRetryable?: boolean;
   /** Record catalog apply targets instead of the default noop. */
@@ -340,7 +485,7 @@ function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const http = alwaysReadyHttpClient();
   const telemetry = mockTelemetryStateTracked();
-  const cliSettings = mockCommandSettings({ workdir });
+  const cliSettings = mockCommandSettings({ workdir, projectId: opts.projectId });
   const baseRoute = opts.route ?? defaultRoute();
   const route =
     opts.running === true
@@ -353,11 +498,15 @@ function setup(opts: SetupOpts = {}) {
 
   let connectAttempts = 0;
   const connectFailures = opts.connectFailures ?? 0;
+  const connectFailuresStartAt = opts.connectFailuresStartAt ?? 1;
   const dbConnection = Layer.succeed(DbConnection, {
     connect: () =>
       Effect.suspend(() => {
         connectAttempts += 1;
-        if (connectAttempts <= connectFailures) {
+        if (
+          connectAttempts >= connectFailuresStartAt &&
+          connectAttempts < connectFailuresStartAt + connectFailures
+        ) {
           return Effect.fail(
             new DbConnectError({
               message:
@@ -467,7 +616,8 @@ describe("db start", () => {
             Layer.mergeAll(
               layer,
               Layer.succeed(LocalDockerEngine, {
-                containerExists: () => Effect.succeed(Option.some(true)),
+                inspectContainer: () =>
+                  Effect.succeed(Option.some({ exists: true, running: true, status: "running" })),
               }),
             ),
           ),
@@ -477,6 +627,178 @@ describe("db start", () => {
       });
     },
   );
+
+  it.effect(
+    "leaves a running db container alone when docker inspect reports State.Running true",
+    () => {
+      const { layer, out, child } = setup({
+        route: leftBehindDbRoute({ Running: true, Status: "running" }, defaultRoute()),
+        projectId: DB_PROJECT_ID,
+      });
+      return Effect.gen(function* () {
+        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(out.stderrText).toContain("Postgres database is already running.");
+        expect(containerRemovals(child.spawned)).toEqual([]);
+        expect(createArgs(child.spawned)).toBeUndefined();
+      });
+    },
+  );
+
+  describe("a db container that exists but is not running", () => {
+    beforeEach(() => {
+      vi.stubEnv("BITBUCKET_CLONE_DIR", undefined);
+    });
+
+    it.effect.each([
+      ["Engine API", "exited"],
+      ["container CLI", "exited"],
+      ["Engine API", "created"],
+      ["container CLI", "created"],
+    ] as const)(
+      "removes only the %s-reported %s db container and brings it back up",
+      ([probe, status]) => {
+        const { route, engine } = leftBehindDbProbe(probe, status);
+        const { layer, out, child } = setup({ route, projectId: DB_PROJECT_ID });
+        return Effect.gen(function* () {
+          yield* dbStart(DEFAULT_FLAGS).pipe(
+            Effect.provide(engine === undefined ? layer : Layer.mergeAll(layer, engine)),
+          );
+          expect(out.stderrText).not.toContain("already running");
+          expect(out.stderrText).toContain("Starting database");
+          expect(containerRemovals(child.spawned)).toEqual([
+            ["container", "rm", "-f", DB_CONTAINER],
+          ]);
+          expect(volumeRemovals(child.spawned)).toEqual([]);
+          expect(rollbackWasAttempted(child.spawned)).toBe(false);
+          expect(containerNameFromCreateArgs(createArgs(child.spawned) ?? [])).toBe(DB_CONTAINER);
+          expect(dbSetupJobCalls(child.spawned)).toHaveLength(0);
+          expect(yield* readCurrentBranch(tempRoot.current)).toBe("main");
+        }).pipe(withEmptyConfigEnv);
+      },
+    );
+
+    it.effect.each(["Engine API", "container CLI"] as const)(
+      "inside Bitbucket Pipelines the %s-reported stopped container fails with a supabase stop suggestion and is left in place",
+      (probe) => {
+        const { route, engine } = leftBehindDbProbe(probe, "exited");
+        const { layer, out, child } = setup({
+          route,
+          projectId: DB_PROJECT_ID,
+          projectEnvContents: BITBUCKET_ENV,
+        });
+        return Effect.gen(function* () {
+          const error = yield* dbStart(DEFAULT_FLAGS).pipe(
+            Effect.provide(engine === undefined ? layer : Layer.mergeAll(layer, engine)),
+            Effect.flip,
+          );
+          expect(error).toMatchObject({
+            _tag: "StatusDbNotRunningError",
+            message: `${DB_CONTAINER} container is not running: exited`,
+            suggestion: expect.stringContaining("supabase stop"),
+          });
+          expect(out.stderrText).not.toContain("already running");
+          expect(containerRemovals(child.spawned)).toEqual([]);
+          expect(volumeRemovals(child.spawned)).toEqual([]);
+          expect(createArgs(child.spawned)).toBeUndefined();
+          expect(yield* currentBranchExists(tempRoot.current)).toBe(false);
+        });
+      },
+    );
+
+    it.effect.each(["Engine API", "container CLI"] as const)(
+      "--from-backup against the %s-reported stopped container fails before removing anything",
+      (probe) => {
+        const { route, engine } = leftBehindDbProbe(probe, "exited");
+        const { layer, child } = setup({ route, projectId: DB_PROJECT_ID });
+        return Effect.gen(function* () {
+          const error = yield* dbStart(flags("/abs/host/backup.sql")).pipe(
+            Effect.provide(engine === undefined ? layer : Layer.mergeAll(layer, engine)),
+            Effect.flip,
+          );
+          expect(error).toMatchObject({
+            _tag: "StartBackupVolumeExistsError",
+            message: "backup volume already exists",
+            suggestion: expect.stringContaining("supabase stop --no-backup"),
+          });
+          expect(teardownCommands(child.spawned)).toEqual([]);
+          expect(createArgs(child.spawned)).toBeUndefined();
+          expect(yield* currentBranchExists(tempRoot.current)).toBe(false);
+        }).pipe(withEmptyConfigEnv);
+      },
+    );
+
+    for (const [probe, route, outcome, volumeRemoval] of [
+      [
+        "initialised",
+        (base: ReturnType<typeof defaultRoute>) => base,
+        "removes only the db container and unused networks",
+        [],
+      ],
+      [
+        "uninitialised",
+        uninitialisedDataDirRoute,
+        "removes only the db container, its volume and unused networks",
+        [`volume rm -f ${DB_CONTAINER}`],
+      ],
+    ] as const) {
+      it.effect(
+        `a failed bring-up over a stopped db container on an ${probe} data directory ${outcome}, leaving the project's running services alone`,
+        () => {
+          const { layer, child } = setup({
+            route: route(
+              dbStartFailsRoute(
+                otherServicesRunningRoute(
+                  leftBehindDbRoute({ Running: false, Status: "exited" }, defaultRoute()),
+                ),
+              ),
+            ),
+            projectId: DB_PROJECT_ID,
+          });
+          return Effect.gen(function* () {
+            const error = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
+            expect(error).toBeInstanceOf(ContainerStartError);
+            // The first removal recovers the stopped container; the second is the rollback of
+            // the replacement that failed to start.
+            expect(teardownCommands(child.spawned)).toEqual([
+              `container rm -f ${DB_CONTAINER}`,
+              `container rm -f ${DB_CONTAINER}`,
+              ...volumeRemoval,
+              "network prune --force --filter label=com.supabase.cli.project=test",
+            ]);
+            expect(yield* currentBranchExists(tempRoot.current)).toBe(false);
+          }).pipe(withEmptyConfigEnv);
+        },
+      );
+    }
+
+    it.effect("an empty BITBUCKET_CLONE_DIR does not count as Bitbucket Pipelines", () => {
+      const { route } = leftBehindDbProbe("container CLI", "exited");
+      const { layer, child } = setup({
+        route,
+        projectId: DB_PROJECT_ID,
+        projectEnvContents: "BITBUCKET_CLONE_DIR=\n",
+      });
+      return Effect.gen(function* () {
+        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(containerRemovals(child.spawned)).toEqual([["container", "rm", "-f", DB_CONTAINER]]);
+        expect(createArgs(child.spawned)).not.toBeUndefined();
+      }).pipe(withEmptyConfigEnv);
+    });
+
+    it.effect("starts normally inside Bitbucket Pipelines when no db container exists", () => {
+      const { layer, out, child } = setup({
+        route: freshVolumeRoute(defaultRoute()),
+        projectEnvContents: BITBUCKET_ENV,
+      });
+      return Effect.gen(function* () {
+        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(out.stderrText).toContain("Starting database");
+        expect(containerRemovals(child.spawned)).toEqual([]);
+        expect(createArgs(child.spawned)).not.toBeUndefined();
+        expect(yield* readCurrentBranch(tempRoot.current)).toBe("main");
+      });
+    });
+  });
 
   it.effect(
     "starts the database on a fresh volume: creates the container, runs the SetupLocalDatabase-equivalent pipeline, and writes _current_branch",
@@ -500,10 +822,14 @@ describe("db start", () => {
   it.live(
     "fresh volume: retries the host connect while the published port is not yet reachable (#6136)",
     () => {
-      const s = setup({ route: freshVolumeRoute(defaultRoute()), connectFailures: 2 });
+      const s = setup({
+        route: freshVolumeRoute(defaultRoute()),
+        connectFailuresStartAt: 2,
+        connectFailures: 2,
+      });
       return Effect.gen(function* () {
         yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(s.layer));
-        expect(s.connectAttempts).toBe(3);
+        expect(s.connectAttempts).toBe(4);
         expect(yield* readCurrentBranch(tempRoot.current)).toBe("main");
       });
     },
@@ -513,13 +839,14 @@ describe("db start", () => {
   it.effect("fresh volume: a non-dial connect failure is not retried", () => {
     const s = setup({
       route: freshVolumeRoute(defaultRoute()),
+      connectFailuresStartAt: 2,
       connectFailures: 1,
       connectFailuresRetryable: false,
     });
     return Effect.gen(function* () {
       const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(s.layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(s.connectAttempts).toBe(1);
+      expect(s.connectAttempts).toBe(2);
     });
   });
 
@@ -588,7 +915,7 @@ describe("db start", () => {
           expect(Cause.pretty(exit.cause)).toContain("DbConfigLoadError");
         }
         // The container is already created/healthy by the time JWKS resolution runs, so the
-        // rollback still tears it down.
+        // rollback still removes it.
         expect(rollbackWasAttempted(child.spawned)).toBe(true);
       }).pipe(
         Effect.ensuring(
@@ -674,10 +1001,9 @@ describe("db start", () => {
           suggestion: expect.stringContaining("supabase stop --no-backup"),
         });
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-        // The volume this guard detected must never be pruned, even though the rollback still
-        // removes everything else on failure.
+        // The rollback must never remove the volume this guard detected.
         expect(rollbackWasAttempted(child.spawned)).toBe(true);
-        expect(volumePruneWasAttempted(child.spawned)).toBe(false);
+        expect(volumeRemovals(child.spawned)).toEqual([]);
       });
     },
   );
@@ -711,33 +1037,84 @@ describe("db start", () => {
     });
   });
 
+  it.effect("starts when Docker's health check cannot exec but the host can connect", () => {
+    const s = setup({ route: execFailedHealthRoute(freshVolumeRoute(defaultRoute())) });
+    return Effect.gen(function* () {
+      yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(s.layer));
+      expect(s.connectAttempts).toBeGreaterThan(0);
+      expect(rollbackWasAttempted(s.child.spawned)).toBe(false);
+      expect(yield* readCurrentBranch(tempRoot.current)).toBe("main");
+    });
+  });
+
+  it.effect("waits for Docker's first health verdict once the database accepts connections", () => {
+    const settleStarted = Deferred.makeUnsafe<void>();
+    const settleDone = Deferred.makeUnsafe<void>();
+    const base = freshVolumeRoute(defaultRoute());
+    let inspectsAfterConnect = 0;
+    const s = setup({
+      route: (args) => {
+        const result = base(args);
+        const isDbInspect =
+          args[0] === "container" &&
+          args[1] === "inspect" &&
+          result.stdout?.[0] === HEALTHY_STATE &&
+          s.connectAttempts > 0;
+        if (!isDbInspect) return result;
+        inspectsAfterConnect += 1;
+        Deferred.doneUnsafe(settleStarted, Effect.void);
+        if (inspectsAfterConnect < 3) return { stdout: [STARTING_STATE] };
+        Deferred.doneUnsafe(settleDone, Effect.void);
+        return result;
+      },
+    });
+    return Effect.gen(function* () {
+      const fiber = yield* dbStart(DEFAULT_FLAGS).pipe(
+        Effect.provide(s.layer),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Effect.raceFirst(Deferred.await(settleStarted), Fiber.await(fiber));
+      // Small steps: the settle's own 15s cap must stay far away however many scheduler turns
+      // each poll needs before it registers its next sleep.
+      while (fiber.pollUnsafe() === undefined && !(yield* Deferred.isDone(settleDone))) {
+        yield* TestClock.adjust("100 millis");
+      }
+      const exit = yield* Fiber.await(fiber);
+
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(inspectsAfterConnect).toBe(3);
+    });
+  });
+
   it.live("a health-check timeout without --from-backup fails the command and rolls back", () => {
     // `db.health_timeout` (unlike the generic 30s `serviceTimeout` every other service waits on)
     // is a real config.toml-configurable seam — this keeps the scenario fast instead of waiting
     // out the real 2m default.
     const { layer, child } = setup({
       configContents: 'project_id = "test"\n[db]\nhealth_timeout = "1s"\n',
-      route: freshVolumeRoute(defaultRoute({ neverHealthy: true })),
+      route: freshVolumeRoute(defaultRoute()),
+      connectFailures: Number.POSITIVE_INFINITY,
     });
     return Effect.gen(function* () {
       const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(rollbackWasAttempted(child.spawned)).toBe(true);
-      // This run's fresh volume means the rollback prunes it too — the "backup volume already
-      // exists" test above covers the non-pruning case.
-      expect(volumePruneWasAttempted(child.spawned)).toBe(true);
+      // This run's fresh volume means the rollback removes it too — the "backup volume already
+      // exists" test above covers the non-removing case.
+      expect(volumeRemovals(child.spawned)).toEqual([["volume", "rm", "-f", DB_CONTAINER]]);
       expect(yield* currentBranchExists(tempRoot.current)).toBe(false);
     });
   });
 
   it.live(
-    "honors a SUPABASE_DEBUG set only in the project .env: the rollback's Pruned reports fire without --debug",
+    "honors a SUPABASE_DEBUG set only in the project .env: the rollback's Pruned network report fires without --debug",
     () => {
       // A shell SUPABASE_DEBUG (even "false") would suppress the project .env value, so clear
       // it first.
       const { layer, child } = setup({
         configContents: 'project_id = "test"\n[db]\nhealth_timeout = "1s"\n',
-        route: freshVolumeRoute(defaultRoute({ neverHealthy: true })),
+        route: freshVolumeRoute(defaultRoute()),
+        connectFailures: Number.POSITIVE_INFINITY,
         projectEnvContents: "SUPABASE_DEBUG=true\n",
       });
       // This log write goes straight to the real process stderr, never the mocked Output
@@ -752,7 +1129,7 @@ describe("db start", () => {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         expect(rollbackWasAttempted(child.spawned)).toBe(true);
-        expect(writes.some((chunk) => chunk.includes("Pruned containers:"))).toBe(true);
+        expect(writes.some((chunk) => chunk.includes("Pruned network:"))).toBe(true);
       }).pipe(
         withEmptyConfigEnv,
         Effect.ensuring(
@@ -769,7 +1146,8 @@ describe("db start", () => {
     () => {
       const { layer, child } = setup({
         configContents: 'project_id = "test"\n[db]\nhealth_timeout = "1s"\n',
-        route: freshVolumeRoute(defaultRoute({ neverHealthy: true })),
+        route: freshVolumeRoute(defaultRoute()),
+        connectFailures: Number.POSITIVE_INFINITY,
       });
       return Effect.gen(function* () {
         // The stderr log dump on timeout is covered by the shared health-check.ts suite; this
@@ -780,6 +1158,114 @@ describe("db start", () => {
       });
     },
   );
+
+  describe("an existing volume whose Postgres data directory was never initialised", () => {
+    it.effect("runs the schema setup pipeline as it does for a brand-new volume", () => {
+      const { layer, out, child } = setup({ route: uninitialisedDataDirRoute(defaultRoute()) });
+      return Effect.gen(function* () {
+        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(out.stderrText).toContain("Initialising schema...");
+        expect(dbSetupJobCalls(child.spawned)).toHaveLength(3);
+        expect(volumeRemovals(child.spawned)).toEqual([]);
+        expect(yield* readCurrentBranch(tempRoot.current)).toBe("main");
+      });
+    });
+
+    for (const [probe, route, volumeRemoved] of [
+      ["uninitialised", uninitialisedDataDirRoute, true],
+      ["initialised", (base: ReturnType<typeof defaultRoute>) => base, false],
+    ] as const) {
+      const rollbackOutcome = volumeRemoved ? "and removes" : "without removing";
+      const expectedVolumeRemovals = volumeRemoved ? [["volume", "rm", "-f", DB_CONTAINER]] : [];
+
+      it.live(
+        `rolls back ${rollbackOutcome} the volume when Postgres never becomes healthy on an ${probe} data directory`,
+        () => {
+          const { layer, child } = setup({
+            configContents: 'project_id = "test"\n[db]\nhealth_timeout = "0s"\n',
+            route: route(defaultRoute()),
+            connectFailures: Number.POSITIVE_INFINITY,
+          });
+          return Effect.gen(function* () {
+            const error = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
+            expect(error).toBeInstanceOf(HealthCheckTimeoutError);
+            expect(rollbackWasAttempted(child.spawned)).toBe(true);
+            expect(volumeRemovals(child.spawned)).toEqual(expectedVolumeRemovals);
+          });
+        },
+      );
+
+      it.effect(
+        `rolls back ${rollbackOutcome} the volume when docker start of Postgres fails on an ${probe} data directory`,
+        () => {
+          const { layer, child } = setup({ route: dbStartFailsRoute(route(defaultRoute())) });
+          return Effect.gen(function* () {
+            const error = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
+            expect(error).toBeInstanceOf(ContainerStartError);
+            expect(error).toMatchObject({
+              message: expect.stringContaining(
+                `failed to start docker container "${DB_CONTAINER}"`,
+              ),
+            });
+            expect(rollbackWasAttempted(child.spawned)).toBe(true);
+            expect(volumeRemovals(child.spawned)).toEqual(expectedVolumeRemovals);
+          });
+        },
+      );
+    }
+  });
+
+  describe("project lifecycle lock", () => {
+    // `db start` holds the shared gate, so an exclusive probe reads `busy` while it is in flight.
+    const lifecycleGateFile = Effect.fnUntraced(function* (workdir: string) {
+      const path = yield* Path.Path;
+      return path.join(workdir, ".supabase", "locks", "docker-lifecycle.lock");
+    });
+    const gateState = (gate: string) =>
+      TestClock.withLive(
+        holdExclusiveLock(gate, "0 millis", "probe").pipe(
+          Effect.scoped,
+          Effect.match({
+            onSuccess: () => "free" as const,
+            onFailure: (error) => (isLockBusy(error) ? ("busy" as const) : ("error" as const)),
+          }),
+        ),
+      );
+
+    for (const outcome of ["succeeds", "fails"] as const) {
+      it.effect(
+        `holds the lifecycle lock while the database comes up and releases it when the start ${outcome}`,
+        () => {
+          const { layer, dbSession } = setup({ route: freshVolumeRoute(defaultRoute()) });
+          return Effect.gen(function* () {
+            const gate = yield* lifecycleGateFile(tempRoot.current);
+            const stateAtConnect: Array<"free" | "busy" | "error"> = [];
+            const probingConnection = Layer.succeed(DbConnection, {
+              connect: () =>
+                gateState(gate).pipe(
+                  Effect.flatMap((state) => {
+                    stateAtConnect.push(state);
+                    return outcome === "fails" && stateAtConnect.length > 1
+                      ? Effect.fail(new DbConnectError({ message: "connection refused" }))
+                      : Effect.succeed(dbSession.session);
+                  }),
+                ),
+            });
+
+            const exit = yield* dbStart(DEFAULT_FLAGS).pipe(
+              Effect.provide(Layer.mergeAll(layer, probingConnection)),
+              Effect.exit,
+            );
+
+            expect(Exit.isSuccess(exit)).toBe(outcome === "succeeds");
+            expect(stateAtConnect.length).toBeGreaterThan(1);
+            expect(stateAtConnect.every((state) => state === "busy")).toBe(true);
+            expect(yield* gateState(gate)).toBe("free");
+          }).pipe(Effect.provide(BunServices.layer));
+        },
+      );
+    }
+  });
 
   it.effect("proceeds with no config file (missing config is tolerated)", () => {
     const { layer, child } = setup({ skipConfig: true, route: freshVolumeRoute(defaultRoute()) });
@@ -1598,7 +2084,7 @@ describe("db start", () => {
       const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(rollbackWasAttempted(child.spawned)).toBe(true);
-      expect(volumePruneWasAttempted(child.spawned)).toBe(true);
+      expect(volumeRemovals(child.spawned)).toEqual([["volume", "rm", "-f", DB_CONTAINER]]);
     });
   });
 

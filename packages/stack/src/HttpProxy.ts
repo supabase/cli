@@ -28,6 +28,12 @@ export interface HttpRoute {
   readonly target: Effect.Effect<BackendAddress, ProxyError, Scope.Scope>;
   readonly upstreamPrefix?: string;
   readonly upstreamHost?: string;
+  /** Headers sent only when the client sent none, like Kong's request-transformer `add`. */
+  readonly addHeaders?: Readonly<Record<string, string>>;
+  /** X-Forwarded-Prefix of a stripped route; defaults to `prefix/`, legacy Kong's path form. */
+  readonly forwardedPrefix?: string;
+  /** A shared API listener route, which sends legacy Kong's X-Forwarded-Proto/Host/Port/Path/Prefix. */
+  readonly gateway?: boolean;
   readonly keyRewrite?: HttpRouteKeyRewrite;
   /** Sends each write over a fresh upstream connection; reads still share the pool and its retry. */
   readonly freshWrites?: boolean;
@@ -144,6 +150,29 @@ const upstreamHeadersFor = (request: IncomingMessage, route: HttpRoute) => {
     result["x-forwarded-for"] = forwardedFor === undefined ? client : `${forwardedFor}, ${client}`;
     result["x-real-ip"] = client;
   }
+  /* Like Kong without trusted IPs: client-sent X-Forwarded-* values are replaced, the host is
+     nginx's `$host` (lowercase, no port or trailing dot: ngx_http_validate_host, release-1.19.10
+     src/http/ngx_http_request.c#L2026-L2028), and only a stripped route sends its prefix. */
+  if (route.gateway === true) {
+    const host = headerValue(headers.host)
+      ?.toLowerCase()
+      .replace(/\.?(?::\d*)?$/u, "");
+    const port = request.socket.localPort;
+    const prefix =
+      route.upstreamPrefix === undefined || route.prefix === "/"
+        ? undefined
+        : (route.forwardedPrefix ?? `${route.prefix}/`);
+    result["x-forwarded-proto"] = "http";
+    if (host === undefined) delete result["x-forwarded-host"];
+    else result["x-forwarded-host"] = host;
+    if (port === undefined) delete result["x-forwarded-port"];
+    else result["x-forwarded-port"] = String(port);
+    result["x-forwarded-path"] = pathnameFor(request.url ?? "/");
+    if (prefix === undefined) delete result["x-forwarded-prefix"];
+    else result["x-forwarded-prefix"] = prefix;
+  }
+  for (const [name, value] of Object.entries(route.addHeaders ?? {}))
+    result[name.toLowerCase()] ??= value;
   const keyRewrite = route.keyRewrite;
   if (keyRewrite?.policy === "bearer") {
     const value = bearerValueFor(headers, keyRewrite.keys);

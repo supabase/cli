@@ -8,7 +8,7 @@ Management API.
 
 | Path                                   | Format     | When                                                                                                         |
 | -------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------ |
-| `<workdir>/supabase/config.toml`       | TOML       | local / `--db-url` — to resolve the DB connection config                                                     |
+| `<workdir>/supabase/config.toml`       | TOML       | local / `--db-url` — to resolve the DB connection and `[api].enabled` / `[api].schemas`                      |
 | `~/.supabase/access-token`             | plain text | `--linked` only, when `SUPABASE_ACCESS_TOKEN` unset (keyring → file)                                         |
 | `<workdir>/supabase/.temp/project-ref` | plain text | `--linked` only — to resolve the project ref; skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set |
 | `PGSSL*` PEM, `pg_service.conf`        | PEM, libpq | linked: `pg_service.conf` if `PGSERVICE` is set; PEM files only on the pooler temp-role probe; see `db push` |
@@ -36,19 +36,21 @@ Issued through the typed client; the generated schema keeps advisor
 
 ## Database (`--local` / `--db-url`)
 
-One connection. Within one transaction: `BEGIN` → `set local search_path = ''`
+One connection. Within one transaction: `BEGIN` → `set_config('pgrst.db_schemas', <exposed schemas or ''>, true)` → `set local search_path = ''`
 (setup half of `templates/lints.sql`) → the multi-CTE lints query → `ROLLBACK`.
 `--type` filters the resulting rows by category (`SECURITY` / `PERFORMANCE`).
 
 ## Environment Variables
 
-| Variable                | Purpose                                                              | Required?                                 |
-| ----------------------- | -------------------------------------------------------------------- | ----------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token for `--linked`                                            | no (keyring → `~/.supabase/access-token`) |
-| `SUPABASE_PROJECT_ID`   | linked project ref override (superseded by `--project-ref` when set) | no                                        |
-| `SUPABASE_PROFILE`      | API profile (built-in name or YAML path)                             | no                                        |
-| `PGHOST` / `PGPORT` / … | connection overrides (local / `--db-url`)                            | no                                        |
-| `PG*` libpq             | linked: validated; used only by the temp-role probe; see `db push`   | no                                        |
+| Variable                | Purpose                                                                                                                                  | Required?                                 |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| `SUPABASE_API_SCHEMAS`  | overrides `[api].schemas` for local / `--db-url`                                                                                         | no                                        |
+| `SUPABASE_API_ENABLED`  | overrides `[api].enabled`; malformed values fail config loading on every target unless a matching `[remotes.*]` block sets `api.enabled` | no                                        |
+| `SUPABASE_ACCESS_TOKEN` | auth token for `--linked`                                                                                                                | no (keyring → `~/.supabase/access-token`) |
+| `SUPABASE_PROJECT_ID`   | linked project ref override (superseded by `--project-ref` when set)                                                                     | no                                        |
+| `SUPABASE_PROFILE`      | API profile (built-in name or YAML path)                                                                                                 | no                                        |
+| `PGHOST` / `PGPORT` / … | connection overrides (local / `--db-url`)                                                                                                | no                                        |
+| `PG*` libpq             | linked: validated; used only by the temp-role probe; see `db push`                                                                       | no                                        |
 
 The API base URL is derived from `SUPABASE_PROFILE`; `SUPABASE_API_URL` is **not**
 honored (see `command-settings.layer.unit.test.ts`).
@@ -101,3 +103,7 @@ the process exits non-zero (no error envelope is written over the payload).
   equivalent env var simply leaves unused on a non-linked target).
 - Not-logged-in suggestion: `Run supabase login first.`
 - Telemetry: only the standard `cli_command_executed` event (no custom events).
+- Exposure reflects config on disk, which may differ from a stack started with older config.
+- `--db-url` uses the local `[api]` exposure even when the URL points at a remote database, because a raw URL does not identify a project whose Data API settings could be read; align `[api]` (or `SUPABASE_API_SCHEMAS` / `SUPABASE_API_ENABLED`) with the target, or use `--linked`.
+- The exposure value reverts at rollback, but the setting stays defined and later reads `''` on that backend.
+- `--linked` exposure is set by the platform.

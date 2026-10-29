@@ -1,0 +1,301 @@
+name: CLI benchmark
+run-name: "CLI benchmark #${{ github.event.pull_request.number || github.event.issue.number }}"
+
+# Report-only comparison of a pull request's CLI build with a build of its merge base. Every
+# workload runs against the replay server, so no Docker, database, or network is involved. The
+# job never blocks a pull request and is not a required check.
+#
+# The first push to a pull request from this repository benchmarks and posts one comment tagged
+# `<!-- cli-bench:pr -->`; later pushes skip while that comment reports a result. A maintainer
+# commenting exactly `/bench` re-runs the run for the pull request's current head commit, as does
+# "Re-run all jobs" in the Actions UI: a re-run benchmarks again and updates the comment, keeping
+# earlier runs in a collapsed list. Pull requests from forks benchmark every push and write a job
+# summary only. A pull request that changes no benchmarked path, or more than the 300 files
+# GitHub's path filter inspects, has no run to re-run, and `/bench` says so.
+# See apps/cli/docs/tracing-monitoring.md.
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+    branches:
+      - develop
+    paths:
+      - "apps/cli/**"
+      - "apps/cli-e2e/**"
+      - "packages/**"
+      - "pnpm-lock.yaml"
+      - "turbo.json"
+      - ".github/workflows/cli-bench.yml"
+      - ".github/scripts/cli-bench/**"
+  # `/bench` runs default branch code only: it never checks out or runs pull request code.
+  # jactionlint ignore=dangerous-triggers
+  issue_comment:
+    types:
+      - created
+
+permissions: {}
+
+# Comment runs get a group of their own, so a comment can never cancel a pull request's benchmark
+# nor be cancelled by one.
+concurrency:
+  group: >-
+    cli-bench-${{ github.event.pull_request.number || github.event.issue.number }}${{
+      github.event_name == 'issue_comment' && format('-comment-{0}', github.run_id) || '' }}
+  cancel-in-progress: true
+
+jobs:
+  # Decides whether this push benchmarks. Read-only: it only lists the pull request's comments.
+  resolve:
+    name: Resolve
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      should_run: ${{ steps.resolve.outputs.should_run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: ".bun-version"
+          no-cache: true
+      - name: Resolve
+        id: resolve
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: bun .github/scripts/cli-bench/resolve.ts
+
+  # `/bench`: re-runs this workflow's run for the pull request's current head commit. The only job
+  # with `actions: write`; it runs default branch code and no pull request code.
+  rerun:
+    name: Re-run benchmark
+    # Cheap, non-authoritative pre-filter; rerun.ts does the exact command match and the
+    # effective-permission lookup.
+    if: >
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request != null &&
+      startsWith(github.event.comment.body, '/bench') &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: ".bun-version"
+          no-cache: true
+      - name: Re-run
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          COMMENT_AUTHOR_LOGIN: ${{ github.event.comment.user.login }}
+          COMMENT_AUTHOR_ASSOCIATION: ${{ github.event.comment.author_association }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: bun .github/scripts/cli-bench/rerun.ts
+
+  bench:
+    name: Benchmark CLI against merge base
+    needs: resolve
+    if: needs.resolve.outputs.should_run == 'true'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout pull request head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+      - name: Prepare benchmark directory
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/bench"
+          echo "BENCH_DIR=$RUNNER_TEMP/bench" >> "$GITHUB_ENV"
+
+      - name: Build branch binary
+        id: branch_build
+        continue-on-error: true
+        shell: bash
+        run: |
+          pnpm --filter supabase run build:binary
+          mkdir -p "$BENCH_DIR/branch"
+          cp apps/cli/dist/supabase "$BENCH_DIR/branch/supabase"
+
+      - name: Build merge-base binary
+        id: base_build
+        continue-on-error: true
+        if: steps.branch_build.outcome == 'success'
+        env:
+          HUSKY: "0"
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        shell: bash
+        run: |
+          merge_base="$(git merge-base HEAD "origin/$BASE_REF")"
+          echo "Merge base: $merge_base"
+          echo "merge_base=$merge_base" >> "$GITHUB_OUTPUT"
+          git worktree add "$RUNNER_TEMP/base-src" "$merge_base"
+          cd "$RUNNER_TEMP/base-src"
+          # The setup action writes this file only when the Dependency Firewall token is available.
+          if [ -f "$RUNNER_TEMP/dependency-firewall.npmrc" ]; then
+            export NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/dependency-firewall.npmrc"
+          fi
+          pnpm install --frozen-lockfile
+          pnpm --filter supabase run build:binary
+          mkdir -p "$BENCH_DIR/base"
+          cp apps/cli/dist/supabase "$BENCH_DIR/base/supabase"
+
+      - name: Start replay server
+        id: replay
+        continue-on-error: true
+        if: steps.branch_build.outcome == 'success' && steps.base_build.outcome == 'success'
+        shell: bash
+        run: |
+          bun apps/cli-e2e/scripts/replay-serve.ts > "$BENCH_DIR/replay.log" 2>&1 &
+          echo "REPLAY_PID=$!" >> "$GITHUB_ENV"
+          for _ in $(seq 1 60); do
+            url="$(grep -o 'http://[^"]*' "$BENCH_DIR/replay.log" | head -n 1 || true)"
+            if [ -n "$url" ]; then
+              echo "REPLAY_URL=$url" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 0.5
+          done
+          echo "replay server did not report a URL" >&2
+          cat "$BENCH_DIR/replay.log" >&2
+          exit 1
+
+      - name: Run benchmark
+        id: bench
+        continue-on-error: true
+        if: steps.replay.outcome == 'success'
+        shell: bash
+        run: |
+          bun apps/cli/scripts/bench-cli.ts \
+            --base "$BENCH_DIR/base/supabase" \
+            --branch "$BENCH_DIR/branch/supabase" \
+            --workloads apps/cli/bench/workloads.pr.json \
+            --api-url "$REPLAY_URL" \
+            --trace \
+            --out "$BENCH_DIR/report.json" | tee "$BENCH_DIR/report.txt"
+
+      - name: Stop replay server
+        if: always() && env.REPLAY_PID != ''
+        shell: bash
+        run: kill "$REPLAY_PID" || true
+
+      - name: Write job summary
+        if: always()
+        env:
+          BRANCH_BUILD: ${{ steps.branch_build.outcome == 'success' && 'ok' || 'failed' }}
+          BASE_BUILD: ${{ steps.base_build.outcome == 'success' && 'ok' || 'failed' }}
+          REPLAY: ${{ steps.replay.outcome == 'success' && 'ok' || 'failed' }}
+          MERGE_BASE: ${{ steps.base_build.outputs.merge_base }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        shell: bash
+        run: |
+          bun apps/cli/scripts/bench-summary.ts \
+            --report "$BENCH_DIR/report.json" \
+            --branch-build "$BRANCH_BUILD" \
+            --base-build "$BASE_BUILD" \
+            --replay "$REPLAY" \
+            --head-sha "$HEAD_SHA" \
+            --base-ref "$BASE_REF" \
+            --merge-base "$MERGE_BASE" \
+            --comment-out "$BENCH_DIR/comment.md"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cli-bench-report
+          path: |
+            ${{ runner.temp }}/bench/report.json
+            ${{ runner.temp }}/bench/report.txt
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Upload comment
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cli-bench-comment
+          path: ${{ runner.temp }}/bench/comment.md
+          retention-days: 1
+          if-no-files-found: ignore
+
+  comment:
+    name: Post pull request comment
+    needs:
+      - resolve
+      - bench
+    # A pull_request run from a fork has a read-only token, so it posts no comment. Failing to
+    # post never fails the workflow.
+    if: >-
+      ${{ !cancelled() && needs.resolve.outputs.should_run == 'true' && needs.bench.result == 'success' &&
+      github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    # The only pull_request job that can write to the pull request. It checks out the merge commit,
+    # which its author can already run with this token by editing the workflow. It never builds or
+    # runs the benchmarked binaries and reads the rendered markdown as data.
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: ".bun-version"
+          no-cache: true
+      - name: Download comment
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cli-bench-comment
+          path: ${{ runner.temp }}/bench-comment
+      - name: Post comment
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MODE: ${{ github.run_attempt > 1 && 'upsert' || 'create-if-missing' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BODY_FILE: ${{ runner.temp }}/bench-comment/comment.md
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
+        run: |
+          if [ ! -f "$BODY_FILE" ]; then
+            echo "The benchmark job produced no comment."
+            exit 0
+          fi
+          bun .github/scripts/cli-bench/post-comment.ts

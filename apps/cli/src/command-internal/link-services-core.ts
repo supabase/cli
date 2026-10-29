@@ -25,7 +25,7 @@ export interface LinkServicesInput {
   readonly ref: string;
   /**
    * Tenant API key used for the service version probes: `link` passes the
-   * service-role key, `bootstrap` passes the anon key.
+   * service-role key, `bootstrap` passes the anon key. Empty skips the probes.
    */
   readonly serviceKey: string;
   readonly skipPooler: boolean;
@@ -60,6 +60,7 @@ export const linkServicesCore = Effect.fn("LinkServices.write")(function* (
 
   yield* linkStorageMigration(api, input.ref, state, workdir);
   yield* linkPooler({ api, ref: input.ref, skipPooler: input.skipPooler, state, workdir });
+  if (input.serviceKey.length === 0) return;
 
   const tenantOpts = {
     ref: input.ref,

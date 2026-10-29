@@ -12,7 +12,10 @@ import {
   serviceContainerIds,
   localDbContainerId,
 } from "../../command-internal/docker-ids.ts";
+import { healthCheckExecUnavailableWarning } from "../../command-internal/db-bootstrap/health-check.ts";
 import {
+  formatNotReadyReason,
+  healthCheckCannotExec,
   inspectContainerState,
   listContainersByLabel,
 } from "../../command-internal/docker-lifecycle.ts";
@@ -183,9 +186,13 @@ export const status = Effect.fn("status")(function* (flags: StatusFlags) {
         });
       }
       if (state.health !== undefined && state.health !== "healthy") {
-        return yield* new StatusDbNotReadyError({
-          message: `${dbContainerId} container is not ready: ${state.health}`,
-        });
+        if (!healthCheckCannotExec(state)) {
+          return yield* new StatusDbNotReadyError({
+            message: `${dbContainerId} ${formatNotReadyReason(state)}`,
+          });
+        }
+        yield* Effect.annotateCurrentSpan("db.health_exec_unavailable", true);
+        yield* output.raw(healthCheckExecUnavailableWarning([dbContainerId]), "stderr");
       }
     }
 

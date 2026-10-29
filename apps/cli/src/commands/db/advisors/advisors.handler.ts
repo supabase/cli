@@ -61,6 +61,21 @@ const queryLints = Effect.fn("DbAdvisors.queryLints")(function* (session: DbSess
   return rows.map(scanAdvisorLintRow);
 });
 
+const setExposedSchemas = Effect.fn("DbAdvisors.setExposedSchemas")(function* (
+  session: DbSession,
+  schemas: ReadonlyArray<string>,
+) {
+  yield* Effect.annotateCurrentSpan("advisor.exposed_schema_count", schemas.length);
+  yield* session
+    .query("select set_config('pgrst.db_schemas', $1, true)", [schemas.join(",")])
+    .pipe(
+      Effect.mapError(
+        (cause) =>
+          new DbAdvisorsSetupError({ message: `failed to prepare lint session: ${cause.message}` }),
+      ),
+    );
+});
+
 /** Gathers lints from a local (or `--db-url`) database connection. */
 const runLocal = Effect.fn("db.advisors.runLocal")(function* (
   flags: DbAdvisorsFlags,
@@ -94,7 +109,12 @@ const runLocal = Effect.fn("db.advisors.runLocal")(function* (
             }),
         ),
       );
-      return yield* queryLints(session).pipe(
+      return yield* Effect.gen(function* () {
+        if (cfg.exposedSchemas !== undefined) {
+          yield* setExposedSchemas(session, cfg.exposedSchemas);
+        }
+        return yield* queryLints(session);
+      }).pipe(
         Effect.ensuring(
           session
             .exec("rollback")

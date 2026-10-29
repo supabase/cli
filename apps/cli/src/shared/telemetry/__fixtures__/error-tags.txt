@@ -471,6 +471,7 @@ SecretsNoArgumentsError
 SecretsSetInputError
 SecretsSetNetworkError
 SecretsSetUnexpectedStatusError
+SecretsSetWorkdirError
 SecretsUnsetCancelledError
 SecretsUnsetNetworkError
 SecretsUnsetUnexpectedStatusError

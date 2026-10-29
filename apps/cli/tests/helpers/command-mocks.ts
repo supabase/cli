@@ -56,10 +56,8 @@ import {
   LoginVerificationError,
 } from "../../src/commands/login/login.errors.ts";
 import { CommandSettings } from "../../src/config/command-settings.service.ts";
-import {
-  PGDATA_BASELINE_MARKER_NAME,
-  PGDATA_PATH,
-} from "../../src/command-internal/db-bootstrap/pgdata-snapshot.ts";
+import { PGDATA_BASELINE_MARKER_NAME } from "../../src/command-internal/db-bootstrap/pgdata-snapshot.ts";
+import { POSTGRES_DATA_DIR } from "../../src/command-internal/db-bootstrap/postgres.service.ts";
 import { remoteTargetLayer } from "../../src/config/remote-target.layer.ts";
 import { LocalDockerEngine } from "../../src/command-internal/db-bootstrap/local-db-running.ts";
 import { LinkedProjectCache } from "../../src/telemetry/linked-project-cache.service.ts";
@@ -80,6 +78,7 @@ import {
   mockTty,
   processEnvLayer,
 } from "./mocks.ts";
+import { EXEC_FAILED_STATE } from "./docker-health.ts";
 
 const hostPath = Effect.runSync(Path.Path.pipe(Effect.provide(BunPath.layer)));
 
@@ -105,7 +104,7 @@ export const mockLinkedProjectCacheLayer = Layer.succeed(LinkedProjectCache, {
  * socket. Direct-path tests provide their own definitive `LocalDockerEngine`.
  */
 export const mockLocalDockerEngineUnavailableLayer = Layer.succeed(LocalDockerEngine, {
-  containerExists: () => Effect.succeed(Option.none()),
+  inspectContainer: () => Effect.succeed(Option.none()),
 });
 
 export const mockTelemetryStateLayer = Layer.succeed(TelemetryState, {
@@ -932,26 +931,14 @@ export const FAKE_SHADOW_CONTAINER_ID = "abc123456789shadow0".padEnd(64, "0").sl
 const SHADOW_HEALTHY_STATE = '{"Running":true,"Status":"running","Health":{"Status":"healthy"}}';
 
 /**
- * A real (Docker-valid) "still starting" state, not `Effect.never`, so
- * {@link waitForHealthyServices}'s retry loop genuinely retries on its real 1-second
- * `Schedule.spaced` backoff instead of hanging on a single probe forever — a fiber interrupted
- * mid-retry must be observed actually suspended inside the retry loop, not merely past the
- * initial `create` call.
- */
-const SHADOW_STARTING_STATE = '{"Running":true,"Status":"running","Health":{"Status":"starting"}}';
-
-/**
  * Fakes every `docker`/`podman` subprocess call the native shadow-provisioning path issues:
  * `buildLocalDbContainerInputs`'s image-cache check, `createShadowDatabase`'s network-create +
- * container create/start, `waitForHealthyServices`'s container inspect, and
+ * container create/start, `waitForPostgresReady`'s container inspect, and
  * `removeShadowDatabase`'s cleanup. Both callers only ever create one (shadow) container, never
  * named.
  *
- * `neverHealthy` (default `false`) makes every `container inspect` report `"starting"` instead of
- * `"healthy"`, for interrupt-during-health-wait coverage: with the default healthy-immediately
- * response, a forked fiber can run the entire shadow-provisioning sequence to completion
- * synchronously before a test's own polling loop is even scheduled, making `Fiber.interrupt` a
- * no-op on an already-finished fiber.
+ * `execFailedHealth` (default `false`) makes every `container inspect` report the health state of a
+ * host where Docker cannot `docker exec` a HEALTHCHECK (`EXEC_FAILED_STATE`) instead of `"healthy"`.
  *
  * `failCreate`/`failRemove` (both default `false`) make `docker create`/`docker rm` exit
  * non-zero instead.
@@ -960,7 +947,7 @@ const SHADOW_STARTING_STATE = '{"Running":true,"Status":"running","Health":{"Sta
  * supabase_db_<projectId>` probe `isLocalDbRunning` issues before `--use-pgadmin` provisions
  * anything — distinguished from the shadow's own `container inspect <64-hex-id>` health probe by
  * the target id's `supabase_db_` prefix, so both options leave the shadow's own health check on
- * its normal (healthy/never-healthy) path. `dbNotRunning` reports Docker's "container doesn't
+ * its normal path. `dbNotRunning` reports Docker's "container doesn't
  * exist" shape (`isContainerNotFoundMessage`); mutually exclusive with `dbInspectFailsWith`,
  * which instead reports a daemon-unreachable failure (`isDockerDaemonUnreachable`) with the given
  * stderr text — enforced below (a test that sets both throws immediately, rather than one option
@@ -972,7 +959,7 @@ const SHADOW_STARTING_STATE = '{"Running":true,"Status":"running","Health":{"Sta
  */
 export function mockShadowContainerCliSpawner(
   opts: {
-    readonly neverHealthy?: boolean;
+    readonly execFailedHealth?: boolean;
     readonly failCreate?: boolean;
     readonly failRemove?: boolean;
     readonly dbNotRunning?: boolean;
@@ -988,7 +975,7 @@ export function mockShadowContainerCliSpawner(
       "mockShadowContainerCliSpawner: dbNotRunning and dbInspectFailsWith are mutually exclusive",
     );
   }
-  const neverHealthy = opts.neverHealthy ?? false;
+  const execFailedHealth = opts.execFailedHealth ?? false;
   const failCreate = opts.failCreate ?? false;
   const failRemove = opts.failRemove ?? false;
   const spawned: Array<{ readonly args: ReadonlyArray<string> }> = [];
@@ -1061,7 +1048,7 @@ export function mockShadowContainerCliSpawner(
             stdoutLines = [FAKE_SHADOW_CONTAINER_ID];
           }
         } else if (args[0] === "container" && args[1] === "inspect") {
-          stdoutLines = [neverHealthy ? SHADOW_STARTING_STATE : SHADOW_HEALTHY_STATE];
+          stdoutLines = [execFailedHealth ? EXEC_FAILED_STATE : SHADOW_HEALTHY_STATE];
         } else if (args[0] === "rm") {
           if (failRemove) {
             exitCode = 1;
@@ -1317,7 +1304,7 @@ export function mockDockerDaemonCliSpawner(
         const container = containers.get(id);
         const received = yield* readStdin(command);
         const isSecret = containerPath === "" || containerPath === "/";
-        const isStamp = containerPath === PGDATA_PATH;
+        const isStamp = containerPath === POSTGRES_DATA_DIR;
         const failed =
           (isStamp && opts.failStamp === true) ||
           (!isSecret && !isStamp && opts.failCopyIn === true);
@@ -1390,7 +1377,7 @@ export function mockDockerDaemonCliSpawner(
         const dest = args[2] ?? "";
         const containerPath = dest.slice(dest.indexOf(":") + 1);
         if (containerPath === "" || containerPath === "/") return "cp-secret";
-        return containerPath === PGDATA_PATH ? "cp-stamp" : "cp-in";
+        return containerPath === POSTGRES_DATA_DIR ? "cp-stamp" : "cp-in";
       }
       if (args[2] === "-") return "cp-out";
       return "cp-secret";

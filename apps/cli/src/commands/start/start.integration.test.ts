@@ -4,6 +4,7 @@ import { BunServices } from "@effect/platform-bun";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import {
   Cause,
+  Clock,
   Deferred,
   Effect,
   Exit,
@@ -21,6 +22,7 @@ import {
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as TestClock from "effect/testing/TestClock";
 import { assert, vi } from "vitest";
 
 import {
@@ -41,10 +43,18 @@ import {
   withEmptyConfigEnv,
   withEnvVar,
 } from "../../../tests/helpers/command-mocks.ts";
+import {
+  EXEC_FAILED_STATE,
+  PROBE_TIMEOUT_OUTPUT,
+  inspectedState,
+} from "../../../tests/helpers/docker-health.ts";
 import { assertPermissionDrift } from "../../../tests/helpers/permission-drift.ts";
 import { unusedStackServices } from "../../../tests/helpers/unused-stack.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
-import { classifyCliCauseActionability } from "../../shared/telemetry/error-actionability.ts";
+import {
+  classifyCliCauseActionability,
+  classifyCliErrorActionability,
+} from "../../shared/telemetry/error-actionability.ts";
 import {
   DebugFlag,
   ExperimentalFlag,
@@ -54,7 +64,9 @@ import {
 import { CommandPlatformApiFactory } from "../../auth/command-platform-api-factory.service.ts";
 import { serviceContainerIds, serviceContainerName } from "../../command-internal/docker-ids.ts";
 import { bindMountSpecSource } from "../../command-internal/docker-bind-classify.ts";
+import { ContainerStartError } from "../../command-internal/db-bootstrap/container-lifecycle.ts";
 import { HealthCheckTimeoutSeconds } from "../../command-internal/db-bootstrap/health-check.ts";
+import { DbConnectError } from "../../command-internal/db-connection.errors.ts";
 import { DbConnection, type DbSession } from "../../command-internal/db-connection.service.ts";
 import { dockerRunLayer } from "../../command-internal/docker-run.layer.ts";
 import { START_EXCLUDABLE_KEYS } from "./start.exclude.ts";
@@ -290,6 +302,75 @@ function defaultRoute(opts: { readonly neverHealthy?: ReadonlySet<string> } = {}
   };
 }
 
+const refusedDbConnect = () =>
+  Effect.fail(new DbConnectError({ message: "failed to connect: connection refused" }));
+
+/** Docker cannot launch any HEALTHCHECK on this host, Kong's included. */
+function execBrokenHostRoute(base: (args: ReadonlyArray<string>) => RouteResult = defaultRoute()) {
+  return (args: ReadonlyArray<string>): RouteResult => {
+    const result = base(args);
+    if (args[0] === "container" && args[1] === "inspect" && result.stdout?.[0] === HEALTHY_STATE) {
+      return { stdout: [EXEC_FAILED_STATE] };
+    }
+    return result;
+  };
+}
+
+/**
+ * A db whose Docker health reads `starting` until `healthyAtSeconds` of test-clock time.
+ * `settleStarted` fires on the first db inspect after the host connect probe succeeded;
+ * `settled` fires when Docker first reports healthy.
+ */
+function dbHealthVerdictAt(healthyAtSeconds: number) {
+  const base = defaultRoute();
+  const settleStarted = Deferred.makeUnsafe<void>();
+  const settled = Deferred.makeUnsafe<void>();
+  let connected = false;
+  const dbConnect = () => {
+    connected = true;
+    return Effect.succeed(fakeDbSession().session);
+  };
+  const route = (args: ReadonlyArray<string>): RouteResult | Effect.Effect<RouteResult> => {
+    const result = base(args);
+    const isDbInspect =
+      args[0] === "container" &&
+      args[1] === "inspect" &&
+      (args[2] ?? "").includes("_db_") &&
+      result.stdout?.[0] === HEALTHY_STATE;
+    if (!isDbInspect) return result;
+    if (connected) Deferred.doneUnsafe(settleStarted, Effect.void);
+    return Effect.map(Clock.currentTimeMillis, (now) => {
+      if (now < healthyAtSeconds * 1000) return { stdout: [STARTING_STATE] };
+      Deferred.doneUnsafe(settled, Effect.void);
+      return result;
+    });
+  };
+  return { route, dbConnect, settleStarted, settled };
+}
+
+/** Answers every Kong-gateway request with the status scripted for its path (200 otherwise), recording each. */
+function mockGatewayHttpClient(statusByPath: Readonly<Record<string, number>> = {}) {
+  const requests: Array<{
+    readonly method: string;
+    readonly path: string;
+    readonly headers: Readonly<Record<string, string>>;
+  }> = [];
+  const layer = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => {
+      const { pathname } = new URL(request.url);
+      requests.push({ method: request.method, path: pathname, headers: { ...request.headers } });
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response("{}", { status: statusByPath[pathname] ?? 200 }),
+        ),
+      );
+    }),
+  );
+  return { layer, requests };
+}
+
 /** A `HttpClient` that always answers 200 — the default config's PostgREST/Kong readiness probe. */
 const alwaysReadyHttpClientLayer = Layer.succeed(
   HttpClient.HttpClient,
@@ -316,6 +397,72 @@ function freshVolumeRoute(
     // This stderr text is what `volumeExists` treats as a confirmed missing volume.
     if (args[0] === "volume" && args[1] === "inspect") {
       return { exitCode: 1, stderr: [`Error: No such volume: ${args[2] ?? ""}`] };
+    }
+    return base(args);
+  };
+}
+
+/** Docker's answer when the created Postgres container's data directory holds no `PG_VERSION`, i.e. `initdb` never ran. */
+function uninitialisedDataDirRoute(
+  base: (
+    args: ReadonlyArray<string>,
+  ) => RouteResult | Effect.Effect<RouteResult, PlatformError.PlatformError>,
+): (
+  args: ReadonlyArray<string>,
+) => RouteResult | Effect.Effect<RouteResult, PlatformError.PlatformError> {
+  return (args) => {
+    if (
+      args[0] === "cp" &&
+      args[1]?.endsWith(":/var/lib/postgresql/data/PG_VERSION") === true &&
+      args[2] === "-"
+    ) {
+      return {
+        exitCode: 1,
+        stderr: [
+          `Error response from daemon: Could not find the file /var/lib/postgresql/data/PG_VERSION in container ${args[1].split(":")[0]}`,
+        ],
+      };
+    }
+    return base(args);
+  };
+}
+
+/** `docker start` of the Postgres container exits non-zero, as when the runtime cannot launch it. */
+function dbStartFailsRoute(
+  base: (
+    args: ReadonlyArray<string>,
+  ) => RouteResult | Effect.Effect<RouteResult, PlatformError.PlatformError>,
+) {
+  return (args: ReadonlyArray<string>) =>
+    args[0] === "start" && args[1] === fakeContainerId("supabase_db_demo")
+      ? {
+          exitCode: 1,
+          stderr: [
+            "Error response from daemon: failed to create task for container: OCI runtime create failed",
+          ],
+        }
+      : base(args);
+}
+
+/** The project's database container reports `state` until recovery lists the project's containers, then behaves like a fresh bring-up. */
+function recoveringStackRoute(
+  state: string,
+  workdir: string,
+  base: (args: ReadonlyArray<string>) => RouteResult = defaultRoute(),
+) {
+  let recovering = false;
+  return (args: ReadonlyArray<string>): RouteResult => {
+    if (
+      args[0] === "container" &&
+      args[1] === "inspect" &&
+      args[2] === "supabase_db_demo" &&
+      !recovering
+    ) {
+      return { stdout: [state] };
+    }
+    if (args[0] === "ps" && args.includes("--all")) {
+      recovering = true;
+      return { stdout: [`db-id\tsupabase_db_demo\t${workdir}`] };
     }
     return base(args);
   };
@@ -493,6 +640,8 @@ interface SetupOpts {
   readonly networkId?: Option.Option<string>;
   /** `--experimental`/`SUPABASE_EXPERIMENTAL`. Defaults to `false`. */
   readonly experimental?: boolean;
+  /** Replaces the `DbConnection.connect` behind the Postgres readiness probe. Defaults to succeeding. */
+  readonly dbConnect?: (typeof DbConnection)["Service"]["connect"];
 }
 
 const setup = Effect.fnUntraced(function* (opts: SetupOpts = {}) {
@@ -521,10 +670,11 @@ const setup = Effect.fnUntraced(function* (opts: SetupOpts = {}) {
     analytics.layer,
     child.layer,
     opts.httpClientLayer ?? alwaysReadyHttpClientLayer,
-    // Only exercised by a fresh-volume scenario; every other scenario's default route never
-    // reaches `startSetupLocalDatabase`/`seedBucketsRun`, but both are part of `start`'s
-    // aggregate Effect type, so every scenario still needs this satisfied.
-    Layer.succeed(DbConnection, { connect: () => Effect.succeed(dbSession.session) }),
+    // Backs the Postgres readiness probe on every scenario, and `startSetupLocalDatabase`/
+    // `seedBucketsRun` on fresh-volume ones.
+    Layer.succeed(DbConnection, {
+      connect: opts.dbConnect ?? (() => Effect.succeed(dbSession.session)),
+    }),
     // `Layer.mergeAll` never cross-wires sibling requirements, so `dockerRunLayer` needs
     // `ChildProcessSpawner`/`ProcessControl` provided to it explicitly, not just present
     // elsewhere in this merge.
@@ -975,7 +1125,7 @@ describe("start integration", () => {
         "BITBUCKET_CLONE_DIR",
         "/opt/atlassian/pipelines/agent/build",
         Effect.gen(function* () {
-          const { layer, child } = yield* setup({
+          const { layer, out, child } = yield* setup({
             route: (args) => {
               if (args[0] === "container" && args[1] === "inspect") {
                 return { stdout: [STOPPED_STATE] };
@@ -987,8 +1137,11 @@ describe("start integration", () => {
           const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(Cause.pretty(exit.cause)).toContain("StatusDbNotRunningError");
+            const serialized = Cause.pretty(exit.cause);
+            expect(serialized).toContain("StatusDbNotRunningError");
+            expect(serialized).toContain("supabase_db_demo container is not running: exited");
           }
+          expect(out.stderrText).not.toContain("is already running");
           expect(
             child.spawned.some(
               (spawn) =>
@@ -1005,7 +1158,7 @@ describe("start integration", () => {
     it.effect("does not remove containers when re-inspect returns an unknown state", () =>
       Effect.gen(function* () {
         let dbInspects = 0;
-        const { layer, child } = yield* setup({
+        const { layer, out, child } = yield* setup({
           route: (args) => {
             if (args[0] === "container" && args[1] === "inspect") {
               dbInspects += 1;
@@ -1017,6 +1170,12 @@ describe("start integration", () => {
 
         const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
         expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain(
+            "supabase_db_demo container is not running: unknown",
+          );
+        }
+        expect(out.stderrText).not.toContain("is already running");
         expect(
           child.spawned.some(
             (spawn) =>
@@ -1026,34 +1185,103 @@ describe("start integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.effect("does not recover a created database container with unknown volume state", () =>
+    it.effect("recovers a created database container without pruning the database volume", () =>
       Effect.gen(function* () {
-        const { layer, child } = yield* setup({
+        const workdir = tempRoot.current;
+        const route = defaultRoute();
+        let recovering = false;
+        const { layer, out, child } = yield* setup({
           route: (args) => {
-            if (args[0] === "container" && args[1] === "inspect") {
+            if (
+              args[0] === "container" &&
+              args[1] === "inspect" &&
+              args[2] === "supabase_db_demo" &&
+              !recovering
+            ) {
               return { stdout: [CREATED_STATE] };
             }
-            return { exitCode: 0 };
+            if (args[0] === "ps" && args.includes("--all")) {
+              recovering = true;
+              return { stdout: [`db-id\tsupabase_db_demo\t${workdir}`] };
+            }
+            return route(args);
           },
         });
 
-        const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const serialized = Cause.pretty(exit.cause);
-          expect(serialized).toContain("StatusDbNotRunningError");
-          expect(serialized).toContain("container is not running: created");
-        }
+        yield* start(flags()).pipe(Effect.provide(layer));
+
+        expect(out.stderrText).not.toContain("is already running");
+        expect(out.stderrText).not.toContain("Initialising schema...");
+        expect(createdContainerNames(child.spawned)).toContain("supabase_db_demo");
         expect(
           child.spawned.some(
             (spawn) =>
-              (spawn.args[0] === "ps" && spawn.args.includes("--all")) ||
-              spawn.args[0] === "stop" ||
-              spawn.args[1] === "prune" ||
-              spawn.args[0] === "create",
+              spawn.args[0] === "container" &&
+              spawn.args[1] === "prune" &&
+              spawn.args.includes("label=com.supabase.cli.project=demo"),
           ),
+        ).toBe(true);
+        expect(
+          child.spawned.some((spawn) => spawn.args[0] === "volume" && spawn.args[1] === "prune"),
         ).toBe(false);
       }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect(
+      "fails with the unknown status and a supabase stop suggestion when Docker reports no database state",
+      () =>
+        Effect.gen(function* () {
+          const { layer, out, child } = yield* setup({
+            route: (args) => {
+              if (args[0] === "container" && args[1] === "inspect") return { stdout: [""] };
+              return { exitCode: 0 };
+            },
+          });
+
+          const error = yield* start(flags()).pipe(Effect.provide(layer), Effect.flip);
+
+          expect(error).toMatchObject({
+            _tag: "StatusDbNotRunningError",
+            message: "supabase_db_demo container is not running: unknown",
+            suggestion: expect.stringContaining("supabase stop"),
+          });
+          expect(classifyCliErrorActionability(error)).toMatchObject({
+            error_kind: "user_actionable",
+            suggested_command: "supabase stop",
+          });
+          expect(out.stderrText).not.toContain("is already running");
+          expect(createdContainerNames(child.spawned)).toEqual([]);
+        }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect(
+      "fails with the container status and no already-running banner when the database stops between the two inspects",
+      () =>
+        Effect.gen(function* () {
+          let dbInspects = 0;
+          const { layer, out } = yield* setup({
+            route: (args) => {
+              if (
+                args[0] === "container" &&
+                args[1] === "inspect" &&
+                args[2] === "supabase_db_demo"
+              ) {
+                dbInspects += 1;
+                return { stdout: [dbInspects === 1 ? HEALTHY_STATE : STOPPED_STATE] };
+              }
+              return { exitCode: 0 };
+            },
+          });
+
+          const error = yield* start(flags()).pipe(Effect.provide(layer), Effect.flip);
+
+          expect(error).toMatchObject({
+            _tag: "StatusDbNotRunningError",
+            message: "supabase_db_demo container is not running: exited",
+            suggestion: expect.stringContaining("supabase stop"),
+          });
+          expect(out.stderrText).not.toContain("is already running");
+        }).pipe(Effect.provide(BunServices.layer)),
     );
 
     it.effect("validates custom TLS files before removing a stopped stack", () =>
@@ -2633,6 +2861,101 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
+    describe("a reused volume whose Postgres data directory was never initialised", () => {
+      for (const [status, state] of [
+        ["created", CREATED_STATE],
+        ["exited", STOPPED_STATE],
+      ] as const) {
+        it.effect(
+          `runs the database setup when the ${status} container's volume has no PG_VERSION`,
+          () =>
+            Effect.gen(function* () {
+              const { layer, out, child } = yield* setup({
+                route: uninitialisedDataDirRoute(recoveringStackRoute(state, tempRoot.current)),
+              });
+
+              yield* start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer));
+
+              expect(out.stderrText).not.toContain("is already running");
+              expect(out.stderrText).toContain("Initialising schema...");
+              expect(dbSetupJobCalls(child.spawned)).toHaveLength(3);
+              expect(
+                child.spawned.some((s) => s.args[0] === "volume" && s.args[1] === "prune"),
+              ).toBe(false);
+            }).pipe(Effect.provide(BunServices.layer)),
+        );
+      }
+
+      it.effect("seeds configured buckets, as it does for a brand-new volume", () =>
+        Effect.gen(function* () {
+          const http = mockStorageBucketHttpClient();
+          const { layer } = yield* setup({
+            configContents: 'project_id = "demo"\n[storage.buckets.avatars]\npublic = false\n',
+            route: uninitialisedDataDirRoute(recoveringStackRoute(CREATED_STATE, tempRoot.current)),
+            httpClientLayer: http.layer,
+          });
+
+          yield* start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer));
+
+          expect(http.createdBucketRequests).toHaveLength(1);
+        }).pipe(Effect.provide(BunServices.layer)),
+      );
+
+      for (const [probe, route, volumePruned] of [
+        ["uninitialised", uninitialisedDataDirRoute, true],
+        ["initialised", (base: ReturnType<typeof recoveringStackRoute>) => base, false],
+      ] as const) {
+        it.live(
+          `rolls back ${volumePruned ? "and prunes" : "without pruning"} the volume when Postgres never becomes healthy on an ${probe} data directory`,
+          () =>
+            Effect.gen(function* () {
+              const { layer, child } = yield* setup({
+                configContents: 'project_id = "demo"\n[db]\nhealth_timeout = "0s"\n',
+                dbConnect: refusedDbConnect,
+                route: route(recoveringStackRoute(CREATED_STATE, tempRoot.current)),
+              });
+
+              const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+
+              expect(Exit.isFailure(exit)).toBe(true);
+              if (Exit.isFailure(exit)) {
+                expect(Cause.pretty(exit.cause)).toContain("HealthCheckTimeoutError");
+              }
+              expect(rollbackWasAttempted(child.spawned)).toBe(true);
+              expect(
+                child.spawned.some((s) => s.args[0] === "volume" && s.args[1] === "prune"),
+              ).toBe(volumePruned);
+            }).pipe(Effect.provide(BunServices.layer)),
+          10_000,
+        );
+
+        it.effect(
+          `rolls back ${volumePruned ? "and prunes" : "without pruning"} the volume when docker start of Postgres fails on an ${probe} data directory`,
+          () =>
+            Effect.gen(function* () {
+              const { layer, child } = yield* setup({
+                route: dbStartFailsRoute(
+                  route(recoveringStackRoute(CREATED_STATE, tempRoot.current)),
+                ),
+              });
+
+              const error = yield* start(flags()).pipe(Effect.provide(layer), Effect.flip);
+
+              expect(error).toBeInstanceOf(ContainerStartError);
+              expect(error).toMatchObject({
+                message: expect.stringContaining(
+                  'failed to start docker container "supabase_db_demo"',
+                ),
+              });
+              expect(rollbackWasAttempted(child.spawned)).toBe(true);
+              expect(
+                child.spawned.some((s) => s.args[0] === "volume" && s.args[1] === "prune"),
+              ).toBe(volumePruned);
+            }).pipe(Effect.provide(BunServices.layer)),
+        );
+      }
+    });
+
     it.effect("seeds a configured bucket on a fresh volume with storage enabled", () =>
       Effect.gen(function* () {
         const http = mockStorageBucketHttpClient();
@@ -3137,22 +3460,19 @@ content_path = "./supabase/templates/custom_notice.html"
           // rollback being wired via `Effect.onError` (not `Effect.tapError`, which never sees a
           // pure interrupt's `Cause`).
           //
-          // Marking `db` never-healthy keeps `bringUp`'s Postgres health-check wait suspended in
-          // its retry loop, rather than the whole synchronous mock bring-up completing before
-          // this test's probe wait is even scheduled — which would make `Fiber.interrupt` a
-          // no-op on an already-succeeded fiber.
-          const neverHealthy = new Set<string>();
-          const route = defaultRoute({ neverHealthy });
+          // A refused Postgres connect keeps `bringUp`'s readiness wait suspended in its retry
+          // loop, rather than the whole synchronous mock bring-up completing before this test's
+          // probe wait is even scheduled — which would make `Fiber.interrupt` a no-op on an
+          // already-succeeded fiber.
+          const route = defaultRoute();
           let dbContainerId: string | undefined;
           const dbProbed = yield* Deferred.make<void>();
           const { layer, child } = yield* setup({
+            dbConnect: refusedDbConnect,
             route: (args) => {
               if (args[0] === "create") {
                 const name = containerNameFromCreateArgs(args);
-                if (name.includes("_db_")) {
-                  neverHealthy.add(name);
-                  dbContainerId = name;
-                }
+                if (name.includes("_db_")) dbContainerId = name;
               }
               if (
                 dbContainerId !== undefined &&
@@ -3169,8 +3489,8 @@ content_path = "./supabase/templates/custom_notice.html"
             Effect.provide(layer),
             Effect.forkChild({ startImmediately: true }),
           );
-          // Wait until the health check has actually probed the never-healthy `db` container,
-          // proving the fiber is suspended inside the retry loop, not merely past `create`.
+          // Wait until the readiness wait has actually inspected the `db` container, proving the
+          // fiber is suspended inside the retry loop, not merely past `create`.
           yield* Deferred.await(dbProbed);
           // `Fiber.interrupt` only resolves once the target fiber (and its finalizers,
           // including the `Effect.onError` rollback) has fully completed.
@@ -3389,18 +3709,9 @@ content_path = "./supabase/templates/custom_notice.html"
       () =>
         Effect.gen(function* () {
           // A zero `db.health_timeout` limits Postgres's wait to a single probe.
-          const neverHealthy = new Set<string>();
-          const base = defaultRoute({ neverHealthy });
-          const route = (args: ReadonlyArray<string>): RouteResult => {
-            if (args[0] === "create") {
-              const name = containerNameFromCreateArgs(args);
-              if (name.includes("_db_")) neverHealthy.add(name);
-            }
-            return base(args);
-          };
           const { layer, child } = yield* setup({
             configContents: 'project_id = "demo"\n[db]\nhealth_timeout = "0s"\n',
-            route,
+            dbConnect: refusedDbConnect,
           });
 
           const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
@@ -3422,13 +3733,8 @@ content_path = "./supabase/templates/custom_notice.html"
           // `ignoreHealthCheck && isUnhealthyStartError(err)` downgrades uniformly to whatever the
           // run returns, including Postgres's own health-wait failure, which propagates before
           // any other service is even created.
-          const neverHealthy = new Set<string>();
-          const base = defaultRoute({ neverHealthy });
+          const base = defaultRoute();
           const route = (args: ReadonlyArray<string>): RouteResult => {
-            if (args[0] === "create") {
-              const name = containerNameFromCreateArgs(args);
-              if (name.includes("_db_")) neverHealthy.add(name);
-            }
             // Postgres's own health wait builds its `images` map separately from the bulk one,
             // so this scripts the marker here too.
             if (args[0] === "logs" && (args[1] ?? "").includes("_db_")) {
@@ -3438,6 +3744,7 @@ content_path = "./supabase/templates/custom_notice.html"
           };
           const { layer, out, child, analytics } = yield* setup({
             configContents: 'project_id = "demo"\n[db]\nhealth_timeout = "0s"\n',
+            dbConnect: refusedDbConnect,
             route,
           });
 
@@ -3733,6 +4040,291 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.provide(BunServices.layer),
         ),
       10_000,
+    );
+  });
+
+  describe("Docker's first health verdict on the database", () => {
+    const runWithClock = <A, E, R>(
+      effect: Effect.Effect<A, E, R>,
+      db: ReturnType<typeof dbHealthVerdictAt>,
+    ) =>
+      Effect.gen(function* () {
+        const fiber = yield* effect.pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.raceFirst(Deferred.await(db.settleStarted), Fiber.await(fiber));
+        // Small steps: each settle poll needs a few scheduler turns before it registers its next sleep.
+        for (let step = 0; step < 160 && fiber.pollUnsafe() === undefined; step++) {
+          if (yield* Deferred.isDone(db.settled)) break;
+          yield* TestClock.adjust("100 millis");
+        }
+        return yield* Fiber.await(fiber);
+      });
+
+    it.effect(
+      "start waits for it, so a start right afterwards finds the database ready instead of starting",
+      () =>
+        Effect.gen(function* () {
+          const db = dbHealthVerdictAt(5);
+          const { layer, out } = yield* setup({ route: db.route, dbConnect: db.dbConnect });
+
+          const first = yield* runWithClock(start(flags()).pipe(Effect.provide(layer)), db);
+          yield* start(flags()).pipe(Effect.provide(layer));
+
+          expect(Exit.isSuccess(first)).toBe(true);
+          expect(out.stderrText).toContain("local development setup is running.");
+        }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("start still completes without rolling back when Docker never settles", () =>
+      Effect.gen(function* () {
+        const db = dbHealthVerdictAt(Number.POSITIVE_INFINITY);
+        const { layer, child } = yield* setup({ route: db.route, dbConnect: db.dbConnect });
+
+        const exit = yield* runWithClock(start(flags()).pipe(Effect.provide(layer)), db);
+
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(rollbackWasAttempted(child.spawned)).toBe(false);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+  });
+
+  describe("a host where Docker cannot exec health checks", () => {
+    const projectId = "demo";
+    const kongRouted = ["auth", "storage", "pg_meta", "analytics"];
+    const gatewayVerified = ["kong", ...kongRouted];
+    const readinessAssumed = ["realtime", "studio", "inbucket", "vector"];
+
+    for (const format of ["text", "json"] as const) {
+      it.effect(
+        `starts with one stderr warning naming only unverified services in ${format} mode`,
+        () =>
+          Effect.gen(function* () {
+            const { layer, out, analytics } = yield* setup({
+              format,
+              route: execBrokenHostRoute(),
+              httpClientLayer: mockGatewayHttpClient().layer,
+            });
+
+            yield* start(flags()).pipe(Effect.provide(layer));
+
+            const warnings = out.stderrText
+              .split("\n")
+              .filter((line) => line.includes("Docker cannot run health checks"));
+            expect(warnings).toHaveLength(1);
+            for (const service of readinessAssumed) {
+              expect(warnings[0]).toContain(serviceContainerName(service, projectId));
+            }
+            for (const service of gatewayVerified) {
+              expect(warnings[0]).not.toContain(serviceContainerName(service, projectId));
+            }
+            expect(out.stdoutText).not.toContain("Docker cannot run health checks");
+            expect(analytics.captured).toContainEqual(
+              expect.objectContaining({ event: "cli_stack_started" }),
+            );
+            if (format === "json") {
+              expect(out.messages.find((m) => m.type === "success")?.data).toMatchObject({
+                DB_URL: expect.any(String),
+              });
+            }
+          }).pipe(Effect.provide(BunServices.layer)),
+      );
+    }
+
+    it.effect(
+      "verifies Kong and gateway-routed services with an authenticated GET, accepting any status from Kong",
+      () =>
+        Effect.gen(function* () {
+          const gateway = mockGatewayHttpClient({ "/": 404 });
+          const { layer } = yield* setup({
+            route: execBrokenHostRoute(),
+            httpClientLayer: gateway.layer,
+          });
+
+          yield* start(flags()).pipe(Effect.provide(layer));
+
+          const gets = gateway.requests.filter((request) => request.method === "GET");
+          expect(gets.map((request) => request.path).toSorted()).toEqual([
+            "/",
+            "/analytics/v1/health",
+            "/auth/v1/health",
+            "/pg/health",
+            "/storage/v1/status",
+          ]);
+          for (const request of gets) {
+            expect(request.headers["apikey"]).toEqual(expect.any(String));
+          }
+        }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect(
+      "with Kong excluded, accepts Kong-routed services as running and lists them as unverified",
+      () =>
+        Effect.gen(function* () {
+          const unroutable = {
+            "/auth/v1/health": 503,
+            "/storage/v1/status": 503,
+            "/pg/health": 503,
+            "/analytics/v1/health": 503,
+          };
+          const { layer, out } = yield* setup({
+            route: execBrokenHostRoute(),
+            httpClientLayer: mockGatewayHttpClient(unroutable).layer,
+          });
+
+          yield* start(flags({ exclude: ["kong"] })).pipe(Effect.provide(layer));
+
+          const warnings = out.stderrText
+            .split("\n")
+            .filter((line) => line.includes("Docker cannot run health checks"));
+          expect(warnings).toHaveLength(1);
+          for (const service of [...kongRouted, ...readinessAssumed]) {
+            expect(warnings[0]).toContain(serviceContainerName(service, projectId));
+          }
+          expect(warnings[0]).not.toContain(serviceContainerName("kong", projectId));
+        }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.live(
+      "fails with the gateway status, the exec suggestion and a rollback when Storage is not routable",
+      () =>
+        Effect.gen(function* () {
+          const { layer, out, child } = yield* setup({
+            route: execBrokenHostRoute(),
+            httpClientLayer: mockGatewayHttpClient({ "/storage/v1/status": 503 }).layer,
+          });
+
+          const error = yield* start(flags()).pipe(Effect.provide(layer), Effect.flip);
+
+          const storage = serviceContainerName("storage", projectId);
+          expect(error).toMatchObject({
+            _tag: "HealthCheckTimeoutError",
+            message: `${storage} container is not ready: /storage/v1/status: unexpected status 503`,
+            suggestion: expect.stringContaining(`Check with: docker exec ${storage} true`),
+          });
+          expect(out.stderrText).not.toContain("Docker cannot run health checks");
+          expect(out.stderrText).not.toContain("Started");
+          expect(rollbackWasAttempted(child.spawned)).toBe(true);
+        }).pipe(
+          Effect.provideService(HealthCheckTimeoutSeconds, 0),
+          Effect.provide(BunServices.layer),
+        ),
+      10_000,
+    );
+
+    it.live(
+      "--ignore-health-check still names the services accepted as running when it downgrades a failure",
+      () =>
+        Effect.gen(function* () {
+          const { layer, out, child } = yield* setup({
+            route: execBrokenHostRoute(),
+            httpClientLayer: mockGatewayHttpClient({ "/storage/v1/status": 503 }).layer,
+          });
+
+          yield* start(flags({ ignoreHealthCheck: true })).pipe(Effect.provide(layer));
+
+          const storage = serviceContainerName("storage", projectId);
+          expect(out.stderrText).toContain(
+            `${storage} container is not ready: /storage/v1/status: unexpected status 503`,
+          );
+          const warnings = out.stderrText
+            .split("\n")
+            .filter((line) => line.includes("Docker cannot run health checks"));
+          expect(warnings).toHaveLength(1);
+          for (const service of readinessAssumed) {
+            expect(warnings[0]).toContain(serviceContainerName(service, projectId));
+          }
+          expect(warnings[0]).not.toContain(storage);
+          expect(rollbackWasAttempted(child.spawned)).toBe(false);
+        }).pipe(
+          Effect.provideService(HealthCheckTimeoutSeconds, 0),
+          Effect.provide(BunServices.layer),
+        ),
+      10_000,
+    );
+
+    it.live(
+      "does not accept a Docker probe timeout as an exec failure",
+      () =>
+        Effect.gen(function* () {
+          const timedOut = inspectedState({
+            health: "unhealthy",
+            probes: [{ exitCode: -1, output: PROBE_TIMEOUT_OUTPUT }],
+          });
+          const base = defaultRoute();
+          const { layer } = yield* setup({
+            route: (args) => {
+              const result = base(args);
+              return args[0] === "container" &&
+                args[1] === "inspect" &&
+                (args[2] ?? "").includes("_studio_") &&
+                result.stdout?.[0] === HEALTHY_STATE
+                ? { stdout: [timedOut] }
+                : result;
+            },
+          });
+
+          const error = yield* start(flags()).pipe(Effect.provide(layer), Effect.flip);
+
+          expect(error).toMatchObject({
+            _tag: "HealthCheckTimeoutError",
+            message: `${serviceContainerName("studio", projectId)} container is not ready: unhealthy (last health check exit code -1: Health check exceeded timeout (2s))`,
+          });
+          expect(error).not.toHaveProperty("suggestion");
+        }).pipe(
+          Effect.provideService(HealthCheckTimeoutSeconds, 0),
+          Effect.provide(BunServices.layer),
+        ),
+      10_000,
+    );
+
+    it.effect(
+      "already running: accepts a db whose health check cannot exec, with a stderr warning",
+      () =>
+        Effect.gen(function* () {
+          const { layer, out, child } = yield* setup({
+            route: (args) => {
+              if (args[0] === "container" && args[1] === "inspect") {
+                return { stdout: [EXEC_FAILED_STATE] };
+              }
+              if (args[0] === "ps") return { stdout: [] };
+              return { exitCode: 0 };
+            },
+          });
+
+          yield* start(flags()).pipe(Effect.provide(layer));
+
+          expect(out.stderrText).toContain("WARNING:");
+          expect(out.stderrText).toContain("Readiness of supabase_db_demo was not verified.");
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("already running: still rejects a db whose health check ran and failed", () =>
+      Effect.gen(function* () {
+        const { layer, out } = yield* setup({
+          route: (args) => {
+            if (args[0] === "container" && args[1] === "inspect") {
+              return {
+                stdout: [
+                  inspectedState({
+                    health: "unhealthy",
+                    probes: [{ exitCode: 1, output: "pg_isready: no response" }],
+                  }),
+                ],
+              };
+            }
+            return { exitCode: 0 };
+          },
+        });
+
+        const error = yield* start(flags()).pipe(Effect.provide(layer), Effect.flip);
+
+        expect(error).toMatchObject({
+          _tag: "StatusDbNotReadyError",
+          message:
+            "supabase_db_demo container is not ready: unhealthy (last health check exit code 1: pg_isready: no response)",
+        });
+        expect(out.stderrText).not.toContain("Docker cannot run health checks");
+      }).pipe(Effect.provide(BunServices.layer)),
     );
   });
 
@@ -5133,16 +5725,7 @@ content_path = "./supabase/templates/custom_notice.html"
           "SUPABASE_DB_HEALTH_TIMEOUT",
           "0s",
           Effect.gen(function* () {
-            const neverHealthy = new Set<string>();
-            const base = defaultRoute({ neverHealthy });
-            const route = (args: ReadonlyArray<string>): RouteResult => {
-              if (args[0] === "create") {
-                const name = containerNameFromCreateArgs(args);
-                if (name.includes("_db_")) neverHealthy.add(name);
-              }
-              return base(args);
-            };
-            const { layer, child } = yield* setup({ route });
+            const { layer, child } = yield* setup({ dbConnect: refusedDbConnect });
 
             const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
             expect(Exit.isFailure(exit)).toBe(true);

@@ -8,7 +8,7 @@
  * {@link StartLocalDatabaseResult} discriminator instead of printing the terminal line itself.
  */
 
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Path } from "effect";
 import { ChildProcessSpawner } from "effect/process";
 
 import { Output } from "../../shared/output/output.service.ts";
@@ -49,12 +49,16 @@ import { parseGoDuration, resolveHealthTimeoutSeconds } from "../go-duration.ts"
 import { ramInBytes } from "../size-units.ts";
 import { goUrlParse } from "../storage-url.ts";
 import { loadLocalProjectContext } from "../local-project-context.ts";
-import { cliProjectFilterValue } from "../docker-ids.ts";
+import { cliProjectFilterValue, localDbContainerId } from "../docker-ids.ts";
+import { isBitbucketPipeline } from "../bitbucket-pipeline.ts";
 import { holdProjectLifecycleLock } from "../project-lifecycle-lock.ts";
+import { dbNotRunningError } from "../status-errors.ts";
 import { buildLocalDbContainerInputs } from "./local-container-inputs.ts";
-import { isLocalDbRunning } from "./local-db-running.ts";
-import { rollbackStart } from "./rollback.ts";
-import { startDatabase } from "./start-database.ts";
+import { removeContainer } from "./container-lifecycle.ts";
+import { awaitDockerHealthSettled } from "./health-check.ts";
+import { localDbState } from "./local-db-running.ts";
+import { rollbackDatabaseStart } from "./rollback.ts";
+import { backupVolumeExistsError, startDatabase } from "./start-database.ts";
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -103,7 +107,7 @@ const startLocalDatabaseInScope = Effect.fn("DbBootstrap.startLocalDatabase")(fu
   // `isLocalDbRunning`'s best-effort read, which swallows config errors.
   const dbTomlValues = yield* checkDbToml(fs, path, cliSettings.workdir);
 
-  // Threaded into `rollbackStart`'s own teardown (gates its `Pruned …:` stderr reports) and into
+  // Threaded into `rollbackDatabaseStart`'s own teardown (gates its `Pruned …:` stderr reports) and into
   // `buildLocalDbContainerInputs`'s own `setup.debug`, so a failed fresh-volume migrate job tees
   // its own stderr. Resolved with the `SUPABASE_DEBUG` shell/project-`.env` fallback, not the
   // bare flag.
@@ -633,16 +637,26 @@ const startLocalDatabaseInScope = Effect.fn("DbBootstrap.startLocalDatabase")(fu
 
   // If the db container is already up, tell the caller and stop here. Runs after the config
   // load/validation above.
-  const running = yield* isLocalDbRunning(
-    spawner,
-    fs,
-    path,
-    cliSettings.workdir,
-    Option.getOrUndefined(cliSettings.projectId),
-  );
-  yield* Effect.annotateCurrentSpan("db.already_running", running);
+  // Probed by the same project id bring-up uses, so a stopped container is removed by the name
+  // that was inspected.
+  const dbState = yield* localDbState(spawner, fs, path, cliSettings.workdir, context.projectId);
+  const running = dbState.exists && dbState.running;
+  const recoverStopped = dbState.exists && !dbState.running;
+  yield* Effect.annotateCurrentSpan({
+    "db.already_running": running,
+    "db.recover_stopped": recoverStopped,
+  });
   if (running) {
     return { status: "already-running" } satisfies StartLocalDatabaseResult;
+  }
+  // Bitbucket has no named volumes, so removing the container would destroy its data.
+  if (dbState.exists) {
+    const inBitbucketPipeline = yield* isBitbucketPipeline(projectEnvValues).pipe(
+      Effect.mapError((error) => new DbConfigLoadError({ message: error.message })),
+    );
+    if (inBitbucketPipeline) {
+      return yield* dbNotRunningError(localDbContainerId(context.projectId), dbState.status);
+    }
   }
 
   // Resolve a relative `--from-backup` against the caller's cwd, captured before any workdir
@@ -654,6 +668,12 @@ const startLocalDatabaseInScope = Effect.fn("DbBootstrap.startLocalDatabase")(fu
       : path.isAbsolute(fromBackupFlag)
         ? fromBackupFlag
         : path.join(runtimeInfo.cwd, fromBackupFlag);
+
+  // A stopped container's named volume always exists, so a restore is refused before the
+  // container is removed.
+  if (recoverStopped && fromBackup !== undefined) {
+    return yield* backupVolumeExistsError();
+  }
 
   // Not running → bring up the container natively. `context` (loaded eagerly above) is threaded
   // through as `preloadedContext` so this call reuses it instead of calling
@@ -683,6 +703,13 @@ const startLocalDatabaseInScope = Effect.fn("DbBootstrap.startLocalDatabase")(fu
 
   const filterValue = cliProjectFilterValue(projectId);
 
+  // Only the db container: `db start` leaves the project's other services alone.
+  if (recoverStopped) {
+    yield* removeContainer(spawner, dbContainerId).pipe(
+      Effect.withSpan("DbBootstrap.recoverStoppedDatabase"),
+    );
+  }
+
   // Assigned by `startDatabase`'s own pre-create volume-existence check; defaults to
   // `false` so a rollback triggered by an earlier failure (e.g. network creation) never
   // deletes a volume this run never confirmed was fresh.
@@ -690,8 +717,7 @@ const startLocalDatabaseInScope = Effect.fn("DbBootstrap.startLocalDatabase")(fu
 
   // Runs the exact start-database sequence (network -> volume probe -> container create+start
   // -> health wait -> fresh-volume setup -> `_current_branch`) — shared with `supabase start`,
-  // see `startDatabase`'s own header. Any failure rolls back via the same `Effect.onError`
-  // wrapper `supabase start` uses.
+  // see `startDatabase`'s own header. Any failure rolls back only what `db start` creates.
   yield* startDatabase(spawner, {
     fs,
     path,
@@ -715,9 +741,13 @@ const startLocalDatabaseInScope = Effect.fn("DbBootstrap.startLocalDatabase")(fu
     },
   }).pipe(
     Effect.onError(() =>
-      rollbackStart(spawner, filterValue, isFreshVolume, cliSettings.workdir, debug),
+      rollbackDatabaseStart(spawner, filterValue, dbContainerId, isFreshVolume, debug),
     ),
   );
+
+  // The connect probe returns before Docker's first health probe, and `status` and the
+  // already-running gate still read Docker health.
+  yield* awaitDockerHealthSettled(spawner, dbContainerId);
 
   return { status: "started" } satisfies StartLocalDatabaseResult;
 });
