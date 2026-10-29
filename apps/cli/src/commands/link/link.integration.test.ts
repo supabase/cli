@@ -1568,7 +1568,7 @@ describe("link permissions", () => {
       expect(yield* readTemp(workdir, "project-ref")).toBe(VALID_REF);
       assertPermissionDrift({
         command: "link",
-        activeFlags: { "project-ref": true, "skip-pooler": false },
+        activeFlags: { "project-ref": VALID_REF, "skip-pooler": false },
         requests: api.requests,
       });
     }).pipe(Effect.provide(layer));

@@ -272,12 +272,12 @@ const assertDbConfigDrift = (
 
 describe("dbConfigResolver (local + db-url)", () => {
   it.effect.each([
-    { name: "local", flags: localFlags },
-    { name: "db-url", flags: dbUrlFlags("postgres://alice:password@example.com:6543/appdb") },
-  ])("resolves Data API exposure for $name", ({ flags }) =>
+    { name: "local", target: localTarget },
+    { name: "db-url", target: dbUrlTarget("postgres://alice:password@example.com:6543/appdb") },
+  ])("resolves Data API exposure for $name", ({ target }) =>
     Effect.gen(function* () {
       const dir = yield* withWorkdir('[api]\nschemas = ["app", "public"]');
-      const result = yield* resolve(dir, flags);
+      const result = yield* resolveConnection(dir, inputFor(target));
       expect(result.exposedSchemas).toEqual(["app", "public"]);
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
@@ -737,8 +737,7 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
   it.effect("resolves Data API exposure for the stack-backed local database", () =>
     Effect.gen(function* () {
       const dir = yield* withWorkdir('[api]\nschemas = ["app", "public"]');
-      const resolved = yield* resolve(dir, localFlags, {
-        projectStateMode: "stack",
+      const resolved = yield* resolveConnection(dir, inputFor(localTarget), {
         stackApi: projectStackApi(dir, "running"),
       }).pipe(Effect.provide(stackBackendLayer("stack")));
       expect(resolved.exposedSchemas).toEqual(["app", "public"]);

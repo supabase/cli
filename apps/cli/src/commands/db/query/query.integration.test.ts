@@ -151,7 +151,7 @@ function mockDbConnection(opts: {
       Effect.succeed({
         exec: () => Effect.void,
         execBatch: () => Effect.void,
-        query: (sql, params) => {
+        query: (sql: string, params?: ReadonlyArray<unknown>) => {
           if (sql !== RLS_CHECK_SQL) return Effect.succeed([]);
           opts.rlsParams?.push(params);
           return opts.rlsFails === true

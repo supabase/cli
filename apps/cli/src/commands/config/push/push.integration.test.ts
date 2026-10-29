@@ -1495,7 +1495,7 @@ otp_expiry = 120
         },
       });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         const update = api.requests.find(
           (r) => r.method === "PATCH" && r.url.includes("/config/auth"),
         );
@@ -1529,7 +1529,7 @@ otp_expiry = 120
         },
       });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         const update = api.requests.find(
           (r) => r.method === "PATCH" && r.url.includes("/config/auth"),
         );
@@ -1568,7 +1568,7 @@ otp_expiry = 120
         },
       });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         const update = api.requests.find(
           (r) => r.method === "PATCH" && r.url.includes("/config/auth"),
         );
@@ -1605,7 +1605,7 @@ otp_expiry = 120
         },
       });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         const update = api.requests.find(
           (r) => r.method === "PATCH" && r.url.includes("/config/auth"),
         );
@@ -1644,7 +1644,7 @@ otp_expiry = 120
         },
       });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         const update = api.requests.find(
           (r) => r.method === "PATCH" && r.url.includes("/config/auth"),
         );
