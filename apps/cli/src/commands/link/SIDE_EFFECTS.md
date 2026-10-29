@@ -82,7 +82,7 @@ Management API (base `CommandSettings.apiUrl`, `Authorization: Bearer <access-to
 | Method | Path                                        | When                                                                                                                                                                       |
 | ------ | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET`  | `/v1/projects/{ref}`                        | always (404 tolerated for branch projects)                                                                                                                                 |
-| `GET`  | `/v1/projects/{ref}/api-keys?reveal=true`   | always                                                                                                                                                                     |
+| `GET`  | `/v1/projects/{ref}/api-keys?reveal=true`   | always; a 403 (no API Key Secrets read) is not fatal: link warns and skips the tenant probes                                                                               |
 | `GET`  | `/v1/projects/{ref}/config/storage`         | best-effort                                                                                                                                                                |
 | `GET`  | `/v1/projects/{ref}/config/database/pooler` | best-effort (unless `--skip-pooler`)                                                                                                                                       |
 | `GET`  | `/v1/projects`                              | only when prompting on a TTY                                                                                                                                               |
@@ -120,7 +120,7 @@ a redirect is never followed and counts as a failed probe):
 | `1`  | malformed project ref — only reachable via `SUPABASE_PROJECT_ID`/TTY prompt now; a malformed `[ref-or-branch]`/`--project-ref` value takes the CLI-2167 branch-lookup path below instead |
 | `1`  | project paused (`INACTIVE`)                                                                                                                                                              |
 | `1`  | project status non-200/404                                                                                                                                                               |
-| `1`  | api-keys auth failure / missing key                                                                                                                                                      |
+| `1`  | api-keys auth failure other than 403 / missing key                                                                                                                                       |
 | `1`  | `project-ref` file write failure                                                                                                                                                         |
 | `1`  | both `[ref-or-branch]` and `--project-ref` given (CLI-2167, TS-only)                                                                                                                     |
 | `1`  | non-ref-shaped `[ref-or-branch]`/`--project-ref` value with no linked parent project at all (CLI-2167, TS-only)                                                                          |
@@ -136,7 +136,7 @@ a redirect is never followed and counts as a failed probe):
 
 ### `--output-format text`
 
-- stderr: `Selected project: <ref>` (prompt path); `WARNING: Project status is <status> instead of Active Healthy. Some operations might fail.`; the dashboard unpause suggestion on a paused project.
+- stderr: `Selected project: <ref>` (prompt path); `WARNING: Project status is <status> instead of Active Healthy. Some operations might fail.`; `WARNING: The access token cannot read secret API keys (API Key Secrets: read), so the service version checks were skipped.` when `reveal=true` answers 403; the dashboard unpause suggestion on a paused project.
 - stderr: `Resolved branch "<name>" of project <parentRef> to project ref <branchRef>.` — via
   `output.raw(..., "stderr")` (NOT `output.info`, which clack renders on stdout with `│`/`◇`
   framing in text mode) — only when a non-ref-shaped `[ref-or-branch]`/`--project-ref` value
@@ -198,7 +198,8 @@ stays busy fails the link with `LockResolutionError` reason `lease-busy` before 
 - Probes the target (the `link.probe` span; `stack update` runs the same probe under `update.probe`):
   the database version from `getProject` (`database.version`), or from `getABranchConfig`
   (`postgres_version`) when the ref is a branch the project lookup does not return, and the `rest`, `auth` and `storage` versions from the target's
-  tenant host (`/rest/v1/`, `/auth/v1/health`, `/storage/v1/version`) with the service-role key.
+  tenant host (`/rest/v1/`, `/auth/v1/health`, `/storage/v1/version`) with the service-role key
+  (skipped and recorded as failed when `reveal=true` answers 403).
   The key is sent as `apikey`, and as a bearer token unless it is an `sb_` key; it is never logged
   or recorded, and a redirect is never followed (the probe counts it as failed). Services without a
   version endpoint are not probed.
