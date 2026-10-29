@@ -130,6 +130,7 @@ function setup(
           workdir: opts.workdir ?? defaultWorkdir.current,
           explicitWorkdir: false,
           userAgent: "SupabaseCLI/test",
+          apiMaxRetries: Option.none(),
         }),
       ),
       Layer.succeed(

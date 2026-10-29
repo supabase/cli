@@ -23,6 +23,7 @@ const settings = (accessToken: Option.Option<Redacted.Redacted<string>>) =>
     dbPassword: Option.none(),
     githubToken: Option.none(),
     userAgent: "SupabaseCLI/test",
+    apiMaxRetries: Option.none(),
   });
 
 const credentials = (

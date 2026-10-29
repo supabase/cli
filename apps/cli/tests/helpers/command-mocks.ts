@@ -422,6 +422,7 @@ export function mockCommandSettings(opts: {
   readonly supabaseHome?: string;
   readonly dbPassword?: Option.Option<Redacted.Redacted<string>>;
   readonly githubToken?: Option.Option<Redacted.Redacted<string>>;
+  readonly apiMaxRetries?: Option.Option<number>;
 }): Layer.Layer<CommandSettings> {
   return Layer.succeed(CommandSettings, {
     dbPassword: opts.dbPassword ?? Option.none(),
@@ -440,6 +441,7 @@ export function mockCommandSettings(opts: {
     workdirEnvValue:
       opts.workdirEnvValue === undefined ? Option.none() : Option.some(opts.workdirEnvValue),
     userAgent: opts.userAgent ?? DEFAULT_USER_AGENT,
+    apiMaxRetries: opts.apiMaxRetries ?? Option.none(),
   });
 }
 

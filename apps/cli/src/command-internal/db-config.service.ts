@@ -8,6 +8,7 @@ import type {
   ProjectRefNotLinkedError,
 } from "../config/project-ref.errors.ts";
 import type { ProfileLoadError } from "./profile-load.ts";
+import type { ApiMaxRetriesError } from "../config/command-settings.layer.ts";
 import type { LinkedProjectRefReadError } from "./project-link.ts";
 import type { DbConnectError } from "./db-connection.errors.ts";
 import type { LocalDbRunningError } from "./db-bootstrap/local-db-running.ts";
@@ -57,8 +58,9 @@ export type DbConfigError =
   // layer-build channel. `--linked --password` skips `make` entirely and never raises these.
   | CommandPlatformApiFactoryError
   // The lazy linked runtime rebuilds `commandSettingsLayer`, whose strict
-  // profile resolution can fail inside the resolver effect the same way.
-  | ProfileLoadError;
+  // profile and `SUPABASE_API_MAX_RETRIES` checks can fail inside the resolver effect the same way.
+  | ProfileLoadError
+  | ApiMaxRetriesError;
 
 // The `--linked` path builds a lazy Management API runtime (so `--local`/`--db-url` never
 // resolve an access token) and provides every one of its own requirements from the resolver's

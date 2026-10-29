@@ -47,6 +47,8 @@ interface CommandSettingsShape {
   /** Raw `SUPABASE_WORKDIR` value; `Some("")` differs from an absent variable and is used verbatim. */
   readonly workdirEnvValue: Option.Option<string>;
   readonly userAgent: string;
+  /** `SUPABASE_API_MAX_RETRIES`: Management API retries after the first attempt; none keeps the client default. */
+  readonly apiMaxRetries: Option.Option<number>;
 }
 
 export class CommandSettings extends Context.Service<CommandSettings, CommandSettingsShape>()(

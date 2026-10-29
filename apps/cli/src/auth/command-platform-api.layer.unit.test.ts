@@ -38,6 +38,7 @@ function mockCliSettings(opts: {
   userAgent?: string;
   profile?: string;
   projectHost?: string;
+  apiMaxRetries?: number;
 }) {
   return Layer.succeed(CommandSettings, {
     dbPassword: Option.none(),
@@ -56,6 +57,7 @@ function mockCliSettings(opts: {
     workdir: "/tmp",
     explicitWorkdir: false,
     userAgent: opts.userAgent ?? "SupabaseCLI/0.0.0-dev",
+    apiMaxRetries: Option.fromUndefinedOr(opts.apiMaxRetries),
   });
 }
 
@@ -185,7 +187,7 @@ function withBaseDeps(
     );
 }
 
-function captureRequests(responseHeaders: Record<string, string> = {}) {
+function captureRequests(responseHeaders: Record<string, string> = {}, status = 200) {
   const requests: Array<{
     url: string;
     headers: Readonly<Record<string, string | undefined>>;
@@ -196,7 +198,7 @@ function captureRequests(responseHeaders: Record<string, string> = {}) {
       HttpClientResponse.fromWeb(
         request,
         new Response(JSON.stringify([]), {
-          status: 200,
+          status,
           headers: { "content-type": "application/json", ...responseHeaders },
         }),
       ),
@@ -307,6 +309,39 @@ describe("commandPlatformApiLayer", () => {
       expect(http.requests[0]?.headers["user-agent"]).toBe("SupabaseCLI/1.123.4");
       expect(http.requests[0]?.headers["x-supabase-command"]).toBeUndefined();
       expect(http.requests[0]?.headers["x-supabase-command-run-id"]).toBeUndefined();
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("sends a failing request once when SUPABASE_API_MAX_RETRIES is 0", () => {
+    /* `Retry-After: 0` keeps any retry from waiting on the test clock. */
+    const http = captureRequests({ "Retry-After": "0" }, 500);
+    const layer = commandPlatformApiLayer.pipe(
+      Layer.provide(mockCliSettings({ accessToken: VALID_TOKEN, apiMaxRetries: 0 })),
+      Layer.provide(mockCredentials(Option.none())),
+      Layer.provide(http.layer),
+      withBaseDeps(),
+    );
+    return Effect.gen(function* () {
+      const api = yield* CommandPlatformApi;
+      const exit = yield* Effect.exit(api.v1.listAllProjects());
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(http.requests).toHaveLength(1);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("keeps the client's default retries when SUPABASE_API_MAX_RETRIES is unset", () => {
+    const http = captureRequests({ "Retry-After": "0" }, 500);
+    const layer = commandPlatformApiLayer.pipe(
+      Layer.provide(mockCliSettings({ accessToken: VALID_TOKEN })),
+      Layer.provide(mockCredentials(Option.none())),
+      Layer.provide(http.layer),
+      withBaseDeps(),
+    );
+    return Effect.gen(function* () {
+      const api = yield* CommandPlatformApi;
+      const exit = yield* Effect.exit(api.v1.listAllProjects());
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(http.requests).toHaveLength(6);
     }).pipe(Effect.provide(layer));
   });
 

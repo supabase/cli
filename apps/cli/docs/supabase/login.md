@@ -7,3 +7,5 @@ Your access token is stored securely in [native credentials storage](https://git
 > If this behavior is not desired, such as in a CI environment, you may skip login by specifying the `SUPABASE_ACCESS_TOKEN` environment variable in other commands.
 
 The Supabase CLI uses the stored token to access Management APIs for projects, functions, secrets, etc.
+
+> The Management API client retries retryable failures up to 5 times by default. Set `SUPABASE_API_MAX_RETRIES` to change that, such as `0` to turn retries off in automation.

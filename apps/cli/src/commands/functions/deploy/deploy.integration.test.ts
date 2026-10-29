@@ -766,6 +766,7 @@ describe("functions deploy", () => {
     handler: ApiHandler,
     args: ReadonlyArray<string> = ["functions", "deploy", "hello-world", "--use-api"],
     rateLimitNotices?: Queue.Enqueue<string>,
+    apiMaxRetries = Option.none<number>(),
   ) {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ handler });
@@ -797,7 +798,7 @@ describe("functions deploy", () => {
                 ).pipe(Layer.provide(out.layer)),
               },
         api,
-        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current, apiMaxRetries }),
         runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       }),
       Layer.succeed(YesFlag, false),
@@ -1026,6 +1027,62 @@ describe("functions deploy", () => {
       expect(out.stderrText).toContain("Rate limit exceeded while deploying function hello-world.");
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
+
+  it.effect(
+    "leaves a failed function list to the client when SUPABASE_API_MAX_RETRIES is set",
+    () => {
+      const { layer, api } = apiDeployHarness(
+        (request) => Effect.succeed(jsonResponse(request, 500, { message: "boom" })),
+        undefined,
+        undefined,
+        Option.some(2),
+      );
+
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+        /* The mock client never retries, so any further GET would come from the command. */
+        const error = yield* functionsDeploy(baseFlags).pipe(Effect.flip);
+
+        expect(error).toMatchObject({ status: 500 });
+        expect(
+          api.requests.filter((request) => request.url.endsWith(`/${VALID_REF}/functions`)),
+        ).toHaveLength(1);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    },
+  );
+
+  it.effect(
+    "leaves a rate-limited deploy to the client when SUPABASE_API_MAX_RETRIES is set",
+    () => {
+      const { layer, api } = apiDeployHarness(
+        (request) =>
+          Effect.succeed(
+            request.method === "GET"
+              ? jsonResponse(request, 200, [])
+              : HttpClientResponse.fromWeb(
+                  request,
+                  new Response("{}", { status: 429, headers: { "retry-after": "0" } }),
+                ),
+          ),
+        undefined,
+        undefined,
+        Option.some(2),
+      );
+
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+        /* The mock client never retries, so any further POST would come from the command. */
+        const error = yield* functionsDeploy(baseFlags).pipe(Effect.flip);
+
+        expect(error).toMatchObject({ status: 429 });
+        expect(api.requests.filter((request) => request.method === "POST")).toHaveLength(1);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    },
+  );
 
   it.effect("gives up on a persistent rate limit after the command's backoff schedule", () =>
     Effect.gen(function* () {
@@ -1570,6 +1627,7 @@ describe("functions deploy", () => {
       readonly deployStatuses: ReadonlyArray<number>;
       readonly bulkStatuses?: ReadonlyArray<number>;
       readonly functionStatuses?: Readonly<Record<string, string>>;
+      readonly apiMaxRetries?: Option.Option<number>;
     }) {
       const out = mockOutput({ format: "text" });
       let deployCalls = 0;
@@ -1620,7 +1678,10 @@ describe("functions deploy", () => {
         buildTestRuntime({
           out,
           api,
-          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+          cliSettings: mockCommandSettings({
+            workdir: tempRoot.current,
+            apiMaxRetries: opts.apiMaxRetries,
+          }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
         Layer.succeed(YesFlag, false),
@@ -1664,6 +1725,34 @@ describe("functions deploy", () => {
         });
       }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
+
+    it.effect(
+      "leaves a failed bulk update to the client when SUPABASE_API_MAX_RETRIES is set",
+      () => {
+        const { api, layer } = setupBulkDeploy({
+          deployStatuses: [201, 201],
+          bulkStatuses: [500, 200],
+          apiMaxRetries: Option.some(2),
+        });
+
+        return Effect.gen(function* () {
+          yield* writeCliConfig(tempRoot.current);
+          yield* writeLocalFunction(tempRoot.current, "hello-world");
+          yield* writeLocalFunction(tempRoot.current, "bye-world");
+
+          /* The mock client never retries, so any further PUT would come from the command. */
+          const error = yield* functionsDeploy({
+            ...baseFlags,
+            functionNames: ["hello-world", "bye-world"],
+          }).pipe(Effect.flip);
+
+          expect(error).toMatchObject({
+            message: 'unexpected bulk update status 500: {"message":"bulk update rejected"}',
+          });
+          expect(api.requests.filter((request) => request.method === "PUT")).toHaveLength(1);
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+      },
+    );
 
     it.effect("skips the bulk update entirely when every upload fails", () => {
       const { out, api, layer } = setupBulkDeploy({ deployStatuses: [409, 400] });
@@ -2259,6 +2348,53 @@ describe("functions deploy", () => {
         },
       });
     }
+
+    it.live("updates a duplicated function once when SUPABASE_API_MAX_RETRIES is 0", () => {
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi({
+        handler: (request) =>
+          Effect.succeed(
+            request.method === "GET"
+              ? jsonResponse(request, 200, [])
+              : request.method === "POST"
+                ? jsonResponse(request, 400, { message: "Duplicated function slug" })
+                : jsonResponse(request, 500, { message: "boom" }),
+          ),
+      });
+      const child = mockDockerBundleSpawner();
+      const layer = Layer.mergeAll(
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({
+            workdir: tempRoot.current,
+            apiMaxRetries: Option.some(0),
+          }),
+          runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+        }),
+        Layer.succeed(YesFlag, false),
+        child.layer,
+        Stdio.layerTest({
+          args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
+        }),
+      );
+
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+        const error = yield* functionsDeploy({ ...baseFlags, useApi: false, useDocker: true }).pipe(
+          Effect.flip,
+        );
+
+        expect(error).toMatchObject({ status: 500 });
+        expect(
+          api.requests
+            .filter((request) => request.method !== "GET")
+            .map((request) => request.method),
+        ).toEqual(["POST", "PATCH"]);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
 
     it.live(
       "resolves the deno v1 edge-runtime image tag when SUPABASE_EDGE_RUNTIME_DENO_VERSION=1 overrides an unset config value",

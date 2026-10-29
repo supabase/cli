@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { LoginApi } from "../commands/login/login-api.service.ts";
 import {
@@ -13,11 +14,14 @@ import { loginApiLayer, loginProfile } from "./login-api.layer.ts";
 
 const PROFILE = { gotrue_id: "gotrue-user-123", primary_email: "a@b.co", username: "ab" };
 
-function setup(opts: Parameters<typeof mockCommandPlatformApi>[0]) {
+function setup(
+  opts: Parameters<typeof mockCommandPlatformApi>[0],
+  apiMaxRetries = Option.none<number>(),
+) {
   const api = mockCommandPlatformApi(opts);
   const layer = loginApiLayer.pipe(
     Layer.provide(api.httpClientLayer),
-    Layer.provide(mockCommandSettings({ workdir: "/unused-workdir" })),
+    Layer.provide(mockCommandSettings({ workdir: "/unused-workdir", apiMaxRetries })),
   );
   return { api, layer };
 }
@@ -52,6 +56,28 @@ describe("loginApiLayer", () => {
 
   it.effect("skips the identity stitch when the profile lookup is forbidden", () => {
     const { api, layer } = setup({ response: { status: 403, body: { message: "Forbidden" } } });
+    return Effect.gen(function* () {
+      const loginApi = yield* LoginApi;
+      const gotrueId = yield* loginApi.fetchGotrueId(DEFAULT_API_URL, VALID_TOKEN);
+      expect(gotrueId).toEqual(Option.none());
+      expect(api.requests).toHaveLength(1);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("looks the profile up once when SUPABASE_API_MAX_RETRIES is 0", () => {
+    const { api, layer } = setup(
+      {
+        /* `Retry-After: 0` keeps any retry from waiting on the test clock. */
+        handler: (request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response("{}", { status: 500, headers: { "Retry-After": "0" } }),
+            ),
+          ),
+      },
+      Option.some(0),
+    );
     return Effect.gen(function* () {
       const loginApi = yield* LoginApi;
       const gotrueId = yield* loginApi.fetchGotrueId(DEFAULT_API_URL, VALID_TOKEN);

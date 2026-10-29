@@ -384,6 +384,7 @@ const testCliConfigLayer = (workdir: string, explicitWorkdir: boolean) =>
         explicitWorkdir,
         workdirEnvValue: Option.none(),
         userAgent: "supabase",
+        apiMaxRetries: Option.none(),
       });
     }),
   ).pipe(Layer.provide(BunServices.layer));

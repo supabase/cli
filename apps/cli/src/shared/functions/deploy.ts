@@ -14,6 +14,7 @@ import {
 import {
   Cause,
   Config,
+  Context,
   Duration,
   Effect,
   Fiber,
@@ -1694,6 +1695,7 @@ const listRemoteFunctions = Effect.fn("functions.deploy.listRemoteFunctions")(fu
   api: ApiClient,
   projectRef: string,
 ) {
+  const apiMaxRetries = yield* DeployApiMaxRetries;
   return yield* Effect.gen(function* () {
     const response = yield* api
       .executeRaw(operationDefinitions.v1ListAllFunctions, { ref: projectRef })
@@ -1721,7 +1723,7 @@ const listRemoteFunctions = Effect.fn("functions.deploy.listRemoteFunctions")(fu
   }).pipe(
     Effect.retry({
       schedule: Schedule.exponential(Duration.seconds(1)),
-      times: 3,
+      times: Option.isSome(apiMaxRetries) ? 0 : 3,
       while: (error) =>
         !(error instanceof FunctionsApiStatusError) || error.status >= 500 || error.status === 429,
     }),
@@ -1766,6 +1768,12 @@ function rateLimitDelayText(milliseconds: number) {
 // The command's own 429 loop is the only retry layer.
 const NO_CLIENT_RETRY = { retry: { maxRetries: 0 } } as const;
 
+/** `SUPABASE_API_MAX_RETRIES`: once set, the client's retries replace the command loops below. */
+export const DeployApiMaxRetries = Context.Reference<Option.Option<number>>(
+  "supabase/functions/deploy/DeployApiMaxRetries",
+  { defaultValue: () => Option.none() },
+);
+
 const rateLimitedRequest = Effect.fnUntraced(function* <A>(
   action: string,
   request: () => Effect.Effect<
@@ -1778,12 +1786,11 @@ const rateLimitedRequest = Effect.fnUntraced(function* <A>(
   >,
 ) {
   const output = yield* Output;
+  const maxRetries = Option.isSome(yield* DeployApiMaxRetries) ? 0 : DEPLOY_RATE_LIMIT_MAX_RETRIES;
   return yield* Effect.repeat(Effect.suspend(request), ($) =>
     $(Schedule.forever).pipe(
       Schedule.passthrough,
-      Schedule.while(
-        ({ input, attempt }) => input.status === 429 && attempt <= DEPLOY_RATE_LIMIT_MAX_RETRIES,
-      ),
+      Schedule.while(({ input, attempt }) => input.status === 429 && attempt <= maxRetries),
       Schedule.modifyDelay(({ input, attempt, now }) =>
         Effect.succeed(Duration.millis(rateLimitDelayMillis(input.headers, attempt - 1, now))),
       ),
@@ -1807,6 +1814,7 @@ const uploadFunctionSource = Effect.fn("functions.deploy.uploadFunctionSource")(
   bundleOnly: boolean,
 ) {
   const output = yield* Output;
+  const apiMaxRetries = yield* DeployApiMaxRetries;
   const files = yield* joinDetached(
     collectSourceDeployFiles(sourceRoot, workdir, config, metadata, (text) =>
       output.raw(text, "stderr"),
@@ -1831,7 +1839,7 @@ const uploadFunctionSource = Effect.fn("functions.deploy.uploadFunctionSource")(
             file: files,
           },
         },
-        NO_CLIENT_RETRY,
+        Option.isSome(apiMaxRetries) ? undefined : NO_CLIENT_RETRY,
       )
       .pipe(
         // Read the body as text (never failing) so the status check below wins:
@@ -1912,6 +1920,7 @@ const bulkUpdateRemoteFunctions = Effect.fn("functions.deploy.bulkUpdateFunction
   projectRef: string,
   functions: ReadonlyArray<BulkUpdateFunction>,
 ) {
+  const apiMaxRetries = yield* DeployApiMaxRetries;
   return yield* Effect.gen(function* () {
     const response = yield* rateLimitedRequest("bulk updating functions", () =>
       api
@@ -1921,7 +1930,7 @@ const bulkUpdateRemoteFunctions = Effect.fn("functions.deploy.bulkUpdateFunction
             ref: projectRef,
             body: functions,
           },
-          NO_CLIENT_RETRY,
+          Option.isSome(apiMaxRetries) ? undefined : NO_CLIENT_RETRY,
         )
         .pipe(
           // Read the body as text (never failing) so the status check wins even
@@ -1945,7 +1954,7 @@ const bulkUpdateRemoteFunctions = Effect.fn("functions.deploy.bulkUpdateFunction
   }).pipe(
     Effect.retry({
       schedule: Schedule.exponential(Duration.seconds(1)),
-      times: 3,
+      times: Option.isSome(apiMaxRetries) ? 0 : 3,
       while: (error) => !(error instanceof FunctionsApiStatusError) || error.status >= 500,
     }),
   );
@@ -1957,6 +1966,7 @@ const upsertBundledFunction = Effect.fn("functions.deploy.upsertFunction")(funct
   bundled: BundledFunction,
   exists: boolean,
 ) {
+  const apiMaxRetries = yield* DeployApiMaxRetries;
   const shouldUpdateRef = yield* Ref.make(exists);
 
   const upsert = Effect.gen(function* () {
@@ -2021,8 +2031,12 @@ const upsertBundledFunction = Effect.fn("functions.deploy.upsertFunction")(funct
   return yield* upsert.pipe(
     Effect.retry({
       schedule: Schedule.exponential(Duration.millis(500)),
-      times: 3,
-      while: (error) => !(error instanceof FunctionsApiStatusError && error.decode === true),
+      /* With a limit set, the only follow-up is turning a duplicated create into an update. */
+      times: Option.isSome(apiMaxRetries) ? 1 : 3,
+      while: (error) =>
+        Option.isSome(apiMaxRetries)
+          ? Ref.get(shouldUpdateRef).pipe(Effect.map((shouldUpdate) => shouldUpdate !== exists))
+          : Effect.succeed(!(error instanceof FunctionsApiStatusError && error.decode === true)),
     }),
   );
 });
