@@ -1,6 +1,6 @@
 import { legacyProjectStateLayer } from "../../command-internal/legacy-project-state.layer.ts";
 import { Cause, Effect, Exit, FileSystem, Layer, Schema } from "effect";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { CliOutput, Command, type HelpDoc } from "effect/cli";
 import { describe, expect, it } from "@effect/vitest";
 import { branchesCommand } from "../../commands/branches/branches.command.ts";
@@ -60,8 +60,8 @@ const testRootLayer = (
     CliOutput.layer(formatter),
     Layer.succeed(CliArgs, { args }),
     mockOutput({ format: "text" }).layer,
-    BunServices.layer,
-    legacyProjectStateLayer.pipe(Layer.provide(BunServices.layer)),
+    NodeServices.layer,
+    legacyProjectStateLayer.pipe(Layer.provide(NodeServices.layer)),
     mockRuntimeInfo(),
     mockAnalytics().layer,
     mockTelemetryRuntime(),
@@ -173,7 +173,7 @@ describe("native hidden flags", () => {
       ]),
     );
     const parserLayer = Layer.mergeAll(
-      BunServices.layer,
+      NodeServices.layer,
       CliOutput.layer(silentCliOutputFormatter),
     );
     const runParser = (args: ReadonlyArray<string>) =>
@@ -305,6 +305,6 @@ describe("hidden subcommands", () => {
       expect(Exit.isFailure(unknownExit)).toBe(true);
       if (!Exit.isFailure(unknownExit)) return;
       expect(Cause.hasFails(unknownExit.cause)).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

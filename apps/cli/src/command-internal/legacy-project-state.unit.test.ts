@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 
@@ -7,7 +7,7 @@ import { legacyProjectStateLayer } from "./legacy-project-state.layer.ts";
 import { legacyProjectStatePaths } from "./legacy-project-state.paths.ts";
 import { LegacyProjectState, ProjectRefReadError } from "./legacy-project-state.service.ts";
 
-const services = legacyProjectStateLayer.pipe(Layer.provideMerge(BunServices.layer));
+const services = legacyProjectStateLayer.pipe(Layer.provideMerge(NodeServices.layer));
 
 const readRef = (workdir: string) =>
   Effect.gen(function* () {
@@ -37,7 +37,7 @@ describe("legacyProjectStatePaths", () => {
       expect(paths.cliLatest).toBe(path.join(tempDir, "cli-latest"));
       expect(paths.pgdeltaDir).toBe(path.join(tempDir, "pgdelta"));
       expect(paths.startSecretsDir).toBe(path.join(tempDir, "start-secrets"));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("every temp path is nested under tempDir", () =>
@@ -48,7 +48,7 @@ describe("legacyProjectStatePaths", () => {
       for (const value of Object.values(rest)) {
         expect(path.dirname(value)).toBe(tempDir);
       }
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
 

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Effect, FileSystem, Path } from "effect";
 import { expect } from "vitest";
 
@@ -29,6 +29,6 @@ test("unlinks a linked workspace, leaving no local link state", ({
       expect(result.stderr).toContain(`Unlinking project: ${project.ref}`);
       const tempDirExists = yield* fs.exists(path.join(workspace.path, "supabase", ".temp"));
       expect(tempDirExists, result.stderr).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
     { signal },
   ));

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Data, Effect, FileSystem, Path } from "effect";
 
@@ -139,7 +139,7 @@ as $$ select 1; $$;`,
             /REVOKE\s+(?:ALL|EXECUTE)\s+ON\s+FUNCTION\s+"?public"?\s*\.\s*"?probe_fn"?\s*\(\)\s+FROM\s+[^;]*PUBLIC[^;]*;/i,
           );
         }),
-      ).pipe(Effect.provide(BunServices.layer)),
+      ).pipe(Effect.provide(NodeServices.layer)),
     DIFF_TEST_TIMEOUT_MS,
   );
 });

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Cause, Effect, Exit, FileSystem, Path } from "effect";
 import { expect } from "vitest";
 
@@ -58,5 +58,5 @@ test("moves an uploaded object to a new path", ({ cli, cliEffect, project, works
         targetError: Exit.isFailure(targetExit) ? Cause.squash(targetExit.cause) : undefined,
         cleanupErrors,
       };
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   ).then(({ targetError, cleanupErrors }) => throwWithCleanup(targetError, cleanupErrors)));

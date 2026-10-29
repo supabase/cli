@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { Cause, Clock, Crypto, DateTime, Effect, Layer, Option } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { GlobalFlag } from "effect/cli";
@@ -1133,8 +1133,8 @@ const completeAnalyticsLayer = (mode: ProjectStateMode) =>
     ),
     Layer.provide(FetchHttpClient.layer),
     Layer.provide(cliConfigProviderLayer),
-    Layer.provide(BunServices.layer),
-    Layer.merge(BunCrypto.layer),
+    Layer.provide(NodeServices.layer),
+    Layer.merge(NodeCrypto.layer),
   );
 
 /**

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { LOCK_SCHEMA_URL, writeLock, type Lock } from "@supabase/stack/effect";
 import type { ArtifactPin } from "@supabase/stack/internal/artifacts";
@@ -27,7 +27,7 @@ const inProject = <A, E>(
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     return yield* body(yield* fs.makeTempDirectoryScoped({ prefix: "stack-lock-int-" }));
-  }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 const requestFor = (
   projectRoot: string,

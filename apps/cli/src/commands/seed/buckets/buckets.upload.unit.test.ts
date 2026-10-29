@@ -1,12 +1,12 @@
-import { BunPath } from "@effect/platform-bun";
+import { NodePath } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Path } from "effect";
 
 import { bucketObjectKey } from "./buckets.upload.ts";
 
-const path = Effect.runSync(Effect.provide(Path.Path, BunPath.layer));
-const posixPath = Effect.runSync(Effect.provide(Path.Path, BunPath.layerPosix));
-const win32Path = Effect.runSync(Effect.provide(Path.Path, BunPath.layerWin32));
+const path = Effect.runSync(Effect.provide(Path.Path, NodePath.layer));
+const posixPath = Effect.runSync(Effect.provide(Path.Path, NodePath.layerPosix));
+const win32Path = Effect.runSync(Effect.provide(Path.Path, NodePath.layerWin32));
 
 describe("bucketObjectKey", () => {
   it("maps a single-file objects_path to <bucket>/<basename>", () => {

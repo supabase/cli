@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Option, Path, Predicate } from "effect";
 
@@ -372,7 +372,7 @@ describe("storage ls", () => {
           expect(Cause.pretty(exit.cause)).toContain("StorageMissingProjectConfigError");
         }
         expect(requests).toHaveLength(0);
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     },
   );
 
@@ -400,7 +400,7 @@ describe("storage ls", () => {
         expect(requests.some((r) => r.url.startsWith(`https://${VALID_REF}.supabase.co`))).toBe(
           true,
         );
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     },
   );
 
@@ -426,7 +426,7 @@ describe("storage ls", () => {
           expect(Cause.pretty(exit.cause)).toContain(`Did you mean --workdir ${tmp.current}?`);
         }
         expect(requests).toHaveLength(0);
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     },
   );
 
@@ -448,7 +448,7 @@ describe("storage ls", () => {
           expect(causeText).toContain("failed to change workdir: chdir");
         }
         expect(requests).toHaveLength(0);
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     },
   );
   it.effect("fetches the revealed api keys and fills the cache through the real layers", () =>
@@ -473,7 +473,7 @@ describe("storage ls", () => {
           activeFlags: { local: false },
           requests: managementRequests,
         });
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
 
@@ -535,7 +535,7 @@ describe("storage ls", () => {
             ],
           }),
         ).toThrow(/condition doesn't hold/);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
 

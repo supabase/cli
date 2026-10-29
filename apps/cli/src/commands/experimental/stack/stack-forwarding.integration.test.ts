@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Redacted, Schema } from "effect";
 import { ServiceCreation } from "../../../../../../packages/stack/src/services/Catalog.ts";
@@ -14,7 +14,7 @@ import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts"
 import { createStackConfigProject } from "../../../../tests/helpers/stack-config.ts";
 
 const layer = Layer.mergeAll(
-  BunServices.layer,
+  NodeServices.layer,
   runtimeInfoLayer,
   mockCommandSettings({ workdir: "/unused-stack-forwarding-workdir" }),
 );

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Effect, FileSystem, Path } from "effect";
 import { expect } from "vitest";
 
@@ -19,6 +19,6 @@ test("dumps the remote schema to a file", ({ cliEffect, project, workspace, sign
         /^CREATE /m.test(dump),
         `stderr:\n${result.stderr}\nfile:\n${dump.slice(0, 1_000)}`,
       ).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
     { signal },
   ));

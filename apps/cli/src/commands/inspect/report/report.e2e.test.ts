@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 
@@ -36,7 +36,7 @@ describe("supabase inspect report", () => {
           expect(dated.length).toBe(1);
           expect(yield* fs.exists(path.join(outputDir, dated[0] ?? ""))).toBe(true);
         }),
-      ).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      ).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     E2E_TIMEOUT_MS,
   );
 });

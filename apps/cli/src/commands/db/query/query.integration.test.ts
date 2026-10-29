@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -297,7 +297,7 @@ function setup(opts: SetupOpts = {}) {
       deleteProjectCredential: () => Effect.die("unexpected project-credential delete in test"),
     }),
     platformApi.factoryLayer,
-    BunServices.layer,
+    NodeServices.layer,
   );
   return { layer, out, telemetry, cache, telemetryOutputFormat, platformApi };
 }
@@ -400,7 +400,7 @@ describe("db query integration", () => {
         Effect.provide(layer),
       );
       expect(out.stdoutText).toContain("alice");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("errors when --file cannot be read", () => {

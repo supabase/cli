@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 
@@ -34,7 +34,7 @@ describe("supabase db push --skip-vault", () => {
         expect(exitCode).toBe(1);
         expect(stderr).toContain("failed to parse config:");
         expect(stderr).not.toContain("Connecting to remote database...");
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     E2E_TIMEOUT_MS,
   );
 
@@ -51,7 +51,7 @@ describe("supabase db push --skip-vault", () => {
         expect(stderr).toContain("Connecting to remote database...");
         expect(stderr).toContain("failed to connect");
         expect(stderr).not.toContain("failed to parse config:");
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     E2E_TIMEOUT_MS,
   );
 });

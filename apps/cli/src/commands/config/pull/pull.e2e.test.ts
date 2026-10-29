@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Data, Effect, FileSystem, Path } from "effect";
 
@@ -35,7 +35,7 @@ describe("config pull CLI surface", () => {
       expect(combined).toContain(
         "failed to read supabase/config.toml or supabase/config.json: file not found. Run `supabase init` to create one.",
       );
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.live("reads a piped confirmation through the production command layer", () =>
@@ -102,6 +102,6 @@ describe("config pull CLI surface", () => {
       );
       expect(stdout).toContain("not written (declined)");
       expect(yield* fs.readFileString(configPath)).toBe(before);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

@@ -1,5 +1,5 @@
 import * as net from "node:net";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import {
   Config,
   Crypto,
@@ -590,7 +590,7 @@ export const dbConfigResolverLayer = Layer.effect(
     // `never` (handler tests can mock this resolver without wiring the whole
     // management runtime). None of these resolves an access token — only the
     // platform API layer does, and that is built only on the `--linked` branch.
-    // `BunServices.layer` is included as a concrete layer (not a captured-value
+    // `NodeServices.layer` is included as a concrete layer (not a captured-value
     // `Layer.succeed`) because it provides FileSystem/Path, which have no single
     // tag to snapshot and which `managementApiRuntimeLayer` does not expose.
     const ambientLayer = Layer.mergeAll(
@@ -617,7 +617,7 @@ export const dbConfigResolverLayer = Layer.effect(
         onNone: () => Layer.empty,
         onSome: (value) => Layer.succeed(CliArgs, value),
       }),
-      BunServices.layer,
+      NodeServices.layer,
     );
     // Compile-time guard: if `linkedDbResolverRuntimeLayer`'s requirements ever
     // grow a service not captured above, this assignment fails to type-check (the

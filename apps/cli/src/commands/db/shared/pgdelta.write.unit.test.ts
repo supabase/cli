@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { DateTime, Effect, FileSystem, Option, Path, Schema } from "effect";
 
@@ -18,7 +18,7 @@ const write = (declarativeDir: string, output: PgDeltaDeclarativeExportResult) =
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     return yield* writeDeclarativeSchemas(fs, path, declarativeDir, output);
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 
 const nextOutput = (files: PgDeltaDeclarativeExportResult["files"]) => ({
   files,
@@ -94,7 +94,7 @@ describe("writeDeclarativeSchemas", () => {
   ]
 }
 `);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports manifestless files that the next writer preserves", () =>
@@ -114,7 +114,7 @@ describe("writeDeclarativeSchemas", () => {
       );
       expect(written.preservedUnmanagedFiles).toEqual(["legacy-a.sql", "legacy-b.sql"]);
       expect(yield* fs.readFileString(path.join(dir, "replaced.sql"))).toContain("create table");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("does not rewrite unchanged next-engine files or manifests", () =>
@@ -138,7 +138,7 @@ describe("writeDeclarativeSchemas", () => {
 
       expect(yield* mtimeIso(schemaPath)).toEqual(Option.some("2020-01-01T00:00:00.000Z"));
       expect(yield* mtimeIso(manifestPath)).toEqual(Option.some("2020-01-01T00:00:00.000Z"));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("rejects reserved and escaping export paths", () =>
@@ -157,7 +157,7 @@ describe("writeDeclarativeSchemas", () => {
       ).pipe(Effect.flip);
       expect(escaping).toBeInstanceOf(DeclarativeWriteError);
       expect(escaping.message).toContain("unsafe declarative export path");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
 

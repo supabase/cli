@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 
@@ -43,13 +43,13 @@ const run = (input: Parameters<typeof warnLinkedTargetDefault>[0], scenario: Sce
         Layer.mergeAll(
           out.layer,
           mockCommandSettings({ workdir, projectId: scenario.projectId ?? Option.none() }),
-          BunServices.layer,
+          NodeServices.layer,
           projectStateModeLayer(scenario.stackLinkRef === undefined ? "legacy" : "stack"),
         ),
       ),
     );
     return { stdout: out.stdoutText, stderr: stripAnsi(out.stderrText) };
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 
 const BARE = { command: "db push", targetSelected: false } as const;
 const WARNING = `${targetDefaultWarning("db push")}\n`;

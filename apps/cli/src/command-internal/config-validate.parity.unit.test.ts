@@ -1,5 +1,5 @@
 import { unusedStackServices } from "../../tests/helpers/unused-stack.ts";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { CliConfigSchema, type CliConfig } from "@supabase/config";
 import { Effect, Exit, FileSystem, Layer, Path, Schema } from "effect";
@@ -46,7 +46,7 @@ const readD = (workdir: string) =>
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     return yield* readDbToml(fs, path, workdir);
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 
 /** Drives D's real pipeline and asserts the failure message contains `message`. */
 function failsWithD(tomlLines: ReadonlyArray<string>, message: string) {
@@ -58,7 +58,7 @@ function failsWithD(tomlLines: ReadonlyArray<string>, message: string) {
       expect(yield* encodeJson(exit.cause)).toContain(message);
     }
     yield* removeDir(dir);
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 }
 
 const decodeConfig = Schema.decodeUnknownSync(CliConfigSchema);
@@ -77,7 +77,7 @@ const failsWithL = Effect.fnUntraced(function* (
   const config = baseConfig(overrides);
   const error = yield* Effect.flip(
     resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
     ),
   );
   expect(error.message).toContain(message);
@@ -331,7 +331,7 @@ describe("shared api + auth validation branches, cross-caller parity (S vs L)", 
         Effect.provide(
           Layer.mergeAll(
             unusedStackServices,
-            BunServices.layer,
+            NodeServices.layer,
             runtimeInfoLayer,
             mockCommandSettings({ workdir: dir }),
             // Local-path parity only — the remote branch (and with it the
@@ -348,7 +348,7 @@ describe("shared api + auth validation branches, cross-caller parity (S vs L)", 
         expect(yield* encodeJson(exit.cause)).toContain(message);
       }
       yield* removeDir(dir);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
 
   // Ambient SUPABASE_API_* / SUPABASE_AUTH_* values would override the config
   // under test, so pin every participating key to unset for the duration of

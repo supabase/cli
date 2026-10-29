@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
@@ -157,18 +157,18 @@ function setup(
     Layer.provide(Layer.succeed(ExperimentalFlag, false)),
     Layer.provide(Layer.succeed(DebugFlag, false)),
     Layer.provide(Layer.succeed(CliArgs, { args: [] })),
-    // The fake `ChildProcessSpawner` must be provided BEFORE the real `BunServices.layer`
+    // The fake `ChildProcessSpawner` must be provided BEFORE the real `NodeServices.layer`
     // fallback below, so it wins over the real one for whatever `ChildProcessSpawner`
     // `seam` itself resolves — `Layer.provide` fully resolves each requirement it can
-    // satisfy as it's applied, so `BunServices.layer` only ever fills in `FileSystem`/`Path`.
+    // satisfy as it's applied, so `NodeServices.layer` only ever fills in `FileSystem`/`Path`.
     Layer.provide(shadowSpawner.layer),
     Layer.provide(mockLocalDockerEngineUnavailableLayer),
     Layer.provide(unusedStackServices),
-    Layer.provide(BunServices.layer),
+    Layer.provide(NodeServices.layer),
   );
 
   const layer = Layer.mergeAll(
-    BunServices.layer,
+    NodeServices.layer,
     out.layer,
     shadowSpawner.layer,
     dbConnection.layer,

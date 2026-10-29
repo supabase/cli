@@ -5,7 +5,7 @@
  * structure, and the connect suggestion must classify real node-postgres error shapes.
  */
 import * as net from "node:net";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Duration, Effect, FileSystem, Layer, Path } from "effect";
 
@@ -52,7 +52,7 @@ const connectFailure = (
         Effect.mapError(() => new Error("expected the connection to fail")),
         Effect.orDie,
       );
-  }).pipe(Effect.provide(dbConnectionLayer.pipe(Layer.provide(BunServices.layer))));
+  }).pipe(Effect.provide(dbConnectionLayer.pipe(Layer.provide(NodeServices.layer))));
 
 /** A TCP port that is guaranteed closed: bind an ephemeral port, then release it. */
 const acquireClosedPort = (): Effect.Effect<number> =>
@@ -571,7 +571,7 @@ describe("dbConnectionLayer exec failures", () => {
               Effect.orDie,
             );
         }).pipe(
-          Effect.provide(dbConnectionLayer.pipe(Layer.provide(BunServices.layer))),
+          Effect.provide(dbConnectionLayer.pipe(Layer.provide(NodeServices.layer))),
           Effect.ensuring(Effect.sync(server.close)),
         );
         expect(error._tag).toBe("DbExecError");
@@ -617,7 +617,7 @@ describe("dbConnectionLayer extended batches", () => {
       return yield* use(session);
     }).pipe(
       Effect.scoped,
-      Effect.provide(dbConnectionLayer.pipe(Layer.provide(BunServices.layer))),
+      Effect.provide(dbConnectionLayer.pipe(Layer.provide(NodeServices.layer))),
       Effect.ensuring(Effect.sync(server.close)),
     );
 
@@ -817,7 +817,7 @@ describe("dbConnectionLayer extended batches", () => {
         client.release(new Error("done"));
       }).pipe(
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide(NodeServices.layer),
         Effect.ensuring(Effect.sync(server.close)),
       );
     }),
@@ -876,7 +876,7 @@ describe("acquirePgPool", () => {
           expect(pool.ending).toBe(false);
           expect(pool.ended).toBe(false);
           yield* Effect.tryPromise(() => pool.query("select 1"));
-        }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
         expect(acquired?.ending).toBe(true);
         expect(acquired?.ended).toBe(true);
@@ -918,7 +918,7 @@ describe("a local target's explicit TLS request (CLI-2366: honor --db-url's own 
         yield* Effect.tryPromise(() => pool.query("select 1"));
       }).pipe(
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide(NodeServices.layer),
         Effect.ensuring(Effect.sync(server.close)),
       );
       expect(server.sawSslRequest()).toBe(false);
@@ -946,7 +946,7 @@ describe("a local target's explicit TLS request (CLI-2366: honor --db-url's own 
           yield* Effect.tryPromise(() => pool.query("select 1"));
         }).pipe(
           Effect.scoped,
-          Effect.provide(BunServices.layer),
+          Effect.provide(NodeServices.layer),
           Effect.ensuring(Effect.sync(server.close)),
         );
         expect(server.sawSslRequest()).toBe(false);
@@ -974,7 +974,7 @@ describe("a local target's explicit TLS request (CLI-2366: honor --db-url's own 
           yield* Effect.tryPromise(() => pool.query("select 1"));
         }).pipe(
           Effect.scoped,
-          Effect.provide(BunServices.layer),
+          Effect.provide(NodeServices.layer),
           Effect.ensuring(Effect.sync(server.close)),
         );
         expect(server.sawSslRequest()).toBe(false);
@@ -1000,7 +1000,7 @@ describe("a local target's explicit TLS request (CLI-2366: honor --db-url's own 
           yield* Effect.tryPromise(() => pool.query("select 1"));
         }).pipe(
           Effect.scoped,
-          Effect.provide(BunServices.layer),
+          Effect.provide(NodeServices.layer),
           Effect.ensuring(Effect.sync(server.close)),
         );
         expect(server.sawSslRequest()).toBe(false);
@@ -1058,7 +1058,7 @@ describe("a local target's explicit TLS request (CLI-2366: honor --db-url's own 
         yield* Effect.tryPromise(() => pool.query("select 1"));
       }).pipe(
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide(NodeServices.layer),
         Effect.ensuring(Effect.sync(server.close)),
       );
       expect(server.sawSslRequest()).toBe(false);

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path, Schema } from "effect";
 
@@ -58,6 +58,6 @@ describe("pg-delta next artifact generation", () => {
       expect(yield* readJson("diagnostics.json")).toEqual([
         { origin: "source", code: "PG001", severity: "warning", message: "warning" },
       ]);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 
@@ -52,7 +52,7 @@ function setup(opts: { workdir?: string; noProjectId?: boolean } = {}) {
       workdir: opts.workdir ?? "/work/project",
       ...(opts.noProjectId === true ? { projectId: Option.none() } : {}),
     }),
-    BunServices.layer,
+    NodeServices.layer,
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(CliArgs, { args: [] }),
     Layer.succeed(DbConfigResolver, {

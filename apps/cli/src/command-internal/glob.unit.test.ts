@@ -1,4 +1,4 @@
-import { BunFileSystem, BunPath } from "@effect/platform-bun";
+import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { ByteSize, Effect, Exit, FileSystem, Layer, Option, Path, PlatformError } from "effect";
 
@@ -19,7 +19,7 @@ function fakeReadDirFs(entries: Record<string, ReadonlyArray<string>>) {
         },
       }),
     ),
-  ).pipe(Layer.provide(BunFileSystem.layer));
+  ).pipe(Layer.provide(NodeFileSystem.layer));
   return { layer, calls };
 }
 
@@ -58,7 +58,7 @@ describe("globPattern", () => {
   it.effect(
     "globs a Windows drive-root pattern (C:\\*.sql) against the drive root, not the workdir",
     () => {
-      // Uses the real Node win32 path module (`BunPath.layerWin32`) so this is deterministic
+      // Uses the real Node win32 path module (`NodePath.layerWin32`) so this is deterministic
       // regardless of the host OS running the test.
       const { layer, calls } = fakeReadDirFs({
         "C:": ["x.sql", "y.sql"],
@@ -70,7 +70,7 @@ describe("globPattern", () => {
         const matches = yield* globPattern(fs, path, "D:\\work", "C:\\*.sql");
         expect([...matches].sort()).toEqual(["C:/x.sql", "C:/y.sql"]);
         expect(calls).toEqual(["C:"]);
-      }).pipe(Effect.provide(Layer.mergeAll(layer, BunPath.layerWin32)));
+      }).pipe(Effect.provide(Layer.mergeAll(layer, NodePath.layerWin32)));
     },
   );
 });
@@ -233,13 +233,13 @@ describe("resolveUnderWorkdir", () => {
       Effect.gen(function* () {
         const path = yield* Path.Path;
         expect(resolveUnderWorkdir(path, "D:\\work", "C:")).toBe("C:");
-      }).pipe(Effect.provide(BunPath.layerWin32)),
+      }).pipe(Effect.provide(NodePath.layerWin32)),
   );
 
   it.effect("still joins an ordinary relative segment under workdir on win32", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       expect(resolveUnderWorkdir(path, "D:\\work", "schemas")).toBe("D:\\work\\schemas");
-    }).pipe(Effect.provide(BunPath.layerWin32)),
+    }).pipe(Effect.provide(NodePath.layerWin32)),
   );
 });

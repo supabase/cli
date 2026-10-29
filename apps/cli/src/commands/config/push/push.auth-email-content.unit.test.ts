@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { expect, layer } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 
@@ -52,7 +52,7 @@ const setupOutsideFile = Effect.gen(function* () {
   return outsideFile;
 });
 
-layer(BunServices.layer)("loadAuthEmailContent", (it) => {
+layer(NodeServices.layer)("loadAuthEmailContent", (it) => {
   it.effect("loads templates and notifications from the same project-root base", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

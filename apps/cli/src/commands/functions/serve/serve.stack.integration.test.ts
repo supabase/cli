@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -320,7 +320,7 @@ const fixture = (
     const api = Layer.succeed(StackApi, apiService);
     const recorder = recordingFileSystem();
     const layer = Layer.mergeAll(
-      BunServices.layer,
+      NodeServices.layer,
       recorder.layer,
       api,
       mockCommandSettings({
@@ -394,7 +394,7 @@ describe("experimental Stack Functions serve", () => {
         yield* Deferred.succeed(state.signal, undefined);
         yield* Fiber.join(run);
         expect(state.destroyed).toBe(true);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("runs standalone Functions on the pin the project lock selects", () =>
@@ -429,7 +429,7 @@ describe("experimental Stack Functions serve", () => {
 
       yield* Deferred.succeed(state.signal, undefined);
       yield* Fiber.join(run);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live(
@@ -457,7 +457,7 @@ describe("experimental Stack Functions serve", () => {
 
         yield* Deferred.succeed(state.signal, undefined);
         yield* Fiber.join(run);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("refreshes remote JWKS before creating standalone Functions", () =>
@@ -521,7 +521,7 @@ describe("experimental Stack Functions serve", () => {
 
       yield* Deferred.succeed(state.signal, undefined);
       yield* Fiber.join(run);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("keeps local signing keys and warns when remote JWKS refresh fails", () =>
@@ -580,7 +580,7 @@ describe("experimental Stack Functions serve", () => {
 
       yield* Deferred.succeed(state.signal, undefined);
       yield* Fiber.join(run);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("forwards Functions output written since serve started and reports lost output", () =>
@@ -660,7 +660,7 @@ describe("experimental Stack Functions serve", () => {
       yield* Deferred.succeed(state.signal, undefined);
       yield* Fiber.join(run);
       expect(state.currentFunctions.env).toEqual(functionsConfig().env);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("rejects unsupported flags before reading or mutating the stack", () =>
@@ -733,7 +733,7 @@ describe("experimental Stack Functions serve", () => {
       expect(error.message).toContain("Multiline");
       expect(state.currentFunctions).toEqual(functionsConfig());
       expect(state.restartCount).toBe(0);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("rejects an invalid environment key before restarting Functions", () =>
@@ -750,7 +750,7 @@ describe("experimental Stack Functions serve", () => {
       expect(error.message).toContain("Environment names");
       expect(state.currentFunctions).toEqual(functionsConfig());
       expect(state.restartCount).toBe(0);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("restores config when SIGINT arrives during an in-flight restart", () =>

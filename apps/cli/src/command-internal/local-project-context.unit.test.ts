@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Config,
@@ -74,7 +74,7 @@ describe("loadLocalProjectContext", () => {
       }).pipe(
         (body) => withEnvVar("SUPABASE_PROJECT_ID", "local", body),
         (body) => withConfigEnv({ SUPABASE_PROJECT_ID: "local" }, body),
-        Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+        Effect.provide(Layer.mergeAll(NodeServices.layer, runtimeInfoLayer)),
       );
     },
   );
@@ -95,7 +95,7 @@ describe("loadLocalProjectContext", () => {
     }).pipe(
       (body) => withEnvVar("SUPABASE_PROJECT_ID", "env-project", body),
       (body) => withConfigEnv({ SUPABASE_PROJECT_ID: "env-project" }, body),
-      Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, runtimeInfoLayer)),
     );
   });
 
@@ -110,7 +110,7 @@ describe("loadLocalProjectContext", () => {
         expect(yield* processEnvValue(DOCKER_HOST_KEY)).toBeUndefined();
       }).pipe(
         (body) => withEnvVar(DOCKER_HOST_KEY, undefined, body),
-        Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+        Effect.provide(Layer.mergeAll(NodeServices.layer, runtimeInfoLayer)),
       );
     },
   );
@@ -126,7 +126,7 @@ describe("loadLocalProjectContext", () => {
         expect(yield* processEnvValue(DOCKER_HOST_KEY)).toBe("tcp://real-shell-host:2375");
       }).pipe(
         (body) => withEnvVar(DOCKER_HOST_KEY, "tcp://real-shell-host:2375", body),
-        Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+        Effect.provide(Layer.mergeAll(NodeServices.layer, runtimeInfoLayer)),
       );
     },
   );
@@ -146,7 +146,7 @@ describe("loadLocalProjectContext", () => {
       expect(yield* processEnvValue(BITBUCKET_CLONE_DIR_KEY)).toBeUndefined();
     }).pipe(
       (body) => withEnvVar(BITBUCKET_CLONE_DIR_KEY, undefined, body),
-      Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, runtimeInfoLayer)),
     );
   });
 
@@ -163,7 +163,7 @@ describe("loadLocalProjectContext", () => {
       expect(yield* processEnvValue(BITBUCKET_CLONE_DIR_KEY)).toBe("/real-shell-clone-dir");
     }).pipe(
       (body) => withEnvVar(BITBUCKET_CLONE_DIR_KEY, "/real-shell-clone-dir", body),
-      Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, runtimeInfoLayer)),
     );
   });
 
@@ -180,7 +180,7 @@ describe("loadLocalProjectContext", () => {
     }).pipe(
       (body) => withEnvVar("SUPABASE_PROJECT_ID", "", body),
       (body) => withConfigEnv({ SUPABASE_PROJECT_ID: "" }, body),
-      Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, runtimeInfoLayer)),
     );
   });
 
@@ -201,7 +201,7 @@ describe("loadLocalProjectContext", () => {
       }).pipe(
         (body) => withEnvVar("SUPABASE_PROJECT_ID", undefined, body),
         (body) => withConfigEnv({ SUPABASE_PROJECT_ID: "" }, body),
-        Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+        Effect.provide(Layer.mergeAll(NodeServices.layer, runtimeInfoLayer)),
       );
     },
   );
@@ -225,7 +225,7 @@ describe("loadLocalProjectContext", () => {
     }).pipe(
       (body) => withEnvVar("SUPABASE_AUTH_JWT_SECRET", undefined, body),
       (body) => withConfigEnv({ SUPABASE_ENV: "" }, body),
-      Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, runtimeInfoLayer)),
     );
   });
 
@@ -244,7 +244,7 @@ describe("loadLocalProjectContext", () => {
       expect(Exit.isSuccess(exit)).toBe(true);
     }).pipe(
       (body) => withConfigEnv({ SUPABASE_ENV: "test" }, body),
-      Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, runtimeInfoLayer)),
     );
   });
 
@@ -263,7 +263,7 @@ describe("loadLocalProjectContext", () => {
       expect(error.message).toMatch(/^failed to read config: /);
     }).pipe(
       (body) => withConfigEnv({ SUPABASE_ENV: "development" }, body),
-      Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, runtimeInfoLayer)),
     );
   });
 
@@ -277,7 +277,7 @@ describe("loadLocalProjectContext", () => {
         (message) => new TestError({ message }),
       ).pipe(Effect.flip);
       expect(error.message).toBe('failed to read config: Expected number\n  at ["db"]["port"]');
-    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)));
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, runtimeInfoLayer)));
   });
 
   it.effect("reports a TOML syntax error's position without quoting the file", () => {
@@ -295,7 +295,7 @@ describe("loadLocalProjectContext", () => {
       expect(error.message).toBe(
         "failed to read config: Invalid TOML document: incomplete declaration: value expected (line 3, column 9)",
       );
-    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)));
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, runtimeInfoLayer)));
   });
 
   it.effect("keeps the Error: prefix when a project-root .env is malformed", () => {
@@ -310,7 +310,7 @@ describe("loadLocalProjectContext", () => {
       expect(error.message).toMatch(
         /^failed to read config: Error: failed to parse environment file: /,
       );
-    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)));
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, runtimeInfoLayer)));
   });
 
   it.effect("fails with a typed error when SUPABASE_ENV cannot be resolved", () => {
@@ -329,7 +329,7 @@ describe("loadLocalProjectContext", () => {
           Effect.fail(new ConfigProvider.SourceError({ message: "injected" })),
         ),
       ),
-      Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, runtimeInfoLayer)),
     );
   });
 
@@ -352,7 +352,7 @@ describe("loadLocalProjectContext", () => {
             : ConfigProvider.fromEnvRecord({}).load(path),
         ),
       ),
-      Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, runtimeInfoLayer)),
     );
   });
 });

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Cause, Effect, Exit, FileSystem, Path } from "effect";
 import { expect } from "vitest";
 
@@ -51,6 +51,6 @@ test("lists a seeded remote migration", ({ cli, cliEffect, project, signal }) =>
           };
         }),
       );
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     { signal },
   ).then(({ targetError, cleanupErrors }) => throwWithCleanup(targetError, cleanupErrors)));

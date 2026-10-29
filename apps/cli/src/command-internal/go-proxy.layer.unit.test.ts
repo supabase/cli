@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import {
   Cause,
   Deferred,
@@ -261,7 +261,7 @@ describe("formatGoBinaryNotFoundError - pinned snippet", () => {
 const proxyDeps = (
   spawner: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>,
   processControl: Layer.Layer<ProcessControl>,
-) => Layer.mergeAll(BunServices.layer, mockRuntimeInfo(), spawner, processControl);
+) => Layer.mergeAll(NodeServices.layer, mockRuntimeInfo(), spawner, processControl);
 
 describe("makeGoProxyLayer", () => {
   const tmp = useTempWorkdir("supabase-go-proxy-");
@@ -443,7 +443,7 @@ describe("makeGoProxyLayer", () => {
         yield* run(projectStateModeLayer("legacy"));
         yield* run(undefined);
         expect(childEnv()).toEqual([absent, absent, absent, absent]);
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     },
   );
 

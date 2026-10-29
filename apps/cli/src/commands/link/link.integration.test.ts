@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunCrypto } from "@effect/platform-bun";
+import { NodeCrypto } from "@effect/platform-node";
 import type { V1ListAllBranchesOutput } from "@supabase/api/effect";
 import {
   Cause,
@@ -1482,7 +1482,7 @@ describe("link integration", () => {
             cliSettings,
             analytics,
           }),
-          commandRuntimeLayer(["link"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["link"]).pipe(Layer.provide(NodeCrypto.layer)),
           Stdio.layerTest({
             args: Effect.succeed(["link", "--project-ref", VALID_REF]),
           }),
@@ -1512,7 +1512,7 @@ describe("link integration", () => {
             cliSettings,
             analytics,
           }),
-          commandRuntimeLayer(["link"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["link"]).pipe(Layer.provide(NodeCrypto.layer)),
           Stdio.layerTest({
             args: Effect.succeed(["link", "--project-ref", "my-branch"]),
           }),

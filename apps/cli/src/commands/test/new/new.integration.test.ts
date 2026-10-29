@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import { badArgument } from "effect/PlatformError";
@@ -45,7 +45,7 @@ function failingFsLayer(op: "writeFileString" | "makeDirectory") {
           ),
       });
     }),
-  ).pipe(Layer.provide(BunServices.layer));
+  ).pipe(Layer.provide(NodeServices.layer));
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -59,9 +59,9 @@ function setup(opts: SetupOpts = {}) {
     out.layer,
     cliSettings,
     telemetry.layer,
-    // The failing layer is appended last so it overrides BunServices' FileSystem
-    // (duplicate-tag mergeAll is last-wins); Path still comes from BunServices.
-    BunServices.layer,
+    // The failing layer is appended last so it overrides NodeServices' FileSystem
+    // (duplicate-tag mergeAll is last-wins); Path still comes from NodeServices.
+    NodeServices.layer,
     ...(opts.writeFails === true ? [failingFsLayer("writeFileString")] : []),
     ...(opts.mkdirFails === true ? [failingFsLayer("makeDirectory")] : []),
   );

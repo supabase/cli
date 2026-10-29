@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option } from "effect";
 import { vi } from "vitest";
@@ -207,7 +207,7 @@ function setup(opts: SetupOpts = {}) {
       workdir: opts.realLayers?.workdir ?? opts.workdir ?? "/work/project",
       ...(opts.noProjectId === true ? { projectId: Option.none() } : {}),
     }),
-    BunServices.layer,
+    NodeServices.layer,
   );
   return { layer, out, resolver, connection, telemetry };
 }
@@ -523,7 +523,7 @@ describe("inspect db through the real database-config resolver", () => {
         }
       }).pipe(
         Effect.scoped,
-        Effect.provide(Layer.mergeAll(layer, BunServices.layer)),
+        Effect.provide(Layer.mergeAll(layer, NodeServices.layer)),
         provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
       );
     },
@@ -548,7 +548,7 @@ describe("inspect db through the real database-config resolver", () => {
       });
     }).pipe(
       Effect.scoped,
-      Effect.provide(Layer.mergeAll(layer, BunServices.layer)),
+      Effect.provide(Layer.mergeAll(layer, NodeServices.layer)),
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });
@@ -577,7 +577,7 @@ describe("inspect db through the real database-config resolver", () => {
         });
       }).pipe(
         Effect.scoped,
-        Effect.provide(Layer.mergeAll(layer, BunServices.layer)),
+        Effect.provide(Layer.mergeAll(layer, NodeServices.layer)),
         provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
       );
     },
@@ -601,7 +601,7 @@ describe("inspect db through the real database-config resolver", () => {
         expect(requests).toEqual([]);
       }).pipe(
         Effect.scoped,
-        Effect.provide(Layer.mergeAll(layer, BunServices.layer)),
+        Effect.provide(Layer.mergeAll(layer, NodeServices.layer)),
         provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
       );
     },

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Cause, Clock, Effect, Exit, FileSystem, Path, Random } from "effect";
 import { expect } from "vitest";
 
@@ -51,6 +51,6 @@ test("pushes a local migration to the remote database", ({
           };
         }),
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
     { signal },
   ).then(({ targetError, cleanupErrors }) => throwWithCleanup(targetError, cleanupErrors)));

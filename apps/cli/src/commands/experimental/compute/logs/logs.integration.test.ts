@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { assert, describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -158,7 +158,7 @@ describe("compute logs", () => {
         kind: "requests",
         output: "json",
       });
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("prints a compute's own output oldest first", () =>
@@ -193,7 +193,7 @@ describe("compute logs", () => {
           requests: http.driftRequests,
         });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("picks the project, reads its logs and records the linked project", () =>
@@ -233,7 +233,7 @@ describe("compute logs", () => {
           requests: http.driftRequests,
         });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("composes a request line from attributes rather than the message", () =>
@@ -259,7 +259,7 @@ describe("compute logs", () => {
 
         expect(out.stdoutText).toContain("500 POST /checkout 7ms");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("prints a build event with its reason", () =>
@@ -279,7 +279,7 @@ describe("compute logs", () => {
 
         expect(out.stdoutText).toContain("build_failed exit status 1");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("always sends both timestamp bounds, under a 24 hour span", () =>
@@ -312,7 +312,7 @@ describe("compute logs", () => {
             DateTime.toEpochMillis(DateTime.makeUnsafe(start)),
         ).toBeLessThan(24 * 60 * 60 * 1000);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("filters on the subservice attribute, never the empty source column", () =>
@@ -335,7 +335,7 @@ describe("compute logs", () => {
         expect(sql).not.toMatch(/(?<!\[')subservice/);
         expect(sql).not.toMatch(/where source =/);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("narrows to one stream for --kind, and to all three without it", () =>
@@ -361,7 +361,7 @@ describe("compute logs", () => {
         expect(all).toContain("'worker_ingress_logs'");
         expect(all).toContain("'worker_api_logs'");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("renders a stream it has never heard of rather than failing", () =>
@@ -383,7 +383,7 @@ describe("compute logs", () => {
 
         expect(out.stdoutText).toContain("from the future");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("strips escape sequences a compute printed", () =>
@@ -404,7 +404,7 @@ describe("compute logs", () => {
         expect(out.stdoutText).toContain("ERROR: not really");
         expect(out.stdoutText).not.toContain(ESCAPE);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("keeps a blank guest line as a line", () =>
@@ -426,7 +426,7 @@ describe("compute logs", () => {
 
         expect(out.stdoutText.trimEnd().split("\n")).toHaveLength(3);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("makes no request at all for --tail 0", () =>
@@ -445,7 +445,7 @@ describe("compute logs", () => {
 
         expect(http.routeKeys).not.toContain(computeLogsRoute());
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   const tailZeroRuns: ReadonlyArray<{
@@ -483,7 +483,7 @@ describe("compute logs", () => {
           exact: true,
         });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("passes --tail through as the row limit", () =>
@@ -501,7 +501,7 @@ describe("compute logs", () => {
         assert.isDefined(request);
         expect(sentQuery(request).sql).toContain("limit 7");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports a compute that is not deployed rather than an empty screen", () =>
@@ -522,7 +522,7 @@ describe("compute logs", () => {
         const suggestion = error instanceof ComputeNotDeployedError ? error.suggestion : "";
         expect(suggestion).toContain("supabase compute push api");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("says so when a deployed compute has simply been quiet", () =>
@@ -548,7 +548,7 @@ describe("compute logs", () => {
           requests: http.driftRequests,
         });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("treats absent, null and empty result identically", () =>
@@ -573,7 +573,7 @@ describe("compute logs", () => {
 
         expect(out.stdoutText.match(/No logs for/gu)).toHaveLength(3);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("fails on a 200 that carries a query error", () =>
@@ -595,7 +595,7 @@ describe("compute logs", () => {
         const detail = error instanceof ComputeLogsQueryFailedError ? error.detail : "";
         expect(detail).toContain("query timed out");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reads the structured form of a query error too", () =>
@@ -620,7 +620,7 @@ describe("compute logs", () => {
         const detail = error instanceof ComputeLogsQueryFailedError ? error.detail : "";
         expect(detail).toContain("Unknown expression");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("maps 402 to a usage error and 429 to a rate limit error", () =>
@@ -638,7 +638,7 @@ describe("compute logs", () => {
         expect(usage).toBeInstanceOf(ComputeLogsUsageExceededError);
         expect(limited).toBeInstanceOf(ComputeLogsRateLimitedError);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("points at the project ref when the logs 404 names no such project", () =>
@@ -660,7 +660,7 @@ describe("compute logs", () => {
         expect(error).toBeInstanceOf(ComputeProjectNotFoundError);
         expect(error).toMatchObject({ suggestion: expect.stringContaining("supabase link") });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // The analytics route is not gated on the alpha's allow-list, so only a body
@@ -678,7 +678,7 @@ describe("compute logs", () => {
 
         expect(error).toBeInstanceOf(ComputeUnavailableError);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports an unexpected status, which is where a rejected query lands", () =>
@@ -694,7 +694,7 @@ describe("compute logs", () => {
 
         expect(error).toBeInstanceOf(ComputeApiUnexpectedStatusError);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports a transport failure", () =>
@@ -710,7 +710,7 @@ describe("compute logs", () => {
 
         expect(error).toBeInstanceOf(ComputeApiNetworkError);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("rejects an impossible compute name before any request", () =>
@@ -724,7 +724,7 @@ describe("compute logs", () => {
         expect(error).toBeInstanceOf(InvalidComputeNameError);
         expect(http.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("refuses -o env before spending the query", () =>
@@ -742,7 +742,7 @@ describe("compute logs", () => {
         expect(error).toBeInstanceOf(ComputeEnvNotSupportedError);
         expect(http.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("emits only the payload on stdout for -o json", () =>
@@ -784,7 +784,7 @@ describe("compute logs", () => {
         const attributes = payload.logs[0]?.attributes;
         expect(attributes?.duration_ms).toBe("12");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("emits exactly one structured result for --output-format json", () =>
@@ -803,7 +803,7 @@ describe("compute logs", () => {
         const results = out.messages.filter((message) => message.type === "success");
         expect(results).toHaveLength(1);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("flushes telemetry even when the query fails", () =>
@@ -819,7 +819,7 @@ describe("compute logs", () => {
 
         expect(telemetry.flushed).toBe(true);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // The command has run by the time the ref fails to resolve, so its post-run
@@ -841,7 +841,7 @@ describe("compute logs", () => {
         expect(telemetry.flushed).toBe(true);
         expect(http.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("uses the project ref from the flag and echoes it in suggestions", () =>
@@ -866,7 +866,7 @@ describe("compute logs", () => {
         const suggestion = error instanceof ComputeNotDeployedError ? error.suggestion : "";
         expect(suggestion).toContain(`--project-ref ${COMPUTE_PROJECT_REF}`);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("keeps printing new lines, sending both bounds on every poll", () =>
@@ -913,7 +913,7 @@ describe("compute logs", () => {
           exact: true,
         });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("traces the history read but records follow polls only as a count", () =>
@@ -946,7 +946,7 @@ describe("compute logs", () => {
 
       expect(spans.map((span) => span.name)).toEqual(["compute.logs", "v1GetProjectLogs", "GET"]);
       expect(spans[0]?.attributes.get("poll.attempt_count")).toBe(4);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("does not reprint a line an overlapping window returns again", () =>
@@ -973,7 +973,7 @@ describe("compute logs", () => {
         expect(out.stdoutText.match(/only once/gu)).toHaveLength(1);
         expect(out.stdoutText).toContain("and this");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("still emits a line that arrived late, inside the grace window", () =>
@@ -996,7 +996,7 @@ describe("compute logs", () => {
 
         expect(out.stdoutText).toContain("arrived late");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("skips history for --tail 0 but still follows", () =>
@@ -1031,7 +1031,7 @@ describe("compute logs", () => {
           expect(query).not.toContain("limit 0");
         }
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("checks the compute, then polls, when --tail 0 --follow finds no rows", () =>
@@ -1057,7 +1057,7 @@ describe("compute logs", () => {
           exact: true,
         });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("emits a log-entry event per line under stream-json", () =>
@@ -1090,7 +1090,7 @@ describe("compute logs", () => {
         // field a consumer could recover them from.
         expect(entries[0]).toMatchObject({ line: "500 GET / 23ms" });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // `-o` outranks `--output-format` when both are set, and `-o pretty` encodes
@@ -1111,7 +1111,7 @@ describe("compute logs", () => {
         expect(out.stdoutText).not.toBe("");
         expect(out.messages.filter((message) => message.type === "success")).toHaveLength(0);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // Same precedence, on the branch that refuses a tail: `-o pretty` means this
@@ -1132,7 +1132,7 @@ describe("compute logs", () => {
 
         expect(out.stdoutText).not.toBe("");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("refuses --follow for the single-payload output formats", () =>
@@ -1154,7 +1154,7 @@ describe("compute logs", () => {
           expect(setup.http.requests).toHaveLength(0);
         }
       });
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // `--tail 0 --follow` is "skip history, print what arrives". The poll window
@@ -1190,7 +1190,7 @@ describe("compute logs", () => {
         expect(out.stdoutText).toContain("written after");
         expect(out.stdoutText).not.toContain("written before");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // No history query means zero rows proves nothing, so the tail has to ask
@@ -1214,7 +1214,7 @@ describe("compute logs", () => {
           expect.objectContaining({ type: "start", message: "Checking compute..." }),
         );
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // `ts_ms` feeds `new Date(...).toISOString()` while the payload is built, which
@@ -1235,7 +1235,7 @@ describe("compute logs", () => {
 
         expect(error).toBeInstanceOf(ComputeApiUnexpectedStatusError);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // A 404 answers the same way every time. Retrying it held the error back for a
@@ -1261,7 +1261,7 @@ describe("compute logs", () => {
         // History, then the one poll that failed — no second attempt at it.
         expect(http.requests).toHaveLength(2);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // A rate limit is the server asking for exactly that, so it still rides out.
@@ -1288,7 +1288,7 @@ describe("compute logs", () => {
 
         expect(http.requests).toHaveLength(3);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // `--tail` bounds the history a run opens with; reusing it as the poll size
@@ -1316,7 +1316,7 @@ describe("compute logs", () => {
         expect(sentQuery(history).sql ?? "").toContain("limit 1");
         expect(sentQuery(poll).sql ?? "").toContain("limit 1000");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // The query orders newest-first, so a full page means there is more below it.
@@ -1356,7 +1356,7 @@ describe("compute logs", () => {
         // was skipped and the run stays quiet.
         expect(out.stderrText).not.toContain("Skipped part of a burst");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // The drain walks backwards from the newest rows, so running out of pages
@@ -1400,7 +1400,7 @@ describe("compute logs", () => {
         // The lines it did reach are still printed.
         expect(out.stdoutText).toContain("page 0 line 999");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("warns once about a skipped burst, however long the tail runs", () =>
@@ -1437,7 +1437,7 @@ describe("compute logs", () => {
         const notices = out.stderrText.split("Skipped part of a burst").length - 1;
         expect(notices).toBe(1);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("records exit 130 on SIGINT and still runs its finalizers", () =>
@@ -1462,6 +1462,6 @@ describe("compute logs", () => {
         expect(telemetry.flushed).toBe(true);
         expect(processControl.exitCalls).toEqual([]);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

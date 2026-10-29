@@ -1,4 +1,4 @@
-import { BunPath, BunServices } from "@effect/platform-bun";
+import { NodePath, NodeServices } from "@effect/platform-node";
 import { expect, layer } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 
@@ -18,7 +18,7 @@ const tempWorkdir = Effect.fnUntraced(function* (prefix: string) {
 });
 
 /**
- * Runs `use` with win32 path semantics (`BunPath.layerWin32` + `process.platform`), the same
+ * Runs `use` with win32 path semantics (`NodePath.layerWin32` + `process.platform`), the same
  * branch a real Windows install takes.
  */
 const withWin32Path = <A, E, R>(use: (path: Path.Path) => Effect.Effect<A, E, R>) =>
@@ -28,7 +28,7 @@ const withWin32Path = <A, E, R>(use: (path: Path.Path) => Effect.Effect<A, E, R>
       Object.defineProperty(process, "platform", { value: "win32" });
       return platform;
     }),
-    () => Effect.flatMap(Path.Path, use).pipe(Effect.provide(BunPath.layerWin32)),
+    () => Effect.flatMap(Path.Path, use).pipe(Effect.provide(NodePath.layerWin32)),
     (platform) =>
       Effect.sync(() => {
         Object.defineProperty(process, "platform", { value: platform });
@@ -45,7 +45,7 @@ const withMode = <A, E, R>(target: string, mode: number, body: Effect.Effect<A, 
     ),
   );
 
-layer(BunServices.layer)("sqlFilesGlob", (it) => {
+layer(NodeServices.layer)("sqlFilesGlob", (it) => {
   it.effect("treats an empty pattern as no match, not the workdir itself (Go fs.Glob parity)", () =>
     Effect.gen(function* () {
       const { dir } = yield* tempWorkdir("sql-glob-empty-");
@@ -209,7 +209,7 @@ layer(BunServices.layer)("sqlFilesGlob", (it) => {
         // For `a\x.sql` vs `a0\x.sql`, sorting the raw backslash bytes puts `a0\x.sql` first
         // (`\` is `0x5C` > `0`'s `0x30`), while sorting the slashed form would put `a/x.sql`
         // first instead — a fully faked filesystem supplies canned results keyed by the exact
-        // backslash-joined paths `BunPath.layerWin32`'s `path.join` computes.
+        // backslash-joined paths `NodePath.layerWin32`'s `path.join` computes.
         const { fs, path, dir } = yield* tempWorkdir("sql-glob-win-sort-");
         const canaryFile = path.join(dir, "canary.sql");
         yield* fs.writeFileString(canaryFile, "select 1;");

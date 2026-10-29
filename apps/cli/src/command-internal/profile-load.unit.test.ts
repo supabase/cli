@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 
@@ -8,7 +8,7 @@ const load = (token: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     return (yield* loadProfile(token, fs)).apiUrl;
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 
 const loadError = (token: string) =>
   load(token).pipe(
@@ -30,7 +30,7 @@ const writeProfile = (name: string, content: string) =>
     const filePath = yield* tempPath(name);
     yield* fs.writeFileString(filePath, content);
     return filePath;
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 
 describe("loadProfile", () => {
   it.effect("resolves built-in profile names case-insensitively (Go strings.EqualFold)", () =>
@@ -68,7 +68,7 @@ describe("loadProfile", () => {
       expect(yield* loadError(missing)).toBe(
         `failed to read profile: open ${missing}: no such file or directory`,
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("fails on a missing file with Go's os.Open error", () =>
@@ -85,7 +85,7 @@ describe("loadProfile", () => {
       const dir = yield* tempPath("dir.yml");
       yield* fs.makeDirectory(dir);
       expect(yield* loadError(dir)).toBe(`failed to read profile: read ${dir}: is a directory`);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("resolves a valid YAML profile to its api_url", () =>
@@ -118,7 +118,7 @@ describe("loadProfile", () => {
       const profile = yield* loadProfile(file, fs);
       expect(profile.apiUrl).toBe("http://127.0.0.1:44444");
       expect(profile.name).toBe("harness");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("returns the full endpoint set for built-in and YAML profiles", () =>
@@ -143,7 +143,7 @@ describe("loadProfile", () => {
       expect(fromFile.projectHost).toBe("example.test");
       expect(fromFile.poolerHost).toBe("");
       expect(fromFile.dashboardUrl).toBe("http://127.0.0.1:44444/dashboard");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports unknown keys LOWERCASED, like viper's pre-decode normalization", () =>
@@ -178,7 +178,7 @@ describe("loadProfile", () => {
           ].join("\n"),
         );
         expect((yield* loadProfile(file, fs)).name).toBe("harness");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("rejects unknown keys with mapstructure's padded UnmarshalExact block", () =>

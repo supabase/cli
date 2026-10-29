@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { FileSystem, Path } from "effect";
 import { FetchHttpClient } from "effect/http";
 
@@ -123,9 +123,9 @@ vi.mock("../../../shared/functions/functions-docker.ts", () =>
       "../../../shared/functions/functions-docker.ts",
     ),
     import("effect"),
-    import("@effect/platform-bun"),
+    import("@effect/platform-node"),
     import("../../../command-internal/docker-registry.ts"),
-  ]).then(([actual, { Effect, FileSystem, Path }, { BunServices }, { getRegistryImageUrl }]) => ({
+  ]).then(([actual, { Effect, FileSystem, Path }, { NodeServices }, { getRegistryImageUrl }]) => ({
     ...actual,
     ensureDockerNetwork: (networkMode: string, projectId: string) =>
       Effect.sync(() => {
@@ -193,7 +193,7 @@ vi.mock("../../../shared/functions/functions-docker.ts", () =>
         if (Effect.isEffect(result)) return yield* result;
         if ("failure" in result) return yield* Effect.fail(result.failure);
         return result;
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   })),
 );
 
@@ -263,7 +263,7 @@ const extractDockerEnvEntries = Effect.fnUntraced(function* (call: {
     return values;
   }
   return values.map((name) => `${name}=${env[name] ?? ""}`);
-}, Effect.provide(BunServices.layer));
+}, Effect.provide(NodeServices.layer));
 
 function mockQueuedProcessControl() {
   const signals = Effect.runSync(Queue.unbounded<CliProcessSignal>());
@@ -493,7 +493,7 @@ const writeCliConfig = Effect.fnUntraced(function* (content: string) {
   const path = yield* Path.Path;
   yield* fs.makeDirectory(path.join(tempRoot.current, "supabase"), { recursive: true });
   yield* fs.writeFileString(path.join(tempRoot.current, "supabase", "config.toml"), content);
-}, Effect.provide(BunServices.layer));
+}, Effect.provide(NodeServices.layer));
 
 const writeFunctionFile = Effect.fnUntraced(function* (
   slug: string,
@@ -505,7 +505,7 @@ const writeFunctionFile = Effect.fnUntraced(function* (
   const pathname = path.join(tempRoot.current, "supabase", "functions", slug, relativePath);
   yield* fs.makeDirectory(path.dirname(pathname), { recursive: true });
   yield* fs.writeFileString(pathname, contents);
-}, Effect.provide(BunServices.layer));
+}, Effect.provide(NodeServices.layer));
 
 const writeProjectFile = Effect.fnUntraced(function* (relativePath: string, contents: string) {
   const fs = yield* FileSystem.FileSystem;
@@ -513,7 +513,7 @@ const writeProjectFile = Effect.fnUntraced(function* (relativePath: string, cont
   const pathname = path.join(tempRoot.current, relativePath);
   yield* fs.makeDirectory(path.dirname(pathname), { recursive: true });
   yield* fs.writeFileString(pathname, contents);
-}, Effect.provide(BunServices.layer));
+}, Effect.provide(NodeServices.layer));
 
 const decodeFunctionsContainerConfig = Schema.decodeEffect(
   Schema.fromJsonString(
@@ -624,7 +624,7 @@ describe("functions serve integration", () => {
       expect(out.stderrText).toContain(
         "Env name cannot start with SUPABASE_, skipping: SUPABASE_SKIP\n",
       );
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.live("uses an explicit env file instead of automatic Function env files", () => {
@@ -698,7 +698,7 @@ describe("functions serve integration", () => {
           entrypointPath: "supabase/functions/hello/index.ts",
         },
       });
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.live.each([
@@ -731,7 +731,7 @@ describe("functions serve integration", () => {
         expect(error.message).toContain("unexpected character");
         expect(error.message).not.toContain("secret-value");
         expect(deployMockState.runCalls.some((call) => call.args[0] === "create")).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("fails before starting the runtime when a Function env file is malformed", () => {
@@ -759,7 +759,7 @@ describe("functions serve integration", () => {
       ).toHaveLength(0);
       expect(deployMockState.networkCalls).toHaveLength(0);
       expect(deployMockState.volumeCalls).toHaveLength(0);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.live(
@@ -940,7 +940,7 @@ describe("functions serve integration", () => {
             ],
           },
         ]);
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     },
   );
 
@@ -985,7 +985,7 @@ describe("functions serve integration", () => {
             multilineEnvDirExistedWhenLogsStarted =
               multilineEnvDirWhenLogsStarted !== undefined &&
               (yield* fs.exists(multilineEnvDirWhenLogsStarted));
-          }).pipe(Effect.provide(BunServices.layer), Effect.orDie),
+          }).pipe(Effect.provide(NodeServices.layer), Effect.orDie),
       },
     ]);
 
@@ -1056,7 +1056,7 @@ describe("functions serve integration", () => {
       }
       expect(multilineEnvDirExistedWhenLogsStarted).toBe(true);
       expect(yield* fs.exists(multilineEnvDirWhenLogsStarted)).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.live(
@@ -1138,7 +1138,7 @@ describe("functions serve integration", () => {
             value.endsWith(":/root/.supabase/multiline-env:ro,Z"),
           ),
         ).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     },
   );
 
@@ -1165,7 +1165,7 @@ describe("functions serve integration", () => {
           (call) => call.command === "docker" && call.args[0] === "create",
         ),
       ).toHaveLength(0);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.live("sanitizes dotenv parse failures from config env files", () => {
@@ -1325,7 +1325,7 @@ describe("functions serve integration", () => {
             value.endsWith("/shared-import-map.json:ro"),
         ),
       ).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.live("binds git-root workspace imports for serve", () => {
@@ -1409,7 +1409,7 @@ describe("functions serve integration", () => {
             value.endsWith("/packages/shared/src/index.ts:ro"),
         ),
       ).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.live(
@@ -1488,7 +1488,7 @@ describe("functions serve integration", () => {
         const resolvedOrmDir = yield* fs.realPath(path.join(tempRoot.current, "packages", "orm"));
         expect(bindValues.some((value) => value.startsWith(`${resolvedOrmDir}:`))).toBe(true);
         expect(bindValues.filter((value) => value.startsWith(`${resolvedOrmDir}/`))).toEqual([]);
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     },
   );
 
@@ -1572,7 +1572,7 @@ describe("functions serve integration", () => {
       expect(extractFlagValues(dockerCreate.args, "--workdir")).toEqual([
         toDockerPath(projectDir, path),
       ]);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.live("leaves the existing container alone when create loses a name conflict", () => {
@@ -1765,7 +1765,7 @@ describe("functions serve integration", () => {
         processControl.signal("SIGINT");
         const exit = yield* Fiber.await(fiber);
         expect(Exit.isSuccess(exit)).toBe(true);
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     },
   );
 
@@ -1843,7 +1843,7 @@ describe("functions serve integration", () => {
         // ancestor's deno.json must never be borrowed for it.
         expect(functionsConfig).toHaveProperty("hello");
         expect(functionsConfig.hello).not.toHaveProperty("importMapPath");
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     },
   );
 
@@ -1935,7 +1935,7 @@ describe("functions serve integration", () => {
             call.args.includes("reload"),
         ),
       ).toHaveLength(2);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("stops serving cleanly on a process signal", () => {
@@ -2127,7 +2127,7 @@ describe("functions serve integration", () => {
           ),
         ).toBe(true);
         expect(yield* fs.exists(stagingDir)).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     },
   );
 
@@ -3887,7 +3887,7 @@ describe("functions serve integration", () => {
           false,
         );
         expect(parsed.keys.some((key) => key.kty === "oct")).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     },
   );
 
@@ -3934,7 +3934,7 @@ describe("functions serve integration", () => {
             "not a directory\n",
           );
           return { exitCode: 0, stdout: "", stderr: "" };
-        }).pipe(Effect.provide(BunServices.layer), Effect.orDie);
+        }).pipe(Effect.provide(NodeServices.layer), Effect.orDie);
       }
       throw new Error(`unexpected docker args: ${args.join(" ")}`);
     };
@@ -3971,7 +3971,7 @@ describe("functions serve integration", () => {
       ).toHaveLength(0);
       expect(deployMockState.networkCalls).toHaveLength(0);
       expect(deployMockState.volumeCalls).toHaveLength(0);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.live("preserves the primary error when artifact cleanup also fails", () => {
@@ -4026,7 +4026,7 @@ describe("functions serve integration", () => {
         message: expect.stringContaining("An error occurred in Effect.tryPromise"),
       });
       expect(deployMockState.runCalls.filter((call) => call.args[0] === "create")).toHaveLength(0);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   describe("Config.Validate / dotenv / env-override parity (CLI-1963)", () => {
@@ -4242,7 +4242,7 @@ describe("functions serve integration", () => {
           (call) => call.command === "docker" && call.args[0] === "create",
         ),
       ).toHaveLength(0);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.live.skipIf(isRoot)(
@@ -4275,7 +4275,7 @@ describe("functions serve integration", () => {
             (call) => call.command === "docker" && call.args[0] === "create",
           ),
         ).toHaveLength(0);
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     },
   );
 });

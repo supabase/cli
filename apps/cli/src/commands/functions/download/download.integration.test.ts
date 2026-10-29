@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
 import { slimImagesEnabled } from "../../../shared/services/slim-images.ts";
 import {
@@ -579,7 +579,7 @@ describe("functions download", () => {
               );
               yield* fs.remove(eszipPath);
               yield* fs.makeDirectory(path.join(eszipPath, "occupied"), { recursive: true });
-            }).pipe(Effect.provide(BunServices.layer), Effect.orDie)
+            }).pipe(Effect.provide(NodeServices.layer), Effect.orDie)
           : Effect.void,
     });
     const layer = Layer.mergeAll(
@@ -2148,7 +2148,7 @@ describe("functions download", () => {
           analytics,
         }),
         proxy.layer,
-        commandRuntimeLayer(["functions", "download"]).pipe(Layer.provide(BunCrypto.layer)),
+        commandRuntimeLayer(["functions", "download"]).pipe(Layer.provide(NodeCrypto.layer)),
         Stdio.layerTest({
           args: Effect.succeed([
             "functions",

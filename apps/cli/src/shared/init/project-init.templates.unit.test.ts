@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 import { applyConfigEdits, type ConfigEdit } from "@supabase/config/internal";
@@ -96,7 +96,7 @@ describe("project init templates", () => {
       expect(normalizeNewlines(renderCliConfigTemplate("demo-project", true))).toBe(
         yield* renderExpectedNativeEject,
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -108,7 +108,7 @@ describe("project init templates", () => {
         // to match before shipping.
         const unresolvedActions = (yield* renderExpectedGoEject).match(/\{\{[^}]*\}\}/g) ?? [];
         expect(new Set(unresolvedActions)).toEqual(new Set(["{{ .Code }}"]));
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it("renders the SMS and MFA phone OTP templates as GoTrue templates, not raw Go escapes", () => {
@@ -156,7 +156,7 @@ describe("project init templates", () => {
   it.effect("matches the Go .gitignore scaffold", () =>
     Effect.gen(function* () {
       expect(INIT_GITIGNORE_TEMPLATE).toBe(yield* readVendoredTemplate("gitignore"));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("matches the Go VS Code extensions scaffold", () =>
@@ -164,7 +164,7 @@ describe("project init templates", () => {
       expect(VSCODE_EXTENSIONS_TEMPLATE).toBe(
         yield* readVendoredTemplate("vscode-extensions.json.golden"),
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("matches the Go VS Code settings scaffold", () =>
@@ -172,13 +172,13 @@ describe("project init templates", () => {
       expect(VSCODE_SETTINGS_TEMPLATE).toBe(
         yield* readVendoredTemplate("vscode-settings.json.golden"),
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("matches the Go IntelliJ scaffold", () =>
     Effect.gen(function* () {
       expect(INTELLIJ_DENO_TEMPLATE).toBe(yield* readVendoredTemplate("idea-deno.xml"));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
 

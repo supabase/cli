@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import { FetchHttpClient } from "effect/http";
@@ -31,7 +31,7 @@ import { destroyTestStack } from "../../../../tests/helpers/stack-cleanup.ts";
 import { stubRemoteTarget } from "../../../../tests/helpers/remote-target.ts";
 
 const runtimes = ["native", "docker"] as const;
-const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
+const liveStackApi = stackApiLayer.pipe(Layer.provide(NodeServices.layer));
 
 const flags: MigrationSquashFlags = {
   version: Option.none(),
@@ -97,7 +97,7 @@ const testLayer = (root: string) =>
     dbConnectionLayer,
     stackCatalogSetupLayer,
     stackBackendLayer("stack"),
-  ).pipe(Layer.provideMerge(BunServices.layer));
+  ).pipe(Layer.provideMerge(NodeServices.layer));
 
 describe("managed migration squash", { timeout: 180_000 }, () => {
   for (const runtime of runtimes) {
@@ -124,7 +124,7 @@ describe("managed migration squash", { timeout: 180_000 }, () => {
               );
               return { root, first, second };
             }),
-            Layer.mergeAll(BunServices.layer, FetchHttpClient.layer),
+            Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer),
           );
 
           yield* Effect.provide(

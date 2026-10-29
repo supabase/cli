@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { expect, layer } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 
@@ -116,7 +116,7 @@ const run = (
     return yield* migrateAndSeed(session, fs, path, workdir, version, config);
   }).pipe(Effect.provide(out.layer));
 
-layer(BunServices.layer)("migrateAndSeed experimental declarative-schema branch", (it) => {
+layer(NodeServices.layer)("migrateAndSeed experimental declarative-schema branch", (it) => {
   it.effect(
     "applies schema_paths files instead of migrations when experimental is on, pg-delta is off, and version is empty",
     () =>
@@ -409,7 +409,7 @@ layer(BunServices.layer)("migrateAndSeed experimental declarative-schema branch"
   );
 });
 
-layer(BunServices.layer)("migrateAndSeed local pg_net remediation", (it) => {
+layer(NodeServices.layer)("migrateAndSeed local pg_net remediation", (it) => {
   const missingNetSchema = new DbExecError({
     message: 'ERROR: schema "net" does not exist (SQLSTATE 3F000)',
     code: "3F000",
@@ -477,7 +477,7 @@ layer(BunServices.layer)("migrateAndSeed local pg_net remediation", (it) => {
   );
 });
 
-layer(BunServices.layer)("migrateAndSeed apply order", (it) => {
+layer(NodeServices.layer)("migrateAndSeed apply order", (it) => {
   it.effect("applies mixed-width versions in version order, like db push (#6036)", () =>
     Effect.gen(function* () {
       const workdir = yield* makeWorkdir;

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it, layer } from "@effect/vitest";
 import { ConfigProvider, Data, Effect, Exit, FileSystem, Path, Schema } from "effect";
 
@@ -136,7 +136,7 @@ const run = (
     );
   });
 
-layer(BunServices.layer)("applyMigrationFile", (it) => {
+layer(NodeServices.layer)("applyMigrationFile", (it) => {
   it.effect(
     "creates the history table, then runs the statements + history insert in a transaction",
     () =>
@@ -713,7 +713,7 @@ describe("hasTransactionControl", () => {
   });
 });
 
-layer(BunServices.layer)("migration failure rendering (Go ExecBatch parity)", (it) => {
+layer(NodeServices.layer)("migration failure rendering (Go ExecBatch parity)", (it) => {
   // Error message layout: `<pg error>\n[Detail]\n[42704 hint]\n` then
   // `At statement: <i>\n<caret-marked statement>`.
   const failing = (
@@ -922,7 +922,7 @@ describe("isPipelineIncompatible", () => {
   });
 });
 
-layer(BunServices.layer)("seedGlobals", (it) => {
+layer(NodeServices.layer)("seedGlobals", (it) => {
   it.effect("runs the globals file WITHOUT RESET ALL and without a history insert", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -961,7 +961,7 @@ layer(BunServices.layer)("seedGlobals", (it) => {
   );
 });
 
-layer(BunServices.layer)("applySchemaFiles", (it) => {
+layer(NodeServices.layer)("applySchemaFiles", (it) => {
   const schemaFile = Effect.fnUntraced(function* (prefix: string, name: string, contents: string) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;

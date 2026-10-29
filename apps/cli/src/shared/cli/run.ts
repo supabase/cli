@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { CliConfigStore } from "@supabase/config/effect";
 import {
   Cause,
@@ -527,14 +527,17 @@ export function withoutParseErrorHelpDump<A, E, R>(
 }
 
 function cliProjectContextLayerFor(runtimeLayer: Layer.Layer<never>) {
-  return cliProjectContextLayer.pipe(Layer.provide(runtimeLayer), Layer.provide(BunServices.layer));
+  return cliProjectContextLayer.pipe(
+    Layer.provide(runtimeLayer),
+    Layer.provide(NodeServices.layer),
+  );
 }
 
 function cliSettingsLayerFor(runtimeLayer: Layer.Layer<never>) {
   return cliSettingsLayer.pipe(
     Layer.provide(cliProjectContextLayerFor(runtimeLayer)),
     Layer.provide(runtimeLayer),
-    Layer.provide(BunServices.layer),
+    Layer.provide(NodeServices.layer),
   );
 }
 
@@ -543,7 +546,7 @@ function cliProjectHomeLayerFor(runtimeLayer: Layer.Layer<never>) {
     Layer.provide(cliSettingsLayerFor(runtimeLayer)),
     Layer.provide(cliProjectContextLayerFor(runtimeLayer)),
     Layer.provide(runtimeLayer),
-    Layer.provide(BunServices.layer),
+    Layer.provide(NodeServices.layer),
   );
 }
 
@@ -617,7 +620,7 @@ function cliProgramFor<
     Layer.provideMerge(runtimeLayer),
     Layer.provideMerge(fallbackCommandLayer),
     Layer.provideMerge(Layer.succeed(CliArgs, { args })),
-    Layer.provideMerge(BunServices.layer),
+    Layer.provideMerge(NodeServices.layer),
   );
   return withoutParseErrorHelpDump(
     commandProgram.pipe(
@@ -655,7 +658,7 @@ export const runCli = Effect.fnUntraced(function* <
   const args = yield* Effect.gen(function* () {
     const stdio = yield* Stdio.Stdio;
     return yield* stdio.args;
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 
   // Same shape `formatterLayerFor` builds below, so `normalizeCause`'s fallback path can reuse
   // `formatCliErrorsForDisplay` and surface the same subcommand-flag hint the formatters would.
@@ -670,7 +673,7 @@ export const runCli = Effect.fnUntraced(function* <
   const signalAwareLayer = processControlLayer.pipe(
     Layer.provideMerge(runtimeInfoLayer),
     Layer.provideMerge(ttyLayer),
-    Layer.provideMerge(BunServices.layer),
+    Layer.provideMerge(NodeServices.layer),
   );
   const signalAwareProgram = Effect.scoped(
     Effect.gen(function* () {
@@ -716,7 +719,7 @@ export const runCli = Effect.fnUntraced(function* <
   );
   const handledProgramLayer = processControlLayer.pipe(
     Layer.provideMerge(runtimeInfoLayer),
-    Layer.provideMerge(BunServices.layer),
+    Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(cliConfigProviderLayer),
   );
 

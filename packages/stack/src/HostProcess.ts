@@ -28,7 +28,11 @@ import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import packageJson from "../package.json" with { type: "json" };
 import { isStackFailureKind, type StackFailureKind } from "./FailureKind.ts";
-import { HOST_PROCESS_DISPATCH_SENTINEL, isBunVirtualPath } from "./internal/dispatch-markers.ts";
+import {
+  HOST_PROCESS_DISPATCH_SENTINEL,
+  dispatchArgvFor,
+  isBunVirtualPath,
+} from "./internal/dispatch-markers.ts";
 import { failureMessage } from "./internal/failure-message.ts";
 import { stackSourceDigest } from "./internal/release.ts";
 import type { PortConflict } from "./Ports.ts";
@@ -463,7 +467,7 @@ type Spawned =
 const spawnOwner = Effect.fn("HostProcess.spawnOwner")(function* (
   state: StateInterface,
   options: LaunchOptions,
-  entrypoint: string,
+  entrypoint: ReadonlyArray<string>,
   payloadArgs: ReadonlyArray<string>,
 ): Effect.fn.Return<Spawned, HostProcessError, Scope.Scope | FileSystem.FileSystem | Path.Path> {
   const fs = yield* FileSystem.FileSystem;
@@ -495,7 +499,7 @@ const spawnOwner = Effect.fn("HostProcess.spawnOwner")(function* (
               const started = spawn(
                 process.execPath,
                 [
-                  entrypoint,
+                  ...entrypoint,
                   options.stateRoot,
                   options.cacheRoot,
                   options.stackId,
@@ -663,7 +667,14 @@ export const launchHost = Effect.fn("HostProcess.launchHost")(function* (
   HostProcessError | NamespaceError,
   Scope.Scope | HttpClient.HttpClient | FileSystem.FileSystem | Path.Path | Crypto.Crypto
 > {
-  const entrypoint = options.entrypoint ?? hostEntrypointFor(import.meta.url);
+  const entrypoint =
+    options.entrypoint === undefined
+      ? dispatchArgvFor(
+          import.meta.url,
+          "./internal/host-process.ts",
+          HOST_PROCESS_DISPATCH_SENTINEL,
+        )
+      : [options.entrypoint];
   const attempt = Effect.gen(function* () {
     if (options.register === undefined) {
       const existing = yield* connectHost(state, options.stackId).pipe(
@@ -806,9 +817,3 @@ export const waitForOwnerExit = Effect.fn("HostProcess.waitForOwnerExit")(functi
     ),
   );
 });
-
-const hostEntrypointFor = (moduleUrl: string): string => {
-  if (isBunVirtualPath(moduleUrl)) return HOST_PROCESS_DISPATCH_SENTINEL;
-  const sourceEntrypoint = fileURLToPath(new URL("./internal/host-process.ts", moduleUrl));
-  return isBunVirtualPath(sourceEntrypoint) ? HOST_PROCESS_DISPATCH_SENTINEL : sourceEntrypoint;
-};

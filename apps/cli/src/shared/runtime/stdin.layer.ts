@@ -1,6 +1,6 @@
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- no effect or platform-bun stream reads fd 0 with backpressure and non-blocking EAGAIN handling (#6287).
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- no Effect platform stream reads fd 0 with backpressure and non-blocking EAGAIN handling (#6287).
 import { createReadStream } from "node:fs";
-import { BunStream } from "@effect/platform-bun";
+import { NodeStream } from "@effect/platform-node";
 import {
   Channel,
   Duration,
@@ -26,7 +26,7 @@ const isEagain = (cause: unknown) =>
 // read), so an unbounded producer OOMs. A file stream over fd 0 honors backpressure instead;
 // EAGAIN from the non-blocking fd is reported as WouldBlock for the reader to wait out.
 // See https://github.com/supabase/cli/issues/6287
-const processStdin: Stream.Stream<Uint8Array, PlatformError> = BunStream.fromReadable({
+const processStdin: Stream.Stream<Uint8Array, PlatformError> = NodeStream.fromReadable({
   evaluate: () => createReadStream("", { fd: 0, autoClose: false }),
   onError: (cause) =>
     systemError({

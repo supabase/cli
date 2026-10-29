@@ -1,7 +1,7 @@
 import { FileSystem, Path } from "effect";
 
 import { expect, layer } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { edgeRuntimeNofileUlimit } from "../../../shared/stack-constants.ts";
 import { ConfigProvider, Effect, Exit, Sink, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -112,7 +112,7 @@ const envEntries = Effect.fnUntraced(function* (runCall: {
   return (yield* fs.readFileString(envFilePath)).split("\n").filter((line) => line.length > 0);
 });
 
-layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
+layer(NodeServices.layer)("startStackEdgeRuntimeContainer", (it) => {
   const tempWorkdir = useTempWorkdir("supabase-edge-runtime-service-int-");
 
   // Only needs to exist — every scenario here has zero declared functions,
@@ -125,7 +125,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
         yield* fs.makeDirectory(path.join(tempWorkdir.current, "supabase", "functions"), {
           recursive: true,
         });
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 

@@ -17,6 +17,7 @@ import { spawnContainerCli } from "../../command-internal/container-cli.ts";
 import { makeDockerImageResolver } from "../../command-internal/docker-image-resolve.ts";
 import { DENO1_EDGE_RUNTIME_VERSION } from "./functions.shared.ts";
 import { bitbucketCloneDir } from "../../command-internal/bitbucket-pipeline.ts";
+import { createTar } from "../compute/tar.ts";
 
 const INVALID_PROJECT_ID = /[^a-zA-Z0-9_.-]+/g;
 const MAX_PROJECT_ID_LENGTH = 40;
@@ -91,20 +92,17 @@ export function toDockerPath(hostPath: string, path: Pick<Path.Path, "resolve">)
  * In-memory tar bytes for `docker cp - <container>:/` delivery, which needs no
  * daemon-visible host path. Keys are absolute container paths; leading slashes
  * are stripped into the tar entry names since the archive extracts at the
- * container root. `Bun.Archive` exposes no per-entry mode option, so entries
- * carry its `0644` default.
+ * container root. Entries carry mode `0644`, so non-root container processes can
+ * read them. A path USTAR cannot represent fails with `TarPathTooLongError`.
  */
-export function containerArchiveBytes(
-  files: Readonly<Record<string, string>>,
-): Promise<Uint8Array> {
-  return new Bun.Archive(
-    Object.fromEntries(
-      Object.entries(files).map(([containerPath, content]) => [
-        containerPath.replace(/^\/+/, ""),
-        content,
-      ]),
-    ),
-  ).bytes();
+export function containerArchiveBytes(files: Readonly<Record<string, string>>) {
+  const encoder = new TextEncoder();
+  return createTar(
+    Object.entries(files).map(([containerPath, content]) => ({
+      path: containerPath.replace(/^\/+/, ""),
+      contents: encoder.encode(content),
+    })),
+  );
 }
 
 export interface FunctionsDockerRunSpec {

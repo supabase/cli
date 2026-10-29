@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { DateTime, Effect, Exit, FileSystem, Layer, Option, Path, Redacted, Schema } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -173,7 +173,7 @@ function withBaseDeps(
         isCi: opts.isCi,
       }),
     ),
-    Layer.provide(BunServices.layer),
+    Layer.provide(NodeServices.layer),
   );
   return <ROut, E, RIn>(layer: Layer.Layer<ROut, E, RIn>) =>
     layer.pipe(
@@ -378,7 +378,7 @@ describe("commandPlatformApiLayer", () => {
       expect(telemetry.distinct_id).toBe("user-123");
       expect(telemetry.enabled).toBe(true);
       expect(telemetry.schema_version).toBe(1);
-    }).pipe(Effect.provide([layer, BunServices.layer]));
+    }).pipe(Effect.provide([layer, NodeServices.layer]));
   });
 
   it.effect("does not stitch identity from X-Gotrue-Id responses in CI", () => {
@@ -400,7 +400,7 @@ describe("commandPlatformApiLayer", () => {
       expect(analytics.aliases).toEqual([]);
       expect(analytics.identifies).toEqual([]);
       expect((yield* readTelemetryConfig(configDir)).distinct_id).toBeUndefined();
-    }).pipe(Effect.provide([layer, BunServices.layer]));
+    }).pipe(Effect.provide([layer, NodeServices.layer]));
   });
 
   it.effect("does not stitch identity in a first-run non-TTY runtime", () => {
@@ -423,7 +423,7 @@ describe("commandPlatformApiLayer", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       expect(yield* fs.exists(path.join(configDir, "telemetry.json"))).toBe(false);
-    }).pipe(Effect.provide([layer, BunServices.layer]));
+    }).pipe(Effect.provide([layer, NodeServices.layer]));
   });
 
   it.effect("stitches identity in a first-run TTY runtime", () => {
@@ -444,7 +444,7 @@ describe("commandPlatformApiLayer", () => {
       expect(analytics.aliases).toEqual([{ distinctId: "user-123", alias: "device-123" }]);
       expect(analytics.identifies).toEqual([]);
       expect((yield* readTelemetryConfig(configDir)).distinct_id).toBe("user-123");
-    }).pipe(Effect.provide([layer, BunServices.layer]));
+    }).pipe(Effect.provide([layer, NodeServices.layer]));
   });
 
   it.effect("does not stitch identity when a distinct_id is already known", () => {
@@ -466,7 +466,7 @@ describe("commandPlatformApiLayer", () => {
       expect(analytics.aliases).toEqual([]);
       expect(analytics.identifies).toEqual([]);
       expect((yield* readTelemetryConfig(configDir)).distinct_id).toBe("existing-user");
-    }).pipe(Effect.provide([layer, BunServices.layer]));
+    }).pipe(Effect.provide([layer, NodeServices.layer]));
   });
 
   it.effect("does not stitch identity when legacy telemetry state is disabled", () => {
@@ -490,7 +490,7 @@ describe("commandPlatformApiLayer", () => {
       const telemetry = yield* readTelemetryConfig(configDir);
       expect(telemetry.enabled).toBe(false);
       expect(telemetry.distinct_id).toBeUndefined();
-    }).pipe(Effect.provide([layer, BunServices.layer]));
+    }).pipe(Effect.provide([layer, NodeServices.layer]));
   });
 });
 

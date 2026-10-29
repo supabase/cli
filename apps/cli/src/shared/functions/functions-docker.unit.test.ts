@@ -1,4 +1,4 @@
-import { BunPath } from "@effect/platform-bun";
+import { NodePath } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -79,7 +79,7 @@ describe("toDockerPath", () => {
       expect(toDockerPath("/home/u/p/supabase/functions", path)).toBe(
         "/home/u/p/supabase/functions",
       );
-    }).pipe(Effect.provide(BunPath.layer));
+    }).pipe(Effect.provide(NodePath.layer));
   });
 
   it.effect("translates Windows drive paths with the Windows path service on every host", () =>
@@ -88,7 +88,7 @@ describe("toDockerPath", () => {
       const containerPath = toDockerPath("C:\\Users\\u\\p\\supabase\\functions", path);
       expect(containerPath).toBe("/Users/u/p/supabase/functions");
       expect(containerPath).not.toContain(":");
-    }).pipe(Effect.provide(BunPath.layerWin32)),
+    }).pipe(Effect.provide(NodePath.layerWin32)),
   );
 
   it.effect.runIf(process.platform === "win32")(
@@ -103,7 +103,7 @@ describe("toDockerPath", () => {
         const containerPath = toDockerPath("C:\\Users\\u\\p\\supabase\\functions", path);
         expect(containerPath).toBe("/Users/u/p/supabase/functions");
         expect(containerPath).not.toContain(":");
-      }).pipe(Effect.provide(BunPath.layer));
+      }).pipe(Effect.provide(NodePath.layer));
     },
   );
 
@@ -112,7 +112,7 @@ describe("toDockerPath", () => {
       const path = yield* Path.Path;
       const containerPath = toDockerPath("/home/u/repo:with:colons/supabase/functions", path);
       expect(containerPath).toBe("/home/u/repo:with:colons/supabase/functions");
-    }).pipe(Effect.provide(BunPath.layer));
+    }).pipe(Effect.provide(NodePath.layer));
   });
 });
 
@@ -292,10 +292,7 @@ describe("containerArchiveBytes", () => {
     "strips leading slashes into root-relative tar entries with the contractual 0644 mode",
     () => {
       return Effect.gen(function* () {
-        const archive = yield* Effect.tryPromise({
-          try: () => containerArchiveBytes({ "/root/index.ts": "export const x = 1;\n" }),
-          catch: nativeFailure,
-        });
+        const archive = yield* containerArchiveBytes({ "/root/index.ts": "export const x = 1;\n" });
         expect(tarRegularFileEntries(archive)).toEqual([["root/index.ts", 0o644]]);
         const files = yield* Effect.tryPromise({
           try: () => new Bun.Archive(archive).files(),

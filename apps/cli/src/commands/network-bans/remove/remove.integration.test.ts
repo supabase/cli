@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Option, Schema } from "effect";
 
@@ -29,7 +29,7 @@ const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 const parseDbUnbanIp = (rawValues: ReadonlyArray<string>) =>
   networkBansRemoveDbUnbanIpFlag.parse({ flags: { "db-unban-ip": rawValues }, arguments: [] }).pipe(
     Effect.map(([, values]) => values),
-    Effect.provide(BunServices.layer),
+    Effect.provide(NodeServices.layer),
   );
 
 interface SetupOpts {

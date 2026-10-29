@@ -1,4 +1,4 @@
-import { BunPath } from "@effect/platform-bun";
+import { NodePath } from "@effect/platform-node";
 import { Effect, Path } from "effect";
 import { it } from "@effect/vitest";
 import { describe, expect } from "vitest";
@@ -75,7 +75,7 @@ describe("buildStudioEnv", () => {
         HOSTNAME: "0.0.0.0",
         POSTGRES_USER_READ_WRITE: "postgres",
       });
-    }).pipe(Effect.provide(BunPath.layer));
+    }).pipe(Effect.provide(NodePath.layer));
   });
 
   it.effect(
@@ -85,7 +85,7 @@ describe("buildStudioEnv", () => {
         const path = yield* Path.Path;
         const env = buildStudioEnv(baseEnvInput, path);
         expect(env["LOGFLARE_PRIVATE_ACCESS_TOKEN"]).toBe("api-key");
-      }).pipe(Effect.provide(BunPath.layer));
+      }).pipe(Effect.provide(NodePath.layer));
     },
   );
 
@@ -94,7 +94,7 @@ describe("buildStudioEnv", () => {
       const path = yield* Path.Path;
       const env = buildStudioEnv({ ...baseEnvInput, openaiApiKey: undefined }, path);
       expect(env["OPENAI_API_KEY"]).toBe("");
-    }).pipe(Effect.provide(BunPath.layer));
+    }).pipe(Effect.provide(NodePath.layer));
   });
 
   it.effect("passes through a configured OPENAI_API_KEY", () => {
@@ -102,7 +102,7 @@ describe("buildStudioEnv", () => {
       const path = yield* Path.Path;
       const env = buildStudioEnv({ ...baseEnvInput, openaiApiKey: "sk-test" }, path);
       expect(env["OPENAI_API_KEY"]).toBe("sk-test");
-    }).pipe(Effect.provide(BunPath.layer));
+    }).pipe(Effect.provide(NodePath.layer));
   });
 
   it.effect(
@@ -120,7 +120,7 @@ describe("buildStudioEnv", () => {
         );
         expect(env["NEXT_PUBLIC_ENABLE_LOGS"]).toBe("false");
         expect(env["NEXT_ANALYTICS_BACKEND_PROVIDER"]).toBe("bigquery");
-      }).pipe(Effect.provide(BunPath.layer));
+      }).pipe(Effect.provide(NodePath.layer));
     },
   );
 
@@ -139,7 +139,7 @@ describe("buildStudioEnv", () => {
         expect(env["EDGE_FUNCTIONS_MANAGEMENT_FOLDER"]).toBe(
           "/Users/me/my-project/supabase/functions",
         );
-      }).pipe(Effect.provide(BunPath.layer));
+      }).pipe(Effect.provide(NodePath.layer));
     },
   );
 });
@@ -179,7 +179,7 @@ describe("buildStudioContainerSpec", () => {
         });
 
         expect(spec.env["STUDIO_PG_META_URL"]).toBe("http://test-pgmeta:8080");
-      }).pipe(Effect.provide(BunPath.layer));
+      }).pipe(Effect.provide(NodePath.layer));
     },
   );
 
@@ -201,7 +201,7 @@ describe("buildStudioContainerSpec", () => {
           "/project/supabase/snippets:/project/supabase/snippets:rw",
         ]);
         expect(spec.env["SNIPPETS_MANAGEMENT_FOLDER"]).toBe("/project/supabase/snippets");
-      }).pipe(Effect.provide(BunPath.layer));
+      }).pipe(Effect.provide(NodePath.layer));
     },
   );
 
@@ -219,7 +219,7 @@ describe("buildStudioContainerSpec", () => {
         );
 
         expect(spec.binds).toEqual(["/project/supabase/snippets:/project/supabase/snippets:rw"]);
-      }).pipe(Effect.provide(BunPath.layer));
+      }).pipe(Effect.provide(NodePath.layer));
     },
   );
   it.effect("translates Windows function and snippet mounts for the container", () =>
@@ -232,6 +232,6 @@ describe("buildStudioContainerSpec", () => {
       expect(spec.env.EDGE_FUNCTIONS_MANAGEMENT_FOLDER).toBe("/project/supabase/functions");
       expect(spec.env.SNIPPETS_MANAGEMENT_FOLDER).toBe("/project/supabase/snippets");
       expect(spec.binds).toContain("C:\\project\\supabase\\snippets:/project/supabase/snippets:rw");
-    }).pipe(Effect.provide(BunPath.layerWin32)),
+    }).pipe(Effect.provide(NodePath.layerWin32)),
   );
 });

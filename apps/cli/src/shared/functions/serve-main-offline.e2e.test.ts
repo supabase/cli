@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Clock,
@@ -68,7 +68,7 @@ const dockerAvailable = await Effect.runPromise(
   docker(["info"]).pipe(
     Effect.map(({ status }) => status === 0),
     Effect.orElseSucceed(() => false),
-    Effect.provide(BunServices.layer),
+    Effect.provide(NodeServices.layer),
   ),
 );
 const SERVE_OFFLINE_STARTUP_TIMEOUT_MS = 60_000;
@@ -409,7 +409,7 @@ const publishedPort = Effect.fnUntraced(function* (container: string, containerP
 });
 
 const testLayer = Layer.mergeAll(
-  BunServices.layer,
+  NodeServices.layer,
   FetchHttpClient.layer,
   Layer.succeed(HttpClient.TracerPropagationEnabled, false),
 );

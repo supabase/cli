@@ -1,4 +1,4 @@
-import { BunPath } from "@effect/platform-bun";
+import { NodePath } from "@effect/platform-node";
 import { Effect, Option, Path, Ref } from "effect";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
@@ -35,7 +35,7 @@ export const storageMv = Effect.fn("storage.mv")(function* (flags: StorageMvFlag
   const telemetryState = yield* TelemetryState;
   const linkedProjectCache = yield* LinkedProjectCache;
   const resolver = yield* RemoteTarget;
-  const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
+  const posixPath = yield* Effect.provide(Path.Path, NodePath.layerPosix);
 
   const linkedRef = yield* Ref.make(Option.none<string>());
 

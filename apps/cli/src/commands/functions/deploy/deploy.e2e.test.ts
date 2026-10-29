@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem } from "effect";
 import { runSupabaseEffect, withTempHome } from "../../../../tests/helpers/cli.ts";
@@ -106,7 +106,7 @@ describe("supabase functions deploy — argument validation", () => {
           });
           expect(exitCode).not.toBe(0);
           expect(stderr).toMatch(/Cannot find project ref|Have you run|supabase link/i);
-        }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
       ),
     E2E_TIMEOUT_MS,
   );

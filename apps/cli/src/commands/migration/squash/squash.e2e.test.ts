@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 
@@ -35,7 +35,7 @@ describe("supabase migration squash", () => {
         expect(text).toContain("invalid version number");
         expect(text).not.toContain("failed to parse");
         expect(text).toContain("Try rerunning the command with --debug to troubleshoot the error.");
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     E2E_TIMEOUT_MS,
   );
 
@@ -66,7 +66,7 @@ describe("supabase migration squash", () => {
         expect(stripAnsi(stderr)).toContain(
           "Run supabase migration repair --status applied to update your remote migration history table.",
         );
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     E2E_TIMEOUT_MS,
   );
 });

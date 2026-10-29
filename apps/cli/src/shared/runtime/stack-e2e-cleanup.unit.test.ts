@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it, vi } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 import { createStackE2eCleanupManager } from "../../../tests/helpers/stack-e2e-cleanup.ts";
@@ -116,7 +116,7 @@ describe("stack e2e cleanup manager", () => {
       expect(snapshots).toEqual([
         { projectDir: yield* fs.realPath(project), homeDir: yield* fs.realPath(home) },
       ]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("preserves project and home cleanup receivers", () => {

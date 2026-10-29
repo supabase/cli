@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, Exit, Layer } from "effect";
 import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
@@ -108,7 +108,7 @@ describe("schema and id helpers", () => {
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          BunServices.layer,
+          NodeServices.layer,
           runtimeInfoLayer,
           ConfigProvider.layer(ConfigProvider.fromEnvRecord({ DOCKER_HOST: undefined })),
         ),

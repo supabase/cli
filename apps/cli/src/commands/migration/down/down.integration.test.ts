@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import { vi } from "vitest";
@@ -175,7 +175,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       // Migration prompts read stdin directly, so the confirm answer is piped in.
       opts.pipedInput ?? (opts.confirm === undefined ? undefined : opts.confirm ? "y\n" : "n\n"),
     ),
-    BunServices.layer,
+    NodeServices.layer,
   );
   return { layer, http, out, telemetry, execs, queries, cache };
 }

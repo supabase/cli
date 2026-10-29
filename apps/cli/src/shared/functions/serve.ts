@@ -1921,10 +1921,9 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       // Streamed in via `docker cp` between create and start: embedding the template in the
       // `sh -c` argv hits Windows ENAMETOOLONG (#5711), and a single-file host bind mounts as
       // an empty directory on daemons that cannot see this host's filesystem (#6254, #4190).
-      const serveMainArchive = yield* Effect.tryPromise({
-        try: () => containerArchiveBytes({ [serveMainFile]: serveMainTemplate }),
-        catch: nativeFailure,
-      });
+      const serveMainArchive = yield* containerArchiveBytes({
+        [serveMainFile]: serveMainTemplate,
+      }).pipe(Effect.mapError(nativeFailure));
       const containerProjectRoot = toDockerPath(input.projectRoot, path);
       const nofile = edgeRuntimeNofileUlimit(input.platform);
       if (nofile.clampWarning !== undefined) {

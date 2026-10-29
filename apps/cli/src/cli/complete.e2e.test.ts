@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path, Schema } from "effect";
 import { runSupabaseEffect, withTempCliProject, withTempHome } from "../../tests/helpers/cli.ts";
@@ -135,7 +135,7 @@ describe("supabase __complete", () => {
             });
           }),
         ),
-      ).pipe(Effect.provide(BunServices.layer)),
+      ).pipe(Effect.provide(NodeServices.layer)),
     E2E_TIMEOUT_MS,
   );
 });

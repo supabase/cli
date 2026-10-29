@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Effect, FileSystem, Path } from "effect";
 
 import { runSupabaseEffect } from "../../../tests/helpers/cli.ts";
@@ -20,7 +20,7 @@ const withStorageProject = <A, E, R>(
       'project_id = "test"\n',
     );
     return yield* use(projectDir);
-  }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 /**
  * Golden-path e2e for `storage`: the compiled binary and `--linked`/`--local` flag

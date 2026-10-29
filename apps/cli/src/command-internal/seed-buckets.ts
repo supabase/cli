@@ -1,6 +1,6 @@
 import { type CliConfig, CliConfigSchema } from "@supabase/config/effect";
 import { loadCliConfig, type InternalLoadCliConfigOptions } from "@supabase/config/internal";
-import { BunPath } from "@effect/platform-bun";
+import { NodePath } from "@effect/platform-node";
 import { Effect, FileSystem, Path, Schema } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
@@ -155,7 +155,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
   const workdir = opts.workdir ?? cliSettings.workdir;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
+  const posixPath = yield* Effect.provide(Path.Path, NodePath.layerPosix);
   const projectEnvValues = opts.projectEnvValues ?? (yield* loadProjectEnv(fs, path, workdir));
   // `--yes` OR `SUPABASE_YES`.
   const yes = opts.yes ?? (yield* resolveYesWithProjectEnv(projectEnvValues));

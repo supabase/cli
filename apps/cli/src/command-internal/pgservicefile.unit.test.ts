@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 
@@ -63,21 +63,21 @@ describe("pgServiceSettings", () => {
         database: "appdb",
         user: "alice",
       });
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("returns undefined for an unknown service", () =>
     Effect.gen(function* () {
       const { path } = yield* serviceFile;
       expect(yield* pgServiceSettings("missing", path)).toBeUndefined();
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("returns undefined when the service file is unreadable", () =>
     Effect.gen(function* () {
       const { pathService, tmp } = yield* serviceFile;
       expect(yield* pgServiceSettings("prod", pathService.join(tmp, "nope.conf"))).toBeUndefined();
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("returns undefined when the file is malformed", () =>
@@ -85,6 +85,6 @@ describe("pgServiceSettings", () => {
       const { fs, path } = yield* serviceFile;
       yield* fs.writeFileString(path, "host=orphan\n");
       expect(yield* pgServiceSettings("prod", path)).toBeUndefined();
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

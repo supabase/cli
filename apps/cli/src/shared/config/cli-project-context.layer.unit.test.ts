@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import { mockRuntimeInfo, processEnvLayer } from "../../../tests/helpers/mocks.ts";
 import { cliProjectContextLayer } from "./cli-project-context.layer.ts";
@@ -16,7 +16,7 @@ function buildLayer(path: Path.Path, opts: { cwd: string; env?: Record<string, s
   });
   const envLayer = processEnvLayer(opts.env ?? {});
   return cliProjectContextLayer.pipe(
-    Layer.provide(BunServices.layer),
+    Layer.provide(NodeServices.layer),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(envLayer),
   );
@@ -66,7 +66,7 @@ describe("cliProjectContextLayer", () => {
         expect(cliProjectContext.paths.value.projectRoot).toBe(projectRoot);
       }
       expect(Option.isSome(cliProjectContext.projectEnv)).toBe(true);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("returns empty context when no supabase project is found", () =>
@@ -80,6 +80,6 @@ describe("cliProjectContextLayer", () => {
 
       expect(Option.isNone(cliProjectContext.paths)).toBe(true);
       expect(Option.isNone(cliProjectContext.projectEnv)).toBe(true);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

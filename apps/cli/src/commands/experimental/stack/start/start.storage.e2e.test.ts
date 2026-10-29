@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Data, Effect, Exit, FileSystem, Path, Schema } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
@@ -202,7 +202,7 @@ describe("stack start Storage behind the API gateway (compiled e2e)", () => {
           expect(yield* s3Call("read", () => s3.file("resumable.txt").text())).toBe(
             "resumable upload",
           );
-        }).pipe(Effect.scoped, Effect.provide([BunServices.layer, FetchHttpClient.layer])),
+        }).pipe(Effect.scoped, Effect.provide([NodeServices.layer, FetchHttpClient.layer])),
       { timeout: COMMAND_TIMEOUT_MS + 2 * CLEANUP_TIMEOUT_MS },
     );
   }

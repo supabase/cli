@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import type { SpawnRequest, SpawnResult } from "@supabase/typegen";
 import { Data, Deferred, Effect, FileSystem, Path, PlatformError, Sink, Stream } from "effect";
@@ -211,7 +211,7 @@ describe("makeTypegenHost", () => {
         yield* spawnOf(spawner, "win32", env)(request({ env }));
         expect(calls[0]?.command).toBe(path.join(flutter, "dart.BAT"));
         expect(calls[0]?.shell).toBe(true);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 });

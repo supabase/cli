@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import {
   Config,
   ConfigProvider,
@@ -53,13 +53,13 @@ function buildLayer(opts: {
     Layer.provide(runtimeInfoLayer),
     Layer.provide(cliProjectContextLayer),
     Layer.provide(providerLayer),
-    Layer.provide(BunServices.layer),
+    Layer.provide(NodeServices.layer),
   );
   const telemetryLayer = telemetryRuntimeLayer.pipe(
     Layer.provide(configLayer),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(ttyLayer),
-    Layer.provide(BunServices.layer),
+    Layer.provide(NodeServices.layer),
     Layer.provide(providerLayer),
   );
 
@@ -86,7 +86,7 @@ describe("telemetryRuntimeLayer", () => {
           }),
         ),
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("marks the actual first granted invocation as first run", () =>
@@ -101,7 +101,7 @@ describe("telemetryRuntimeLayer", () => {
         expect(runtime.isFirstRun).toBe(true);
         expect(yield* fs.exists(configPath)).toBe(true);
       }).pipe(Effect.provide(buildLayer({ homeDir })));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("treats a malformed telemetry.json as a fresh first run instead of crashing", () =>
@@ -117,7 +117,7 @@ describe("telemetryRuntimeLayer", () => {
         expect(runtime.isFirstRun).toBe(true);
         expect(yield* fs.exists(configPath)).toBe(true);
       }).pipe(Effect.provide(buildLayer({ homeDir })));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("silently ignores structurally invalid telemetry.json instead of crashing", () =>
@@ -133,7 +133,7 @@ describe("telemetryRuntimeLayer", () => {
         expect(runtime.isFirstRun).toBe(true);
         expect(yield* fs.exists(configPath)).toBe(true);
       }).pipe(Effect.provide(buildLayer({ homeDir })));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("honors a legacy disabled telemetry state", () =>
@@ -160,7 +160,7 @@ describe("telemetryRuntimeLayer", () => {
         expect(runtime.isFirstRun).toBe(false);
         expect(yield* fs.exists(configPath)).toBe(true);
       }).pipe(Effect.provide(buildLayer({ homeDir, stdoutIsTty: true })));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   // `consent` is read from disk once at layer-construction time and does not reflect a later
@@ -201,6 +201,6 @@ describe("telemetryRuntimeLayer", () => {
 
         expect(runtime.consent).toBe("granted");
       }).pipe(Effect.provide(buildLayer({ homeDir })));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

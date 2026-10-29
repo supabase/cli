@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { TestClock } from "effect/testing";
 import {
@@ -34,7 +34,7 @@ import type { StackLogsFlags } from "./logs.command.ts";
 import { stackLogs } from "./logs.handler.ts";
 import { selection } from "../../../../../tests/helpers/pins.ts";
 
-const live = Layer.provideMerge(stackApiLayer, BunServices.layer);
+const live = Layer.provideMerge(stackApiLayer, NodeServices.layer);
 
 type SavedInstance = SavedStack["instances"][number];
 const mail = (id: string): SavedInstance => ({
@@ -415,7 +415,7 @@ describe("stack logs", () => {
                   position: { generation: 1, byteOffset: 1_000_000 },
                 }),
               ),
-              Stream.provide(BunServices.layer),
+              Stream.provide(NodeServices.layer),
             ),
           );
       const f = yield* fixture({

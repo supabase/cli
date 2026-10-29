@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -110,7 +110,7 @@ const baseFlags: FunctionsDeployFlags = {
 const removeTempRoot = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   yield* fs.remove(tempRoot.current, { recursive: true, force: true });
-}).pipe(Effect.provide(BunServices.layer), Effect.orDie);
+}).pipe(Effect.provide(NodeServices.layer), Effect.orDie);
 
 const writeCliConfig = Effect.fnUntraced(function* (
   cwd: string,
@@ -164,7 +164,7 @@ function mockDockerBundleSpawner() {
       const outputPath = resolveDockerOutputPath(record.args);
       yield* fs.makeDirectory(path.dirname(outputPath), { recursive: true });
       yield* fs.writeFileString(outputPath, "eszip-test-output");
-    }).pipe(Effect.provide(BunServices.layer), Effect.orDie);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.orDie);
   return mockChildProcessSpawner(spawnerOpts);
 }
 

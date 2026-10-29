@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 import { describe, expect } from "vitest";
@@ -20,11 +20,11 @@ const PROJECT = "/repo";
  * pure string scenarios.
  */
 const runFs = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>) =>
-  effect.pipe(Effect.provide(BunServices.layer));
+  effect.pipe(Effect.provide(NodeServices.layer));
 const runPath = <A>(fn: (path: Path.Path) => A): Effect.Effect<A> =>
   Effect.gen(function* () {
     return fn(yield* Path.Path);
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 
 describe("compute directories", () => {
   it.effect("resolve under supabase/compute/", () =>
@@ -171,7 +171,7 @@ describe("resolveComputeSource containment on a real filesystem", () => {
         });
         return yield* run(project, outside, fs, path);
       }),
-    ).pipe(Effect.provide(BunServices.layer));
+    ).pipe(Effect.provide(NodeServices.layer));
 
   it.effect("resolves a genuine directory inside the project", () =>
     withFixture((project, _outside, _fs, path) =>

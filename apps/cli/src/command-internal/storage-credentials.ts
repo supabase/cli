@@ -27,6 +27,7 @@ import {
 import { currentStackBackend } from "./stack-backend.ts";
 import { stackStorageEndpoint } from "./stack-storage.ts";
 import { block } from "./command-permissions/model.ts";
+import { trustCaInit } from "./fetch-tls.ts";
 
 /** `resolveStorageCredentials` for a remote project. */
 export const storageCredentials = block("storage-credentials", [
@@ -311,7 +312,7 @@ const validateLocalKongTls = Effect.fnUntraced(function* (
 /**
  * Scopes Storage gateway calls to plain `globalThis.fetch`, trusting
  * `localKongCa` for a local https gateway through a `FetchHttpClient.RequestInit`
- * carrying Bun's `tls.ca` option. Storage calls never use DNS-over-HTTPS, so this
+ * carrying the runtime's CA option. Storage calls never use DNS-over-HTTPS, so this
  * always replaces the shared DoH-wrapped fetch at the gateway scope. `RequestInit`
  * values replace rather than merge, so this one hides an outer one and an inner
  * one drops the CA.
@@ -321,6 +322,5 @@ export const withStorageGatewayFetch =
   <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> => {
     const plain = effect.pipe(Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch));
     if (localKongCa === undefined) return plain;
-    const caInit: BunFetchRequestInit = { tls: { ca: localKongCa } };
-    return plain.pipe(Effect.provideService(FetchHttpClient.RequestInit, caInit));
+    return plain.pipe(Effect.provideService(FetchHttpClient.RequestInit, trustCaInit(localKongCa)));
   };

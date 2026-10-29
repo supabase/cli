@@ -1,6 +1,6 @@
 // Golden path for a stack-mode project: `functions new hello` scaffolds the template, `stack
 // start` boots it, and a real request proves Edge Runtime resolves the template's import map.
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path, Schema } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
@@ -57,7 +57,7 @@ const StartResultSchema = Schema.Struct({ id: Schema.String });
 const StackEnvSchema = Schema.Struct({ API_URL: Schema.String, PUBLISHABLE_KEY: Schema.String });
 const HelloResponseSchema = Schema.Struct({ message: Schema.String });
 
-const layer = Layer.mergeAll(BunServices.layer, FetchHttpClient.layer);
+const layer = Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer);
 
 describe("functions new (stack e2e)", () => {
   for (const runtime of ["native", "docker"] as const) {

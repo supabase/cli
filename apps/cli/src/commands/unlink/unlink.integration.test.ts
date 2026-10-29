@@ -1,6 +1,6 @@
 import { LegacyProjectState } from "../../command-internal/legacy-project-state.service.ts";
 import { legacyProjectStateLayer } from "../../command-internal/legacy-project-state.layer.ts";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { holdLock } from "@supabase/stack/effect";
 import {
@@ -74,7 +74,7 @@ const failingRemoveStateLayer = Layer.effect(
         ),
     });
   }),
-).pipe(Layer.provide(legacyProjectStateLayer), Layer.provide(BunServices.layer));
+).pipe(Layer.provide(legacyProjectStateLayer), Layer.provide(NodeServices.layer));
 
 const seedProjectRef = (workdir: string, ref: string) =>
   Effect.gen(function* () {

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path } from "effect";
 
@@ -21,7 +21,7 @@ function runInit(cwd: string) {
   const out = mockOutput({ format: "text", interactive: false });
   // `initProject`'s type requires `Stdin` (the IDE-settings prompt path threads
   // through it), even though `interactive: false` below means it's never read.
-  const layer = Layer.mergeAll(out.layer, mockTty(), mockStdin(false), BunServices.layer);
+  const layer = Layer.mergeAll(out.layer, mockTty(), mockStdin(false), NodeServices.layer);
   return initProject({
     cwd,
     force: false,
@@ -50,7 +50,7 @@ describe("initProject file modes (Go parity: 0755 dirs, 0644 files)", () => {
       const supabaseDir = path.join(cwd, "supabase");
       expect(yield* fileMode(supabaseDir)).toBe(0o755);
       expect(yield* fileMode(path.join(supabaseDir, "config.toml"))).toBe(0o644);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -66,6 +66,6 @@ describe("initProject file modes (Go parity: 0755 dirs, 0644 files)", () => {
         yield* runInit(cwd);
 
         expect(yield* fileMode(path.join(cwd, "supabase", ".gitignore"))).toBe(0o644);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

@@ -16,6 +16,7 @@ import { Effect, Option, Stream, type FileSystem } from "effect";
 import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import { collectText, describeContainerCliFailure, spawnContainerCli } from "../container-cli.ts";
+import { createTar } from "../../shared/compute/tar.ts";
 import { dockerCopyArchiveIntoContainer } from "./container-lifecycle.ts";
 import type { StartContainerSpec } from "./docker-create-args.ts";
 
@@ -103,16 +104,16 @@ const pgDataSnapshotUnavailable = (reason: string): PgDataSnapshotUnavailable =>
 export const pgDataBaselineMarkerTar = (
   key: string,
 ): Effect.Effect<Uint8Array, PgDataSnapshotUnavailable> =>
-  Effect.tryPromise({
-    try: () =>
-      new Bun.Archive({
-        [PGDATA_BASELINE_MARKER_NAME]: pgDataBaselineMarkerContent(key),
-      }).bytes(),
-    catch: (cause) =>
-      pgDataSnapshotUnavailable(
-        `failed to build the baseline marker archive: ${cause instanceof Error ? cause.message : String(cause)}`,
-      ),
-  });
+  createTar([
+    {
+      path: PGDATA_BASELINE_MARKER_NAME,
+      contents: new TextEncoder().encode(pgDataBaselineMarkerContent(key)),
+    },
+  ]).pipe(
+    Effect.mapError((cause) =>
+      pgDataSnapshotUnavailable(`failed to build the baseline marker archive: ${cause.detail}`),
+    ),
+  );
 
 /**
  * Writes {@link PGDATA_BASELINE_MARKER_ENTRY} into the container's PGDATA so the following

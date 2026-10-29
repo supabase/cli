@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import { vi } from "vitest";
@@ -213,9 +213,9 @@ function setup(
 ) {
   const services =
     opts.linkReads === undefined
-      ? BunServices.layer
+      ? NodeServices.layer
       : Layer.mergeAll(
-          BunServices.layer,
+          NodeServices.layer,
           Layer.effect(
             FileSystem.FileSystem,
             Effect.map(FileSystem.FileSystem, (real) =>
@@ -227,7 +227,7 @@ function setup(
                 },
               }),
             ),
-          ).pipe(Layer.provide(BunServices.layer)),
+          ).pipe(Layer.provide(NodeServices.layer)),
         );
   const workdirLayer = Layer.effectDiscard(
     Effect.gen(function* () {
@@ -243,7 +243,7 @@ function setup(
         yield* fs.writeFileString(abs, content);
       }
     }),
-  ).pipe(Layer.provide(BunServices.layer));
+  ).pipe(Layer.provide(NodeServices.layer));
 
   const out = mockOutput({ format: opts.format ?? "text", promptConfirmResponses: opts.confirm });
   const conn = mockConnection(opts);
@@ -699,7 +699,7 @@ describe("db push", () => {
       yield* fs.writeFile(path.join(tmp.current, "supabase", "seed.sql"), raw);
       yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
       expect(out.stdoutText).toBe("Local database is up to date.\n");
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("skips seeding when disabled in config", () => {
@@ -993,7 +993,7 @@ describe("db push", () => {
       expect(linkReads).toHaveLength(1);
     }).pipe(
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });
@@ -1031,7 +1031,7 @@ describe("db push", () => {
       });
     }).pipe(
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });
@@ -1064,7 +1064,7 @@ describe("db push", () => {
       });
     }).pipe(
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });
@@ -1093,7 +1093,7 @@ describe("db push", () => {
         });
       }).pipe(
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide(NodeServices.layer),
         provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
       );
     },

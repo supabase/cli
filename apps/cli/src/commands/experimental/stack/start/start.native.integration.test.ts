@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import { FetchHttpClient } from "effect/http";
@@ -44,7 +44,7 @@ const flags = (exclude: ReadonlyArray<string>) => ({
   eager: false,
 });
 
-const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
+const liveStackApi = stackApiLayer.pipe(Layer.provide(NodeServices.layer));
 
 const captureOwnerPid = (capture: (pid: number) => void) =>
   Layer.effect(
@@ -179,7 +179,7 @@ const onlyRest = [...onlyRestAndAuth, "auth"];
 const makeLayers = (root: string, apiLayer = liveStackApi, workdir = root) => {
   const settings = mockCommandSettings({ workdir, supabaseHome: root });
   const resolver = stackTargetResolverLayer.pipe(
-    Layer.provide(Layer.mergeAll(BunServices.layer, settings, apiLayer)),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, settings, apiLayer)),
   );
   const output = mockOutput();
   const telemetry = mockTelemetryStateTracked();
@@ -203,7 +203,7 @@ const makeLayers = (root: string, apiLayer = liveStackApi, workdir = root) => {
       Layer.succeed(CommandPlatformApiFactory, { make: Effect.die("unused") }),
       stdinLayer.pipe(Layer.provide(tty)),
       tty,
-    ).pipe(Layer.provideMerge(BunServices.layer)),
+    ).pipe(Layer.provideMerge(NodeServices.layer)),
   };
 };
 
@@ -361,7 +361,7 @@ describe("experimental stack start native lifecycle", () => {
             yield* destroyTestStacks(api, path.join(root, "stacks"), path.join(root, "cache"));
           }),
         ).pipe(Effect.provide(fixture.layer));
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     { timeout: 180_000 },
   );
 
@@ -424,7 +424,7 @@ describe("experimental stack start native lifecycle", () => {
             );
           }),
         ).pipe(Effect.provide(fixture.layer));
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     { timeout: 180_000 },
   );
 
@@ -541,7 +541,7 @@ describe("experimental stack start native lifecycle", () => {
             expect(ownerPids.filter((pid) => pid !== undefined)).toHaveLength(2);
           }),
         ).pipe(Effect.provide(fixture.layer));
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     { timeout: 60_000 },
   );
 
@@ -602,7 +602,7 @@ describe("experimental stack start native lifecycle", () => {
             yield* destroyTestStacks(api, path.join(root, "stacks"), path.join(root, "cache"));
           }),
         ).pipe(Effect.provide(fixture.layer));
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     { timeout: 180_000 },
   );
 
@@ -670,7 +670,7 @@ describe("experimental stack start native lifecycle", () => {
             yield* destroyTestStacks(api, path.join(root, "stacks"), path.join(root, "cache"));
           }),
         ).pipe(Effect.provide(fixture.layer));
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     { timeout: 120_000 },
   );
 
@@ -732,7 +732,7 @@ describe("experimental stack start native lifecycle", () => {
             yield* destroyTestStacks(api, locations.stateRoot, locations.cacheRoot);
           }),
         ).pipe(Effect.provide(fixture.layer));
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     { timeout: 180_000 },
   );
 });

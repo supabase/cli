@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
@@ -54,7 +54,7 @@ function setup(opts: { githubToken?: string; content?: string } = {}) {
     Layer.provide(httpLayer),
     Layer.provide(settings),
     Layer.provide(mockOutput().layer),
-    Layer.provide(BunServices.layer),
+    Layer.provide(NodeServices.layer),
   );
   return { layer, requests };
 }
@@ -97,7 +97,7 @@ function setupDownload(listings: Readonly<Record<string, ReadonlyArray<DownloadE
     Layer.provide(httpLayer),
     Layer.provide(mockCommandSettings({ workdir: "/" })),
     Layer.provide(mockOutput().layer),
-    Layer.provide(BunServices.layer),
+    Layer.provide(NodeServices.layer),
   );
   return { layer };
 }
@@ -158,7 +158,7 @@ describe("bootstrap template service", () => {
       expect(yield* fs.readFileString(path.join(targetDir, "sub", "b.txt"))).toBe(
         "content of /b.txt",
       );
-    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(s.layer, BunServices.layer)));
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(s.layer, NodeServices.layer)));
   });
 
   it.effect("rejects a listing entry that escapes the target directory", () => {
@@ -178,7 +178,7 @@ describe("bootstrap template service", () => {
       );
       expect(error).toBeInstanceOf(BootstrapTemplateDownloadError);
       expect(error.message).toContain("entry escapes target directory");
-    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(s.layer, BunServices.layer)));
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(s.layer, NodeServices.layer)));
   });
 
   it.effect("rejects a file entry with no download url", () => {
@@ -196,6 +196,6 @@ describe("bootstrap template service", () => {
       );
       expect(error).toBeInstanceOf(BootstrapTemplateDownloadError);
       expect(error.message).toContain("no download URL");
-    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(s.layer, BunServices.layer)));
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(s.layer, NodeServices.layer)));
   });
 });

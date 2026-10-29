@@ -1,9 +1,9 @@
 import { expect, layer } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Effect, Path } from "effect";
 import { resolveSupabaseHome } from "./supabase-home.ts";
 
-layer(BunServices.layer)("resolveSupabaseHome", (it) => {
+layer(NodeServices.layer)("resolveSupabaseHome", (it) => {
   it.effect("returns SUPABASE_HOME when set to a non-empty value", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;

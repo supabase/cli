@@ -3,7 +3,7 @@ import http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect";
 import { ChildProcessSpawner } from "effect/process";
@@ -105,7 +105,7 @@ const makeEngineServer = (respond: (req: http.IncomingMessage, res: http.ServerR
   );
 
 const localDockerEngineTestLayer = localDockerEngineLayer.pipe(
-  Layer.provide(BunServices.layer),
+  Layer.provide(NodeServices.layer),
   Layer.provide(runtimeInfoLayer),
 );
 
@@ -404,7 +404,7 @@ describe("isLocalDbRunning", () => {
       return yield* isLocalDbRunning(spawner, fs, path, workdir, "engine-probe").pipe(
         Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))),
       );
-    }).pipe(Effect.provide(spawnerLayer), Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(spawnerLayer), Effect.provide(NodeServices.layer));
 
   it.live("trusts a definitive Engine answer without spawning the container CLI", () => {
     const asked: Array<string> = [];

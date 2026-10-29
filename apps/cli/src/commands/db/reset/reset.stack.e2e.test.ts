@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Context, Data, Effect, FileSystem, Layer, Path, Redacted } from "effect";
 import { FetchHttpClient, HttpClient } from "effect/http";
@@ -255,7 +255,7 @@ describe("supabase db reset (stack e2e)", () => {
           const restUrl = restCredentials.url;
           if (restUrl === undefined) return yield* Effect.die("REST URL is missing");
           expect(yield* responseStatus(restUrl)).toBe(200);
-        }).pipe(Effect.provide([BunServices.layer, FetchHttpClient.layer])),
+        }).pipe(Effect.provide([NodeServices.layer, FetchHttpClient.layer])),
       { timeout: TEST_TIMEOUT_MS },
     );
   }

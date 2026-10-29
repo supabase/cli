@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Deferred,
@@ -357,7 +357,7 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
               buildOutput.layer,
               stackCatalogSetupLayer,
               dbConnectionLayer,
-            ).pipe(Layer.provideMerge(BunServices.layer)),
+            ).pipe(Layer.provideMerge(NodeServices.layer)),
           ),
         );
       },

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Effect, FileSystem, Layer, Option, Path, Schema, Stdio } from "effect";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
@@ -135,7 +135,7 @@ function setupFeedbackDelete(
     Layer.succeed(CliArgs, { args: [] }),
     // Real filesystem: the handler reads `supabase/.temp/project-ref` from the
     // temp workdir, so this must not be stubbed out.
-    BunServices.layer,
+    NodeServices.layer,
   );
   return { layer, out, client, telemetryState };
 }
@@ -152,7 +152,7 @@ function setupFeedbackDeleteHandler(
     base.layer,
     analytics.layer,
     processControl.layer,
-    commandRuntimeLayer(["feedback", "delete"]).pipe(Layer.provide(BunServices.layer)),
+    commandRuntimeLayer(["feedback", "delete"]).pipe(Layer.provide(NodeServices.layer)),
     Stdio.layerTest({ args: Effect.succeed([...(opts.args ?? ["feedback", "delete", TOKEN])]) }),
   );
   return { ...base, layer, analytics, processControl };

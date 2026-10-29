@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, FileSystem, Layer, Path } from "effect";
 import type { DbSession } from "../../../command-internal/db-connection.service.ts";
@@ -42,7 +42,7 @@ const layerIn = (cwd: string, env: Record<string, string>) =>
   genTypesGeneratorLayer.pipe(
     Layer.provide(emptyDatabase),
     Layer.provide(runtimeIn(cwd)),
-    Layer.provide(BunServices.layer),
+    Layer.provide(NodeServices.layer),
     Layer.provide(Layer.succeed(ConfigProvider.ConfigProvider, ConfigProvider.fromEnvRecord(env))),
   );
 
@@ -92,7 +92,7 @@ const withFakeDart = <A, E, R>(
     yield* fs.writeFileString(path.join(bin, "dart"), FAKE_DART);
     yield* fs.chmod(path.join(bin, "dart"), 0o755);
     return yield* body({ cwd, bin });
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 
 describe.skipIf(process.platform === "win32")(
   "genTypesGeneratorLayer with a real subprocess",
@@ -139,7 +139,7 @@ describe.skipIf(process.platform === "win32")(
           expect(error.message).toContain("needs Dart 3.8.0 or newer");
         }).pipe(
           Effect.provide(
-            Layer.merge(layerIn(cwd, { PATH: `${bin}:/usr/bin:/bin` }), BunServices.layer),
+            Layer.merge(layerIn(cwd, { PATH: `${bin}:/usr/bin:/bin` }), NodeServices.layer),
           ),
         ),
       ),

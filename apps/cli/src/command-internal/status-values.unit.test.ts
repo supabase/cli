@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import { CliConfigSchema, type CliConfig } from "@supabase/config";
 import { Effect, FileSystem, Path, Schema } from "effect";
@@ -32,7 +32,7 @@ const NO_OVERRIDES = new Map<string, string>();
 const WORKDIR = "/tmp/status-values-test";
 
 const run = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>) =>
-  Effect.runSync(effect.pipe(Effect.provide(BunServices.layer)));
+  Effect.runSync(effect.pipe(Effect.provide(NodeServices.layer)));
 
 describe("statusValues", () => {
   it("emits DB_URL unconditionally, even when every other service is disabled/excluded", () => {
@@ -611,7 +611,7 @@ describe("--exclude image short names under SUPABASE_USE_SLIM_IMAGES", () => {
       ] as const) {
         const { values } = yield* slimModule
           .statusValues(baseConfig(), CONTAINER_IDS, HOSTNAME, [excluded], NO_OVERRIDES, WORKDIR)
-          .pipe(Effect.provide(BunServices.layer));
+          .pipe(Effect.provide(NodeServices.layer));
         expect(values[omitted], `--exclude ${excluded}`).toBeUndefined();
       }
     }),

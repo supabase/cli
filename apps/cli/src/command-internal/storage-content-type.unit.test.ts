@@ -1,4 +1,4 @@
-import { BunPath } from "@effect/platform-bun";
+import { NodePath } from "@effect/platform-node";
 import { expect, layer } from "@effect/vitest";
 import { Effect, Path } from "effect";
 
@@ -11,7 +11,7 @@ function bytes(s: string): Uint8Array {
   return out;
 }
 
-layer(BunPath.layer)("contentTypeForUpload", (it) => {
+layer(NodePath.layer)("contentTypeForUpload", (it) => {
   // `http.DetectContentType` (bytes win) then refine only generic text/plain
   // by extension via `mime.TypeByExtension`.
   it.effect("lets the sniffed bytes win over the extension (PNG named .txt)", () =>
@@ -67,7 +67,7 @@ layer(BunPath.layer)("contentTypeForUpload", (it) => {
   );
 });
 
-layer(BunPath.layer)("refineUploadContentType", (it) => {
+layer(NodePath.layer)("refineUploadContentType", (it) => {
   it.effect(
     "refines an explicit text/plain content-type by extension (Go refines the flag too)",
     () =>

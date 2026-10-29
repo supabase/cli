@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { gunzipSync } from "node:zlib";
 import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, Layer, Option, Schema } from "effect";
@@ -41,7 +41,7 @@ describe("analytics destination", () => {
       Layer.provide(settings),
       Layer.provide(mockRuntimeInfo({ homeDir: tempRoot.current })),
       Layer.provide(mockTty({ stdoutIsTty: false })),
-      Layer.provide(BunServices.layer),
+      Layer.provide(NodeServices.layer),
       Layer.provide(Layer.succeed(HttpClient.HttpClient, recordingClient)),
     );
     return Effect.gen(function* () {
@@ -98,7 +98,7 @@ describe("analytics destination", () => {
       Layer.provide(settings),
       Layer.provide(mockRuntimeInfo({ homeDir: tempRoot.current, cwd: tempRoot.current })),
       Layer.provide(mockTty({ stdoutIsTty: false })),
-      Layer.provide(BunServices.layer),
+      Layer.provide(NodeServices.layer),
       Layer.provide(Layer.succeed(HttpClient.HttpClient, recordingClient)),
     );
     return Effect.gen(function* () {
@@ -123,7 +123,7 @@ describe("analytics destination", () => {
         }),
       ]);
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       Effect.provideService(
         ConfigProvider.ConfigProvider,
         ConfigProvider.fromEnvRecord({

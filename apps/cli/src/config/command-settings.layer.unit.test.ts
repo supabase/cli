@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunPath, BunServices } from "@effect/platform-bun";
+import { NodePath, NodeServices } from "@effect/platform-node";
 import {
   Cause,
   ConfigProvider,
@@ -22,7 +22,7 @@ import { ProfileLoadError } from "../command-internal/profile-load.ts";
 import { commandSettingsLayer } from "./command-settings.layer.ts";
 import { CommandSettings } from "./command-settings.service.ts";
 
-const path = Effect.runSync(Effect.provide(Path.Path, BunPath.layer));
+const path = Effect.runSync(Effect.provide(Path.Path, NodePath.layer));
 
 function makeLayer(opts: {
   profileFlag?: string;
@@ -50,7 +50,7 @@ function makeLayer(opts: {
         homeDir: opts.home ?? path.join(tempRoot.current, "home"),
       }),
     ),
-    Layer.provide(BunServices.layer),
+    Layer.provide(NodeServices.layer),
     Layer.provide(
       ConfigProvider.layer(
         ConfigProvider.fromEnvRecord(opts.env ?? {}, { preserveEmptyStrings: true }),
@@ -223,7 +223,7 @@ describe("commandSettingsLayer", () => {
         makeLayer({ home, cwd: tempRoot.current }),
       );
       expect(config.profile).toBe("supabase-staging");
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("reads the persisted profile file from SUPABASE_HOME when configured", () => {
@@ -238,7 +238,7 @@ describe("commandSettingsLayer", () => {
         makeLayer({ home, cwd: tempRoot.current, env: { SUPABASE_HOME: supabaseHome } }),
       );
       expect(config.profile).toBe("supabase-staging");
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("debug logs the persisted profile file source", () => {
@@ -259,7 +259,7 @@ describe("commandSettingsLayer", () => {
       );
     }).pipe(
       Effect.ensuring(Effect.sync(() => stderr.mockRestore())),
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
     );
   });
 
@@ -275,7 +275,7 @@ describe("commandSettingsLayer", () => {
       );
       // SUPABASE_PROFILE wins over the file.
       expect(config.profile).toBe("supabase-local");
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect(
@@ -361,7 +361,7 @@ describe("commandSettingsLayer", () => {
         makeLayer({ argv: ["login", "--profile=supabase"], home, cwd: tempRoot.current }),
       );
       expect(config.profile).toBe("supabase");
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("loads api_url, name, pooler_host, and dashboard_url from a YAML profile file", () => {
@@ -389,7 +389,7 @@ describe("commandSettingsLayer", () => {
       expect(config.poolerHost).toBe("staging.example.com");
       // dashboard_url feeds the connect-failure hint; cli-e2e points it at its replay server.
       expect(config.dashboardUrl).toBe("http://127.0.0.1:9999");
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("keeps pooler_host empty when a YAML profile omits it — Go omitempty", () => {
@@ -413,7 +413,7 @@ describe("commandSettingsLayer", () => {
       // An absent pooler_host disables the MITM domain assertion rather
       // than falling back to supabase.com.
       expect(config.poolerHost).toBe("");
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("fails when a YAML profile omits required keys — Go validator parity", () => {
@@ -434,7 +434,7 @@ describe("commandSettingsLayer", () => {
         "Field validation for 'DashboardURL' failed on the 'required' tag",
         "Field validation for 'ProjectHost' failed on the 'required' tag",
       );
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("fails when SUPABASE_PROFILE points to a non-existent file — Go parity", () =>
@@ -461,7 +461,7 @@ describe("commandSettingsLayer", () => {
         cwd: tempRoot.current,
       });
       expectProfileLoadFailure(exit, "failed to read profile: While parsing config:");
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   // Files written by older, more lenient CLI versions may still exist on disk and must
@@ -474,7 +474,7 @@ describe("commandSettingsLayer", () => {
       yield* fs.writeFileString(path.join(home, ".supabase", "profile"), "resms\n");
       const exit = yield* configExit({ home, cwd: tempRoot.current });
       expectProfileLoadFailure(exit, "failed to read profile: Unsupported Config Type");
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("ignores SUPABASE_API_URL — Go parity", () =>
@@ -644,7 +644,7 @@ describe("commandSettingsLayer", () => {
       );
       expect(config.workdir).toBe(projectRoot);
       expect(config.explicitWorkdir).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("falls back to CWD when no supabase/config.toml found", () =>

@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Data, Effect, FileSystem, Path, Schema } from "effect";
 
 import { makeTempHome, requireCliSuccess, runSupabaseEffect } from "../../../tests/helpers/cli.ts";
@@ -93,5 +93,5 @@ it.live("shows the authenticated profile through the CLI", () =>
       pathname: "/v1/profile",
       authorization: `Bearer ${ACCESS_TOKEN}`,
     });
-  }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

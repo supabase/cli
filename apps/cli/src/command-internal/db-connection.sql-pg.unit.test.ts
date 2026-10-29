@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Fiber } from "effect";
 import { TestClock } from "effect/testing";
@@ -303,7 +303,7 @@ describe("tlsExplicitlyRequested (CLI-2366: --db-url TLS against a local target)
       );
       expect(conn?.sslmode).toBe("prefer");
       expect(tlsExplicitlyRequested(conn!)).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("still demands TLS when PGSSLMODE asks for verification", () =>
@@ -314,7 +314,7 @@ describe("tlsExplicitlyRequested (CLI-2366: --db-url TLS against a local target)
       );
       expect(conn?.sslmode).toBe("verify-full");
       expect(tlsExplicitlyRequested(conn!)).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it("is true when a root cert (file path or inline PEM) is set", () => {

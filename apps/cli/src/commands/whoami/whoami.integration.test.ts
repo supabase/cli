@@ -1,6 +1,6 @@
 import type { V1GetProfileOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { BunCrypto } from "@effect/platform-bun";
+import { NodeCrypto } from "@effect/platform-node";
 import { Cause, Effect, Exit, Layer, Option, Schema, Stdio } from "effect";
 
 import { GLOBAL_OUTPUT_FORMATS } from "../../command-internal/global-flags.ts";
@@ -231,7 +231,7 @@ describe("whoami integration", () => {
         Effect.provide(
           Layer.mergeAll(
             layer,
-            commandRuntimeLayer(["whoami"]).pipe(Layer.provide(BunCrypto.layer)),
+            commandRuntimeLayer(["whoami"]).pipe(Layer.provide(NodeCrypto.layer)),
             Stdio.layerTest({ args: Effect.succeed(["whoami", "-o", goOutput]) }),
           ),
         ),

@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Duration, Effect, Fiber, Layer, Option, Queue, Ref, Stream } from "effect";
 import { systemError, type PlatformError } from "effect/PlatformError";
@@ -367,7 +367,7 @@ describe("stdinLayer over fd 0", () => {
       }).pipe(
         // A failed assertion must not leave the child waiting on its second prompt.
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide(NodeServices.layer),
       ),
     30_000,
   );
@@ -440,7 +440,7 @@ describe("stdinLayer over fd 0", () => {
         const [answers, left] = stdout.trim().split("\n");
         expect(answers).toBe("line-0 line-1 line-2");
         expect(payload.length - Number(left)).toBeLessThanOrEqual(256 * 1024);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     30_000,
   );
 });

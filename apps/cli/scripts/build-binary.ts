@@ -1,35 +1,16 @@
 import { Console, Effect } from "effect";
-import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
-import { compileOptions, stackReleaseDefine } from "./compile-options.ts";
+import { compileOptions, localBuildDefine } from "./compile-options.ts";
 
 /**
  * Compiles the CLI to a standalone binary, run via `pnpm build:binary`. Embeds the pre-bundled
  * edge-runtime template through `SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE` so Functions serve
  * offline without bundling at runtime (supabase/supabase#45570).
  */
-const entrypoint = "src/main.ts";
-const outfile = "dist/supabase";
-const packageJson = JSON.parse(
-  await Bun.file(new URL("../package.json", import.meta.url)).text(),
-) as {
-  version?: string;
-};
-if (packageJson.version === undefined || packageJson.version.length === 0) {
-  throw new Error("CLI package version is required for a compiled build");
-}
 const result = await Bun.build({
-  entrypoints: [entrypoint],
-  compile: { outfile },
+  entrypoints: ["src/main.ts"],
+  compile: { outfile: "dist/supabase" },
   ...compileOptions,
-  define: {
-    SUPABASE_CLI_VERSION: JSON.stringify(packageJson.version),
-    ...(await stackReleaseDefine()),
-    SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: JSON.stringify(
-      await Effect.runPromise(bundleServeMainTemplate()),
-    ),
-    // Skips msgpackr's native addon probe at the build host's path, which can hang macOS startup.
-    "process.env.MSGPACKR_NATIVE_ACCELERATION_DISABLED": JSON.stringify("true"),
-  },
+  define: await Effect.runPromise(localBuildDefine),
 });
 for (const log of result.logs) {
   Effect.runSync(Console.warn(log));

@@ -2,7 +2,7 @@
  * Native TS implementation of `start` — see `SIDE_EFFECTS.md` for the full
  * behavior contract.
  */
-import { BunPath } from "@effect/platform-bun";
+import { NodePath } from "@effect/platform-node";
 import { inferFunctionsManifest } from "@supabase/config/effect";
 import { resolveCliConfigSubtree } from "@supabase/config/internal";
 import { Effect, FileSystem, Option, Path, Predicate, Result } from "effect";
@@ -432,7 +432,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
+  const posixPath = yield* Effect.provide(Path.Path, NodePath.layerPosix);
   const runtimeInfo = yield* RuntimeInfo;
   // Threaded into every `dockerRemoveAll` teardown below — `--debug`
   // gates that function's `Pruned …:` stderr reports.

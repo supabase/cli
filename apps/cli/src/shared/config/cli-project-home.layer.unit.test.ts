@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import { mockRuntimeInfo, processEnvLayer } from "../../../tests/helpers/mocks.ts";
 import { cliSettingsLayer } from "./cli-settings.layer.ts";
@@ -22,24 +22,24 @@ function buildLayer(
   });
   const envLayer = processEnvLayer(opts.env ?? {});
   const discoveredCliProjectContextLayer = cliProjectContextLayer.pipe(
-    Layer.provide(BunServices.layer),
+    Layer.provide(NodeServices.layer),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(envLayer),
   );
   const discoveredCliSettingsLayer = cliSettingsLayer.pipe(
-    Layer.provide(BunServices.layer),
+    Layer.provide(NodeServices.layer),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(discoveredCliProjectContextLayer),
   );
   const discoveredCliProjectHomeLayer = cliProjectHomeLayer.pipe(
-    Layer.provide(BunServices.layer),
+    Layer.provide(NodeServices.layer),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(discoveredCliProjectContextLayer),
     Layer.provide(discoveredCliSettingsLayer),
   );
 
   return Layer.mergeAll(
-    BunServices.layer,
+    NodeServices.layer,
     runtimeInfoLayer,
     envLayer,
     discoveredCliProjectContextLayer,
@@ -80,7 +80,7 @@ describe("cliProjectHomeLayer", () => {
       expect(cliProjectHome.projectLocalVersionsPath).toBe(
         path.join(packageRoot, ".supabase", "local-versions.json"),
       );
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("falls back to the nearest linked project root when no project config exists", () =>
@@ -105,7 +105,7 @@ describe("cliProjectHomeLayer", () => {
       expect(cliProjectHome.projectRoot).toBe(projectRoot);
       expect(cliProjectHome.projectHomeDir).toBe(path.join(projectRoot, ".supabase"));
       expect(cliProjectHome.supabaseDir).toBe(path.join(projectRoot, "supabase"));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("does not let a bare ancestor .supabase directory capture a nested checkout", () =>
@@ -128,7 +128,7 @@ describe("cliProjectHomeLayer", () => {
       expect(cliProjectHome.projectRoot).toBe(cwd);
       expect(cliProjectHome.projectHomeDir).toBe(path.join(cwd, ".supabase"));
       expect(cliProjectHome.projectLinkPath).toBe(path.join(cwd, ".supabase", "project.json"));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("creates the repo-local .supabase directory lazily", () =>
@@ -147,7 +147,7 @@ describe("cliProjectHomeLayer", () => {
       yield* cliProjectHome.ensureCliProjectHomeDir;
       yield* fs.writeFileString(cliProjectHome.projectLinkPath, "{}\n");
       expect(yield* fs.readFileString(cliProjectHome.projectLinkPath)).toBe("{}\n");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -179,7 +179,7 @@ describe("cliProjectHomeLayer", () => {
             expect(error.value.message).toContain("could not be created");
           }
         }
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -214,6 +214,6 @@ describe("cliProjectHomeLayer", () => {
             expect(error.value.message).toContain("could not be created");
           }
         }
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

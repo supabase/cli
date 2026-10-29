@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 import { respondToComplete } from "../../../cli/complete.ts";
@@ -7,7 +7,7 @@ import { resolveComputeEnabled } from "./compute-backend.ts";
 import { ExperimentalFeatureFlagError } from "../../../command-internal/experimental-feature.ts";
 
 const resolve = (input: Parameters<typeof resolveComputeEnabled>[0]) =>
-  resolveComputeEnabled(input).pipe(Effect.provide(BunServices.layer));
+  resolveComputeEnabled(input).pipe(Effect.provide(NodeServices.layer));
 
 const project = Effect.fnUntraced(function* (files: Record<string, string>) {
   const fs = yield* FileSystem.FileSystem;
@@ -48,7 +48,7 @@ describe("resolveComputeEnabled", () => {
         "supabase/config.json": '{"experimental":{"compute":true}}',
       });
       expect(yield* resolve({ args: ["compute"], cwd: root, env: {} })).toBe(true);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
   });
 
   it.effect("reads a true TOML setting and lets explicit env values override it", () =>
@@ -80,7 +80,7 @@ describe("resolveComputeEnabled", () => {
           env: { SUPABASE_EXPERIMENTAL_COMPUTE: "1" },
         }),
       ).toBe(true);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("ignores an invalid stack setting when reading compute", () =>
@@ -89,7 +89,7 @@ describe("resolveComputeEnabled", () => {
         "supabase/config.toml": '[experimental]\ncompute = true\nstack = "yes"\n',
       });
       expect(yield* resolve({ args: ["compute"], cwd: root, env: {} })).toBe(true);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("finds a JSON-only ancestor and respects explicit workdirs", () => {
@@ -106,7 +106,7 @@ describe("resolveComputeEnabled", () => {
       expect(
         yield* resolve({ args: ["compute", "--workdir", explicit], cwd: child, env: {} }),
       ).toBe(false);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
   });
 
   it.effect("keeps default workdir selection aligned with the TOML command reader", () => {
@@ -124,7 +124,7 @@ describe("resolveComputeEnabled", () => {
       expect(yield* resolve({ args: ["compute", "--workdir", child], cwd: root, env: {} })).toBe(
         true,
       );
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
   });
 
   it.effect("fails closed for malformed files and types invalid env values", () => {
@@ -139,7 +139,7 @@ describe("resolveComputeEnabled", () => {
         env: { SUPABASE_EXPERIMENTAL_COMPUTE: "invalid" },
       }).pipe(Effect.flip);
       expect(error).toBeInstanceOf(ExperimentalFeatureFlagError);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
   });
 
   it.effect("ignores compute configuration for unrelated commands", () =>
@@ -182,7 +182,7 @@ describe("resolveComputeEnabled", () => {
       ]);
       expect(enabled).toBe(true);
       expect(completion?.candidates).toContainEqual(expect.objectContaining({ name: "compute" }));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it("hides the compute command when disabled", () => {

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { expect, layer } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Path } from "effect";
 
@@ -19,7 +19,7 @@ const list = (migrationsDir: string, out = mockOutput()) =>
     return yield* listLocalMigrations(fs, path, migrationsDir);
   }).pipe(Effect.provide(out.layer));
 
-layer(BunServices.layer)("listLocalMigrations", (it) => {
+layer(NodeServices.layer)("listLocalMigrations", (it) => {
   it.effect("returns sorted valid migrations, skipping a deprecated _init.sql first file", () =>
     Effect.gen(function* () {
       const { fs, path, migrationsDir } = yield* project;

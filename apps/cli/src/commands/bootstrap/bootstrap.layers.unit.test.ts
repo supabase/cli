@@ -1,7 +1,7 @@
 /** See `db/lint/lint.layers.unit.test.ts` for the canonical pattern this test follows. */
 
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Effect, Layer, Option } from "effect";
 
 import {
@@ -85,7 +85,7 @@ function ambientStubs() {
   );
 
   return Layer.mergeAll(
-    BunServices.layer,
+    NodeServices.layer,
     // Builds the real `commandSettingsLayer` against the real filesystem (see
     // `isolatedHomeLayer`'s docs). `commandPlatformApiLayer` eagerly validates the access token at
     // construction time, so inject a valid one via the isolated env (`SUPABASE_ACCESS_TOKEN`).

@@ -1,6 +1,6 @@
 import { stripVTControlCharacters } from "node:util";
 
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Clock, DateTime, Effect, FileSystem, Layer, Path } from "effect";
 
@@ -105,7 +105,7 @@ describe("upgrade notice user-level cache", () => {
 
       expect(fetchCalls).toBe(0);
       expect(stderr).toContain("A new version of Supabase CLI is available: v99.99.99");
-    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer))),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, runtimeInfoLayer))),
   );
 
   it.live("refetches a stale SUPABASE_HOME cache and records the new tag", () =>
@@ -117,7 +117,7 @@ describe("upgrade notice user-level cache", () => {
 
       expect(fetchCalls).toBe(1);
       expect(yield* ctx.fs.readFileString(ctx.cacheFile)).toBe("v99.99.100");
-    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer))),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, runtimeInfoLayer))),
   );
 
   describe("inside a project", () => {
@@ -138,7 +138,7 @@ describe("upgrade notice user-level cache", () => {
 
         expect(fetchCalls).toBe(0);
         expect(stderr).toContain("A new version of Supabase CLI is available: v99.99.99");
-      }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer))),
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, runtimeInfoLayer))),
     );
 
     it.live("keeps the cache in SUPABASE_HOME and leaves supabase/.temp alone in stack mode", () =>
@@ -151,7 +151,7 @@ describe("upgrade notice user-level cache", () => {
         expect(stderr).toContain("A new version of Supabase CLI is available: v99.99.100");
         expect(yield* ctx.fs.readFileString(ctx.cacheFile)).toBe("v99.99.100");
         expect(yield* ctx.fs.readFileString(ctx.legacyCache)).toBe("v99.99.99");
-      }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer))),
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, runtimeInfoLayer))),
     );
 
     it.live("keeps a stack-mode project out of supabase/.temp when --workdir is relative", () =>
@@ -176,7 +176,7 @@ describe("upgrade notice user-level cache", () => {
         expect(
           yield* ctx.fs.exists(ctx.path.join(project, "supabase", ".temp", "cli-latest")),
         ).toBe(false);
-      }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer))),
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, runtimeInfoLayer))),
     );
 
     it.live(
@@ -200,7 +200,7 @@ describe("upgrade notice user-level cache", () => {
           expect(fetchCalls).toBe(1);
           expect(yield* ctx.fs.readFileString(ctx.cacheFile)).toBe("v99.99.100");
           expect(yield* ctx.fs.exists(ctx.path.join(project, "supabase", ".temp"))).toBe(false);
-        }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer))),
+        }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, runtimeInfoLayer))),
     );
   });
 });

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path } from "effect";
 
@@ -48,7 +48,7 @@ function setup(options: SetupOptions = {}) {
     explicitWorkdir: options.explicitWorkdir ?? false,
   });
   const layer = Layer.mergeAll(
-    BunServices.layer,
+    NodeServices.layer,
     out.layer,
     telemetry.layer,
     cliSettings,
@@ -343,6 +343,6 @@ describe("functions new integration", () => {
         expect(error.message).toContain("failed to change workdir: chdir");
         expect(yield* fs.exists(path.join(badWorkdir, "supabase"))).toBe(false);
         expect(telemetry.flushed).toBe(true);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem } from "effect";
 import { runSupabaseEffect, stripAnsi } from "../../../tests/helpers/cli.ts";
@@ -26,7 +26,7 @@ describe("supabase start", () => {
           "WARNING: The following container names are not valid to exclude: bogus",
         );
         expect(exitCode, `stdout:\n${stdout}\nstderr:\n${stderr}`).not.toBe(0);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     E2E_TIMEOUT_MS,
   );
 });

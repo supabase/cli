@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 import { runSupabaseEffect } from "../../../tests/helpers/cli.ts";
@@ -90,7 +90,7 @@ describe("CLI upgrade notice (#5853)", () => {
       });
       expect(helped.exitCode).toBe(0);
       expect(helped.stderr).toContain("A new version of Supabase CLI is available: v99.99.99");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("a failing command exits non-zero and prints no notice", () =>
@@ -103,7 +103,7 @@ describe("CLI upgrade notice (#5853)", () => {
       });
       expect(exitCode).toBe(1);
       expect(stderr).not.toContain("A new version of Supabase CLI is available");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("keeps the Go upgrade notice before a native command suggestion", () =>
@@ -127,7 +127,7 @@ describe("CLI upgrade notice (#5853)", () => {
       expect(suppressed.exitCode).toBe(0);
       expect(suppressed.stderr).not.toContain("A new version of Supabase CLI is available");
       expect(suppressed.stderr).toContain("To enable JWT signing keys in your local project:");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
 

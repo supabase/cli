@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { beforeAll, describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 import { Command, Flag } from "effect/cli";
@@ -32,7 +32,7 @@ const loadDocsContent = Effect.gen(function* () {
     docsContentCache = yield* readDocsContent(path.resolve(import.meta.dirname, "../../docs"));
   }
   return docsContentCache;
-}).pipe(Effect.provide(BunServices.layer));
+}).pipe(Effect.provide(NodeServices.layer));
 
 /** Lazily built once, so runs filtered to the pure helpers skip the tree walk and disk reads. */
 function builtSpec(): BuiltSpecFixture {
@@ -454,7 +454,7 @@ describe("readDocsContent rejects malformed examples.yaml", () => {
       expect(error).toBeInstanceOf(DocsExamplesError);
       expect(error.cause).toBeInstanceOf(Error);
       return error;
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
   it.effect("rejects a non-mapping document", () =>
     Effect.map(readTempDocsError("- just\n- a list\n"), (error) =>
@@ -497,7 +497,7 @@ describe("readDocsContent walk", () => {
       yield* fs.writeFileString(path.join(dir, "templates", "examples.yaml"), "{}\n");
       const content = yield* readDocsContent(dir);
       expect([...content.overlays.keys()]).toEqual(["supabase/link.md"]);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
 
@@ -532,6 +532,6 @@ describe("DOCS_EXPERIMENTAL mirrors the runtime gate", () => {
         });
       yield* walk(commandsDir);
       expect([...gated].sort()).toEqual([...DOCS_EXPERIMENTAL].sort());
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

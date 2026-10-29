@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 
@@ -39,7 +39,7 @@ describe("supabase migration fetch", () => {
         expect(lines.at(-1)).toBe("context canceled");
         expect(stderr).not.toContain("Try rerunning the command with --debug");
         expect(yield* fs.readDirectory(migrations)).toEqual(["20240101000000_existing.sql"]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     E2E_TIMEOUT_MS,
   );
 });

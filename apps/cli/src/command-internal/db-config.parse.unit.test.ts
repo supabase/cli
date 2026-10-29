@@ -1,5 +1,5 @@
 import { userInfo } from "node:os";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it, layer } from "@effect/vitest";
 import { ConfigProvider, Effect, FileSystem, Layer, Path } from "effect";
 
@@ -22,7 +22,7 @@ const osAccount = (() => {
 const osUser = osAccount ?? "postgres";
 
 const parseTestLayer = Layer.merge(
-  BunServices.layer,
+  NodeServices.layer,
   ConfigProvider.layer(ConfigProvider.fromEnvRecord({}, { preserveEmptyStrings: true })),
 );
 

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -973,7 +973,7 @@ function setup(
         yield* fs.writeFileString(abs, content);
       }
     }),
-  ).pipe(Layer.provide(BunServices.layer));
+  ).pipe(Layer.provide(NodeServices.layer));
 
   const out = mockOutput({ format: opts.format ?? "text", promptConfirmResponses: opts.confirm });
   const conn = mockConnection(opts);
@@ -1050,7 +1050,7 @@ function setup(
         })
       : resolver.layer,
     mockCommandSettings({ workdir }),
-    BunServices.layer,
+    NodeServices.layer,
     recorder.layer,
     child.layer,
     mockLocalDockerEngineUnavailableLayer,
@@ -1379,7 +1379,7 @@ describe("db reset", () => {
         yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
 
         expect(catalogApplied[0]?.target.selection.auth).toEqual(lockedAuth);
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     });
 
     it.effect(
@@ -1422,7 +1422,7 @@ describe("db reset", () => {
             suggested_command: "supabase start",
             error_fingerprint: "tag:ResetLocalDbFailedError:conflict",
           });
-        }).pipe(Effect.provide(BunServices.layer));
+        }).pipe(Effect.provide(NodeServices.layer));
       },
     );
 
@@ -2812,7 +2812,7 @@ describe("db reset", () => {
         });
       }).pipe(
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide(NodeServices.layer),
         provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
       );
     });
@@ -2835,7 +2835,7 @@ describe("db reset", () => {
           assertPermissionDrift({ command: "db reset", requests: [], exact: true });
         }).pipe(
           Effect.scoped,
-          Effect.provide(BunServices.layer),
+          Effect.provide(NodeServices.layer),
           provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
         ),
       );
@@ -2870,7 +2870,7 @@ describe("db reset", () => {
             });
           }).pipe(
             Effect.scoped,
-            Effect.provide(BunServices.layer),
+            Effect.provide(NodeServices.layer),
             provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
           ),
         );
@@ -3371,7 +3371,7 @@ describe("db reset", () => {
             );
           }
           expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
-        }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
       },
     );
 
@@ -3413,7 +3413,7 @@ describe("db reset", () => {
           }
           expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
           expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
-        }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
       },
     );
 
@@ -3649,7 +3649,7 @@ describe("db reset", () => {
         expect(out.stderrText).toContain(
           `Seeding data from ${absSeed.replaceAll(path.sep, "/")}...`,
         );
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     });
 
     it.effect("warns and seeds from --sql-paths overriding config on a remote reset", () => {

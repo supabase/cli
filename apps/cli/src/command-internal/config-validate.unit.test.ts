@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it, layer } from "@effect/vitest";
 import { Effect, FileSystem, Path, PlatformError, Predicate } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -97,7 +97,7 @@ describe("CLERK_DOMAIN_PATTERN", () => {
 // Direct coverage for the containment check shared by every caller (config push's
 // loadAuthEmailContent, db-config.toml-read.ts, local-config-values.ts, start.handler.ts's
 // pre-Docker pass), cheaper to pin here than to re-derive through every caller's own fixtures.
-layer(BunServices.layer)("resolveEmailTemplateContentPath", (it) => {
+layer(NodeServices.layer)("resolveEmailTemplateContentPath", (it) => {
   const tempDir = (prefix: string) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

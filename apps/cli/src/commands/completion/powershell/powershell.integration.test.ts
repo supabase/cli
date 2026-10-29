@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Effect, Layer } from "effect";
 import { Command } from "effect/cli";
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
@@ -48,7 +48,7 @@ describe("completion powershell", () => {
       const layer = Layer.mergeAll(
         out.layer,
         mockAnalytics().layer,
-        BunServices.layer,
+        NodeServices.layer,
         processControlLayer,
       );
       return Effect.gen(function* () {
@@ -69,7 +69,7 @@ describe("completion powershell", () => {
       const layer = Layer.mergeAll(
         out.layer,
         analytics.layer,
-        BunServices.layer,
+        NodeServices.layer,
         processControlLayer,
       );
       return Effect.gen(function* () {

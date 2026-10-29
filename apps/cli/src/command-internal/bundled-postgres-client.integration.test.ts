@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Ref } from "effect";
 
@@ -23,7 +23,7 @@ const processControl = Layer.succeed(ProcessControl, {
   getExitCode: Effect.undefined,
 });
 
-const base = Layer.mergeAll(BunServices.layer, processControl);
+const base = Layer.mergeAll(NodeServices.layer, processControl);
 const docker = dockerRunLayer.pipe(Layer.provide(base));
 const client = bundledPostgresClientLayer.pipe(
   Layer.provide(Layer.mergeAll(base, docker, mockOutput().layer)),

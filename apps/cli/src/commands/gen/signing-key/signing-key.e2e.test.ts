@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path, Schema } from "effect";
 
@@ -44,7 +44,7 @@ describe("supabase gen signing-key", () => {
         expect(stderr).not.toContain("Service not found");
         const saved = yield* fs.readFileString(keysPath);
         expect(yield* Schema.decodeEffect(storedSigningKeysJson)(saved)).toEqual([]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     { timeout: E2E_TIMEOUT_MS },
   );
 
@@ -62,7 +62,7 @@ describe("supabase gen signing-key", () => {
         expect(stderr).toContain("JWT signing key appended to:");
         const saved = yield* fs.readFileString(keysPath);
         expect(yield* Schema.decodeEffect(storedSigningKeysJson)(saved)).toHaveLength(1);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     { timeout: E2E_TIMEOUT_MS },
   );
 });

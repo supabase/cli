@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import { StackError } from "@supabase/stack/effect";
@@ -13,7 +13,7 @@ import { StackApi, stackApiLayer, stackTargetResolverLayer } from "../stack.shar
 import { stackDestroy } from "./destroy.handler.ts";
 import { StackCommandDestroyError } from "./destroy.errors.ts";
 
-const live = Layer.provideMerge(stackApiLayer, BunServices.layer);
+const live = Layer.provideMerge(stackApiLayer, NodeServices.layer);
 
 /**
  * A real registration whose `destroy` fails the way the stack owner reports an unreachable engine:

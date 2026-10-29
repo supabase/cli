@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path, Schema } from "effect";
 import { randomUUID } from "node:crypto";
@@ -87,6 +87,6 @@ describe("release-minified error fingerprints", () => {
         has_suggestion: true,
         suggestion_type: "update_config",
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

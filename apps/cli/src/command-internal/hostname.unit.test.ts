@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Config,
@@ -39,7 +39,7 @@ type HostnameServices = RuntimeInfo | FileSystem.FileSystem | Path.Path | Crypto
 
 function configLayer(env: Readonly<Record<string, string | undefined>>) {
   return Layer.mergeAll(
-    BunServices.layer,
+    NodeServices.layer,
     runtimeLayer,
     ConfigProvider.layer(ConfigProvider.fromEnvRecord(env, { preserveEmptyStrings: true })),
   );
@@ -78,7 +78,7 @@ function withDockerConfig<A>(
   run: () => Effect.Effect<A, Config.ConfigError, HostnameServices>,
 ) {
   return writeDockerConfigDir(options).pipe(
-    Effect.provide(BunServices.layer),
+    Effect.provide(NodeServices.layer),
     Effect.flatMap((configDir) =>
       run().pipe(Effect.provide(configLayer({ ...env, DOCKER_CONFIG: configDir }))),
     ),
@@ -101,7 +101,7 @@ describe("getHostname", () => {
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          BunServices.layer,
+          NodeServices.layer,
           runtimeLayer,
           ConfigProvider.layer(
             ConfigProvider.fromEnvRecord({ DOCKER_HOST: "tcp://docker-host:2375" }),
@@ -219,7 +219,7 @@ describe("getHostname", () => {
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          BunServices.layer,
+          NodeServices.layer,
           runtimeLayer,
           ConfigProvider.layer(
             ConfigProvider.fromEnvRecord({ DOCKER_HOST: "unix:///docker.sock" }),

@@ -1,5 +1,5 @@
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Clock, Crypto, Data, Effect, FileSystem, Layer, Path, Schema } from "effect";
 import { beforeAll, describe, expect, it } from "@effect/vitest";
 import {
@@ -305,7 +305,7 @@ describe("supabase start slim images (e2e)", () => {
           for (const image of latestImagesToPull()) {
             yield* pullLatestImage(image, deadline);
           }
-        }).pipe(Effect.provide(Layer.merge(BunServices.layer, FetchHttpClient.layer))),
+        }).pipe(Effect.provide(Layer.merge(NodeServices.layer, FetchHttpClient.layer))),
       ),
     PULL_TIMEOUT_MS + 10_000,
   );
@@ -333,7 +333,7 @@ describe("supabase start slim images (e2e)", () => {
             yield* runWgetInImage(image, waitArgs);
           }
         }
-      }).pipe(Effect.provide(Layer.merge(BunServices.layer, FetchHttpClient.layer))),
+      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, FetchHttpClient.layer))),
     WGET_PROBE_TEST_TIMEOUT_MS,
   );
 
@@ -436,7 +436,7 @@ describe("supabase start slim images (e2e)", () => {
         expect(yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(body)).toEqual({
           message: "Hello Functions!",
         });
-      }).pipe(Effect.provide(Layer.merge(BunServices.layer, FetchHttpClient.layer))),
+      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, FetchHttpClient.layer))),
     START_TIMEOUT_MS + LIFECYCLE_OVERHEAD_MS + CLEANUP_TIMEOUT_MS,
   );
 });

@@ -586,9 +586,9 @@ const secretCopyFailure = (detail: string): ContainerCreateError =>
   });
 
 /**
- * Streams all secret files as one archive after create and before start. `Bun.Archive` exposes
- * no per-entry mode option, so the unit test pins its `0644` default, which keeps the files
- * readable by non-root Kong/Postgres processes. Once copied, the files live in the container
+ * Streams all secret files as one archive after create and before start. The archive's `0644`
+ * entry mode, pinned by the unit test, keeps the files readable by non-root Kong/Postgres
+ * processes. Once copied, the files live in the container
  * filesystem, so normal restarts need no host artifact.
  */
 function copyStartSecretFilesIntoContainer(
@@ -598,21 +598,18 @@ function copyStartSecretFilesIntoContainer(
 ): Effect.Effect<void, ContainerCreateError> {
   if (secretFiles.length === 0) return Effect.void;
 
-  return Effect.tryPromise({
-    try: () =>
-      containerArchiveBytes(
-        Object.fromEntries(
-          secretFiles.map((secretFile) => [secretFile.containerPath, secretFile.content]),
-        ),
-      ),
-    catch: (cause) =>
-      new ContainerCreateError({
-        message: `failed to create docker container: failed to prepare container secret files: ${
-          cause instanceof Error ? cause.message : String(cause)
-        }`,
-        reason: "internal",
-      }),
-  }).pipe(
+  return containerArchiveBytes(
+    Object.fromEntries(
+      secretFiles.map((secretFile) => [secretFile.containerPath, secretFile.content]),
+    ),
+  ).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ContainerCreateError({
+          message: `failed to create docker container: failed to prepare container secret files: ${cause.detail}`,
+          reason: "internal",
+        }),
+    ),
     Effect.flatMap((archive) =>
       dockerCopyArchiveIntoContainer(spawner, archive, `${containerId}:/`, secretCopyFailure),
     ),

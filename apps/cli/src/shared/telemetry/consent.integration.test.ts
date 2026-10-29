@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -99,7 +99,7 @@ describe("writeTelemetryConfig", () => {
         ),
       ).toEqual(config);
       expect(yield* temporaryFiles(dir)).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("cleans the temporary file when cancelled during replacement backoff", () =>
@@ -121,7 +121,7 @@ describe("writeTelemetryConfig", () => {
       yield* Fiber.interrupt(publishing);
       expect(yield* fs.readFileString(configPath)).toBe("previous config");
       expect(yield* temporaryFiles(dir)).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("preserves the normalized platform error when retries exhaust", () =>
@@ -172,7 +172,7 @@ describe("writeTelemetryConfig", () => {
       expect(yield* Ref.get(calls)).toBe(13);
       expect(yield* fs.readFileString(configPath)).toBe("previous config");
       expect(yield* temporaryFiles(dir)).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("does not retry unrelated errors or failures on another platform", () =>
@@ -199,7 +199,7 @@ describe("writeTelemetryConfig", () => {
         expect(yield* fs.readFileString(configPath)).toBe("previous config");
         expect(yield* temporaryFiles(dir)).toEqual([]);
       }
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("removes a partially written temporary file when writing fails", () =>
@@ -221,6 +221,6 @@ describe("writeTelemetryConfig", () => {
       expect(Exit.isFailure(result)).toBe(true);
       expect(yield* fs.readFileString(configPath)).toBe("previous config");
       expect(yield* temporaryFiles(dir)).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

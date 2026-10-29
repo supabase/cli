@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   create as createStack,
@@ -198,7 +198,7 @@ const payload = Effect.fn("FunctionsServeE2e.payload")(function* (
   return yield* Schema.decodeUnknownEffect(Payload)(yield* response.json);
 });
 
-const layer = Layer.mergeAll(BunServices.layer, FetchHttpClient.layer);
+const layer = Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer);
 
 /**
  * Follows a service's statuses from the first one it delivers and returns a fiber that resolves

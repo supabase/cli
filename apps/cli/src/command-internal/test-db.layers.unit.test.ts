@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Effect, Layer, Option } from "effect";
 
 import {
@@ -74,7 +74,7 @@ function ambientStubs() {
   );
 
   return Layer.mergeAll(
-    BunServices.layer,
+    NodeServices.layer,
     isolatedHomeLayer(tempRoot.current),
     mockTty(),
     mockProcessControl().layer,

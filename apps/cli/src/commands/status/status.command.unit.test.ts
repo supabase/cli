@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit } from "effect";
 import { normalizeCause } from "../../shared/output/normalize-error.ts";
@@ -12,7 +12,7 @@ describe("status --override-name flag (pflag StringSlice parity)", () => {
           flags: { "override-name": ["api.url=FOO,db.url=BAR"] },
           arguments: [],
         })
-        .pipe(Effect.provide(BunServices.layer));
+        .pipe(Effect.provide(NodeServices.layer));
 
       expect(overrideName).toEqual(["api.url=FOO", "db.url=BAR"]);
     }),
@@ -25,7 +25,7 @@ describe("status --override-name flag (pflag StringSlice parity)", () => {
           flags: { "override-name": ["api.url=FOO,db.url=BAR", "studio.url=BAZ"] },
           arguments: [],
         })
-        .pipe(Effect.provide(BunServices.layer));
+        .pipe(Effect.provide(NodeServices.layer));
 
       expect(overrideName).toEqual(["api.url=FOO", "db.url=BAR", "studio.url=BAZ"]);
     }),
@@ -35,7 +35,7 @@ describe("status --override-name flag (pflag StringSlice parity)", () => {
     Effect.gen(function* () {
       const [, overrideName] = yield* statusOverrideNameFlag
         .parse({ flags: {}, arguments: [] })
-        .pipe(Effect.provide(BunServices.layer));
+        .pipe(Effect.provide(NodeServices.layer));
 
       expect(overrideName).toEqual([]);
     }),
@@ -45,7 +45,7 @@ describe("status --override-name flag (pflag StringSlice parity)", () => {
     Effect.gen(function* () {
       const [, overrideName] = yield* statusOverrideNameFlag
         .parse({ flags: { "override-name": ['a=1\nb"2'] }, arguments: [] })
-        .pipe(Effect.provide(BunServices.layer));
+        .pipe(Effect.provide(NodeServices.layer));
 
       expect(overrideName).toEqual(["a=1"]);
     }),
@@ -55,7 +55,7 @@ describe("status --override-name flag (pflag StringSlice parity)", () => {
     Effect.gen(function* () {
       const exit = yield* statusOverrideNameFlag
         .parse({ flags: { "override-name": ['"api.url=FOO'] }, arguments: [] })
-        .pipe(Effect.provide(BunServices.layer), Effect.exit);
+        .pipe(Effect.provide(NodeServices.layer), Effect.exit);
 
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -70,7 +70,7 @@ describe("status --override-name flag (pflag StringSlice parity)", () => {
     Effect.gen(function* () {
       const exit = yield* statusOverrideNameFlag
         .parse({ flags: { "override-name": ["\n"] }, arguments: [] })
-        .pipe(Effect.provide(BunServices.layer), Effect.exit);
+        .pipe(Effect.provide(NodeServices.layer), Effect.exit);
 
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -87,7 +87,7 @@ describe("status --exclude flag (pflag StringSlice parity)", () => {
     Effect.gen(function* () {
       const [, exclude] = yield* statusExcludeFlag
         .parse({ flags: { exclude: ["kong,auth"] }, arguments: [] })
-        .pipe(Effect.provide(BunServices.layer));
+        .pipe(Effect.provide(NodeServices.layer));
 
       expect(exclude).toEqual(["kong", "auth"]);
     }),
@@ -97,7 +97,7 @@ describe("status --exclude flag (pflag StringSlice parity)", () => {
     Effect.gen(function* () {
       const [, exclude] = yield* statusExcludeFlag
         .parse({ flags: {}, arguments: [] })
-        .pipe(Effect.provide(BunServices.layer));
+        .pipe(Effect.provide(NodeServices.layer));
 
       expect(exclude).toEqual([]);
     }),
@@ -107,7 +107,7 @@ describe("status --exclude flag (pflag StringSlice parity)", () => {
     Effect.gen(function* () {
       const exit = yield* statusExcludeFlag
         .parse({ flags: { exclude: ['a"b'] }, arguments: [] })
-        .pipe(Effect.provide(BunServices.layer), Effect.exit);
+        .pipe(Effect.provide(NodeServices.layer), Effect.exit);
 
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {

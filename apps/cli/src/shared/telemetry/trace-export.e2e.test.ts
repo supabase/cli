@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 import { runSupabaseEffect } from "../../../tests/helpers/cli.ts";
@@ -66,7 +66,7 @@ describe("trace export across the process exit", () => {
         parentSpanId: parentId,
         status: { code: STATUS_OK },
       });
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.live("warns once and still runs the command when the trace file is /dev/null", () =>
@@ -100,7 +100,7 @@ describe("trace export across the process exit", () => {
       const recorded = run?.attributes?.find((attribute) => attribute.key === "process.exit_code");
       expect(Number(recorded?.value.intValue)).toBe(1);
       expect(run?.status.code).toBe(STATUS_ERROR);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
 
@@ -127,7 +127,7 @@ describe("span debug console", () => {
       expect(exitCode, stderr).toBe(1);
       expect(stderr).toMatch(SPAN_LINE);
       expect(stderr).toContain("CommandCredentials.load (");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.live("prints no spans for --debug", () =>
@@ -143,7 +143,7 @@ describe("span debug console", () => {
       expect(exitCode, stderr).toBe(1);
       expect(stderr).toContain("Access token not provided");
       expect(stderr).not.toMatch(SPAN_LINE);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.live("prints no spans when --debug is a flag value", () =>
@@ -158,6 +158,6 @@ describe("span debug console", () => {
 
       expect(exitCode, stderr).toBe(1);
       expect(stderr).not.toMatch(SPAN_LINE);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

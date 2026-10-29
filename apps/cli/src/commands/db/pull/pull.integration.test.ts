@@ -1,5 +1,5 @@
 import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -490,14 +490,14 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         yield* fs.writeFileString(path.join(workdir, file), content);
       }
     }),
-  ).pipe(Layer.provide(BunServices.layer));
+  ).pipe(Layer.provide(NodeServices.layer));
 
   const projectHttp = recordingProjectHttpClient(VALID_REF);
   const baseLayer = Layer.mergeAll(
     unusedStackServices,
     // Listed first so the fake service layers below (`Layer.mergeAll` is last-wins)
     // override its real implementations, matching `start.integration.test.ts`.
-    BunServices.layer,
+    NodeServices.layer,
     out.layer,
     telemetry.layer,
     opts.realLayers === true
@@ -1521,7 +1521,7 @@ describe("db pull", () => {
       expect(error.message).toBe(`No schema changes found (debug bundle: ${debugDir})`);
       expect(streamText(s.out, "stderr")).toContain(`Debug information saved to`);
       expect(streamText(s.out, "stderr")).toContain(debugDir);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("prompts to update history and inserts on yes (tty)", () => {
@@ -2526,7 +2526,7 @@ describe("db pull", () => {
         expect(pgDeltaRun.dockerDaemon?.stepCalls("cp-out")).toHaveLength(1);
         expect(yield* publishedTars()).toHaveLength(2);
         expect(yield* publishedTars()).toEqual(expect.arrayContaining(migraTars));
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     });
   });
 });
@@ -2699,7 +2699,7 @@ describe("db pull and db remote commit permissions through the real resolver and
       });
     }).pipe(
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });
@@ -2738,7 +2738,7 @@ describe("db pull and db remote commit permissions through the real resolver and
       });
     }).pipe(
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });
@@ -2764,7 +2764,7 @@ describe("db pull and db remote commit permissions through the real resolver and
       });
     }).pipe(
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });
@@ -2797,7 +2797,7 @@ describe("db pull and db remote commit permissions through the real resolver and
       });
     }).pipe(
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });
@@ -2846,7 +2846,7 @@ describe("db pull and db remote commit permissions through the real resolver and
       });
     }).pipe(
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });
@@ -2885,7 +2885,7 @@ describe("db pull and db remote commit permissions through the real resolver and
       });
     }).pipe(
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });

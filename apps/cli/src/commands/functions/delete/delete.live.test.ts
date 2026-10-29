@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Cause, Data, Effect, Exit, FileSystem, Path } from "effect";
 import { expect } from "vitest";
 
@@ -72,5 +72,5 @@ test("deletes a deployed function", ({ cliEffect, project, workspace }) =>
         targetError: Exit.isFailure(targetExit) ? Cause.squash(targetExit.cause) : undefined,
         cleanupErrors: Exit.isFailure(cleanupExit) ? [Cause.squash(cleanupExit.cause)] : [],
       };
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   ).then(({ targetError, cleanupErrors }) => throwWithCleanup(targetError, cleanupErrors)));

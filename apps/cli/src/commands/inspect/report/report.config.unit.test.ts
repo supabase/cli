@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Path } from "effect";
 
@@ -31,7 +31,7 @@ const readRules = (configToml?: string, dotEnv?: string) =>
     const path = yield* Path.Path;
     const workdir = yield* makeWorkdir(fs, path, configToml, dotEnv);
     return yield* readInspectRules(fs, path, workdir);
-  }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, cliConfigProviderLayer)));
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, cliConfigProviderLayer)));
 
 describe("readInspectRules", () => {
   it.effect("returns [] when config.toml is absent", () =>

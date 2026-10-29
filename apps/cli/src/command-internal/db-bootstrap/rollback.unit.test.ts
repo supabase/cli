@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import { Data, Deferred, Effect, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/process";
@@ -71,11 +71,11 @@ describe("rollbackStart", () => {
         false,
         "/tmp/rollback-unit-test-workdir",
         false,
-      ).pipe(Effect.provide(BunServices.layer));
+      ).pipe(Effect.provide(NodeServices.layer));
       expect(stderr).toHaveBeenCalledTimes(1);
       expect(stderr).toHaveBeenCalledWith("Stopping containers...\n");
       expect(mock.spawned.map((args) => args[0])).toEqual(["ps", "container", "network"]);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.live("requests a volume prune when deleteVolumes is true", () => {
@@ -87,7 +87,7 @@ describe("rollbackStart", () => {
         true,
         "/tmp/rollback-unit-test-workdir",
         false,
-      ).pipe(Effect.provide(BunServices.layer));
+      ).pipe(Effect.provide(NodeServices.layer));
       expect(mock.spawned.map((args) => args[0])).toEqual([
         "ps",
         "container",
@@ -95,7 +95,7 @@ describe("rollbackStart", () => {
         "volume",
         "network",
       ]);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.live("swallows a rollback failure, logging it to stderr instead of failing the effect", () => {
@@ -108,11 +108,11 @@ describe("rollbackStart", () => {
         false,
         "/tmp/rollback-unit-test-workdir",
         false,
-      ).pipe(Effect.provide(BunServices.layer));
+      ).pipe(Effect.provide(NodeServices.layer));
       expect(stderr).toHaveBeenCalledTimes(2);
       expect(stderr).toHaveBeenNthCalledWith(1, "Stopping containers...\n");
       expect(stderr).toHaveBeenNthCalledWith(2, "failed to list containers: permission denied\n");
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.live("logs a generic message to stderr when the underlying failure has no stderr text", () => {
@@ -125,11 +125,11 @@ describe("rollbackStart", () => {
         false,
         "/tmp/rollback-unit-test-workdir",
         false,
-      ).pipe(Effect.provide(BunServices.layer));
+      ).pipe(Effect.provide(NodeServices.layer));
       expect(stderr).toHaveBeenCalledTimes(2);
       expect(stderr).toHaveBeenNthCalledWith(1, "Stopping containers...\n");
       expect(stderr).toHaveBeenNthCalledWith(2, "failed to list containers\n");
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 });
 

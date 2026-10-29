@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -735,7 +735,7 @@ function setupRuntime(
       goOutput: opts.goOutput ?? Option.none(),
     }),
     machineErrorContextLayer,
-    commandRuntimeLayer(["pull"]).pipe(Layer.provide(BunServices.layer)),
+    commandRuntimeLayer(["pull"]).pipe(Layer.provide(NodeServices.layer)),
     stdioLayer,
     opts.realLayers === true
       ? Layer.mergeAll(
@@ -773,7 +773,7 @@ function setupRuntime(
     Layer.succeed(NetworkIdFlag, Option.none()),
     Layer.succeed(CliArgs, { args: [] }),
     unusedStackServices,
-    // Listed after `buildTestRuntime` so it overrides the real spawner `BunServices.layer`
+    // Listed after `buildTestRuntime` so it overrides the real spawner `NodeServices.layer`
     // provides (last-wins).
     spawner.layer,
     shadowCacheDisabledLayer,
@@ -1546,7 +1546,7 @@ describe("pull integration", () => {
 
         expect(telemetry.flushed).toBe(true);
         expect(linkedProjectCache.cached).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -1662,7 +1662,7 @@ describe("pull integration", () => {
           // step's TOCTOU guard rather than routing the db step onto the unmocked migra path.
           confirmSideEffect: writeConfigFile(
             'project_id = "changed-mid-flight"\n\n[experimental.pgdelta]\nenabled = true\n',
-          ).pipe(Effect.provide(BunServices.layer)),
+          ).pipe(Effect.provide(NodeServices.layer)),
           api: { functionSlugs: ["hello"] },
           remoteMigrations: [
             { version: "20260101000000", name: "init", statements: ["select 1;"] },
@@ -1698,7 +1698,7 @@ describe("pull integration", () => {
           confirm: [true],
           confirmSideEffect: writeConfigFile(
             'project_id = "changed-mid-flight"\n\n[experimental.pgdelta]\nenabled = true\n',
-          ).pipe(Effect.provide(BunServices.layer)),
+          ).pipe(Effect.provide(NodeServices.layer)),
           api: { functionSlugs: [] },
           remoteMigrations: [
             { version: "20260101000000", name: "init", statements: ["select 1;"] },
@@ -1732,7 +1732,7 @@ describe("pull integration", () => {
           // --remote-label was never passed) is ever written.
           confirmSideEffect: writeConfigFile(
             'project_id = "changed-mid-flight"\n\n[experimental.pgdelta]\nenabled = true\n',
-          ).pipe(Effect.provide(BunServices.layer)),
+          ).pipe(Effect.provide(NodeServices.layer)),
           api: { functionSlugs: [] },
           remoteMigrations: [
             { version: "20260101000000", name: "init", statements: ["select 1;"] },

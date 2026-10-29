@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { DateTime, Effect, FileSystem, Layer, Path, Schema } from "effect";
 
@@ -42,7 +42,7 @@ function makeLayer(
   runtime: ReturnType<typeof makeRuntime> = makeRuntime(),
 ) {
   return telemetryStateLayer.pipe(
-    Layer.provide(BunServices.layer),
+    Layer.provide(NodeServices.layer),
     Layer.provide(analytics.layer),
     Layer.provide(runtime.layer),
   );
@@ -55,16 +55,16 @@ const telemetryPath = Effect.gen(function* () {
 const readTelemetryFile = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   return yield* fs.readFileString(yield* telemetryPath);
-}).pipe(Effect.provide(BunServices.layer));
+}).pipe(Effect.provide(NodeServices.layer));
 const telemetryFileExists = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   return yield* fs.exists(yield* telemetryPath);
-}).pipe(Effect.provide(BunServices.layer));
+}).pipe(Effect.provide(NodeServices.layer));
 const writeTelemetryFile = (contents: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     yield* fs.writeFileString(yield* telemetryPath, contents);
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 const seedJson = (value: unknown) =>
   Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(value).pipe(
     Effect.flatMap(writeTelemetryFile),
@@ -188,9 +188,9 @@ describe("loadOrCreateTelemetryState (Go decodeState parity: all-or-nothing reco
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 
   const runLoad = () =>
-    loadOrCreateTelemetryState().pipe(Effect.provide(BunServices.layer), withTempHome);
+    loadOrCreateTelemetryState().pipe(Effect.provide(NodeServices.layer), withTempHome);
   const runLoadAt = (now: DateTime.Utc) =>
-    loadOrCreateTelemetryState({ now }).pipe(Effect.provide(BunServices.layer), withTempHome);
+    loadOrCreateTelemetryState({ now }).pipe(Effect.provide(NodeServices.layer), withTempHome);
 
   it.effect("a bool-only file missing device_id/session_id is wholly regenerated", () =>
     Effect.gen(function* () {
@@ -740,7 +740,7 @@ describe("loadOrCreateTelemetryState (Go decodeState parity: all-or-nothing reco
 
 describe("exact int64 schema_version round-trip (Go json.Marshal parity)", () => {
   const runLoad = () =>
-    loadOrCreateTelemetryState().pipe(Effect.provide(BunServices.layer), withTempHome);
+    loadOrCreateTelemetryState().pipe(Effect.provide(NodeServices.layer), withTempHome);
 
   // File contents are hand-built strings: `JSON.stringify(9007199254740993)`
   // would round inside the test itself, hiding exactly the bug under test.
@@ -774,7 +774,7 @@ describe("exact int64 schema_version round-trip (Go json.Marshal parity)", () =>
   it.effect("setTelemetryEnabled's rewrite also preserves the exact token", () =>
     Effect.gen(function* () {
       yield* writeTelemetryFile(yield* fileWith("9007199254740993"));
-      yield* setTelemetryEnabled(true).pipe(Effect.provide(BunServices.layer), withTempHome);
+      yield* setTelemetryEnabled(true).pipe(Effect.provide(NodeServices.layer), withTempHome);
       const written = yield* readTelemetryFile;
       expect(written).toContain('"enabled":true');
       expect(written).toContain('"schema_version":9007199254740993');

@@ -1,5 +1,5 @@
 import { it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Effect, Exit } from "effect";
 import { describe, expect } from "vitest";
 import { normalizeCause } from "../../shared/output/normalize-error.ts";
@@ -10,7 +10,7 @@ describe("start --exclude flag (pflag StringSlice parity)", () => {
     Effect.gen(function* () {
       const [, exclude] = yield* startExcludeFlag
         .parse({ flags: { exclude: ["gotrue,realtime"] }, arguments: [] })
-        .pipe(Effect.provide(BunServices.layer));
+        .pipe(Effect.provide(NodeServices.layer));
 
       expect(exclude).toEqual(["gotrue", "realtime"]);
     }),
@@ -20,7 +20,7 @@ describe("start --exclude flag (pflag StringSlice parity)", () => {
     Effect.gen(function* () {
       const [, exclude] = yield* startExcludeFlag
         .parse({ flags: { exclude: ["gotrue,realtime", "studio"] }, arguments: [] })
-        .pipe(Effect.provide(BunServices.layer));
+        .pipe(Effect.provide(NodeServices.layer));
 
       expect(exclude).toEqual(["gotrue", "realtime", "studio"]);
     }),
@@ -30,7 +30,7 @@ describe("start --exclude flag (pflag StringSlice parity)", () => {
     Effect.gen(function* () {
       const [, exclude] = yield* startExcludeFlag
         .parse({ flags: {}, arguments: [] })
-        .pipe(Effect.provide(BunServices.layer));
+        .pipe(Effect.provide(NodeServices.layer));
 
       expect(exclude).toEqual([]);
     }),
@@ -40,7 +40,7 @@ describe("start --exclude flag (pflag StringSlice parity)", () => {
     Effect.gen(function* () {
       const [, exclude] = yield* startExcludeFlag
         .parse({ flags: { exclude: ['a\nb"c'] }, arguments: [] })
-        .pipe(Effect.provide(BunServices.layer));
+        .pipe(Effect.provide(NodeServices.layer));
 
       expect(exclude).toEqual(["a"]);
     }),
@@ -50,7 +50,7 @@ describe("start --exclude flag (pflag StringSlice parity)", () => {
     Effect.gen(function* () {
       const exit = yield* startExcludeFlag
         .parse({ flags: { exclude: ['a"b'] }, arguments: [] })
-        .pipe(Effect.provide(BunServices.layer), Effect.exit);
+        .pipe(Effect.provide(NodeServices.layer), Effect.exit);
 
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -65,7 +65,7 @@ describe("start --exclude flag (pflag StringSlice parity)", () => {
     Effect.gen(function* () {
       const exit = yield* startExcludeFlag
         .parse({ flags: { exclude: ["\n"] }, arguments: [] })
-        .pipe(Effect.provide(BunServices.layer), Effect.exit);
+        .pipe(Effect.provide(NodeServices.layer), Effect.exit);
 
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {

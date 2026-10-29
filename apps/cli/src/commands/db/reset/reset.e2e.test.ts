@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 
@@ -29,7 +29,7 @@ describe("supabase db reset", () => {
         const lines = stripAnsi(stderr).trimEnd().split("\n");
         expect(lines.at(-1)).toBe("context canceled");
         expect(stderr).not.toContain("Try rerunning the command with --debug");
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     E2E_TIMEOUT_MS,
   );
 });

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { orioledbVersions } from "@supabase/stack/internal/artifacts";
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import { DEFAULT_SIGNING_KEY } from "@supabase/stack/defaults";
@@ -27,7 +27,7 @@ const load = (projectRoot: string) =>
   loadStackConfig(projectRoot).pipe(
     Effect.provide(
       Layer.mergeAll(
-        BunServices.layer,
+        NodeServices.layer,
         runtimeInfoLayer,
         mockCommandSettings({ workdir: projectRoot }),
       ),
@@ -36,7 +36,7 @@ const load = (projectRoot: string) =>
 
 const project = (contents: string, options: Parameters<typeof createStackConfigProject>[1] = {}) =>
   createStackConfigProject(contents, options).pipe(
-    Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+    Effect.provide(Layer.mergeAll(NodeServices.layer, runtimeInfoLayer)),
   );
 
 const publicJwkSchema = Schema.Struct({
@@ -119,7 +119,7 @@ enabled = true
       const storage = recipes.get("storage");
       expect(storage?.service === "storage" && storage.config.fileSizeLimit).toBe("52428800");
       expect(recipes.has("functions")).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("preserves explicit listener ports while translating every enabled service", () =>
@@ -163,7 +163,7 @@ enabled = true
       });
       expect(recipes.has("pgmeta")).toBe(true);
       expect(recipes.has("imgproxy")).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("hands Studio the API settings it mirrors and its snippets folder", () =>
@@ -183,7 +183,7 @@ max_rows = 250
         apiMaxRows: 250,
         cliVersion: CLI_VERSION,
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("leaves stack-opt-in init listeners automatic except disabled pooler", () =>
@@ -194,7 +194,7 @@ max_rows = 250
       expect(services.get("database")?.endpoints).toEqual({ sql: { port: "auto" } });
       expect(services.get("rest")?.endpoints).toEqual({ http: { port: "auto" } });
       expect(services.get("pooler")).toBeUndefined();
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("keeps the shared API port when REST is disabled", () =>
@@ -209,7 +209,7 @@ port = 55431
       expect(recipes.has("rest")).toBe(false);
       expect(recipes.get("auth")?.endpoints).toEqual({ http: { port: 55431 } });
       expect(recipes.get("storage")?.endpoints).toEqual({ http: { port: 55431 } });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("rejects Auth email template content paths deferred by the stack", () =>
@@ -221,7 +221,7 @@ content_path = "./templates/invite.html"
       const exit = yield* load(root).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("auth.email");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("validates enabled Auth third-party providers", () =>
@@ -234,7 +234,7 @@ project_id = ""
       const exit = yield* load(root).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("auth.third_party");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("loads an empty signing-key file and skips it when Auth is disabled", () =>
@@ -286,7 +286,7 @@ signing_keys_path = "./missing-keys.json"
       expect(envKeys.publicSigningKeys).toBe(disabledKeys.publicSigningKeys);
       expect(envKeys.anonKey).toBeDefined();
       expect(envKeys.serviceRoleKey).toBeDefined();
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("fetches third-party JWKS while Auth is disabled", () =>
@@ -334,7 +334,7 @@ issuer_url = ""
       const emptyIssuerKeys = yield* (yield* load(emptyIssuer)).keys;
       expect(emptyIssuerKeys.remoteJwks).toBeUndefined();
       expect(paths).toEqual(["/.well-known/openid-configuration", "/jwks"]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("rejects an analytics backend the stack cannot represent", () =>
@@ -348,7 +348,7 @@ backend = "bigquery"
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit))
         expect(String(exit.cause)).toContain("analytics.backend must be postgres");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("rejects unsupported database versions before creating recipes", () =>
@@ -361,7 +361,7 @@ major_version = 14
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit))
         expect(String(exit.cause)).toContain("db.major_version must be 15 or 17");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("ignores unresolved experimental S3 env placeholders", () => {
@@ -378,7 +378,7 @@ s3_secret_key = "env(S3_SECRET_KEY)"
       const config = yield* load(root);
       const services = yield* config.creations("stack-s3-placeholder");
       expect(services.some((service) => service.service === "database")).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect(
@@ -426,7 +426,7 @@ s3_host = "s3.example.test"
           expect(String(orioledbS3Exit.cause)).toContain(
             "experimental.s3_host is unsupported by the experimental stack",
           );
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("records OrioleDB selection on the command event before rejecting it", () =>
@@ -455,6 +455,6 @@ orioledb_version = "15.1.1.14"
       const accepted = yield* loadRecordingOrioleDb(standard);
       expect(Exit.isSuccess(accepted.exit)).toBe(true);
       expect(accepted.orioledb).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

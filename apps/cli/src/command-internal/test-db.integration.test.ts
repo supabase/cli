@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
 import { vi } from "vitest";
@@ -297,7 +297,7 @@ function setup(opts: SetupOpts = {}) {
     ),
     Layer.succeed(DnsResolverFlag, opts.dnsResolver ?? "native"),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
-    BunServices.layer,
+    NodeServices.layer,
   );
   return { layer, out, telemetry, connection, docker, bundled, resolver };
 }
@@ -783,7 +783,7 @@ describe("test db integration", () => {
           name: "supabase_network_My_Project",
         });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("mints a login role through the real resolver for --linked --project-ref", () => {

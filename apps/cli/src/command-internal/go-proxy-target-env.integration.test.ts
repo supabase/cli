@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
 
 import { useTempWorkdir, VALID_TOKEN } from "../../tests/helpers/command-mocks.ts";
@@ -40,7 +40,7 @@ const setup = (
   const calls: Array<{ readonly args: ReadonlyArray<string> }> = [];
   const poolerUrls: Array<string | undefined> = [];
   const layer = Layer.mergeAll(
-    BunServices.layer,
+    NodeServices.layer,
     isolatedHomeLayer(workdir, {
       SUPABASE_NO_KEYRING: "1",
       ...(interactive === undefined ? {} : { SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit } from "effect";
 import { normalizeCause } from "../../../shared/output/normalize-error.ts";
@@ -13,7 +13,7 @@ describe("postgres-config delete --config flag (pflag StringSlice parity)", () =
       });
 
       expect(values).toEqual(["max_connections", "statement_timeout"]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("accumulates repeated occurrences, each CSV-split", () =>
@@ -24,7 +24,7 @@ describe("postgres-config delete --config flag (pflag StringSlice parity)", () =
       });
 
       expect(values).toEqual(["max_connections", "statement_timeout", "custom_key"]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("keeps only the first CSV record of a multiline value (pflag reads ONE record)", () =>
@@ -35,7 +35,7 @@ describe("postgres-config delete --config flag (pflag StringSlice parity)", () =
       });
 
       expect(values).toEqual(["a"]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("rejects malformed CSV (bare quote) with pflag's exact diagnostic", () =>
@@ -54,7 +54,7 @@ describe("postgres-config delete --config flag (pflag StringSlice parity)", () =
           'invalid argument "max\\"connections" for "--config" flag: parse error on line 1, column 4: bare " in non-quoted-field',
         );
       }
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("rejects a blank-only value with pflag's EOF diagnostic", () =>
@@ -72,6 +72,6 @@ describe("postgres-config delete --config flag (pflag StringSlice parity)", () =
           'invalid argument "\\n" for "--config" flag: EOF',
         );
       }
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

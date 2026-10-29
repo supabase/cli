@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { loadCliConfig } from "@supabase/config/internal";
 import {
@@ -256,7 +256,7 @@ const setupSeedBuckets = Effect.fnUntraced(function* (
     telemetry.layer,
     ConfigProvider.layer(ConfigProvider.fromEnvRecord(process.env, { preserveEmptyStrings: true })),
     mockCommandSettings({ workdir, explicitWorkdir: opts.explicitWorkdir ?? false }),
-    BunServices.layer,
+    NodeServices.layer,
     recorder.layer,
     runtimeInfoLayer,
     // Seed-bucket prompts model an interactive user answering via `confirm`.
@@ -322,11 +322,11 @@ describe("seed buckets", () => {
   ] as const;
 
   const seedScenario = <A, E>(
-    body: Effect.Effect<A, E, BunServices.BunServices>,
+    body: Effect.Effect<A, E, NodeServices.NodeServices>,
   ): Effect.Effect<A, E> =>
     OVERRIDE_ENV_KEYS.reduce<Effect.Effect<A, E>>(
       (acc, key) => withEnvVar(key, undefined, acc),
-      body.pipe(Effect.provide(BunServices.layer)),
+      body.pipe(Effect.provide(NodeServices.layer)),
     );
 
   it.effect("short-circuits with no output when nothing is configured", () =>
@@ -3014,7 +3014,7 @@ describe("seed buckets", () => {
         const loaded = yield* loadCliConfig(tmp.current, {
           goViperCompat: true,
           search: false,
-        }).pipe(Effect.provide(BunServices.layer));
+        }).pipe(Effect.provide(NodeServices.layer));
         if (loaded === null) {
           throw new Error("test setup: config.toml failed to load");
         }
@@ -3060,7 +3060,7 @@ describe("stack backend", () => {
         requests.some((r) => r.method === "POST" && r.url.endsWith("/storage/v1/bucket")),
       ).toBe(true);
       expect(requests.some((r) => r.url.includes("/storage/v1/object/"))).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("seeds buckets without reading or writing supabase/.temp", () =>
@@ -3081,7 +3081,7 @@ describe("stack backend", () => {
 
       expect(accessed.some((entry) => entry.endsWith("a.txt"))).toBe(true);
       expect(legacyStateAccesses(accessed)).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -3099,7 +3099,7 @@ describe("stack backend", () => {
         expect(requests).toHaveLength(0);
         const success = out.messages.find((m) => m.type === "success");
         expect(success?.data?.["buckets_created"]).toEqual([]);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("the same malformed SUPABASE_API_PORT still hard-fails under the legacy backend", () =>
@@ -3116,7 +3116,7 @@ describe("stack backend", () => {
         expect(causeText).toContain("Invalid config for api.port: cannot parse");
       }
       expect(requests).toHaveLength(0);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -3136,7 +3136,7 @@ describe("stack backend", () => {
         expect(capability).toBeInstanceOf(StackStorageCapabilityError);
         expect(capability?.suggestion).toContain("--exclude storage");
         expect(requests).toHaveLength(0);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -3156,6 +3156,6 @@ describe("stack backend", () => {
         expect(unavailable).toBeInstanceOf(StackStorageUnavailableError);
         expect(unavailable?.suggestion).toContain("supabase start");
         expect(requests).toHaveLength(0);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

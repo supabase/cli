@@ -1,6 +1,6 @@
 import { generateKeyPairSync } from "node:crypto";
 
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import { CliConfigSchema, type CliConfig } from "@supabase/config";
 import { ConfigProvider, Effect, FileSystem, Layer, Path, Schema } from "effect";
@@ -46,7 +46,7 @@ import {
 const testEnv: Record<string, string> = {};
 
 const testLayer = Layer.mergeAll(
-  BunServices.layer,
+  NodeServices.layer,
   Layer.succeed(
     ConfigProvider.ConfigProvider,
     ConfigProvider.fromEnvRecord(testEnv, { preserveEmptyStrings: true }),

@@ -1,4 +1,4 @@
-import { BunPath, BunServices } from "@effect/platform-bun";
+import { NodePath, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Config, ConfigProvider, Effect, Exit, FileSystem, Option, Path, Ref } from "effect";
 import type { PlatformError } from "effect/PlatformError";
@@ -26,7 +26,7 @@ function withConfig(content: string | undefined) {
       yield* fs.writeFileString(path.join(dir, "supabase", "config.toml"), content);
     }
     return dir;
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 }
 
 const writeFile = (dir: string, segments: ReadonlyArray<string>, content: string) =>
@@ -34,14 +34,14 @@ const writeFile = (dir: string, segments: ReadonlyArray<string>, content: string
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     yield* fs.writeFileString(path.join(dir, ...segments), content);
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 
 const makeDir = (dir: string, segments: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     yield* fs.makeDirectory(path.join(dir, ...segments), { recursive: true });
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 
 const withEnv = (values: Readonly<Record<string, string>>) =>
   Effect.provideService(
@@ -54,21 +54,21 @@ const read = (workdir: string) =>
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     return yield* readDbToml(fs, path, workdir);
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 
 const readRef = (workdir: string, ref: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     return yield* readDbToml(fs, path, workdir, ref);
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 
 const loadEnv = (workdir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     return yield* loadProjectEnv(fs, path, workdir);
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 
 describe("read (lenient) vs check (throws) split", () => {
   const withServices = <A, E>(
@@ -79,7 +79,7 @@ describe("read (lenient) vs check (throws) split", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       return yield* run(fs, path);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
 
   it.effect("checkDbToml throws on an undecryptable secret", () => {
     return withConfig('[db]\nroot_key = "encrypted:anything"\n').pipe(
@@ -336,7 +336,7 @@ describe("readDbToml", () => {
       // A bare leading `/` has no Windows volume name, so it resolves as relative and joins to
       // `supabase/`, unlike Node's `path.win32.isAbsolute`, which treats a leading separator as
       // rooted at the current drive. Tests `resolveSeedSqlPath` directly with
-      // `BunPath.layerWin32` instead of the full `readDbToml` pipeline, since that pipeline
+      // `NodePath.layerWin32` instead of the full `readDbToml` pipeline, since that pipeline
       // needs the real (POSIX-pathed) `Path.Path` service to open the temp config file on disk.
       const originalPlatform = process.platform;
       Object.defineProperty(process, "platform", { value: "win32" });
@@ -345,7 +345,7 @@ describe("readDbToml", () => {
         const resolved = resolveSeedSqlPath(path, "/schemas/*.sql");
         expect(resolved).toBe("supabase/schemas/*.sql");
       }).pipe(
-        Effect.provide(BunPath.layerWin32),
+        Effect.provide(NodePath.layerWin32),
         Effect.ensuring(
           Effect.sync(() => {
             Object.defineProperty(process, "platform", { value: originalPlatform });
@@ -1856,7 +1856,7 @@ describe("readDbToml", () => {
             return yield* readDbToml(fs, path, dir, undefined, { warnOnUnresolvedEnv: false });
           }),
         ),
-        Effect.provide(BunServices.layer),
+        Effect.provide(NodeServices.layer),
         Effect.tap((v) =>
           Effect.sync(() => {
             // Config load still succeeds and still resolves the value; only the
@@ -2304,7 +2304,7 @@ describe("readDbToml [experimental.pgdelta]", () => {
           );
         }),
       ),
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
     );
   });
 
@@ -2333,7 +2333,7 @@ describe("resolveDeclarativeDir", () => {
           formatOptions: Option.none(),
         }),
       ).toBe(path.join("supabase", "schemas"));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("uses the configured declarative_schema_path when set", () =>
@@ -2346,7 +2346,7 @@ describe("resolveDeclarativeDir", () => {
           formatOptions: Option.none(),
         }),
       ).toBe(path.join("supabase", "db", "decl"));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
 

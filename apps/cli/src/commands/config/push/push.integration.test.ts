@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { V1UpdateAuthServiceConfigOutput } from "@supabase/api/effect";
 import {
@@ -85,7 +85,7 @@ type WorkdirSeed = Effect.Effect<
 const workdirFilesLayer = (toml: string, seed: WorkdirSeed = Effect.void) =>
   Layer.effectDiscard(
     Effect.andThen(writeWorkdirFile(["supabase", "config.toml"], toml), seed),
-  ).pipe(Layer.provide(BunServices.layer));
+  ).pipe(Layer.provide(NodeServices.layer));
 
 const jsonText = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeJsonText = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -852,7 +852,7 @@ max_rows = 1000
           true,
         );
       }),
-    ).pipe(Effect.provide(BunServices.layer)),
+    ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -882,7 +882,7 @@ max_rows = 1000
         expect(api.requests.some((r) => r.method === "PATCH" || r.method === "PUT")).toBe(false);
         expect(api.requests).toHaveLength(0);
         expect(telemetry.flushed).toBe(true);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("a defaulted workdir with no project still points at supabase init", () => {
@@ -934,7 +934,7 @@ max_rows = 1000
           expect(causeText).toContain("failed to change workdir: chdir");
         }
         expect(api.requests).toHaveLength(0);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -962,7 +962,7 @@ max_rows = 1000
         }
         expect(api.requests).toHaveLength(0);
         expect(telemetry.flushed).toBe(true);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("emits a structured summary in json mode with every payload field", () => {
@@ -1750,7 +1750,7 @@ content_path = "./templates/invite.html"
       expect(update).toBeDefined();
       const input = yield* decodeJsonRecord(update?.input);
       expect(input["mailer_templates_invite_content"]).toBe("<h1>Nested invite</h1>");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -3962,7 +3962,7 @@ describe("config push telemetry wiring", () => {
   const wiringLayer = (analytics: ReturnType<typeof mockAnalytics>, projectRef: string) =>
     Layer.mergeAll(
       setup({ toml: `project_id = "test"\n`, yes: true, analytics }).layer,
-      commandRuntimeLayer(["config", "push"]).pipe(Layer.provide(BunServices.layer)),
+      commandRuntimeLayer(["config", "push"]).pipe(Layer.provide(NodeServices.layer)),
       Stdio.layerTest({
         args: Effect.succeed(["config", "push", "--project-ref", projectRef]),
       }),

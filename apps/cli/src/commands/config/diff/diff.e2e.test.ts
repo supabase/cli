@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem } from "effect";
 
@@ -24,6 +24,6 @@ describe("config diff CLI surface", () => {
       expect(combined).toContain(
         "failed to read supabase/config.toml or supabase/config.json: file not found. Run `supabase init` to create one.",
       );
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

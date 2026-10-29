@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, FileSystem, Path } from "effect";
 import { parse } from "yaml";
@@ -82,7 +82,7 @@ describe("issue template contract", () => {
       for (const form of Object.values(issueTemplateContract)) {
         expect(yield* fs.exists(yield* issueTemplatePath(form.template))).toBe(true);
       }
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("keeps issue command field ids aligned with the GitHub issue forms", () =>
@@ -92,7 +92,7 @@ describe("issue template contract", () => {
         expect(ids).toEqual(expect.arrayContaining([...form.fields]));
         expect(form.fields).toEqual(expect.arrayContaining(ids));
       }
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("keeps issue command prefilled option values valid for their fields", () =>
@@ -105,7 +105,7 @@ describe("issue template contract", () => {
           expect(optionLabels(item!)).toEqual(expect.arrayContaining([...values]));
         }
       }
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("keeps inferred install methods compatible with the template dropdown", () =>
@@ -169,6 +169,6 @@ describe("issue template contract", () => {
           ...form.requiredFields,
         ]);
       }
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

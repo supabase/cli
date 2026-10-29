@@ -10,7 +10,7 @@
 
 import type { CliConfig } from "@supabase/config";
 import { CliConfigSchema } from "@supabase/config";
-import { BunPath, BunServices } from "@effect/platform-bun";
+import { NodePath, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   ConfigProvider,
@@ -55,7 +55,7 @@ import {
 import { removeShadowDatabase } from "./shadow-database.ts";
 import type { ShadowDbSetupInput, ShadowSetupInput } from "./shadow-database.ts";
 
-const nodePath = Effect.runSync(Effect.provide(Path.Path, BunPath.layer));
+const nodePath = Effect.runSync(Effect.provide(Path.Path, NodePath.layer));
 
 const decodeConfig = Schema.decodeUnknownSync(CliConfigSchema);
 const defaultConfig: CliConfig = decodeConfig({});
@@ -199,7 +199,7 @@ describe("acquireShadowDatabase", () => {
       }),
     ).pipe(
       Effect.provideService(ConfigProvider.ConfigProvider, configProvider),
-      Effect.provide(Layer.mergeAll(BunServices.layer, out.layer)),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, out.layer)),
     );
   });
 
@@ -225,7 +225,7 @@ describe("acquireShadowDatabase", () => {
         yield* removeShadowDatabase(docker.spawner, handle.containerId);
         expect(docker.calls("rm")[0]).toEqual(["rm", "-f", "-v", handle.containerId]);
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, out.layer, cluster.layer)));
   });
 
   it.live("bypassCache acquires an uncached shadow even when a warm tar exists", () => {
@@ -252,7 +252,7 @@ describe("acquireShadowDatabase", () => {
         yield* handle.snapshotBaseline;
         expect(docker.stepCalls("cp-out")).toHaveLength(1); // the initial cold run's only
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, out.layer, cluster.layer)));
   });
 
   it.live("stays uncached on PG14, whose setup mutates role defaults mid-session", () => {
@@ -280,7 +280,7 @@ describe("acquireShadowDatabase", () => {
         yield* handle.snapshotBaseline;
         expect(yield* soleTarName(fs, path)).toEqual([]);
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, out.layer, cluster.layer)));
   });
 
   it.live("a warm hit also sweeps abandoned partials left by a killed concurrent writer", () => {
@@ -309,7 +309,7 @@ describe("acquireShadowDatabase", () => {
         expect(warm.baselinePresent).toBe(true);
         expect(yield* fs.exists(abandoned)).toBe(false);
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, out.layer, cluster.layer)));
   });
 
   it.live("stays uncached for an OrioleDB cluster even with the cache enabled", () => {
@@ -334,7 +334,7 @@ describe("acquireShadowDatabase", () => {
         expect(docker.calls("stop")).toEqual([]);
         expect(yield* soleTarName(fs, path)).toEqual([]);
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, out.layer, cluster.layer)));
   });
 
   it.live("caches by default when the env var is unset (default ON)", () => {
@@ -360,7 +360,7 @@ describe("acquireShadowDatabase", () => {
         expect(warm.baselinePresent).toBe(true);
         yield* removeShadowDatabase(docker.spawner, warm.containerId);
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, out.layer, cluster.layer)));
   });
 
   it.live(
@@ -389,7 +389,7 @@ describe("acquireShadowDatabase", () => {
           expect(docker.calls("stop")).toEqual([]);
           expect(out.stderrText).toContain("shadow baseline cache unavailable");
         }),
-      ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+      ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, out.layer, cluster.layer)));
     },
   );
 
@@ -427,7 +427,7 @@ describe("acquireShadowDatabase", () => {
         }
         yield* fs.chmod(cacheDir, 0o700);
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, out.layer, cluster.layer)));
   });
 
   it.live("a project dotenv opt-out (SUPABASE_SHADOW_CACHE=0) disables the default", () => {
@@ -450,7 +450,7 @@ describe("acquireShadowDatabase", () => {
         yield* handle.snapshotBaseline;
         expect(yield* soleTarName(fs, path)).toEqual([]);
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, out.layer, cluster.layer)));
   });
 
   it.live("cold run stops, exports the tar, and starts the container again", () => {
@@ -517,7 +517,7 @@ describe("acquireShadowDatabase", () => {
         yield* removeShadowDatabase(docker.spawner, handle.containerId);
         expect(docker.ids()).toEqual([]);
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, out.layer, cluster.layer)));
   });
 
   it.live("warm run restores the tar into a FRESH container before starting it", () => {
@@ -557,7 +557,7 @@ describe("acquireShadowDatabase", () => {
         expect(docker.calls("stop")).toHaveLength(1);
         expect(yield* soleTarName(fs, path)).toHaveLength(1);
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, out.layer, cluster.layer)));
   });
 
   it.live("a pre-created permissive temp file cannot leak into the published tar's mode", () => {
@@ -589,7 +589,7 @@ describe("acquireShadowDatabase", () => {
         expect((Number(info.mode) & 0o777).toString(8)).toBe("600");
         expect(yield* fs.readFileString(tarPath)).toBe(expectedTarFor(tarName));
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, out.layer, cluster.layer)));
   });
 
   it.live("a cold export sweeps abandoned partial temp files but never fresh ones", () => {
@@ -619,7 +619,7 @@ describe("acquireShadowDatabase", () => {
         expect(yield* fs.exists(live)).toBe(true);
         expect(yield* soleTarName(fs, path)).toHaveLength(1);
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, out.layer, cluster.layer)));
   });
 
   it.live("publishing distinct keys keeps both tars until LRU/TTL eviction", () => {
@@ -662,7 +662,7 @@ describe("acquireShadowDatabase", () => {
         expect(afterCap).not.toContain(first[0]);
         expect(yield* fs.exists(stray)).toBe(true);
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, out.layer, cluster.layer)));
   });
 
   it.live("worktrees with identical settings share a warm hit from the global cache", () => {
@@ -693,7 +693,7 @@ describe("acquireShadowDatabase", () => {
         expect(yield* soleTarName(fs, path)).toHaveLength(1);
         yield* removeShadowDatabase(docker.spawner, warm.containerId);
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, out.layer, cluster.layer)));
   });
 
   it.live("a changed published host port is still a warm hit", () => {
@@ -719,7 +719,7 @@ describe("acquireShadowDatabase", () => {
         expect(yield* soleTarName(fs, path)).toHaveLength(1);
         yield* removeShadowDatabase(docker.spawner, warm.containerId);
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, out.layer, cluster.layer)));
   });
 
   it.live("legacy forced-on webhooks and next config-following webhooks do not share a tar", () => {
@@ -754,7 +754,7 @@ describe("acquireShadowDatabase", () => {
         yield* removeShadowDatabase(docker.spawner, warmConfig.containerId);
         yield* removeShadowDatabase(docker.spawner, warmDisabled.containerId);
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, out.layer, cluster.layer)));
   });
 
   it.live("a changed internal image registry is a different key, not a warm hit", () => {
@@ -792,7 +792,7 @@ describe("acquireShadowDatabase", () => {
         expect(mirroredTar).toContain(defaultRegistryTar[0]);
         expect(mirroredTar.some((name) => name !== defaultRegistryTar[0])).toBe(true);
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, out.layer, cluster.layer)));
   });
 
   it.live(
@@ -815,7 +815,7 @@ describe("acquireShadowDatabase", () => {
           expect(Exit.isFailure(exit)).toBe(true);
           expect(out.stderrText).not.toContain("Warning: shadow baseline not cached");
         }),
-      ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+      ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, out.layer, cluster.layer)));
     },
   );
 
@@ -839,7 +839,7 @@ describe("acquireShadowDatabase", () => {
         const entries = yield* fs.readDirectory(shadowCacheDir(path));
         expect(entries).toEqual([]);
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, out.layer, cluster.layer)));
   });
 
   it.live(
@@ -880,7 +880,7 @@ describe("acquireShadowDatabase", () => {
           expect(yield* soleTarName(fs, path)).toHaveLength(1);
           expect(yield* fs.readFileString(tarPath)).toBe(expectedTarFor(tarName));
         }),
-      ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+      ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, out.layer, cluster.layer)));
     },
   );
 
@@ -920,7 +920,7 @@ describe("acquireShadowDatabase", () => {
         expect(yield* fs.readFileString(tarPath)).toBe(expectedTarFor(tarName));
         yield* removeShadowDatabase(docker.spawner, fallback.containerId);
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, out.layer, cluster.layer)));
   });
 
   it.live("a published tar carrying a bare cluster is discarded instead of restored", () => {
@@ -959,7 +959,7 @@ describe("acquireShadowDatabase", () => {
         expect(yield* fs.readFileString(tarPath)).toBe(expectedTarFor(tarName));
         yield* removeShadowDatabase(docker.spawner, fallback.containerId);
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, out.layer, cluster.layer)));
   });
 
   it.live(
@@ -1012,7 +1012,7 @@ describe("acquireShadowDatabase", () => {
           );
           yield* removeShadowDatabase(docker.spawner, fallback.containerId);
         }),
-      ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+      ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, out.layer, cluster.layer)));
     },
   );
 
@@ -1038,7 +1038,7 @@ describe("acquireShadowDatabase", () => {
         expect(docker.stepCalls("cp-out")).toHaveLength(0);
         expect(yield* soleTarName(fs, path)).toEqual([]);
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, out.layer, cluster.layer)));
   });
 
   it.live("a restored shadow that never becomes ready is removed before the cold retry", () => {
@@ -1072,7 +1072,7 @@ describe("acquireShadowDatabase", () => {
         expect(removeIndex).toBeLessThan(recreateIndex);
         expect(yield* soleTarName(fs, path)).toEqual([]);
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, fakeCluster().layer)));
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, out.layer, fakeCluster().layer)));
   });
 
   it.live("concurrent same-key cold snapshots publish exactly one intact tar", () => {
@@ -1114,7 +1114,7 @@ describe("acquireShadowDatabase", () => {
         yield* removeShadowDatabase(docker.spawner, second.containerId);
         expect(docker.ids()).toEqual([]);
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, out.layer, cluster.layer)));
   });
 });
 
@@ -1157,7 +1157,7 @@ describe("peekShadowBaseline", () => {
 
         expect((yield* peekShadowBaseline(input, { bypassCache: true })).state).toBe("uncachable");
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, out.layer, cluster.layer)));
   });
 
   it.live("reports uncachable when the cache env gate is off", () => {
@@ -1170,7 +1170,7 @@ describe("peekShadowBaseline", () => {
         const path = yield* Path.Path;
         expect((yield* peekShadowBaseline(shadowInput(fs, path))).state).toBe("uncachable");
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, out.layer, cluster.layer)));
   });
 
   it.live("acquire reuses peeked key inputs instead of re-resolving JWKS", () => {
@@ -1211,6 +1211,6 @@ describe("peekShadowBaseline", () => {
         expect(jwksResolutions).toBe(1);
         yield* removeShadowDatabase(docker.spawner, handle.containerId);
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, out.layer, cluster.layer)));
   });
 });

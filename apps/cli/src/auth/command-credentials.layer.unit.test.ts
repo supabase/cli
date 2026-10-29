@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunPath, BunServices } from "@effect/platform-bun";
+import { NodePath, NodeServices } from "@effect/platform-node";
 import {
   Effect,
   Exit,
@@ -22,7 +22,7 @@ import { commandCredentialsLayer } from "./command-credentials.layer.ts";
 import { CommandCredentials } from "./command-credentials.service.ts";
 import { DeleteTokenError, InvalidAccessTokenError, NotLoggedInError } from "./errors.ts";
 
-const path = Effect.runSync(Effect.provide(Path.Path, BunPath.layer));
+const path = Effect.runSync(Effect.provide(Path.Path, NodePath.layer));
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const passwords = new Map<string, string>();
@@ -124,7 +124,7 @@ function makeLayer(
     Layer.provide(Layer.succeed(ProfileFlag, "supabase")),
     Layer.provide(Layer.succeed(WorkdirFlag, Option.none<string>())),
     Layer.provide(runtimeInfoLayer),
-    Layer.provide(BunServices.layer),
+    Layer.provide(NodeServices.layer),
     Layer.provide(envLayer),
   );
   return commandCredentialsLayer.pipe(
@@ -132,8 +132,8 @@ function makeLayer(
     Layer.provide(debugLoggerLayer),
     Layer.provide(Layer.succeed(DebugFlag, opts.debug ?? false)),
     Layer.provide(runtimeInfoLayer),
-    Layer.provide(opts.fs ?? BunServices.layer),
-    Layer.provideMerge(BunServices.layer),
+    Layer.provide(opts.fs ?? NodeServices.layer),
+    Layer.provideMerge(NodeServices.layer),
     Layer.provide(envLayer),
   );
 }
@@ -628,7 +628,7 @@ describe("commandCredentialsLayer.deleteAccessToken", () => {
       Layer.provide(Layer.succeed(ProfileFlag, "supabase")),
       Layer.provide(Layer.succeed(WorkdirFlag, Option.none<string>())),
       Layer.provide(runtimeInfoLayer),
-      Layer.provide(BunServices.layer),
+      Layer.provide(NodeServices.layer),
       Layer.provide(processEnvLayer(env)),
     );
     const layer = commandCredentialsLayer.pipe(
@@ -637,7 +637,7 @@ describe("commandCredentialsLayer.deleteAccessToken", () => {
       Layer.provide(Layer.succeed(DebugFlag, false)),
       Layer.provide(runtimeInfoLayer),
       Layer.provide(fsLayer),
-      Layer.provide(BunServices.layer),
+      Layer.provide(NodeServices.layer),
       Layer.provide(processEnvLayer(env)),
     );
     return Effect.gen(function* () {

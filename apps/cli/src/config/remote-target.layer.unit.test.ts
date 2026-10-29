@@ -1,6 +1,6 @@
 import type { ApiClient } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
 
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
@@ -78,7 +78,7 @@ function makeLayer(opts: {
         make: CommandPlatformApi.pipe(Effect.provide(mockPlatformApi(opts.projects ?? []))),
       }),
     ),
-    Layer.provideMerge(BunServices.layer),
+    Layer.provideMerge(NodeServices.layer),
   );
   return { layer, out };
 }

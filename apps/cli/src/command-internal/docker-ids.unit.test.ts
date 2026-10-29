@@ -1,4 +1,4 @@
-import { BunPath } from "@effect/platform-bun";
+import { NodePath } from "@effect/platform-node";
 import { describe, expect, it, layer } from "@effect/vitest";
 import { ConfigProvider, Effect, Path } from "effect";
 
@@ -14,7 +14,7 @@ import {
 import { resolveDockerNetworkMode } from "../shared/functions/functions-docker.ts";
 import { viperEnvStringWithProjectFallback } from "./viper-env.ts";
 
-layer(BunPath.layer)("resolveLocalProjectId", (it) => {
+layer(NodePath.layer)("resolveLocalProjectId", (it) => {
   it.effect("prefers SUPABASE_PROJECT_ID (env) over config.toml and the basename", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;

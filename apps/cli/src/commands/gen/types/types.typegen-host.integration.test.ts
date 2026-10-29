@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect } from "effect";
 import { ChildProcessSpawner } from "effect/process";
@@ -21,7 +21,7 @@ describe.skipIf(process.platform === "win32")("makeTypegenHost with the real spa
       return yield* Effect.promise(() =>
         spawn({ command: "sh", args: ["-c", tool], cwd: process.cwd(), env: {}, stdin }),
       );
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
 
   // A write this small completes before the tool exits, so the pipe's EPIPE arrives after the
   // sink has stopped listening; only the patched stdin error listener keeps it from crashing

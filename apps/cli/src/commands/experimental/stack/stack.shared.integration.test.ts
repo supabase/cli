@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path, Ref } from "effect";
 import {
@@ -79,7 +79,7 @@ describe("stack target resolver", () => {
         runtime: "native",
         hostRunning: false,
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("rejects an id prefix that several readable or unreadable saved stacks share", () =>
@@ -110,7 +110,7 @@ describe("stack target resolver", () => {
       expect(failure.message).toContain(id);
       expect(failure.message).toContain(twin);
       expect(failure.message).toContain(broken);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("rejects a stack id shorter than four characters", () =>
@@ -126,7 +126,7 @@ describe("stack target resolver", () => {
 
       expect(failure.reason).toBe("flags");
       expect(failure.message).toContain("prefix of at least 4 characters");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("rejects an explicit id when its saved runtime differs", () =>
@@ -144,7 +144,7 @@ describe("stack target resolver", () => {
       expect(failure.message).toContain("existing stack runtime docker");
       expect(failure.suggestion).toContain("--runtime auto");
       expect(failure.suggestion).toContain("different --stack name");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("selects the saved stack whose identity the project and stack name derive", () =>
@@ -157,7 +157,7 @@ describe("stack target resolver", () => {
 
       expect(target).toMatchObject({ projectRoot: root, id, name: "feature" });
       expect(target.definition?.identity.stackName).toBe("feature");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("records the saved stack's runtime on the command event", () =>
@@ -173,7 +173,7 @@ describe("stack target resolver", () => {
       );
 
       expect((yield* Ref.get(recorded)).stack_runtime).toBe("docker");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports no id when the project has no saved stack", () =>
@@ -183,7 +183,7 @@ describe("stack target resolver", () => {
       const target = yield* resolve({ projectRoot: root, runtime: "docker" });
 
       expect(target).toEqual({ projectRoot: root, runtime: "docker", hostRunning: false });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("carries an explicit Podman runtime onto a new stack target and records it", () =>
@@ -199,7 +199,7 @@ describe("stack target resolver", () => {
 
       expect(target).toEqual({ projectRoot: root, runtime: "podman", hostRunning: false });
       expect((yield* Ref.get(recorded)).stack_runtime).toBe("podman");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("returns the canonical project root for a new stack reached through a symlink", () =>
@@ -214,7 +214,7 @@ describe("stack target resolver", () => {
 
       expect(target.projectRoot).toBe(root);
       expect(target.id).toBeUndefined();
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("surfaces an unreadable saved stack instead of reporting it missing", () =>
@@ -230,7 +230,7 @@ describe("stack target resolver", () => {
       expect(failure).toBeInstanceOf(StackTargetError);
       expect(failure).toMatchObject({ reason: "invalid-config", targetIssue: "stack-lookup" });
       expect(failure.message).toContain(id);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -264,7 +264,7 @@ describe("stack target resolver", () => {
             `Remove its directory ${path.join(home, "stacks", id)}`,
           );
         }
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports a stack registry that cannot be listed for an id prefix", () =>
@@ -280,7 +280,7 @@ describe("stack target resolver", () => {
       );
 
       expect(failure).toMatchObject({ reason: "invalid-config", targetIssue: "stack-discovery" });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports a missing project root as the project root, not as a stack lookup", () =>
@@ -294,7 +294,7 @@ describe("stack target resolver", () => {
       }).pipe(Effect.flip);
 
       expect(failure).toMatchObject({ reason: "invalid-config", targetIssue: "project-root" });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("surfaces an unreadable saved stack that an id prefix selects", () =>
@@ -313,7 +313,7 @@ describe("stack target resolver", () => {
 
       expect(failure).toMatchObject({ reason: "invalid-config", targetIssue: "unreadable-stack" });
       expect(failure.message).toContain(`Stack ${id} could not be read`);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
 
@@ -341,6 +341,6 @@ describe("stack API layer", () => {
       expect(discovered[0]?.definition.id).toBe(created.id);
       expect(discovered[0]?.host).toBeUndefined();
       expect(opened.id).toBe(created.id);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

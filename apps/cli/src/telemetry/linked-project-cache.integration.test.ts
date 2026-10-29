@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path, Schema } from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -70,7 +70,7 @@ describe("linkedProjectCacheLayer", () => {
             isTty: true,
           }),
         ),
-        Layer.provide(BunServices.layer),
+        Layer.provide(NodeServices.layer),
       );
       const layer = linkedProjectCacheLayer.pipe(
         Layer.provide(api.httpClientLayer),
@@ -80,7 +80,7 @@ describe("linkedProjectCacheLayer", () => {
         // The cache also fires org/project groupIdentify; it reads Analytics directly, so
         // provide the same mock the stitcher uses.
         Layer.provide(analytics.layer),
-        Layer.provide(BunServices.layer),
+        Layer.provide(NodeServices.layer),
       );
       yield* Effect.gen(function* () {
         const cache = yield* LinkedProjectCache;
@@ -109,7 +109,7 @@ describe("linkedProjectCacheLayer", () => {
           },
         ]);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.live("does not re-identify groups when the linked-project cache already exists", () =>
@@ -136,7 +136,7 @@ describe("linkedProjectCacheLayer", () => {
         Layer.provide(
           mockTelemetryRuntime({ configDir: path.join(workdir, ".supabase"), consent: "granted" }),
         ),
-        Layer.provide(BunServices.layer),
+        Layer.provide(NodeServices.layer),
       );
       const layer = linkedProjectCacheLayer.pipe(
         Layer.provide(api.httpClientLayer),
@@ -144,7 +144,7 @@ describe("linkedProjectCacheLayer", () => {
         Layer.provide(mockCommandCredentialsLayer),
         Layer.provide(identityStitch),
         Layer.provide(analytics.layer),
-        Layer.provide(BunServices.layer),
+        Layer.provide(NodeServices.layer),
       );
       yield* Effect.gen(function* () {
         const cache = yield* LinkedProjectCache;
@@ -153,7 +153,7 @@ describe("linkedProjectCacheLayer", () => {
         expect(analytics.groupIdentified).toEqual([]);
         expect(analytics.aliased).toEqual([]);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.live(
@@ -185,7 +185,7 @@ describe("linkedProjectCacheLayer", () => {
               consent: "granted",
             }),
           ),
-          Layer.provide(BunServices.layer),
+          Layer.provide(NodeServices.layer),
         );
         const layer = linkedProjectCacheLayer.pipe(
           Layer.provide(api.httpClientLayer),
@@ -193,7 +193,7 @@ describe("linkedProjectCacheLayer", () => {
           Layer.provide(mockCommandCredentialsLayer),
           Layer.provide(identityStitch),
           Layer.provide(analytics.layer),
-          Layer.provide(BunServices.layer),
+          Layer.provide(NodeServices.layer),
         );
         yield* Effect.gen(function* () {
           const cache = yield* LinkedProjectCache;
@@ -203,7 +203,7 @@ describe("linkedProjectCacheLayer", () => {
           ).toBe(false);
           expect(analytics.groupIdentified).toEqual([]);
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.live("leaves the command's result alone when the project lookup is forbidden", () =>
@@ -220,7 +220,7 @@ describe("linkedProjectCacheLayer", () => {
         Layer.provide(
           mockTelemetryRuntime({ configDir: path.join(workdir, ".supabase"), consent: "granted" }),
         ),
-        Layer.provide(BunServices.layer),
+        Layer.provide(NodeServices.layer),
       );
       const layer = linkedProjectCacheLayer.pipe(
         Layer.provide(api.httpClientLayer),
@@ -228,7 +228,7 @@ describe("linkedProjectCacheLayer", () => {
         Layer.provide(mockCommandCredentialsLayer),
         Layer.provide(identityStitch),
         Layer.provide(analytics.layer),
-        Layer.provide(BunServices.layer),
+        Layer.provide(NodeServices.layer),
       );
       yield* Effect.gen(function* () {
         const cache = yield* LinkedProjectCache;
@@ -239,7 +239,7 @@ describe("linkedProjectCacheLayer", () => {
         ).toBe(false);
         expect(analytics.groupIdentified).toEqual([]);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.live("keeps the stack-mode cache under SUPABASE_HOME and leaves supabase/.temp alone", () =>
@@ -274,7 +274,7 @@ describe("linkedProjectCacheLayer", () => {
         Layer.provide(
           mockTelemetryRuntime({ configDir: path.join(workdir, ".supabase"), consent: "granted" }),
         ),
-        Layer.provide(BunServices.layer),
+        Layer.provide(NodeServices.layer),
       );
       const layer = linkedProjectCacheLayer.pipe(
         Layer.provide(api.httpClientLayer),
@@ -282,7 +282,7 @@ describe("linkedProjectCacheLayer", () => {
         Layer.provide(mockCommandCredentialsLayer),
         Layer.provide(identityStitch),
         Layer.provide(analytics.layer),
-        Layer.provide(BunServices.layer),
+        Layer.provide(NodeServices.layer),
       );
       yield* Effect.gen(function* () {
         const cache = yield* LinkedProjectCache;
@@ -298,6 +298,6 @@ describe("linkedProjectCacheLayer", () => {
         expect(api.requests).toHaveLength(1);
         expect(yield* fs.exists(path.join(workdir, "supabase", ".temp"))).toBe(false);
       }).pipe(Effect.provide(layer.pipe(Layer.provideMerge(projectStateModeLayer("stack")))));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

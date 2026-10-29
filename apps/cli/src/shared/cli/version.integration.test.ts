@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Console, Effect, Layer, Schema, Stream } from "effect";
 import { CliOutput, Command } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -76,6 +76,6 @@ describe("CLI --version (text)", () => {
 
       expect(exitCode, stderr).toBe(0);
       expect(stdout.trim()).toBe("0.0.0-dev");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

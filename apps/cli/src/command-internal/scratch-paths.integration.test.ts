@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect } from "effect";
 
@@ -12,7 +12,7 @@ const resolve = (kind: "legacy" | "stack", workdir: string) =>
     pgdelta: pgdeltaScratchDir(workdir),
   }).pipe(
     Effect.provide([
-      BunServices.layer,
+      NodeServices.layer,
       mockCommandSettings({ workdir, supabaseHome: "/home/.supabase" }),
       stackBackendLayer(kind),
     ]),

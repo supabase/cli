@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 
@@ -71,7 +71,7 @@ describe("updateMigrationHistory", () => {
       expect(out.stderrText).toContain(
         "Repaired migration history: [20240101000000 20240101000001] => applied",
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("rolls back and surfaces the error when an upsert fails mid-loop", () =>
@@ -94,6 +94,6 @@ describe("updateMigrationHistory", () => {
       expect(error).toBeInstanceOf(DbPullWriteError);
       expect(error.message).toBe("failed to update migration table: connection reset by peer");
       expect(out.stderrText).not.toContain("Repaired migration history");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

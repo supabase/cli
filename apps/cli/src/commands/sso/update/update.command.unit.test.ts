@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Effect, Exit } from "effect";
 import { describe, expect, it } from "@effect/vitest";
 import { normalizeCause } from "../../../shared/output/normalize-error.ts";
@@ -16,7 +16,7 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
           flags: { domains: ["example.com,example.org"] },
           arguments: [],
         })
-        .pipe(Effect.provide(BunServices.layer));
+        .pipe(Effect.provide(NodeServices.layer));
 
       expect(domains).toEqual(["example.com", "example.org"]);
     }),
@@ -29,7 +29,7 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
           flags: { "add-domains": ["example.com,example.org"] },
           arguments: [],
         })
-        .pipe(Effect.provide(BunServices.layer));
+        .pipe(Effect.provide(NodeServices.layer));
 
       expect(addDomains).toEqual(["example.com", "example.org"]);
     }),
@@ -42,7 +42,7 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
           flags: { "remove-domains": ["example.com,example.org"] },
           arguments: [],
         })
-        .pipe(Effect.provide(BunServices.layer));
+        .pipe(Effect.provide(NodeServices.layer));
 
       expect(removeDomains).toEqual(["example.com", "example.org"]);
     }),
@@ -55,7 +55,7 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
           flags: {},
           arguments: [],
         })
-        .pipe(Effect.provide(BunServices.layer));
+        .pipe(Effect.provide(NodeServices.layer));
 
       expect(domains).toEqual([]);
     }),
@@ -68,7 +68,7 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
           flags: {},
           arguments: [],
         })
-        .pipe(Effect.provide(BunServices.layer));
+        .pipe(Effect.provide(NodeServices.layer));
 
       expect(addDomains).toEqual([]);
     }),
@@ -81,7 +81,7 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
           flags: {},
           arguments: [],
         })
-        .pipe(Effect.provide(BunServices.layer));
+        .pipe(Effect.provide(NodeServices.layer));
 
       expect(removeDomains).toEqual([]);
     }),
@@ -97,7 +97,7 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
           flags: { domains: [""] },
           arguments: [],
         })
-        .pipe(Effect.provide(BunServices.layer));
+        .pipe(Effect.provide(NodeServices.layer));
 
       expect(domains).toEqual([]);
     }),
@@ -110,7 +110,7 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
           flags: { domains: ['a.com\nb"c'] },
           arguments: [],
         })
-        .pipe(Effect.provide(BunServices.layer));
+        .pipe(Effect.provide(NodeServices.layer));
 
       expect(domains).toEqual(["a.com"]);
     }),
@@ -123,7 +123,7 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
           flags: { domains: ['example"com'] },
           arguments: [],
         })
-        .pipe(Effect.provide(BunServices.layer), Effect.exit);
+        .pipe(Effect.provide(NodeServices.layer), Effect.exit);
 
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -141,7 +141,7 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
           flags: { "add-domains": ['"x'] },
           arguments: [],
         })
-        .pipe(Effect.provide(BunServices.layer), Effect.exit);
+        .pipe(Effect.provide(NodeServices.layer), Effect.exit);
 
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -159,7 +159,7 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
           flags: { "remove-domains": ['"x'] },
           arguments: [],
         })
-        .pipe(Effect.provide(BunServices.layer), Effect.exit);
+        .pipe(Effect.provide(NodeServices.layer), Effect.exit);
 
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -177,7 +177,7 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
           flags: { "add-domains": ["\n\n"] },
           arguments: [],
         })
-        .pipe(Effect.provide(BunServices.layer), Effect.exit);
+        .pipe(Effect.provide(NodeServices.layer), Effect.exit);
 
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {

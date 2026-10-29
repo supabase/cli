@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import { vi } from "vitest";
 
@@ -81,7 +81,7 @@ function setup(
         }),
         Layer.succeed(DebugFlag, false),
         Layer.succeed(NetworkIdFlag, Option.none<string>()),
-        BunServices.layer,
+        NodeServices.layer,
       ),
     ),
   );
@@ -177,7 +177,7 @@ describe("edgeRuntimeScriptLayer sentinel handling", () => {
         }).pipe(Effect.provide(layer));
         expect(docker.lastOpts?.image).toContain("edge-runtime:v-from-caller");
         expect(docker.lastOpts?.image).not.toContain("v-from-config");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -223,7 +223,7 @@ describe("edgeRuntimeScriptLayer sentinel handling", () => {
         yield* runScript().pipe(Effect.provide(Layer.merge(layer, projectStateModeLayer("stack"))));
 
         expect(docker.lastOpts?.image).toContain("edge-runtime:v1.99.0");
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -270,7 +270,7 @@ describe("edgeRuntimeScriptLayer sentinel handling", () => {
         expect(docker.lastOpts?.image).toBe(lockedImage);
       }).pipe(
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide(NodeServices.layer),
         Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
       ),
   );

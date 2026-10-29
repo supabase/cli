@@ -1,6 +1,6 @@
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem.watch drops root events and classifies renames asynchronously.
 import { existsSync, watch } from "node:fs";
-import { BunPath } from "@effect/platform-bun";
+import { NodePath } from "@effect/platform-node";
 import { Cause, Context, Data, Effect, Layer, Path, Queue, Stream } from "effect";
 
 import {
@@ -78,4 +78,4 @@ export const fileWatcherLayer = Layer.effect(
         ),
     }),
   ),
-).pipe(Layer.provide(BunPath.layer));
+).pipe(Layer.provide(NodePath.layer));

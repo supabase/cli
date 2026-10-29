@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { expect, layer } from "@effect/vitest";
 import { Data, Effect, Exit, FileSystem, Path } from "effect";
 
@@ -43,7 +43,7 @@ const tempDir = (prefix: string) =>
 // Exercises that `getPendingSeeds`'s glob resolution actually uses `pathMatch`
 // (`../../../shared/path-match.ts`) end to end; pattern-matching semantics are covered by
 // `path-match.unit.test.ts`.
-layer(BunServices.layer)("getPendingSeeds (glob character classes)", (it) => {
+layer(NodeServices.layer)("getPendingSeeds (glob character classes)", (it) => {
   it.effect(
     "treats a leading `!` in a bracket class as literal, not negation (Go path.Match parity)",
     () =>
@@ -95,7 +95,7 @@ const runSeed = (
     );
   }).pipe(Effect.provide(mockOutput({ format: "text" }).layer));
 
-layer(BunServices.layer)("seedData (dirty parse)", (it) => {
+layer(NodeServices.layer)("seedData (dirty parse)", (it) => {
   it.effect("fails on an unreadable dirty seed instead of refreshing its hash", () =>
     Effect.gen(function* () {
       const { dir } = yield* tempDir("seed-");

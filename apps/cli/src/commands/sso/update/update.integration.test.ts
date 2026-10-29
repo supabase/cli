@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -1278,7 +1278,7 @@ describe("sso update integration", () => {
         const putReq = api.requests.find((r) => r.method === "PUT");
         expect(putReq?.body).toHaveProperty("metadata_xml", expect.stringContaining("<md/>"));
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("preserves attribute_mapping `default` field in PUT body", () =>
@@ -1294,7 +1294,7 @@ describe("sso update integration", () => {
         const putReq = api.requests.find((r) => r.method === "PUT");
         expect(putReq?.body).toHaveProperty("attribute_mapping.keys.a.default", 3);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("PUT 200 → renders single-provider markdown in text mode", () => {
@@ -1457,7 +1457,7 @@ describe("sso update integration", () => {
           expect(Cause.pretty(exit.cause)).toContain("SsoUpdateAttributeMappingFileError");
         }
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("an attribute mapping with an unknown key fails before the PUT", () =>
@@ -1478,7 +1478,7 @@ describe("sso update integration", () => {
         }
         expect(api.requests.some((r) => r.method === "PUT")).toBe(false);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("--add-domains + --remove-domains combined apply remove then add", () => {
@@ -1533,7 +1533,7 @@ describe("sso update integration", () => {
           expect(put?.headers["authorization"]).toMatch(/^Bearer sbp_/);
           expect(cache.cachedApiUrl).toBe("http://second.example");
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("profile emulation: a reconciled profile with no resolvable token aborts like Go", () =>
@@ -1565,7 +1565,7 @@ describe("sso update integration", () => {
         }
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("profile emulation: the missing-token gate fires AFTER the mutex check, like Go", () =>
@@ -1601,7 +1601,7 @@ describe("sso update integration", () => {
         }
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -1658,7 +1658,7 @@ describe("sso update integration", () => {
             apiUrl: "http://second.example",
           });
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("profile emulation: the LoadProfile failure loses to the arity check, like Go", () => {

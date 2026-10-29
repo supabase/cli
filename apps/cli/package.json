@@ -27,6 +27,7 @@
     "build": "pnpm build:go-sidecar && pnpm build:binary && pnpm build:shim",
     "build:go-sidecar": "mkdir -p dist && cp ../cli-go/supabase-go dist/supabase-go",
     "build:binary": "bun scripts/build-binary.ts",
+    "build:node": "mkdir -p dist-node && cp ../cli-go/supabase-go dist-node/supabase-go && bun scripts/build-node.ts",
     "build:shim": "bun build src/shared/cli/bin.ts --outfile dist/supabase.js --target node",
     "docs:spec": "bun scripts/generate-docs-spec.ts",
     "dev": "bun src/main.ts",
@@ -51,6 +52,7 @@
     "@anthropic-ai/sdk": "^0.120.0",
     "@clack/prompts": "^1.7.0",
     "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
     "@effect/sql-pg": "catalog:",
     "@effect/vitest": "catalog:",
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -79,6 +81,7 @@
     "smol-toml": "^1.8.0",
     "tldts": "catalog:",
     "typescript": "catalog:",
+    "undici": "8.12.2",
     "vite": "^8.2.2",
     "vitest": "catalog:",
     "yaml": "^2.9.0"

@@ -1,5 +1,5 @@
 import { legacyProjectStateLayer } from "./legacy-project-state.layer.ts";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer } from "effect";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -77,7 +77,7 @@ describe("linkServicesCore", () => {
           api.layer,
           api.httpClientLayer,
           mockCommandSettings({ workdir: workdir.current }),
-        ).pipe(Layer.provideMerge(legacyProjectStateLayer), Layer.provideMerge(BunServices.layer)),
+        ).pipe(Layer.provideMerge(legacyProjectStateLayer), Layer.provideMerge(NodeServices.layer)),
       ),
       Effect.as(api.requests),
     );
@@ -122,7 +122,7 @@ describe("linkServicesCore", () => {
         activeFlags: { "skip-pooler": false },
         requests,
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("writes nothing and still completes when both config lookups are forbidden", () =>
@@ -140,7 +140,7 @@ describe("linkServicesCore", () => {
       );
       expect(yield* fs.exists(`${temp}/storage-migration`)).toBe(false);
       expect(yield* fs.exists(`${temp}/pooler-url`)).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("requests no pooler config when skipPooler is set", () =>

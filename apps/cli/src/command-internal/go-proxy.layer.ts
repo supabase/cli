@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import os from "node:os";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 import { Config, Effect, FileSystem, Layer, Option, Path, Schema, Stream } from "effect";
 import * as ChildProcess from "effect/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
@@ -74,6 +75,16 @@ export type BinaryResolution =
   | { readonly found: string }
   | { readonly notFound: ReadonlyArray<string> };
 
+/** Directory of the running JS bundle; undefined inside a Bun-compiled binary's virtual filesystem. */
+function bundleDirectory(path: Pick<Path.Path, "dirname">): string | undefined {
+  if (import.meta.url.includes("$bunfs") || import.meta.url.includes("~BUN")) return undefined;
+  try {
+    return path.dirname(fileURLToPath(import.meta.url));
+  } catch {
+    return undefined;
+  }
+}
+
 const resolveBinary = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
@@ -90,9 +101,18 @@ const resolveBinary = Effect.fnUntraced(function* (
 
   // When running as a compiled standalone binary (exec'd by the base shim), process.execPath is
   // this binary's own path; look for supabase-go co-located next to it.
-  const colocated = path.join(path.dirname(process.execPath), `supabase-go${ext}`);
+  const execDir = path.dirname(process.execPath);
+  const colocated = path.join(execDir, `supabase-go${ext}`);
   if (yield* exists(colocated)) return { found: colocated };
   tried.push(`${colocated} (not found alongside the shim)`);
+
+  // Under a JS runtime (Node), execPath is the runtime itself, so also look next to the bundle.
+  const bundleDir = bundleDirectory(path);
+  if (bundleDir !== undefined && bundleDir !== execDir) {
+    const besideBundle = path.join(bundleDir, `supabase-go${ext}`);
+    if (yield* exists(besideBundle)) return { found: besideBundle };
+    tried.push(`${besideBundle} (not found alongside the CLI bundle)`);
+  }
 
   // When running from source, resolve via installed npm packages.
   // Guard with exists — in dev the workspace stub packages exist but their bin/ is empty.

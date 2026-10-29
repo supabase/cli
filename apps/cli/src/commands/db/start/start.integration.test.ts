@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -353,7 +353,7 @@ function setup(opts: SetupOpts = {}) {
         yield* writeProjectFile(workdir, ".env", opts.projectEnvContents);
       }
     }),
-  ).pipe(Layer.provide(BunServices.layer));
+  ).pipe(Layer.provide(NodeServices.layer));
   const out = mockOutput({ format: opts.format ?? "text" });
   const http = alwaysReadyHttpClient();
   const telemetry = mockTelemetryStateTracked();
@@ -400,7 +400,7 @@ function setup(opts: SetupOpts = {}) {
   });
 
   const layer = Layer.mergeAll(
-    BunServices.layer,
+    NodeServices.layer,
     out.layer,
     cliSettings,
     telemetry.layer,
@@ -451,13 +451,13 @@ const readCurrentBranch = (workdir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     return yield* fs.readFileString(yield* currentBranchPath(workdir));
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 
 const currentBranchExists = (workdir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     return yield* fs.exists(yield* currentBranchPath(workdir));
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 
 describe("db start", () => {
   beforeEach(() => {
@@ -1521,7 +1521,7 @@ describe("db start", () => {
             const fs = yield* FileSystem.FileSystem;
             const path = yield* Path.Path;
             return yield* fs.readFileString(path.join(tempRoot.current, "supabase", "config.toml"));
-          }).pipe(Effect.provide(BunServices.layer));
+          }).pipe(Effect.provide(NodeServices.layer));
           expect(onDiskConfig).toBe(configContents ?? 'project_id = "test"\n');
           expect(out.stderrText).not.toContain("auto_expose_new_tables");
         }

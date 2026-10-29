@@ -1,5 +1,5 @@
 import type { CliConfig } from "@supabase/config";
-import { BunPath } from "@effect/platform-bun";
+import { NodePath } from "@effect/platform-node";
 import { Effect, FileSystem, Option, Path, Ref, Result, Stream } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
@@ -66,7 +66,7 @@ export const storageCp = Effect.fn("storage.cp")(function* (flags: StorageCpFlag
   const resolver = yield* RemoteTarget;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
+  const posixPath = yield* Effect.provide(Path.Path, NodePath.layerPosix);
   const runtimeInfo = yield* RuntimeInfo;
 
   const jobsFlag = Option.getOrElse(flags.jobs, () => 1);

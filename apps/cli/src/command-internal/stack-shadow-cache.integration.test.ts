@@ -1,5 +1,5 @@
 import { CliConfigSchema } from "@supabase/config";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Option, Path, Schema } from "effect";
 
@@ -129,7 +129,7 @@ describe("stack shadow cache entry", () => {
           "config",
         ),
       ).toBeUndefined();
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("keys shadows of different database or service pins apart", () =>
@@ -161,6 +161,6 @@ describe("stack shadow cache entry", () => {
       expect(stock).toBeDefined();
       for (const other of keys) expect(other).toBeDefined();
       expect(new Set([stock, ...keys]).size).toBe(keys.length + 1);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

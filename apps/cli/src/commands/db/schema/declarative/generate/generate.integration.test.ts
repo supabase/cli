@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer, Option, Path, Redacted, Schema, Stream } from "effect";
 import { StackError, type DatabaseInstance, type Stack } from "@supabase/stack/effect";
@@ -357,7 +357,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         Layer.succeed(CommandPlatformApiFactory, {
           make: CommandPlatformApi.pipe(Effect.provide(platformApi.layer)),
         }),
-        BunServices.layer,
+        NodeServices.layer,
       ),
     ),
   );
@@ -397,8 +397,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(CommandPlatformApiFactory, {
       make: CommandPlatformApi.pipe(Effect.provide(platformApi.layer)),
     }),
-    BunServices.layer,
-    // `child.layer` must be listed after `BunServices.layer` — `Layer.mergeAll` resolves a
+    NodeServices.layer,
+    // `child.layer` must be listed after `NodeServices.layer` — `Layer.mergeAll` resolves a
     // duplicate service tag to whichever layer is listed last, so this mock overrides Bun's
     // real `ChildProcessSpawner` instead of the reverse.
     child.layer,
@@ -722,7 +722,7 @@ describe("db schema declarative generate integration", () => {
         }
         expect(s.localPostgresImageChecks).toEqual([]);
       }).pipe(Effect.provide(s.layer));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("--output-dir leaves the configured declarative tree untouched", () => {
@@ -1367,7 +1367,7 @@ describe("db schema declarative generate permissions through the real resolver a
       });
     }).pipe(
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });
@@ -1392,7 +1392,7 @@ describe("db schema declarative generate permissions through the real resolver a
       });
     }).pipe(
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });
@@ -1417,7 +1417,7 @@ describe("db schema declarative generate permissions through the real resolver a
       });
     }).pipe(
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });
@@ -1442,7 +1442,7 @@ describe("db schema declarative generate permissions through the real resolver a
       });
     }).pipe(
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });
@@ -1479,7 +1479,7 @@ describe("db schema declarative generate permissions through the real resolver a
         });
       }).pipe(
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide(NodeServices.layer),
         provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
       );
     },

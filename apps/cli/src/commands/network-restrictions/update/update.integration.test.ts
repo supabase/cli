@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import {
   type V1PatchNetworkRestrictionsOutput,
   type V1UpdateNetworkRestrictionsOutput,
@@ -39,7 +39,7 @@ const parseDbAllowCidr = (rawValues: ReadonlyArray<string>) =>
     .parse({ flags: { "db-allow-cidr": rawValues }, arguments: [] })
     .pipe(
       Effect.map(([, values]) => values),
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
     );
 
 const POST_APPLIED: typeof V1UpdateNetworkRestrictionsOutput.Type = {

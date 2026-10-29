@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path, Schema } from "effect";
 import { runSupabaseEffect } from "../../../../tests/helpers/cli.ts";
@@ -171,7 +171,7 @@ enabled = false
             { cwd: root, home, exitTimeoutMs: AUX_TIMEOUT_MS },
           );
           expect(sync.exitCode, sync.stderr).toBe(0);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
       ),
     { timeout: TEST_TIMEOUT_MS },
   );

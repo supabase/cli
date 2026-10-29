@@ -1,7 +1,7 @@
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vitest";
-import { BunPath, BunServices } from "@effect/platform-bun";
+import { NodePath, NodeServices } from "@effect/platform-node";
 import type {
   V1CreateLoginRoleOutput,
   V1GetABranchConfigOutput,
@@ -92,7 +92,7 @@ vi.mock("node:net", (importOriginal) =>
   ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net, fixtureNet)),
 );
 
-const path = Effect.runSync(Effect.provide(Path.Path, BunPath.layer));
+const path = Effect.runSync(Effect.provide(Path.Path, NodePath.layer));
 
 const makeWorkdir = Effect.fnUntraced(function* (prefix: string) {
   const fs = yield* FileSystem.FileSystem;
@@ -527,7 +527,7 @@ const setup = Effect.fnUntraced(function* (
 
   const layer = Layer.mergeAll(
     runtime,
-    BunServices.layer,
+    NodeServices.layer,
     recorder.layer,
     child.layer,
     Stdio.layerTest({ args: Effect.succeed(opts.args ?? ["gen", "types"]) }),
@@ -588,7 +588,7 @@ describe("gen types", () => {
       ]);
       expect(linkedProjectCache.cached).toBe(true);
       expect(telemetry.flushed).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("generates types from the explicit --linked flag", () =>
@@ -608,7 +608,7 @@ describe("gen types", () => {
       ]);
       expect(linkedProjectCache.cached).toBe(true);
       expect(telemetry.flushed).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("uses explicit schemas for the management API path", () =>
@@ -627,7 +627,7 @@ describe("gen types", () => {
         method: "generateTypescriptTypes",
         input: { ref: VALID_REF, included_schemas: "auth,storage" },
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -653,7 +653,7 @@ describe("gen types", () => {
           method: "generateTypescriptTypes",
           input: { ref: VALID_REF, included_schemas: "public,auth,storage" },
         });
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -676,7 +676,7 @@ describe("gen types", () => {
           method: "generateTypescriptTypes",
           input: { ref: VALID_REF, included_schemas: "public,auth,storage" },
         });
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -709,7 +709,7 @@ describe("gen types", () => {
           );
         }
         expect(api.requests).toHaveLength(0);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -738,7 +738,7 @@ describe("gen types", () => {
           method: "generateTypescriptTypes",
           input: { ref: VALID_REF, included_schemas: "public,ancestor_only" },
         });
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -763,7 +763,7 @@ describe("gen types", () => {
           expect(String(exit.cause)).toContain("failed to change workdir: chdir");
         }
         expect(api.requests).toHaveLength(0);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -791,7 +791,7 @@ describe("gen types", () => {
           expect(rendered).not.toContain("CliConfigParseError");
         }
         expect(api.requests).toHaveLength(0);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("fails when no target resolves", () =>
@@ -811,7 +811,7 @@ describe("gen types", () => {
           ),
         ).toBe(true);
       }
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("generates from --project-id without a local project config", () =>
@@ -827,7 +827,7 @@ describe("gen types", () => {
         input: { ref: VALID_REF, included_schemas: "public" },
       });
       expect(out.stderrText).not.toContain("unformatted");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("resolves the linked fallback without a local project config", () =>
@@ -845,7 +845,7 @@ describe("gen types", () => {
         method: "generateTypescriptTypes",
         input: { ref: VALID_REF, included_schemas: "public" },
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("ignores positional language scanning when argv lacks the gen types context", () =>
@@ -860,7 +860,7 @@ describe("gen types", () => {
       );
 
       expect(api.requests).toHaveLength(1);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("prefers explicit --schema on the linked path", () =>
@@ -874,7 +874,7 @@ describe("gen types", () => {
         method: "generateTypescriptTypes",
         input: { ref: VALID_REF, included_schemas: "auth" },
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("prefers explicit --schema on the linked fallback path", () =>
@@ -888,7 +888,7 @@ describe("gen types", () => {
         method: "generateTypescriptTypes",
         input: { ref: VALID_REF, included_schemas: "auth" },
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("silently ignores --query-timeout for implicit linked TypeScript generation", () =>
@@ -905,7 +905,7 @@ describe("gen types", () => {
         method: "generateTypescriptTypes",
         input: { ref: VALID_REF, included_schemas: "public" },
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("maps project type generation network failures", () =>
@@ -926,7 +926,7 @@ describe("gen types", () => {
           "failed to get typescript types: ApiCallFailure: network error",
         );
       }
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("accepts legacy positional typescript without changing behavior", () =>
@@ -937,7 +937,7 @@ describe("gen types", () => {
         projectTypes: "ok",
       });
       yield* genTypes(defaultFlags()).pipe(Effect.provide(layer));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   describe("Flag mutex groups and argv-scan precedence", () => {
@@ -964,7 +964,7 @@ describe("gen types", () => {
           ).toBe(true);
         }
         expect(telemetry.flushed).toBe(true);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("does not misdetect a mutex flag consumed as -s's value (pflag consumption)", () =>
@@ -985,7 +985,7 @@ describe("gen types", () => {
           expect(String(exit.cause)).toContain("failed to inspect service");
           expect(String(exit.cause)).not.toContain("if any flags in the group");
         }
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("rejects --swift-access-control with --linked (cobra mutex group)", () =>
@@ -1007,7 +1007,7 @@ describe("gen types", () => {
             "if any flags in the group [linked project-id swift-access-control] are set none of the others can be; [linked swift-access-control] were all set",
           );
         }
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("rejects --swift-access-control with --project-id (cobra mutex group)", () =>
@@ -1038,7 +1038,7 @@ describe("gen types", () => {
             "if any flags in the group [linked project-id swift-access-control] are set none of the others can be; [project-id swift-access-control] were all set",
           );
         }
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("rejects --postgrest-v9-compat without --db-url for project-id generation", () =>
@@ -1063,7 +1063,7 @@ describe("gen types", () => {
             ),
           ).toBe(true);
         }
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("rejects --postgrest-v9-compat without --db-url for local generation", () =>
@@ -1083,7 +1083,7 @@ describe("gen types", () => {
           );
         }
         expect(telemetry.flushed).toBe(true);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("rejects --query-timeout with --project-id (cobra mutex group)", () =>
@@ -1101,7 +1101,7 @@ describe("gen types", () => {
             "if any flags in the group [linked project-id query-timeout] are set none of the others can be; [project-id query-timeout] were all set",
           );
         }
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("rejects --query-timeout with --linked (cobra mutex group)", () =>
@@ -1121,7 +1121,7 @@ describe("gen types", () => {
             "if any flags in the group [linked project-id query-timeout] are set none of the others can be; [linked query-timeout] were all set",
           );
         }
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("counts explicitly negated booleans as set for mutex groups (pflag Changed)", () =>
@@ -1139,7 +1139,7 @@ describe("gen types", () => {
             "if any flags in the group [linked project-id postgrest-v9-compat] are set none of the others can be; [linked project-id] were all set",
           );
         }
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("fails on an invalid --query-timeout before any flag guard runs", () =>
@@ -1158,7 +1158,7 @@ describe("gen types", () => {
           expect(String(exit.cause)).not.toContain("if any flags in the group");
         }
         expect(telemetry.flushed).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("prefers the --postgrest-v9-compat guard over mutex group errors", () =>
@@ -1176,7 +1176,7 @@ describe("gen types", () => {
             "--postgrest-v9-compat must used together with --db-url",
           );
         }
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("prefers the positional language guard over mutex group errors", () =>
@@ -1199,7 +1199,7 @@ describe("gen types", () => {
             ),
           ).toBe(true);
         }
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("reports mutex groups in cobra's sorted group-key order", () =>
@@ -1230,7 +1230,7 @@ describe("gen types", () => {
             "if any flags in the group [linked project-id postgrest-v9-compat] are set none of the others can be; [postgrest-v9-compat project-id] were all set",
           );
         }
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("rejects a non-typescript language passed after a -- separator", () =>
@@ -1242,7 +1242,7 @@ describe("gen types", () => {
         if (Exit.isFailure(exit)) {
           expect(String(exit.cause)).toContain("use --lang flag to specify the typegen language");
         }
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("treats a trailing -- with no operand as no positional language", () =>
@@ -1254,7 +1254,7 @@ describe("gen types", () => {
         });
         yield* genTypes(defaultFlags()).pipe(Effect.provide(layer));
         expect(api.requests).toHaveLength(1);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("treats a positional after a valueless long flag as the language", () =>
@@ -1265,7 +1265,7 @@ describe("gen types", () => {
         if (Exit.isFailure(exit)) {
           expect(String(exit.cause)).toContain("use --lang flag to specify the typegen language");
         }
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("treats a positional after a valueless short flag as the language", () =>
@@ -1276,7 +1276,7 @@ describe("gen types", () => {
         if (Exit.isFailure(exit)) {
           expect(String(exit.cause)).toContain("use --lang flag to specify the typegen language");
         }
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("rejects legacy positional non-typescript without an explicit lang flag", () =>
@@ -1290,7 +1290,7 @@ describe("gen types", () => {
         if (Exit.isFailure(exit)) {
           expect(String(exit.cause)).toContain("use --lang flag to specify the typegen language");
         }
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -1307,7 +1307,7 @@ describe("gen types", () => {
           if (Exit.isFailure(exit)) {
             expect(String(exit.cause)).toContain("use --lang flag to specify the typegen language");
           }
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -1329,7 +1329,7 @@ describe("gen types", () => {
         }
         expect(generator.calls).toHaveLength(0);
         expect(child.calls).toHaveLength(0);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -1351,7 +1351,7 @@ describe("gen types", () => {
           }
           expect(generator.calls).toHaveLength(0);
           expect(child.calls).toHaveLength(0);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -1424,7 +1424,7 @@ describe("gen types", () => {
           expect(call?.conn.sslmode).toBe("require");
           expect(call?.conn.sslrootcertInline).toBe(rootCaBundle());
           expect(linkedProjectCache.cached).toBe(true);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
       );
     }
 
@@ -1449,7 +1449,7 @@ describe("gen types", () => {
         expect(dbConfig.resolves).toHaveLength(1);
         expect(dbConfig.resolves[0]?.connType).toBe("linked");
         expect(dbConfig.resolves[0]?.adHocProjectRef).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("preserves resolver connection options for remote non-TypeScript typegen", () =>
@@ -1477,7 +1477,7 @@ describe("gen types", () => {
 
         expect(generator.calls[0]?.conn.options).toBe(`reference=${VALID_REF}`);
         expect(generator.calls[0]?.conn.user).toBe(`postgres.${VALID_REF}`);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -1510,7 +1510,7 @@ describe("gen types", () => {
           expect(call?.options["swift-access-control"]).toBe("public");
           expect(call?.conn.runtimeParams?.["statement_timeout"]).toBe("20000");
           expect(call?.conn.connectTimeoutSeconds).toBe(20);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("uses remote config schemas for explicit project-ref typegen", () =>
@@ -1544,7 +1544,7 @@ describe("gen types", () => {
         ).pipe(Effect.provide(layer));
 
         expect(generator.calls[0]?.includedSchemas).toEqual(["public", "private"]);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("uses remote config schemas for linked typegen", () =>
@@ -1579,7 +1579,7 @@ describe("gen types", () => {
         ).pipe(Effect.provide(layer));
 
         expect(generator.calls[0]?.includedSchemas).toEqual(["public", "private"]);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -1632,7 +1632,7 @@ describe("gen types", () => {
         // Preview-branch generation pins the Supabase CA the same as any other remote target.
         expect(call?.conn.sslmode).toBe("require");
         expect(call?.conn.sslrootcertInline).toBe(rootCaBundle());
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("falls back to preview branch config for any project 404 body", () =>
@@ -1668,7 +1668,7 @@ describe("gen types", () => {
         });
         expect(dbConfig.resolves).toHaveLength(0);
         expect(generator.calls[0]?.conn.password).toBe("branch-password");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("fails clearly when preview branch config does not include DB credentials", () =>
@@ -1708,7 +1708,7 @@ describe("gen types", () => {
             ),
           ).toBe(true);
         }
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -1757,7 +1757,7 @@ describe("gen types", () => {
         expect(dbConfig.poolerFallbacks).toHaveLength(1);
         expect(dbConfig.poolerFallbacks[0]?.connType).toBe("linked");
         expect(dbConfig.poolerFallbacks[0]?.adHocProjectRef).toBe(true);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("retries through the IPv4 pooler on an ENOTFOUND direct-host dial failure", () =>
@@ -1800,7 +1800,7 @@ describe("gen types", () => {
         expect(generator.calls).toHaveLength(2);
         expect(generator.calls[1]?.conn.host).toBe("127.0.0.1");
         expect(dbConfig.poolerFallbacks).toHaveLength(1);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("does not retry through the pooler when the failure is not IPv6-classified", () =>
@@ -1834,7 +1834,7 @@ describe("gen types", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         expect(generator.calls).toHaveLength(1);
         expect(dbConfig.poolerFallbacks).toHaveLength(0);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -1873,7 +1873,7 @@ describe("gen types", () => {
           expect(Exit.isFailure(exit)).toBe(true);
           expect(generator.calls).toHaveLength(2);
           expect(dbConfig.poolerFallbacks).toHaveLength(1);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -1910,7 +1910,7 @@ describe("gen types", () => {
           expect(generator.calls).toHaveLength(1);
           expect(dbConfig.poolerFallbacks).toHaveLength(0);
           expect(out.stderrText).not.toContain("Retrying via the IPv4 connection pooler.");
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("does not retry through the pooler when an out-of-process tool fails", () =>
@@ -1945,7 +1945,7 @@ describe("gen types", () => {
         expect(generator.calls).toHaveLength(1);
         expect(dbConfig.poolerFallbacks).toHaveLength(0);
         expect(out.stderrText).not.toContain("Retrying via the IPv4 connection pooler.");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("preserves the original generation error when pooler fallback resolution fails", () =>
@@ -1976,7 +1976,7 @@ describe("gen types", () => {
           expect(String(exit.cause)).not.toContain("pooler fallback failed");
         }
         expect(generator.calls).toHaveLength(1);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("retries preview branch generation through the branch IPv4 pooler", () =>
@@ -2035,7 +2035,7 @@ describe("gen types", () => {
         expect(generator.calls).toHaveLength(2);
         expect(generator.calls[1]?.conn.host).toBe(poolerHost);
         expect(generator.calls[1]?.conn.password).toBe("branch-password");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("skips preview branch pooler fallback when the pooler URL fails validation", () =>
@@ -2089,7 +2089,7 @@ describe("gen types", () => {
           input: { ref: VALID_REF },
         });
         expect(generator.calls).toHaveLength(1);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -2118,7 +2118,7 @@ describe("gen types", () => {
 
         expect(generator.calls[0]?.conn.sslmode).toBe("require");
         expect(generator.calls[0]?.conn.sslrootcertInline).toBe(rootCaBundle());
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("pins the Supabase CA for a db-url pointing at the pooler host", () =>
@@ -2145,7 +2145,7 @@ describe("gen types", () => {
 
         expect(generator.calls[0]?.conn.sslmode).toBe("require");
         expect(generator.calls[0]?.conn.sslrootcertInline).toBe(rootCaBundle());
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("honors an explicit sslmode from the db-url's DSN on a Supabase host", () =>
@@ -2173,7 +2173,7 @@ describe("gen types", () => {
 
         expect(generator.calls[0]?.conn.sslmode).toBe("disable");
         expect(generator.calls[0]?.conn.sslrootcertInline).toBeUndefined();
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("leaves a non-Supabase db-url host unpinned", () =>
@@ -2198,7 +2198,7 @@ describe("gen types", () => {
 
         expect(generator.calls[0]?.conn.sslmode).toBeUndefined();
         expect(generator.calls[0]?.conn.sslrootcertInline).toBeUndefined();
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("never pins TLS for a local db-url target", () =>
@@ -2223,7 +2223,7 @@ describe("gen types", () => {
 
         expect(generator.calls[0]?.conn.sslmode).toBeUndefined();
         expect(generator.calls[0]?.conn.sslrootcertInline).toBeUndefined();
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -2290,7 +2290,7 @@ describe("gen types", () => {
           expect(call?.conn.sslmode).toBeUndefined();
           expect(call?.conn.sslrootcertInline).toBeUndefined();
           expect(linkedProjectCache.cached).toBe(false);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2320,7 +2320,7 @@ describe("gen types", () => {
           expect(child.calls.map((call) => call.command)).toEqual(["docker", "podman"]);
           expect(child.calls[1]?.args).toEqual(["container", "inspect", "supabase_db_demo"]);
           expect(generator.calls).toHaveLength(1);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("uses sanitized local docker ids and env-backed local db passwords", () =>
@@ -2354,7 +2354,7 @@ describe("gen types", () => {
         ]);
         expect(generator.calls[0]?.conn.password).toBe("secret-password");
         expect(generator.calls[0]?.conn.host).toBe("127.0.0.1");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("forces v9 compat when rest-version reports v9 on a modern database", () =>
@@ -2378,7 +2378,7 @@ describe("gen types", () => {
         yield* genTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer));
 
         expect(generator.calls[0]?.options["detect-one-to-one-relationships"]).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("ignores rest-version v9 marker on databases older than 15", () =>
@@ -2402,7 +2402,7 @@ describe("gen types", () => {
         yield* genTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer));
 
         expect(generator.calls[0]?.options["detect-one-to-one-relationships"]).toBe(true);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("prefers explicit --schema over config schemas for local generation", () =>
@@ -2426,7 +2426,7 @@ describe("gen types", () => {
         );
 
         expect(generator.calls[0]?.includedSchemas).toEqual(["auth", "storage"]);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("allows --swift-access-control for local non-Swift generation", () =>
@@ -2458,7 +2458,7 @@ describe("gen types", () => {
 
         expect(generator.calls[0]?.lang).toBe("python");
         expect(generator.calls[0]?.options["swift-access-control"]).toBe("public");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("falls back to the workdir basename when config has no project_id", () =>
@@ -2474,7 +2474,7 @@ describe("gen types", () => {
         const inspectId = child.calls[0]?.args[2] ?? "";
         expect(inspectId.startsWith("supabase_db_")).toBe(true);
         expect(inspectId).not.toBe("supabase_db_demo");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("fails with not-running parity when the local db container is missing", () =>
@@ -2512,7 +2512,7 @@ describe("gen types", () => {
             ),
           ).toBe(true);
         }
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2546,7 +2546,7 @@ describe("gen types", () => {
           expect(error).toBeInstanceOf(GenTypesLocalDbNotRunningError);
           expect(error.message).toBe("supabase start is not running.");
           expect(child.calls.map((call) => call.command)).toEqual(["docker", "podman"]);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2588,7 +2588,7 @@ describe("gen types", () => {
               ),
             ).toBe(true);
           }
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("generates locally with Go defaults when supabase/config.toml is missing", () =>
@@ -2614,7 +2614,7 @@ describe("gen types", () => {
         });
         expect(generator.calls[0]?.includedSchemas).toEqual(["public", "graphql_public"]);
         expect(out.stdoutText).toContain("generated");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("honors local dotenv overrides when supabase/config.toml is missing", () =>
@@ -2652,7 +2652,7 @@ describe("gen types", () => {
           "graphql_public",
         ]);
         expect(out.stdoutText).toContain("generated");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("reports a generic inspect failure when docker emits no stderr", () =>
@@ -2687,7 +2687,7 @@ describe("gen types", () => {
             ),
           ).toBe(true);
         }
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("surfaces generation failures after local db inspection succeeds", () =>
@@ -2723,7 +2723,7 @@ describe("gen types", () => {
         }
         expect(child.calls).toHaveLength(1);
         expect(generator.calls).toHaveLength(1);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -2754,7 +2754,7 @@ describe("gen types", () => {
         expect(generator.calls[0]?.options["detect-one-to-one-relationships"]).toBe(true);
         expect(accessed.some((entry) => entry.endsWith("config.toml"))).toBe(true);
         expect(legacyStateAccesses(accessed)).toEqual([]);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("resolves the stack local database directly, without inspecting any container", () =>
@@ -2806,7 +2806,7 @@ describe("gen types", () => {
         // The stack backend never pins TLS for a local target either.
         expect(call?.conn.sslmode).toBeUndefined();
         expect(call?.conn.sslrootcertInline).toBeUndefined();
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -2837,7 +2837,7 @@ describe("gen types", () => {
           expect(dbConfig.resolves).toHaveLength(1);
           expect(dbConfig.resolves[0]?.connType).toBe("db-url");
           expect(generator.calls[0]?.includedSchemas).toEqual(["public"]);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2860,7 +2860,7 @@ describe("gen types", () => {
           expect(generator.calls[0]?.isLocal).toBe(false);
           expect(generator.calls[0]?.conn.runtimeParams?.["statement_timeout"]).toBe("15000");
           expect(generator.calls[0]?.conn.connectTimeoutSeconds).toBe(15);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2878,7 +2878,7 @@ describe("gen types", () => {
           const call = generator.calls[0];
           expect(call?.conn.runtimeParams?.["statement_timeout"]).toBe("400");
           expect(call?.conn.connectTimeoutSeconds).toBeGreaterThanOrEqual(1);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("leaves connectTimeoutSeconds unset for --query-timeout 0s", () =>
@@ -2894,7 +2894,7 @@ describe("gen types", () => {
         const call = generator.calls[0];
         expect(call?.conn.runtimeParams?.["statement_timeout"]).toBe("0");
         expect(call?.conn.connectTimeoutSeconds).toBeUndefined();
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2919,7 +2919,7 @@ describe("gen types", () => {
           expect(call?.options["detect-one-to-one-relationships"]).toBe(false);
           expect(call?.conn.runtimeParams?.["statement_timeout"]).toBe("20000");
           expect(call?.conn.connectTimeoutSeconds).toBe(20);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2940,7 +2940,7 @@ describe("gen types", () => {
           expect(out.stderrText).toContain(
             "Flag --postgrest-v9-compat has been deprecated, PostgREST 9 reached end of life; the flag still disables one-to-one relationship detection.",
           );
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("allows legacy positional non-typescript when --lang is explicitly set", () =>
@@ -2957,7 +2957,7 @@ describe("gen types", () => {
         ).pipe(Effect.provide(layer));
 
         expect(generator.calls[0]?.lang).toBe("go");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 });
@@ -3069,7 +3069,7 @@ const setupRecorded = Effect.fnUntraced(function* (opts: {
   });
   const layer = Layer.mergeAll(
     runtime,
-    BunServices.layer,
+    NodeServices.layer,
     mockInspectSpawner().layer,
     Stdio.layerTest({ args: Effect.succeed(opts.args) }),
     Layer.succeed(OutputFlag, Option.none()),
@@ -3144,7 +3144,7 @@ describe("gen types permissions through the real layers", () => {
         requests: ctx.recordedRequests(),
         exact: true,
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("looks the project up, then reaches the database through the pooler for go", () =>
@@ -3167,7 +3167,7 @@ describe("gen types permissions through the real layers", () => {
         requests: ctx.recordedRequests(),
         exact: true,
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -3206,7 +3206,7 @@ describe("gen types permissions through the real layers", () => {
           requests: ctx.recordedRequests(),
           exact: true,
         });
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("falls back to the preview branch config when the project lookup returns 404", () =>
@@ -3240,7 +3240,7 @@ describe("gen types permissions through the real layers", () => {
         requests: ctx.recordedRequests(),
         exact: true,
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("asks which project to use for --linked when no ref is saved", () =>
@@ -3262,7 +3262,7 @@ describe("gen types permissions through the real layers", () => {
         requests: ctx.recordedRequests(),
         exact: true,
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -3284,7 +3284,7 @@ describe("gen types permissions through the real layers", () => {
           requests: ctx.recordedRequests(),
           exact: true,
         });
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   const NO_API_SCENARIOS = [
@@ -3346,7 +3346,7 @@ describe("gen types permissions through the real layers", () => {
           requests: ctx.recordedRequests(),
           exact: true,
         });
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
   }
 });
@@ -3382,7 +3382,7 @@ describe("gen types target default warning", () => {
           });
           yield* genTypes(defaultFlags(selector?.over)).pipe(Effect.provide(layer), Effect.exit);
           return { stdout: out.stdoutText, stderr: out.stderrText };
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     }),
   );
 
@@ -3391,6 +3391,6 @@ describe("gen types target default warning", () => {
       const { layer, out } = yield* setup();
       yield* genTypes(defaultFlags()).pipe(Effect.provide(layer), Effect.exit);
       expect(out.stderrText).not.toContain("by default in the next major version");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

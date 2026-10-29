@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer, Option, Path, PlatformError } from "effect";
 
@@ -74,7 +74,7 @@ describe("loadDeclaredSchemas", () => {
         const workdir = yield* makeWorkdir;
         const result = yield* loadDeclaredSchemas(fs, path, workdir, [], pgDelta());
         expect(result).toEqual([]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -95,7 +95,7 @@ describe("loadDeclaredSchemas", () => {
         );
         const result = yield* loadDeclaredSchemas(fs, path, workdir, [], pgDelta());
         expect(result).toEqual(["supabase/schemas/a.sql", "supabase/schemas/b.sql"]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -126,7 +126,7 @@ describe("loadDeclaredSchemas", () => {
           }),
         );
         expect(result).toEqual(["supabase/database/t.sql"]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -154,7 +154,7 @@ describe("loadDeclaredSchemas", () => {
           }),
         );
         expect(result).toEqual(["supabase/custom/x.sql"]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("fails when a literal (non-glob) schema_paths entry matches nothing", () =>
@@ -166,7 +166,7 @@ describe("loadDeclaredSchemas", () => {
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -185,7 +185,7 @@ describe("loadDeclaredSchemas", () => {
           Effect.exit,
         );
         expect(Exit.isFailure(exit)).toBe(true);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("a glob schema_paths entry matching nothing is silently skipped, not an error", () =>
@@ -203,7 +203,7 @@ describe("loadDeclaredSchemas", () => {
         pgDelta(),
       );
       expect(result).toEqual(["supabase/custom/x.sql"]);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -217,7 +217,7 @@ describe("loadDeclaredSchemas", () => {
         yield* fs.writeFileString(path.join(workdir, "supabase", "customx.sql"), "select 1;\n");
         const result = yield* loadDeclaredSchemas(fs, path, workdir, ["custom\\x.sql"], pgDelta());
         expect(result).toEqual(["supabase/customx.sql"]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -231,7 +231,7 @@ describe("loadDeclaredSchemas", () => {
         yield* fs.writeFileString(path.join(workdir, "supabase", "foo*.sql"), "select 1;\n");
         const result = yield* loadDeclaredSchemas(fs, path, workdir, ["foo\\*.sql"], pgDelta());
         expect(result).toEqual(["supabase/foo*.sql"]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -255,7 +255,7 @@ describe("loadDeclaredSchemas", () => {
           pgDelta(),
         );
         expect(result).toEqual([absFile]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -275,7 +275,7 @@ describe("loadDeclaredSchemas", () => {
         yield* fs.symlink(secretTarget, path.join(workdir, "supabase", "custom", "linked.sql"));
         const result = yield* loadDeclaredSchemas(fs, path, workdir, ["custom"], pgDelta());
         expect(result).toEqual(["supabase/custom/real.sql"]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("excludes a symlinked .sql file from the supabase/schemas fallback walk", () =>
@@ -293,7 +293,7 @@ describe("loadDeclaredSchemas", () => {
       yield* fs.symlink(secretTarget, path.join(workdir, "supabase", "schemas", "linked.sql"));
       const result = yield* loadDeclaredSchemas(fs, path, workdir, [], pgDelta());
       expect(result).toEqual(["supabase/schemas/real.sql"]);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -314,7 +314,7 @@ describe("loadDeclaredSchemas", () => {
         yield* fs.symlink(outsideDir, path.join(workdir, "supabase", "custom", "linked-dir"));
         const result = yield* loadDeclaredSchemas(fs, path, workdir, ["custom"], pgDelta());
         expect(result).toEqual(["supabase/custom/real.sql"]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("does not follow a symlinked subdirectory in the supabase/schemas fallback walk", () =>
@@ -333,7 +333,7 @@ describe("loadDeclaredSchemas", () => {
       yield* fs.symlink(outsideDir, path.join(workdir, "supabase", "schemas", "linked-dir"));
       const result = yield* loadDeclaredSchemas(fs, path, workdir, [], pgDelta());
       expect(result).toEqual(["supabase/schemas/real.sql"]);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -361,7 +361,7 @@ describe("loadDeclaredSchemas", () => {
           }),
         );
         expect(result).toEqual(["supabase/schemas/a.sql"]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("returns [] when supabase/schemas exists but is a regular file, not a directory", () =>
@@ -373,7 +373,7 @@ describe("loadDeclaredSchemas", () => {
       yield* fs.writeFileString(path.join(workdir, "supabase", "schemas"), "not a directory");
       const result = yield* loadDeclaredSchemas(fs, path, workdir, [], pgDelta());
       expect(result).toEqual([]);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -399,7 +399,7 @@ describe("loadDeclaredSchemas", () => {
           }),
         );
         expect(result).toEqual([]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("returns [] (does not follow) when supabase/schemas itself is a symlink", () =>
@@ -414,7 +414,7 @@ describe("loadDeclaredSchemas", () => {
       yield* fs.symlink(realDir, path.join(workdir, "supabase", "schemas"));
       const result = yield* loadDeclaredSchemas(fs, path, workdir, [], pgDelta());
       expect(result).toEqual([]);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -442,7 +442,7 @@ describe("loadDeclaredSchemas", () => {
           `supabase/schemas/${privateUse}`,
           `supabase/schemas/${supplementary}`,
         ]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -476,7 +476,7 @@ describe("loadDeclaredSchemas", () => {
                   )
                 : real.stat(statPath),
           })),
-        ).pipe(Layer.provideMerge(BunServices.layer));
+        ).pipe(Layer.provideMerge(NodeServices.layer));
         const exit = yield* Effect.gen(function* () {
           const failingFs = yield* FileSystem.FileSystem;
           const failingPath = yield* Path.Path;
@@ -485,7 +485,7 @@ describe("loadDeclaredSchemas", () => {
           );
         }).pipe(Effect.provide(statFs));
         expect(Exit.isFailure(exit)).toBe(true);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect.skipIf(isRoot)(
@@ -503,7 +503,7 @@ describe("loadDeclaredSchemas", () => {
         );
         expect(error.message).toContain("failed to walk matched directory:");
         expect(error.message).not.toContain("failed to walk matched directory: locked");
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect.skipIf(isRoot)(
@@ -527,7 +527,7 @@ describe("loadDeclaredSchemas", () => {
         );
         expect(error.message).toContain(byteOrderFirst);
         expect(error.message).not.toContain(utf16First);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect.skipIf(isRoot)(
@@ -552,7 +552,7 @@ describe("loadDeclaredSchemas", () => {
         ).pipe(Effect.flip);
         expect(error.message).toContain("failed to walk declarative dir:");
         expect(error.message).not.toContain("failed to walk dir:");
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect.skipIf(isRoot)(
@@ -570,6 +570,6 @@ describe("loadDeclaredSchemas", () => {
         );
         expect(error.message).toContain("failed to walk dir:");
         expect(error.message).not.toContain("failed to walk declarative dir:");
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

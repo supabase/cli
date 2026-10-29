@@ -1,0 +1,76 @@
+name: Node runtime CI
+
+# Runs the full Test suite and a Node 26 smoke test of the Node bundle on pushes to the Node
+# runtime branch, which has no pull request.
+on:
+  push:
+    branches:
+      - chore/cli-node-runtime
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: node-runtime-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test
+    uses: ./.github/workflows/test.yml
+    with:
+      force: true
+      full: true
+    secrets:
+      DF_FIREWALL_TOKEN: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+  node-smoke:
+    name: Smoke-test the Node bundle (Node 26)
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 20
+    env:
+      SUPABASE_NO_KEYRING: "1"
+      SUPABASE_NO_UPDATE_NOTIFIER: "1"
+      SUPABASE_TELEMETRY_DISABLED: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          sticky-disks: "true"
+          docker-images: "true"
+
+      - name: Build the Node bundle
+        run: pnpm exec turbo run supabase#build:node
+
+      - name: Install Node 26
+        run: mise install node@26
+
+      - name: Run commands
+        working-directory: ${{ runner.temp }}
+        env:
+          CLI: ${{ github.workspace }}/apps/cli/dist-node/main.js
+          SUPABASE_EXPERIMENTAL_STACK: "1"
+        run: |
+          set -euo pipefail
+          node() { mise exec node@26 -- node "$@"; }
+          node --version
+          node "$CLI" --version
+          node "$CLI" --help > /dev/null
+          mkdir project && cd project
+          node "$CLI" init
+          node "$CLI" gen signing-key --algorithm ES256 > /dev/null
+          rest_url=$(node "$CLI" start --output-format json | jq -r .env.REST_URL)
+          curl --fail --silent --show-error --output /dev/null "$rest_url/"
+          node "$CLI" stop
+
+      # Releases /var/lib/docker so the image disk unmounts cleanly.
+      - name: Stop Docker
+        if: always()
+        run: sudo systemctl stop docker.socket docker.service

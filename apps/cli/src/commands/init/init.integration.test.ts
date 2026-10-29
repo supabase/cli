@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import * as SmolToml from "smol-toml";
 import { orioledbVersions } from "@supabase/stack/internal/artifacts";
 import {
@@ -38,7 +38,7 @@ const readTextFile = (...segments: Array<string>) =>
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     return yield* fs.readFileString(path.join(...segments));
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 
 function setup(
   cwd: string,
@@ -58,7 +58,7 @@ function setup(
   return {
     out,
     layer: Layer.mergeAll(
-      BunServices.layer,
+      NodeServices.layer,
       out.layer,
       mockRuntimeInfo({ cwd, platform: opts.platform }),
       mockTty({

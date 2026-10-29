@@ -50,8 +50,12 @@
         // The CLI under test in apps/cli/tests/smoke-test-{macos,windows}.ts.
         "supabase",
       ],
-      // TODO(CLI-2424): spawned through a node_modules/.bin path in scripts/publish-docs-spec.ts.
-      "ignoreDependencies": ["prettier"],
+      "ignoreDependencies": [
+        // TODO(CLI-2424): spawned through a node_modules/.bin path in scripts/publish-docs-spec.ts.
+        "prettier",
+        // Imported by the Node build; knip-bun resolves it to Bun's built-in `undici` module.
+        "undici",
+      ],
     },
     "apps/docs": {
       // Next.js convention file that knip's Next.js plugin does not list.

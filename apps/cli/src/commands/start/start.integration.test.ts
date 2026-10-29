@@ -1,6 +1,6 @@
 import { generateKeyPairSync } from "node:crypto";
 
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -593,7 +593,7 @@ const setup = Effect.fnUntraced(function* (opts: SetupOpts = {}) {
   const dbSession = fakeDbSession();
   const layer = Layer.mergeAll(
     unusedStackServices,
-    BunServices.layer,
+    NodeServices.layer,
     out.layer,
     cliSettings,
     telemetry.layer,
@@ -706,7 +706,7 @@ describe("start integration", () => {
         expect(out.stderrText).toContain("WARNING:");
         expect(out.stderrText).toContain("not-a-real-service");
         expect(out.stderrText).toContain("not valid to exclude");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -722,7 +722,7 @@ describe("start integration", () => {
           expect(createdContainerNames(child.spawned).some((name) => name.includes("_db_"))).toBe(
             true,
           );
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -745,7 +745,7 @@ describe("start integration", () => {
           expect(out.stderrText).toContain("supabase start");
           expect(out.stderrText).toContain("is already running");
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("reports the stack is already running with a machine payload in json mode", () =>
@@ -765,7 +765,7 @@ describe("start integration", () => {
         const success = out.messages.find((m) => m.type === "success");
         expect(success?.data).toMatchObject({ DB_URL: expect.any(String) });
         expect(out.stderrText).not.toContain("is already running");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -787,7 +787,7 @@ describe("start integration", () => {
           const success = out.messages.find((m) => m.type === "success");
           expect(success?.data).toMatchObject({ DB_URL: expect.any(String) });
           expect(out.stderrText).not.toContain("is already running");
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -812,7 +812,7 @@ describe("start integration", () => {
             expect(Cause.pretty(exit.cause)).toContain("StatusDbNotRunningError");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -836,7 +836,7 @@ describe("start integration", () => {
           if (Exit.isFailure(exit)) {
             expect(Cause.pretty(exit.cause)).toContain("StatusDbNotReadyError");
           }
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -862,7 +862,7 @@ describe("start integration", () => {
             expect(serialized).toContain("StatusDbInspectError");
             expect(serialized).toContain("permission denied");
           }
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("fails when listing running containers errors while already running", () =>
@@ -882,7 +882,7 @@ describe("start integration", () => {
         if (Exit.isFailure(exit)) {
           expect(Cause.pretty(exit.cause)).toContain("StatusListError");
         }
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("already running, --ignore-health-check skips the health re-check entirely", () =>
@@ -903,7 +903,7 @@ describe("start integration", () => {
         yield* start(flags({ ignoreHealthCheck: true })).pipe(Effect.provide(layer));
         expect(inspectCalls).toBe(1);
         expect(child.spawned.some((s) => s.args[0] === "ps")).toBe(true);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("already running with every service still up omits the 'Stopped services' line", () =>
@@ -920,7 +920,7 @@ describe("start integration", () => {
 
         yield* start(flags()).pipe(Effect.provide(layer));
         expect(out.stderrText).not.toContain("Stopped services");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -951,7 +951,7 @@ describe("start integration", () => {
             );
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -1021,7 +1021,7 @@ describe("start integration", () => {
         expect(
           child.spawned.some((spawn) => spawn.args[0] === "volume" && spawn.args[1] === "prune"),
         ).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("does not remove containers when the project id sanitizes to empty", () =>
@@ -1047,7 +1047,7 @@ describe("start integration", () => {
               (spawn.args[0] === "ps" && spawn.args.includes("--all")) || spawn.args[1] === "prune",
           ),
         ).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("preserves a stopped Bitbucket database container", () =>
@@ -1078,8 +1078,8 @@ describe("start integration", () => {
                 spawn.args[0] === "create",
             ),
           ).toBe(false);
-        }).pipe(Effect.provide(BunServices.layer)),
-      ).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("does not remove containers when re-inspect returns an unknown state", () =>
@@ -1103,7 +1103,7 @@ describe("start integration", () => {
               (spawn.args[0] === "ps" && spawn.args.includes("--all")) || spawn.args[1] === "prune",
           ),
         ).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("does not recover a created database container with unknown volume state", () =>
@@ -1133,7 +1133,7 @@ describe("start integration", () => {
               spawn.args[0] === "create",
           ),
         ).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("validates custom TLS files before removing a stopped stack", () =>
@@ -1175,7 +1175,7 @@ describe("start integration", () => {
               spawn.args[0] === "create",
           ),
         ).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("validates function bind mounts before removing a stopped stack", () =>
@@ -1212,7 +1212,7 @@ describe("start integration", () => {
               spawn.args[0] === "create",
           ),
         ).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("removes remaining project containers when the stopped database disappears", () =>
@@ -1268,7 +1268,7 @@ describe("start integration", () => {
         expect(
           child.spawned.some((spawn) => spawn.args[0] === "volume" && spawn.args[1] === "prune"),
         ).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("cleans only current-workdir secrets when recovery fails", () =>
@@ -1325,7 +1325,7 @@ describe("start integration", () => {
         expect(yield* fs.exists(staleSecret)).toBe(false);
         expect(yield* fs.exists(foreignSecret)).toBe(true);
         expect(createdContainerNames(child.spawned)).toEqual([]);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("keeps a stopped stack intact when a later config field fails to parse", () =>
@@ -1352,7 +1352,7 @@ describe("start integration", () => {
           ),
         ).toBe(false);
         expect(child.spawned.some((spawn) => spawn.args[0] === "stop")).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -1389,7 +1389,7 @@ describe("start integration", () => {
           ).toBe(false);
           expect(child.spawned.some((spawn) => spawn.args[0] === "stop")).toBe(false);
           expect(createdContainerNames(child.spawned)).toEqual([]);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -1410,7 +1410,7 @@ describe("start integration", () => {
           );
         }
         expect(child.spawned).toEqual([]);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("fails when the DB container inspect fails for a reason other than not-found", () =>
@@ -1432,7 +1432,7 @@ describe("start integration", () => {
           expect(serialized).toContain("permission denied");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -1453,7 +1453,7 @@ describe("start integration", () => {
               error_fingerprint: "tag:DockerLifecycleInspectError:docker_not_running",
             });
           }
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("fails on a malformed config.toml", () =>
@@ -1474,7 +1474,7 @@ describe("start integration", () => {
           expect(Cause.pretty(exit.cause)).toContain("StartConfigLoadError");
         }
         expect(child.spawned).toEqual([]);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("fails when auth.jwt_secret is configured but shorter than 16 characters", () =>
@@ -1493,7 +1493,7 @@ describe("start integration", () => {
           );
         }
         expect(child.spawned).toEqual([]);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -1520,7 +1520,7 @@ describe("start integration", () => {
             );
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -1552,7 +1552,7 @@ describe("start integration", () => {
           }
           expect(yield* fs.exists(path.join(workdir, "templates", "missing.html"))).toBe(false);
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -1590,7 +1590,7 @@ describe("start integration", () => {
           expect(analytics.captured).toContainEqual(
             expect.objectContaining({ event: "cli_stack_started" }),
           );
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -1625,7 +1625,7 @@ describe("start integration", () => {
             createdContainerNames(child.spawned).some((name) => name.includes("_studio_")),
           ).toBe(true);
           expect(yield* fs.exists(snippetsDir)).toBe(true);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("leaves supabase/snippets uncreated when Studio is excluded", () =>
@@ -1637,7 +1637,7 @@ describe("start integration", () => {
         yield* start(flags({ exclude: ["studio"] })).pipe(Effect.provide(layer));
 
         expect(yield* fs.exists(path.join(tempRoot.current, "supabase", "snippets"))).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("fails before creating anything when a file blocks supabase/snippets", () =>
@@ -1666,7 +1666,7 @@ describe("start integration", () => {
             (s) => s.args[0] === "create" || (s.args[0] === "network" && s.args[1] === "create"),
           ),
         ).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("emits a machine status payload in json mode instead of the pretty table", () =>
@@ -1677,7 +1677,7 @@ describe("start integration", () => {
         const success = out.messages.find((m) => m.type === "success");
         expect(success?.data).toMatchObject({ DB_URL: expect.any(String) });
         expect(out.stderrText).not.toContain("Started");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -1690,7 +1690,7 @@ describe("start integration", () => {
           const success = out.messages.find((m) => m.type === "success");
           expect(success?.data).toMatchObject({ DB_URL: expect.any(String) });
           expect(out.stderrText).not.toContain("Started");
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("fires cli_stack_started exactly once on a successful start", () =>
@@ -1702,7 +1702,7 @@ describe("start integration", () => {
           (c) => c.event === "cli_stack_started",
         );
         expect(stackStartedEvents).toEqual([{ event: "cli_stack_started", properties: {} }]);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("brings the stack up when podman rejects re-creating preserved volumes (#6020)", () =>
@@ -1723,7 +1723,7 @@ describe("start integration", () => {
 
         yield* start(flags()).pipe(Effect.provide(layer));
         expect(analytics.captured.some((c) => c.event === "cli_stack_started")).toBe(true);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -1770,7 +1770,7 @@ describe("start integration", () => {
 
           yield* start(flags()).pipe(Effect.provide(layer));
           expect(resolveLocalConfigValuesCalls.count).toBe(1);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -1796,7 +1796,7 @@ describe("start integration", () => {
           expect(Cause.pretty(exit.cause)).toContain("StartInvalidConfigError");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("reads and mounts a configured API TLS cert/key pair for Kong", () =>
@@ -1821,7 +1821,7 @@ describe("start integration", () => {
         expect(createdContainerNames(child.spawned).some((name) => name.includes("_kong_"))).toBe(
           true,
         );
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("fails when a configured API TLS cert file cannot be read", () =>
@@ -1846,7 +1846,7 @@ describe("start integration", () => {
           expect(serialized).toContain("failed to read TLS cert");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("fails when a configured API TLS key file cannot be read", () =>
@@ -1871,7 +1871,7 @@ describe("start integration", () => {
           expect(serialized).toContain("failed to read TLS key");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -1954,7 +1954,7 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(notificationBind).toContain(
             path.join(workdir, "supabase", "templates/custom_notice.html"),
           );
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -1968,7 +1968,7 @@ content_path = "./supabase/templates/custom_notice.html"
             configContents: 'project_id = "demo"\n[db]\nhealth_timeout = "0s"\n[auth.webauthn]\n',
           });
           return yield* start(flags()).pipe(Effect.provide(layer));
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -1989,7 +1989,7 @@ content_path = "./supabase/templates/custom_notice.html"
             expect(serialized).toContain("failed to parse config");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2010,7 +2010,7 @@ content_path = "./supabase/templates/custom_notice.html"
             expect(serialized).toContain("invalid config for storage.file_size_limit");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2032,8 +2032,8 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(serialized).toContain("invalid config for storage.s3_protocol.enabled");
             }
             expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2055,8 +2055,8 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(serialized).toContain("invalid config for storage.analytics.enabled");
             }
             expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2078,8 +2078,8 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(serialized).toContain("invalid config for storage.analytics.max_namespaces");
             }
             expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2101,8 +2101,8 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(serialized).toContain("invalid config for storage.analytics.max_tables");
             }
             expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2124,8 +2124,8 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(serialized).toContain("invalid config for storage.analytics.max_catalogs");
             }
             expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2147,8 +2147,8 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(serialized).toContain("invalid config for storage.vector.max_buckets");
             }
             expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2170,8 +2170,8 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(serialized).toContain("invalid config for storage.vector.max_indexes");
             }
             expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2191,7 +2191,7 @@ content_path = "./supabase/templates/custom_notice.html"
             expect(serialized).toContain("invalid config for auth.sms.max_frequency");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2213,8 +2213,8 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(serialized).toContain("invalid config for auth.rate_limit");
             }
             expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2236,8 +2236,8 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(serialized).toContain("invalid config for auth.web3");
             }
             expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2259,8 +2259,8 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(serialized).toContain("invalid config for auth.oauth_server");
             }
             expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2282,8 +2282,8 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(serialized).toContain("invalid config for auth.third_party");
             }
             expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2306,7 +2306,7 @@ content_path = "./supabase/templates/custom_notice.html"
             expect(serialized).toContain("invalid config for auth.passkey");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2332,7 +2332,7 @@ content_path = "./supabase/templates/custom_notice.html"
             expect(serialized).toContain("invalid config for auth.external");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2357,7 +2357,7 @@ content_path = "./supabase/templates/custom_notice.html"
             expect(serialized).toContain("'functions[foo]' has invalid keys: env");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2379,8 +2379,8 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(serialized).toContain("invalid config for edge_runtime.policy");
             }
             expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2402,8 +2402,8 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(serialized).toContain("invalid config for edge_runtime.inspector_port");
             }
             expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2423,8 +2423,8 @@ content_path = "./supabase/templates/custom_notice.html"
               "Analytics on Windows requires Docker daemon exposed on tcp://localhost:2375.",
             );
             expect(out.stderrText).toContain("Started");
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -2445,7 +2445,7 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(createdNames.some((name) => name.includes("_auth_"))).toBe(true);
           expect(createdNames.some((name) => name.includes("_storage_"))).toBe(true);
           expect(createdNames.some((name) => name.includes("_studio_"))).toBe(true);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2464,7 +2464,7 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(createdNames.some((name) => name.includes("_storage_"))).toBe(false);
           expect(createdNames.some((name) => name.includes("_imgproxy_"))).toBe(false);
           expect(createdNames.some((name) => name.includes("_kong_"))).toBe(true);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2482,8 +2482,8 @@ content_path = "./supabase/templates/custom_notice.html"
             const createdNames = createdContainerNames(child.spawned);
             expect(createdNames.some((name) => name.includes("_storage_"))).toBe(true);
             expect(createdNames.some((name) => name.includes("_imgproxy_"))).toBe(false);
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2503,7 +2503,7 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(createdNames.some((name) => name.includes("_kong_"))).toBe(true);
           expect(createdNames.some((name) => name.includes("_realtime_"))).toBe(true);
           expect(createdNames.some((name) => name.includes("_rest_"))).toBe(false);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2532,7 +2532,7 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(actuallyExists, `excludeKey=${excludeKey} suffix=${suffix}`).toBe(shouldExist);
             }
           }
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
       15_000,
     );
   });
@@ -2555,7 +2555,7 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(out.stderrText).toContain("Initialising schema...");
           // Default config: realtime, storage, and auth are all enabled.
           expect(dbSetupJobCalls(child.spawned)).toHaveLength(3);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2582,7 +2582,7 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(
             authMigrateJob?.args.some((arg) => arg.startsWith("registry.example.com/supabase/")),
           ).toBe(true);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2610,7 +2610,7 @@ content_path = "./supabase/templates/custom_notice.html"
           const createdNames = createdContainerNames(child.spawned);
           expect(createdNames.some((name) => name.includes("_storage_"))).toBe(false);
           expect(createdNames.some((name) => name.includes("_kong_"))).toBe(true);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("skips the SetupLocalDatabase-equivalent pipeline on a non-fresh volume", () =>
@@ -2620,7 +2620,7 @@ content_path = "./supabase/templates/custom_notice.html"
         yield* start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer));
         expect(out.stderrText).not.toContain("Initialising schema...");
         expect(dbSetupJobCalls(child.spawned)).toHaveLength(0);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2646,8 +2646,8 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(serialized).toContain("failed to parse config: missing private key");
             }
             expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2669,7 +2669,7 @@ content_path = "./supabase/templates/custom_notice.html"
             );
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect('prints "Starting database..." on a fresh volume, before Postgres is created', () =>
@@ -2682,7 +2682,7 @@ content_path = "./supabase/templates/custom_notice.html"
         expect(out.stderrText.indexOf("Starting database...\n")).toBeLessThan(
           out.stderrText.indexOf("Initialising schema..."),
         );
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2694,7 +2694,7 @@ content_path = "./supabase/templates/custom_notice.html"
           yield* start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer));
           expect(out.stderrText).toContain("Starting database from backup...\n");
           expect(out.stderrText).not.toContain("Starting database...\n");
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2710,7 +2710,7 @@ content_path = "./supabase/templates/custom_notice.html"
             path.join(workdir, "supabase", ".branches", "_current_branch"),
           );
           expect(content).toBe("main");
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("seeds a configured bucket on a fresh volume with storage enabled", () =>
@@ -2735,7 +2735,7 @@ content_path = "./supabase/templates/custom_notice.html"
         // docker.io Storage carries its own Docker healthcheck, so readiness
         // never goes through the gateway.
         expect(http.requests.some((entry) => entry.url.includes("/storage/v1/status"))).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2759,7 +2759,7 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(http.deletedVectorBuckets).toHaveLength(0);
             }).pipe(Effect.provide(layer), withEmptyConfigEnv),
           );
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2783,7 +2783,7 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(out.stderrText).not.toContain("Do you want to overwrite its properties?");
             }).pipe(Effect.provide(layer), withEmptyConfigEnv),
           );
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2810,7 +2810,7 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(out.stderrText).toContain("Keeping vector bucket");
             }).pipe(Effect.provide(layer), withEmptyConfigEnv),
           );
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2832,7 +2832,7 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(http.deletedVectorBuckets[0]).toContain("stale-vec");
             }).pipe(Effect.provide(layer)),
           );
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2847,7 +2847,7 @@ content_path = "./supabase/templates/custom_notice.html"
 
           yield* start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer));
           expect(http.createdBucketRequests).toHaveLength(0);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2869,8 +2869,8 @@ content_path = "./supabase/templates/custom_notice.html"
             yield* start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer));
             expect(http.createdBucketRequests).toHaveLength(1);
             expect(http.createdBucketRequests[0]).toContain(":65432/");
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2892,8 +2892,8 @@ content_path = "./supabase/templates/custom_notice.html"
             yield* start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer));
             expect(http.createdBucketRequests).toHaveLength(1);
             expect(http.createdBucketRequests[0]).toContain("override.example.com:9999");
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2919,8 +2919,8 @@ content_path = "./supabase/templates/custom_notice.html"
             expect(http.createdBucketBodies[0]).toMatchObject({
               file_size_limit: 10 * 1024 * 1024,
             });
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -2951,7 +2951,7 @@ content_path = "./supabase/templates/custom_notice.html"
           `${containerName}:/`,
         ]);
         expect(child.spawned.map((s) => s.args)).toContainEqual(["start", containerName]);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("--exclude edge-runtime skips its container entirely", () =>
@@ -2960,7 +2960,7 @@ content_path = "./supabase/templates/custom_notice.html"
 
         yield* start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer));
         expect(edgeRuntimeRunCalls(child.spawned)).toHaveLength(0);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -2988,7 +2988,7 @@ content_path = "./supabase/templates/custom_notice.html"
           } finally {
             yield* fs.remove(stagingRoot, { recursive: true, force: true });
           }
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -3026,7 +3026,7 @@ content_path = "./supabase/templates/custom_notice.html"
               }).pipe(Effect.orDie),
             ),
           );
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -3075,7 +3075,7 @@ content_path = "./supabase/templates/custom_notice.html"
               }).pipe(Effect.orDie),
             ),
           );
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -3119,7 +3119,7 @@ content_path = "./supabase/templates/custom_notice.html"
           );
           expect(kongPulls.length).toBeGreaterThanOrEqual(2);
           expect(out.stderrText).toContain("Started");
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
       10_000,
     );
 
@@ -3155,7 +3155,7 @@ content_path = "./supabase/templates/custom_notice.html"
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
           expect(rollbackWasAttempted(child.spawned)).toBe(false);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
       45_000,
     );
 
@@ -3199,7 +3199,7 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(out.stdoutText).toBe("");
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
           expect(rollbackWasAttempted(child.spawned)).toBe(false);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
       45_000,
     );
   });
@@ -3253,7 +3253,7 @@ content_path = "./supabase/templates/custom_notice.html"
           // including the `Effect.onError` rollback) has fully completed.
           yield* Fiber.interrupt(fiber);
           expect(rollbackWasAttempted(child.spawned)).toBe(true);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -3305,7 +3305,7 @@ content_path = "./supabase/templates/custom_notice.html"
           // including the `Effect.onError` rollback) has fully completed.
           yield* Fiber.interrupt(fiber);
           expect(rollbackWasAttempted(child.spawned)).toBe(true);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("fails and rolls back on a network create failure", () =>
@@ -3334,7 +3334,7 @@ content_path = "./supabase/templates/custom_notice.html"
         expect(child.spawned.some((s) => s.args[0] === "network" && s.args[1] === "prune")).toBe(
           true,
         );
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("fails and rolls back on a container create failure", () =>
@@ -3356,7 +3356,7 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(serialized).toContain("failed to create docker container");
         }
         expect(rollbackWasAttempted(child.spawned)).toBe(true);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -3386,7 +3386,7 @@ content_path = "./supabase/templates/custom_notice.html"
             );
           }
           expect(rollbackWasAttempted(child.spawned)).toBe(true);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -3407,7 +3407,7 @@ content_path = "./supabase/templates/custom_notice.html"
             expect(serialized).toContain("invalid config for auth.email.max_frequency");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -3432,8 +3432,8 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(serialized).toContain("StartInvalidConfigError");
             }
             expect(child.spawned).toHaveLength(0);
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -3457,8 +3457,8 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(serialized).toContain("StartInvalidConfigError");
             }
             expect(child.spawned).toHaveLength(0);
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live(
@@ -3479,7 +3479,7 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(rollbackWasAttempted(child.spawned)).toBe(true);
           // Postgres's own health wait fails before any other service is ever created.
           expect(createdContainerNames(child.spawned)).toEqual([expect.stringContaining("_db_")]);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
       10_000,
     );
 
@@ -3520,7 +3520,7 @@ content_path = "./supabase/templates/custom_notice.html"
           // `cli_stack_started`'s capture sits after the entire bring-up + bulk health check,
           // neither of which is reached once Postgres's wait is downgraded to a warning.
           expect(analytics.captured.some((c) => c.event === "cli_stack_started")).toBe(false);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
       10_000,
     );
 
@@ -3557,7 +3557,7 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(rollbackWasAttempted(child.spawned)).toBe(true);
         }).pipe(
           Effect.provideService(HealthCheckTimeoutSeconds, 0),
-          Effect.provide(BunServices.layer),
+          Effect.provide(NodeServices.layer),
         ),
       10_000,
     );
@@ -3607,7 +3607,7 @@ content_path = "./supabase/templates/custom_notice.html"
         expect(analytics.captured.some((c) => c.event === "cli_stack_started")).toBe(false);
       }).pipe(
         Effect.provideService(HealthCheckTimeoutSeconds, 0),
-        Effect.provide(BunServices.layer),
+        Effect.provide(NodeServices.layer),
       ),
     10_000,
   );
@@ -3642,7 +3642,7 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(analytics.captured.some((c) => c.event === "cli_stack_started")).toBe(false);
         }).pipe(
           Effect.provideService(HealthCheckTimeoutSeconds, 0),
-          Effect.provide(BunServices.layer),
+          Effect.provide(NodeServices.layer),
         ),
       10_000,
     );
@@ -3689,7 +3689,7 @@ content_path = "./supabase/templates/custom_notice.html"
           );
         }).pipe(
           Effect.provideService(HealthCheckTimeoutSeconds, 0),
-          Effect.provide(BunServices.layer),
+          Effect.provide(NodeServices.layer),
         ),
       10_000,
     );
@@ -3758,7 +3758,7 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(analytics.captured.some((c) => c.event === "cli_stack_started")).toBe(false);
         }).pipe(
           Effect.provideService(HealthCheckTimeoutSeconds, 0),
-          Effect.provide(BunServices.layer),
+          Effect.provide(NodeServices.layer),
         ),
       10_000,
     );
@@ -3794,7 +3794,7 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(analytics.captured.some((c) => c.event === "cli_stack_started")).toBe(false);
         }).pipe(
           Effect.provideService(HealthCheckTimeoutSeconds, 0),
-          Effect.provide(BunServices.layer),
+          Effect.provide(NodeServices.layer),
         ),
       10_000,
     );
@@ -3828,7 +3828,7 @@ content_path = "./supabase/templates/custom_notice.html"
 
           expect(Exit.isSuccess(first)).toBe(true);
           expect(out.stderrText).toContain("local development setup is running.");
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("start still completes without rolling back when Docker never settles", () =>
@@ -3840,7 +3840,7 @@ content_path = "./supabase/templates/custom_notice.html"
 
         expect(Exit.isSuccess(exit)).toBe(true);
         expect(rollbackWasAttempted(child.spawned)).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -3882,7 +3882,7 @@ content_path = "./supabase/templates/custom_notice.html"
                 DB_URL: expect.any(String),
               });
             }
-          }).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
       );
     }
 
@@ -3909,7 +3909,7 @@ content_path = "./supabase/templates/custom_notice.html"
           for (const request of gets) {
             expect(request.headers["apikey"]).toEqual(expect.any(String));
           }
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -3937,7 +3937,7 @@ content_path = "./supabase/templates/custom_notice.html"
             expect(warnings[0]).toContain(serviceContainerName(service, projectId));
           }
           expect(warnings[0]).not.toContain(serviceContainerName("kong", projectId));
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live(
@@ -3962,7 +3962,7 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(rollbackWasAttempted(child.spawned)).toBe(true);
         }).pipe(
           Effect.provideService(HealthCheckTimeoutSeconds, 0),
-          Effect.provide(BunServices.layer),
+          Effect.provide(NodeServices.layer),
         ),
       10_000,
     );
@@ -3993,7 +3993,7 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(rollbackWasAttempted(child.spawned)).toBe(false);
         }).pipe(
           Effect.provideService(HealthCheckTimeoutSeconds, 0),
-          Effect.provide(BunServices.layer),
+          Effect.provide(NodeServices.layer),
         ),
       10_000,
     );
@@ -4028,7 +4028,7 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(error).not.toHaveProperty("suggestion");
         }).pipe(
           Effect.provideService(HealthCheckTimeoutSeconds, 0),
-          Effect.provide(BunServices.layer),
+          Effect.provide(NodeServices.layer),
         ),
       10_000,
     );
@@ -4052,7 +4052,7 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(out.stderrText).toContain("WARNING:");
           expect(out.stderrText).toContain("Readiness of supabase_db_demo was not verified.");
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("already running: still rejects a db whose health check ran and failed", () =>
@@ -4081,7 +4081,7 @@ content_path = "./supabase/templates/custom_notice.html"
             "supabase_db_demo container is not ready: unhealthy (last health check exit code 1: pg_isready: no response)",
         });
         expect(out.stderrText).not.toContain("Docker cannot run health checks");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -4100,7 +4100,7 @@ content_path = "./supabase/templates/custom_notice.html"
         );
         const networkFlagIndex = kongCreate?.args.indexOf("--network") ?? -1;
         expect(kongCreate?.args[networkFlagIndex + 1]).toBe("custom-net");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("never spawns a create for a pre-created --network-id network", () =>
@@ -4124,7 +4124,7 @@ content_path = "./supabase/templates/custom_notice.html"
             (s) => s.args[0] === "network" && s.args[1] === "inspect" && s.args[2] === "custom-net",
           ),
         ).toBe(true);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("falls back to SUPABASE_NETWORK_ID when the flag itself is omitted", () =>
@@ -4139,8 +4139,8 @@ content_path = "./supabase/templates/custom_notice.html"
             (s) => s.args[0] === "network" && s.args[1] === "create",
           );
           expect(networkCreate?.args.at(-1)).toBe("env-net");
-        }).pipe(Effect.provide(BunServices.layer)),
-      ).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -4158,8 +4158,8 @@ content_path = "./supabase/templates/custom_notice.html"
           );
           expect(kongCreate?.args).toContain("61234:8000");
           expect(kongCreate?.args).not.toContain("54321:8000");
-        }).pipe(Effect.provide(BunServices.layer)),
-      ).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -4251,7 +4251,7 @@ content_path = "./supabase/templates/custom_notice.html"
               (body, key) => withEnvVar(key, scenario.ambient[key], body),
               effect,
             ),
-          Effect.provide(BunServices.layer),
+          Effect.provide(NodeServices.layer),
         ),
       );
     }
@@ -4277,7 +4277,7 @@ content_path = "./supabase/templates/custom_notice.html"
               s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_storage_"),
           );
           expect(storageCreate?.env["DB_MIGRATIONS_FREEZE_AT"]).toBe("20240102030405");
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect('resolves to "" when no pin file exists', () =>
@@ -4290,7 +4290,7 @@ content_path = "./supabase/templates/custom_notice.html"
             s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_storage_"),
         );
         expect(storageCreate?.env["DB_MIGRATIONS_FREEZE_AT"]).toBe("");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -4316,7 +4316,7 @@ content_path = "./supabase/templates/custom_notice.html"
               (s.args[2] ?? "").includes("storage"),
           );
           expect(storageImageInspect?.args[2]).toMatch(/:1\.2\.3$/);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -4344,7 +4344,7 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(dbCp?.args).toEqual(["cp", "-", `${fakeContainerId(containerName)}:/`]);
           expect(dbCp?.args.some((arg) => arg.includes("custom-root-key-value"))).toBe(false);
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -4383,7 +4383,7 @@ content_path = "./supabase/templates/custom_notice.html"
           yield* start(flags()).pipe(Effect.provide(layer));
           const createdNames = createdContainerNames(child.spawned);
           expect(createdNames.some((name) => name.includes("_db_"))).toBe(true);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -4398,7 +4398,7 @@ content_path = "./supabase/templates/custom_notice.html"
         );
         const addHostIndex = kongCreate?.args.indexOf("--add-host") ?? -1;
         expect(kongCreate?.args[addHostIndex + 1]).toBe("host.docker.internal:host-gateway");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -4418,7 +4418,7 @@ content_path = "./supabase/templates/custom_notice.html"
           );
           expect(gotrueCreate?.env["GOTRUE_SMTP_HOST"]).toBe("smtp.example.com");
           expect(gotrueCreate?.env["GOTRUE_SMTP_PORT"]).toBe("587");
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -4436,7 +4436,7 @@ content_path = "./supabase/templates/custom_notice.html"
         );
         expect(gotrueCreate?.env["GOTRUE_EXTERNAL_MY_OIDC_ENABLED"]).toBe("true");
         expect(gotrueCreate?.env["GOTRUE_EXTERNAL_MY_OIDC_CLIENT_ID"]).toBe("custom-client-id");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -4458,9 +4458,9 @@ content_path = "./supabase/templates/custom_notice.html"
             );
             expect(gotrueCreate?.env["GOTRUE_SMTP_ADMIN_EMAIL"]).toBe("override-admin@example.com");
             expect(gotrueCreate?.env["GOTRUE_SMTP_SENDER_NAME"]).toBe("Override Sender");
-          }).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
         ),
-      ).pipe(Effect.provide(BunServices.layer)),
+      ).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -4480,8 +4480,8 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(Cause.pretty(exit.cause)).toContain("StartInvalidConfigError");
             }
             expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -4525,7 +4525,7 @@ content_path = "./supabase/templates/custom_notice.html"
                   expect(gotrueCreate?.env["GOTRUE_SMS_TWILIO_AUTH_TOKEN"]).toBe(
                     "override-auth-token",
                   );
-                }).pipe(Effect.provide(BunServices.layer)),
+                }).pipe(Effect.provide(NodeServices.layer)),
               ),
             ),
           ),
@@ -4554,9 +4554,9 @@ content_path = "./supabase/templates/custom_notice.html"
               );
               expect(gotrueCreate?.env["GOTRUE_EXTERNAL_PHONE_ENABLED"]).toBe("true");
               expect(gotrueCreate?.env["GOTRUE_SMS_MAX_FREQUENCY"]).toBe("10s");
-            }).pipe(Effect.provide(BunServices.layer)),
+            }).pipe(Effect.provide(NodeServices.layer)),
           ),
-        ).pipe(Effect.provide(BunServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -4580,8 +4580,8 @@ content_path = "./supabase/templates/custom_notice.html"
             expect(out.stderrText).toContain(
               "WARN: no SMS provider is enabled. Disabling phone login",
             );
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -4605,9 +4605,9 @@ content_path = "./supabase/templates/custom_notice.html"
               );
               expect(gotrueCreate?.env["GOTRUE_EXTERNAL_EMAIL_ENABLED"]).toBe("false");
               expect(gotrueCreate?.env["GOTRUE_MAILER_OTP_LENGTH"]).toBe("8");
-            }).pipe(Effect.provide(BunServices.layer)),
+            }).pipe(Effect.provide(NodeServices.layer)),
           ),
-        ).pipe(Effect.provide(BunServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -4637,8 +4637,8 @@ content_path = "./supabase/templates/custom_notice.html"
             expect(gotrueCreate?.env["GOTRUE_MAILER_SUBJECTS_CONFIRMATION"]).toBe(
               "Override subject",
             );
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -4665,8 +4665,8 @@ content_path = "./supabase/templates/custom_notice.html"
               );
             }
             expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -4684,8 +4684,8 @@ content_path = "./supabase/templates/custom_notice.html"
           );
           expect(dbCreate?.args).toContain("54329:5432");
           expect(dbCreate?.args).not.toContain("54322:5432");
-        }).pipe(Effect.provide(BunServices.layer)),
-      ).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -4702,8 +4702,8 @@ content_path = "./supabase/templates/custom_notice.html"
             (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_db_"),
           );
           expect(dbCreate?.args.some((arg) => arg.includes("shared_buffers = '256MB'"))).toBe(true);
-        }).pipe(Effect.provide(BunServices.layer)),
-      ).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -4727,9 +4727,9 @@ content_path = "./supabase/templates/custom_notice.html"
                   containerNameFromCreateArgs(s.args).includes("_storage_"),
               );
               expect(storageCreate?.env["S3_PROTOCOL_ENABLED"]).toBe("false");
-            }).pipe(Effect.provide(BunServices.layer)),
+            }).pipe(Effect.provide(NodeServices.layer)),
           ),
-        ).pipe(Effect.provide(BunServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -4764,11 +4764,11 @@ content_path = "./supabase/templates/custom_notice.html"
                     containerNameFromCreateArgs(s.args).includes("_studio_"),
                 );
                 expect(studioCreate?.env["NEXT_ANALYTICS_BACKEND_PROVIDER"]).toBe("bigquery");
-              }).pipe(Effect.provide(BunServices.layer)),
+              }).pipe(Effect.provide(NodeServices.layer)),
             ),
           ),
         ),
-      ).pipe(Effect.provide(BunServices.layer)),
+      ).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -4785,8 +4785,8 @@ content_path = "./supabase/templates/custom_notice.html"
             (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
           );
           expect(gotrueCreate?.env["GOTRUE_DISABLE_SIGNUP"]).toBe("true");
-        }).pipe(Effect.provide(BunServices.layer)),
-      ).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -4808,8 +4808,8 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(edgeRuntimeImageInspect?.args[2]).toBe(
             "public.ecr.aws/supabase/edge-runtime:v1.68.4",
           );
-        }).pipe(Effect.provide(BunServices.layer)),
-      ).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -4845,9 +4845,9 @@ content_path = "./supabase/templates/custom_notice.html"
               );
               expect(realtimeSetupJob?.env["ERL_AFLAGS"]).toBe("-proto_dist inet6_tcp");
               expect(realtimeSetupJob?.env["MAX_HEADER_LENGTH"]).toBe("8192");
-            }).pipe(Effect.provide(BunServices.layer)),
+            }).pipe(Effect.provide(NodeServices.layer)),
           ),
-        ).pipe(Effect.provide(BunServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -4865,8 +4865,8 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(Cause.pretty(exit.cause)).toContain("StartInvalidConfigError");
             }
             expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -4884,7 +4884,7 @@ content_path = "./supabase/templates/custom_notice.html"
           );
           expect(studioCreate?.env["SUPABASE_PUBLIC_URL"]).toBe("http://127.0.0.1:54321");
           expect(studioCreate?.env["SUPABASE_PUBLIC_URL"]).not.toBe("http://127.0.0.1");
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -4910,8 +4910,8 @@ content_path = "./supabase/templates/custom_notice.html"
               (s) => s.args[0] === "run" && s.args[1] === "--rm",
             );
             expect(migrateJobs[1]?.env["FILE_SIZE_LIMIT"]).toBe(String(5 * 1024 * 1024));
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -4938,8 +4938,8 @@ content_path = "./supabase/templates/custom_notice.html"
               (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_db_"),
             );
             expect(dbCreate?.env["S3_ENABLED"]).toBe("true");
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("honors SUPABASE_EXPERIMENTAL_S3_HOST/_REGION/_ACCESS_KEY/_SECRET_KEY", () =>
@@ -4971,12 +4971,12 @@ content_path = "./supabase/templates/custom_notice.html"
                   expect(dbCreate?.env["S3_REGION"]).toBe("env-s3-region");
                   expect(dbCreate?.env["S3_ACCESS_KEY"]).toBe("env-s3-access-key");
                   expect(dbCreate?.env["S3_SECRET_KEY"]).toBe("env-s3-secret-key");
-                }).pipe(Effect.provide(BunServices.layer)),
+                }).pipe(Effect.provide(NodeServices.layer)),
               ),
             ),
           ),
         ),
-      ).pipe(Effect.provide(BunServices.layer)),
+      ).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -4996,7 +4996,7 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
           expect(copied.get("/home/kong/localhost.crt")).toBe(KONG_LOCAL_TLS_CERT);
           expect(copied.get("/home/kong/localhost.key")).toBe(KONG_LOCAL_TLS_KEY);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     // An empty but present `cert_path`/`key_path` is treated the same as absent — it must not
@@ -5018,7 +5018,7 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
           expect(copied.get("/home/kong/localhost.crt")).toBe(KONG_LOCAL_TLS_CERT);
           expect(copied.get("/home/kong/localhost.key")).toBe(KONG_LOCAL_TLS_KEY);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -5062,9 +5062,9 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(copied.get("/home/kong/localhost.key")).toBe(
                 "-----BEGIN PRIVATE KEY-----env-key",
               );
-            }).pipe(Effect.provide(BunServices.layer)),
+            }).pipe(Effect.provide(NodeServices.layer)),
           ),
-        ).pipe(Effect.provide(BunServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -5104,8 +5104,8 @@ content_path = "./supabase/templates/custom_notice.html"
             expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
             expect(copied.get("/home/kong/localhost.crt")).toBe(KONG_LOCAL_TLS_CERT);
             expect(copied.get("/home/kong/localhost.key")).toBe(KONG_LOCAL_TLS_KEY);
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -5123,8 +5123,8 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(Cause.pretty(exit.cause)).toContain("StartInvalidConfigError");
             }
             expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -5145,8 +5145,8 @@ content_path = "./supabase/templates/custom_notice.html"
             (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
           );
           expect(gotrueCreate?.env["GOTRUE_JWT_EXP"]).toBe("7200");
-        }).pipe(Effect.provide(BunServices.layer)),
-      ).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -5165,8 +5165,8 @@ content_path = "./supabase/templates/custom_notice.html"
             (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
           );
           expect(gotrueCreate?.env["GOTRUE_EXTERNAL_GITHUB_SECRET"]).toBe("value");
-        }).pipe(Effect.provide(BunServices.layer)),
-      ).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -5186,8 +5186,8 @@ content_path = "./supabase/templates/custom_notice.html"
                 s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
             );
             expect(gotrueCreate?.env["GOTRUE_EXTERNAL_MY_OIDC_SECRET"]).toBe("value");
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("decrypts an encrypted Twilio SMS auth_token", () =>
@@ -5204,8 +5204,8 @@ content_path = "./supabase/templates/custom_notice.html"
             (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
           );
           expect(gotrueCreate?.env["GOTRUE_SMS_TWILIO_AUTH_TOKEN"]).toBe("value");
-        }).pipe(Effect.provide(BunServices.layer)),
-      ).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -5233,7 +5233,7 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(envFileContent).toContain("MY_LOWER_SECRET=keep-me");
           expect(envFileContent).not.toContain("my_lower_secret=");
           expect(envFileContent).not.toContain("EMPTY_SECRET=");
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -5258,8 +5258,8 @@ content_path = "./supabase/templates/custom_notice.html"
             const envFileContent = yield* fs.readFileString(envFilePath ?? "");
             expect(envFileContent).toContain("MY_SECRET=value");
             expect(envFileContent).not.toContain("encrypted:");
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -5283,8 +5283,8 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(serialized).toContain("failed to parse config: missing private key");
             }
             expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -5318,10 +5318,10 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(studioCreate?.env["PGRST_DB_SCHEMAS"]).toBe("public,custom");
               expect(studioCreate?.env["PGRST_DB_EXTRA_SEARCH_PATH"]).toBe("extensions,other");
               expect(studioCreate?.env["PGRST_DB_MAX_ROWS"]).toBe("500");
-            }).pipe(Effect.provide(BunServices.layer)),
+            }).pipe(Effect.provide(NodeServices.layer)),
           ),
         ),
-      ).pipe(Effect.provide(BunServices.layer)),
+      ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -5339,8 +5339,8 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(Cause.pretty(exit.cause)).toContain("StartInvalidConfigError");
             }
             expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -5363,8 +5363,8 @@ content_path = "./supabase/templates/custom_notice.html"
           // and 6543, so assert on the specific `hostPort:containerPort` mapping instead.
           expect(poolerCreate?.args).toContain("54329:5432");
           expect(poolerCreate?.args).not.toContain("54329:6543");
-        }).pipe(Effect.provide(BunServices.layer)),
-      ).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -5384,8 +5384,8 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(Cause.pretty(exit.cause)).toContain("StartInvalidConfigError");
             }
             expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -5403,8 +5403,8 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(Cause.pretty(exit.cause)).toContain("StartInvalidConfigError");
             }
             expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("SUPABASE_DB_POOLER_PORT overrides the published host port", () =>
@@ -5425,8 +5425,8 @@ content_path = "./supabase/templates/custom_notice.html"
           // container port 6543 — see the SUPABASE_DB_POOLER_POOL_MODE test above.
           expect(poolerCreate?.args).toContain("60001:6543");
           expect(poolerCreate?.args).not.toContain("54329:6543");
-        }).pipe(Effect.provide(BunServices.layer)),
-      ).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -5445,8 +5445,8 @@ content_path = "./supabase/templates/custom_notice.html"
           );
           expect(logflareCreate?.args).toContain("60002:4000");
           expect(logflareCreate?.args).not.toContain("54327:4000");
-        }).pipe(Effect.provide(BunServices.layer)),
-      ).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -5469,8 +5469,8 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(serialized).toContain("invalid config for analytics.vector_port");
             }
             expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -5492,8 +5492,8 @@ content_path = "./supabase/templates/custom_notice.html"
             // Postgres's own health wait fails before any other service is ever created —
             // proving the short env-overridden timeout took effect (the default is much longer).
             expect(createdContainerNames(child.spawned)).toEqual([expect.stringContaining("_db_")]);
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
       10_000,
     );
   });
@@ -5524,9 +5524,9 @@ content_path = "./supabase/templates/custom_notice.html"
             expect(gotrueCreate?.env["GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_URI"]).toBe(
               "pg-functions://postgres/auth/custom-access-token-hook",
             );
-          }).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
         ),
-      ).pipe(Effect.provide(BunServices.layer)),
+      ).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -5551,9 +5551,9 @@ content_path = "./supabase/templates/custom_notice.html"
             );
             expect(gotrueCreate?.env["GOTRUE_SECURITY_CAPTCHA_ENABLED"]).toBe("true");
             expect(gotrueCreate?.env["GOTRUE_SECURITY_CAPTCHA_PROVIDER"]).toBe("turnstile");
-          }).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
         ),
-      ).pipe(Effect.provide(BunServices.layer)),
+      ).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -5570,8 +5570,8 @@ content_path = "./supabase/templates/custom_notice.html"
             (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
           );
           expect(gotrueCreate?.env["GOTRUE_SESSIONS_TIMEBOX"]).toBe("24h0m0s");
-        }).pipe(Effect.provide(BunServices.layer)),
-      ).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("honors SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED/_VERIFY_ENABLED", () =>
@@ -5593,9 +5593,9 @@ content_path = "./supabase/templates/custom_notice.html"
             );
             expect(gotrueCreate?.env["GOTRUE_MFA_TOTP_ENROLL_ENABLED"]).toBe("true");
             expect(gotrueCreate?.env["GOTRUE_MFA_TOTP_VERIFY_ENABLED"]).toBe("true");
-          }).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
         ),
-      ).pipe(Effect.provide(BunServices.layer)),
+      ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("honors SUPABASE_AUTH_RATE_LIMIT_SMS_SENT", () =>
@@ -5610,8 +5610,8 @@ content_path = "./supabase/templates/custom_notice.html"
             (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
           );
           expect(gotrueCreate?.env["GOTRUE_RATE_LIMIT_SMS_SENT"]).toBe("99");
-        }).pipe(Effect.provide(BunServices.layer)),
-      ).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("honors SUPABASE_AUTH_WEB3_SOLANA_ENABLED", () =>
@@ -5626,8 +5626,8 @@ content_path = "./supabase/templates/custom_notice.html"
             (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
           );
           expect(gotrueCreate?.env["GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED"]).toBe("true");
-        }).pipe(Effect.provide(BunServices.layer)),
-      ).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("honors SUPABASE_AUTH_OAUTH_SERVER_ENABLED", () =>
@@ -5642,8 +5642,8 @@ content_path = "./supabase/templates/custom_notice.html"
             (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
           );
           expect(gotrueCreate?.env["GOTRUE_OAUTH_SERVER_ENABLED"]).toBe("true");
-        }).pipe(Effect.provide(BunServices.layer)),
-      ).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -5663,8 +5663,8 @@ content_path = "./supabase/templates/custom_notice.html"
             (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
           );
           expect(gotrueCreate?.env["GOTRUE_PASSKEY_ENABLED"]).toBe("true");
-        }).pipe(Effect.provide(BunServices.layer)),
-      ).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("honors SUPABASE_AUTH_WEBAUTHN_RP_ID/_RP_DISPLAY_NAME/_RP_ORIGINS", () =>
@@ -5693,10 +5693,10 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(gotrueCreate?.env["GOTRUE_WEBAUTHN_RP_ORIGINS"]).toBe(
                 "http://a.example,http://b.example",
               );
-            }).pipe(Effect.provide(BunServices.layer)),
+            }).pipe(Effect.provide(NodeServices.layer)),
           ),
         ),
-      ).pipe(Effect.provide(BunServices.layer)),
+      ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -5721,8 +5721,8 @@ content_path = "./supabase/templates/custom_notice.html"
                 s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
             );
             expect(gotrueCreate?.env["GOTRUE_PASSKEY_ENABLED"]).toBe("true");
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer), (body) =>
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer), (body) =>
           withConfigEnv({ PASSKEY_ENABLED: "true" }, body),
         ),
     );
@@ -5747,8 +5747,8 @@ content_path = "./supabase/templates/custom_notice.html"
             expect(gotrueCreate?.env["GOTRUE_WEBAUTHN_RP_ORIGINS"]).toBe(
               "http://a.example,http://b.example",
             );
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -5767,8 +5767,8 @@ content_path = "./supabase/templates/custom_notice.html"
           const entrypointCommand = runCalls[0]?.args.at(-1) ?? "";
           expect(entrypointCommand).toContain("--policy=per_worker");
           expect(entrypointCommand).not.toContain("--policy=oneshot");
-        }).pipe(Effect.provide(BunServices.layer)),
-      ).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 });

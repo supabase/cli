@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { expect, layer } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 
@@ -44,7 +44,7 @@ const run = (
     return yield* applySeedFiles(session, fs, path, workdir, { enabled: true, sqlPaths });
   }).pipe(Effect.provide(out.layer));
 
-layer(BunServices.layer)("applySeedFiles seed glob", (it) => {
+layer(NodeServices.layer)("applySeedFiles seed glob", (it) => {
   it.effect("treats a backslash escape as a glob metacharacter (matches the real file)", () =>
     Effect.gen(function* () {
       const { fs, path, dir } = yield* tempDir("seed-");
@@ -100,7 +100,7 @@ layer(BunServices.layer)("applySeedFiles seed glob", (it) => {
   );
 });
 
-layer(BunServices.layer)("applySeedFiles scanner buffer size", (it) => {
+layer(NodeServices.layer)("applySeedFiles scanner buffer size", (it) => {
   it.effect(
     "rejects an oversized seed statement when SUPABASE_SCANNER_BUFFER_SIZE is configured (Go SeedFile.ExecBatchWithCache parity)",
     () =>
@@ -123,7 +123,7 @@ layer(BunServices.layer)("applySeedFiles scanner buffer size", (it) => {
   );
 });
 
-layer(BunServices.layer)("applySeedFiles stepped-down session", (it) => {
+layer(NodeServices.layer)("applySeedFiles stepped-down session", (it) => {
   it.effect("restores the role right after a reset and before the seed_files upsert", () =>
     Effect.gen(function* () {
       const { fs, path, dir } = yield* tempDir("seed-");

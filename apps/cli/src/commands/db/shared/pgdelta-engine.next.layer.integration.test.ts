@@ -1,4 +1,4 @@
-import * as BunServices from "@effect/platform-bun/BunServices";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 
@@ -94,7 +94,7 @@ function setup() {
     http: () => Effect.void,
   });
   const dependencies = Layer.mergeAll(
-    BunServices.layer,
+    NodeServices.layer,
     shadow,
     unusedAdapter,
     debug,

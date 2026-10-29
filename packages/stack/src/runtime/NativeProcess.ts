@@ -1,8 +1,6 @@
 import { Data, Duration, Effect, Fiber, Option, Scope, Sink, Stream } from "effect";
-import { fileURLToPath } from "node:url";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { PlatformError } from "effect/PlatformError";
-import { isBunVirtualPath } from "../internal/dispatch-markers.ts";
 import * as Environment from "../namespace/Environment.ts";
 import type { ChildProcessHandle, ExitCode, ProcessId } from "effect/process/ChildProcessSpawner";
 
@@ -64,17 +62,11 @@ export interface NativeProcess {
   readonly kill: Effect.Effect<void, NativeProcessError>;
 }
 
-import { NATIVE_PROCESS_DISPATCH_SENTINEL } from "../internal/dispatch-markers.ts";
-
-const nativeLauncherEntrypointFor = (moduleUrl: string): string => {
-  if (isBunVirtualPath(moduleUrl)) return NATIVE_PROCESS_DISPATCH_SENTINEL;
-  const sourceEntrypoint = fileURLToPath(new URL("./native-launcher.ts", moduleUrl));
-  return isBunVirtualPath(sourceEntrypoint) ? NATIVE_PROCESS_DISPATCH_SENTINEL : sourceEntrypoint;
-};
+import { NATIVE_PROCESS_DISPATCH_SENTINEL, dispatchArgvFor } from "../internal/dispatch-markers.ts";
 
 export const defaultNativeProcessLauncher = (): NativeProcessLauncher => ({
   command: process.execPath,
-  args: [nativeLauncherEntrypointFor(import.meta.url)],
+  args: dispatchArgvFor(import.meta.url, "./native-launcher.ts", NATIVE_PROCESS_DISPATCH_SENTINEL),
 });
 
 const encodeSpec = (spec: NativeProcessSpec, env: Readonly<Record<string, string>>): Uint8Array => {

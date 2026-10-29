@@ -1,4 +1,4 @@
-import * as BunPath from "@effect/platform-bun/BunPath";
+import * as NodePath from "@effect/platform-node/NodePath";
 import { Effect, FileSystem, Layer, Path, PlatformError } from "effect";
 import { describe, expect, it } from "vitest";
 
@@ -22,7 +22,7 @@ const missingEntry = (method: string, syscall: string, path: string) =>
   });
 
 const FAKE_EXISTING_BASE = "/fake/project-root";
-const path = Effect.runSync(Effect.provide(Path.Path, BunPath.layer));
+const path = Effect.runSync(Effect.provide(Path.Path, NodePath.layer));
 const fakeFileSystem = FileSystem.layerNoop({
   realPath: (path) =>
     path === FAKE_EXISTING_BASE
@@ -46,7 +46,7 @@ describe("canonicalPathForContainment (via resolveEmailTemplateContentPath)", ()
         contentPath,
         contentPresent: false,
         base: FAKE_EXISTING_BASE,
-      }).pipe(Effect.provide(Layer.mergeAll(fakeFileSystem, BunPath.layer))),
+      }).pipe(Effect.provide(Layer.mergeAll(fakeFileSystem, NodePath.layer))),
     );
 
     expect(resolved).toBe(path.join(FAKE_EXISTING_BASE, contentPath));

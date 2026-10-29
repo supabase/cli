@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { beforeAll, describe, expect, it } from "@effect/vitest";
 import { Config, Effect, FileSystem, Option, Path, PlatformError } from "effect";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -180,7 +180,7 @@ describe("error tag stability", () => {
   let productionDeclarations: Array<TaggedErrorDeclaration>;
 
   beforeAll(() =>
-    Effect.runPromise(collectProductionDeclarations.pipe(Effect.provide(BunServices.layer))).then(
+    Effect.runPromise(collectProductionDeclarations.pipe(Effect.provide(NodeServices.layer))).then(
       (declarations) => {
         productionDeclarations = declarations;
       },
@@ -214,7 +214,7 @@ describe("error tag stability", () => {
           '`UPDATE_ERROR_TAGS_FIXTURE=1 bun --bun vitest run --project unit -t "error tag stability"` ' +
           "and commit the resulting apps/cli/src/shared/telemetry/__fixtures__/error-tags.txt.",
       ).toEqual({ added: [], removed: [] });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it("never lets two unexpectedly-different error classes share the same tag literal", () => {

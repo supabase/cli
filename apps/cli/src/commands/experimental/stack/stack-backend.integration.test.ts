@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
 import { ExperimentalFeatureFlagError } from "../../../command-internal/experimental-feature.ts";
@@ -13,7 +13,7 @@ import {
 } from "../../../command-internal/stack-backend.ts";
 
 const select = (input: Parameters<typeof resolveProjectStateSelection>[0]) =>
-  resolveProjectStateSelection(input).pipe(Effect.provide(BunServices.layer));
+  resolveProjectStateSelection(input).pipe(Effect.provide(NodeServices.layer));
 
 const resolve = (input: Parameters<typeof resolveProjectStateSelection>[0]) =>
   select(input).pipe(Effect.map(({ stackBackend }) => stackBackend));
@@ -29,7 +29,7 @@ const project = (config: string, format: "toml" | "json" = "toml") =>
   });
 
 const withServices = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  effect.pipe(Effect.provide(BunServices.layer));
+  effect.pipe(Effect.provide(NodeServices.layer));
 
 const completionFlags = (backend: StackBackend | undefined, command: string) =>
   respondToComplete(rootCommandForFeatures({ stackBackend: backend }), [

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Data, Effect, FileSystem, Path } from "effect";
 import { describe, expect, it } from "@effect/vitest";
 
@@ -104,7 +104,7 @@ describe("supabase start health (e2e)", () => {
         expect(start.stderr).toContain(`${mailpitContainer} container is not ready`);
         expect(start.stderr).toContain(`${mailpitContainer}'s image ${mailpitImage}`);
         expect(start.stderr).toContain(`image rm -f ${mailpitImage}`);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     START_TIMEOUT_MS + LIFECYCLE_OVERHEAD_MS + CLEANUP_TIMEOUT_MS,
   );
 
@@ -155,7 +155,7 @@ describe("supabase start health (e2e)", () => {
           "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
         ]);
         expect(health.stdout.trim()).toBe("healthy");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     START_TIMEOUT_MS + LIFECYCLE_OVERHEAD_MS + CLEANUP_TIMEOUT_MS,
   );
 });

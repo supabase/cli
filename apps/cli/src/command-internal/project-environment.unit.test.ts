@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, layer } from "@effect/vitest";
 import type { CliProjectEnvironment } from "@supabase/config";
 import { ConfigProvider, Effect, FileSystem, Path, Tracer } from "effect";
@@ -35,7 +35,7 @@ function fakeProjectEnv(
   };
 }
 
-layer(BunServices.layer)("resolveProjectEnvironmentValues", (it) => {
+layer(NodeServices.layer)("resolveProjectEnvironmentValues", (it) => {
   it.effect("returns just the already-loaded values when no extra dotenv files exist", () =>
     Effect.gen(function* () {
       const dirs = yield* project;

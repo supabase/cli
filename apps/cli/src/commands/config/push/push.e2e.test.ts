@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Data, Effect, FileSystem, Path } from "effect";
 
@@ -38,7 +38,7 @@ describe("supabase config push", () => {
         );
         expect(exitCode).toBe(1);
         expect(`${stdout}${stderr}`).toContain("config.toml");
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     E2E_TIMEOUT_MS,
   );
   it.live.each(["n", "y"] as const)(
@@ -124,7 +124,7 @@ describe("supabase config push", () => {
         expect(writes).toEqual(answer === "y" ? ['{"max_rows":500}'] : []);
         expect(stdout).toContain(`"status":"${answer === "y" ? "updated" : "skipped"}"`);
         expect(stderr).toContain("api.max_rows [update]");
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     E2E_TIMEOUT_MS,
   );
 });

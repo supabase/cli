@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 
@@ -23,7 +23,7 @@ describe("squashLineByLineDiff", () => {
       const after = yield* readGoFixture("after.sql");
       const expected = yield* readGoFixture("diff.sql");
       expect(squashLineByLineDiff(before, after)).toBe(expected);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it("keeps only after-only lines when before is shorter", () => {

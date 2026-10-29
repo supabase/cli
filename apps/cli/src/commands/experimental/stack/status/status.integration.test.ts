@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Redacted, Schema, Stream } from "effect";
 import {
@@ -276,14 +276,14 @@ const runStatus = (input: {
       out.layer,
       telemetry.layer,
       mockCommandSettings({ workdir: projectRoot, supabaseHome: root }),
-      BunServices.layer,
+      NodeServices.layer,
       runtimeInfoLayer,
     );
     if (input.config === "explicit" || input.config === "multiline-functions-env")
       yield* seedLock(root).pipe(Effect.provide(layer));
     const effect = stackStatus(input.flags ?? flags()).pipe(Effect.provide(layer));
     return { effect, out, root };
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 
 it.effect("renders connections and a services summary without internal IDs", () =>
   Effect.gen(function* () {

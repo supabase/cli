@@ -1,5 +1,5 @@
 import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Config, ConfigProvider, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import { PlatformError, SystemError } from "effect/PlatformError";
@@ -219,7 +219,7 @@ function faultyFsLayer(workdir: string, opts: FsFaultOpts): Layer.Layer<FileSyst
         },
       });
     }),
-  ).pipe(Layer.provide(BunServices.layer));
+  ).pipe(Layer.provide(NodeServices.layer));
 }
 
 const alwaysReadyHttpClientLayer = Layer.succeed(
@@ -377,7 +377,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     unusedStackServices,
     // Listed first so every fake service layer below overrides it; Layer.mergeAll is
     // last-wins on a shared service.
-    BunServices.layer,
+    NodeServices.layer,
     out.layer,
     telemetry.layer,
     opts.realLayers === true

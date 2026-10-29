@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer, Option, Path, Ref, Scope } from "effect";
 import { StackError } from "@supabase/stack/effect";
@@ -17,7 +17,7 @@ const flags = (id?: string) => ({
   stack: Option.none<string>(),
   stackId: Option.fromUndefinedOr(id),
 });
-const live = Layer.provideMerge(stackApiLayer, BunServices.layer);
+const live = Layer.provideMerge(stackApiLayer, NodeServices.layer);
 const fixture = Effect.fn("StackStopTest.fixture")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;

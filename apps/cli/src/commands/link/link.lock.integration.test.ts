@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import type { V1ListAllBranchesOutput } from "@supabase/api/effect";
 import { readLock, writeLock } from "@supabase/stack/effect";
@@ -261,7 +261,7 @@ const lockWriteFails = Layer.effect(
         },
       }),
   ),
-).pipe(Layer.provide(BunServices.layer));
+).pipe(Layer.provide(NodeServices.layer));
 
 const runLinkWithLockWriteFailing = (world: World, linkFlags: LinkFlags) => {
   const out = mockOutput({ format: "text" });
@@ -334,7 +334,7 @@ describe("link records hosted versions in the stack lock", () => {
       expect(warnings(out)).toEqual([
         expect.stringMatching(/^database: hosted Postgres 15\.1\.0\.117/),
       ]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("links without probing the tenant when the token cannot read secret keys", () =>
@@ -350,7 +350,7 @@ describe("link records hosted versions in the stack lock", () => {
       }
       expect(world.tenant.requests).toEqual([]);
       expect(warnings(out).join("\n")).toContain("no API key to probe with");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("takes the bundled pin as unobserved for a service the platform does not report", () =>
@@ -388,7 +388,7 @@ describe("link records hosted versions in the stack lock", () => {
           ]),
         },
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("does not rewrite the lock when linking again changes nothing", () =>
@@ -403,7 +403,7 @@ describe("link records hosted versions in the stack lock", () => {
       const printed = out.messages.map(({ message }) => message).join("\n");
       expect(printed).toContain("supabase/supabase.lock is already up to date");
       expect(printed).not.toContain("Updated supabase/supabase.lock");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("keeps a fallback entry's pin when linking again changes nothing", () =>
@@ -424,7 +424,7 @@ describe("link records hosted versions in the stack lock", () => {
         resolution: "unobserved",
         resolved: pinned,
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("records the same branch identity whether it was linked by ref or by name", () =>
@@ -443,7 +443,7 @@ describe("link records hosted versions in the stack lock", () => {
 
       expect(byName).toEqual({ ref: BRANCH_REF, isDefault: false });
       expect(yield* branchOf()).toEqual(byName);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("fails the link, leaving no lock or link, when an explicit pin is not published", () =>
@@ -457,7 +457,7 @@ describe("link records hosted versions in the stack lock", () => {
       expect(error).toMatchObject({ _tag: "LockResolutionError", reason: "unpublished" });
       expect(yield* fs.exists(`${world.workdir}/supabase/supabase.lock`)).toBe(false);
       expect(yield* fs.exists(`${world.workdir}/supabase/.link.json`)).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("keeps the previous entry when a hosted probe fails and nothing else changed", () =>
@@ -473,7 +473,7 @@ describe("link records hosted versions in the stack lock", () => {
       expect(after.rest).toEqual(before.rest);
       expect(warnings(out).join("\n")).toContain(`rest: the hosted version could not be read`);
       expect(warnings(out).join("\n")).toContain(`kept ${HOSTED}-r0`);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("takes nothing from the old remote when a probe fails after the link moved", () =>
@@ -498,7 +498,7 @@ describe("link records hosted versions in the stack lock", () => {
       });
       expect(lock.services.rest.linked).toBeUndefined();
       expect(lock.services.auth.linked?.version).toBe(HOSTED);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("targets the new remote in .link.json when the lock cannot be written", () =>
@@ -519,7 +519,7 @@ describe("link records hosted versions in the stack lock", () => {
 
       const lock = yield* readLock(world.workdir).pipe(Effect.map(Option.getOrThrow));
       expect(lock.linked?.branch.ref).toBe(BRANCH_REF);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("a frozen link records the target in .link.json and leaves the lock untouched", () =>
@@ -542,7 +542,7 @@ describe("link records hosted versions in the stack lock", () => {
       expect(out.messages.map(({ message }) => message).join("\n")).toContain(
         "supabase/supabase.lock was left untouched",
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
 
@@ -562,7 +562,7 @@ describe("stack update follows the recorded observations", () => {
         resolved: { upstreamVersion: "v99.1.0", revision: 0 },
       });
       expect(services.auth.resolved.upstreamVersion).toBe(HOSTED);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
 
@@ -607,7 +607,7 @@ describe("link warns when a saved stack would refuse the versions it locks", () 
         expect((yield* readServices(world.workdir)).database.resolved.upstreamVersion).toBe(
           HOSTED_DATABASE,
         );
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("stays quiet when the data was built by the version the link locks", () =>
@@ -623,7 +623,7 @@ describe("link warns when a saved stack would refuse the versions it locks", () 
       const out = yield* runLink(world);
 
       expect(stackWarnings(out)).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("leaves a frozen link silent about saved stacks", () =>
@@ -636,7 +636,7 @@ describe("link warns when a saved stack would refuse the versions it locks", () 
       const out = yield* runLink(world, flags({ frozen: true }));
 
       expect(stackWarnings(out)).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("still links when the saved stacks cannot be read", () =>
@@ -650,6 +650,6 @@ describe("link warns when a saved stack would refuse the versions it locks", () 
 
       expect(stackWarnings(out)).toEqual([]);
       expect((yield* readServices(world.workdir)).auth.resolved.upstreamVersion).toBe(HOSTED);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

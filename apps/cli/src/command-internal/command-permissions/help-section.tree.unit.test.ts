@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Context, Effect, Exit, Option } from "effect";
 import type { Command } from "effect/cli";
 import { describe, expect, it } from "@effect/vitest";
@@ -94,7 +94,7 @@ describe("permission help section across the command tree", () => {
               if (flag === undefined || param === undefined) continue;
               const exit = yield* param
                 .parse({ flags: {}, arguments: [] })
-                .pipe(Effect.provide(BunServices.layer), Effect.exit);
+                .pipe(Effect.provide(NodeServices.layer), Effect.exit);
               const parsed = Exit.isSuccess(exit) ? exit.value[1] : undefined;
               expect(
                 known.get(flag)?.default,
@@ -140,7 +140,7 @@ describe("permission help section across the command tree", () => {
               if (param === undefined || catalogFor(path).get(flag)?.hidden !== false) continue;
               const [, value] = yield* param
                 .parse({ flags: {}, arguments: [] })
-                .pipe(Effect.provide(BunServices.layer));
+                .pipe(Effect.provide(NodeServices.layer));
               expect(value, `"${path}" --${flag} defaults to on`).not.toBe(true);
             }
           }

@@ -1,6 +1,6 @@
 import { stripVTControlCharacters } from "node:util";
 
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it, layer } from "@effect/vitest";
 import { Clock, DateTime, Effect, Fiber, FileSystem, Layer, Option, Path, Tracer } from "effect";
 import { FetchHttpClient } from "effect/http";
@@ -76,7 +76,7 @@ describe("formatUpgradeNotice", () => {
 
 const isRoot = process.getuid?.() === 0;
 
-const hookLayer = Layer.mergeAll(BunServices.layer, runtimeInfoLayer);
+const hookLayer = Layer.mergeAll(NodeServices.layer, runtimeInfoLayer);
 
 const notice = (deps: UpgradeNoticeDeps) => runUpgradeNotice(deps);
 
@@ -95,7 +95,7 @@ const withMode = <A, E, R>(
     ),
   );
 
-layer(BunServices.layer)("runUpgradeNotice", (it) => {
+layer(NodeServices.layer)("runUpgradeNotice", (it) => {
   const setup = Effect.fnUntraced(function* (opts: {
     readonly env?: Record<string, string>;
     readonly args?: ReadonlyArray<string>;

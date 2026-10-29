@@ -1,5 +1,5 @@
 import type { V1ListAllProjectsOutput } from "@supabase/api/effect";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 
@@ -51,7 +51,7 @@ describe("remoteTargetLayer Management API requests", () => {
       Layer.provide(mockTty({ stdinIsTty: true })),
       Layer.provide(output.layer),
       Layer.provide(api.factoryLayer),
-      Layer.provide(BunServices.layer),
+      Layer.provide(NodeServices.layer),
     );
     return { api, layer };
   }
@@ -120,7 +120,7 @@ describe("remoteTargetLayer Management API requests", () => {
       const { ref } = yield* resolve(Option.none());
       expect(ref).toBe(VALID_REF);
       expect(api.requests).toEqual([]);
-    }).pipe(Effect.provide([layer, BunServices.layer]));
+    }).pipe(Effect.provide([layer, NodeServices.layer]));
   });
 });
 
@@ -138,7 +138,7 @@ describe("remoteTargetLayer in stack mode", () => {
       project: { ref: VALID_REF },
       active_branch: activeBranch,
       fetchedAt: "2026-01-01T00:00:00.000Z",
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
 
   const inStackMode = <A, E>(
     effect: Effect.Effect<A, E, RemoteTarget>,
@@ -155,7 +155,7 @@ describe("remoteTargetLayer in stack mode", () => {
       Layer.provide(mockTty({ stdinIsTty: false })),
       Layer.provide(mockOutput().layer),
       Layer.provide(api.factoryLayer),
-      Layer.provide(BunServices.layer),
+      Layer.provide(NodeServices.layer),
     );
     return effect.pipe(
       Effect.provide(layer.pipe(Layer.provideMerge(projectStateModeLayer("stack")))),

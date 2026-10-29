@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { CliOutput, Command } from "effect/cli";
 import { Effect, Layer, Option, Redacted, Schema, Stream } from "effect";
@@ -231,7 +231,7 @@ const runStatusEnv = (input: {
     yield* Command.runWith(testRoot, { version: "0.0.0-test" })(input.argv).pipe(
       Effect.provide(
         Layer.mergeAll(
-          BunServices.layer,
+          NodeServices.layer,
           CliOutput.layer(textCliOutputFormatter()),
           output.layer,
           analytics.layer,
@@ -248,7 +248,7 @@ const runStatusEnv = (input: {
     return yield* Schema.decodeEffect(
       Schema.fromJsonString(Schema.Record(Schema.String, Schema.String)),
     )(output.rawChunks.map(({ text }) => text).join(""));
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 
 describe("stack start export pointer", () => {
   it.effect(

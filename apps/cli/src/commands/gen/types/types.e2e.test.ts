@@ -1,5 +1,5 @@
 import { languages } from "@supabase/typegen";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Clock, Config, Data, Effect, FileSystem, Option, Path, Schedule } from "effect";
 import {
@@ -352,7 +352,7 @@ describe("gen types e2e", () => {
             }
           }).pipe(Effect.ensuring(cleanupLocalPostgres(localPostgres)));
         }),
-      ).pipe(Effect.provide(BunServices.layer)),
+      ).pipe(Effect.provide(NodeServices.layer)),
     {
       timeout:
         LOCAL_IMAGE_BUDGET_MS +
@@ -408,7 +408,7 @@ describe("gen types e2e", () => {
             expectLanguageShape(lang, result.stdout);
           }
         }),
-      ).pipe(Effect.provide(BunServices.layer)),
+      ).pipe(Effect.provide(NodeServices.layer)),
     { timeout: RESOLVE_BUDGET_MS + TYPEGEN_TIMEOUT_MS * TYPEGEN_LANGS.length },
   );
 });

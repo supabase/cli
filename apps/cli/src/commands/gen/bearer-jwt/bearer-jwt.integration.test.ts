@@ -1,5 +1,5 @@
 import { generateKeyPairSync } from "node:crypto";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, DateTime, Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
 import { CliOutput, Command } from "effect/cli";
@@ -1256,7 +1256,7 @@ describe("gen bearer-jwt integration", () => {
     const out = mockOutput({ format: "text", interactive: false });
     const analytics = mockAnalytics();
     const layer = Layer.mergeAll(
-      BunServices.layer,
+      NodeServices.layer,
       processControlLayer,
       CliOutput.layer(textCliOutputFormatter()),
       out.layer,
