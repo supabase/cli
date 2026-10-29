@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { DateTime } from "effect";
 import {
   decodeHistory,
   headlineOf,
@@ -33,7 +34,7 @@ describe("makeEntry", () => {
   test("shortens the commit and rounds the time down to the minute in UTC", () => {
     const made = makeEntry({
       sha: "0123456789abcdef0123456789abcdef01234567",
-      now: new Date("2026-10-28T09:05:59Z"),
+      now: DateTime.toDateUtc(DateTime.makeUnsafe("2026-10-28T09:05:59Z")),
       headline: "no changes found",
       url: "https://github.com/o/r/actions/runs/9/attempts/2",
     });
@@ -44,7 +45,7 @@ describe("makeEntry", () => {
   test("refuses a run link that is not a workflow run", () => {
     const made = makeEntry({
       sha: "abcdef1",
-      now: new Date(),
+      now: DateTime.toDateUtc(DateTime.nowUnsafe()),
       headline: "h",
       url: "https://evil.test/x",
     });

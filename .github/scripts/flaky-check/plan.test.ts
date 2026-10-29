@@ -29,29 +29,31 @@ function outputOf(argv: string[]): string | undefined {
 }
 
 describe("plan", () => {
-  test("schedules run unit and integration nightly and the e2e suites on the workflow's weekly cron", async () => {
-    const workflow = await Bun.file(`${import.meta.dir}/../../workflows/flaky-check.yml`).text();
-    expect(JSON.stringify(Bun.YAML.parse(workflow))).toContain(`"cron":"${WEEKLY_CRON}"`);
+  test("schedules run unit and integration nightly and the e2e suites on the workflow's weekly cron", () =>
+    Bun.file(`${import.meta.dir}/../../workflows/flaky-check.yml`)
+      .text()
+      .then((workflow) => {
+        expect(JSON.stringify(Bun.YAML.parse(workflow))).toContain(`"cron":"${WEEKLY_CRON}"`);
 
-    const weekly = plan(input({ event: "schedule", schedule: WEEKLY_CRON })).entries;
-    const nightly = plan(input({ event: "schedule", schedule: "17 3 * * *" })).entries;
+        const weekly = plan(input({ event: "schedule", schedule: WEEKLY_CRON })).entries;
+        const nightly = plan(input({ event: "schedule", schedule: "17 3 * * *" })).entries;
 
-    expect(weekly.map((e) => e.name).slice(0, 7)).toEqual([
-      "flaky-e2e-cli1-run1",
-      "flaky-e2e-cli2-run1",
-      "flaky-e2e-cli3-run1",
-      "flaky-e2e-cli4-run1",
-      "flaky-e2e-cli5-run1",
-      "flaky-e2e-cli-e2e1-run1",
-      "flaky-e2e-cli-e2e2-run1",
-    ]);
-    expect(weekly).toHaveLength(48);
-    expect(nightly.map((e) => [e.suite, e.runner, e.timeout]).slice(9, 11)).toEqual([
-      ["unit", "blacksmith-4vcpu-ubuntu-2404", 30],
-      ["integration", "blacksmith-8vcpu-ubuntu-2404", 30],
-    ]);
-    expect(nightly).toHaveLength(20);
-  });
+        expect(weekly.map((e) => e.name).slice(0, 7)).toEqual([
+          "flaky-e2e-cli1-run1",
+          "flaky-e2e-cli2-run1",
+          "flaky-e2e-cli3-run1",
+          "flaky-e2e-cli4-run1",
+          "flaky-e2e-cli5-run1",
+          "flaky-e2e-cli-e2e1-run1",
+          "flaky-e2e-cli-e2e2-run1",
+        ]);
+        expect(weekly).toHaveLength(48);
+        expect(nightly.map((e) => [e.suite, e.runner, e.timeout]).slice(9, 11)).toEqual([
+          ["unit", "blacksmith-4vcpu-ubuntu-2404", 30],
+          ["integration", "blacksmith-8vcpu-ubuntu-2404", 30],
+        ]);
+        expect(nightly).toHaveLength(20);
+      }));
 
   test("a labeled pull request adds focused jobs that run five executions against the PR base", () => {
     const { entries, base } = plan(input({ event: "pull_request", baseRef: "next" }));
