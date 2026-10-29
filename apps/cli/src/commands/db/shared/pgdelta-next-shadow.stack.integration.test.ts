@@ -27,6 +27,7 @@ const toml = {
   projectEnv: {},
   envLookup: () => undefined,
   apiSchemas: ["public", "graphql_public"],
+  exposedSchemas: ["public", "graphql_public"],
   port: 54321,
   shadowPort: 54320,
   password: "postgres",

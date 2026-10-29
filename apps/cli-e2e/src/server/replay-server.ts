@@ -153,6 +153,8 @@ interface ReplayServerOptions {
   fixturesDir: string;
   /** Port to listen on (0 = random). */
   port?: number;
+  /** Interface to bind; Bun binds all interfaces when omitted. */
+  hostname?: string;
   /** Optional Postgres mock server to control via /_ctrl/pg-* endpoints. */
   pgMock?: PgMockHandle;
 }
@@ -193,6 +195,7 @@ export async function startReplayServer(options: ReplayServerOptions): Promise<R
 
   const server = Bun.serve({
     port: options.port ?? 0,
+    ...(options.hostname === undefined ? {} : { hostname: options.hostname }),
     async fetch(req: Request) {
       const url = new URL(req.url);
 

@@ -28,17 +28,19 @@ formatting without disabling safe compaction.
 
 ## Files Written
 
-| Path                                                                                            | Format | When                                                         |
-| ----------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------ |
-| `<workdir>/supabase/schemas/**/*.sql` (default declarative dir, or invocation-local `--output`) | SQL    | selected destination is wiped + rewritten after confirmation |
-| `<selected-output>/.pgdelta-export.json`                                                        | JSON   | export metadata                                              |
-| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`                                         | JSON   | with `PGDELTA_DEBUG`                                         |
+| Path                                                                                            | Format | When                                                                                                                                                                                                                  |
+| ----------------------------------------------------------------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/schemas/**/*.sql` (default declarative dir, or invocation-local `--output`) | SQL    | selected destination is wiped + rewritten after confirmation                                                                                                                                                          |
+| `<selected-output>/.pgdelta-export.json`                                                        | JSON   | export metadata                                                                                                                                                                                                       |
+| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`                                         | JSON   | with `PGDELTA_DEBUG`                                                                                                                                                                                                  |
+| `$SUPABASE_HOME/locks/start-<project_id>.lock`                                                  | SQLite | when the local database is started — the per-project start lock shared with `supabase start`; a concurrent start prints `Waiting for another supabase start for this project to finish...` on stderr (see `db start`) |
 
 ## Subprocesses / Containers
 
-| What                                                                                                                                                                  | When                                                           |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| `docker`/`podman` container recreate for the local `db` (+ satellite restarts, Kong reload) — the same primitives `db start`/`db reset` use, via `resetLocalDatabase` | smart-mode Local choice when reset is confirmed (or `--reset`) |
+| What                                                                                                                                                                                                                                                                              | When                                                           |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `docker`/`podman` container recreate for the local `db` (+ satellite stop/restart, Kong reload) — the same primitives `db start`/`db reset` use, via `resetLocalDatabase`                                                                                                         | smart-mode Local choice when reset is confirmed (or `--reset`) |
+| Local database auto-start via `startLocalDatabase` — absent `db` container: started; present but not running: removed with `docker container rm -f` (data volume kept) and started, as `db start` does; in Bitbucket Pipelines it fails with a `supabase stop` suggestion instead | the local `db` container is not running                        |
 
 ## Environment Variables
 

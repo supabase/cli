@@ -430,14 +430,27 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
       }
     }
 
-    // 2. Resolve service keys (auth check).
-    const keys = yield* api.v1
-      .getProjectApiKeys({ ref, reveal: true })
-      .pipe(Effect.catch(mapApiKeysError));
-    const { anon, serviceRole } = extractServiceKeys(keys);
-    if (anon.length === 0 && serviceRole.length === 0) {
-      return yield* new LinkMissingKeyError({ message: "Anon key not found." });
-    }
+    // 2. Resolve service keys. A 403 means the token cannot read secret keys: link still links,
+    // with no key to probe.
+    const serviceRole = yield* api.v1.getProjectApiKeys({ ref, reveal: true }).pipe(
+      Effect.catch(mapApiKeysError),
+      Effect.flatMap((keys) => {
+        const { anon, serviceRole } = extractServiceKeys(keys);
+        return anon.length === 0 && serviceRole.length === 0
+          ? Effect.fail(new LinkMissingKeyError({ message: "Anon key not found." }))
+          : Effect.succeed(serviceRole);
+      }),
+      Effect.catchTag("LinkAuthTokenError", (error) =>
+        error.status === 403
+          ? output
+              .raw(
+                "WARNING: The access token cannot read secret API keys (API Key Secrets: read), so the service version checks were skipped.\n",
+                "stderr",
+              )
+              .pipe(Effect.as(""))
+          : Effect.fail(error),
+      ),
+    );
 
     // 3. Link services — best-effort, using the service-role key for tenant probes. Stack mode
     // keeps only the pooler URL; versions come from the service lock.

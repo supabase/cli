@@ -339,6 +339,7 @@ LinkProjectStatusError
 LinkProjectStatusNetworkError
 LinkRefArgConflictError
 LocalDbRunningError
+LocalStackStartBusyError
 LockResolutionError
 LoginCryptoError
 LoginDecryptError

@@ -10,7 +10,7 @@ the result as a table or JSON.
 | ------------------------------------ | ---------- | ------------------------------------------------------------------------------------------ |
 | `<path>` (from `--file`)             | SQL        | when `--file` / `-f` is set (takes precedence over arg/stdin)                              |
 | stdin                                | SQL        | when piped (not a TTY) and no `--file`/positional SQL                                      |
-| `supabase/config.toml`               | TOML       | local / `--db-url` connection resolution                                                   |
+| `supabase/config.toml`               | TOML       | local / `--db-url` connection resolution and `[api].enabled` / `[api].schemas`             |
 | `~/.supabase/access-token`           | plain text | `--linked` when `SUPABASE_ACCESS_TOKEN` unset                                              |
 | `supabase/.temp/project-ref`         | plain text | `--linked` ref resolution — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set |
 | `supabase/.temp/linked-project.json` | JSON       | `--linked` existence check before the cache write (see below)                              |
@@ -31,11 +31,13 @@ the result as a table or JSON.
 
 ## Environment Variables
 
-| Variable                | Purpose                                                                      |
-| ----------------------- | ---------------------------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | `--linked` auth                                                              |
-| agent-detection signals | `--agent=auto` (e.g. `CURSOR_*`, `CLAUDECODE`, …) via `@vercel/detect-agent` |
-| `PG*` libpq             | linked-project TLS, timeout, service; see `db push`                          |
+| Variable                | Purpose                                                                                                                               |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | `--linked` auth                                                                                                                       |
+| `SUPABASE_API_SCHEMAS`  | overrides `[api].schemas` for the local / `--db-url` agent-mode advisory                                                              |
+| `SUPABASE_API_ENABLED`  | overrides `[api].enabled`; malformed values fail config load on every target unless a matching `[remotes.*]` block sets `api.enabled` |
+| agent-detection signals | `--agent=auto` (e.g. `CURSOR_*`, `CLAUDECODE`, …) via `@vercel/detect-agent`                                                          |
+| `PG*` libpq             | linked-project TLS, timeout, service; see `db push`                                                                                   |
 
 ## Exit Codes
 
@@ -57,7 +59,7 @@ payload). Diagnostics (`Connecting to {local|remote} database...`) go to
   envelope `{advisory?, boundary, rows, warning}` with a random 16-byte hex
   boundary (`Random`), HTML-escaped, map keys
   sorted. Agent mode additionally runs a best-effort RLS advisory check (local
-  path only).
+  path only), checking `[api]`-exposed schemas and skipping the check when the Data API is off.
 
 ### Agent mode
 

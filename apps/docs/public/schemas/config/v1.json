@@ -1,6 +1,6 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://supabase.com/docs/cli/config.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://supabase.com/schemas/config/v1.json",
   "title": "Supabase CLI config (CliConfig)",
   "description": "The Supabase CLI's local project config document (supabase/config.toml or supabase/config.json).",
   "type": "object",
@@ -4062,6 +4062,8 @@
           "properties": {
             "rules": {
               "type": "array",
+              "description": "Inspection rules.",
+              "default": [],
               "items": {
                 "type": "object",
                 "properties": {
@@ -4083,9 +4085,7 @@
                   }
                 },
                 "additionalProperties": false
-              },
-              "description": "Inspection rules.",
-              "default": []
+              }
             }
           },
           "additionalProperties": false
@@ -8330,6 +8330,8 @@
                         "properties": {
                           "rules": {
                             "type": "array",
+                            "description": "Inspection rules.",
+                            "default": [],
                             "items": {
                               "type": "object",
                               "properties": {
@@ -8351,9 +8353,7 @@
                                 }
                               },
                               "additionalProperties": false
-                            },
-                            "description": "Inspection rules.",
-                            "default": []
+                            }
                           }
                         },
                         "additionalProperties": false
