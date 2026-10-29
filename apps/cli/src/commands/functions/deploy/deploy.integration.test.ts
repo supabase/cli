@@ -2349,7 +2349,7 @@ describe("functions deploy", () => {
       });
     }
 
-    it.live("updates a duplicated function once when SUPABASE_API_MAX_RETRIES is 0", () => {
+    it.effect("updates a duplicated function once when SUPABASE_API_MAX_RETRIES is 0", () => {
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi({
         handler: (request) =>
@@ -2383,7 +2383,13 @@ describe("functions deploy", () => {
         yield* writeCliConfig(tempRoot.current);
         yield* writeLocalFunction(tempRoot.current, "hello-world");
 
+        /* Each sleep advances the test clock itself, so the update's backoff costs no real time. */
+        const clock = yield* TestClock.testClockWith(Effect.succeed);
         const error = yield* functionsDeploy({ ...baseFlags, useApi: false, useDocker: true }).pipe(
+          Effect.provideService(Clock.Clock, {
+            ...clock,
+            sleep: (duration) => clock.adjust(duration),
+          }),
           Effect.flip,
         );
 
