@@ -42,9 +42,9 @@ import {
   PGDATA_BASELINE_MARKER_ENTRY,
   PGDATA_BASELINE_MARKER_NAME,
   PGDATA_PARENT_PATH,
-  PGDATA_PATH,
   pgDataBaselineMarkerContent,
 } from "./pgdata-snapshot.ts";
+import { POSTGRES_DATA_DIR } from "./postgres.service.ts";
 import {
   SHADOW_BASELINE_KEEP,
   SHADOW_CACHE_ENV,
@@ -487,7 +487,7 @@ describe("acquireShadowDatabase", () => {
         expect(docker.stepCalls("cp-stamp")[0]).toEqual([
           "cp",
           "-",
-          `${handle.containerId}:${PGDATA_PATH}`,
+          `${handle.containerId}:${POSTGRES_DATA_DIR}`,
         ]);
         // The stamp really carries the marker file, delivered as a tar so `docker cp` unpacks it
         // relative to PGDATA rather than rewriting the directory's ownership — and its content is
@@ -497,7 +497,7 @@ describe("acquireShadowDatabase", () => {
         expect(stamp).toContain(pgDataBaselineMarkerContent(handle.snapshotKey ?? ""));
         expect(docker.stepCalls("cp-out")[0]).toEqual([
           "cp",
-          `${handle.containerId}:${PGDATA_PATH}`,
+          `${handle.containerId}:${POSTGRES_DATA_DIR}`,
           "-",
         ]);
         expect(docker.containers.get(handle.containerId)?.running).toBe(true);

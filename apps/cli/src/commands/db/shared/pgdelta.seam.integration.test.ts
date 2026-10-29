@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { afterEach, beforeEach, vi } from "vitest";
@@ -11,6 +11,7 @@ import {
   mockShadowContainerCliSpawner,
   shadowCacheDisabledLayer,
   useTempWorkdir,
+  withEmptyConfigEnv,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
 import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
@@ -27,6 +28,7 @@ import {
 } from "../../../command-internal/db-connection.service.ts";
 import { DockerRun } from "../../../command-internal/docker-run.service.ts";
 import { dockerfileServiceImageRaw } from "../../../shared/services/dockerfile-images.ts";
+import { LocalDockerEngine } from "../../../command-internal/db-bootstrap/local-db-running.ts";
 import { SUGGEST_DOCKER_INSTALL } from "../../../command-internal/docker-suggest.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
@@ -128,6 +130,8 @@ function setup(
     readonly dbInspectFailsWith?: string;
     readonly dbInspectImage?: string;
     readonly stackBackend?: boolean;
+    /** The Engine API's answer for an existing local db container. */
+    readonly dbContainer?: { readonly running: boolean; readonly status: string };
   } = {},
 ) {
   const out = mockOutput();
@@ -146,6 +150,20 @@ function setup(
   // `Layer.succeed`s below are ALSO listed as `layer`'s own top-level members (so the test
   // body itself can resolve `Output`/etc.), but that doesn't satisfy `seam`'s OWN identical
   // requirements as a sibling entry in the same merge.
+  const { dbContainer } = opts;
+  const engine =
+    dbContainer === undefined
+      ? mockLocalDockerEngineUnavailableLayer
+      : Layer.succeed(LocalDockerEngine, {
+          inspectContainer: () =>
+            Effect.succeed(
+              Option.some({
+                exists: true as const,
+                running: dbContainer.running,
+                status: dbContainer.status,
+              }),
+            ),
+        });
   const seam = declarativeSeamLayer.pipe(
     Layer.provide(cliSettings),
     Layer.provide(dbConnection.layer),
@@ -162,7 +180,7 @@ function setup(
     // `seam` itself resolves — `Layer.provide` fully resolves each requirement it can
     // satisfy as it's applied, so `BunServices.layer` only ever fills in `FileSystem`/`Path`.
     Layer.provide(shadowSpawner.layer),
-    Layer.provide(mockLocalDockerEngineUnavailableLayer),
+    Layer.provide(engine),
     Layer.provide(unusedStackServices),
     Layer.provide(BunServices.layer),
   );
@@ -212,6 +230,56 @@ describe("declarativeSeamLayer.ensureLocalDatabaseStarted", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+});
+
+describe("declarativeSeamLayer.ensureLocalDatabaseStarted with an existing db container", () => {
+  beforeEach(() => {
+    vi.stubEnv("BITBUCKET_CLONE_DIR", undefined);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const writeProjectId = Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+    yield* fs.writeFileString(
+      path.join(tmp.current, "supabase", "config.toml"),
+      'project_id = "seam-existing"\n',
+    );
+  });
+
+  it.effect.each(["exited", "created"] as const)(
+    "replaces a db container left %s with a fresh start instead of treating it as running",
+    (status) => {
+      const { layer, shadowSpawned } = setup(tmp.current, {
+        dbContainer: { running: false, status },
+      });
+      return Effect.gen(function* () {
+        yield* writeProjectId;
+        const seam = yield* DeclarativeSeam;
+        yield* seam.ensureLocalDatabaseStarted;
+        expect(
+          shadowSpawned.filter((s) => s.args[0] === "container" && s.args[1] === "rm"),
+        ).toEqual([{ args: ["container", "rm", "-f", "supabase_db_seam-existing"] }]);
+        const create = shadowSpawned.find((s) => s.args[0] === "create");
+        expect(create?.args[create.args.indexOf("--name") + 1]).toBe("supabase_db_seam-existing");
+      }).pipe(Effect.provide(layer), withEmptyConfigEnv);
+    },
+  );
+
+  it.effect("leaves a running db container untouched", () => {
+    const { layer, shadowSpawned } = setup(tmp.current, {
+      dbContainer: { running: true, status: "running" },
+    });
+    return Effect.gen(function* () {
+      yield* writeProjectId;
+      const seam = yield* DeclarativeSeam;
+      yield* seam.ensureLocalDatabaseStarted;
+      expect(shadowSpawned).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
 });
 
 describe("declarativeSeamLayer.ensureLocalPostgresImageCurrent", () => {

@@ -38,6 +38,7 @@ const toml: DbTomlValues = {
   projectEnv: {},
   envLookup: () => undefined,
   apiSchemas: ["public", "graphql_public"],
+  exposedSchemas: ["public", "graphql_public"],
   port: 54322,
   shadowPort: 54320,
   password: "postgres",

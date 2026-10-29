@@ -2990,3 +2990,62 @@ describe("readDbToml OrioleDB telemetry", () => {
     );
   });
 });
+
+describe("readDbToml Data API exposure", () => {
+  it.effect.each([
+    {
+      name: "disabled in config",
+      config: '[api]\nenabled = false\nschemas = ["app"]',
+      env: { SUPABASE_API_ENABLED: "" },
+      expected: [],
+    },
+    {
+      name: "disabled by environment",
+      config: "[api]\nenabled = true",
+      env: { SUPABASE_API_ENABLED: "false" },
+      expected: [],
+    },
+    {
+      name: "trimmed and deduplicated",
+      config: '[api]\nschemas = ["app", " public", "app"]',
+      env: { SUPABASE_API_ENABLED: "" },
+      expected: ["app", "public"],
+    },
+  ])("resolves exposed schemas: $name", ({ config, env, expected }) =>
+    withConfig(config).pipe(
+      Effect.flatMap(read),
+      Effect.tap((values) => Effect.sync(() => expect(values.exposedSchemas).toEqual(expected))),
+      withEnv(env),
+    ),
+  );
+
+  it.effect("an explicit remote api.enabled beats SUPABASE_API_ENABLED", () => {
+    const ref = "abcdefghijklmnopqrst";
+    return withConfig(
+      ["[remotes.prod]", `project_id = "${ref}"`, "[remotes.prod.api]", "enabled = false"].join(
+        "\n",
+      ),
+    ).pipe(
+      Effect.flatMap((dir) => readRef(dir, ref)),
+      Effect.tap((values) => Effect.sync(() => expect(values.exposedSchemas).toEqual([]))),
+      withEnv({ SUPABASE_API_ENABLED: "true" }),
+    );
+  });
+
+  it.effect("rejects malformed SUPABASE_API_ENABLED", () =>
+    withConfig("[api]\nenabled = true").pipe(
+      Effect.flatMap(read),
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(Cause.pretty(exit.cause)).toContain("DbConfigLoadError");
+            expect(Cause.pretty(exit.cause)).toContain("invalid api.enabled");
+          }
+        }),
+      ),
+      withEnv({ SUPABASE_API_ENABLED: "perhaps" }),
+    ),
+  );
+});

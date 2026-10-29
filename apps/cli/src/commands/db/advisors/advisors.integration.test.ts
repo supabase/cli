@@ -116,9 +116,11 @@ function mockResolver(opts: { ipv6Error?: boolean } = {}) {
 function mockConnection(opts: {
   rows?: ReadonlyArray<Record<string, unknown>>;
   setupFails?: boolean;
+  exposureFails?: boolean;
   queryFails?: boolean;
 }) {
   const execs: Array<string> = [];
+  const calls: Array<{ kind: "exec" | "query"; sql: string; params?: ReadonlyArray<unknown> }> = [];
   const layer = Layer.succeed(DbConnection, {
     connect: () => {
       const session: DbSession = {
@@ -128,13 +130,18 @@ function mockConnection(opts: {
         exec: (sql: string) =>
           Effect.suspend(() => {
             execs.push(sql);
+            calls.push({ kind: "exec", sql });
             if (sql === SETUP_SQL && opts.setupFails === true) {
               return Effect.fail(new DbExecError({ message: "syntax error at set" }));
             }
             return Effect.void;
           }),
-        query: (sql: string) =>
+        query: (sql: string, params?: ReadonlyArray<unknown>) =>
           Effect.suspend(() => {
+            calls.push({ kind: "query", sql, params });
+            if (sql.includes("pgrst.db_schemas") && opts.exposureFails === true) {
+              return Effect.fail(new DbExecError({ message: "permission denied" }));
+            }
             if (sql === QUERY_SQL && opts.queryFails === true) {
               return Effect.fail(new DbExecError({ message: "syntax error" }));
             }
@@ -149,6 +156,7 @@ function mockConnection(opts: {
   });
   return {
     layer,
+    calls,
     get execs() {
       return execs;
     },
@@ -212,6 +220,7 @@ interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   rows?: ReadonlyArray<Record<string, unknown>>;
   setupFails?: boolean;
+  exposureFails?: boolean;
   queryFails?: boolean;
   loggedIn?: boolean;
   invalidToken?: boolean;
@@ -223,7 +232,7 @@ interface SetupOpts {
   /** Raw CLI args for `CliArgs` — drives DB target selection (Changed-based). */
   args?: ReadonlyArray<string>;
   /** Runs the real `DbConfigResolver` and linked-project cache against the temp `workdir`. */
-  realLayers?: { readonly workdir: string };
+  realLayers?: { readonly workdir: string; readonly env?: Readonly<Record<string, string>> };
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -232,6 +241,7 @@ function setup(opts: SetupOpts = {}) {
   const connection = mockConnection({
     rows: opts.rows,
     setupFails: opts.setupFails,
+    exposureFails: opts.exposureFails,
     queryFails: opts.queryFails,
   });
   const telemetry = mockTelemetryStateTracked();
@@ -285,7 +295,7 @@ function setup(opts: SetupOpts = {}) {
       : realDbConfigResolver({
           workdir: opts.realLayers.workdir,
           dbConnection: connection.layer,
-          env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+          env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN, ...opts.realLayers.env },
         }),
     connection.layer,
     telemetry.layer,
@@ -324,6 +334,55 @@ const flags = (over: Partial<DbAdvisorsFlags> = {}): DbAdvisorsFlags => ({
 });
 
 describe("db advisors — local", () => {
+  const tempRoot = useTempWorkdir("supabase-advisors-exposure-");
+  it.effect.each([
+    {
+      name: "configured schemas",
+      config: '[api]\nschemas = ["app", "public"]',
+      env: { SUPABASE_API_SCHEMAS: "" },
+      expected: "app,public",
+    },
+    {
+      name: "Data API disabled",
+      config: "[api]\nenabled = false",
+      env: { SUPABASE_API_SCHEMAS: "" },
+      expected: "",
+    },
+    {
+      name: "environment schemas",
+      config: '[api]\nschemas = ["public"]',
+      env: { SUPABASE_API_SCHEMAS: "app,public" },
+      expected: "app,public",
+    },
+    {
+      name: "default schemas",
+      config: undefined,
+      env: { SUPABASE_API_SCHEMAS: "" },
+      expected: "public,graphql_public",
+    },
+  ])("sets exposure before lint setup: $name", ({ config, env, expected }) => {
+    const { layer, connection } = setup({ realLayers: { workdir: tempRoot.current, env } });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      if (config !== undefined) {
+        yield* fs.makeDirectory(`${tempRoot.current}/supabase`, { recursive: true });
+        yield* fs.writeFileString(`${tempRoot.current}/supabase/config.toml`, config);
+      }
+      yield* dbAdvisors(flags());
+      expect(connection.calls).toEqual([
+        { kind: "exec", sql: "begin" },
+        {
+          kind: "query",
+          sql: "select set_config('pgrst.db_schemas', $1, true)",
+          params: [expected],
+        },
+        { kind: "exec", sql: SETUP_SQL },
+        { kind: "query", sql: QUERY_SQL, params: undefined },
+        { kind: "exec", sql: "rollback" },
+      ]);
+    }).pipe(Effect.provide(Layer.mergeAll(layer, BunServices.layer)), provideEnv(env));
+  });
+
   it.effect("queries the local database and prints the Go pretty JSON array", () => {
     const { layer, out, connection, api } = setup({ rows: [lintRow()] });
     return Effect.gen(function* () {
@@ -374,6 +433,25 @@ describe("db advisors — local", () => {
       }
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect(
+    "rolls back and fails with 'failed to prepare lint session' when exposure fails",
+    () => {
+      const env = { SUPABASE_API_SCHEMAS: "" };
+      const { layer, connection } = setup({
+        exposureFails: true,
+        realLayers: { workdir: tempRoot.current, env },
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(dbAdvisors(flags()));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("failed to prepare lint session");
+        }
+        expect(connection.execs).toEqual(["begin", "rollback"]);
+      }).pipe(Effect.provide(Layer.mergeAll(layer, BunServices.layer)), provideEnv(env));
+    },
+  );
 
   it.effect("fails with 'failed to query lints' on a query error", () => {
     const { layer } = setup({ queryFails: true });
