@@ -183,7 +183,7 @@ export const startDatabase = <E>(
       image: resolvedPostgresImage,
     });
     // A reused volume with no `PG_VERSION` was never initialised, so it still needs the
-    // fresh-volume setup.
+    // fresh-volume setup. Published before `docker start` so a failed start rolls the volume back.
     let dataInitialized = true;
     yield* createContainer(
       spawner,
@@ -194,14 +194,12 @@ export const startDatabase = <E>(
             postgresDataInitialized(spawner, containerId).pipe(
               Effect.map((initialized) => {
                 dataInitialized = initialized;
+                if (!initialized) input.onFreshVolumeResolved(true);
               }),
             )
         : undefined,
     );
     const isFreshVolume = !volumeExisted || !dataInitialized;
-    if (volumeExisted && !dataInitialized) {
-      input.onFreshVolumeResolved(true);
-    }
     yield* Effect.annotateCurrentSpan({ "db.fresh_volume": isFreshVolume });
 
     // A host connect, not Docker's HEALTHCHECK: that needs `docker exec`, which nested or

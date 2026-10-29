@@ -66,10 +66,12 @@ import {
 import { CommandPlatformApiFactory } from "../../auth/command-platform-api-factory.service.ts";
 import { serviceContainerIds, serviceContainerName } from "../../command-internal/docker-ids.ts";
 import { bindMountSpecSource } from "../../command-internal/docker-bind-classify.ts";
+import { ContainerStartError } from "../../command-internal/db-bootstrap/container-lifecycle.ts";
 import { HealthCheckTimeoutSeconds } from "../../command-internal/db-bootstrap/health-check.ts";
 import { DbConnectError } from "../../command-internal/db-connection.errors.ts";
 import { DbConnection, type DbSession } from "../../command-internal/db-connection.service.ts";
 import { dockerRunLayer } from "../../command-internal/docker-run.layer.ts";
+import { LocalStackStartBusyError } from "../../command-internal/local-stack-start-lock.ts";
 import { START_EXCLUDABLE_KEYS } from "./start.exclude.ts";
 import type { StartFlags } from "./start.command.ts";
 import { start } from "./start.handler.ts";
@@ -426,6 +428,23 @@ function uninitialisedDataDirRoute(
     }
     return base(args);
   };
+}
+
+/** `docker start` of the Postgres container exits non-zero, as when the runtime cannot launch it. */
+function dbStartFailsRoute(
+  base: (
+    args: ReadonlyArray<string>,
+  ) => RouteResult | Effect.Effect<RouteResult, PlatformError.PlatformError>,
+) {
+  return (args: ReadonlyArray<string>) =>
+    args[0] === "start" && args[1] === fakeContainerId("supabase_db_demo")
+      ? {
+          exitCode: 1,
+          stderr: [
+            "Error response from daemon: failed to create task for container: OCI runtime create failed",
+          ],
+        }
+      : base(args);
 }
 
 /** The project's database container reports `state` until recovery lists the project's containers, then behaves like a fresh bring-up. */
@@ -1575,6 +1594,7 @@ describe("start integration", () => {
         Effect.gen(function* () {
           const { error, out, child, waitedMillis } = yield* startAgainstHeldLock("text");
 
+          expect(error).toBeInstanceOf(LocalStackStartBusyError);
           expect(error).toMatchObject({
             _tag: "LocalStackStartBusyError",
             message: "another supabase start is still running for this project",
@@ -3054,6 +3074,31 @@ content_path = "./supabase/templates/custom_notice.html"
               ).toBe(volumePruned);
             }).pipe(Effect.provide(BunServices.layer)),
           10_000,
+        );
+
+        it.effect(
+          `rolls back ${volumePruned ? "and prunes" : "without pruning"} the volume when docker start of Postgres fails on an ${probe} data directory`,
+          () =>
+            Effect.gen(function* () {
+              const { layer, child } = yield* setup({
+                route: dbStartFailsRoute(
+                  route(recoveringStackRoute(CREATED_STATE, tempRoot.current)),
+                ),
+              });
+
+              const error = yield* start(flags()).pipe(Effect.provide(layer), Effect.flip);
+
+              expect(error).toBeInstanceOf(ContainerStartError);
+              expect(error).toMatchObject({
+                message: expect.stringContaining(
+                  'failed to start docker container "supabase_db_demo"',
+                ),
+              });
+              expect(rollbackWasAttempted(child.spawned)).toBe(true);
+              expect(
+                child.spawned.some((s) => s.args[0] === "volume" && s.args[1] === "prune"),
+              ).toBe(volumePruned);
+            }).pipe(Effect.provide(BunServices.layer)),
         );
       }
     });

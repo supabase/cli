@@ -41,12 +41,16 @@ Runs the initial schema/migrations/seed pipeline. Gated on `isFreshVolume`, true
 Postgres volume did not exist before this run created it (`volumeExists`, checked BEFORE the
 volume is created) OR when it exists but was never initialised: after Postgres's container is
 created and before it starts, `docker cp <container>:/var/lib/postgresql/data/PG_VERSION -` exits
-non-zero with a missing-file message (Docker's `Could not find the file`, older Docker clients'
-`No such container:path`, Podman's `could not be found`) because `initdb` has not run, for example after an earlier `start` died between
-`docker create` and `docker start`. Any other probe outcome — exit 0, an unspawnable runtime, or an
-unrecognised error — counts as initialised, so an existing database is never re-seeded on an
-ambiguous probe. A volume whose `initdb` started but whose setup never finished has `PG_VERSION`
-and also counts as initialised. Only the volume-existence check selects which of
+non-zero with a diagnostic reporting `PG_VERSION` missing from the container (Docker's `Could not
+find the file <path>/PG_VERSION in container`, older Docker clients' `No such container:path:
+<id>:<path>/PG_VERSION`, Podman's `"<path>/PG_VERSION" could not be found on container`) because
+`initdb` has not run, for example after an earlier `start` died between `docker create` and
+`docker start`. Any other probe outcome — exit 0, an unspawnable runtime, an unrecognised error, or
+a generic missing-file error that is not one of those diagnostics, such as a Docker socket dial
+failure — counts as initialised, so an existing database is never re-seeded on an ambiguous
+probe. The freshness is published as soon as the probe resolves, so a `docker start` failure
+afterwards still rolls the volume back. A volume whose `initdb` started but whose setup never
+finished has `PG_VERSION` and also counts as initialised. Only the volume-existence check selects which of
 `Starting database...`/`Starting database from backup...` prints to stderr immediately
 before Postgres's container is created. Runs immediately
 after Postgres's own health check passes, before "Starting containers..." prints and

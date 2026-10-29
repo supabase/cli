@@ -647,14 +647,15 @@ function extractPreStartArchiveIntoContainer(
   );
 }
 
-/** Docker's and Podman's `cp` stderr when the source path is absent from the container. */
-const COPY_SOURCE_MISSING_PATTERN =
-  /could not find the file|no such container:path|could not be found|no such file or directory/iu;
+/** Docker's, Podman's and older Docker clients' `cp` diagnostics for a missing `PG_VERSION`. */
+const PG_VERSION_MISSING_PATTERN =
+  /could not find the file \S*\/PG_VERSION in container|"\S*\/PG_VERSION" could not be found on container|no such container:path: \S+:\S*\/PG_VERSION/iu;
 
 /**
  * Whether the Postgres data directory of a created, not-yet-started container already holds a
- * cluster (`PG_VERSION`, written by `initdb`). Only a confirmed-missing file resolves `false`;
- * every other outcome resolves `true`, so an ambiguous probe never runs setup over real data.
+ * cluster (`PG_VERSION`, written by `initdb`). Only a diagnostic reporting `PG_VERSION` itself
+ * as missing resolves `false`; every other outcome resolves `true`, so an ambiguous probe never
+ * runs setup over real data.
  */
 export const postgresDataInitialized = Effect.fn("ContainerLifecycle.postgresDataInitialized")(
   function* (spawner: Spawner, containerId: string) {
@@ -669,7 +670,7 @@ export const postgresDataInitialized = Effect.fn("ContainerLifecycle.postgresDat
           [child.exitCode.pipe(Effect.map(Number)), collectText(child.stderr)],
           { concurrency: "unbounded" },
         );
-        return exitCode === 0 || !COPY_SOURCE_MISSING_PATTERN.test(stderr);
+        return exitCode === 0 || !PG_VERSION_MISSING_PATTERN.test(stderr);
       }),
     ).pipe(Effect.orElseSucceed(() => true));
     yield* Effect.annotateCurrentSpan({ "db.data_initialized": initialized });

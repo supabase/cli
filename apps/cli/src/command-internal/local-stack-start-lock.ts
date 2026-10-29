@@ -17,7 +17,7 @@ const WAIT_BUDGET = "10 minutes";
 const WAITING_MESSAGE = "Waiting for another supabase start for this project to finish...\n";
 
 /** Another `supabase start` for this project held the start lock for the whole wait budget. */
-class LocalStackStartBusyError extends Data.TaggedError("LocalStackStartBusyError")<{
+export class LocalStackStartBusyError extends Data.TaggedError("LocalStackStartBusyError")<{
   readonly message: string;
   readonly suggestion?: string;
 }> {

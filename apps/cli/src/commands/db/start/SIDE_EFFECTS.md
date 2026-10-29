@@ -66,7 +66,8 @@ composition reuses too — see that command's `SIDE_EFFECTS.md`):
 7. On a fresh volume with `--from-backup` unset: run the `SetupLocalDatabase`-equivalent
    pipeline. A volume counts as fresh when it did not exist before step 2 OR it exists but was
    never initialised: between create and start, `docker cp <container>:/var/lib/postgresql/data/PG_VERSION -`
-   fails with a missing-file message (any other probe outcome counts as initialised). The pipeline (`command-internal/db-bootstrap/db-setup.ts`) — initial schema (PG<=14: SQL over a
+   fails with a diagnostic reporting `PG_VERSION` missing from the container (any other probe outcome counts as
+   initialised). The pipeline (`command-internal/db-bootstrap/db-setup.ts`) — initial schema (PG<=14: SQL over a
    direct `DbConnection`; PG>=15: up to three one-shot `docker run --rm` migrate jobs
    for realtime/storage/auth, each gated on its own `enabled` flag; the realtime
    one-shot runs so user migrations see the tenant), API-privilege
@@ -86,7 +87,8 @@ composition reuses too — see that command's `SIDE_EFFECTS.md`):
 
 Any failure from step 1 onward rolls back via `rollbackStart` (stop + prune every
 container/network this project's label matches; volumes are pruned too, but ONLY when the
-volume was confirmed fresh this run, including a reused volume the probe found uninitialised).
+volume was confirmed fresh this run, including a reused volume the probe found uninitialised, even
+when `docker start` then fails).
 
 ## Files Read
 

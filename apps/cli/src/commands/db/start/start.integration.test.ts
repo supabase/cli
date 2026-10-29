@@ -49,9 +49,12 @@ import {
 } from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { LocalDockerEngine } from "../../../command-internal/db-bootstrap/local-db-running.ts";
+import { ContainerStartError } from "../../../command-internal/db-bootstrap/container-lifecycle.ts";
+import { HealthCheckTimeoutError } from "../../../command-internal/db-bootstrap/health-check.ts";
 import { DbConnectError } from "../../../command-internal/db-connection.errors.ts";
 import { DbConnection, type DbSession } from "../../../command-internal/db-connection.service.ts";
 import { dockerRunLayer } from "../../../command-internal/docker-run.layer.ts";
+import { LocalStackStartBusyError } from "../../../command-internal/local-stack-start-lock.ts";
 import { dbStart } from "./start.handler.ts";
 import type { DbStartFlags } from "./start.command.ts";
 import { stackLocalDatabaseConn } from "../../../command-internal/stack-local-database.ts";
@@ -244,6 +247,21 @@ function uninitialisedDataDirRoute(
     }
     return base(args);
   };
+}
+
+/** `docker start` of the Postgres container exits non-zero, as when the runtime cannot launch it. */
+function dbStartFailsRoute(
+  base: (args: ReadonlyArray<string>) => RouteResult,
+): (args: ReadonlyArray<string>) => RouteResult {
+  return (args) =>
+    args[0] === "start" && args[1] === fakeContainerId(DB_CONTAINER)
+      ? {
+          exitCode: 1,
+          stderr: [
+            "Error response from daemon: failed to create task for container: OCI runtime create failed",
+          ],
+        }
+      : base(args);
 }
 
 /** Docker's HEALTHCHECK can never launch on this host, so every created container reports exec-failed health. */
@@ -1079,22 +1097,41 @@ describe("db start", () => {
       ["uninitialised", uninitialisedDataDirRoute, true],
       ["initialised", (base: ReturnType<typeof defaultRoute>) => base, false],
     ] as const) {
+      const rollbackOutcome = volumePruned ? "and prunes" : "without pruning";
+
       it.live(
-        `rolls back ${volumePruned ? "and prunes" : "without pruning"} the volume when Postgres never becomes healthy on an ${probe} data directory`,
+        `rolls back ${rollbackOutcome} the volume when Postgres never becomes healthy on an ${probe} data directory`,
         () => {
           const { layer, child } = setup({
-            configContents: 'project_id = "test"\n[db]\nhealth_timeout = "1s"\n',
+            configContents: 'project_id = "test"\n[db]\nhealth_timeout = "0s"\n',
             route: route(defaultRoute()),
             connectFailures: Number.POSITIVE_INFINITY,
           });
           return Effect.gen(function* () {
-            const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-            expect(Exit.isFailure(exit)).toBe(true);
+            const error = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
+            expect(error).toBeInstanceOf(HealthCheckTimeoutError);
             expect(rollbackWasAttempted(child.spawned)).toBe(true);
             expect(volumePruneWasAttempted(child.spawned)).toBe(volumePruned);
           });
         },
-        15_000,
+      );
+
+      it.effect(
+        `rolls back ${rollbackOutcome} the volume when docker start of Postgres fails on an ${probe} data directory`,
+        () => {
+          const { layer, child } = setup({ route: dbStartFailsRoute(route(defaultRoute())) });
+          return Effect.gen(function* () {
+            const error = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
+            expect(error).toBeInstanceOf(ContainerStartError);
+            expect(error).toMatchObject({
+              message: expect.stringContaining(
+                `failed to start docker container "${DB_CONTAINER}"`,
+              ),
+            });
+            expect(rollbackWasAttempted(child.spawned)).toBe(true);
+            expect(volumePruneWasAttempted(child.spawned)).toBe(volumePruned);
+          });
+        },
       );
     }
   });
@@ -1141,6 +1178,7 @@ describe("db start", () => {
           const error = yield* Fiber.join(fiber);
           const waitedMillis = (yield* Clock.currentTimeMillis) - forkedAt;
 
+          expect(error).toBeInstanceOf(LocalStackStartBusyError);
           expect(error).toMatchObject({
             _tag: "LocalStackStartBusyError",
             message: "another supabase start is still running for this project",

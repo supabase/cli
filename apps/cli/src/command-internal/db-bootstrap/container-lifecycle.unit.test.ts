@@ -783,6 +783,8 @@ describe("postgresDataInitialized", () => {
       'Error: "/var/lib/postgresql/data/PG_VERSION" could not be found on container container-id-pg: no such file or directory\n',
     "an older Docker client":
       "Error: No such container:path: container-id-pg:/var/lib/postgresql/data/PG_VERSION\n",
+    "Docker after a config warning":
+      "WARNING: Error loading config file: open /home/me/.docker/config.json: no such file or directory\nError response from daemon: Could not find the file /var/lib/postgresql/data/PG_VERSION in container container-id-pg\n",
   };
   for (const [runtime, stderr] of Object.entries(missingFileStderr)) {
     it.live(`resolves false when ${runtime} reports the PG_VERSION file missing`, () => {
@@ -799,6 +801,14 @@ describe("postgresDataInitialized", () => {
     "a missing container": "Error response from daemon: No such container: container-id-pg\n",
     "a permission error": "Error response from daemon: permission denied\n",
     "an unreachable daemon": "Cannot connect to the Docker daemon at unix:///var/run/docker.sock\n",
+    "an unreadable Docker CLI config":
+      "open /home/me/.docker/config.json: no such file or directory\n",
+    "a Docker socket that does not exist":
+      'error during connect: Head "http://%2Fvar%2Frun%2Fdocker.sock/_ping": dial unix /var/run/docker.sock: connect: no such file or directory\n',
+    "a Docker socket that does not exist when requesting the PG_VERSION archive":
+      'error during connect: Head "http://%2Fvar%2Frun%2Fdocker.sock/v1.47/containers/container-id-pg/archive?path=%2Fvar%2Flib%2Fpostgresql%2Fdata%2FPG_VERSION": dial unix /var/run/docker.sock: connect: no such file or directory\n',
+    "a Docker config warning beside an unrelated PG_VERSION error":
+      "WARNING: Error loading config file: open /home/me/.docker/config.json: no such file or directory\nError response from daemon: permission denied reading /var/lib/postgresql/data/PG_VERSION\n",
     "empty stderr": "",
   };
   for (const [cause, stderr] of Object.entries(otherFailureStderr)) {
