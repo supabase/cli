@@ -20,13 +20,11 @@
 
 ## API Routes
 
-| Method | Path                                            | Auth         | Request body                                                                                                           | Response (used fields)                                                                                                                                                                                     |
-| ------ | ----------------------------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST` | `/v1/projects/{ref}/branches`                   | Bearer token | `{branch_name, is_default: false, git_branch?, region?, desired_instance_size?, persistent?, with_data?, notify_url?}` | full `BranchResponse`                                                                                                                                                                                      |
-| `GET`  | `/v1/projects/{ref}` (on 4xx gated)             | Bearer token | none                                                                                                                   | `{organization_slug}`                                                                                                                                                                                      |
-| `GET`  | `/v1/organizations/{slug}/entitlements` (gated) | Bearer token | none                                                                                                                   | `[{feature: {key}, hasAccess, ...}]`                                                                                                                                                                       |
-| `GET`  | `/v1/projects`                                  | Bearer token | none                                                                                                                   | `[{id, name, organization_slug, region, …}]` — no project ref from `--project-ref`, `SUPABASE_PROJECT_ID` or `.temp/project-ref`, with stdin and stdout TTYs and a non-JSON output format (project picker) |
-| `GET`  | `/v1/projects/{ref}`                            | Bearer token | none                                                                                                                   | `{ref, name, organization_id, organization_slug}` — linked-project cache miss only (best-effort, after the command)                                                                                        |
+| Method | Path                          | Auth         | Request body                                                                                                           | Response (used fields)                                                                                                                                                                                     |
+| ------ | ----------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST` | `/v1/projects/{ref}/branches` | Bearer token | `{branch_name, is_default: false, git_branch?, region?, desired_instance_size?, persistent?, with_data?, notify_url?}` | full `BranchResponse`                                                                                                                                                                                      |
+| `GET`  | `/v1/projects`                | Bearer token | none                                                                                                                   | `[{id, name, organization_slug, region, …}]` — no project ref from `--project-ref`, `SUPABASE_PROJECT_ID` or `.temp/project-ref`, with stdin and stdout TTYs and a non-JSON output format (project picker) |
+| `GET`  | `/v1/projects/{ref}`          | Bearer token | none                                                                                                                   | `{ref, name, organization_id, organization_slug}` — linked-project cache miss only (best-effort, after the command)                                                                                        |
 
 ## Environment Variables
 
@@ -50,10 +48,10 @@
 
 ## Telemetry Events Fired
 
-| Event                   | When                                            | Notable properties / groups                                       |
-| ----------------------- | ----------------------------------------------- | ----------------------------------------------------------------- |
-| `cli_command_executed`  | post-run, success or failure (via wrapper)      | `exit_code`, `duration_ms`, `flags` (`--project-ref` whitelisted) |
-| `cli_upgrade_suggested` | on 4xx with `branching_limit` entitlement gated | `{feature_key: "branching_limit", org_slug}`                      |
+| Event                   | When                                                       | Notable properties / groups                                       |
+| ----------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------- |
+| `cli_command_executed`  | post-run, success or failure (via wrapper)                 | `exit_code`, `duration_ms`, `flags` (`--project-ref` whitelisted) |
+| `cli_upgrade_suggested` | on a 4xx whose body is the `entitlement_required` envelope | `{feature_key: "branching_limit", org_slug}`                      |
 
 ## Output
 
