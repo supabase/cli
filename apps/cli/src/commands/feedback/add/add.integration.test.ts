@@ -36,6 +36,7 @@ import {
   FEEDBACK_EMPTY_MESSAGE,
   FEEDBACK_PIPE_CAP_BYTES,
   FEEDBACK_PIPE_TOO_LONG_MESSAGE,
+  feedbackTargetInvalidMessage,
   feedbackTooLongMessage,
 } from "./add.errors.ts";
 import { feedbackAdd } from "./add.handler.ts";
@@ -72,7 +73,7 @@ function addArgs(
   message: ReadonlyArray<string>,
   overrides: Partial<FeedbackAddArgs> = {},
 ): FeedbackAddArgs {
-  return { message, projectRef: Option.none(), ...overrides };
+  return { message, projectRef: Option.none(), target: [], ...overrides };
 }
 
 function mockFeedbackClient(opts: { failWith?: string } = {}) {
@@ -193,6 +194,7 @@ describe("feedback add", () => {
             arch: "arm64",
             isAgent: false,
           },
+          targets: [],
         },
       ]);
       expect(out.messages).toContainEqual(
@@ -585,6 +587,126 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("submits docs targets with the message", () => {
+    const { layer, submitter } = setupFeedback();
+    return Effect.gen(function* () {
+      yield* feedbackAdd(
+        addArgs(["the guide does not say who refreshes the session"], {
+          target: [
+            '{"url":"https://supabase.com/docs/guides/auth/server-side#creating-a-client","heading":"Creating a client","quote":"Create a server client.","extra":"dropped"}',
+            '{"url":"https://supabase.com/kb/troubleshooting/auth-session-missing","heading":"  ","quote":"Refresh the session."}',
+          ],
+        }),
+      );
+
+      expect(submitter.submissions[0]?.targets).toEqual([
+        {
+          url: "https://supabase.com/docs/guides/auth/server-side#creating-a-client",
+          heading: "Creating a client",
+          quote: "Create a server client.",
+        },
+        {
+          url: "https://supabase.com/kb/troubleshooting/auth-session-missing",
+          quote: "Refresh the session.",
+        },
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect.each([
+    "https://supabase.com/llms.txt",
+    "https://supabase.com/llms-full.txt",
+    "https://supabase.com/llms/guides.txt",
+  ])("accepts the llms target %s", (url) => {
+    const { layer, submitter } = setupFeedback();
+    return Effect.gen(function* () {
+      yield* feedbackAdd(addArgs(["docs gap"], { target: [`{"url":"${url}","quote":"a"}`] }));
+
+      expect(submitter.submissions[0]?.targets).toEqual([{ url, quote: "a" }]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("accepts a target quote and heading at the limit, counted in code points", () => {
+    const quote = "🦆".repeat(400);
+    const heading = "🦆".repeat(200);
+    const { layer, submitter } = setupFeedback();
+    return Effect.gen(function* () {
+      yield* feedbackAdd(
+        addArgs(["docs gap"], {
+          target: [
+            `{"url":"https://supabase.com/docs/x","quote":"${quote}","heading":"${heading}"}`,
+          ],
+        }),
+      );
+
+      expect(submitter.submissions[0]?.targets).toEqual([
+        { url: "https://supabase.com/docs/x", quote, heading },
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("rejects an invalid --target before any request, naming the field", () => {
+    const { layer, submitter } = setupFeedback();
+    const invalidTargets: ReadonlyArray<readonly [string, string | undefined]> = [
+      ["not json", undefined],
+      ["[]", undefined],
+      ['{"url":"https://github.com/supabase/ssr","quote":"a"}', "url"],
+      ['{"url":"https://supabase.com/blog/x","quote":"a"}', "url"],
+      ['{"url":"https://supabase.com/docs/../blog/x","quote":"a"}', "url"],
+      ['{"url":"https://supabase.com/docs/%2E%2e/blog","quote":"a"}', "url"],
+      ['{"url":"https://supabase.com/docs/a b","quote":"a"}', "url"],
+      ['{"url":"https://evil@supabase.com/docs/x","quote":"a"}', "url"],
+      ['{"url":"https://supabase.com/docsfoo","quote":"a"}', "url"],
+      ['{"url":"https://supabase.com/llmsfoo","quote":"a"}', "url"],
+      ['{"url":"https://supabase.com/llms.txt.evil","quote":"a"}', "url"],
+      [`{"url":"https://supabase.com/docs/${"a".repeat(475)}","quote":"a"}`, "url"],
+      ['{"url":"https://supabase.com/docs/x","quote":" "}', "quote"],
+      [`{"url":"https://supabase.com/docs/x","quote":"${"a".repeat(401)}"}`, "quote"],
+      ['{"url":"https://supabase.com/docs/x"}', "quote"],
+      [
+        `{"url":"https://supabase.com/docs/x","quote":"a","heading":"${"h".repeat(201)}"}`,
+        "heading",
+      ],
+      ['{"url":"https://supabase.com/docs/x","quote":"a","heading":null}', "heading"],
+    ];
+    return Effect.gen(function* () {
+      for (const [target, field] of invalidTargets) {
+        const error = yield* feedbackAdd(addArgs(["docs gap"], { target: [target] })).pipe(
+          Effect.flip,
+        );
+        expect(error, target).toMatchObject({
+          _tag: "FeedbackTargetInvalidError",
+          message: feedbackTargetInvalidMessage(1, field),
+        });
+      }
+      expect(submitter.submissions).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("reports the position of an invalid --target after a valid one", () => {
+    const { layer, submitter } = setupFeedback();
+    return Effect.gen(function* () {
+      const error = yield* feedbackAdd(
+        addArgs(["docs gap"], {
+          target: ['{"url":"https://supabase.com/docs/x","quote":"a"}', "not json"],
+        }),
+      ).pipe(Effect.flip);
+
+      expect(error).toMatchObject({ message: feedbackTargetInvalidMessage(2) });
+      expect(submitter.submissions).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("rejects an invalid --target before it reads piped stdin", () => {
+    const { layer, submitter } = setupFeedback({ stdinIsTTY: false });
+    return Effect.gen(function* () {
+      const error = yield* feedbackAdd(addArgs([], { target: ["not json"] })).pipe(Effect.flip);
+
+      expect(error).toMatchObject({ _tag: "FeedbackTargetInvalidError" });
+      expect(submitter.submissions).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("emits the delete token in the json acknowledgement", () => {
     const { layer, out, submitter } = setupFeedback({ output: { format: "json" } });
     return Effect.gen(function* () {
@@ -704,6 +826,24 @@ describe("feedback add", () => {
       expect(scanned).toContain("cli_command_executed");
       expect(scanned).not.toContain("abcdefghijklmnopqrst");
       expect(Object.keys(events[0]?.properties.flags ?? {})).toEqual(["project-ref"]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("records --target by name only, never its value, in PostHog", () => {
+    const target = '{"url":"https://supabase.com/docs/guides/private-page","quote":"secret quote"}';
+    const { layer, analytics, submitter } = setupFeedbackHandler({
+      args: ["feedback", "add", "docs gap", "--target", target],
+    });
+    return Effect.gen(function* () {
+      yield* feedbackAddHandler(addArgs(["docs gap"], { target: [target] }));
+
+      expect(submitter.submissions[0]?.targets).toHaveLength(1);
+      const events = analytics.captured.filter((c) => c.event === "cli_command_executed");
+      expect(events).toHaveLength(1);
+      const scanned = yield* jsonText(events[0]);
+      expect(scanned).not.toContain("private-page");
+      expect(scanned).not.toContain("secret quote");
+      expect(Object.keys(events[0]?.properties.flags ?? {})).toEqual(["target"]);
     }).pipe(Effect.provide(layer));
   });
 

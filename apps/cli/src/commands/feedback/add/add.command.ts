@@ -24,6 +24,12 @@ const config = {
     ),
     Flag.optional,
   ),
+  target: Flag.String("target").pipe(
+    Flag.withDescription(
+      'Docs section the feedback is about, as JSON: {"url":"https://supabase.com/docs/...","quote":"...","heading":"..."}. Repeat up to 3 times. URL is https://supabase.com/ followed by docs, kb, llms/, llms.txt or llms-full.txt; quote 1-400 characters, copied verbatim; heading at most 200.',
+    ),
+    Flag.atMost(3),
+  ),
 } as const;
 
 export type FeedbackAddArgs = CliCommand.Command.Config.Infer<typeof config>;
@@ -33,15 +39,17 @@ export type FeedbackAddArgs = CliCommand.Command.Config.Infer<typeof config>;
 export const feedbackAddHandler = (args: FeedbackAddArgs) =>
   feedbackAdd(args).pipe(
     // The message is a positional (structurally excluded from telemetry) and
-    // `--project-ref` is a plain string flag, so its value is redacted — the
-    // same treatment as `feedback delete`. Feedback's own `-o` enum is
-    // `pretty|json` (see feedback-output.ts).
+    // `--project-ref` and `--target` are plain string flags, so their values
+    // are redacted — the same treatment as `feedback delete`. Feedback's own
+    // `-o` enum is `pretty|json` (see feedback-output.ts).
     withCommandTelemetry({ flags: args, outputFormats: FEEDBACK_OUTPUT_FORMATS }),
     withJsonErrorHandling,
   );
 
 export const feedbackAddCommand = Command.make("add", config).pipe(
-  Command.withDescription("Send quick feedback about the Supabase CLI to the Supabase team."),
+  Command.withDescription(
+    "Send quick feedback about the Supabase CLI or docs to the Supabase team.",
+  ),
   Command.withShortDescription("Send feedback to the Supabase team"),
   Command.withExamples([
     {
@@ -57,8 +65,13 @@ export const feedbackAddCommand = Command.make("add", config).pipe(
       command: 'supabase feedback add --project-ref abcdefghijklmnopqrst "branching is slow here"',
       description: "Attribute the feedback to a project from an unlinked directory",
     },
+    {
+      command:
+        'supabase feedback add --target \'{"url":"https://supabase.com/docs/guides/auth/server-side","quote":"Create a server client."}\' "the guide does not say who refreshes the session"',
+      description: "Report a docs problem with the section it is about",
+    },
   ]),
-  withPermissions({ operations: [], noApiEffectFlags: ["project-ref"] }),
+  withPermissions({ operations: [], noApiEffectFlags: ["project-ref", "target"] }),
   Command.withHandler(feedbackAddHandler),
   Command.provide(commandRuntimeLayer(["feedback", "add"])),
   Command.provide(telemetryStateLayer),

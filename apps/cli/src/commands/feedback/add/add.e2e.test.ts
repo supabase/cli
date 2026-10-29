@@ -31,4 +31,27 @@ describe("supabase feedback", () => {
       ),
     E2E_TIMEOUT_MS,
   );
+
+  it.live(
+    "feedback add rejects more than 3 --target flags before running",
+    () =>
+      withTempHome((home) =>
+        Effect.gen(function* () {
+          const target = '{"url":"https://supabase.com/docs/guides/auth","quote":"a"}';
+          const result = yield* runSupabaseEffect(
+            [
+              "feedback",
+              "add",
+              ...Array.from({ length: 4 }, () => ["--target", target]).flat(),
+              "docs gap",
+            ],
+            { home: home.dir, env: { HOME: home.dir } },
+          );
+          expect(result.exitCode).toBe(1);
+          expect(result.stderr).toContain("at most 3");
+          expect(result.stdout).toBe("");
+        }),
+      ),
+    E2E_TIMEOUT_MS,
+  );
 });

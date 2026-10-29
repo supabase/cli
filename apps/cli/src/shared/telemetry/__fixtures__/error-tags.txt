@@ -256,6 +256,7 @@ FeedbackEmptyMessageError
 FeedbackInvalidTokenError
 FeedbackMessageTooLongError
 FeedbackNotFoundError
+FeedbackTargetInvalidError
 FileWatcherError
 FunctionDeployCancelledError
 FunctionDownloadNotFoundError

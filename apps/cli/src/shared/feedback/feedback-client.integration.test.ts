@@ -131,6 +131,46 @@ describe("feedbackClientLayer", () => {
       }).pipe(Effect.provide(layerWith(transport)));
     });
 
+    it.effect("sends docs targets inside metadata", () => {
+      const transport = recordingFetch(() => jsonResponse(TOKEN));
+      return Effect.gen(function* () {
+        const client = yield* FeedbackClient;
+        yield* client.submit({
+          message: "the guide does not say who refreshes the session",
+          context: {
+            cliVersion: "9.9.9",
+            userAgent: "SupabaseCLI/9.9.9",
+            os: "linux",
+            arch: "x64",
+            isAgent: false,
+          },
+          targets: [
+            {
+              url: "https://supabase.com/docs/guides/auth/server-side",
+              quote: "Create a server client.",
+              heading: "Creating a client",
+            },
+          ],
+        });
+
+        const body = yield* decodeJsonBody(transport.requests[0]!.bodyText);
+        expect(body["metadata"]).toEqual({
+          cli_version: "9.9.9",
+          source: "cli",
+          os: "linux",
+          arch: "x64",
+          is_agent: false,
+          targets: [
+            {
+              url: "https://supabase.com/docs/guides/auth/server-side",
+              quote: "Create a server client.",
+              heading: "Creating a client",
+            },
+          ],
+        });
+      }).pipe(Effect.provide(layerWith(transport)));
+    });
+
     it.effect("maps a PostgREST error response to FeedbackBackendError", () => {
       // Shape PostgREST returns when execute is denied on the RPC.
       const transport = recordingFetch(() =>
