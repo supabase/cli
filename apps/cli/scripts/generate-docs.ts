@@ -1,11 +1,12 @@
 import { BunFileSystem, BunPath } from "@effect/platform-bun";
 import process from "node:process";
 import { CLI_CONFIG_SCHEMA_URL, PROJECT_CONFIG_SCHEMA_URL } from "@supabase/config";
-import { Lock, LOCK_SCHEMA_URL } from "@supabase/stack/effect";
+import { HOSTED_LOCK_SCHEMA_URL } from "@supabase/stack/effect";
 import { Console, Effect, FileSystem, Layer, Path, Schema } from "effect";
 import { rootCommand } from "../src/cli/root.ts";
 import { collectCommands, getHelpDoc } from "../src/shared/cli/command-docs.ts";
 import { formatHelpDocAsMarkdown } from "../src/shared/cli/markdown-formatter.ts";
+import { lockSchemaDocument, publishedSchemaPath } from "./published-schemas.ts";
 
 const BINARY_NAME = "supabase";
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }));
@@ -92,8 +93,7 @@ const main = Effect.gen(function* () {
     schemaUrl: string,
     distFileName: string,
   ) {
-    const schemaPathname = new URL(schemaUrl).pathname.replace(/^\/docs/, "");
-    const destPath = path.join(defaultDocsPublicDir, schemaPathname);
+    const destPath = path.join(defaultDocsPublicDir, publishedSchemaPath(schemaUrl));
     const sourcePath = path.join(configPackageDistDir, distFileName);
 
     yield* fs.makeDirectory(path.dirname(destPath), { recursive: true });
@@ -106,20 +106,10 @@ const main = Effect.gen(function* () {
 
   /** Writes the `supabase.lock` v1 JSON Schema, generated from the stack's lock schema, to its docs-site public path. */
   const writeLockSchemaAsset = Effect.fnUntraced(function* () {
-    const { schema, definitions } = Schema.toJsonSchemaDocument(Lock);
-    const document = {
-      $schema: "https://json-schema.org/draft/2020-12/schema",
-      $id: LOCK_SCHEMA_URL,
-      title: "supabase.lock",
-      description: "The service versions that supabase start pins in supabase/supabase.lock.",
-      ...schema,
-      $defs: definitions,
-    };
-    const schemaPathname = new URL(LOCK_SCHEMA_URL).pathname.replace(/^\/docs/, "");
-    const destPath = path.join(defaultDocsPublicDir, schemaPathname);
+    const destPath = path.join(defaultDocsPublicDir, publishedSchemaPath(HOSTED_LOCK_SCHEMA_URL));
 
     yield* fs.makeDirectory(path.dirname(destPath), { recursive: true });
-    yield* fs.writeFileString(destPath, `${yield* encodeJson(document)}\n`);
+    yield* fs.writeFileString(destPath, `${yield* encodeJson(lockSchemaDocument())}\n`);
 
     yield* Console.log(
       `Generated: ${path.relative(path.resolve(import.meta.dir, "../../.."), destPath)}`,

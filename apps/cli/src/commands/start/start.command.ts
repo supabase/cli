@@ -71,6 +71,7 @@ const platformApiFactory = commandPlatformApiFactoryLayer.pipe(
 
 const startRuntimeLayer = Layer.mergeAll(
   cliSettings,
+  debugLoggerLayer,
   telemetryStateLayer,
   commandRuntimeLayer(["start"]),
   dockerRunLayer,

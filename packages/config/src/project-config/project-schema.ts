@@ -137,7 +137,7 @@ export const ProjectConfigSchema: StandardSchemaV1<
   Schema.make<Schema.Codec<ProjectConfigSchemaType>>(projectConfigAst),
 );
 
-/** JSON Schema (draft 2020-12) rendering of {@link ProjectConfigSchema}. */
+/** JSON Schema (draft-07) rendering of {@link ProjectConfigSchema}. */
 export function toProjectConfigJsonSchema() {
   return toPublishedJsonSchemaDocument(ProjectConfigSchema, { onExcessProperty: "ignore" });
 }

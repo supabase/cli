@@ -128,6 +128,36 @@ const pruneFailureMessage = (kind: string, stderr: string) => {
   return detail.length > 0 ? `failed to prune ${kind}: ${detail}` : `failed to prune ${kind}`;
 };
 
+/** Prunes unused networks carrying `filterValue`; networks with attached containers are kept. */
+export const pruneProjectNetworks = (
+  spawner: Spawner,
+  filterValue: string,
+  debug: boolean,
+): Effect.Effect<void, DockerRemoveAllNetworkPruneError> =>
+  Effect.gen(function* () {
+    const networkPrune = yield* pruneWaitingForConcurrentPrune(spawner, [
+      "network",
+      "prune",
+      "--force",
+      "--filter",
+      `label=${filterValue}`,
+    ]).pipe(
+      Effect.mapError(
+        (cause) =>
+          new DockerRemoveAllNetworkPruneError({
+            message: `failed to prune networks: ${describeContainerCliFailure(cause)}`,
+          }),
+      ),
+    );
+    if (networkPrune.exitCode !== 0) {
+      return yield* new DockerRemoveAllNetworkPruneError({
+        message: pruneFailureMessage("networks", networkPrune.stderr),
+      });
+    }
+    // Established output text: singular "network", unlike the container/volume reports.
+    yield* reportPruned(debug, "Pruned network:", networkPrune.stdout);
+  });
+
 /** Every failure {@link dockerRemoveAll} can produce. */
 export type DockerRemoveAllError =
   | DockerRemoveAllListError
@@ -246,25 +276,5 @@ export const dockerRemoveAll = (
       yield* reportPruned(debug, "Pruned volumes:", volumePrune.stdout);
     }
 
-    const networkPrune = yield* pruneWaitingForConcurrentPrune(spawner, [
-      "network",
-      "prune",
-      "--force",
-      "--filter",
-      `label=${filterValue}`,
-    ]).pipe(
-      Effect.mapError(
-        (cause) =>
-          new DockerRemoveAllNetworkPruneError({
-            message: `failed to prune networks: ${describeContainerCliFailure(cause)}`,
-          }),
-      ),
-    );
-    if (networkPrune.exitCode !== 0) {
-      return yield* new DockerRemoveAllNetworkPruneError({
-        message: pruneFailureMessage("networks", networkPrune.stderr),
-      });
-    }
-    // Established output text: singular "network", unlike the container/volume reports.
-    yield* reportPruned(debug, "Pruned network:", networkPrune.stdout);
+    yield* pruneProjectNetworks(spawner, filterValue, debug);
   });

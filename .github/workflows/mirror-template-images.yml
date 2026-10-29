@@ -41,6 +41,7 @@ jobs:
     permissions:
       contents: read
       packages: read
+      id-token: write
     outputs:
       missing: ${{ steps.detect.outputs.missing }}
     steps:
@@ -53,6 +54,19 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+      # Anonymous public.ecr.aws pulls share a per-IP data quota with every
+      # other GitHub-hosted runner user, which is often exhausted already.
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: ${{ secrets.PROD_AWS_ROLE }}
+          aws-region: us-east-1
+
+      - name: Log in to public.ecr.aws
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: public.ecr.aws
 
       - name: Log in to ghcr.io
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0

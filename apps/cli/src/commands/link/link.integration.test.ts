@@ -1534,6 +1534,8 @@ describe("link permissions", () => {
   function setupRecording(
     opts: {
       readonly selectResponses?: ReadonlyArray<string>;
+      /* A project-scoped token without API Key Secrets read: `reveal=true` is refused. */
+      readonly revealRefused?: boolean;
     } = {},
   ) {
     const out = mockOutput({ format: "text", promptSelectResponses: opts.selectResponses });
@@ -1559,7 +1561,14 @@ describe("link permissions", () => {
               : jsonResponse(request, 200, { ...HEALTHY_PROJECT, id: ref, ref });
           }
           if (rest === "/branches") return jsonResponse(request, 200, [LINK_BRANCH]);
-          if (rest === "/api-keys") return jsonResponse(request, 200, SERVICE_KEYS);
+          if (rest === "/api-keys") {
+            return opts.revealRefused === true
+              ? jsonResponse(request, 403, {
+                  message:
+                    "Your account does not have the necessary privileges to access this endpoint.",
+                })
+              : jsonResponse(request, 200, SERVICE_KEYS);
+          }
           if (rest === "/config/storage") {
             return jsonResponse(request, 200, {
               migrationVersion: "2026-01-01-000000",
@@ -1609,6 +1618,29 @@ describe("link permissions", () => {
         activeFlags: { "project-ref": true, "skip-pooler": false },
         requests: api.requests,
         exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("links with a token that cannot read secret keys, skipping the version checks", () => {
+    const { layer, api, out, workdir } = setupRecording({ revealRefused: true });
+    return Effect.gen(function* () {
+      yield* link(flags());
+
+      expect(api.requests.map(({ method, urlWithParams }) => `${method} ${urlWithParams}`)).toEqual(
+        [
+          `GET ${API}/v1/projects/${VALID_REF}`,
+          `GET ${API}/v1/projects/${VALID_REF}/api-keys?reveal=true`,
+          `GET ${API}/v1/projects/${VALID_REF}/config/storage`,
+          `GET ${API}/v1/projects/${VALID_REF}/config/database/pooler`,
+        ],
+      );
+      expect(out.stderrText).toContain("API Key Secrets: read");
+      expect(yield* readTemp(workdir, "project-ref")).toBe(VALID_REF);
+      assertPermissionDrift({
+        command: "link",
+        activeFlags: { "project-ref": true, "skip-pooler": false },
+        requests: api.requests,
       });
     }).pipe(Effect.provide(layer));
   });

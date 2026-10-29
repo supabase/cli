@@ -351,7 +351,7 @@ start --frozen` fails instead of resolving when the lock is missing or stale; it
 targets another project or branch than the lock observed (run `supabase stack update`), and when
 this CLI bundles a newer revision of a locked version. A lock that is malformed, does not match the
 format, or comes from a newer CLI always fails the start. The lock's JSON Schema is published at
-`https://supabase.com/docs/cli/supabase-lock/v1.schema.json`. A database with initialized data keeps
+`https://supabase.com/schemas/supabase-lock/v1.json`. A database with initialized data keeps
 its build: any change other than a new `-rN` revision of the same build (a different upstream build,
 release line or major) is refused. The refusal offers to keep the data by pinning the recorded build with
 `[local.services.database] version`, setting `[db] major_version` back when the major differs and removing any
