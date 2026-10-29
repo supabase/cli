@@ -20,12 +20,13 @@ import {
 import { CliError, CliOutput, Command } from "effect/cli";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
+import { REMOTE_FLAG_NAME } from "../../command-internal/target/remote-vocabulary.ts";
 import { CLI_VERSION } from "./version.ts";
 import type { CliProjectHome } from "../config/cli-project-home.service.ts";
 import type { CliSettings } from "../config/cli-settings.service.ts";
 import type { ProjectLinkState } from "../config/project-link-state.service.ts";
-import { legacyProjectStateLayer } from "../../command-internal/legacy-project-state.layer.ts";
-import type { LegacyProjectState } from "../../command-internal/legacy-project-state.service.ts";
+import { legacyProjectStateLayer } from "../config/legacy-project-state.layer.ts";
+import type { LegacyProjectState } from "../config/legacy-project-state.service.ts";
 import { jsonCliOutputFormatter } from "../output/json-formatter.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
 import { outputLayerFor } from "../output/output.layer.ts";
@@ -33,11 +34,6 @@ import { failureBesideClosedStdout, ignoreStdoutClosed } from "../output/errors.
 import { normalizeCause } from "../output/normalize-error.ts";
 import type { OutputFormat } from "../output/types.ts";
 import { Output } from "../output/output.service.ts";
-import { GoChildExitError } from "../../command-internal/go-child-exit.error.ts";
-import {
-  GoProxyInvocation,
-  goProxyInvocationLayer,
-} from "../../command-internal/go-proxy-invocation.ts";
 import { cliSettingsLayer } from "../config/cli-settings.layer.ts";
 import { cliConfigProviderLayer } from "../config/cli-config-provider.layer.ts";
 import { cliProjectHomeLayer } from "../config/cli-project-home.layer.ts";
@@ -60,17 +56,25 @@ import {
   withDebugConsole,
   withTraceExport,
 } from "../telemetry/trace-export.layer.ts";
-import { CliArgs } from "./cli-args.service.ts";
-import { GLOBAL_VALUE_FLAG_TOKENS } from "./cobra-flag-groups.ts";
+import { CliArgs, type CliArgsShape } from "./cli-args.service.ts";
+import { GLOBAL_VALUE_FLAG_TOKENS } from "./flag-groups.ts";
 import {
   BOOLEAN_FLAG_VALUES,
   resolveAgentOutputFormatFromArgs,
   ROOT_BOOLEAN_FLAGS,
 } from "./agent-output.ts";
+import {
+  bareRemoteOperand,
+  hasConflictingRemotes,
+  joinRemoteOperands,
+  remoteOperandCapacity,
+  type RemoteArgvLeaf,
+} from "./remote-argv.ts";
 import { SuccessTrailer, successTrailerLayer } from "./success-trailer.ts";
 import type { CliErrorSuggestionContext } from "./subcommand-flag-suggestions.ts";
 import {
   flagAliasesFor,
+  isRemoteFlagMisuse,
   isValueTakingFlagTokenFor,
   resolvedCommandPathForArgv,
 } from "./subcommand-flag-suggestions.ts";
@@ -110,7 +114,7 @@ export type CliRootCommand = Command.Command<"supabase", {}, {}, unknown, Allowe
 // drift apart.
 //
 // `extractCommandPath` treats a recognized bare boolean literal (`--debug false`) as consuming a
-// token too, but `rootFlagTokens`/`firstPositionalIndex` keep pflag's stricter rule that a bare
+// token too, but `rootFlagTokens`/`firstPositionalIndex` keep the stricter rule that a bare
 // boolean never consumes the next token — don't unify these; they answer different questions.
 const globalFlagsWithValues: ReadonlySet<string> = GLOBAL_VALUE_FLAG_TOKENS;
 
@@ -154,7 +158,7 @@ export function extractCommandPath(args: ReadonlyArray<string>): ReadonlyArray<s
 
 /**
  * Yields argv tokens that are actual flag occurrences, with their positions,
- * honoring cobra/pflag boundaries: everything after a bare `--` is an operand,
+ * honoring flag boundaries: everything after a bare `--` is an operand,
  * and a token consumed as a value-taking global flag's value (`--profile -v`)
  * is not a flag.
  */
@@ -181,7 +185,7 @@ const isGlobalValueFlagToken = (token: string): boolean => globalFlagsWithValues
 
 /**
  * The full value-taking-token predicate for a real invocation: the global
- * flags plus the resolved leaf command's own value flags — pflag parses with
+ * flags plus the resolved leaf command's own value flags — parsing uses
  * the resolved command's complete flagset, so `login --name --debug` hands
  * `--debug` to `--name` and never sets the debug flag.
  */
@@ -196,20 +200,74 @@ function valueTakingFlagTokenPredicateForArgv(
   return (token) => isGlobalValueFlagToken(token) || leafPredicate(token);
 }
 
+/** How the resolved command reads operands; `undefined` unless `--remote` is given and accepted. */
+export function remoteArgvLeafFor(
+  rootCommand: Command.Command.Any,
+  args: ReadonlyArray<string>,
+): RemoteArgvLeaf | undefined {
+  if (!args.some((arg) => arg === "--remote" || arg.startsWith("--remote="))) return undefined;
+  const path = resolvedCommandPathForArgv(rootCommand, extractCommandPath(args));
+  const operandCapacity = remoteOperandCapacity(rootCommand, path);
+  if (operandCapacity === undefined) return undefined;
+  const isValueTakingToken = valueTakingFlagTokenPredicateForArgv(rootCommand, args);
+  return {
+    pathLength: path.length - 1,
+    operandCapacity,
+    consumesNextToken: (token) => {
+      const [flag] = token.split("=", 1);
+      return (
+        (!token.includes("=") && flag !== undefined && isValueTakingToken(flag)) ||
+        shortClusterConsumesNextToken(token, isValueTakingToken)
+      );
+    },
+  };
+}
+
+/**
+ * `rawArgs` with a bare `--remote <word>` joined to `--remote=<word>` wherever the command's
+ * operands leave no other reading, plus the word a bare `--remote` is still followed by and
+ * whether `--remote` is given more than once with different values.
+ */
+export function prepareCliArgs(
+  rootCommand: Command.Command.Any,
+  rawArgs: ReadonlyArray<string>,
+): CliArgsShape {
+  const leaf = remoteArgvLeafFor(rootCommand, rawArgs);
+  if (leaf === undefined) return { args: rawArgs };
+  const args = joinRemoteOperands(rawArgs, leaf);
+  return {
+    args,
+    bareRemoteOperand: bareRemoteOperand(args, leaf),
+    remoteConflict: hasConflictingRemotes(args, leaf),
+  };
+}
+
+/** `CliArgs` and a `Stdio` sharing one argv, so every reader sees the rewritten command line. */
+export const cliArgsLayer = (cliArgs: CliArgsShape) =>
+  Layer.mergeAll(
+    Layer.succeed(CliArgs, cliArgs),
+    Layer.effect(
+      Stdio.Stdio,
+      Effect.map(Stdio.Stdio, (stdio) =>
+        Stdio.make({ ...stdio, args: Effect.succeed(cliArgs.args) }),
+      ),
+    ),
+  );
+
 /** Whether `token` is an occurrence of the long or exact-short boolean flag `name`, bare or valued (`--help`, `--help=false`). */
 function isFlagOccurrence(token: string, name: string): boolean {
   return token === name || token.startsWith(`${name}=`);
 }
 
 /**
- * pflag's `ParseBool` true spellings, used to resolve `--version=<value>` here. This answers a
+ * The boolean true spellings (`1`, `t`, `T`, `TRUE`, `true`, `True`), used to resolve `--version=<value>` here. This answers a
  * different question than `BOOLEAN_FLAG_VALUES` (`agent-output.ts`), which asks whether the
  * shipped parser accepts the value at all — the two sets must not be merged.
  */
-const PFLAG_BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
+const BOOL_TRUE_VALUES = new Set(["1", "t", "T", "TRUE", "true", "True"]);
 
 /**
- * pflag reads a single-dash token as a cluster of shorthand flags until a
+ * A single-dash token is read as a cluster of shorthand flags until a
  * value-taking shorthand consumes the rest of the cluster as its value.
  */
 function* shortClusterFlagNames(
@@ -228,7 +286,7 @@ function* shortClusterFlagNames(
   }
 }
 
-/** Whether a short cluster ends in a value-taking shorthand with no inline value, which pflag satisfies with the NEXT argv token (`-ho json`). */
+/** Whether a short cluster ends in a value-taking shorthand with no inline value, which consumes the NEXT argv token (`-ho json`). */
 function shortClusterConsumesNextToken(
   token: string,
   isValueTakingToken: (token: string) => boolean,
@@ -242,7 +300,7 @@ function shortClusterConsumesNextToken(
 }
 
 /**
- * Index of the first positional token — pflag's view, with flags and their
+ * Index of the first positional token, with flags and their
  * consumed values skipped and everything from a bare `--` on positional —
  * or `args.length` when there is none.
  */
@@ -266,7 +324,7 @@ function firstPositionalIndex(
 }
 
 /**
- * Whether argv sets the root `--version` flag, in any spelling pflag marks as changed: bare,
+ * Whether argv sets the root `--version` flag, in any spelling that marks it as changed: bare,
  * valued (`--version=false` included), or followed by a space-form operand (`--version true`,
  * since the version built-in is served before the stray operand is validated). A subcommand's
  * own `--version` (`db reset --version x`) does not count, since a positional precedes it.
@@ -286,7 +344,7 @@ export function hasRootVersionFlag(
 /**
  * Whether this argv resolves to a built-in action — help at any depth, or the root version —
  * without ever running a command handler. Help counts on presence, regardless of value. The
- * version flag resolves pflag-style, last value wins: a true value counts as the version
+ * version flag resolves last-value-wins: a true value counts as the version
  * built-in, `--version=false <leaf>` counts as running the leaf, and only a bare invocation with
  * no positional falls back to the root's help. Used only by the upgrade-notice checks below.
  */
@@ -303,7 +361,7 @@ export function hasRootHelpOrVersionFlag(
     if (index < positional) {
       if (token === "--version") version = true;
       else if (token.startsWith("--version=")) {
-        version = PFLAG_BOOL_TRUE.has(token.slice("--version=".length));
+        version = BOOL_TRUE_VALUES.has(token.slice("--version=".length));
       }
     }
   }
@@ -358,15 +416,10 @@ export function exitCodeForFailure(cause: Cause.Cause<unknown>): number {
 
 /**
  * Whether `handledProgram` should render its generic `output.fail` stderr line for a failed run.
- * False for a clean exit (`0`), an interrupt (`130`), and a `GoChildExitError` — a delegated Go
- * child already wrote its own failure to the inherited stderr, so a second line here would be
- * redundant. Checked by concrete type rather than Effect's shared `[Runtime.errorReported]`
- * marker, since `CliError.ShowHelp` also sets that marker `false` for an unrelated reason and
- * would otherwise suppress real error rendering too.
+ * False only for a clean exit (`0`) or an interrupt (`130`); every other exit code reports.
  */
-export function shouldReportFailure(cause: Cause.Cause<unknown>, exitCode: number): boolean {
-  if (exitCode === 0 || exitCode === 130) return false;
-  return !(Cause.squash(cause) instanceof GoChildExitError);
+export function shouldReportFailure(exitCode: number): boolean {
+  return exitCode !== 0 && exitCode !== 130;
 }
 
 /**
@@ -447,7 +500,7 @@ function isMissingFlagTokenPresent(
     const equalIndex = arg.indexOf("=");
     const bareToken = equalIndex === -1 ? arg : arg.slice(0, equalIndex);
     if (equalIndex === -1 && isValueTakingToken(bareToken)) {
-      // pflag consumes the following argv entry as `bareToken`'s value unconditionally — even a
+      // The following argv entry is consumed as `bareToken`'s value unconditionally — even a
       // literal "--" — so skip it here too, before the terminator check ever sees it.
       index++;
     }
@@ -482,7 +535,14 @@ export function classifyParseErrorConsoleOutput(
       flagAliasesFor(context.rootCommand, error.commandPath, inner.option),
       isValueTakingToken,
     );
-  return error.errors.every(isSuppressedMissingFlag) ? "drop" : "flush-help-doc-to-stderr";
+  const isRemoteFlagError = (inner: (typeof error.errors)[number]) =>
+    (Predicate.isTagged(inner, "InvalidValue") &&
+      inner.kind === "flag" &&
+      inner.option === REMOTE_FLAG_NAME) ||
+    isRemoteFlagMisuse(inner, context.rootCommand);
+  return error.errors.every((inner) => isSuppressedMissingFlag(inner) || isRemoteFlagError(inner))
+    ? "drop"
+    : "flush-help-doc-to-stderr";
 }
 
 /**
@@ -490,8 +550,7 @@ export function classifyParseErrorConsoleOutput(
  * `Console.log`/`Console.error` writes are captured instead of reaching the real console, then
  * disposed of per `classifyParseErrorConsoleOutput`: dropped for a missing-required-flag failure,
  * replayed to stderr for other parse/validation failures, and replayed unchanged otherwise. Safe
- * to wrap the whole call since no handler here writes through `Console` directly except
- * `@supabase/config`'s `loadCliConfigFile`, which pins itself to the real console.
+ * to wrap the whole call since no handler here writes through `Console` directly.
  *
  * TODO: remove once https://github.com/Effect-TS/effect/issues/6313 is fixed upstream.
  */
@@ -566,7 +625,6 @@ export interface RunCliOptions<BeforeParseError = never> {
     args: ReadonlyArray<string>,
     info: {
       readonly cleanShowHelp: boolean;
-      readonly delegatedToGo: boolean;
       readonly workingDirectory?: string;
       /** Value-taking-token predicate for this argv (global + resolved leaf flags) — see `valueTakingFlagTokenPredicateForArgv`. */
       readonly isValueTakingFlagToken: (token: string) => boolean;
@@ -574,7 +632,7 @@ export interface RunCliOptions<BeforeParseError = never> {
   ) => Effect.Effect<void, never, FileSystem.FileSystem | Path.Path | RuntimeInfo>;
 }
 
-function cliProgramFor<
+export function cliProgramFor<
   Name extends string,
   Input,
   ContextInput,
@@ -583,10 +641,11 @@ function cliProgramFor<
   BeforeParseError,
 >(
   rootCommand: Command.Command<Name, Input, ContextInput, E, R>,
-  args: ReadonlyArray<string>,
+  cliArgs: CliArgsShape,
   options: RunCliOptions<BeforeParseError>,
   outputFormat: OutputFormat,
 ) {
+  const { args } = cliArgs;
   const runtimeLayer = Layer.mergeAll(processControlLayer, runtimeInfoLayer, ttyLayer);
   const fallbackCommandLayer = Layer.mergeAll(
     // Root command env inference leaks some subcommand-provided services; these stand-ins die
@@ -616,7 +675,7 @@ function cliProgramFor<
     Layer.provideMerge(legacyProjectStateLayer),
     Layer.provideMerge(runtimeLayer),
     Layer.provideMerge(fallbackCommandLayer),
-    Layer.provideMerge(Layer.succeed(CliArgs, { args })),
+    Layer.provideMerge(cliArgsLayer(cliArgs)),
     Layer.provideMerge(BunServices.layer),
   );
   return withoutParseErrorHelpDump(
@@ -652,10 +711,12 @@ export const runCli = Effect.fnUntraced(function* <
   options: RunCliOptions<BeforeParseError>,
 ) {
   const bootMs = Math.round(performance.now());
-  const args = yield* Effect.gen(function* () {
+  const rawArgs = yield* Effect.gen(function* () {
     const stdio = yield* Stdio.Stdio;
     return yield* stdio.args;
   }).pipe(Effect.provide(BunServices.layer));
+  const cliArgs = prepareCliArgs(rootCommand, rawArgs);
+  const { args } = cliArgs;
 
   // Same shape `formatterLayerFor` builds below, so `normalizeCause`'s fallback path can reuse
   // `formatCliErrorsForDisplay` and surface the same subcommand-flag hint the formatters would.
@@ -665,7 +726,7 @@ export const runCli = Effect.fnUntraced(function* <
     const aiTool = yield* AiTool;
     return resolveAgentOutputFormatFromArgs(args, aiTool.name, options.agentDefaultOutputFormat);
   }).pipe(Effect.provide(aiToolLayer));
-  const cliProgram = cliProgramFor(rootCommand, args, options, outputFormat);
+  const cliProgram = cliProgramFor(rootCommand, cliArgs, options, outputFormat);
 
   const signalAwareLayer = processControlLayer.pipe(
     Layer.provideMerge(runtimeInfoLayer),
@@ -711,7 +772,6 @@ export const runCli = Effect.fnUntraced(function* <
     Layer.provideMerge(cliSettingsLayerFor(handledRuntimeLayer)),
     Layer.provideMerge(cliProjectContextLayerFor(handledRuntimeLayer)),
     Layer.provideMerge(ttyLayer),
-    Layer.provideMerge(goProxyInvocationLayer),
     Layer.provideMerge(successTrailerLayer),
   );
   const handledProgramLayer = processControlLayer.pipe(
@@ -723,7 +783,6 @@ export const runCli = Effect.fnUntraced(function* <
   const runToExitCode = <A, E, R>(program: Effect.Effect<A, E, R>) =>
     Effect.gen(function* () {
       const processControl = yield* ProcessControl;
-      const goProxyInvocation = yield* GoProxyInvocation;
       const output = yield* Output;
       const successTrailer = yield* SuccessTrailer;
       const exit = yield* program.pipe(Effect.exit);
@@ -738,11 +797,9 @@ export const runCli = Effect.fnUntraced(function* <
                     Effect.andThen(
                       Effect.gen(function* () {
                         if (afterSuccessHook !== undefined) {
-                          const delegatedToGo = yield* goProxyInvocation.wasDelegated;
                           const workingDirectory = yield* successTrailer.workingDirectory;
                           yield* afterSuccessHook(args, {
                             cleanShowHelp,
-                            delegatedToGo,
                             workingDirectory,
                             isValueTakingFlagToken: valueTakingFlagTokenPredicateForArgv(
                               rootCommand,
@@ -770,7 +827,7 @@ export const runCli = Effect.fnUntraced(function* <
         const exitCode = exitCodeForFailure(cause);
         // See `shouldReportFailure` and `exitCodeForFailure` for the exit-code/reporting rules; a
         // literal `--help` never reaches this branch — it exits 0 via the success path below.
-        if (shouldReportFailure(cause, exitCode)) {
+        if (shouldReportFailure(exitCode)) {
           yield* ignoreStdoutClosed(output.fail(normalizeCause(cause, suggestionContext)));
         }
         yield* afterSuccess(exitCode, true);

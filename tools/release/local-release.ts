@@ -7,7 +7,6 @@
  *   pnpm cli-release [--version 0.0.0-local.1234567890]
  *
  * Requires `pnpm local-registry` to be running in another terminal.
- * Requires Go in PATH to build the `supabase-go` sidecar.
  */
 
 import { BunFileSystem, BunPath } from "@effect/platform-bun";
@@ -48,8 +47,6 @@ type PlatformInfo = {
   bunTarget: string;
   platformPkg: string;
   ext: string;
-  goos: string;
-  goarch: string;
 };
 
 const PLATFORM_MAP: Record<string, PlatformInfo> = {
@@ -57,43 +54,31 @@ const PLATFORM_MAP: Record<string, PlatformInfo> = {
     bunTarget: "bun-darwin-arm64",
     platformPkg: "cli-darwin-arm64",
     ext: "",
-    goos: "darwin",
-    goarch: "arm64",
   },
   "darwin-x64": {
     bunTarget: "bun-darwin-x64",
     platformPkg: "cli-darwin-x64",
     ext: "",
-    goos: "darwin",
-    goarch: "amd64",
   },
   "linux-arm64": {
     bunTarget: "bun-linux-arm64",
     platformPkg: "cli-linux-arm64",
     ext: "",
-    goos: "linux",
-    goarch: "arm64",
   },
   "linux-x64": {
     bunTarget: "bun-linux-x64-baseline",
     platformPkg: "cli-linux-x64",
     ext: "",
-    goos: "linux",
-    goarch: "amd64",
   },
   "win32-x64": {
     bunTarget: "bun-windows-x64-baseline",
     platformPkg: "cli-windows-x64",
     ext: ".exe",
-    goos: "windows",
-    goarch: "amd64",
   },
   "win32-arm64": {
     bunTarget: "bun-windows-arm64",
     platformPkg: "cli-windows-arm64",
     ext: ".exe",
-    goos: "windows",
-    goarch: "arm64",
   },
 };
 
@@ -150,29 +135,6 @@ const readToken = Effect.fnUntraced(function* (tokenPath: string) {
   );
 });
 
-const checkGo = Effect.fnUntraced(function* () {
-  yield* tryAsync(() => $`go version`.quiet()).pipe(
-    Effect.catch(() =>
-      Effect.gen(function* () {
-        yield* Console.error("\nError: `go` not found in PATH.");
-        yield* Console.error("Install Go from https://go.dev/dl/ to build the CLI.\n");
-        return process.exit(1);
-      }),
-    ),
-  );
-});
-
-const checkGoSource = Effect.fnUntraced(function* (path: Path.Path, root: string) {
-  const goSource = path.join(root, "apps", "cli-go");
-  const goMod = Bun.file(path.join(goSource, "go.mod"));
-  if (!(yield* tryAsync(() => goMod.exists()))) {
-    yield* Console.error("\nError: Go CLI source not found at apps/cli-go");
-    yield* Console.error("Run: pnpm repos:install\n");
-    process.exit(1);
-  }
-  return goSource;
-});
-
 const main = Effect.fnUntraced(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -195,9 +157,6 @@ const main = Effect.fnUntraced(function* () {
   yield* checkRegistry();
   const token = yield* readToken(tokenPath);
   const platform = yield* getPlatformInfo();
-
-  yield* checkGo();
-  const goSource = yield* checkGoSource(path, root);
 
   if (process.platform === "linux") {
     yield* Console.warn(
@@ -224,7 +183,7 @@ const main = Effect.fnUntraced(function* () {
     const entrypoint = path.join(root, "apps", "cli", "src", "main.ts");
     const bunBinary = path.join(tmpPlatformBinDir, `supabase${platform.ext}`);
 
-    yield* Console.log("[1/3] Compiling CLI binary...");
+    yield* Console.log("[1/2] Compiling CLI binary...");
     const define = yield* tryAsync(() => stackReleaseDefine());
     const buildResult = yield* tryAsync(() =>
       Bun.build({
@@ -241,29 +200,13 @@ const main = Effect.fnUntraced(function* () {
       return yield* new LocalReleaseError({ message: "failed to compile the CLI binary" });
     }
 
-    {
-      const goBinary = path.join(tmpPlatformBinDir, `supabase-go${platform.ext}`);
-      yield* Console.log(`[2/3] Compiling Go CLI binary (${platform.goos}/${platform.goarch})...`);
-      // go build must run from the Go source directory: passing an absolute path as a positional
-      // arg makes Go resolve the module from CWD instead, which fails because the repo root has
-      // no go.mod.
-      yield* tryAsync(() =>
-        $`go build -trimpath -ldflags="-s -w" -o ${goBinary} .`.cwd(goSource).env({
-          ...process.env,
-          GOOS: platform.goos,
-          GOARCH: platform.goarch,
-          CGO_ENABLED: "0",
-        }),
-      );
-    }
-
     const tmpCliDir = path.join(tmpDir, "cli");
     const tmpCliDistDir = path.join(tmpCliDir, "dist");
     yield* fs.makeDirectory(tmpCliDistDir, { recursive: true });
 
     const shimSrc = path.join(root, "apps", "cli", "src", "shared", "cli", "bin.ts");
     const shimOut = path.join(tmpCliDistDir, "supabase.js");
-    yield* Console.log("[3/3] Building Node.js shim...");
+    yield* Console.log("[2/2] Building Node.js shim...");
     yield* tryAsync(() => $`bun build ${shimSrc} --outfile=${shimOut} --target=node`);
 
     const platformPkgJson = yield* tryAsync(() =>

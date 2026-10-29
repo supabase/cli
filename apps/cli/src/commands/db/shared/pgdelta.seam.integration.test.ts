@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { afterEach, beforeEach, vi } from "vitest";
@@ -12,6 +12,7 @@ import {
   shadowCacheDisabledLayer,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { configValuesLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
 import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
@@ -109,7 +110,7 @@ function fakeShadowDbConnection() {
   return { layer };
 }
 
-/** The shadow's own PG15+ one-shot platform-baseline job(s) — Go's `initSchema15`. */
+/** The shadow's own PG15+ one-shot platform-baseline job(s). */
 function fakeShadowSetupDocker() {
   const layer = Layer.succeed(DockerRun, {
     run: () => Effect.die("run unused"),
@@ -128,6 +129,7 @@ function setup(
     readonly dbInspectFailsWith?: string;
     readonly dbInspectImage?: string;
     readonly stackBackend?: boolean;
+    readonly env?: Readonly<Record<string, string>>;
   } = {},
 ) {
   const out = mockOutput();
@@ -147,6 +149,7 @@ function setup(
   // body itself can resolve `Output`/etc.), but that doesn't satisfy `seam`'s OWN identical
   // requirements as a sibling entry in the same merge.
   const seam = declarativeSeamLayer.pipe(
+    Layer.provide(configValuesLayer({ output: out.layer, env: opts.env })),
     Layer.provide(cliSettings),
     Layer.provide(dbConnection.layer),
     Layer.provide(docker.layer),
@@ -192,8 +195,7 @@ describe("declarativeSeamLayer.ensureLocalDatabaseStarted", () => {
   it.effect(
     "carries the inspect failure's daemon marker AND recovery suggestion onto the seam error",
     () => {
-      // Go's `AssertSupabaseDbIsRunning` sets `CmdSuggestion = suggestDockerInstall` on a
-      // daemon-connection failure — the seam's inspect-error mapping must preserve both the
+      // A daemon-connection failure carries a Docker-install suggestion — the seam's inspect-error mapping must preserve both the
       // daemon classification and that suggestion, or the normalizer renders its generic
       // debug hint instead of the actionable Docker recovery text (review: the start-failure
       // catch below it already propagates `suggestion`; this asserts the inspect mapping does
@@ -235,6 +237,29 @@ describe("declarativeSeamLayer.ensureLocalPostgresImageCurrent", () => {
         expect(error.message).toContain("local Postgres container image is stale");
         expect(error.message).toContain("same SUPABASE_USE_SLIM_IMAGES setting");
         expect(error.message).not.toContain("--no-backup");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    "inspects the container named by SUPABASE_PROJECT_ID over config.toml's project_id",
+    () => {
+      const dir = tmp.current;
+      const { layer, shadowSpawned } = setup(dir, {
+        dbInspectImage: dockerfileServiceImageRaw("pg"),
+        env: { SUPABASE_PROJECT_ID: "envproj" },
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(path.join(dir, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(dir, "supabase", "config.toml"),
+          'project_id = "tomlproj"\n',
+        );
+        const seam = yield* DeclarativeSeam;
+        yield* seam.ensureLocalPostgresImageCurrent.pipe(Effect.exit);
+        expect(shadowSpawned.some((call) => call.args.includes("supabase_db_envproj"))).toBe(true);
       }).pipe(Effect.provide(layer));
     },
   );

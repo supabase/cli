@@ -59,13 +59,13 @@ enabled = true
 describe("config push", () => {
   testBehaviour("reconciles every section against the remote", async ({ run, workspace }) => {
     writeConfigToml(workspace.path);
-    const result = await run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
+    const result = await run(["config", "push", "--yes", `--remote=${PROJECT_REF}`]);
     expect(result.exitCode).toBe(0);
   });
 
   testBehaviour("emits HTTP trace with --debug", async ({ run, workspace }) => {
     writeConfigToml(workspace.path);
-    const result = await run(["config", "push", "--yes", "--project-ref", PROJECT_REF, "--debug"]);
+    const result = await run(["config", "push", "--yes", "--debug", `--remote=${PROJECT_REF}`]);
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toMatch(/HTTP.*GET:/);
   });
@@ -81,7 +81,7 @@ describe("config push", () => {
     });
 
     writeConfigToml(workspace.path);
-    const result = await run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
+    const result = await run(["config", "push", "--yes", `--remote=${PROJECT_REF}`]);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain("401");
   });
@@ -101,7 +101,7 @@ describe("config push", () => {
       });
 
       writeConfigToml(workspace.path);
-      const result = await run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
+      const result = await run(["config", "push", "--yes", `--remote=${PROJECT_REF}`]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("403");
     },
@@ -118,7 +118,7 @@ describe("config push", () => {
     });
 
     writeConfigToml(workspace.path);
-    const result = await run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
+    const result = await run(["config", "push", "--yes", `--remote=${PROJECT_REF}`]);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain("404");
   });
@@ -131,7 +131,7 @@ describe("config push", () => {
     });
 
     writeConfigToml(workspace.path);
-    const result = await run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
+    const result = await run(["config", "push", "--yes", `--remote=${PROJECT_REF}`]);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain("409");
   });
@@ -149,7 +149,7 @@ describe("config push", () => {
     });
 
     writeConfigToml(workspace.path);
-    const result = await run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
+    const result = await run(["config", "push", "--yes", `--remote=${PROJECT_REF}`]);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain("422");
     expect(result.stderr).toContain("max_rows");
@@ -166,7 +166,7 @@ describe("config push", () => {
     });
 
     writeConfigToml(workspace.path);
-    const result = await run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
+    const result = await run(["config", "push", "--yes", `--remote=${PROJECT_REF}`]);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain("429");
   });
@@ -182,7 +182,7 @@ describe("config push", () => {
     });
 
     writeConfigToml(workspace.path);
-    const result = await run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
+    const result = await run(["config", "push", "--yes", `--remote=${PROJECT_REF}`]);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain("500");
   });
@@ -195,7 +195,7 @@ describe("config push", () => {
     });
 
     writeConfigToml(workspace.path);
-    const result = await run(["config", "push", "--yes", "--project-ref", PROJECT_REF]);
+    const result = await run(["config", "push", "--yes", `--remote=${PROJECT_REF}`]);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain("502");
   });

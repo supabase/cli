@@ -4,6 +4,7 @@ import { withPermissions } from "../../../../command-internal/command-permission
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { stackRestart } from "./restart.handler.ts";
+import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 
 const config = {
   stack: Flag.String("stack").pipe(
@@ -33,4 +34,5 @@ export const stackRestartCommand = Command.make("restart", config).pipe(
   Command.withHandler((flags) =>
     stackRestart(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

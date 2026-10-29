@@ -2,11 +2,9 @@ import type { DocsFlag } from "./docs-spec.ts";
 import { genTypesLanguageFlagDefaults } from "../commands/gen/types/types.languages.ts";
 
 /**
- * Static data for the docs spec generator — information the Effect command tree cannot
- * express structurally: docs-site section tags, `--experimental`-required leaves, deprecated
- * commands to exclude from the reference (though still shown in `--help`), and flag defaults
- * that `Flag.withDefault` only captures in a closure. `buildDocsSpec` validates every key here
- * against the walked tree and fails the build on stale entries.
+ * Static data the Effect command tree cannot express structurally: docs-site section tags,
+ * `--experimental`-required leaves, deprecated commands, and flag defaults that
+ * `Flag.withDefault` only captures in a closure. `buildDocsSpec` fails the build on stale keys.
  */
 
 export interface DocsInfoTag {
@@ -87,9 +85,9 @@ export const DOCS_EXPERIMENTAL: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Leaves gated on `--experimental` OR `[experimental.pgdelta] enabled = true`
- * in config.toml — the flag is documented but not marked required, since the
- * config path also passes the gate.
+ * Leaves gated on `--experimental` OR `[experimental.pgdelta] enabled` (default true)
+ * in config.toml — the flag is documented but not marked required, since the gate
+ * is open unless config sets `enabled = false`.
  */
 export const DOCS_EXPERIMENTAL_OPTIONAL: ReadonlySet<string> = new Set([
   "supabase-db-schema-declarative-generate",
@@ -101,18 +99,14 @@ export const DOCS_EXPERIMENTAL_OPTIONAL: ReadonlySet<string> = new Set([
  * suffix) but excluded from the published reference.
  */
 export const DOCS_EXCLUDED: ReadonlySet<string> = new Set([
-  "supabase-gen-keys",
   "supabase-inspect-db-cache-hit",
   "supabase-inspect-db-index-sizes",
   "supabase-inspect-db-index-usage",
   "supabase-inspect-db-role-configs",
   "supabase-inspect-db-role-connections",
   "supabase-inspect-db-seq-scans",
-  "supabase-inspect-db-table-index-sizes",
   "supabase-inspect-db-table-record-counts",
   "supabase-inspect-db-table-sizes",
-  "supabase-inspect-db-total-index-size",
-  "supabase-inspect-db-total-table-sizes",
   "supabase-inspect-db-unused-indexes",
 ]);
 
@@ -130,19 +124,10 @@ export const DOCS_DEFAULT_OVERRIDES: Readonly<Record<string, string>> = {
   "supabase profile": "supabase",
   "supabase-db-advisors fail-on": "none",
   "supabase-db-advisors level": "warn",
-  "supabase-db-advisors local": "true",
   "supabase-db-advisors type": "all",
-  "supabase-db-diff local": "true",
-  "supabase-db-diff use-migra": "true",
-  "supabase-db-dump linked": "true",
   "supabase-db-lint fail-on": "none",
   "supabase-db-lint level": "warning",
-  "supabase-db-lint local": "true",
-  "supabase-db-pull diff-engine": "migra",
-  "supabase-db-pull linked": "true",
-  "supabase-db-push linked": "true",
-  "supabase-db-query local": "true",
-  "supabase-db-reset local": "true",
+  "supabase-db-pull diff-engine": "pg-delta",
   "supabase-db-schema-declarative-sync file": "declarative_sync",
   "supabase-functions-deploy jobs": "1",
   "supabase-functions-new auth": "apikey",
@@ -152,38 +137,12 @@ export const DOCS_DEFAULT_OVERRIDES: Readonly<Record<string, string>> = {
   "supabase-gen-signing-key algorithm": "ES256",
   "supabase-gen-types lang": "typescript",
   "supabase-gen-types query-timeout": "15s",
-  "supabase-inspect-db-bloat linked": "true",
-  "supabase-inspect-db-blocking linked": "true",
-  "supabase-inspect-db-calls linked": "true",
-  "supabase-inspect-db-db-stats linked": "true",
-  "supabase-inspect-db-index-stats linked": "true",
-  "supabase-inspect-db-locks linked": "true",
-  "supabase-inspect-db-long-running-queries linked": "true",
-  "supabase-inspect-db-outliers linked": "true",
-  "supabase-inspect-db-replication-slots linked": "true",
-  "supabase-inspect-db-role-stats linked": "true",
-  "supabase-inspect-db-table-stats linked": "true",
-  "supabase-inspect-db-traffic-profile linked": "true",
-  "supabase-inspect-db-vacuum-stats linked": "true",
-  "supabase-inspect-report linked": "true",
   "supabase-inspect-report output-dir": ".",
   "supabase-login name": "built-in token name generator",
   "supabase-migration-down last": "1",
-  "supabase-migration-down local": "true",
-  "supabase-migration-fetch linked": "true",
-  "supabase-migration-list linked": "true",
-  "supabase-migration-repair linked": "true",
-  "supabase-migration-squash local": "true",
-  "supabase-migration-up local": "true",
-  "supabase-seed-buckets local": "true",
   "supabase-storage-cp cache-control": "max-age=3600",
   "supabase-storage-cp content-type": "auto-detect",
   "supabase-storage-cp jobs": "1",
-  "supabase-storage-cp linked": "true",
-  "supabase-storage-ls linked": "true",
-  "supabase-storage-mv linked": "true",
-  "supabase-storage-rm linked": "true",
-  "supabase-test-db local": "true",
   "supabase-test-new template": "pgtap",
 };
 
@@ -220,18 +179,10 @@ export const DOCS_CHOICE_OVERRIDES: Readonly<Record<string, ReadonlyArray<string
 };
 
 /**
- * Flags excluded from the published reference, keyed `"<doc id> <flag id>"`.
- * `--include-raw-output` stays parse-visible for compatibility (see
- * `commands/domains/SIDE_EFFECTS.md`) but is hidden from docs here. Validated at build time
- * like the other tables.
+ * Flags excluded from the published reference, keyed `"<doc id> <flag id>"`. Validated at build
+ * time like the other tables.
  */
-export const DOCS_EXCLUDED_FLAGS: ReadonlySet<string> = new Set([
-  "supabase-domains-activate include-raw-output",
-  "supabase-domains-create include-raw-output",
-  "supabase-domains-delete include-raw-output",
-  "supabase-domains-get include-raw-output",
-  "supabase-domains-reverify include-raw-output",
-]);
+export const DOCS_EXCLUDED_FLAGS: ReadonlySet<string> = new Set([]);
 
 /**
  * Usage argument overrides, keyed by doc id, for commands whose published argument rendering

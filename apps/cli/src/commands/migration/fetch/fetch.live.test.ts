@@ -29,7 +29,7 @@ test(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const targetArgs = ["--db-url", project.dbUrl];
+        const targetArgs = [`--remote=${project.dbUrl}`];
         const version = liveMigrationVersion();
         const migrationFile = `${version}_${NAME}.sql`;
         const seedDir = yield* fs.makeTempDirectoryScoped({ prefix: "sb-migration-seed-live-" });

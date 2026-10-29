@@ -4,12 +4,14 @@ import type * as CliCommand from "effect/cli/Command";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
-import { projectRefPicker } from "../../../config/remote-target.layer.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
+import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { postgresConfigRead, postgresConfigWrite } from "../postgres-config.shared.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
-import { RESOURCE_OUTPUT_FORMATS } from "../../../command-internal/go-output-flag.ts";
+import { RESOURCE_OUTPUT_FORMATS } from "../../../command-internal/output-formats.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { stringSliceFlag } from "../../../command-internal/string-slice-flag.ts";
 import {
@@ -17,9 +19,10 @@ import {
   withCommandTelemetry,
 } from "../../../telemetry/command-telemetry.ts";
 import { postgresConfigDelete } from "./delete.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 /**
- * CSV-splits each occurrence into config keys, failing at parse time with pflag's diagnostic
+ * CSV-splits each occurrence into config keys, failing at parse time with a diagnostic
  * on malformed CSV — before the --experimental gate runs.
  */
 export const postgresConfigDeleteConfigFlag = stringSliceFlag(
@@ -28,10 +31,7 @@ export const postgresConfigDeleteConfigFlag = stringSliceFlag(
 );
 
 const config = {
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
   config: postgresConfigDeleteConfigFlag,
   noRestart: Flag.Boolean("no-restart").pipe(
     Flag.withDescription("Do not restart the database after deleting config."),
@@ -51,6 +51,7 @@ export const postgresConfigDeleteCommand = Command.make("delete", config).pipe(
       postgresConfigWrite,
       projectRefPicker,
       linkedProjectCache,
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>
@@ -68,4 +69,5 @@ export const postgresConfigDeleteCommand = Command.make("delete", config).pipe(
       );
     }).pipe(withJsonErrorHandling),
   ),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

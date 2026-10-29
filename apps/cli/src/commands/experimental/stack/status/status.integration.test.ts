@@ -20,6 +20,7 @@ import type { StackStatusFlags } from "./status.command.ts";
 import { stackStatus } from "./status.handler.ts";
 import { selection } from "../../../../../tests/helpers/pins.ts";
 import { seedLock } from "../../../../../tests/helpers/stack-lock.ts";
+import { cliConfigValuesTestLayer } from "../../../../../tests/helpers/config-values-layer.ts";
 
 const stackId = "a".repeat(64);
 type StatusOutputFormat = "text" | "json" | "stream-json";
@@ -276,6 +277,7 @@ const runStatus = (input: {
       out.layer,
       telemetry.layer,
       mockCommandSettings({ workdir: projectRoot, supabaseHome: root }),
+      cliConfigValuesTestLayer,
       BunServices.layer,
       runtimeInfoLayer,
     );

@@ -1,14 +1,14 @@
 import { Effect, Option } from "effect";
 
-import { RemoteTarget } from "../../../config/remote-target.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
   encodeEnv,
-  encodeGoJson,
+  encodeSortedJson,
   encodeToml,
   encodeYaml,
-} from "../../../command-internal/go-output.encoders.ts";
+} from "../../../command-internal/output.encoders.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { buildInfoPayload, renderInfoMarkdown } from "../sso.format.ts";
@@ -16,31 +16,30 @@ import type { SsoInfoFlags } from "./info.command.ts";
 
 export const ssoInfo = Effect.fn("sso.info")(function* (flags: SsoInfoFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
-  const resolver = yield* RemoteTarget;
+  const outputFlag = yield* OutputFlag;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
-    const { ref } = yield* resolver.resolve(flags.projectRef);
+    const ref = yield* resolveProjectTarget(flags);
 
     yield* Effect.gen(function* () {
       const payload = buildInfoPayload(ref);
-      const goFmt = Option.getOrUndefined(goOutputFlag);
+      const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
-      if (goFmt === "env") {
+      if (outputFlagFormat === "env") {
         yield* output.raw(encodeEnv(payload) + "\n");
         return;
       }
-      if (goFmt === "json") {
-        yield* output.raw(encodeGoJson(payload));
+      if (outputFlagFormat === "json") {
+        yield* output.raw(encodeSortedJson(payload));
         return;
       }
-      if (goFmt === "yaml") {
+      if (outputFlagFormat === "yaml") {
         yield* output.raw(encodeYaml(payload));
         return;
       }
-      if (goFmt === "toml") {
+      if (outputFlagFormat === "toml") {
         yield* output.raw(encodeToml(payload) + "\n");
         return;
       }

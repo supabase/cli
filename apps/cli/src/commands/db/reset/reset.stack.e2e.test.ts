@@ -201,7 +201,7 @@ describe("supabase db reset (stack e2e)", () => {
           );
           yield* query(databaseUrl, "create database reset_story_stale_database;");
 
-          const reset = yield* runSupabaseEffect(["db", "reset", "--local"], {
+          const reset = yield* runSupabaseEffect(["db", "reset"], {
             cwd: root,
             home,
             env: { SUPABASE_EXPERIMENTAL_STACK: "1" },

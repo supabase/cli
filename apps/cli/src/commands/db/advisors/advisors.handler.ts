@@ -1,11 +1,14 @@
 import { Effect, Option } from "effect";
 
-import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
+import { hostedMutationPreapproval } from "../../../command-internal/hosted-consent/hosted-consent.ts";
+import {
+  resolveTarget,
+  type ResolvedTarget,
+} from "../../../command-internal/target/resolve-target.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { ProcessControl } from "../../../shared/runtime/process-control.service.ts";
 import { CommandCredentials } from "../../../auth/command-credentials.service.ts";
-import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { aqua } from "../../../command-internal/colors.ts";
 import { missingAccessTokenMessage } from "../../../auth/access-token.ts";
 import { failsOn } from "../../../command-internal/fail-on.ts";
@@ -14,14 +17,11 @@ import { DbConnection } from "../../../command-internal/db-connection.service.ts
 import type { DbSession } from "../../../command-internal/db-connection.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
-import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
-import type { DbTargetSelection } from "../../../command-internal/db-target-flags.ts";
 import type { DbAdvisorsFlags } from "./advisors.command.ts";
 import {
   DbAdvisorsBeginTxError,
   DbAdvisorsFailOnError,
   DbAdvisorsInvalidTokenError,
-  DbAdvisorsMutuallyExclusiveFlagsError,
   DbAdvisorsNotLoggedInError,
   DbAdvisorsQueryError,
   DbAdvisorsSetupError,
@@ -63,28 +63,24 @@ const queryLints = Effect.fn("DbAdvisors.queryLints")(function* (session: DbSess
 
 /** Gathers lints from a local (or `--db-url`) database connection. */
 const runLocal = Effect.fn("db.advisors.runLocal")(function* (
-  flags: DbAdvisorsFlags,
+  target: Exclude<ResolvedTarget, { readonly kind: "linked" }>,
   dnsResolver: "native" | "https",
   advisorType: string,
   level: string,
-  target: DbTargetSelection,
 ) {
   const output = yield* Output;
   const resolver = yield* DbConfigResolver;
   const dbConn = yield* DbConnection;
 
-  const cfg = yield* resolver.resolve({
-    dbUrl: flags.dbUrl,
-    connType: target.connType === "db-url" ? "db-url" : "local",
+  const cfg = yield* resolver.resolveConnection({
+    target,
     dnsResolver,
+    password: Option.none(),
+    networkBanRemoval: yield* hostedMutationPreapproval,
   });
 
   const lints = yield* Effect.scoped(
     Effect.gen(function* () {
-      yield* output.raw(
-        `Connecting to ${cfg.isLocal ? "local" : "remote"} database...\n`,
-        "stderr",
-      );
       const session = yield* dbConn.connect(cfg.conn, { isLocal: cfg.isLocal, dnsResolver });
       yield* session.exec("begin").pipe(
         Effect.mapError(
@@ -107,36 +103,20 @@ const runLocal = Effect.fn("db.advisors.runLocal")(function* (
   return filterAdvisorLints(lints, advisorType, level);
 });
 
-/** Gathers lints from the Management API for the linked project. */
+/** Gathers the linked project's lints from the Management API, never from its database. */
 const runLinked = Effect.fn("db.advisors.runLinked")(function* (
-  flags: DbAdvisorsFlags,
-  dnsResolver: "native" | "https",
+  target: Extract<ResolvedTarget, { readonly kind: "linked" }>,
   advisorType: string,
   level: string,
 ) {
-  const resolver = yield* DbConfigResolver;
   const credentials = yield* CommandCredentials;
-  const projectRefResolver = yield* RemoteTarget;
   const linkedProjectCache = yield* LinkedProjectCache;
 
-  // The linked-project cache is written whenever the project ref was resolved, even when the
-  // DB-config resolve below fails. Load the ref first (non-prompting, honoring an explicit
-  // `--project-ref`) and wrap everything after it in the cache finalizer.
-  const linkedTarget = yield* projectRefResolver.load(flags.projectRef);
-  const { ref } = linkedTarget;
+  const { ref } = target;
 
+  // The linked-project cache is written whenever the project ref was resolved, even when a later
+  // step fails.
   return yield* Effect.gen(function* () {
-    // The host probe / login-role mint / pooler / IPv6 fallback. The linked lint-gathering path
-    // ignores the resolved config — this runs purely for the side effects and early-failure
-    // ordering (before the token gate).
-    yield* resolver.resolve({
-      dbUrl: Option.none(),
-      connType: "linked",
-      dnsResolver,
-      linkedProjectRef: flags.projectRef,
-      target: linkedTarget,
-    });
-
     // The access token is validated against the `sbp_` pattern before calling the API: a
     // malformed token maps to the invalid-token error, an absent token to missing.
     const tokenOpt = yield* credentials.getAccessToken.pipe(
@@ -209,42 +189,24 @@ const outputAndCheck = Effect.fnUntraced(function* (
 const runAdvisors = Effect.fnUntraced(function* (
   flags: DbAdvisorsFlags,
   dnsResolver: "native" | "https",
-  target: DbTargetSelection,
 ) {
-  // Mutually-exclusive db-url/linked/local group, keyed off the
-  // explicitly-set flags, not the `--local` default value.
-  const setFlags = target.setFlags;
-  if (setFlags.length > 1) {
-    return yield* new DbAdvisorsMutuallyExclusiveFlagsError({
-      message: `if any flags in the group [db-url linked local] are set none of the others can be; [${setFlags.join(" ")}] were all set`,
-    });
-  }
-
-  // `--project-ref` never implies `--linked` and must not be silently discarded on a non-linked
-  // target (see push.handler.ts's identical guard). Defaults to the local/db-url path otherwise.
-  if (Option.isSome(flags.projectRef) && target.connType !== "linked") {
-    return yield* new DbAdvisorsMutuallyExclusiveFlagsError({
-      message:
-        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-    });
-  }
+  const target = yield* resolveTarget(flags);
 
   const advisorType = Option.getOrElse(flags.type, () => "all");
   const level = Option.getOrElse(flags.level, () => "warn");
   const failOn = Option.getOrElse(flags.failOn, () => "none");
   yield* Effect.annotateCurrentSpan({
-    "db.conn_type": target.connType ?? "local",
+    "db.conn_type": target.kind,
     "advisor.type": advisorType,
     "advisor.level": level,
     "advisor.fail_on": failOn,
   });
 
-  // Branches on whether `--linked` was explicitly set: linked → Management
-  // API; otherwise local / `--db-url`.
+  // Linked goes through the Management API; local and `--db-url` read the database directly.
   const filtered =
-    target.connType === "linked"
-      ? yield* runLinked(flags, dnsResolver, advisorType, level)
-      : yield* runLocal(flags, dnsResolver, advisorType, level, target);
+    target.kind === "linked"
+      ? yield* runLinked(target, advisorType, level)
+      : yield* runLocal(target, dnsResolver, advisorType, level);
   yield* Effect.annotateCurrentSpan("advisor.reported_count", filtered.length);
 
   yield* outputAndCheck(filtered, failOn);
@@ -253,9 +215,7 @@ const runAdvisors = Effect.fnUntraced(function* (
 export const dbAdvisors = Effect.fn("db.advisors")(function* (flags: DbAdvisorsFlags) {
   const dnsResolver = yield* DnsResolverFlag;
   const telemetryState = yield* TelemetryState;
-  const cliArgs = yield* CliArgs;
-  const target = resolveDbTargetFlags(cliArgs.args);
   // Flush telemetry on success and failure. Command-level instrumentation /
   // JSON error handling are applied by `advisors.command.ts`.
-  yield* runAdvisors(flags, dnsResolver, target).pipe(Effect.ensuring(telemetryState.flush));
+  yield* runAdvisors(flags, dnsResolver).pipe(Effect.ensuring(telemetryState.flush));
 });

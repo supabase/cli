@@ -11,7 +11,9 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   projectResponse,
@@ -54,7 +56,7 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api, telemetry, linkedProjectCache };
 }
 
-const baseFlags = { projectRef: Option.none<string>() };
+const baseFlags = { remote: Option.none(), projectRef: Option.none<string>() };
 
 describe("encryption get-root-key integration", () => {
   it.effect("prints the root key to stdout in text mode", () => {
@@ -62,7 +64,7 @@ describe("encryption get-root-key integration", () => {
     return Effect.gen(function* () {
       yield* encryptionGetRootKey(baseFlags);
       expect(out.stdoutText).toBe("abc123rootkey\n");
-      expect(out.stderrText).toBe("");
+      expect(out.stderrText).toBe(unverifiedTargetBanner());
     }).pipe(Effect.provide(layer));
   });
 
@@ -85,15 +87,18 @@ describe("encryption get-root-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("resolves the ref from the --project-ref flag", () => {
+  it.effect("resolves the ref from the --remote=<ref> flag", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* encryptionGetRootKey({ projectRef: Option.some(flagRef) });
+      yield* encryptionGetRootKey({
+        remote: Option.some({ _tag: "Ref", ref: flagRef }),
+        projectRef: Option.none(),
+      });
       expect(api.requests[0]?.url).toContain(`/v1/projects/${flagRef}/pgsodium`);
       assertPermissionDrift({
         command: "encryption get-root-key",
-        activeFlags: { "project-ref": true },
+        activeFlags: { remote: flagRef },
         requests: api.requests,
         exact: true,
       });
@@ -213,4 +218,9 @@ describe("encryption get-root-key integration", () => {
       expect(linkedProjectCache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedTargetSelection("encryption get-root-key", {
+  respond: (request) => Effect.succeed(jsonResponse(request, 200, ROOT_KEY_RESPONSE)),
+  run: (flags) => encryptionGetRootKey(flags),
 });

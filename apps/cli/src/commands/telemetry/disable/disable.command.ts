@@ -4,6 +4,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { telemetryDisable } from "./disable.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 
 const config = {};
@@ -20,4 +21,9 @@ export const telemetryDisableCommand = Command.make("disable", config).pipe(
     telemetryDisable(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(commandRuntimeLayer(["telemetry", "disable"])),
+  withTargetPolicy({
+    group: "local-only",
+    consent: "none",
+    consentExemptReason: "changes only the local telemetry preference",
+  }),
 );
