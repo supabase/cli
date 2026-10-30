@@ -100,7 +100,9 @@ the hidden marker `<!-- cli-bench:pr -->`. The comment shows the commit it measu
 skip the benchmark, and the job summary says so, while the comment reports a result; a comment that
 reports a failed run is benchmarked again on the next push. The [full benchmark](#full-benchmark)
 keeps a separate comment, tagged `<!-- cli-bench:full -->`, so each workflow writes only its own
-comment. Pull requests from forks have a read-only token, so they get the job summary only and
+comment. The lightweight comment is headed `## CLI benchmark (Lightweight Commands): <title>` and the
+full one `## CLI benchmark (Integration Heavy Commands): <title>`; comments posted under the
+earlier `## CLI benchmark: <title>` heading are still recognized and take the new heading on their next update. Pull requests from forks have a read-only token, so they get the job summary only and
 benchmark every push.
 
 A maintainer can comment exactly `/bench` to run the benchmark again on the pull request's current

@@ -55,7 +55,7 @@ describe("renderSummary", () => {
       mergeBase: "1234567890abcdef",
     });
 
-    expect(markdown).toContain("## CLI benchmark: no changes found");
+    expect(markdown).toContain("## CLI benchmark (Lightweight Commands): no changes found");
     expect(markdown).toContain(
       "Commit `abcdef1` against `develop` at `1234567` · 5 runs each · report only, never blocks merging",
     );
@@ -82,7 +82,7 @@ describe("renderSummary", () => {
   it("explains a new API call in plain words and counts each command once", () => {
     const markdown = renderSummary(report([migrationNew]), "unused");
 
-    expect(markdown).toContain("## CLI benchmark: 1 thing to check");
+    expect(markdown).toContain("## CLI benchmark (Lightweight Commands): 1 thing to check");
     expect(markdown).toContain(
       "⚠️ `supabase migration new bench` now calls the Management API. It made no calls before and now makes 1 (`GET /v1/projects/abc`).",
     );
@@ -98,7 +98,9 @@ describe("renderSummary", () => {
   it("says nothing was benchmarked instead of a clean pass when there are no commands", () => {
     const markdown = renderSummary(report([]), "unused");
 
-    expect(markdown).toContain("## CLI benchmark: no commands were benchmarked");
+    expect(markdown).toContain(
+      "## CLI benchmark (Lightweight Commands): no commands were benchmarked",
+    );
     expect(markdown).not.toContain("no changes found");
   });
 
@@ -120,13 +122,16 @@ describe("renderSummary", () => {
   it("names the failed step and stays a notice when there is no report", () => {
     const markdown = renderSummary(undefined, "The build of this commit failed.", {});
 
-    expect(markdown).toContain("## CLI benchmark: could not run");
+    expect(markdown).toContain("## CLI benchmark (Lightweight Commands): could not run");
     expect(markdown).toContain("The build of this commit failed.");
     expect(markdown).not.toContain("/bench");
   });
 
   it.each([
-    { section: "lightweight", heading: "## CLI benchmark: no changes found" },
+    {
+      section: "lightweight",
+      heading: "## CLI benchmark (Lightweight Commands): no changes found",
+    },
     {
       section: "integration-heavy",
       heading: "## CLI benchmark (Integration Heavy Commands): no changes found",

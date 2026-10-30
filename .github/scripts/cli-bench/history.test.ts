@@ -19,6 +19,14 @@ const entry = (n: number, overrides: Partial<RunEntry> = {}): RunEntry => ({
 
 describe("headlineOf", () => {
   test("reads the title of the rendered report", () => {
+    expect(
+      headlineOf(
+        "<!-- cli-bench:pr -->\n\n## CLI benchmark (Lightweight Commands): 2 things to check\n\nbody",
+      ),
+    ).toBe("2 things to check");
+  });
+
+  test("reads the title of a lightweight report under the previous heading", () => {
     expect(headlineOf("<!-- cli-bench:pr -->\n\n## CLI benchmark: 2 things to check\n\nbody")).toBe(
       "2 things to check",
     );

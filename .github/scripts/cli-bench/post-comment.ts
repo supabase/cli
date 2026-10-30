@@ -42,7 +42,7 @@ export const RERUN_NOTES: Record<Kind, string> = {
     "Comment `/bench full` to run this benchmark again on the latest commit, which also refreshes the lightweight comment if it is behind. `/bench` runs only the lightweight benchmark.",
 };
 const TITLES: Record<Kind, string> = {
-  lightweight: "## CLI benchmark",
+  lightweight: "## CLI benchmark (Lightweight Commands)",
   "integration-heavy": "## CLI benchmark (Integration Heavy Commands)",
 };
 /** Login of comments posted with the workflow's `GITHUB_TOKEN`. */

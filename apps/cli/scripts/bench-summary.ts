@@ -424,10 +424,7 @@ function frame(
   report?: BenchReport,
 ): string {
   const section = context.section ?? "lightweight";
-  const heading =
-    section === "lightweight"
-      ? `## CLI benchmark: ${title}`
-      : `## CLI benchmark (${SECTION_NAMES[section]}): ${title}`;
+  const heading = `## CLI benchmark (${SECTION_NAMES[section]}): ${title}`;
   const note = context.note === undefined || context.note === "" ? [] : [`⚠️ ${context.note}`];
   return [heading, contextLine(report, context), ...note, ...body].join("\n\n") + "\n";
 }
