@@ -89,6 +89,7 @@ jobs:
           PERRY: ${{ github.workspace }}/.perry/target/prod/perry
           PERRY_RUNTIME_DIR: ${{ github.workspace }}/.perry/target/prod
           PERRY_NO_AUTO_OPTIMIZE: "1"
+          PERRY_KEEP_SYMBOLS: "1"
         run: |
           /usr/bin/time -v pnpm build:perry
           ls -l dist-perry/supabase
