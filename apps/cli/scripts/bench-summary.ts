@@ -140,7 +140,7 @@ function table(header: ReadonlyArray<string>, rows: ReadonlyArray<ReadonlyArray<
 const when = (build: Flag["build"]) => (build === "base" ? "before" : "after");
 
 /** One plain-words sentence for a flag. */
-function describeFlag(flag: Flag, analysis: WorkloadAnalysis): string {
+function describeFlag(flag: Flag, analysis: WorkloadAnalysis, integration: boolean): string {
   const name = command(analysis);
   const at = when(flag.build);
   switch (flag.kind) {
@@ -169,6 +169,9 @@ function describeFlag(flag: Flag, analysis: WorkloadAnalysis): string {
     case "request-log-mismatch":
       return `The API calls counted for ${name} ${at} do not match what the local test server saw, so the counts may be wrong.`;
     case "error-status":
+      if (integration) {
+        return `${name} called the Management API ${at} and got an error response from the local test server, which has no recorded scenario for these commands; they are expected to make no API calls.`;
+      }
       return `${name} got error responses from the local test server ${at}, so it did not follow the recorded scenario.`;
     case "trace-incomplete":
       return `Some runs of ${name} ${at} produced no usable trace, so call counts and phase timings may be incomplete.`;
@@ -284,7 +287,7 @@ interface ApiOverview {
   readonly changedIds: ReadonlyArray<string>;
 }
 
-function apiOverview(analyses: ReadonlyArray<WorkloadAnalysis>): ApiOverview {
+function apiOverview(analyses: ReadonlyArray<WorkloadAnalysis>, expectNone: boolean): ApiOverview {
   const measured = analyses.filter(
     (analysis) => analysis.base.api !== undefined && analysis.branch.api !== undefined,
   );
@@ -297,6 +300,18 @@ function apiOverview(analyses: ReadonlyArray<WorkloadAnalysis>): ApiOverview {
   const missing = analyses.length - measured.length;
   const suffix = missing === 0 ? "" : ` (not measured for ${missing})`;
   if (changed.length === 0) {
+    const idle =
+      expectNone &&
+      measured.every(
+        (analysis) =>
+          analysis.base.api?.medianCalls === 0 && analysis.branch.api?.medianCalls === 0,
+      );
+    if (idle) {
+      return {
+        line: `API calls: none, before or after, for ${measured.length === 1 ? "the command" : `all ${measured.length} commands`}${suffix}.`,
+        changedIds: [],
+      };
+    }
     return {
       line: `API calls: unchanged for ${measured.length === 1 ? "the command" : `all ${measured.length} commands`}${suffix}.`,
       changedIds: [],
@@ -437,12 +452,15 @@ export function renderSummary(
 ): string {
   if (report === undefined) return frame("could not run", [notice], context);
   const analyses = report.workloads.map((workload) => analyzeWorkload(workload, report.trace));
+  const integration = (context.section ?? "lightweight") === "integration-heavy";
+  // A local stack's own readiness and health traffic always leaves the test server's host.
   const flags = analyses.flatMap((analysis) =>
-    collectFlags(analysis).map((flag) => ({ flag, analysis })),
+    collectFlags(analysis)
+      .filter((flag) => !(integration && flag.kind === "external-calls"))
+      .map((flag) => ({ flag, analysis })),
   );
   if (analyses.length === 0) return frame("no commands were benchmarked", [], context, report);
-  const api = apiOverview(analyses);
-  const integration = (context.section ?? "lightweight") === "integration-heavy";
+  const api = apiOverview(analyses, integration);
   const containers = integration ? containerOverview(analyses) : undefined;
   const moved = analyses
     .filter((analysis) => analysis.verdict === "slower" || analysis.verdict === "faster")
@@ -454,7 +472,7 @@ export function renderSummary(
   return frame(
     title,
     [
-      ...flags.map(({ flag, analysis }) => `⚠️ ${describeFlag(flag, analysis)}`),
+      ...flags.map(({ flag, analysis }) => `⚠️ ${describeFlag(flag, analysis, integration)}`),
       timingTable(analyses),
       api.line,
       ...(containers === undefined ? [] : [containers.line]),

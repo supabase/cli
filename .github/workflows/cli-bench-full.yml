@@ -344,6 +344,27 @@ jobs:
           name: cli-bench-full-binaries
           path: ${{ runner.temp }}/bench
 
+      # A shard that cannot start the replay server fails, and the report job names it as a shard
+      # that did not finish.
+      - name: Start replay server
+        shell: bash
+        run: |
+          bench="$RUNNER_TEMP/bench"
+          chmod +x "$bench/base/supabase" "$bench/branch/supabase"
+          bun apps/cli-e2e/scripts/replay-serve.ts > "$bench/replay.log" 2>&1 &
+          echo "REPLAY_PID=$!" >> "$GITHUB_ENV"
+          for _ in $(seq 1 60); do
+            url="$(grep -o 'http://[^"]*' "$bench/replay.log" | head -n 1 || true)"
+            if [ -n "$url" ]; then
+              echo "REPLAY_URL=$url" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 0.5
+          done
+          echo "replay server did not report a URL" >&2
+          cat "$bench/replay.log" >&2
+          exit 1
+
       - name: Run benchmark
         env:
           RUNTIME: ${{ matrix.runtime }}
@@ -352,7 +373,6 @@ jobs:
         shell: bash
         run: |
           bench="$RUNNER_TEMP/bench"
-          chmod +x "$bench/base/supabase" "$bench/branch/supabase"
           cache_args=()
           if [ "$RUNTIME" = native ]; then
             cache="${XDG_CACHE_HOME:-$HOME/.cache}/supabase-stack-artifacts"
@@ -365,9 +385,15 @@ jobs:
             --workloads apps/cli/bench/workloads.full.json \
             --runtime "$RUNTIME" \
             --only "$WORKLOADS" \
+            --api-url "$REPLAY_URL" \
             "${cache_args[@]}" \
             --trace \
             --out "$bench/report-$RUNTIME-$SHARD.json" | tee "$bench/report-$RUNTIME-$SHARD.txt"
+
+      - name: Stop replay server
+        if: always() && env.REPLAY_PID != ''
+        shell: bash
+        run: kill "$REPLAY_PID" || true
 
       - name: Upload report
         if: always()
@@ -438,7 +464,7 @@ jobs:
         run: |
           note=""
           if [ "$SHARDS" = failure ] || [ "$SHARDS" = cancelled ]; then
-            note="Some shards did not finish, so their commands are missing."
+            note="Some shards did not finish (for example, the local test server failed to start), so their commands are missing."
           fi
           bun apps/cli/scripts/bench-summary.ts \
             --section integration-heavy \
