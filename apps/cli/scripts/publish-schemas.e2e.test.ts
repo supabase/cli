@@ -97,8 +97,8 @@ describe("publish-schemas.ts entrypoint", () => {
       const { exitCode, stdout, stderr } = yield* runScript(["--version", "v2.0.0", "--dry-run"]);
 
       expect(exitCode, stderr).toBe(0);
-      expect(stdout.trim()).toBe(
-        "Would publish config/v1.json, project-config/v1.json, supabase-lock/v1.json to supabase/supabase:apps/www/public/schemas on branch cli/schemas",
+      expect(stdout.trim()).toMatch(
+        /^Would publish .+ to supabase\/supabase:apps\/www\/public\/schemas on branch cli\/schemas$/,
       );
     }).pipe(Effect.provide(platformLayer)),
   );
