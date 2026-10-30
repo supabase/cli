@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { BenchReport, RunSample } from "./bench-report.ts";
-import { BENCH_MARKER, parseSummaryArgs, renderSummary, summaryNotice } from "./bench-summary.ts";
+import { parseSummaryArgs, renderSummary, summaryNotice } from "./bench-summary.ts";
 
 const run = (wallMs: number, calls: number, endpoints: Record<string, number>): RunSample => ({
   wallMs,
@@ -128,18 +128,46 @@ describe("renderSummary", () => {
     expect(markdown).not.toContain("/bench");
   });
 
-  it("adds the marker, re-run hint only to the comment", () => {
-    const input = report([steady("version", ["--version"])]);
-    const context = { headSha: "abcdef1234" } as const;
+  it.each([
+    { section: "lightweight", heading: "### Lightweight Commands: no changes found" },
+    { section: "integration-heavy", heading: "### Integration Heavy Commands: no changes found" },
+  ] as const)(
+    "titles a $section comment section with its name and leaves the markers and re-run note to the poster",
+    ({ section, heading }) => {
+      const input = report([steady("version", ["--version"])]);
 
-    const comment = renderSummary(input, "unused", { target: "comment", ...context });
-    const summary = renderSummary(input, "unused", { target: "summary", ...context });
+      const comment = renderSummary(input, "unused", { target: "comment", section });
 
-    expect(BENCH_MARKER).toBe("<!-- cli-bench:pr -->");
-    expect(comment.startsWith(`${BENCH_MARKER}\n`)).toBe(true);
-    expect(comment).toContain("Comment `/bench` to run it again on the latest commit.");
-    expect(summary).not.toContain(BENCH_MARKER);
-    expect(summary).not.toContain("/bench");
+      expect(comment.startsWith(`${heading}\n`)).toBe(true);
+      expect(comment).not.toContain("<!--");
+      expect(comment).not.toContain("/bench");
+    },
+  );
+
+  it("titles the job summary of the integration-heavy section with its name", () => {
+    const summary = renderSummary(report([steady("version", ["--version"])]), "unused", {
+      target: "summary",
+      section: "integration-heavy",
+    });
+
+    expect(summary).toContain("## CLI benchmark (Integration Heavy Commands): no changes found");
+  });
+
+  it("shows a note above the results", () => {
+    const markdown = renderSummary(report([steady("version", ["--version"])]), "unused", {
+      target: "summary",
+      note: "Some shards did not finish.",
+    });
+
+    expect(markdown).toContain("⚠️ Some shards did not finish.");
+  });
+
+  it("says the range when per-command run counts differ", () => {
+    const fewer = { ...steady("x", ["start"]), base: runs(3, (i) => run(30 + i, 0, {})) };
+
+    const markdown = renderSummary(report([steady("version", ["--version"]), fewer]), "unused");
+
+    expect(markdown).toContain("3-5 runs each");
   });
 
   it("does not claim a missing timing verdict when commands were not comparable", () => {
@@ -220,5 +248,88 @@ describe("parseSummaryArgs", () => {
     expect(
       parseSummaryArgs(["--report", "r.json", "--head-sha", "abc", "--comment-out", "c.md"]),
     ).toMatchObject({ report: "r.json", replay: "ok", headSha: "abc", commentOut: "c.md" });
+  });
+});
+
+describe("renderSummary for integration-heavy commands", () => {
+  const withContainers = (counts: Record<string, number>): RunSample => ({
+    wallMs: 1000,
+    exitCode: 0,
+    tracedExitCode: 0,
+    trace: {
+      skippedLines: 0,
+      spans: Object.fromEntries(
+        Object.entries(counts).map(([verb, count]) => [
+          `ContainerCli.spawn (${verb})`,
+          { totalMs: 5 * count, count },
+        ]),
+      ),
+    },
+  });
+  const heavy = (
+    id: string,
+    base: Record<string, number>,
+    branch: Record<string, number>,
+    extra: Partial<BenchReport["workloads"][number]> = {},
+  ) => ({
+    id,
+    args: ["status"],
+    runtime: "docker" as const,
+    base: runs(5, () => withContainers(base)),
+    branch: runs(5, () => withContainers(branch)),
+    ...extra,
+  });
+  const render = (workloads: BenchReport["workloads"]) =>
+    renderSummary(report(workloads), "unused", { target: "summary", section: "integration-heavy" });
+
+  it("shows unchanged container operations with the runtime column", () => {
+    const markdown = render([
+      heavy("status", { "container inspect": 3 }, { "container inspect": 3 }),
+    ]);
+
+    expect(markdown).toContain("## CLI benchmark (Integration Heavy Commands): no changes found");
+    expect(markdown).toContain("| Command | Runtime | Before | After | Change |");
+    expect(markdown).toContain("| `supabase status` | docker |");
+    expect(markdown).toContain("Container operations: unchanged for the command.");
+  });
+
+  it("flags an extra container call per verb and counts the command once", () => {
+    const markdown = render([
+      heavy("status", { "container inspect": 3 }, { "container inspect": 4 }),
+    ]);
+
+    expect(markdown).toContain("## CLI benchmark (Integration Heavy Commands): 1 thing to check");
+    expect(markdown).toContain(
+      "⚠️ `supabase status` runs a different number of container commands: 3 before, 4 now.",
+    );
+    expect(markdown).toContain("Container operations changed for 1 command:");
+    expect(markdown).toContain("`container inspect` 3 -> 4");
+    expect(markdown).toContain("| `supabase status` | docker | `container inspect` | 3 | 4 |");
+  });
+
+  it("flags container commands that appear where there were none", () => {
+    const markdown = render([heavy("status", {}, { ps: 2 })]);
+
+    expect(markdown).toContain(
+      "⚠️ `supabase status` now runs container commands. It ran none before and now runs 2.",
+    );
+  });
+
+  it("does not count container operations for stack workloads, whose container work runs outside the trace", () => {
+    const markdown = render([
+      heavy("stack-status", { ps: 1 }, { ps: 2 }, { stack: true, runtime: "native" }),
+    ]);
+
+    expect(markdown).toContain("Container operations were not counted.");
+    expect(markdown).toContain("| `supabase status` | stack, native |");
+    expect(markdown).not.toContain("container commands");
+  });
+
+  it("leaves container operations out of the lightweight section", () => {
+    const markdown = renderSummary(report([heavy("status", { ps: 1 }, { ps: 1 })]), "unused", {
+      target: "summary",
+    });
+
+    expect(markdown).not.toContain("Container operations");
   });
 });
