@@ -1,0 +1,178 @@
+name: Perry CI
+
+# Compiles the CLI to a native binary with Perry and runs the CLI end-to-end suites against it on
+# pushes to the Perry branch, which has no pull request.
+on:
+  push:
+    branches:
+      - chore/cli-perry-aot
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perry-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PERRY_REPOSITORY: jgoux/perry
+  PERRY_REF: supabase-cli-fixes
+
+jobs:
+  build:
+    name: Build the CLI with Perry
+    runs-on: blacksmith-32vcpu-ubuntu-2404
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Checkout Perry
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.PERRY_REPOSITORY }}
+          ref: ${{ env.PERRY_REF }}
+          path: .perry
+          persist-credentials: false
+
+      - name: Install LLVM 22
+        run: |
+          set -euo pipefail
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          . /etc/os-release
+          echo "deb http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-22 main" \
+            | sudo tee /etc/apt/sources.list.d/llvm22.list >/dev/null
+          sudo apt-get update -qq || true
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            llvm-22-dev llvm-22-tools libpolly-22-dev libzstd-dev clang-22
+          prefix="$(llvm-config-22 --prefix)"
+          [ -x "$prefix/bin/clang" ] || sudo ln -sf /usr/bin/clang-22 "$prefix/bin/clang"
+          echo "LLVM_SYS_221_PREFIX=$prefix" >> "$GITHUB_ENV"
+
+      - name: Cache the Perry build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .perry/target
+          key: perry-${{ runner.os }}-${{ hashFiles('.perry/Cargo.lock', '.perry/crates/**/*.rs') }}
+          restore-keys: perry-${{ runner.os }}-
+
+      - name: Build Perry
+        working-directory: .perry
+        env:
+          RUSTFLAGS: "-C force-unwind-tables=yes -C linker-features=-lld"
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD
+          cargo build --profile prod -p perry -p perry-runtime-static -p perry-stdlib-static
+          scripts/gc_call_effects/sidecars.sh target/prod
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          sticky-disks: "true"
+
+      - name: Build CLI
+        run: pnpm exec turbo run supabase#build
+
+      - name: Build the CLI with Perry
+        working-directory: apps/cli
+        env:
+          PERRY: ${{ github.workspace }}/.perry/target/prod/perry
+          PERRY_RUNTIME_DIR: ${{ github.workspace }}/.perry/target/prod
+          PERRY_NO_AUTO_OPTIMIZE: "1"
+        run: |
+          /usr/bin/time -v pnpm build:perry
+          ls -l dist-perry/supabase
+
+      - name: Smoke-test the Perry binary
+        env:
+          SUPABASE_NO_KEYRING: "1"
+          SUPABASE_NO_UPDATE_NOTIFIER: "1"
+          SUPABASE_TELEMETRY_DISABLED: "1"
+        run: |
+          set -euo pipefail
+          cli="$GITHUB_WORKSPACE/apps/cli/dist-perry/supabase"
+          "$cli" --version
+          "$cli" --help > /dev/null
+          cd "$RUNNER_TEMP"
+          "$cli" init
+          "$cli" gen signing-key --algorithm ES256 > /dev/null
+
+      - name: Upload the Perry binary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: supabase-perry
+          path: apps/cli/dist-perry/supabase
+          retention-days: 7
+          if-no-files-found: error
+
+  test-e2e:
+    name: Run CLI end-to-end tests on Perry (${{ matrix.name }})
+    needs: build
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { suite: cli, shard: 1, shards: 5, name: cli 1/5 }
+          - { suite: cli, shard: 2, shards: 5, name: cli 2/5 }
+          - { suite: cli, shard: 3, shards: 5, name: cli 3/5 }
+          - { suite: cli, shard: 4, shards: 5, name: cli 4/5 }
+          - { suite: cli, shard: 5, shards: 5, name: cli 5/5 }
+          - { suite: cli-e2e, shard: 1, shards: 2, name: cli-e2e 1/2 }
+          - { suite: cli-e2e, shard: 2, shards: 2, name: cli-e2e 2/2 }
+    steps:
+      - name: Checkout
+        uses: useblacksmith/checkout@6fd481652155169ed4d2f25ebaf97464f685175f # v1.0.0-beta
+        with:
+          fetch-depth: 0
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          sticky-disks: "true"
+          docker-images: "true"
+
+      - name: Build CLI
+        run: pnpm exec turbo run supabase#build
+
+      # The e2e harness runs `apps/cli/dist/supabase.js`, which spawns `apps/cli/dist/supabase`.
+      - name: Download the Perry binary
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: supabase-perry
+          path: ${{ runner.temp }}/perry
+
+      - name: Replace the Bun binary with the Perry binary
+        run: |
+          set -euo pipefail
+          install -m 755 "$RUNNER_TEMP/perry/supabase" apps/cli/dist/supabase
+          ls -l apps/cli/dist
+          apps/cli/dist/supabase --version
+
+      - name: Run end-to-end tests
+        if: matrix.suite == 'cli'
+        run: pnpm exec turbo run test:e2e:run --only --filter=supabase -- --shard=${{ matrix.shard }}/${{ matrix.shards }}
+        env:
+          SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
+          SUPABASE_E2E_WORKERS: "4"
+
+      - name: Run cli-e2e end-to-end tests
+        if: matrix.suite == 'cli-e2e'
+        run: pnpm exec turbo run test:e2e:run --only --filter=@supabase/cli-e2e -- --shard=${{ matrix.shard }}/${{ matrix.shards }}
+        env:
+          SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
+
+      # Releases /var/lib/docker so the image disk unmounts cleanly.
+      - name: Stop Docker
+        if: always()
+        run: sudo systemctl stop docker.socket docker.service
