@@ -1,24 +1,5 @@
 import { Data, Effect, FileSystem, Formatter, Path, Schema } from "effect";
 
-export interface FixtureRequest {
-  method: string;
-  path: string;
-  query: Record<string, string>;
-  headers: Record<string, string>;
-  body: unknown;
-}
-
-export interface FixtureResponse {
-  status: number;
-  headers: Record<string, string>;
-  body?: unknown;
-}
-
-export interface FixtureEntry {
-  request: FixtureRequest;
-  response: FixtureResponse;
-}
-
 /* Hand-authored fixtures may omit headers (served as none) and the response body (served empty). */
 const FixtureHeaders = Schema.Record(Schema.String, Schema.String).pipe(
   Schema.withDecodingDefaultKey(Effect.sync(() => ({}))),
@@ -26,7 +7,7 @@ const FixtureHeaders = Schema.Record(Schema.String, Schema.String).pipe(
 
 const FixtureRequest = Schema.Struct({
   method: Schema.String,
-  path: Schema.String,
+  path: Schema.mutableKey(Schema.String),
   query: Schema.Record(Schema.String, Schema.String),
   headers: FixtureHeaders,
   body: Schema.Unknown,
@@ -39,6 +20,10 @@ const FixtureResponse = Schema.Struct({
 });
 
 const FixtureEntry = Schema.Struct({ request: FixtureRequest, response: FixtureResponse });
+
+export type FixtureRequest = typeof FixtureRequest.Type;
+export type FixtureResponse = typeof FixtureResponse.Type;
+export type FixtureEntry = typeof FixtureEntry.Type;
 
 /** All fixtures indexed by their key (e.g. "GET_v1_projects"), each holding
  *  an ordered queue of entries (for sequential calls to the same endpoint). */

@@ -12,6 +12,7 @@ import {
   writeCliConfigDocumentText,
   type ConfigEdit,
   type ConfigEditRefusalReason,
+  parseCliConfigDocument,
 } from "@supabase/config/internal";
 import type { ConfigChange } from "@supabase/config";
 import { operationDefinitions } from "@supabase/api/effect";
@@ -570,6 +571,11 @@ export const openConfigPullSource = Effect.fn("ConfigPull.openSource")(function*
   return { loaded, text: loaded.rawText };
 });
 
+function configPullSourceDocument(source: ConfigPullSource): Readonly<Record<string, unknown>> {
+  const parsed = parseCliConfigDocument(source.text, source.loaded.format);
+  return configIsRecord(parsed) ? parsed : {};
+}
+
 /** `planConfigPullRun`'s remote config read, shared by `config pull` and `pull`. */
 export const configPullRun = block("config-pull-run", [
   { operationId: "v2-get-project-config", kind: "required" },
@@ -698,6 +704,7 @@ export const planConfigPullRun = Effect.fn("ConfigPull.plan")(function* (
     changeSet,
     destination,
     rootDocument: request.source.loaded.document ?? {},
+    sourceDocument: configPullSourceDocument(request.source),
     projectRef: ref,
   });
   const planWithDefectCheck = yield* configPullDefectAndUnpushableCheck(plan, fixpoint.residual);

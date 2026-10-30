@@ -1,4 +1,4 @@
-import { Data, Effect, FileSystem, Path } from "effect";
+import { Effect, FileSystem, Path } from "effect";
 import { describe, expect } from "vitest";
 import { postControl, runE2e, testBehaviour } from "./test-context.ts";
 
@@ -12,17 +12,8 @@ const setupInspectWorkspace = Effect.fnUntraced(function* (dir: string, pgPort: 
   );
 });
 
-/** The replay server rejected a PG mock fixture. */
-class PgFixtureError extends Data.Error<{ readonly message: string }> {}
-
-const setPgFixture = Effect.fnUntraced(function* (apiUrl: string, key: string) {
-  const res = yield* postControl(`${apiUrl}/_ctrl/pg-fixture`, { key });
-  if (res.status < 200 || res.status >= 300) {
-    return yield* new PgFixtureError({
-      message: `Failed to set PG fixture "${key}": ${yield* res.text}`,
-    });
-  }
-});
+const setPgFixture = (apiUrl: string, key: string) =>
+  postControl(`${apiUrl}/_ctrl/pg-fixture`, { key });
 
 const SUBCOMMANDS = [
   { name: "db-stats", fixtureKey: "db-stats", assertValue: "42 MB" },

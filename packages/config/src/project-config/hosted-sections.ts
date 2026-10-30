@@ -21,7 +21,8 @@ export type HostedSectionKey = (typeof HOSTED_SECTION_KEYS)[number];
  * `ProjectConfig`'s shape, `ProjectConfigSchema`/`toProjectConfigJsonSchema`, and
  * `fromConfigDocument`'s output alike: local bind ports/TLS overrides, `db.pooler`'s
  * `enabled`/`port`, the `db.migrations`/`db.seed` subtrees, every config-side `realtime.*` field,
- * `db.orioledb_version` and the removed `experimental.orioledb_version`, local-only
+ * `db.orioledb_version` and the removed `experimental.orioledb_version`, the
+ * `auth.{email,sms}.enabled` aliases `fromConfigDocument` folds into `enable_signup`, local-only
  * `experimental.*` engine/backend selection, and the whole top-level `local` section.
  *
  * `db.major_version` and `db.pooler`'s other three fields (`pool_mode`, `default_pool_size`,
@@ -36,6 +37,8 @@ export const DOCUMENT_ONLY_LOCAL_PATHS = [
   ["api", "port"],
   ["api", "tls"],
   ["api", "external_url"],
+  ["auth", "email", "enabled"],
+  ["auth", "sms", "enabled"],
   ["db", "port"],
   ["db", "shadow_port"],
   ["db", "health_timeout"],
