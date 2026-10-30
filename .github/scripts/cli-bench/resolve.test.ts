@@ -8,7 +8,7 @@ const lightweight = (content: string) => ({
   body: composeBody("lightweight", content),
   authorLogin: BOT,
 });
-const reported = lightweight("## CLI benchmark: no changes found");
+const reported = lightweight("## CLI benchmark (Lightweight Commands): no changes found");
 
 describe("resolveBench", () => {
   test("benchmarks the first push of a pull request that has no comment yet", () => {
@@ -20,6 +20,18 @@ describe("resolveBench", () => {
 
     expect(result).toEqual({ shouldRun: false, skipReason: SKIP_REASON });
     expect(SKIP_REASON).toContain("`/bench`");
+  });
+
+  test("skips a later push while a comment under the previous heading reports a result", () => {
+    const old = lightweight("## CLI benchmark: no changes found");
+
+    expect(resolveBench({ runAttempt: 1, isFork: false, comments: [old] }).shouldRun).toBe(false);
+  });
+
+  test("benchmarks again when a comment under the previous heading reports a failed run", () => {
+    const old = lightweight("## CLI benchmark: could not run");
+
+    expect(resolveBench({ runAttempt: 1, isFork: false, comments: [old] }).shouldRun).toBe(true);
   });
 
   test("benchmarks again when the comment reports a failed run", () => {

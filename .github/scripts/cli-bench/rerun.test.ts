@@ -388,6 +388,16 @@ describe("measuredSha", () => {
   test("names the commit of a lightweight comment that reports a result", () => {
     const body = composeBody(
       "lightweight",
+      "## CLI benchmark (Lightweight Commands): no changes found",
+      entries(recorded("abc1234", "no changes found")),
+    );
+
+    expect(measuredSha(body)).toBe("abc1234");
+  });
+
+  test("names the commit of a lightweight comment still under the previous heading", () => {
+    const body = composeBody(
+      "lightweight",
       "## CLI benchmark: no changes found",
       entries(recorded("abc1234", "no changes found")),
     );

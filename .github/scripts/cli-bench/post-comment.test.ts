@@ -21,7 +21,9 @@ const NOW = new Date("2026-10-28T09:05:00Z");
 const SHA = "0123456789abcdef";
 
 const titleOf = (kind: Kind) =>
-  kind === "lightweight" ? "## CLI benchmark" : "## CLI benchmark (Integration Heavy Commands)";
+  kind === "lightweight"
+    ? "## CLI benchmark (Lightweight Commands)"
+    : "## CLI benchmark (Integration Heavy Commands)";
 const report = (kind: Kind, title: string) => `${titleOf(kind)}: ${title}\n\ndetails`;
 
 /** An in-memory comment thread. */
