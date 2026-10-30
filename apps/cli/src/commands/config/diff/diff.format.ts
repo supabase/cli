@@ -7,6 +7,7 @@ import {
   configMaskedCaveat,
   configNotReturnedCaveat,
   configPlural,
+  configProviderDisableWarnings,
   configRenderChangeLines,
   configTargetPhrase,
   configUnmanagedCaveat,
@@ -103,6 +104,7 @@ export function renderConfigDiffText(
   if (changeSet.unmanaged.length > 0) {
     lines.push(`Note: ${configUnmanagedCaveat(changeSet.unmanaged)}`);
   }
+  lines.push(...configProviderDisableWarnings(changeSet.changes));
   return `${changeLines}${lines.join("\n")}\n`;
 }
 

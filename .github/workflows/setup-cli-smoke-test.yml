@@ -9,13 +9,13 @@ on:
   workflow_call:
     inputs:
       version:
-        description: Supabase CLI version to install via setup-cli (must already be published to GitHub Releases)
+        description: Supabase CLI version to install via setup-cli (must already be published to GitHub Releases and npm)
         required: true
         type: string
   workflow_dispatch:
     inputs:
       version:
-        description: Supabase CLI version to install via setup-cli (must already be published to GitHub Releases)
+        description: Supabase CLI version to install via setup-cli (must already be published to GitHub Releases and npm)
         required: true
         type: string
 
@@ -33,10 +33,11 @@ jobs:
           - macos-latest
           - windows-latest
         # GitHub Actions doesn't allow expressions in `uses:`, so the action ref is selected via
-        # two `if:`-gated install steps below instead of interpolating `matrix.major-version`.
+        # `if:`-gated install steps below instead of interpolating `matrix.major-version`.
         major-version:
           - v1
           - v2
+          - v3
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
     env:
@@ -50,6 +51,11 @@ jobs:
       - name: Install Supabase CLI via setup-cli@v2
         if: matrix.major-version == 'v2'
         uses: supabase/setup-cli@afb1b15109756ea5cf9d8985a359d9095235ca2b # v2.1.2
+        with:
+          version: ${{ inputs.version }}
+      - name: Install Supabase CLI via setup-cli@v3
+        if: matrix.major-version == 'v3'
+        uses: supabase/setup-cli@45a513f8c64c0bc8e0e3dfe572b5c95be85f6359 # v3.0.1
         with:
           version: ${{ inputs.version }}
       - name: Verify supabase --version matches the expected version
@@ -79,6 +85,7 @@ jobs:
         major-version:
           - v1
           - v2
+          - v3
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # `node:20-alpine` ships a musl-linked Node, required for JavaScript-based actions to launch
@@ -101,6 +108,11 @@ jobs:
       - name: Install Supabase CLI via setup-cli@v2
         if: matrix.major-version == 'v2'
         uses: supabase/setup-cli@afb1b15109756ea5cf9d8985a359d9095235ca2b # v2.1.2
+        with:
+          version: ${{ inputs.version }}
+      - name: Install Supabase CLI via setup-cli@v3
+        if: matrix.major-version == 'v3'
+        uses: supabase/setup-cli@45a513f8c64c0bc8e0e3dfe572b5c95be85f6359 # v3.0.1
         with:
           version: ${{ inputs.version }}
       - name: Verify supabase --version matches the expected version

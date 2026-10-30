@@ -313,7 +313,6 @@ LinkProjectStatusNetworkError
 LinkRefArgConflictError
 LinkedDbNetworkBannedError
 LocalDbRunningError
-LocalStackStartBusyError
 LockResolutionError
 LoginCryptoError
 LoginDecryptError
@@ -397,6 +396,7 @@ PostgresConfigUpdateUnmarshalError
 ProfileLoadError
 ProfileSaveError
 ProjectConfigParseError
+ProjectLifecycleLockBusyError
 ProjectLinkIoError
 ProjectLinkMalformedError
 ProjectNotLinkedError

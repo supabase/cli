@@ -2,7 +2,6 @@ import { generateKeyPairSync } from "node:crypto";
 
 import { BunServices } from "@effect/platform-bun";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
-import { holdLock } from "@supabase/stack/effect";
 import {
   Cause,
   Clock,
@@ -50,7 +49,6 @@ import {
   inspectedState,
 } from "../../../tests/helpers/docker-health.ts";
 import { assertPermissionDrift } from "../../../tests/helpers/permission-drift.ts";
-import { observeMakeDirectory, startLockState } from "../../../tests/helpers/start-lock.ts";
 import { unusedStackServices } from "../../../tests/helpers/unused-stack.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import {
@@ -71,7 +69,6 @@ import { HealthCheckTimeoutSeconds } from "../../command-internal/db-bootstrap/h
 import { DbConnectError } from "../../command-internal/db-connection.errors.ts";
 import { DbConnection, type DbSession } from "../../command-internal/db-connection.service.ts";
 import { dockerRunLayer } from "../../command-internal/docker-run.layer.ts";
-import { LocalStackStartBusyError } from "../../command-internal/local-stack-start-lock.ts";
 import { START_EXCLUDABLE_KEYS } from "./start.exclude.ts";
 import type { StartFlags } from "./start.command.ts";
 import { start } from "./start.handler.ts";
@@ -646,8 +643,6 @@ interface SetupOpts {
   readonly experimental?: boolean;
   /** Replaces the `DbConnection.connect` behind the Postgres readiness probe. Defaults to succeeding. */
   readonly dbConnect?: (typeof DbConnection)["Service"]["connect"];
-  /** Overrides `$SUPABASE_HOME`, which the start lock lives under. Defaults to `<workdir>/.supabase`. */
-  readonly supabaseHome?: string;
 }
 
 const setup = Effect.fnUntraced(function* (opts: SetupOpts = {}) {
@@ -661,7 +656,7 @@ const setup = Effect.fnUntraced(function* (opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const telemetry = mockTelemetryStateTracked();
   const analytics = mockAnalytics();
-  const cliSettings = mockCommandSettings({ workdir, supabaseHome: opts.supabaseHome });
+  const cliSettings = mockCommandSettings({ workdir });
   const child = mockStartContainerCliSpawner(opts.route ?? defaultRoute(), {
     failSpawn: opts.failSpawn,
     onSecretCopy: opts.onSecretCopy,
@@ -1543,148 +1538,6 @@ describe("start integration", () => {
           expect(child.spawned.some((spawn) => spawn.args[0] === "stop")).toBe(false);
           expect(createdContainerNames(child.spawned)).toEqual([]);
         }).pipe(Effect.provide(BunServices.layer)),
-    );
-  });
-
-  describe("per-project start lock", () => {
-    const WAITING_LINE = "Waiting for another supabase start for this project to finish...\n";
-
-    const startLockFile = Effect.fnUntraced(function* (workdir: string) {
-      const path = yield* Path.Path;
-      return path.join(workdir, ".supabase", "locks", "start-demo.lock");
-    });
-
-    const startAgainstHeldLock = (format: "text" | "json" | "stream-json") =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const lockFile = yield* startLockFile(tempRoot.current);
-        yield* fs.makeDirectory(path.dirname(lockFile), { recursive: true });
-        yield* holdLock(lockFile, "0 millis", "concurrent start");
-        const lockDirReady = yield* Deferred.make<void>();
-        const { layer, out, child } = yield* setup({ format });
-
-        const forkedAt = yield* Clock.currentTimeMillis;
-        const fiber = yield* start(flags()).pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              layer,
-              observeMakeDirectory((made) =>
-                made === path.dirname(lockFile)
-                  ? Deferred.succeed(lockDirReady, undefined).pipe(Effect.asVoid)
-                  : Effect.void,
-              ),
-            ),
-          ),
-          Effect.flip,
-          Effect.forkChild({ startImmediately: true }),
-        );
-        yield* Effect.raceFirst(Deferred.await(lockDirReady), Fiber.await(fiber));
-        for (let minute = 0; minute < 60 && fiber.pollUnsafe() === undefined; minute++) {
-          yield* TestClock.adjust("1 minute");
-        }
-        const error = yield* Fiber.join(fiber);
-        const waitedMillis = (yield* Clock.currentTimeMillis) - forkedAt;
-        return { error, out, child, waitedMillis };
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
-
-    it.effect(
-      "waits the 10 minute budget for a concurrent start of the same project, then fails without touching Docker",
-      () =>
-        Effect.gen(function* () {
-          const { error, out, child, waitedMillis } = yield* startAgainstHeldLock("text");
-
-          expect(error).toBeInstanceOf(LocalStackStartBusyError);
-          expect(error).toMatchObject({
-            _tag: "LocalStackStartBusyError",
-            message: "another supabase start is still running for this project",
-            suggestion: expect.stringContaining("supabase start"),
-          });
-          expect(classifyCliErrorActionability(error)).toMatchObject({
-            error_kind: "user_actionable",
-            error_fingerprint: "tag:LocalStackStartBusyError:lease_held",
-          });
-          expect(out.stderrText).toContain(WAITING_LINE);
-          expect(waitedMillis).toBeGreaterThanOrEqual(10 * 60_000);
-          expect(waitedMillis).toBeLessThanOrEqual(11 * 60_000);
-          expect(child.spawned).toEqual([]);
-        }),
-      60_000,
-    );
-
-    for (const format of ["json", "stream-json"] as const) {
-      it.effect(
-        `keeps the waiting line out of ${format} output while waiting for a concurrent start`,
-        () =>
-          Effect.gen(function* () {
-            const { error, out } = yield* startAgainstHeldLock(format);
-
-            expect(error).toMatchObject({ _tag: "LocalStackStartBusyError" });
-            expect(out.rawChunks).toEqual([]);
-          }),
-        60_000,
-      );
-    }
-
-    it.effect("holds the lock from before the first Docker inspect through bring-up", () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const lockFile = yield* startLockFile(tempRoot.current);
-          const base = defaultRoute();
-          const stateAtInspect: Array<"free" | "busy" | "error"> = [];
-          const { layer } = yield* setup({
-            route: (args) =>
-              args[0] === "container" && args[1] === "inspect" && args[2] === "supabase_db_demo"
-                ? startLockState(lockFile).pipe(
-                    Effect.map((state) => {
-                      stateAtInspect.push(state);
-                      return base(args);
-                    }),
-                  )
-                : base(args),
-          });
-
-          yield* start(flags()).pipe(Effect.provide(layer));
-
-          expect(stateAtInspect.length).toBeGreaterThan(1);
-          expect(stateAtInspect.every((state) => state === "busy")).toBe(true);
-          expect(yield* startLockState(lockFile)).toBe("free");
-        }),
-      ).pipe(Effect.provide(BunServices.layer)),
-    );
-
-    it.effect("releases the lock when start fails", () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const lockFile = yield* startLockFile(tempRoot.current);
-          const { layer } = yield* setup({
-            route: (args) =>
-              args[0] === "container" && args[1] === "inspect" ? { stdout: [""] } : { exitCode: 0 },
-          });
-
-          const error = yield* start(flags()).pipe(Effect.provide(layer), Effect.flip);
-
-          expect(error).toMatchObject({ _tag: "StatusDbNotRunningError" });
-          expect(yield* startLockState(lockFile)).toBe("free");
-        }),
-      ).pipe(Effect.provide(BunServices.layer)),
-    );
-
-    it.effect("starts without a lock when the lock location cannot be created", () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const blocker = path.join(tempRoot.current, "not-a-directory");
-        yield* fs.writeFileString(blocker, "");
-        const { layer, out, child } = yield* setup({
-          supabaseHome: path.join(blocker, "home"),
-        });
-
-        yield* start(flags()).pipe(Effect.provide(layer));
-
-        expect(createdContainerNames(child.spawned)).toContain("supabase_db_demo");
-        expect(out.stderrText).not.toContain(WAITING_LINE);
-      }).pipe(Effect.provide(BunServices.layer)),
     );
   });
 
@@ -5107,6 +4960,65 @@ content_path = "./supabase/templates/custom_notice.html"
             expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
           }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
+    );
+  });
+
+  describe("auth.{email,sms}.enabled reaches GoTrue's container", () => {
+    const TWILIO =
+      '[auth.sms.twilio]\nenabled = true\naccount_sid = "AC123"\nauth_token = "test-auth-token"\nmessage_service_sid = "MG123"\n';
+
+    it.effect.each([
+      {
+        name: "[auth.sms] enabled = true with a configured provider",
+        config: `project_id = "demo"\n[auth.sms]\nenabled = true\n${TWILIO}`,
+        env: "GOTRUE_EXTERNAL_PHONE_ENABLED",
+        expected: "true",
+      },
+      {
+        name: "[auth.email] enabled = false",
+        config: 'project_id = "demo"\n[auth.email]\nenabled = false\n',
+        env: "GOTRUE_EXTERNAL_EMAIL_ENABLED",
+        expected: "false",
+      },
+    ])("sets $env from $name", ({ config, env, expected }) =>
+      Effect.gen(function* () {
+        const { layer, child } = yield* setup({ configContents: config });
+
+        yield* start(flags()).pipe(Effect.provide(layer));
+        const gotrueCreate = child.spawned.find(
+          (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+        );
+        expect(gotrueCreate?.env[env]).toBe(expected);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect.each([
+      {
+        name: "[auth.email]",
+        config: 'project_id = "demo"\n[auth.email]\nenabled = false\n',
+        shellEnv: "SUPABASE_AUTH_EMAIL_ENABLED",
+        gotrueEnv: "GOTRUE_EXTERNAL_EMAIL_ENABLED",
+      },
+      {
+        name: "[auth.sms]",
+        config: `project_id = "demo"\n[auth.sms]\nenabled = false\n${TWILIO}`,
+        shellEnv: "SUPABASE_AUTH_SMS_ENABLED",
+        gotrueEnv: "GOTRUE_EXTERNAL_PHONE_ENABLED",
+      },
+    ])("sets $gotrueEnv from $shellEnv=true over $name enabled = false", (row) =>
+      withEnvVar(
+        row.shellEnv,
+        "true",
+        Effect.gen(function* () {
+          const { layer, child } = yield* setup({ configContents: row.config });
+
+          yield* start(flags()).pipe(Effect.provide(layer));
+          const gotrueCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+          );
+          expect(gotrueCreate?.env[row.gotrueEnv]).toBe("true");
+        }).pipe(Effect.provide(BunServices.layer)),
+      ).pipe(Effect.provide(BunServices.layer)),
     );
   });
 

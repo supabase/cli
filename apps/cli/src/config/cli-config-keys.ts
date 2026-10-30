@@ -5,6 +5,7 @@ import {
   CLI_CONFIG_CODEC_OVERRIDES,
   CLI_CONFIG_CONTEXT_DEFAULTS,
   CLI_CONFIG_DOCUMENT_KEYS,
+  CLI_CONFIG_ENV_NAME_PATHS,
   CLI_CONFIG_FAMILIES,
   CLI_CONFIG_FLAGS,
   CLI_CONFIG_LINKED_KEYS,
@@ -167,6 +168,7 @@ export const cliConfigSchemaKeyDefs = (root: SchemaAST.Objects): ReadonlyArray<C
     const annotations = SchemaAST.resolve(leaf.node);
     const configured = annotations?.["default"];
     const noEnv = leaf.segments[0] !== undefined && leaf.segments[0] in CLI_CONFIG_NO_ENV_SECTIONS;
+    const envNamePaths = CLI_CONFIG_ENV_NAME_PATHS[path];
     // Every leaf of a no-env section sits under an optional table, so one with no default is absent.
     const optional = leaf.optional || (noEnv && configured === undefined);
     return [
@@ -180,6 +182,7 @@ export const cliConfigSchemaKeyDefs = (root: SchemaAST.Objects): ReadonlyArray<C
             : { defaultFrom }),
         ...(annotations?.["x-secret"] === true ? { secret: true as const } : {}),
         ...(noEnv ? { noEnv: true as const } : {}),
+        ...(envNamePaths === undefined ? {} : { env: envNamePaths.map(deriveCliConfigEnvName) }),
       },
     ];
   });
