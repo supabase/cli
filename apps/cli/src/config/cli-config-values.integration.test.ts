@@ -369,6 +369,89 @@ major_version = 15
   );
 });
 
+describe("CliConfigValues provider switch env names", () => {
+  it.live.each([
+    { section: "email", upper: "EMAIL" },
+    { section: "sms", upper: "SMS" },
+  ] as const)(
+    "lets the _ENABLED env name beat the config and _ENABLE_SIGNUP for [auth.$section]",
+    ({ section, upper }) =>
+      Effect.gen(function* () {
+        const enabledName = `SUPABASE_AUTH_${upper}_ENABLED`;
+        const legacyName = `SUPABASE_AUTH_${upper}_ENABLE_SIGNUP`;
+        const root = yield* project(`project_id = "p"\n[auth.${section}]\nenabled = false\n`);
+        const key = CliConfigKeys.auth[section].enableSignup;
+        const resolve = (shell: Readonly<Record<string, string>>) =>
+          CliConfigValues.use((values) =>
+            Effect.flatMap(values.load({ workdir: root, projectRef: Option.none() }), (resolved) =>
+              resolved.get(key),
+            ),
+          ).pipe(Effect.provide(configValuesLayer()), (effect) => withShell(shell, effect));
+
+        expect(yield* resolve({})).toMatchObject({ value: false, origin: { tier: "config" } });
+        expect(yield* resolve({ [enabledName]: "true" })).toMatchObject({
+          value: true,
+          origin: { tier: "shell", envName: enabledName },
+        });
+        expect(yield* resolve({ [enabledName]: "false", [legacyName]: "true" })).toMatchObject({
+          value: false,
+          origin: { tier: "shell", envName: enabledName },
+        });
+        expect(yield* resolve({ [legacyName]: "true" })).toMatchObject({
+          value: true,
+          origin: { tier: "shell", envName: legacyName },
+        });
+      }).pipe(Effect.provide(BunServices.layer), Effect.scoped),
+  );
+});
+
+describe("CliConfigValues deprecated keys", () => {
+  const deprecationLine = (path: string) =>
+    `WARN: ${path}.enable_signup is deprecated and will be removed in v4, use ${path}.enabled instead.\n`;
+
+  it.live("prints each deprecation once across separate loads and a write-through", () =>
+    Effect.gen(function* () {
+      const config =
+        'project_id = "dep"\n[auth.email]\nenable_signup = false\n[auth.sms]\nenable_signup = true\n';
+      const root = yield* project(config);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const output = mockOutput();
+
+      yield* Effect.gen(function* () {
+        const values = yield* CliConfigValues;
+        yield* values.load({ workdir: root, projectRef: Option.none() });
+        yield* values.load({ workdir: root, projectRef: Option.some(LINKED) });
+        yield* values.writeThrough(
+          fs.writeFileString(path.join(root, "supabase", "config.toml"), config),
+        );
+        yield* values.load({ workdir: root, projectRef: Option.none() });
+      }).pipe(Effect.provide(configValuesLayer({ output: output.layer })));
+
+      expect(output.stderrText).toBe(
+        `${deprecationLine("auth.email")}${deprecationLine("auth.sms")}`,
+      );
+      expect(output.stdoutText).toBe("");
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("escapes control characters in a remote label before printing the deprecation", () =>
+    Effect.gen(function* () {
+      const root = yield* project(
+        'project_id = "dep"\n[remotes."a\\u001bb"]\nproject_id = "stagingrefaaaaaaaaaa"\n[remotes."a\\u001bb".auth.sms]\nenable_signup = true\n',
+      );
+      const output = mockOutput();
+
+      yield* CliConfigValues.use((values) =>
+        values.load({ workdir: root, projectRef: Option.none() }),
+      ).pipe(Effect.provide(configValuesLayer({ output: output.layer })));
+
+      expect(output.stderrText).toBe(deprecationLine("remotes.a\\u001bb.auth.sms"));
+      expect(output.stderrText.includes("\u001b")).toBe(false);
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+});
+
 describe("CliConfigValues memoisation", () => {
   it.live("memoises a load per target and drops the memo after a write", () =>
     Effect.gen(function* () {

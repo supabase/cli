@@ -76,9 +76,19 @@ const notification = Schema.Struct({
 }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 
 export const email = Schema.Struct({
+  enabled: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      default: defaultEnableSignup,
+      description:
+        "Allow/disallow the email provider. When false, users can't sign up or sign in with email (password, magic link or OTP); set `auth.enable_signup = false` to block new signups only.",
+      tags,
+      links: [links.auth],
+    }),
+  ),
   enable_signup: Schema.Boolean.annotate({
     default: defaultEnableSignup,
-    description: "Allow/disallow new user signups via email to your project.",
+    description:
+      "Deprecated: use `auth.email.enabled` instead. Allow/disallow the email provider; when false, users can't sign up or sign in with email.",
     tags,
     links: [links.auth],
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEnableSignup))),

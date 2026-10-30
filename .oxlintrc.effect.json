@@ -9,6 +9,7 @@
     "!packages/api/**",
     "!packages/config/**",
     "!packages/stack/**",
+    "!apps/cli-e2e/**",
     "!apps/cli/**",
     "!apps/docs/**",
     "!packages/cli-test-helpers/**",
