@@ -36,7 +36,7 @@ export const rollbackStart = (
   Effect.gen(function* () {
     // `dockerRemoveAll` doesn't print this; each caller owns its own status writer.
     yield* Effect.sync(() => {
-      globalThis.process.stderr.write("Stopping containers...\n");
+      process.stderr.write("Stopping containers...\n");
     });
     let removedContainers: ReadonlyArray<ContainerIdName> = [];
     yield* dockerRemoveAll(
@@ -50,7 +50,7 @@ export const rollbackStart = (
     ).pipe(
       Effect.catch((error) =>
         Effect.sync(() => {
-          globalThis.process.stderr.write(`${error.message}\n`);
+          process.stderr.write(`${error.message}\n`);
         }),
       ),
     );
@@ -64,7 +64,7 @@ export const rollbackStart = (
 
 const writeStderrLine = (message: string) =>
   Effect.sync(() => {
-    globalThis.process.stderr.write(`${message}\n`);
+    process.stderr.write(`${message}\n`);
   });
 
 /** Resolves whether the resource is gone; a missing resource counts, any other failure is logged. */

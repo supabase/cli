@@ -2,8 +2,22 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Option, Predicate } from "effect";
 
 import { StackStorageCapabilityError } from "../../../command-internal/stack-storage.ts";
-import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
-import { setupStorage, STORAGE_TEST_JWT_SECRET } from "../../../../tests/helpers/storage.ts";
+import { generateLocalJwt } from "../../../command-internal/local-jwt.ts";
+import {
+  BARE_REMOTE,
+  NO_TARGET,
+  branchLookupsOf,
+  describeDbTargetSelection,
+  storageTargetOf,
+} from "../../../../tests/helpers/db-target-selection.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import {
+  setupStorage,
+  STORAGE_TEST_JWT_SECRET,
+  storageConsentApi,
+  storageConsentServices,
+  storageTestBranch,
+} from "../../../../tests/helpers/storage.ts";
 import { VALID_REF, useTempWorkdir, withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { storageMv } from "./mv.handler.ts";
@@ -19,15 +33,13 @@ function mvFlags(opts: {
   src: string;
   dst: string;
   recursive?: boolean;
-  local?: boolean;
+  remote?: boolean;
 }): StorageMvFlags {
   return {
     src: opts.src,
     dst: opts.dst,
     recursive: opts.recursive ?? false,
-    linked: true,
-    local: opts.local ?? true,
-    projectRef: Option.none(),
+    ...(opts.remote === true ? BARE_REMOTE : NO_TARGET),
   };
 }
 
@@ -270,11 +282,12 @@ describe("storage mv", () => {
   it.effect("targets the linked project's Storage host and flushes telemetry", () => {
     const { layer, requests, telemetry, linkedCache } = setupStorage(tmp.current, {
       // No `--local`, so the linked path resolves the ref + service-role key.
+      yes: true,
       routes: [{ method: "POST", match: MOVE, body: { message: "Successfully moved" } }],
     });
     return Effect.gen(function* () {
       const exit = yield* storageMv(
-        mvFlags({ src: "ss:///private/a", dst: "ss:///private/b", local: false }),
+        mvFlags({ src: "ss:///private/a", dst: "ss:///private/b", remote: true }),
       ).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.some((r) => r.url.startsWith(`https://${VALID_REF}.supabase.co`))).toBe(true);
@@ -284,47 +297,31 @@ describe("storage mv", () => {
     });
   });
 
-  it.effect("moves within the project given via --project-ref, overriding VALID_REF", () => {
-    // The fake's default projectRef is VALID_REF; the flag must win over it.
-    const FLAG_REF = "flagflagflagflagflag";
-    const { layer, requests, linkedCache } = setupStorage(tmp.current, {
-      routes: [{ method: "POST", match: MOVE, body: { message: "Successfully moved" } }],
-    });
-    return Effect.gen(function* () {
-      const exit = yield* storageMv({
-        ...mvFlags({ src: "ss:///private/a", dst: "ss:///private/b" }),
-        local: false,
-        projectRef: Option.some(FLAG_REF),
-      }).pipe(Effect.provide(layer), Effect.exit);
-      expect(Exit.isSuccess(exit)).toBe(true);
-      expect(requests.some((r) => r.url.startsWith(`https://${FLAG_REF}.supabase.co`))).toBe(true);
-      expect(requests.some((r) => r.url.includes(VALID_REF))).toBe(false);
-      expect(linkedCache.cached).toBe(true);
-      expect(linkedCache.cachedRef).toBe(FLAG_REF);
-    });
-  });
-
-  it.effect("rejects --project-ref combined with --local", () => {
-    const FLAG_REF = "flagflagflagflagflag";
-    const { layer, requests, linkedCache } = setupStorage(tmp.current, {
-      toml: 'project_id = "test"\n',
-      local: true,
-    });
-    return Effect.gen(function* () {
-      const exit = yield* storageMv({
-        ...mvFlags({ src: "ss:///private/a", dst: "ss:///private/b" }),
-        local: true,
-        projectRef: Option.some(FLAG_REF),
-      }).pipe(Effect.provide(layer), Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain(
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
-        );
-      }
-      expect(requests).toHaveLength(0);
-      expect(linkedCache.cached).toBe(false);
-    });
+  describeDbTargetSelection("storage mv", {
+    dbUrl: false,
+    operands: ["ss:///private/a", "ss:///private/b"],
+    workdir: () => tmp.current,
+    attempt: ({ workdir, args, target }) => {
+      const ctx = setupStorage(workdir, {
+        toml: 'project_id = "test"\n[api]\nport = 65432\n',
+        branches: [storageTestBranch("feature-x")],
+        yes: true,
+        cliArgs: args,
+        commandPath: ["storage", "mv"],
+        routes: [{ method: "POST", match: MOVE, body: { message: "Successfully moved" } }],
+      });
+      return {
+        layer: ctx.layer,
+        out: ctx.out,
+        run: storageMv({
+          ...mvFlags({ src: "ss:///private/a", dst: "ss:///private/b" }),
+          ...target,
+        }),
+        target: () => storageTargetOf(ctx.requests),
+        cachedRef: () => ctx.linkedCache.cachedRef,
+        branchLookups: () => branchLookupsOf(ctx.managementCalls),
+      };
+    },
   });
 
   it.effect("propagates a 503 from the move endpoint even when recursive", () => {
@@ -402,7 +399,7 @@ describe("storage mv", () => {
     });
     return Effect.gen(function* () {
       const exit = yield* storageMv(
-        mvFlags({ src: "ss:///private", dst: "ss:///private/docs", recursive: true, local: false }),
+        mvFlags({ src: "ss:///private", dst: "ss:///private/docs", recursive: true, remote: true }),
       ).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       const perObject = requests.find(
@@ -425,7 +422,7 @@ describe("storage mv", () => {
         yield* Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           yield* storageMv(
-            mvFlags({ src: "ss:///private/a", dst: "ss:///private/b", local: false }),
+            mvFlags({ src: "ss:///private/a", dst: "ss:///private/b", remote: true }),
           );
           expect(
             managementRequests.map(({ method, urlWithParams }) => `${method} ${urlWithParams}`),
@@ -441,7 +438,7 @@ describe("storage mv", () => {
           expect(yield* fs.exists(`${tmp.current}/${CACHE_FILE}`)).toBe(true);
           assertPermissionDrift({
             command: "storage mv",
-            activeFlags: { local: false },
+            activeFlags: { remote: true },
             requests: managementRequests,
           });
         }).pipe(Effect.provide(layer));
@@ -468,7 +465,9 @@ describe("stack backend", () => {
       expect(out.stderrText).toContain("Successfully moved");
       const move = requests.find((r) => r.url.includes(MOVE));
       expect(move?.url.startsWith("http://127.0.0.1:59999")).toBe(true);
-      expect(move?.headers["apikey"]).toBe(generateGoJwt(STORAGE_TEST_JWT_SECRET, "service_role"));
+      expect(move?.headers["apikey"]).toBe(
+        generateLocalJwt(STORAGE_TEST_JWT_SECRET, "service_role"),
+      );
     });
   });
 
@@ -499,4 +498,20 @@ describe("stack backend", () => {
       });
     },
   );
+});
+
+describeHostedConsent("storage mv", {
+  api: storageConsentApi,
+  invoke: ({ workdir }) => {
+    const storage = storageConsentServices(workdir, [
+      { method: "POST", match: MOVE, body: { message: "Successfully moved" } },
+    ]);
+    return {
+      run: storageMv({
+        ...mvFlags({ src: "ss:///private/a", dst: "ss:///private/b" }),
+        remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
+      }).pipe(Effect.provide(storage.layer)),
+      mutations: storage.writes,
+    };
+  },
 });

@@ -1,6 +1,8 @@
 # `supabase db test [path...]`
 
-`db test` is a **hidden alias** for `supabase test db`. The native TS port
+Target: selectable, consent default No — see [Command target](../../../../docs/command-target.md)
+
+`db test` is a **hidden alias** for `supabase test db`. It
 shares the same flag config and handler: `test.command.ts` reuses `test db`'s
 flag config and assembled handler verbatim
 (`../../../shared/test-db.command-handler.ts`'s
@@ -36,10 +38,10 @@ Identical to `test db`. See
 Identical to `test db`. See
 [`../../test/db/SIDE_EFFECTS.md`](../../test/db/SIDE_EFFECTS.md#docker).
 
-## API Routes (`--linked` only)
+## API Routes (remote project or branch only)
 
 Identical to `test db`. See
-[`../../test/db/SIDE_EFFECTS.md`](../../test/db/SIDE_EFFECTS.md#api-routes---linked-only).
+[`../../test/db/SIDE_EFFECTS.md`](../../test/db/SIDE_EFFECTS.md#api-routes-remote-project-or-branch-only).
 
 ## Environment Variables
 
@@ -60,7 +62,7 @@ Identical to `test db`. See
 The recorded `command` property is the only observable difference between
 the two entry points, since each command's own telemetry wrapper records its
 own command path even though the underlying handler is the literal same
-function reference. The TS port reflects this via
+function reference. This is wired via
 `testDbRuntimeLayer(["db", "test"])` in `test.command.ts` (vs
 `testDbRuntimeLayer(["test", "db"])` for `test db`'s own command file) —
 see `../../../shared/test-db.layers.ts`'s doc comment.
@@ -72,17 +74,8 @@ Identical to `test db`. See
 
 ## Notes
 
-- Native TypeScript port (Phase 1+); no Go proxy (CLI-1962). Hidden command —
+- Hidden command —
   registered with `.pipe(Command.unlisted)` in `../db.command.ts`.
-- `--local` defaults to `true` on both `db test` and `test db` — bare
-  `supabase db test` always targets the local stack. This resolves a former
-  proxy-only `--local` default-modelling caveat that existed while this
-  command still forwarded to the Go binary (the previous proxy's
-  `if (flags.local) args.push("--local")` never actually forwarded the
-  default, since Effect CLI's own `Flag.Boolean` default is `false`; now that
-  the flag drives `resolveDbTargetFlags`'s presence-based selection
-  directly — same mechanism `test db` already used — the true default is
-  reflected exactly, with no proxy-only quirk to carry over).
-- Shares every intentional divergence documented on `test db`
-  (pg_prove image pin, `pg_extension`-based "already exists" detection instead
-  of pgx's `OnNotice`, `--network-id` global-flag override, etc.).
+- Target selection and the hosted-target confirmation are identical to `test db`.
+- Shares every behavior documented on `test db` (pg_prove image pin,
+  `pg_extension`-based "already exists" detection, global `--network-id` handling, etc.).

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Schema } from "effect";
 
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   buildTestRuntime,
@@ -11,7 +12,11 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   projectResponse,
@@ -22,6 +27,7 @@ import { encryptionUpdateRootKey } from "./update-root-key.handler.ts";
 const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const ROOT_KEY_RESPONSE = { root_key: "new-key" };
+const ACTION = "Replace the project's root encryption key";
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
@@ -59,11 +65,13 @@ function setup(opts: SetupOpts = {}) {
       linkedProjectCache: linkedProjectCache.layer,
     }),
     mockStdin(opts.stdinIsTty ?? false, opts.pipedInput),
+    Layer.succeed(YesFlag, true),
+    Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
   );
   return { layer, out, api, telemetry, linkedProjectCache };
 }
 
-const baseFlags = { projectRef: Option.none<string>() };
+const baseFlags = { remote: Option.none(), projectRef: Option.none<string>() };
 
 describe("encryption update-root-key integration", () => {
   it.effect("reads a piped root key and PUTs it, printing the finished message to stderr", () => {
@@ -108,14 +116,21 @@ describe("encryption update-root-key integration", () => {
       workdir: tempRoot.current,
       projectId: Option.none(),
     });
-    const layer = buildTestRuntime({
-      out,
-      api,
-      cliSettings,
-      tty: mockTty({ stdinIsTty: true }),
-      stdin: mockStdin(false, "new-key"),
-      linkedProjectCache: realLinkedProjectCache({ httpClient: api.httpClientLayer, cliSettings }),
-    });
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true }),
+        stdin: mockStdin(false, "new-key"),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      }),
+      Layer.succeed(YesFlag, true),
+      Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+    );
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       yield* encryptionUpdateRootKey(baseFlags);
@@ -167,7 +182,9 @@ describe("encryption update-root-key integration", () => {
       expect(success?.message).toBe("");
       expect(success?.data).toEqual({ root_key: "new-key" });
       expect(out.stdoutText).toBe("");
-      expect(out.stderrText).toBe("");
+      expect(out.stderrText).toBe(
+        unverifiedTargetBanner() + `Confirmed by --yes: ${ACTION} on project ${VALID_REF}\n`,
+      );
     }).pipe(Effect.provide(layer));
   });
 
@@ -247,4 +264,19 @@ describe("encryption update-root-key integration", () => {
       expect(linkedProjectCache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedConsent("encryption update-root-key", {
+  api: { response: { status: 200, body: ROOT_KEY_RESPONSE } },
+  invoke: () => ({
+    run: encryptionUpdateRootKey({
+      remote: Option.some({ _tag: "Ref", ref: VALID_REF }),
+      projectRef: Option.none(),
+    }).pipe(Effect.provide(mockStdin(false, "new-key"))),
+  }),
+});
+
+describeHostedTargetSelection("encryption update-root-key", {
+  respond: (request) => Effect.succeed(jsonResponse(request, 200, ROOT_KEY_RESPONSE)),
+  run: (flags) => encryptionUpdateRootKey(flags).pipe(Effect.provide(mockStdin(false, "new-key"))),
 });

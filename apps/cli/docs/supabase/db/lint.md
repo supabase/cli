@@ -1,8 +1,10 @@
 ## supabase-db-lint
 
-Lints local database for schema errors.
+Lints a database for schema errors.
 
-Requires the local development stack to be running when linting against the local database. To lint against a remote or self-hosted database, specify the `--linked` or `--db-url` flag respectively.
+Lints the local database by default, which requires the local development stack to be running. Pass `--remote` to lint the linked project, or `--remote=<ref|branch|url>` to lint another project, a branch of the linked project, or a database URL such as a self-hosted database. The command prints a `Target:` line on stderr naming the database it resolved, and never asks for confirmation.
+
+`--linked`, `--project-ref`, `--db-url` and `--local` still work in v3 but are deprecated and removed in v4; use `--remote`.
 
 Runs the `plpgsql_check` extension against the local database (native or container) to check for errors in all schemas. The default lint level is `warning` and can be raised to error via the `--level` flag.
 

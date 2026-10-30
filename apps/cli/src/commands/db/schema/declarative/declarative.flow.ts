@@ -306,10 +306,10 @@ function stagedExportCommands(context: StagedExportContext): ReadonlyArray<strin
   const generateCommand =
     context.platform === "windows"
       ? [
-          `  supabase db schema declarative generate --local --overwrite --output-dir ${staged}${schemas} --experimental`,
+          `  supabase db schema declarative generate --overwrite --output-dir ${staged}${schemas} --experimental`,
         ]
       : [
-          "  supabase db schema declarative generate --local --overwrite \\",
+          "  supabase db schema declarative generate --overwrite \\",
           `    --output-dir ${staged}${schemas} --experimental`,
         ];
   return [

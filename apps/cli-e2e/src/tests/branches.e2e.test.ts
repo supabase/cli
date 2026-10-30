@@ -7,7 +7,7 @@ const BRANCH_NAME = "my-branch";
 describe("branches", () => {
   describe("branches:list", () => {
     testBehaviour("renders fixture data in output", async ({ run, projectRef }) => {
-      const result = await run(["branches", "list", "--project-ref", projectRef]);
+      const result = await run(["branches", "list", `--remote=${projectRef}`]);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("NAME");
       expect(result.stdout).toContain("STATUS");
@@ -21,8 +21,7 @@ describe("branches", () => {
           "list",
           "--output",
           "json",
-          "--project-ref",
-          projectRef,
+          `--remote=${projectRef}`,
         ]);
         expect(result.exitCode).toBe(0);
         const parsed = JSON.parse(result.stdout) as unknown[];
@@ -31,7 +30,7 @@ describe("branches", () => {
     );
 
     testBehaviour("includes debug output with --debug", async ({ run, projectRef }) => {
-      const result = await run(["branches", "list", "--debug", "--project-ref", projectRef]);
+      const result = await run(["branches", "list", "--debug", `--remote=${projectRef}`]);
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toMatch(/HTTP.*GET:/);
     });
@@ -42,7 +41,7 @@ describe("branches", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 401, body: { message: "Invalid token" } }),
       });
-      const result = await run(["branches", "list", "--project-ref", PROJECT_REF]);
+      const result = await run(["branches", "list", `--remote=${PROJECT_REF}`]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Invalid token");
     });
@@ -53,7 +52,7 @@ describe("branches", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 403, body: { message: "Forbidden" } }),
       });
-      const result = await run(["branches", "list", "--project-ref", PROJECT_REF]);
+      const result = await run(["branches", "list", `--remote=${PROJECT_REF}`]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Forbidden");
     });
@@ -64,7 +63,7 @@ describe("branches", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 429, body: { message: "Too Many Requests" } }),
       });
-      const result = await run(["branches", "list", "--project-ref", PROJECT_REF]);
+      const result = await run(["branches", "list", `--remote=${PROJECT_REF}`]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Too Many Requests");
     });
@@ -75,7 +74,7 @@ describe("branches", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 500, body: { message: "Internal Server Error" } }),
       });
-      const result = await run(["branches", "list", "--project-ref", PROJECT_REF]);
+      const result = await run(["branches", "list", `--remote=${PROJECT_REF}`]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
     });
@@ -83,7 +82,13 @@ describe("branches", () => {
 
   describe("branches:create", () => {
     testBehaviour.skipIf(isRecording)("creates ephemeral branch", async ({ run, projectRef }) => {
-      const result = await run(["branches", "create", BRANCH_NAME, "--project-ref", projectRef]);
+      const result = await run([
+        "branches",
+        "create",
+        BRANCH_NAME,
+        "--yes",
+        `--remote=${projectRef}`,
+      ]);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("Created preview branch:");
     });
@@ -94,8 +99,8 @@ describe("branches", () => {
         "create",
         BRANCH_NAME,
         "--persistent",
-        "--project-ref",
-        projectRef,
+        "--yes",
+        `--remote=${projectRef}`,
       ]);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("Created preview branch:");
@@ -107,8 +112,8 @@ describe("branches", () => {
         "create",
         BRANCH_NAME,
         "--with-data",
-        "--project-ref",
-        projectRef,
+        "--yes",
+        `--remote=${projectRef}`,
       ]);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("Created preview branch:");
@@ -120,7 +125,13 @@ describe("branches", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 409, body: { message: "Branch name already in use" } }),
       });
-      const result = await run(["branches", "create", BRANCH_NAME, "--project-ref", PROJECT_REF]);
+      const result = await run([
+        "branches",
+        "create",
+        BRANCH_NAME,
+        "--yes",
+        `--remote=${PROJECT_REF}`,
+      ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Branch name already in use");
     });
@@ -134,7 +145,13 @@ describe("branches", () => {
           body: { message: "Preview branching is not enabled" },
         }),
       });
-      const result = await run(["branches", "create", BRANCH_NAME, "--project-ref", PROJECT_REF]);
+      const result = await run([
+        "branches",
+        "create",
+        BRANCH_NAME,
+        "--yes",
+        `--remote=${PROJECT_REF}`,
+      ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Preview branching is not enabled");
     });
@@ -151,8 +168,8 @@ describe("branches", () => {
         BRANCH_NAME,
         "--region",
         "invalid-region",
-        "--project-ref",
-        PROJECT_REF,
+        "--yes",
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("--region");
@@ -164,7 +181,13 @@ describe("branches", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 401, body: { message: "Invalid token" } }),
       });
-      const result = await run(["branches", "create", BRANCH_NAME, "--project-ref", PROJECT_REF]);
+      const result = await run([
+        "branches",
+        "create",
+        BRANCH_NAME,
+        "--yes",
+        `--remote=${PROJECT_REF}`,
+      ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Invalid token");
     });
@@ -175,7 +198,13 @@ describe("branches", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 403, body: { message: "Forbidden" } }),
       });
-      const result = await run(["branches", "create", BRANCH_NAME, "--project-ref", PROJECT_REF]);
+      const result = await run([
+        "branches",
+        "create",
+        BRANCH_NAME,
+        "--yes",
+        `--remote=${PROJECT_REF}`,
+      ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Forbidden");
     });
@@ -186,7 +215,13 @@ describe("branches", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 429, body: { message: "Too Many Requests" } }),
       });
-      const result = await run(["branches", "create", BRANCH_NAME, "--project-ref", PROJECT_REF]);
+      const result = await run([
+        "branches",
+        "create",
+        BRANCH_NAME,
+        "--yes",
+        `--remote=${PROJECT_REF}`,
+      ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Too Many Requests");
     });
@@ -196,7 +231,7 @@ describe("branches", () => {
     testBehaviour.skipIf(isRecording)(
       "returns single branch details",
       async ({ run, projectRef }) => {
-        const result = await run(["branches", "get", BRANCH_NAME, "--project-ref", projectRef]);
+        const result = await run(["branches", "get", BRANCH_NAME, `--remote=${projectRef}`]);
         expect(result.exitCode).toBe(0);
         expect(result.stdout).toContain(BRANCH_NAME);
       },
@@ -211,8 +246,7 @@ describe("branches", () => {
           BRANCH_NAME,
           "--output",
           "json",
-          "--project-ref",
-          projectRef,
+          `--remote=${projectRef}`,
         ]);
         expect(result.exitCode).toBe(0);
         const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
@@ -226,7 +260,7 @@ describe("branches", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 404, body: { message: "Branch not found" } }),
       });
-      const result = await run(["branches", "get", "nonexistent", "--project-ref", PROJECT_REF]);
+      const result = await run(["branches", "get", "nonexistent", `--remote=${PROJECT_REF}`]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Branch not found");
     });
@@ -237,7 +271,7 @@ describe("branches", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 401, body: { message: "Invalid token" } }),
       });
-      const result = await run(["branches", "get", BRANCH_NAME, "--project-ref", PROJECT_REF]);
+      const result = await run(["branches", "get", BRANCH_NAME, `--remote=${PROJECT_REF}`]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Invalid token");
     });
@@ -251,8 +285,8 @@ describe("branches", () => {
         BRANCH_NAME,
         "--name",
         "renamed-branch",
-        "--project-ref",
-        projectRef,
+        "--yes",
+        `--remote=${projectRef}`,
       ]);
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toContain("Updated preview branch:");
@@ -267,8 +301,8 @@ describe("branches", () => {
           BRANCH_NAME,
           "--git-branch",
           "feature/new",
-          "--project-ref",
-          projectRef,
+          "--yes",
+          `--remote=${projectRef}`,
         ]);
         expect(result.exitCode).toBe(0);
         expect(result.stderr).toContain("Updated preview branch:");
@@ -287,8 +321,8 @@ describe("branches", () => {
         "nonexistent",
         "--name",
         "new-name",
-        "--project-ref",
-        PROJECT_REF,
+        "--yes",
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Branch not found");
@@ -306,8 +340,8 @@ describe("branches", () => {
         BRANCH_NAME,
         "--name",
         "new-name",
-        "--project-ref",
-        PROJECT_REF,
+        "--yes",
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Invalid token");
@@ -316,7 +350,13 @@ describe("branches", () => {
 
   describe("branches:pause", () => {
     testBehaviour.skipIf(isRecording)("pauses branch successfully", async ({ run, projectRef }) => {
-      const result = await run(["branches", "pause", BRANCH_NAME, "--project-ref", projectRef]);
+      const result = await run([
+        "branches",
+        "pause",
+        BRANCH_NAME,
+        "--yes",
+        `--remote=${projectRef}`,
+      ]);
       expect(result.exitCode).toBe(0);
     });
 
@@ -326,7 +366,13 @@ describe("branches", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 404, body: { message: "Branch not found" } }),
       });
-      const result = await run(["branches", "pause", "nonexistent", "--project-ref", PROJECT_REF]);
+      const result = await run([
+        "branches",
+        "pause",
+        "nonexistent",
+        "--yes",
+        `--remote=${PROJECT_REF}`,
+      ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Branch not found");
     });
@@ -337,7 +383,13 @@ describe("branches", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 401, body: { message: "Invalid token" } }),
       });
-      const result = await run(["branches", "pause", BRANCH_NAME, "--project-ref", PROJECT_REF]);
+      const result = await run([
+        "branches",
+        "pause",
+        BRANCH_NAME,
+        "--yes",
+        `--remote=${PROJECT_REF}`,
+      ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Invalid token");
     });
@@ -347,7 +399,13 @@ describe("branches", () => {
     testBehaviour.skipIf(isRecording)(
       "unpauses branch successfully",
       async ({ run, projectRef }) => {
-        const result = await run(["branches", "unpause", BRANCH_NAME, "--project-ref", projectRef]);
+        const result = await run([
+          "branches",
+          "unpause",
+          BRANCH_NAME,
+          "--yes",
+          `--remote=${projectRef}`,
+        ]);
         expect(result.exitCode).toBe(0);
       },
     );
@@ -358,7 +416,13 @@ describe("branches", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 401, body: { message: "Invalid token" } }),
       });
-      const result = await run(["branches", "unpause", BRANCH_NAME, "--project-ref", PROJECT_REF]);
+      const result = await run([
+        "branches",
+        "unpause",
+        BRANCH_NAME,
+        "--yes",
+        `--remote=${PROJECT_REF}`,
+      ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Invalid token");
     });
@@ -368,7 +432,13 @@ describe("branches", () => {
     testBehaviour.skipIf(isRecording)(
       "deletes branch successfully",
       async ({ run, projectRef }) => {
-        const result = await run(["branches", "delete", BRANCH_NAME, "--project-ref", projectRef]);
+        const result = await run([
+          "branches",
+          "delete",
+          BRANCH_NAME,
+          "--yes",
+          `--remote=${projectRef}`,
+        ]);
         expect(result.exitCode).toBe(0);
         expect(result.stderr).toContain("Deleted preview branch:");
       },
@@ -380,7 +450,13 @@ describe("branches", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 404, body: { message: "Branch not found" } }),
       });
-      const result = await run(["branches", "delete", "nonexistent", "--project-ref", PROJECT_REF]);
+      const result = await run([
+        "branches",
+        "delete",
+        "nonexistent",
+        "--yes",
+        `--remote=${PROJECT_REF}`,
+      ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Branch not found");
     });
@@ -391,7 +467,13 @@ describe("branches", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 401, body: { message: "Invalid token" } }),
       });
-      const result = await run(["branches", "delete", BRANCH_NAME, "--project-ref", PROJECT_REF]);
+      const result = await run([
+        "branches",
+        "delete",
+        BRANCH_NAME,
+        "--yes",
+        `--remote=${PROJECT_REF}`,
+      ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Invalid token");
     });
@@ -399,7 +481,7 @@ describe("branches", () => {
 
   describe("branches:disable", () => {
     testBehaviour.skipIf(isRecording)("disables preview branching", async ({ run, projectRef }) => {
-      const result = await run(["branches", "disable", "--project-ref", projectRef]);
+      const result = await run(["branches", "disable", "--yes", `--remote=${projectRef}`]);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("Disabled preview branching for project:");
     });
@@ -410,7 +492,7 @@ describe("branches", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 401, body: { message: "Invalid token" } }),
       });
-      const result = await run(["branches", "disable", "--project-ref", PROJECT_REF]);
+      const result = await run(["branches", "disable", "--yes", `--remote=${PROJECT_REF}`]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Invalid token");
     });

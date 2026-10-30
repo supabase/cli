@@ -5,7 +5,7 @@ import { mockOutput, mockStdin, mockTty } from "../../tests/helpers/mocks.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { Stdin } from "../shared/runtime/stdin.service.ts";
 
-import { parseYesNo, promptYesNo } from "./prompt-yes-no.ts";
+import { parseYesNo, promptYesNo, promptYesNoOutcome } from "./prompt-yes-no.ts";
 
 describe("parseYesNo", () => {
   it("parses affirmative answers (case-insensitive, trimmed)", () => {
@@ -106,6 +106,34 @@ describe("promptYesNo machine consent", () => {
       }),
     );
   }
+});
+
+describe("promptYesNoOutcome piped answers", () => {
+  const outcome = (piped: string) =>
+    Effect.gen(function* () {
+      const output = yield* Output;
+      return yield* promptYesNoOutcome(output, false, "Confirm?", false);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(mockOutput().layer, mockStdin(false, piped), mockTty({ stdinIsTty: false })),
+      ),
+    );
+
+  it.effect("reports closed stdin as unanswered, taking the default", () =>
+    Effect.gen(function* () {
+      expect(yield* outcome("")).toEqual({ value: false, answered: false });
+    }),
+  );
+
+  it.effect.each([
+    ["\n", false],
+    ["n\n", false],
+    ["y\n", true],
+  ] as const)("reports the piped line %j as an answer", ([piped, value]) =>
+    Effect.gen(function* () {
+      expect(yield* outcome(piped)).toEqual({ value, answered: true });
+    }),
+  );
 });
 
 describe("promptYesNo piped text answers", () => {

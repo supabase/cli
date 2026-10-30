@@ -7,6 +7,7 @@ import { Effect, Layer, Option, Path } from "effect";
 import { loadStackConfig } from "../../src/command-internal/stack-config.ts";
 import { lockedSelection } from "../../src/command-internal/stack-lock.ts";
 import { Output } from "../../src/shared/output/output.service.ts";
+import { cliConfigValuesTestLayer } from "./config-values-layer.ts";
 import { mockOutput } from "./mocks.ts";
 
 /** A published pin the CLI does not bundle: the same release a hundred revisions later. */
@@ -45,7 +46,11 @@ export const seedLock = (
     yield* loadStackConfig(projectRoot, { selection: lockedSelection({ frozen: false, output }) });
     const lock = yield* readLock(projectRoot).pipe(Effect.map(Option.getOrThrow));
     yield* writeLock(projectRoot, { ...lock, services: edit(lock.services) });
-  }).pipe(Effect.provide(mockOutput().layer), Effect.asVoid, Effect.orDie);
+  }).pipe(
+    Effect.provide(Layer.mergeAll(mockOutput().layer, cliConfigValuesTestLayer)),
+    Effect.asVoid,
+    Effect.orDie,
+  );
 
 /**
  * Saves a stack of `projectRoot` under `supabaseHome` as a start leaves it and returns its id; see

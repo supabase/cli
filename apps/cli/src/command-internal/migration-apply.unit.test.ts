@@ -256,18 +256,16 @@ layer(BunServices.layer)("applyMigrationFile", (it) => {
     }),
   );
 
-  it.effect(
-    "wraps a read failure with Go's parse-file error text (Go NewMigrationFromFile parity)",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "apply-read-fail-" });
-        const missingFile = path.join(dir, "20240101120000_missing.sql");
-        const { session } = fakeSession();
-        const error = yield* run(session, missingFile).pipe(Effect.flip);
-        expect(error.message).toContain("failed to open migration file: ");
-      }),
+  it.effect("wraps a read failure with the parse-file error text", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "apply-read-fail-" });
+      const missingFile = path.join(dir, "20240101120000_missing.sql");
+      const { session } = fakeSession();
+      const error = yield* run(session, missingFile).pipe(Effect.flip);
+      expect(error.message).toContain("failed to open migration file: ");
+    }),
   );
 
   it.effect("runs a pipeline-incompatible statement outside the surrounding transaction", () =>
@@ -713,7 +711,7 @@ describe("hasTransactionControl", () => {
   });
 });
 
-layer(BunServices.layer)("migration failure rendering (Go ExecBatch parity)", (it) => {
+layer(BunServices.layer)("migration failure rendering", (it) => {
   // Error message layout: `<pg error>\n[Detail]\n[42704 hint]\n` then
   // `At statement: <i>\n<caret-marked statement>`.
   const failing = (
@@ -994,7 +992,7 @@ layer(BunServices.layer)("applySchemaFiles", (it) => {
     });
 
   it.effect(
-    "reports a read failure with the workdir-relative path, not the absolute path used to read it (Go open supabase/... parity)",
+    "reports a read failure with the workdir-relative path, not the absolute path used to read it",
     () =>
       Effect.gen(function* () {
         // An unreadable file (permission denied, not missing) still passes the glob's own
@@ -1019,27 +1017,25 @@ layer(BunServices.layer)("applySchemaFiles", (it) => {
       }),
   );
 
-  it.effect(
-    "rejects an oversized statement when SUPABASE_SCANNER_BUFFER_SIZE is configured (Go bufio.Scanner: token too long parity)",
-    () =>
-      Effect.gen(function* () {
-        // Exceeds the 4096-byte floor the scanner always starts at, regardless of the configured
-        // limit.
-        const { workdir } = yield* schemaFile(
-          "schema-files-scanner-",
-          "big.sql",
-          `SELECT 1;\nSELECT '${"a".repeat(5000)}';\n`,
-        );
-        const { session } = fakeSession();
-        const error = yield* applySchema(session, workdir, "supabase/big.sql").pipe(Effect.flip);
-        expect(error.message).toContain("bufio.Scanner: token too long");
-        expect(error.message).toContain("After statement 1: SELECT 1;");
-        expect(error.message).toContain("Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB");
-      }).pipe((body) => withConfigEnv({ SUPABASE_SCANNER_BUFFER_SIZE: "100b" }, body)),
+  it.effect("rejects an oversized statement when SUPABASE_SCANNER_BUFFER_SIZE is configured", () =>
+    Effect.gen(function* () {
+      // Exceeds the 4096-byte floor the scanner always starts at, regardless of the configured
+      // limit.
+      const { workdir } = yield* schemaFile(
+        "schema-files-scanner-",
+        "big.sql",
+        `SELECT 1;\nSELECT '${"a".repeat(5000)}';\n`,
+      );
+      const { session } = fakeSession();
+      const error = yield* applySchema(session, workdir, "supabase/big.sql").pipe(Effect.flip);
+      expect(error.message).toContain("scanner: token too long");
+      expect(error.message).toContain("After statement 1: SELECT 1;");
+      expect(error.message).toContain("Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB");
+    }).pipe((body) => withConfigEnv({ SUPABASE_SCANNER_BUFFER_SIZE: "100b" }, body)),
   );
 
   it.effect(
-    "reports the last scanned RAW token in the too-long error even when it trimmed to empty (Go scanner.Text() parity, review CLI-1958)",
+    "reports the last scanned RAW token in the too-long error even when it trimmed to empty",
     () =>
       Effect.gen(function* () {
         const { workdir } = yield* schemaFile(
@@ -1049,13 +1045,13 @@ layer(BunServices.layer)("applySchemaFiles", (it) => {
         );
         const { session } = fakeSession();
         const error = yield* applySchema(session, workdir, "supabase/big.sql").pipe(Effect.flip);
-        expect(error.message).toContain("bufio.Scanner: token too long");
+        expect(error.message).toContain("scanner: token too long");
         expect(error.message).toContain("After statement 0: ;");
       }).pipe((body) => withConfigEnv({ SUPABASE_SCANNER_BUFFER_SIZE: "100b" }, body)),
   );
 
   it.effect(
-    "applies an oversized statement fine when SUPABASE_SCANNER_BUFFER_SIZE is unset (Go's default auto-grows to file size)",
+    "applies an oversized statement fine when SUPABASE_SCANNER_BUFFER_SIZE is unset (the buffer auto-grows to file size)",
     () =>
       Effect.gen(function* () {
         const { workdir } = yield* schemaFile(
@@ -1070,7 +1066,7 @@ layer(BunServices.layer)("applySchemaFiles", (it) => {
   );
 
   it.effect(
-    "falls back to Go's hardcoded default cap when SUPABASE_SCANNER_BUFFER_SIZE is set but unparseable (viper parity, not '5M' == 5MiB)",
+    "falls back to the hardcoded default cap when SUPABASE_SCANNER_BUFFER_SIZE is set but unparseable (not '5M' == 5MiB)",
     () =>
       Effect.gen(function* () {
         const { workdir } = yield* schemaFile(
@@ -1080,51 +1076,47 @@ layer(BunServices.layer)("applySchemaFiles", (it) => {
         );
         const { session } = fakeSession();
         const error = yield* applySchema(session, workdir, "supabase/big.sql").pipe(Effect.flip);
-        expect(error.message).toContain("bufio.Scanner: token too long");
+        expect(error.message).toContain("scanner: token too long");
         expect(error.message).toContain(
           "Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is 256KB)",
         );
       }).pipe((body) => withConfigEnv({ SUPABASE_SCANNER_BUFFER_SIZE: "5M" }, body)),
   );
 
-  it.effect(
-    "accepts a hex-literal SUPABASE_SCANNER_BUFFER_SIZE (Go strconv.ParseInt base-0 parity, review CLI-1958)",
-    () =>
-      Effect.gen(function* () {
-        const { workdir } = yield* schemaFile(
-          "schema-files-scanner-hex-",
-          "big.sql",
-          `SELECT 1;\nSELECT '${"a".repeat(5116)}';\n`,
-        );
-        const { session } = fakeSession();
-        const error = yield* applySchema(session, workdir, "supabase/big.sql").pipe(Effect.flip);
-        expect(error.message).toContain("bufio.Scanner: token too long");
-        expect(error.message).toContain(
-          "Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is 5KB)",
-        );
-      }).pipe((body) => withConfigEnv({ SUPABASE_SCANNER_BUFFER_SIZE: "0x1400" }, body)),
+  it.effect("accepts a hex-literal SUPABASE_SCANNER_BUFFER_SIZE", () =>
+    Effect.gen(function* () {
+      const { workdir } = yield* schemaFile(
+        "schema-files-scanner-hex-",
+        "big.sql",
+        `SELECT 1;\nSELECT '${"a".repeat(5116)}';\n`,
+      );
+      const { session } = fakeSession();
+      const error = yield* applySchema(session, workdir, "supabase/big.sql").pipe(Effect.flip);
+      expect(error.message).toContain("scanner: token too long");
+      expect(error.message).toContain(
+        "Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is 5KB)",
+      );
+    }).pipe((body) => withConfigEnv({ SUPABASE_SCANNER_BUFFER_SIZE: "0x1400" }, body)),
+  );
+
+  it.effect("accepts underscore digit separators in a decimal SUPABASE_SCANNER_BUFFER_SIZE", () =>
+    Effect.gen(function* () {
+      const { workdir } = yield* schemaFile(
+        "schema-files-scanner-underscore-",
+        "big.sql",
+        `SELECT 1;\nSELECT '${"a".repeat(5116)}';\n`,
+      );
+      const { session } = fakeSession();
+      const error = yield* applySchema(session, workdir, "supabase/big.sql").pipe(Effect.flip);
+      expect(error.message).toContain("scanner: token too long");
+      expect(error.message).toContain(
+        "Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is 5KB)",
+      );
+    }).pipe((body) => withConfigEnv({ SUPABASE_SCANNER_BUFFER_SIZE: "5_120" }, body)),
   );
 
   it.effect(
-    "accepts underscore digit separators in a decimal SUPABASE_SCANNER_BUFFER_SIZE (Go strconv.ParseInt base-0 underscore-literal parity, review CLI-1958)",
-    () =>
-      Effect.gen(function* () {
-        const { workdir } = yield* schemaFile(
-          "schema-files-scanner-underscore-",
-          "big.sql",
-          `SELECT 1;\nSELECT '${"a".repeat(5116)}';\n`,
-        );
-        const { session } = fakeSession();
-        const error = yield* applySchema(session, workdir, "supabase/big.sql").pipe(Effect.flip);
-        expect(error.message).toContain("bufio.Scanner: token too long");
-        expect(error.message).toContain(
-          "Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is 5KB)",
-        );
-      }).pipe((body) => withConfigEnv({ SUPABASE_SCANNER_BUFFER_SIZE: "5_120" }, body)),
-  );
-
-  it.effect(
-    "rejects an invalid underscore placement in SUPABASE_SCANNER_BUFFER_SIZE, unlike a valid digit separator (Go strconv.ParseInt underscore-grammar parity, review CLI-1958)",
+    "rejects an invalid underscore placement in SUPABASE_SCANNER_BUFFER_SIZE, unlike a valid digit separator",
     () =>
       Effect.gen(function* () {
         const { workdir } = yield* schemaFile(
@@ -1139,7 +1131,7 @@ layer(BunServices.layer)("applySchemaFiles", (it) => {
   );
 
   it.effect(
-    "falls back to Go's hardcoded default cap when SUPABASE_SCANNER_BUFFER_SIZE overflows Go's signed int range (strconv.ParseInt/cast.ToInt range-error parity, review CLI-1958)",
+    "falls back to the hardcoded default cap when SUPABASE_SCANNER_BUFFER_SIZE overflows the signed int range",
     () =>
       Effect.gen(function* () {
         const { workdir } = yield* schemaFile(
@@ -1149,7 +1141,7 @@ layer(BunServices.layer)("applySchemaFiles", (it) => {
         );
         const { session } = fakeSession();
         const error = yield* applySchema(session, workdir, "supabase/big.sql").pipe(Effect.flip);
-        expect(error.message).toContain("bufio.Scanner: token too long");
+        expect(error.message).toContain("scanner: token too long");
         expect(error.message).toContain(
           "Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is 256KB)",
         );
@@ -1159,7 +1151,7 @@ layer(BunServices.layer)("applySchemaFiles", (it) => {
   );
 
   it.effect(
-    "still accepts the exact int64 boundary magnitudes for SUPABASE_SCANNER_BUFFER_SIZE (Go strconv.ParseInt range-boundary parity, review CLI-1958)",
+    "still accepts the exact int64 boundary magnitudes for SUPABASE_SCANNER_BUFFER_SIZE",
     () =>
       Effect.gen(function* () {
         const { workdir } = yield* schemaFile(
@@ -1176,7 +1168,7 @@ layer(BunServices.layer)("applySchemaFiles", (it) => {
   );
 
   it.effect(
-    "rejects an oversized statement when SUPABASE_SCANNER_BUFFER_SIZE is set only in the project env (Go loadNestedEnv parity)",
+    "rejects an oversized statement when SUPABASE_SCANNER_BUFFER_SIZE is set only in the project env",
     () =>
       Effect.gen(function* () {
         const { workdir } = yield* schemaFile(
@@ -1188,27 +1180,25 @@ layer(BunServices.layer)("applySchemaFiles", (it) => {
         const error = yield* applySchema(session, workdir, "supabase/big.sql", {
           SUPABASE_SCANNER_BUFFER_SIZE: "100b",
         }).pipe(Effect.flip);
-        expect(error.message).toContain("bufio.Scanner: token too long");
+        expect(error.message).toContain("scanner: token too long");
       }).pipe(withEmptyConfigEnv),
   );
 
-  it.effect(
-    "shell env still wins over the project env for SUPABASE_SCANNER_BUFFER_SIZE (Go godotenv 'never overrides' parity)",
-    () =>
-      Effect.gen(function* () {
-        const { workdir } = yield* schemaFile(
-          "schema-files-scanner-shellwins-",
-          "big.sql",
-          `SELECT '${"a".repeat(5000)}';\n`,
-        );
-        const { session, calls } = fakeSession();
-        // "0" is treated as unset (no check); the shell value must still win over the project
-        // env's tiny limit.
-        yield* applySchema(session, workdir, "supabase/big.sql", {
-          SUPABASE_SCANNER_BUFFER_SIZE: "100b",
-        });
-        expect(executedSql(calls).some((sql) => sql.startsWith("SELECT 'a"))).toBe(true);
-      }).pipe((body) => withConfigEnv({ SUPABASE_SCANNER_BUFFER_SIZE: "0" }, body)),
+  it.effect("shell env still wins over the project env for SUPABASE_SCANNER_BUFFER_SIZE", () =>
+    Effect.gen(function* () {
+      const { workdir } = yield* schemaFile(
+        "schema-files-scanner-shellwins-",
+        "big.sql",
+        `SELECT '${"a".repeat(5000)}';\n`,
+      );
+      const { session, calls } = fakeSession();
+      // "0" is treated as unset (no check); the shell value must still win over the project
+      // env's tiny limit.
+      yield* applySchema(session, workdir, "supabase/big.sql", {
+        SUPABASE_SCANNER_BUFFER_SIZE: "100b",
+      });
+      expect(executedSql(calls).some((sql) => sql.startsWith("SELECT 'a"))).toBe(true);
+    }).pipe((body) => withConfigEnv({ SUPABASE_SCANNER_BUFFER_SIZE: "0" }, body)),
   );
 
   it.effect(
@@ -1231,20 +1221,19 @@ layer(BunServices.layer)("applySchemaFiles", (it) => {
   );
 
   it.effect(
-    "fails with a read-phase error when SUPABASE_SCANNER_BUFFER_SIZE cannot be resolved",
+    "treats an unresolvable shell SUPABASE_SCANNER_BUFFER_SIZE as unset and falls back to the project env",
     () =>
       Effect.gen(function* () {
         const { workdir } = yield* schemaFile(
           "schema-files-scanner-config-error-",
           "big.sql",
-          "SELECT 1;\n",
+          `SELECT 1;\nSELECT '${"a".repeat(5000)}';\n`,
         );
-        const { session, calls } = fakeSession();
-        const error = yield* applySchema(session, workdir, "supabase/big.sql").pipe(Effect.flip);
-        expect(error.message).toBe(
-          "failed to resolve environment variable: SUPABASE_SCANNER_BUFFER_SIZE",
-        );
-        expect(executedSql(calls)).toEqual([]);
+        const { session } = fakeSession();
+        const error = yield* applySchema(session, workdir, "supabase/big.sql", {
+          SUPABASE_SCANNER_BUFFER_SIZE: "100b",
+        }).pipe(Effect.flip);
+        expect(error.message).toContain("scanner: token too long");
       }).pipe(
         Effect.provide(
           ConfigProvider.layer(

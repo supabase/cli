@@ -1,10 +1,11 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect } from "vitest";
+import { getRequestLog } from "./request-log.ts";
 import { testBehaviour } from "./test-context.ts";
 
 const BUCKET = "cli-e2e-bucket";
-const LOCAL_FLAGS = ["--experimental", "--local"];
+const EXPERIMENTAL_FLAGS = ["--experimental"];
 
 function setupStorageWorkspace(dir: string, relayUrl: string): void {
   mkdirSync(join(dir, "supabase"), { recursive: true });
@@ -13,18 +14,6 @@ function setupStorageWorkspace(dir: string, relayUrl: string): void {
     ['project_id = "test-project"', "", "[api]", `external_url = "${relayUrl}"`].join("\n"),
   );
   writeFileSync(join(dir, "upload.txt"), "test upload content");
-}
-
-interface RequestEntry {
-  method: string;
-  pathname: string;
-  headers: Record<string, string>;
-  body: unknown;
-}
-
-async function getRequestLog(apiUrl: string): Promise<RequestEntry[]> {
-  const res = await fetch(`${apiUrl}/_ctrl/requests`);
-  return res.json() as Promise<RequestEntry[]>;
 }
 
 async function injectGlobalError(apiUrl: string, status: number, message: string): Promise<void> {
@@ -42,7 +31,7 @@ async function clearOverrides(apiUrl: string): Promise<void> {
 describe("storage ls", () => {
   testBehaviour("lists objects in bucket", async ({ workspace, run, apiUrl }) => {
     setupStorageWorkspace(workspace.path, apiUrl);
-    const result = await run(["storage", "ls", ...LOCAL_FLAGS, `ss:///${BUCKET}/`]);
+    const result = await run(["storage", "ls", ...EXPERIMENTAL_FLAGS, `ss:///${BUCKET}/`]);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("hello.txt");
     const requests = await getRequestLog(apiUrl);
@@ -55,7 +44,7 @@ describe("storage ls", () => {
 
   testBehaviour("lists objects recursively", async ({ workspace, run, apiUrl }) => {
     setupStorageWorkspace(workspace.path, apiUrl);
-    const result = await run(["storage", "ls", ...LOCAL_FLAGS, "-r", `ss:///${BUCKET}/`]);
+    const result = await run(["storage", "ls", ...EXPERIMENTAL_FLAGS, "-r", `ss:///${BUCKET}/`]);
     expect(result.exitCode).toBe(0);
     const requests = await getRequestLog(apiUrl);
     expect(
@@ -68,7 +57,7 @@ describe("storage ls", () => {
   testBehaviour("exits 1 on 401", async ({ workspace, run, apiUrl }) => {
     setupStorageWorkspace(workspace.path, apiUrl);
     await injectGlobalError(apiUrl, 401, "Invalid token");
-    const result = await run(["storage", "ls", ...LOCAL_FLAGS, `ss:///${BUCKET}/`]);
+    const result = await run(["storage", "ls", ...EXPERIMENTAL_FLAGS, `ss:///${BUCKET}/`]);
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("Invalid token");
     await clearOverrides(apiUrl);
@@ -77,7 +66,7 @@ describe("storage ls", () => {
   testBehaviour("exits 1 on 403", async ({ workspace, run, apiUrl }) => {
     setupStorageWorkspace(workspace.path, apiUrl);
     await injectGlobalError(apiUrl, 403, "Forbidden");
-    const result = await run(["storage", "ls", ...LOCAL_FLAGS, `ss:///${BUCKET}/`]);
+    const result = await run(["storage", "ls", ...EXPERIMENTAL_FLAGS, `ss:///${BUCKET}/`]);
     expect(result.exitCode).toBe(1);
     expect(result.stderr.length).toBeGreaterThan(0);
     await clearOverrides(apiUrl);
@@ -86,7 +75,7 @@ describe("storage ls", () => {
   testBehaviour("exits 1 on 429", async ({ workspace, run, apiUrl }) => {
     setupStorageWorkspace(workspace.path, apiUrl);
     await injectGlobalError(apiUrl, 429, "Too Many Requests");
-    const result = await run(["storage", "ls", ...LOCAL_FLAGS, `ss:///${BUCKET}/`]);
+    const result = await run(["storage", "ls", ...EXPERIMENTAL_FLAGS, `ss:///${BUCKET}/`]);
     expect(result.exitCode).toBe(1);
     expect(result.stderr.length).toBeGreaterThan(0);
     await clearOverrides(apiUrl);
@@ -95,7 +84,7 @@ describe("storage ls", () => {
   testBehaviour("exits 1 on 500", async ({ workspace, run, apiUrl }) => {
     setupStorageWorkspace(workspace.path, apiUrl);
     await injectGlobalError(apiUrl, 500, "Internal Server Error");
-    const result = await run(["storage", "ls", ...LOCAL_FLAGS, `ss:///${BUCKET}/`]);
+    const result = await run(["storage", "ls", ...EXPERIMENTAL_FLAGS, `ss:///${BUCKET}/`]);
     expect(result.exitCode).toBe(1);
     expect(result.stderr.length).toBeGreaterThan(0);
     await clearOverrides(apiUrl);
@@ -108,7 +97,7 @@ describe("storage cp", () => {
     const result = await run([
       "storage",
       "cp",
-      ...LOCAL_FLAGS,
+      ...EXPERIMENTAL_FLAGS,
       "upload.txt",
       `ss:///${BUCKET}/upload.txt`,
     ]);
@@ -126,7 +115,7 @@ describe("storage cp", () => {
     const result = await run([
       "storage",
       "cp",
-      ...LOCAL_FLAGS,
+      ...EXPERIMENTAL_FLAGS,
       "--cache-control",
       "no-cache",
       "upload.txt",
@@ -146,7 +135,7 @@ describe("storage cp", () => {
     const result = await run([
       "storage",
       "cp",
-      ...LOCAL_FLAGS,
+      ...EXPERIMENTAL_FLAGS,
       "--content-type",
       "application/json",
       "upload.txt",
@@ -166,7 +155,7 @@ describe("storage cp", () => {
     const result = await run([
       "storage",
       "cp",
-      ...LOCAL_FLAGS,
+      ...EXPERIMENTAL_FLAGS,
       "nonexistent.txt",
       `ss:///${BUCKET}/x.txt`,
     ]);
@@ -179,7 +168,7 @@ describe("storage cp", () => {
     const result = await run([
       "storage",
       "cp",
-      ...LOCAL_FLAGS,
+      ...EXPERIMENTAL_FLAGS,
       "upload.txt",
       `ss:///${BUCKET}/upload.txt`,
     ]);
@@ -194,7 +183,7 @@ describe("storage cp", () => {
     const result = await run([
       "storage",
       "cp",
-      ...LOCAL_FLAGS,
+      ...EXPERIMENTAL_FLAGS,
       "upload.txt",
       `ss:///${BUCKET}/upload.txt`,
     ]);
@@ -209,7 +198,7 @@ describe("storage cp", () => {
     const result = await run([
       "storage",
       "cp",
-      ...LOCAL_FLAGS,
+      ...EXPERIMENTAL_FLAGS,
       "upload.txt",
       `ss:///${BUCKET}/upload.txt`,
     ]);
@@ -224,7 +213,7 @@ describe("storage cp", () => {
     const result = await run([
       "storage",
       "cp",
-      ...LOCAL_FLAGS,
+      ...EXPERIMENTAL_FLAGS,
       "upload.txt",
       `ss:///${BUCKET}/upload.txt`,
     ]);
@@ -238,7 +227,7 @@ describe("storage cp", () => {
     const result = await run([
       "storage",
       "cp",
-      ...LOCAL_FLAGS,
+      ...EXPERIMENTAL_FLAGS,
       `ss:///${BUCKET}/hello.txt`,
       "hello-download.txt",
     ]);
@@ -250,11 +239,17 @@ describe("storage mv", () => {
   testBehaviour("moves file within bucket", async ({ workspace, run, apiUrl }) => {
     setupStorageWorkspace(workspace.path, apiUrl);
     // Upload source file so the move has something to move in staging.
-    await run(["storage", "cp", ...LOCAL_FLAGS, "upload.txt", `ss:///${BUCKET}/mv-source.txt`]);
+    await run([
+      "storage",
+      "cp",
+      ...EXPERIMENTAL_FLAGS,
+      "upload.txt",
+      `ss:///${BUCKET}/mv-source.txt`,
+    ]);
     const result = await run([
       "storage",
       "mv",
-      ...LOCAL_FLAGS,
+      ...EXPERIMENTAL_FLAGS,
       `ss:///${BUCKET}/mv-source.txt`,
       `ss:///${BUCKET}/mv-dest.txt`,
     ]);
@@ -277,7 +272,7 @@ describe("storage mv", () => {
     const result = await run([
       "storage",
       "mv",
-      ...LOCAL_FLAGS,
+      ...EXPERIMENTAL_FLAGS,
       `ss:///${BUCKET}/a.txt`,
       `ss:///${BUCKET}/b.txt`,
     ]);
@@ -292,7 +287,7 @@ describe("storage mv", () => {
     const result = await run([
       "storage",
       "mv",
-      ...LOCAL_FLAGS,
+      ...EXPERIMENTAL_FLAGS,
       `ss:///${BUCKET}/a.txt`,
       `ss:///${BUCKET}/b.txt`,
     ]);
@@ -307,7 +302,7 @@ describe("storage mv", () => {
     const result = await run([
       "storage",
       "mv",
-      ...LOCAL_FLAGS,
+      ...EXPERIMENTAL_FLAGS,
       `ss:///${BUCKET}/a.txt`,
       `ss:///${BUCKET}/b.txt`,
     ]);
@@ -322,7 +317,7 @@ describe("storage mv", () => {
     const result = await run([
       "storage",
       "mv",
-      ...LOCAL_FLAGS,
+      ...EXPERIMENTAL_FLAGS,
       `ss:///${BUCKET}/a.txt`,
       `ss:///${BUCKET}/b.txt`,
     ]);
@@ -336,12 +331,18 @@ describe("storage rm", () => {
   testBehaviour("removes a file from storage", async ({ workspace, run, apiUrl }) => {
     setupStorageWorkspace(workspace.path, apiUrl);
     // Upload the file to remove.
-    await run(["storage", "cp", ...LOCAL_FLAGS, "upload.txt", `ss:///${BUCKET}/rm-target.txt`]);
+    await run([
+      "storage",
+      "cp",
+      ...EXPERIMENTAL_FLAGS,
+      "upload.txt",
+      `ss:///${BUCKET}/rm-target.txt`,
+    ]);
     const result = await run([
       "storage",
       "rm",
       "--yes",
-      ...LOCAL_FLAGS,
+      ...EXPERIMENTAL_FLAGS,
       `ss:///${BUCKET}/rm-target.txt`,
     ]);
     expect(result.exitCode).toBe(0);
@@ -356,13 +357,13 @@ describe("storage rm", () => {
   testBehaviour("removes multiple files", async ({ workspace, run, apiUrl }) => {
     setupStorageWorkspace(workspace.path, apiUrl);
     writeFileSync(join(workspace.path, "file2.txt"), "second file");
-    await run(["storage", "cp", ...LOCAL_FLAGS, "upload.txt", `ss:///${BUCKET}/rm-a.txt`]);
-    await run(["storage", "cp", ...LOCAL_FLAGS, "file2.txt", `ss:///${BUCKET}/rm-b.txt`]);
+    await run(["storage", "cp", ...EXPERIMENTAL_FLAGS, "upload.txt", `ss:///${BUCKET}/rm-a.txt`]);
+    await run(["storage", "cp", ...EXPERIMENTAL_FLAGS, "file2.txt", `ss:///${BUCKET}/rm-b.txt`]);
     const result = await run([
       "storage",
       "rm",
       "--yes",
-      ...LOCAL_FLAGS,
+      ...EXPERIMENTAL_FLAGS,
       `ss:///${BUCKET}/rm-a.txt`,
       `ss:///${BUCKET}/rm-b.txt`,
     ]);
@@ -382,7 +383,7 @@ describe("storage rm", () => {
       "storage",
       "rm",
       "--yes",
-      ...LOCAL_FLAGS,
+      ...EXPERIMENTAL_FLAGS,
       `ss:///${BUCKET}/file.txt`,
     ]);
     expect(result.exitCode).toBe(1);
@@ -397,7 +398,7 @@ describe("storage rm", () => {
       "storage",
       "rm",
       "--yes",
-      ...LOCAL_FLAGS,
+      ...EXPERIMENTAL_FLAGS,
       `ss:///${BUCKET}/file.txt`,
     ]);
     expect(result.exitCode).toBe(1);
@@ -412,7 +413,7 @@ describe("storage rm", () => {
       "storage",
       "rm",
       "--yes",
-      ...LOCAL_FLAGS,
+      ...EXPERIMENTAL_FLAGS,
       `ss:///${BUCKET}/file.txt`,
     ]);
     expect(result.exitCode).toBe(1);
@@ -427,7 +428,7 @@ describe("storage rm", () => {
       "storage",
       "rm",
       "--yes",
-      ...LOCAL_FLAGS,
+      ...EXPERIMENTAL_FLAGS,
       `ss:///${BUCKET}/file.txt`,
     ]);
     expect(result.exitCode).toBe(1);

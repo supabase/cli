@@ -1,21 +1,21 @@
-import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 
-import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
-import { targetDefaultWarning } from "../../../../tests/helpers/target-default-warning.ts";
 import {
+  buildTestRuntime,
+  mockCommandPlatformApi,
   mockCommandSettings,
   mockTelemetryStateTracked,
-  useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
+import { configValuesLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import { NO_TARGET } from "../../../../tests/helpers/db-target-selection.ts";
+import { DnsResolverFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
+import type { DbConnectionInput } from "../../../command-internal/db-config.types.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
-import type { InspectConnectionFlags, InspectQuerySpec } from "./inspect-query.ts";
+import type { InspectQuerySpec } from "./inspect-query.ts";
 import { dbStatsSpec } from "./db-stats/db-stats.query.ts";
 import { indexStatsSpec } from "./index-stats/index-stats.query.ts";
 import { roleStatsSpec } from "./role-stats/role-stats.query.ts";
@@ -26,11 +26,8 @@ import { inspectDbIndexUsage } from "./index-usage/index-usage.handler.ts";
 import { inspectDbRoleConfigs } from "./role-configs/role-configs.handler.ts";
 import { inspectDbRoleConnections } from "./role-connections/role-connections.handler.ts";
 import { inspectDbSeqScans } from "./seq-scans/seq-scans.handler.ts";
-import { inspectDbTableIndexSizes } from "./table-index-sizes/table-index-sizes.handler.ts";
 import { inspectDbTableRecordCounts } from "./table-record-counts/table-record-counts.handler.ts";
 import { inspectDbTableSizes } from "./table-sizes/table-sizes.handler.ts";
-import { inspectDbTotalIndexSize } from "./total-index-size/total-index-size.handler.ts";
-import { inspectDbTotalTableSizes } from "./total-table-sizes/total-table-sizes.handler.ts";
 import { inspectDbUnusedIndexes } from "./unused-indexes/unused-indexes.handler.ts";
 
 const LOCAL_CONN: PgConnInput = {
@@ -41,23 +38,24 @@ const LOCAL_CONN: PgConnInput = {
   database: "postgres",
 };
 
-function setup(opts: { workdir?: string; noProjectId?: boolean } = {}) {
+function setup() {
   const out = mockOutput({ format: "text" });
   const telemetry = mockTelemetryStateTracked();
   let querySql: string | undefined;
   const layer = Layer.mergeAll(
-    out.layer,
-    telemetry.layer,
-    mockCommandSettings({
-      workdir: opts.workdir ?? "/work/project",
-      ...(opts.noProjectId === true ? { projectId: Option.none() } : {}),
+    buildTestRuntime({
+      out,
+      api: mockCommandPlatformApi(),
+      cliSettings: mockCommandSettings({ workdir: "/tmp/inspect-deprecated-test" }),
+      telemetry: telemetry.layer,
     }),
-    BunServices.layer,
     Layer.succeed(DnsResolverFlag, "native"),
-    Layer.succeed(CliArgs, { args: [] }),
+    Layer.succeed(YesFlag, false),
+    Layer.succeed(TargetPolicy, { group: "selectable", consent: "none" }),
+    configValuesLayer(),
     Layer.succeed(DbConfigResolver, {
-      resolve: (_flags: DbConfigFlags) =>
-        Effect.succeed({ conn: LOCAL_CONN, isLocal: true } satisfies ResolvedDbConfig),
+      resolveConnection: (input: DbConnectionInput) =>
+        Effect.succeed({ conn: LOCAL_CONN, isLocal: true, target: input.target }),
       resolvePoolerFallback: () => Effect.succeed(Option.none()),
     }),
     Layer.succeed(DbConnection, {
@@ -84,13 +82,6 @@ function setup(opts: { workdir?: string; noProjectId?: boolean } = {}) {
   };
 }
 
-const flags: InspectConnectionFlags = {
-  dbUrl: Option.none<string>(),
-  linked: false,
-  local: true,
-  projectRef: Option.none<string>(),
-};
-
 // All deprecated-alias handlers share the same factory-produced type.
 type AliasHandler = typeof inspectDbCacheHit;
 
@@ -99,7 +90,6 @@ interface AliasCase {
   readonly handler: AliasHandler;
   readonly routedSpec: InspectQuerySpec;
   readonly target: string;
-  readonly removedInV3?: boolean;
 }
 
 // One row per deprecated alias: the deprecation target text and the active
@@ -117,13 +107,6 @@ const cases: ReadonlyArray<AliasCase> = [
     handler: inspectDbIndexUsage,
     routedSpec: indexStatsSpec,
     target: "index-stats",
-  },
-  {
-    alias: "total-index-size",
-    handler: inspectDbTotalIndexSize,
-    routedSpec: indexStatsSpec,
-    target: "index-stats",
-    removedInV3: true,
   },
   {
     alias: "index-sizes",
@@ -156,20 +139,6 @@ const cases: ReadonlyArray<AliasCase> = [
     target: "table-stats",
   },
   {
-    alias: "table-index-sizes",
-    handler: inspectDbTableIndexSizes,
-    routedSpec: tableStatsSpec,
-    target: "table-stats",
-    removedInV3: true,
-  },
-  {
-    alias: "total-table-sizes",
-    handler: inspectDbTotalTableSizes,
-    routedSpec: tableStatsSpec,
-    target: "table-stats",
-    removedInV3: true,
-  },
-  {
     alias: "role-configs",
     handler: inspectDbRoleConfigs,
     routedSpec: roleStatsSpec,
@@ -184,38 +153,21 @@ const cases: ReadonlyArray<AliasCase> = [
 ];
 
 describe("inspect db deprecated aliases", () => {
-  const tempRoot = useTempWorkdir("supabase-inspect-deprecated-");
-
-  it("covers all 12 deprecated aliases", () => {
-    expect(cases).toHaveLength(12);
+  it("covers all 9 deprecated aliases", () => {
+    expect(cases).toHaveLength(9);
   });
 
   for (const testCase of cases) {
     it.effect(`${testCase.alias} warns and runs the ${testCase.routedSpec.name} query`, () => {
       const ctx = setup();
       return Effect.gen(function* () {
-        yield* testCase.handler(flags);
-        const expected = testCase.removedInV3
-          ? `Command "${testCase.alias}" is deprecated and will be removed in v3, use "${testCase.target}" instead.\n`
-          : `Command "${testCase.alias}" is deprecated, use "${testCase.target}" instead.\n`;
-        expect(ctx.out.stderrText).toContain(expected);
-        expect(stripAnsi(ctx.out.stderrText)).toContain(
-          targetDefaultWarning(`inspect db ${testCase.alias}`),
+        yield* testCase.handler(NO_TARGET);
+        expect(ctx.out.stderrText).toContain(
+          `Command "${testCase.alias}" is deprecated, use "${testCase.target}" instead.\n`,
         );
         expect(ctx.out.stdoutText).not.toContain("is deprecated");
         expect(ctx.querySql).toBe(testCase.routedSpec.sql);
       }).pipe(Effect.provide(ctx.layer));
     });
   }
-
-  it.effect("prints only the deprecation notice when no linked project is configured", () => {
-    const ctx = setup({ workdir: tempRoot.current, noProjectId: true });
-    return Effect.gen(function* () {
-      yield* inspectDbCacheHit(flags);
-      expect(ctx.out.stderrText).toBe(
-        'Command "cache-hit" is deprecated, use "db-stats" instead.\nConnecting to local database...\n',
-      );
-      expect(ctx.querySql).toBe(dbStatsSpec.sql);
-    }).pipe(Effect.provide(ctx.layer));
-  });
 });

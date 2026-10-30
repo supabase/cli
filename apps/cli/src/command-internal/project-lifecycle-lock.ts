@@ -24,7 +24,7 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
-import { DebugLogger } from "./debug-logger.service.ts";
+import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 import { cliProjectFilterValue } from "./docker-ids.ts";
 
 const LOCKS_DIR = "locks";

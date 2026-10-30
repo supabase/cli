@@ -33,7 +33,16 @@ describe("commandTreeFor", () => {
 
   it("tells a defaulted switch from an optional one", () => {
     expect(tree.get("link")?.flagInfo.get("skip-pooler")?.isOptional).toBe(false);
-    expect(tree.get("db query")?.flagInfo.get("linked")?.isOptional).toBe(true);
+    expect(tree.get("db query")?.flagInfo.get("linked")).toEqual({
+      isBoolean: true,
+      isOptional: false,
+      choices: undefined,
+    });
+    expect(tree.get("db dump")?.flagInfo.get("data-only")).toEqual({
+      isBoolean: true,
+      isOptional: true,
+      choices: undefined,
+    });
   });
 
   it("marks a group as a non-leaf and its subcommand as a leaf", () => {

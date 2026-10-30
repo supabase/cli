@@ -81,7 +81,7 @@ describe("getRegistryImageUrl", () => {
     ]);
   });
 
-  it("honors a projectEnvValues (dotenv)-only registry override, matching Go's post-Load os.Getenv", () => {
+  it("honors a projectEnvValues (dotenv)-only registry override", () => {
     expect(
       resolveImage(undefined, "supabase/pg_prove:3.36", {
         SUPABASE_INTERNAL_IMAGE_REGISTRY: "my.mirror.example",

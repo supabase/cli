@@ -1,29 +1,19 @@
 import { Command, Flag } from "effect/cli";
-import type * as CliCommand from "effect/cli/Command";
-
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
-import {
-  compose,
-  withCondition,
-  withDbTarget,
-} from "../../../../command-internal/command-permissions/model.ts";
-import { dbConfig, dbConfigPoolerFallback } from "../../../../command-internal/db-config.layer.ts";
-import { linkedProjectCache } from "../../../../telemetry/linked-project-cache.layer.ts";
+import { removedCommand } from "../../../../command-internal/removed-command.ts";
+import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
+import { CliConfigKeys } from "../../../../config/cli-config-keys.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
-import { parseSchemaFlags } from "../../../../command-internal/schema-flags.ts";
-import { dbSchemaPullRuntimeLayer } from "../../pull/pull.layers.ts";
-import { dbRemoteCommit } from "./commit.handler.ts";
+import { telemetryStateLayer } from "../../../../telemetry/telemetry-state.layer.ts";
+import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 
 const config = {
   schema: Flag.String("schema").pipe(
     Flag.withAlias("s"),
     Flag.withDescription("Comma separated list of schema to include."),
     Flag.atLeast(0),
-    Flag.mapTryCatch(
-      (rawValues) => parseSchemaFlags(rawValues),
-      (err) => (err instanceof Error ? err.message : String(err)),
-    ),
   ),
   dbUrl: Flag.String("db-url").pipe(
     Flag.withDescription("Connect using the specified Postgres URL (must be percent-encoded)."),
@@ -33,45 +23,30 @@ const config = {
     Flag.withDescription("Connect to the linked project."),
     Flag.withDefault(false),
   ),
-  password: Flag.String("password").pipe(
-    Flag.withAlias("p"),
-    Flag.withDescription("Password to your remote Postgres database."),
-    Flag.optional,
-  ),
+  password: CliConfigKeys.linkedDb.password.flag({
+    name: "password",
+    alias: "p",
+    description:
+      "Database password for the project selected with --remote. Not used for the local database or a database URL.",
+  }),
 } as const;
 
-export type DbRemoteCommitFlags = CliCommand.Command.Config.Infer<typeof config>;
-
 export const dbRemoteCommitCommand = Command.make("commit", config).pipe(
-  Command.withDescription(
-    "Deprecated: use db pull instead; removed in v3. Commit remote changes as a new migration.",
-  ),
-  Command.withShortDescription("Commit remote changes as a new migration"),
-  withPermissions(
-    withDbTarget(
-      compose(
-        { operations: [], noApiEffectFlags: ["schema"] },
-        dbConfig,
-        dbConfigPoolerFallback,
-        withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
-      ),
-      { default: "linked" },
-    ),
-  ),
-  Command.withHandler((flags) =>
-    dbRemoteCommit(flags).pipe(
-      withCommandTelemetry({
-        flags: {
-          schema: flags.schema,
-          "db-url": flags.dbUrl,
-          linked: flags.linked,
-          password: flags.password,
-        },
-        aliases: { s: "schema", p: "password" },
-        config,
-      }),
+  Command.withDescription("Removed: use `supabase db pull --remote` instead."),
+  Command.withShortDescription("Removed: use `db pull --remote` instead"),
+  // Removed: fails before any Management API call, so no flag changes what it calls.
+  withPermissions({
+    operations: [],
+    noApiEffectFlags: ["db-url", "linked", "password", "schema"],
+  }),
+  Command.withHandler(() =>
+    removedCommand("Use `supabase db pull --remote` instead.").pipe(
+      withCommandTelemetry(),
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(dbSchemaPullRuntimeLayer(["db", "remote", "commit"])),
+  Command.provide(commandRuntimeLayer(["db", "remote", "commit"])),
+  Command.provide(telemetryStateLayer),
+  withCliConfigFlags(config),
+  withTargetPolicy({ group: "removed", consent: "none" }),
 );

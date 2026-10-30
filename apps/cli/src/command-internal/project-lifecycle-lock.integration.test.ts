@@ -17,6 +17,7 @@ import {
   mockTelemetryStateTracked,
   sequentialExecBatch,
 } from "../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
 import { dockerModel, type DockerModel } from "../../tests/helpers/docker-model.ts";
 import {
   mockAnalytics,
@@ -120,6 +121,7 @@ const makeProcess = Effect.fnUntraced(function* (
   const layer = Layer.mergeAll(
     unusedStackServices,
     BunServices.layer,
+    cliConfigValuesTestLayer,
     output,
     mockCommandSettings({ workdir, supabaseHome, projectId: Option.none() }),
     mockTelemetryStateTracked().layer,
