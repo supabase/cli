@@ -17,7 +17,6 @@ import {
 } from "effect";
 import { ChildProcessSpawner } from "effect/process";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import { vi } from "vitest";
 
 import {
   mockOutput,
@@ -837,7 +836,6 @@ describe("config pull integration", () => {
           }),
         },
       });
-      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
       return Effect.gen(function* () {
         yield* configPull(noFlags);
         const config = yield* readConfig;
@@ -857,11 +855,9 @@ describe("config pull integration", () => {
           },
         ]);
         const deprecation =
-          "WARN: auth.email.enable_signup is deprecated and will be removed in v4, use auth.email.enabled instead.";
-        expect(errorSpy.mock.calls.some((call) => String(call[0]) === deprecation)).toBe(
-          deprecationWarned,
-        );
-      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())));
+          "WARN: auth.email.enable_signup is deprecated and will be removed in v4, use auth.email.enabled instead.\n";
+        expect(out.stderrText.includes(deprecation)).toBe(deprecationWarned);
+      }).pipe(Effect.provide(layer));
     },
   );
 

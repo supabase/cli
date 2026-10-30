@@ -3430,6 +3430,7 @@ describe("fromConfigDocument — raw-presence masking (CliConfigWithRawPresence,
       config,
       document,
       ignoredPaths: [],
+      deprecatedPaths: [],
     };
     // No `as` cast anywhere above or below — this is the compile-time half
     // of "LoadedCliConfig is structurally assignable without a cast".
@@ -3471,7 +3472,13 @@ describe("fromConfigDocument — raw-presence masking (CliConfigWithRawPresence,
     // Mirrors `saveCliConfig`'s return shape: no `document` key at all, not even `undefined` —
     // there is no raw file to re-read on a save.
     const config = decodeCliConfig({});
-    const saved = { path: "supabase/config.toml", format: "toml", config, ignoredPaths: [] };
+    const saved = {
+      path: "supabase/config.toml",
+      format: "toml",
+      config,
+      ignoredPaths: [],
+      deprecatedPaths: [],
+    };
     const projected = fromConfigDocument(saved);
     // Unmasked: the schema-defaulted captcha section survives, same as the
     // "without a document" behavior pinned earlier in this file.

@@ -405,6 +405,53 @@ describe("CliConfigValues provider switch env names", () => {
   );
 });
 
+describe("CliConfigValues deprecated keys", () => {
+  const deprecationLine = (path: string) =>
+    `WARN: ${path}.enable_signup is deprecated and will be removed in v4, use ${path}.enabled instead.\n`;
+
+  it.live("prints each deprecation once across separate loads and a write-through", () =>
+    Effect.gen(function* () {
+      const config =
+        'project_id = "dep"\n[auth.email]\nenable_signup = false\n[auth.sms]\nenable_signup = true\n';
+      const root = yield* project(config);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const output = mockOutput();
+
+      yield* Effect.gen(function* () {
+        const values = yield* CliConfigValues;
+        yield* values.load({ workdir: root, projectRef: Option.none() });
+        yield* values.load({ workdir: root, projectRef: Option.some(LINKED) });
+        yield* values.writeThrough(
+          fs.writeFileString(path.join(root, "supabase", "config.toml"), config),
+        );
+        yield* values.load({ workdir: root, projectRef: Option.none() });
+      }).pipe(Effect.provide(configValuesLayer({ output: output.layer })));
+
+      expect(output.stderrText).toBe(
+        `${deprecationLine("auth.email")}${deprecationLine("auth.sms")}`,
+      );
+      expect(output.stdoutText).toBe("");
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("escapes control characters in a remote label before printing the deprecation", () =>
+    Effect.gen(function* () {
+      const root = yield* project(
+        'project_id = "dep"\n[remotes."a\\u001bb"]\nproject_id = "stagingrefaaaaaaaaaa"\n[remotes."a\\u001bb".auth.sms]\nenable_signup = true\n',
+      );
+      const output = mockOutput();
+
+      yield* CliConfigValues.use((values) =>
+        values.load({ workdir: root, projectRef: Option.none() }),
+      ).pipe(Effect.provide(configValuesLayer({ output: output.layer })));
+
+      expect(output.stderrText).toBe(deprecationLine("remotes.a\\u001bb.auth.sms"));
+      expect(output.stderrText.includes("\u001b")).toBe(false);
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+});
+
 describe("CliConfigValues memoisation", () => {
   it.live("memoises a load per target and drops the memo after a write", () =>
     Effect.gen(function* () {

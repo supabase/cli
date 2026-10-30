@@ -14,9 +14,11 @@ import {
 } from "effect";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import { vi } from "vitest";
 
-import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import {
+  cliConfigValuesTestLayer,
+  configValuesLayer,
+} from "../../../../tests/helpers/config-values-layer.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
   buildTestRuntime,
@@ -456,7 +458,7 @@ function setup(opts: SetupOptions) {
     Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
     workdirFilesLayer(opts.toml, opts.seed),
     cliConfigProviderLayer,
-    cliConfigValuesTestLayer,
+    configValuesLayer({ output: out.layer }),
   );
   return { layer, out, api, telemetry, linkedProjectCache };
 }
@@ -966,15 +968,16 @@ max_rows = 1000
         toml: 'project_id = "test"\n[auth.email]\nenable_signup = false\n',
         yes: true,
       });
-      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
       return Effect.gen(function* () {
         yield* configPush({ remote: Option.none(), projectRef: Option.none() });
-        expect(errorSpy.mock.calls.map((call) => String(call[0]))).toEqual([
-          "WARN: auth.email.enable_signup is deprecated and will be removed in v4, use auth.email.enabled instead.",
-        ]);
+        const deprecation =
+          "WARN: auth.email.enable_signup is deprecated and will be removed in v4, use auth.email.enabled instead.\n";
+        const confirmed = out.stderrText.indexOf("Confirmed by --yes: Push config changes to Auth");
+        expect(out.stderrText.split(deprecation)).toHaveLength(2);
+        expect(out.stderrText.indexOf(deprecation)).toBeLessThan(confirmed);
         expect(out.stderrText).toContain(EMAIL_WARNING);
         expect(authPatch(api)?.body).toEqual({ external_email_enabled: false });
-      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())));
+      }).pipe(Effect.provide(layer));
     });
 
     it.effect("re-enabling the provider prints no warning", () => {

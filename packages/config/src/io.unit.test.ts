@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, test, vi, type MockInstance } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { BunServices } from "@effect/platform-bun";
+import * as SmolToml from "smol-toml";
 import {
   Cause,
   Deferred,
@@ -15,7 +16,7 @@ import {
   Schema,
   type Scope,
 } from "effect";
-import { CliConfigSchema, toCliConfigJsonSchema } from "./base.ts";
+import { CliConfigSchema, toCliConfigJsonSchema, type CliConfig } from "./base.ts";
 import { loadCliConfig as loadCliConfigFromBun } from "./bun.ts";
 import {
   encodeCliConfigToJson,
@@ -2373,18 +2374,9 @@ enabled = false
     ));
 
   describe("an empty experimental.orioledb_version", () => {
-    let errorSpy: MockInstance<typeof console.error> | undefined;
-
-    afterEach(() => {
-      errorSpy?.mockRestore();
-      errorSpy = undefined;
-    });
-
     test("loads silently and leaves no trace in the loaded document", () =>
       runConfigEffect(
         Effect.gen(function* () {
-          errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
           const loaded = yield* loadToml(
             `project_id = "abc123"
 
@@ -2397,7 +2389,7 @@ orioledb_version = ""
 `,
           );
 
-          expect(errorSpy).not.toHaveBeenCalled();
+          expect(loaded.deprecatedPaths).toEqual([]);
           expect(loaded.rawDocument).toEqual({
             project_id: "abc123",
             experimental: {},
@@ -2432,21 +2424,6 @@ orioledb_version = ""
 });
 
 describe("config io [auth.email|sms] enabled replaces enable_signup", () => {
-  let warnings: Array<string> = [];
-  let errorSpy: MockInstance<typeof console.error> | undefined;
-
-  function captureWarnings() {
-    warnings = [];
-    errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
-      warnings.push(args.map((a) => String(a)).join(" "));
-    });
-  }
-
-  afterEach(() => {
-    errorSpy?.mockRestore();
-    errorSpy = undefined;
-  });
-
   function loadToml(contents: string, options?: InternalLoadCliConfigOptions) {
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -2462,8 +2439,7 @@ describe("config io [auth.email|sms] enabled replaces enable_signup", () => {
 
   const STAGING_REF = "stagingrefaaaaaaaaaa";
 
-  const deprecation = (path: string) =>
-    `WARN: ${path}.enable_signup is deprecated and will be removed in v4, use ${path}.enabled instead.`;
+  const deprecation = (path: string) => `${path}.enable_signup`;
 
   type Section = "email" | "sms";
 
@@ -2471,45 +2447,47 @@ describe("config io [auth.email|sms] enabled replaces enable_signup", () => {
     { section: "email", value: false },
     { section: "email", value: true },
     { section: "sms", value: true },
-  ])("decodes a legacy $section enable_signup = $value and warns once", ({ section, value }) =>
-    runConfigEffect(
-      Effect.gen(function* () {
-        captureWarnings();
-        const loaded = yield* loadToml(
-          `project_id = "abc123"
+  ])(
+    "decodes a legacy $section enable_signup = $value and reports it as deprecated",
+    ({ section, value }) =>
+      runConfigEffect(
+        Effect.gen(function* () {
+          const loaded = yield* loadToml(
+            `project_id = "abc123"
 
 [auth.${section}]
 enable_signup = ${value}
 `,
-        );
+          );
 
-        expect(loaded.config.auth[section].enable_signup).toBe(value);
-        expect(warnings).toEqual([deprecation(`auth.${section}`)]);
-      }),
-    ),
+          expect(loaded.config.auth[section].enable_signup).toBe(value);
+          expect(loaded.deprecatedPaths).toEqual([deprecation(`auth.${section}`)]);
+        }),
+      ),
   );
 
   test.each<{ section: Section; value: boolean }>([
     { section: "email", value: false },
     { section: "sms", value: true },
-  ])("folds $section enabled = $value into enable_signup without a warning", ({ section, value }) =>
-    runConfigEffect(
-      Effect.gen(function* () {
-        captureWarnings();
-        const loaded = yield* loadToml(
-          `project_id = "abc123"
+  ])(
+    "folds $section enabled = $value into enable_signup without reporting a deprecation",
+    ({ section, value }) =>
+      runConfigEffect(
+        Effect.gen(function* () {
+          const loaded = yield* loadToml(
+            `project_id = "abc123"
 
 [auth.${section}]
 enabled = ${value}
 `,
-        );
+          );
 
-        expect(loaded.config.auth[section].enable_signup).toBe(value);
-        expect(loaded.document).toHaveProperty(`auth.${section}.enable_signup`, value);
-        expect(loaded.document).not.toHaveProperty(`auth.${section}.enabled`);
-        expect(warnings).toEqual([]);
-      }),
-    ),
+          expect(loaded.config.auth[section].enable_signup).toBe(value);
+          expect(loaded.document).toHaveProperty(`auth.${section}.enable_signup`, value);
+          expect(loaded.document).not.toHaveProperty(`auth.${section}.enabled`);
+          expect(loaded.deprecatedPaths).toEqual([]);
+        }),
+      ),
   );
 
   test.each<{ section: Section; enabled: boolean }>([
@@ -2518,11 +2496,10 @@ enabled = ${value}
     { section: "sms", enabled: true },
     { section: "sms", enabled: false },
   ])(
-    "lets $section enabled = $enabled beat a disagreeing enable_signup, and still warns",
+    "lets $section enabled = $enabled beat a disagreeing enable_signup, and still reports it as deprecated",
     ({ section, enabled }) =>
       runConfigEffect(
         Effect.gen(function* () {
-          captureWarnings();
           const loaded = yield* loadToml(
             `project_id = "abc123"
 
@@ -2533,27 +2510,25 @@ enable_signup = ${!enabled}
           );
 
           expect(loaded.config.auth[section].enable_signup).toBe(enabled);
-          expect(warnings).toEqual([deprecation(`auth.${section}`)]);
+          expect(loaded.deprecatedPaths).toEqual([deprecation(`auth.${section}`)]);
         }),
       ),
   );
 
-  test("defaults email on and sms off, with no warning, when neither key is set", () =>
+  test("defaults email on and sms off, with nothing deprecated, when neither key is set", () =>
     runConfigEffect(
       Effect.gen(function* () {
-        captureWarnings();
         const loaded = yield* loadToml(`project_id = "abc123"\n`);
 
         expect(loaded.config.auth.email.enable_signup).toBe(true);
         expect(loaded.config.auth.sms.enable_signup).toBe(false);
-        expect(warnings).toEqual([]);
+        expect(loaded.deprecatedPaths).toEqual([]);
       }),
     ));
 
-  test("names the remote block in the warning for a legacy key under [remotes.*]", () =>
+  test("names the remote block in the deprecated path for a legacy key under [remotes.*]", () =>
     runConfigEffect(
       Effect.gen(function* () {
-        captureWarnings();
         const loaded = yield* loadToml(
           `project_id = "abc123"
 
@@ -2566,14 +2541,13 @@ enable_signup = true
         );
 
         expect(loaded.config.remotes.staging?.auth.sms.enable_signup).toBe(true);
-        expect(warnings).toEqual([deprecation("remotes.staging.auth.sms")]);
+        expect(loaded.deprecatedPaths).toEqual([deprecation("remotes.staging.auth.sms")]);
       }),
     ));
 
   test("folds enabled inside an unselected [remotes.*] block", () =>
     runConfigEffect(
       Effect.gen(function* () {
-        captureWarnings();
         const loaded = yield* loadToml(
           `project_id = "abc123"
 
@@ -2586,14 +2560,13 @@ enabled = false
         );
 
         expect(loaded.config.remotes.staging?.auth.email.enable_signup).toBe(false);
-        expect(warnings).toEqual([]);
+        expect(loaded.deprecatedPaths).toEqual([]);
       }),
     ));
 
   test("a selected remote's legacy enable_signup beats the base's enabled", () =>
     runConfigEffect(
       Effect.gen(function* () {
-        captureWarnings();
         const loaded = yield* loadToml(
           `project_id = "abc123"
 
@@ -2611,14 +2584,13 @@ enable_signup = true
 
         expect(loaded.appliedRemote).toBe("staging");
         expect(loaded.config.auth.email.enable_signup).toBe(true);
-        expect(warnings).toEqual([deprecation("remotes.staging.auth.email")]);
+        expect(loaded.deprecatedPaths).toEqual([deprecation("remotes.staging.auth.email")]);
       }),
     ));
 
   test("resolves enabled = env(...) and records the environment origin at enable_signup", () =>
     runConfigEffect(
       Effect.gen(function* () {
-        captureWarnings();
         yield* stubEnv("SUPABASE_PROVIDER_ENABLED_ENV_TEST", "false");
         const loaded = yield* loadToml(
           `project_id = "abc123"
@@ -2633,72 +2605,139 @@ enabled = "env(SUPABASE_PROVIDER_ENABLED_ENV_TEST)"
           "environment",
         );
         expect(cliConfigValueSourceAt(loaded, ["auth", "email", "enabled"])).toBeUndefined();
-        expect(warnings).toEqual([]);
+        expect(loaded.deprecatedPaths).toEqual([]);
       }),
     ));
-});
 
-describe("config io deprecation warnings escape control characters in remote labels", () => {
-  let warnings: Array<string> = [];
-  let errorSpy: MockInstance<typeof console.error> | undefined;
+  const encoders: ReadonlyArray<{
+    format: string;
+    encode: (config: CliConfig) => string;
+    parse: (text: string) => unknown;
+  }> = [
+    { format: "TOML", encode: encodeCliConfigToToml, parse: (text) => SmolToml.parse(text) },
+    { format: "JSON", encode: encodeCliConfigToJson, parse: (text) => JSON.parse(text) },
+  ];
 
-  function captureWarnings() {
-    warnings = [];
-    errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
-      warnings.push(args.map((a) => String(a)).join(" "));
+  describe.each(encoders)("encoding to $format", ({ encode, parse }) => {
+    test("writes enabled, not enable_signup, for a decoded legacy provider switch", () => {
+      const config = decodeCliConfig({
+        auth: { email: { enable_signup: false }, sms: { enable_signup: true } },
+      });
+
+      expect(parse(encode(config))).toEqual({
+        auth: { email: { enabled: false }, sms: { enabled: true } },
+      });
     });
-  }
 
-  afterEach(() => {
-    errorSpy?.mockRestore();
-    errorSpy = undefined;
+    test("lets enabled beat a disagreeing enable_signup on the same section", () => {
+      const config = decodeCliConfig({
+        auth: {
+          email: { enabled: true, enable_signup: false },
+          sms: { enabled: false, enable_signup: true },
+        },
+      });
+
+      expect(parse(encode(config))).toEqual({
+        auth: { email: { enabled: true }, sms: { enabled: false } },
+      });
+    });
+
+    test("writes enabled in every [remotes.*] block, with enabled winning over enable_signup", () => {
+      const config = decodeCliConfig({
+        remotes: {
+          legacy: {
+            project_id: STAGING_REF,
+            auth: { email: { enable_signup: false }, sms: { enable_signup: true } },
+          },
+          both: {
+            project_id: "bothrefaaaaaaaaaaaaa",
+            auth: {
+              email: { enabled: true, enable_signup: false },
+              sms: { enabled: false, enable_signup: true },
+            },
+          },
+        },
+      });
+
+      const { remotes } = parse(encode(config)) as {
+        remotes: Record<string, { auth: { email: object; sms: object } }>;
+      };
+
+      expect(remotes.legacy?.auth.email).toMatchObject({ enabled: false });
+      expect(remotes.legacy?.auth.sms).toMatchObject({ enabled: true });
+      expect(remotes.both?.auth.email).toMatchObject({ enabled: true });
+      expect(remotes.both?.auth.sms).toMatchObject({ enabled: false });
+      for (const remote of Object.values(remotes)) {
+        expect(remote.auth.email).not.toHaveProperty("enable_signup");
+        expect(remote.auth.sms).not.toHaveProperty("enable_signup");
+      }
+    });
   });
 
-  function loadRemoteToml(label: string, body: string) {
-    return Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const { join } = yield* Path.Path;
-      const cwd = yield* makeTempProject();
-      const path = yield* configTomlPath(cwd);
-      yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
-      yield* fs.writeFileString(
-        path,
-        `project_id = "abc123"
+  test.each<{ section: Section; value: boolean }>([
+    { section: "email", value: false },
+    { section: "sms", value: true },
+  ])(
+    "load, save, load keeps $section enabled = $value as enabled and reports nothing deprecated",
+    ({ section, value }) =>
+      runConfigEffect(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const { join } = yield* Path.Path;
+          const cwd = yield* makeTempProject();
+          yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+          yield* fs.writeFileString(
+            yield* configTomlPath(cwd),
+            `project_id = "abc123"\n\n[auth.${section}]\nenabled = ${value}\n`,
+          );
 
-[remotes."${label}"]
-project_id = "stagingrefaaaaaaaaaa"
+          const first = yield* loadCliConfig(cwd);
+          const saved = yield* saveCliConfig({ cwd, config: first!.config });
+          const second = yield* loadCliConfig(cwd);
 
-${body}`,
-      );
+          expect(first?.deprecatedPaths).toEqual([]);
+          const text = yield* fs.readFileString(saved.path);
+          expect(text).toContain(`enabled = ${value}`);
+          expect(text).not.toContain("enable_signup");
+          expect(second?.config.auth[section].enable_signup).toBe(value);
+          expect(second?.deprecatedPaths).toEqual([]);
+        }),
+      ),
+  );
 
-      return yield* loadCliConfigFile(path);
-    });
-  }
-
-  const tomlEscape = (code: number) => `\\u${code.toString(16).padStart(4, "0")}`;
-
-  test.each([
-    { name: "LF", code: 0x0a, shown: "\\u000a", escaped: true },
-    { name: "ESC", code: 0x1b, shown: "\\u001b", escaped: true },
-    { name: "the last C0 character", code: 0x1f, shown: "\\u001f", escaped: true },
-    { name: "space", code: 0x20, shown: " ", escaped: false },
-    { name: "DEL", code: 0x7f, shown: "\\u007f", escaped: true },
-    { name: "the last C1 character", code: 0x9f, shown: "\\u009f", escaped: true },
-    { name: "NBSP", code: 0xa0, shown: String.fromCodePoint(0xa0), escaped: false },
-  ])("renders $name in a remote label as its escaped or literal form", ({ code, shown, escaped }) =>
+  test("reports legacy keys through deprecatedPaths and prints nothing to the console", () =>
     runConfigEffect(
       Effect.gen(function* () {
-        captureWarnings();
-        const label = `a${tomlEscape(code)}b`;
-        yield* loadRemoteToml(label, `[remotes."${label}".auth.sms]\nenable_signup = true\n`);
+        const consoleSpies = yield* Effect.forEach(["error", "warn"] as const, (method) =>
+          Effect.acquireRelease(
+            Effect.sync(() => vi.spyOn(console, method).mockImplementation(() => {})),
+            (spy) => Effect.sync(() => spy.mockRestore()),
+          ),
+        );
 
-        expect(warnings).toEqual([
-          `WARN: remotes.a${shown}b.auth.sms.enable_signup is deprecated and will be removed in v4, use remotes.a${shown}b.auth.sms.enabled instead.`,
+        const loaded = yield* loadToml(
+          `project_id = "abc123"
+
+[auth.email]
+enable_signup = false
+
+[remotes.staging]
+project_id = "${STAGING_REF}"
+
+[remotes.staging.auth.sms]
+enable_signup = true
+`,
+        );
+
+        expect(loaded.deprecatedPaths).toEqual([
+          deprecation("auth.email"),
+          deprecation("remotes.staging.auth.sms"),
         ]);
-        expect(warnings.join("").includes(String.fromCodePoint(code))).toBe(!escaped);
+        for (const spy of consoleSpies) {
+          expect(spy).not.toHaveBeenCalled();
+        }
       }),
-    ),
-  );
+    ));
 });
 
 describe("remoteNameForProjectRef / remoteProjectIdEntries", () => {

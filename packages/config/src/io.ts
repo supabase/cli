@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { Clock, Console, Effect, FileSystem, Path, Predicate, Redacted } from "effect";
+import { Clock, Effect, FileSystem, Path, Predicate, Redacted } from "effect";
 import * as SmolToml from "smol-toml";
 import { CliConfigSchema, type CliConfig } from "./base.ts";
 import {
@@ -373,19 +373,6 @@ export const configTomlPath = Effect.fnUntraced(function* (cwd: string) {
   return configTomlPathWith(path, project?.projectRoot ?? cwd);
 });
 
-/** Renders C0, DEL and C1 characters as `\uXXXX` so a `[remotes.<name>]` label can't inject terminal escapes into a warning. */
-function escapeControlCharacters(text: string): string {
-  let escaped = "";
-  for (const character of text) {
-    const code = character.codePointAt(0) ?? 0;
-    escaped +=
-      code < 0x20 || (code >= 0x7f && code <= 0x9f)
-        ? `\\u${code.toString(16).padStart(4, "0")}`
-        : character;
-  }
-  return escaped;
-}
-
 const readCliConfigDocumentFile = Effect.fnUntraced(function* (filePath: string) {
   const fs = yield* FileSystem.FileSystem;
   const format = filePath.endsWith(".json") ? "json" : "toml";
@@ -404,16 +391,7 @@ const readAndNormalizeCliConfigFile = Effect.fnUntraced(function* (filePath: str
     : document;
   const { document: normalized, deprecatedPaths } =
     normalizeDeprecatedProviderSignupKeys(withoutRemoved);
-  // Written to the real console so a caller's deferred or buffered `Console.Console` can't
-  // delay or swallow the warning.
-  for (const path of deprecatedPaths) {
-    const shown = escapeControlCharacters(path);
-    const replacement = shown.replace(/enable_signup$/, "enabled");
-    yield* Console.error(
-      `WARN: ${shown} is deprecated and will be removed in v4, use ${replacement} instead.`,
-    ).pipe(Effect.provideService(Console.Console, globalThis.console));
-  }
-  return { format, content, document, normalized } as const;
+  return { format, content, document, normalized, deprecatedPaths } as const;
 });
 
 /**
@@ -427,6 +405,8 @@ export interface MergedCliConfigDocument {
   readonly rawText: string;
   readonly schemaRef: string | undefined;
   readonly ignoredPaths: ReadonlyArray<string>;
+  /** Dotted paths of keys written with a deprecated spelling, e.g. `auth.email.enable_signup`. */
+  readonly deprecatedPaths: ReadonlyArray<string>;
   /** The document as parsed, before any `[remotes.*]` merge. */
   readonly rawDocument: Record<string, unknown> | undefined;
   /** The merged document; `remotes` is stripped when a block matched. */
@@ -570,6 +550,7 @@ export const decodeMergedCliConfig = Effect.fn("CliConfig.decodeMerged")(functio
     config,
     schemaRef: merged.schemaRef,
     ignoredPaths: merged.ignoredPaths,
+    deprecatedPaths: merged.deprecatedPaths,
     rawText: merged.rawText,
     document: isObject(documentForDecode) ? documentForDecode : undefined,
     rawDocument: merged.rawDocument,
@@ -584,7 +565,8 @@ export const loadCliConfigFile = Effect.fn("CliConfig.loadFile")(function* (
   options?: InternalLoadCliConfigOptions,
 ) {
   const path = yield* Path.Path;
-  const { format, content, document, normalized } = yield* readAndNormalizeCliConfigFile(filePath);
+  const { format, content, document, normalized, deprecatedPaths } =
+    yield* readAndNormalizeCliConfigFile(filePath);
 
   // Substitute `env(VAR)` references against `.env`/`.env.local`/ambient env before schema
   // decode, since a numeric/boolean field would otherwise crash the strict decoder on a string.
@@ -630,6 +612,7 @@ export const loadCliConfigFile = Effect.fn("CliConfig.loadFile")(function* (
       rawText: content,
       schemaRef: getSchemaRef(document),
       ignoredPaths: [],
+      deprecatedPaths,
       rawDocument: isObject(normalized) ? normalized : undefined,
       document: resolved.document,
       appliedRemote: resolved.appliedRemote,
@@ -697,6 +680,7 @@ export interface ParsedCliConfigDocument {
   readonly rawText: string;
   readonly schemaRef: string | undefined;
   readonly ignoredPaths: ReadonlyArray<string>;
+  readonly deprecatedPaths: ReadonlyArray<string>;
   readonly rawDocument: Record<string, unknown> | undefined;
   readonly normalized: unknown;
 }
@@ -719,9 +703,8 @@ export const parseCliConfigDocumentFile = Effect.fn("CliConfig.parseDocument")(f
     return null;
   }
 
-  const { format, content, document, normalized } = yield* readAndNormalizeCliConfigFile(
-    located.filePath,
-  );
+  const { format, content, document, normalized, deprecatedPaths } =
+    yield* readAndNormalizeCliConfigFile(located.filePath);
 
   return {
     path: located.filePath,
@@ -729,6 +712,7 @@ export const parseCliConfigDocumentFile = Effect.fn("CliConfig.parseDocument")(f
     rawText: content,
     schemaRef: getSchemaRef(document),
     ignoredPaths: located.ignoredPaths,
+    deprecatedPaths,
     rawDocument: isObject(normalized) ? normalized : undefined,
     normalized,
   } satisfies ParsedCliConfigDocument;
@@ -756,6 +740,7 @@ export const mergeParsedCliConfig = Effect.fn("CliConfig.mergeParsed")(function*
     rawText: parsed.rawText,
     schemaRef: parsed.schemaRef,
     ignoredPaths: parsed.ignoredPaths,
+    deprecatedPaths: parsed.deprecatedPaths,
     rawDocument: parsed.rawDocument,
     document: resolved.document,
     appliedRemote: resolved.appliedRemote,
@@ -849,6 +834,7 @@ export const saveCliConfig = Effect.fn("CliConfig.save")(function* (options: Sav
     config: options.config,
     schemaRef,
     ignoredPaths: [],
+    deprecatedPaths: [],
   } satisfies LoadedCliConfig;
 });
 

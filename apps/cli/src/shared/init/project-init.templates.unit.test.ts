@@ -3,7 +3,6 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 import { applyConfigEdits, loadCliConfig, type ConfigEdit } from "@supabase/config/internal";
 import { orioledbVersions, postgresMajor } from "@supabase/stack/internal/artifacts";
-import { vi } from "vitest";
 import { postgresVersionCompare } from "../../command-internal/db-bootstrap/postgres.service.ts";
 import {
   INIT_GITIGNORE_TEMPLATE,
@@ -166,16 +165,13 @@ describe("project init templates", () => {
         path.join(cwd, "supabase", "config.toml"),
         renderCliConfigTemplate("demo-project", false),
       );
-      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      yield* Effect.addFinalizer(() => Effect.sync(() => errorSpy.mockRestore()));
-
       const loaded = yield* loadCliConfig(cwd, { cliCompat: true });
 
       expect(loaded?.config.auth.email.enable_signup).toBe(true);
       expect(loaded?.config.auth.sms.enable_signup).toBe(false);
       expect(loaded?.document).toHaveProperty("auth.email.enable_signup", true);
       expect(loaded?.document).toHaveProperty("auth.sms.enable_signup", false);
-      expect(errorSpy.mock.calls).toEqual([]);
+      expect(loaded?.deprecatedPaths).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 

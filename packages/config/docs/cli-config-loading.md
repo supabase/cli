@@ -206,14 +206,12 @@ cross-field feature contracts such as `enabled => required sibling fields`. Raw 
 fails when a feature block is structurally invalid, but not just because a field still contains a
 literal, unresolved `env(NAME)`.
 
-Deprecated key aliases are rewritten to their preferred form before decoding (top level and in
-every `[remotes.*]` block), and each prints a `WARN:` line on stderr:
-
-- `[inbucket]` becomes `[local_smtp]`.
-- `experimental.orioledb_version` becomes `db.orioledb_version`.
-- `auth.email.enabled`/`auth.sms.enabled` are the preferred spelling of the provider switch whose
-  decoded name stays `enable_signup` until v4. The warning fires whenever the old key is present;
-  when both are set, `enabled` wins, per section and per layer, before the `[remotes.*]` merge.
+`auth.email.enabled` and `auth.sms.enabled` are the preferred spelling of the provider switch;
+the decoded name stays `enable_signup` until v4. The loader folds the alias per section and per
+layer (top level and each `[remotes.*]` block), before the `[remotes.*]` merge, and `enabled` wins
+when both are set. Every legacy `enable_signup` present is reported in the load result's
+`deprecatedPaths`, e.g. `remotes.staging.auth.sms.enable_signup`; the package prints nothing, and
+the CLI prints a `WARN:` line on stderr. Saving a config writes `enabled`.
 
 ### In-memory effective config validation
 
