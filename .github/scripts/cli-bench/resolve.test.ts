@@ -1,13 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { BENCH_MARKER, FAILURE_TITLE } from "./post-comment.ts";
+import { composeBody, failureMarkdown } from "./post-comment.ts";
 import { resolveBench, SKIP_REASON } from "./resolve.ts";
 
 const BOT = "github-actions[bot]";
-const reported = {
+const lightweight = (content: string) => ({
   id: 5,
-  body: `${BENCH_MARKER}\n## CLI benchmark: no changes found`,
+  body: composeBody({ lightweight: { sha: "abc1234", content } }),
   authorLogin: BOT,
-};
+});
+const reported = lightweight("### Lightweight Commands: no changes found");
 
 describe("resolveBench", () => {
   test("benchmarks the first push of a pull request that has no comment yet", () => {
@@ -22,9 +23,26 @@ describe("resolveBench", () => {
   });
 
   test("benchmarks again when the comment reports a failed run", () => {
-    const failed = { ...reported, body: `${BENCH_MARKER}\n${FAILURE_TITLE}` };
+    const failed = lightweight(failureMarkdown("lightweight"));
 
     expect(resolveBench({ runAttempt: 1, isFork: false, comments: [failed] }).shouldRun).toBe(true);
+  });
+
+  test("benchmarks when the comment holds only an integration-heavy result", () => {
+    const stackOnly = {
+      id: 5,
+      body: composeBody({
+        "integration-heavy": {
+          sha: "abc1234",
+          content: "### Integration Heavy Commands: no changes found",
+        },
+      }),
+      authorLogin: BOT,
+    };
+
+    expect(resolveBench({ runAttempt: 1, isFork: false, comments: [stackOnly] }).shouldRun).toBe(
+      true,
+    );
   });
 
   test("benchmarks every re-run even when the comment reports a result", () => {

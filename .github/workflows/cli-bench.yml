@@ -8,10 +8,12 @@ run-name: "CLI benchmark #${{ github.event.pull_request.number || github.event.i
 # The first push to a pull request from this repository benchmarks and posts one comment tagged
 # `<!-- cli-bench:pr -->`; later pushes skip while that comment reports a result. A maintainer
 # commenting exactly `/bench` re-runs the run for the pull request's current head commit, as does
-# "Re-run all jobs" in the Actions UI: a re-run benchmarks again and updates the comment, keeping
-# earlier runs in a collapsed list. Pull requests from forks benchmark every push and write a job
-# summary only. A pull request that changes no benchmarked path, or more than the 300 files
-# GitHub's path filter inspects, has no run to re-run, and `/bench` says so.
+# "Re-run all jobs" in the Actions UI: a re-run benchmarks again and updates the comment's
+# Lightweight Commands section, keeping earlier runs in a collapsed list. A maintainer commenting
+# exactly `/bench full` also dispatches cli-bench-stack.yml on the pull request's branch to
+# re-measure the Integration Heavy Commands section. Pull requests from forks benchmark every push
+# and write a job summary only. A pull request that changes no benchmarked path, or more than the
+# 300 files GitHub's path filter inspects, has no run to re-run, and `/bench` says so.
 # See apps/cli/docs/tracing-monitoring.md.
 on:
   pull_request:
@@ -30,7 +32,8 @@ on:
       - "turbo.json"
       - ".github/workflows/cli-bench.yml"
       - ".github/scripts/cli-bench/**"
-  # `/bench` runs default branch code only: it never checks out or runs pull request code.
+  # `/bench` and `/bench full` run default branch code only: they never check out or run pull
+  # request code.
   # jactionlint ignore=dangerous-triggers
   issue_comment:
     types:
@@ -76,8 +79,9 @@ jobs:
           RUN_ATTEMPT: ${{ github.run_attempt }}
         run: bun .github/scripts/cli-bench/resolve.ts
 
-  # `/bench`: re-runs this workflow's run for the pull request's current head commit. The only job
-  # with `actions: write`; it runs default branch code and no pull request code.
+  # `/bench`: re-runs this workflow's run for the pull request's current head commit. `/bench full`
+  # also dispatches the stack benchmark workflow on the pull request's branch. The only job with
+  # `actions: write`; it runs default branch code and no pull request code.
   rerun:
     name: Re-run benchmark
     # Cheap, non-authoritative pre-filter; rerun.ts does the exact command match and the
@@ -290,6 +294,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           MODE: ${{ github.run_attempt > 1 && 'upsert' || 'create-if-missing' }}
+          SECTION: lightweight
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           BODY_FILE: ${{ runner.temp }}/bench-comment/comment.md
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}

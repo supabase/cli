@@ -1,22 +1,29 @@
 /**
- * `/bench` handler: re-runs the benchmark workflow run of a pull request's current head commit.
+ * `/bench` and `/bench full` handler.
  *
  * Runs default branch code and never checks out or runs pull request code. The commenter must be
  * the repository owner or hold write access, and the pull request must be an open, ready one from
- * this repository into `develop`. The command re-runs the existing `pull_request` run, which
- * benchmarks and updates the comment; the pull request gets a reply when no run can be re-run.
+ * this repository into `develop`. `/bench` re-runs the existing `pull_request` run, which
+ * benchmarks and updates the Lightweight Commands section. `/bench full` always re-measures the
+ * Integration Heavy Commands section by dispatching the stack benchmark workflow on the pull
+ * request's branch, and re-runs the lightweight part only when that section is behind the head
+ * commit; the pull request gets a reply when nothing can run.
  * Run in CI as: `bun .github/scripts/cli-bench/rerun.ts`.
  */
 import { appendFileSync } from "node:fs";
 
 import { fetchAuthorPermission, WRITE_PERMISSIONS } from "../contribution-gate.ts";
-import { githubFetch, GithubRequestError, requireEnv } from "./github.ts";
+import { githubFetch, GithubRequestError, listIssueComments, requireEnv } from "./github.ts";
+import { findBenchComment, parseSections } from "./post-comment.ts";
 
 export const BENCH_COMMAND = "/bench";
+export const BENCH_FULL_COMMAND = "/bench full";
 /** Base branches the benchmark runs for; keep in sync with the workflow's `branches:` filter. */
 export const BENCH_BASE_BRANCHES: ReadonlyArray<string> = ["develop"];
 /** The workflow file whose runs `/bench` re-runs. */
 export const WORKFLOW_FILE = "cli-bench.yml";
+/** The workflow `/bench full` dispatches. */
+export const STACK_WORKFLOW_FILE = "cli-bench-stack.yml";
 /** GitHub refuses to re-run a workflow run older than this. */
 export const RERUN_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -24,6 +31,8 @@ export interface BenchPr {
   state: "open" | "closed";
   draft: boolean;
   headSha: string;
+  /** Name of the head branch. */
+  headRef: string;
   /** `owner/name` of the head repository, empty when it was deleted. */
   headRepoFullName: string;
   baseRepoFullName: string;
@@ -35,6 +44,17 @@ export interface WorkflowRun {
   status: string;
   createdAt: string;
 }
+
+export interface StackRun {
+  id: number;
+  status: string;
+  /** The run name, which carries the `workloads` input. */
+  displayTitle: string;
+  url: string;
+}
+
+/** What a dispatched stack run measures. */
+export type StackWorkloads = "integration-heavy" | "all";
 
 export interface CommandInput {
   prNumber: number;
@@ -48,6 +68,11 @@ export interface CommandIo {
   /** Runs of the benchmark workflow triggered by `pull_request` for this commit, any order. */
   listRuns: (headSha: string) => Promise<ReadonlyArray<WorkflowRun>>;
   rerun: (runId: number) => Promise<void>;
+  /** Dispatched runs of the stack workflow on a branch, any order. */
+  listStackRuns: (headRef: string) => Promise<ReadonlyArray<StackRun>>;
+  dispatchStack: (headRef: string, workloads: StackWorkloads) => Promise<void>;
+  /** Short SHA of the commit the comment's Lightweight Commands section measured, if it has one. */
+  lightweightSha: (prNumber: number) => Promise<string | undefined>;
   reactToComment: (commentId: number) => Promise<void>;
   replyToPr: (prNumber: number, body: string) => Promise<void>;
 }
@@ -55,7 +80,8 @@ export interface CommandIo {
 export type CommandOutcome =
   | { kind: "ignored"; reason: string }
   | { kind: "replied"; reason: string }
-  | { kind: "rerun"; runId: number };
+  | { kind: "rerun"; runId: number }
+  | { kind: "dispatched"; workloads: StackWorkloads; rerunId: number | undefined };
 
 const short = (sha: string) => sha.slice(0, 7);
 
@@ -77,18 +103,46 @@ export const replies = {
   refused: (sha: string, status: number, detail: string) =>
     `The benchmark could not be re-run for commit \`${short(sha)}\`: GitHub refused the request ` +
     `(${status} ${quoted(detail)}).`,
+  notEligible: () =>
+    `\`${BENCH_FULL_COMMAND}\` runs only on pull requests from this repository into ` +
+    `${BENCH_BASE_BRANCHES.join(" or ")}.`,
+  stackRunning: (url: string) =>
+    `An integration-heavy benchmark is already queued or running for this pull request: ${url}. ` +
+    "The comment updates when it finishes.",
+  noStackWorkflow: () =>
+    "This branch does not have the stack benchmark workflow yet. Merge `develop` into the branch " +
+    `and comment \`${BENCH_FULL_COMMAND}\` again.`,
+  stackRefused: (status: number, detail: string) =>
+    `The integration-heavy benchmark could not be started: GitHub refused the request ` +
+    `(${status} ${quoted(detail)}).`,
 };
 
-/** Handles one `/bench` comment; a rejected command is ignored without a reply. */
+const STACK_RUN_WORKLOADS = /\((lightweight|integration-heavy|all)\)/u;
+
+/** Whether a stack run's name says it measures the integration-heavy workloads. */
+export function coversIntegrationHeavy(displayTitle: string): boolean {
+  const workloads = STACK_RUN_WORKLOADS.exec(displayTitle)?.[1];
+  return workloads === "integration-heavy" || workloads === "all";
+}
+
+const isCommand = (body: string) => body.trim() === BENCH_COMMAND;
+const isFullCommand = (body: string) => body.trim() === BENCH_FULL_COMMAND;
+
+/** Handles one `/bench` or `/bench full` comment; a rejected command is ignored without a reply. */
 export async function handleBenchCommand(
   input: CommandInput,
   io: CommandIo,
 ): Promise<CommandOutcome> {
   const { comment, prNumber } = input;
-  // The workflow's `if:` only pre-filters on `startsWith`, so `/bench full` must be rejected here.
-  if (comment.body.trim() !== BENCH_COMMAND) {
-    return { kind: "ignored", reason: `Comment is not exactly ${BENCH_COMMAND}.` };
+  const full = isFullCommand(comment.body);
+  // The workflow's `if:` only pre-filters on `startsWith`, so any other text must be rejected here.
+  if (!full && !isCommand(comment.body)) {
+    return {
+      kind: "ignored",
+      reason: `Comment is not exactly ${BENCH_COMMAND} or ${BENCH_FULL_COMMAND}.`,
+    };
   }
+  const command = full ? BENCH_FULL_COMMAND : BENCH_COMMAND;
   // Only the repository OWNER skips the lookup: MEMBER and COLLABORATOR do not imply push access.
   const permission = await io.fetchPermission(comment.authorLogin);
   const authorized =
@@ -98,55 +152,103 @@ export async function handleBenchCommand(
     return {
       kind: "ignored",
       reason:
-        `Commenter @${comment.authorLogin} is not authorized to run ${BENCH_COMMAND} ` +
+        `Commenter @${comment.authorLogin} is not authorized to run ${command} ` +
         `(author_association=${comment.authorAssociation}, permission=${permission ?? "n/a"}).`,
     };
   }
   const pr = await io.fetchPr(prNumber);
   if (pr.state === "closed") return { kind: "ignored", reason: `PR #${prNumber} is closed.` };
-  if (pr.headRepoFullName !== pr.baseRepoFullName) {
-    return {
-      kind: "ignored",
-      reason: `${BENCH_COMMAND} runs only on pull requests from this repository.`,
-    };
-  }
-  if (!BENCH_BASE_BRANCHES.includes(pr.baseRef)) {
-    return {
-      kind: "ignored",
-      reason: `${BENCH_COMMAND} runs only on pull requests into ${BENCH_BASE_BRANCHES.join(" or ")}.`,
-    };
-  }
 
   const reply = async (text: string): Promise<CommandOutcome> => {
     await io.replyToPr(prNumber, text);
     return { kind: "replied", reason: text };
   };
+  const eligible =
+    pr.headRepoFullName === pr.baseRepoFullName && BENCH_BASE_BRANCHES.includes(pr.baseRef);
+  if (!eligible) {
+    return full
+      ? reply(replies.notEligible())
+      : {
+          kind: "ignored",
+          reason:
+            pr.headRepoFullName !== pr.baseRepoFullName
+              ? `${BENCH_COMMAND} runs only on pull requests from this repository.`
+              : `${BENCH_COMMAND} runs only on pull requests into ${BENCH_BASE_BRANCHES.join(" or ")}.`,
+        };
+  }
   if (pr.draft) return reply(replies.draft());
 
   const latest = [...(await io.listRuns(pr.headSha))].sort((a, b) =>
     b.createdAt.localeCompare(a.createdAt),
   )[0];
-  if (latest === undefined) return reply(replies.noRun(pr.headSha));
-  if (latest.status !== "completed") return reply(replies.running(pr.headSha));
-  if (input.now.getTime() - Date.parse(latest.createdAt) > RERUN_WINDOW_MS) {
-    return reply(replies.expired(pr.headSha));
+  const expired =
+    latest !== undefined && input.now.getTime() - Date.parse(latest.createdAt) > RERUN_WINDOW_MS;
+
+  if (!full) {
+    if (latest === undefined) return reply(replies.noRun(pr.headSha));
+    if (latest.status !== "completed") return reply(replies.running(pr.headSha));
+    if (expired) return reply(replies.expired(pr.headSha));
+    try {
+      await io.rerun(latest.id);
+    } catch (error) {
+      if (error instanceof GithubRequestError) {
+        return reply(replies.refused(pr.headSha, error.status, error.detail));
+      }
+      throw error;
+    }
+    await react(io, comment.id);
+    return { kind: "rerun", runId: latest.id };
   }
 
+  const active = (await io.listStackRuns(pr.headRef)).find(
+    (stackRun) => stackRun.status !== "completed" && coversIntegrationHeavy(stackRun.displayTitle),
+  );
+  if (active !== undefined) return reply(replies.stackRunning(active.url));
+
+  // The lightweight part refreshes only when its section is behind the head commit and no
+  // lightweight run is already in flight; with no run to re-run, the stack run measures it too.
+  const sectionSha = await io.lightweightSha(prNumber);
+  const lightweightCurrent = sectionSha !== undefined && pr.headSha.startsWith(sectionSha);
+  const lightweightInFlight = latest !== undefined && latest.status !== "completed";
+  const needsLightweight = !lightweightCurrent && !lightweightInFlight;
+  const rerunnable = latest !== undefined && !expired ? latest : undefined;
+  const workloads: StackWorkloads =
+    needsLightweight && rerunnable === undefined ? "all" : "integration-heavy";
+
   try {
-    await io.rerun(latest.id);
+    await io.dispatchStack(pr.headRef, workloads);
   } catch (error) {
-    if (error instanceof GithubRequestError) {
-      return reply(replies.refused(pr.headSha, error.status, error.detail));
+    if (!(error instanceof GithubRequestError)) throw error;
+    const missing =
+      error.status === 404 || (error.status === 422 && /workflow_dispatch/u.test(error.detail));
+    return reply(
+      missing ? replies.noStackWorkflow() : replies.stackRefused(error.status, error.detail),
+    );
+  }
+
+  let rerunId: number | undefined;
+  if (needsLightweight && rerunnable !== undefined) {
+    try {
+      await io.rerun(rerunnable.id);
+      rerunId = rerunnable.id;
+    } catch (error) {
+      // The stack run is already under way; a refused lightweight re-run must not hide it.
+      console.warn(
+        `Could not re-run the lightweight benchmark run ${rerunnable.id}: ${String(error)}`,
+      );
     }
-    throw error;
   }
-  // Cosmetic: a failed reaction must never hide an accepted re-run.
+  await react(io, comment.id);
+  return { kind: "dispatched", workloads, rerunId };
+}
+
+/** Cosmetic: a failed reaction must never hide an accepted command. */
+async function react(io: CommandIo, commentId: number): Promise<void> {
   try {
-    await io.reactToComment(comment.id);
+    await io.reactToComment(commentId);
   } catch (error) {
-    console.warn(`Could not react to comment ${comment.id}: ${String(error)}`);
+    console.warn(`Could not react to comment ${commentId}: ${String(error)}`);
   }
-  return { kind: "rerun", runId: latest.id };
 }
 
 async function main(): Promise<void> {
@@ -160,13 +262,14 @@ async function main(): Promise<void> {
       const value = (await (await githubFetch(`${base}/pulls/${n}`, token)).json()) as {
         state: "open" | "closed";
         draft: boolean;
-        head: { sha: string; repo: { full_name: string } | null };
+        head: { sha: string; ref: string; repo: { full_name: string } | null };
         base: { ref: string; repo: { full_name: string } };
       };
       return {
         state: value.state,
         draft: value.draft,
         headSha: value.head.sha,
+        headRef: value.head.ref,
         headRepoFullName: value.head.repo?.full_name ?? "",
         baseRepoFullName: value.base.repo.full_name,
         baseRef: value.base.ref,
@@ -186,6 +289,48 @@ async function main(): Promise<void> {
     },
     rerun: async (runId) => {
       await githubFetch(`${base}/actions/runs/${runId}/rerun`, token, { method: "POST" });
+    },
+    listStackRuns: async (headRef) => {
+      const url =
+        `${base}/actions/workflows/${STACK_WORKFLOW_FILE}/runs` +
+        `?event=workflow_dispatch&branch=${encodeURIComponent(headRef)}&per_page=50`;
+      const payload = await githubFetch(url, token).then(
+        (response) =>
+          response.json() as Promise<{
+            workflow_runs: Array<{
+              id: number;
+              status: string;
+              display_title: string;
+              html_url: string;
+            }>;
+          }>,
+        (error: unknown) => {
+          // A branch without the workflow file has no runs of it.
+          if (error instanceof GithubRequestError && error.status === 404) {
+            return { workflow_runs: [] };
+          }
+          throw error;
+        },
+      );
+      return payload.workflow_runs.map((run) => ({
+        id: run.id,
+        status: run.status,
+        displayTitle: run.display_title,
+        url: run.html_url,
+      }));
+    },
+    dispatchStack: async (headRef, workloads) => {
+      await githubFetch(`${base}/actions/workflows/${STACK_WORKFLOW_FILE}/dispatches`, token, {
+        method: "POST",
+        body: JSON.stringify({
+          ref: headRef,
+          inputs: { workloads, runtime: "both", base: "merge-base" },
+        }),
+      });
+    },
+    lightweightSha: async (n) => {
+      const existing = findBenchComment(await listIssueComments(token, base, n));
+      return existing === undefined ? undefined : parseSections(existing.body).lightweight?.sha;
     },
     reactToComment: async (commentId) => {
       await githubFetch(`${base}/issues/comments/${commentId}/reactions`, token, {
@@ -217,7 +362,11 @@ async function main(): Promise<void> {
   const message =
     outcome.kind === "rerun"
       ? `Re-running benchmark run ${outcome.runId} for PR #${prNumber}.`
-      : `${outcome.kind === "replied" ? "Replied on" : "Ignored command on"} PR #${prNumber}: ${outcome.reason}`;
+      : outcome.kind === "dispatched"
+        ? `Dispatched the stack benchmark (${outcome.workloads}) for PR #${prNumber}${
+            outcome.rerunId === undefined ? "" : ` and re-running benchmark run ${outcome.rerunId}`
+          }.`
+        : `${outcome.kind === "replied" ? "Replied on" : "Ignored command on"} PR #${prNumber}: ${outcome.reason}`;
   console.log(message);
   const summaryFile = process.env.GITHUB_STEP_SUMMARY;
   if (summaryFile) appendFileSync(summaryFile, `${message}\n`);
