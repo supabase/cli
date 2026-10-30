@@ -235,6 +235,7 @@ const UUID_PATTERN =
 // Keys stripped from a schema node because they describe documentation/example
 // values, not the value's shape.
 const SCHEMA_METADATA_KEYS = new Set(["default", "example", "examples"]);
+const CONTENT_ANNOTATION_KEYS = new Set(["contentEncoding", "contentMediaType"]);
 
 // `inPropertiesMap` tracks whether the current object is the value of a
 // `properties: {...}` map; there, keys are user-defined property names (which may
@@ -268,6 +269,12 @@ export function sanitizeOpenApiSchema(
 
     // The OpenAPI 3.0 converter rejects `propertyNames`; key constraints are left to the server.
     if (!inPropertiesMap && key === "propertyNames" && isRecord(rawValue)) {
+      continue;
+    }
+
+    // The OpenAPI 3.0 converter rejects the annotation-only content keywords; `format` still
+    // carries the encoding.
+    if (!inPropertiesMap && CONTENT_ANNOTATION_KEYS.has(key)) {
       continue;
     }
 

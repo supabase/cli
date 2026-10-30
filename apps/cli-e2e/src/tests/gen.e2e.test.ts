@@ -1,6 +1,7 @@
+import { Effect, Schema } from "effect";
 import { describe, expect } from "vitest";
 import { isRecording, PROJECT_REF } from "./env.ts";
-import { testBehaviour } from "./test-context.ts";
+import { decodeJsonOutput, postControl, runE2e, testBehaviour } from "./test-context.ts";
 
 function decodeJwtPart(part: string): Record<string, unknown> {
   const padded = part + "=".repeat((4 - (part.length % 4)) % 4);
@@ -11,147 +12,204 @@ describe("gen", () => {
   describe("gen:types", () => {
     testBehaviour.skipIf(isRecording)(
       "generates typescript types from project",
-      async ({ run, projectRef }) => {
-        // #5212 — with CLAUDECODE=1, piped/redirected output must not include the
-        // plugin hint (would break `gen types > file.ts` and similar captures).
-        const result = await run(["gen", "types", `--remote=${projectRef}`], {
-          env: { CLAUDECODE: "1" },
-        });
-        expect(result.exitCode).toBe(0);
-        expect(result.stdout).toContain("export type Json");
-        expect(result.stdout).toContain("export type Database");
-        expect(result.stdout).not.toMatch(/claude-code-hint/);
-        expect(result.stderr).not.toMatch(/claude-code-hint/);
-      },
+      ({ run, projectRef, signal }) =>
+        runE2e(
+          Effect.gen(function* () {
+            // #5212 — with CLAUDECODE=1, piped/redirected output must not include the
+            // plugin hint (would break `gen types > file.ts` and similar captures).
+            const result = yield* run(["gen", "types", `--remote=${projectRef}`], {
+              env: { CLAUDECODE: "1" },
+            });
+            expect(result.exitCode).toBe(0);
+            expect(result.stdout).toContain("export type Json");
+            expect(result.stdout).toContain("export type Database");
+            expect(result.stdout).not.toMatch(/claude-code-hint/);
+            expect(result.stderr).not.toMatch(/claude-code-hint/);
+          }),
+          signal,
+        ),
     );
 
     testBehaviour.skipIf(isRecording)(
       "includes debug output with --debug",
-      async ({ run, projectRef }) => {
-        const result = await run(["gen", "types", "--debug", `--remote=${projectRef}`]);
-        expect(result.exitCode).toBe(0);
-        expect(result.stderr).toMatch(/HTTP.*GET:/);
-      },
+      ({ run, projectRef, signal }) =>
+        runE2e(
+          Effect.gen(function* () {
+            const result = yield* run(["gen", "types", "--debug", `--remote=${projectRef}`]);
+            expect(result.exitCode).toBe(0);
+            expect(result.stderr).toMatch(/HTTP.*GET:/);
+          }),
+          signal,
+        ),
     );
 
-    testBehaviour("exits non-zero on 401", async ({ run, apiUrl }) => {
-      await fetch(`${apiUrl}/_ctrl/error-all`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: 401, body: { message: "Invalid token" } }),
-      });
-      const result = await run(["gen", "types", `--remote=${PROJECT_REF}`]);
-      expect(result.exitCode).not.toBe(0);
-      expect(result.stderr).toContain("Invalid token");
-    });
+    testBehaviour("exits non-zero on 401", ({ run, apiUrl, signal }) =>
+      runE2e(
+        Effect.gen(function* () {
+          yield* postControl(`${apiUrl}/_ctrl/error-all`, {
+            status: 401,
+            body: { message: "Invalid token" },
+          });
+          const result = yield* run(["gen", "types", `--remote=${PROJECT_REF}`]);
+          expect(result.exitCode).not.toBe(0);
+          expect(result.stderr).toContain("Invalid token");
+        }),
+        signal,
+      ),
+    );
 
-    testBehaviour("exits non-zero on 403", async ({ run, apiUrl }) => {
-      await fetch(`${apiUrl}/_ctrl/error-all`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: 403, body: { message: "Forbidden" } }),
-      });
-      const result = await run(["gen", "types", `--remote=${PROJECT_REF}`]);
-      expect(result.exitCode).not.toBe(0);
-      expect(result.stderr).toContain("Forbidden");
-    });
+    testBehaviour("exits non-zero on 403", ({ run, apiUrl, signal }) =>
+      runE2e(
+        Effect.gen(function* () {
+          yield* postControl(`${apiUrl}/_ctrl/error-all`, {
+            status: 403,
+            body: { message: "Forbidden" },
+          });
+          const result = yield* run(["gen", "types", `--remote=${PROJECT_REF}`]);
+          expect(result.exitCode).not.toBe(0);
+          expect(result.stderr).toContain("Forbidden");
+        }),
+        signal,
+      ),
+    );
 
-    testBehaviour("exits non-zero on 404 project not found", async ({ run, apiUrl }) => {
-      await fetch(`${apiUrl}/_ctrl/error-all`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: 404, body: { message: "Project not found" } }),
-      });
-      const result = await run(["gen", "types", `--remote=${PROJECT_REF}`]);
-      expect(result.exitCode).not.toBe(0);
-      expect(result.stderr).toContain("Project not found");
-    });
+    testBehaviour("exits non-zero on 404 project not found", ({ run, apiUrl, signal }) =>
+      runE2e(
+        Effect.gen(function* () {
+          yield* postControl(`${apiUrl}/_ctrl/error-all`, {
+            status: 404,
+            body: { message: "Project not found" },
+          });
+          const result = yield* run(["gen", "types", `--remote=${PROJECT_REF}`]);
+          expect(result.exitCode).not.toBe(0);
+          expect(result.stderr).toContain("Project not found");
+        }),
+        signal,
+      ),
+    );
 
     testBehaviour(
       "exits non-zero when the local stack is not running",
-      async ({ runNoProjectId }) => {
-        const result = await runNoProjectId(["gen", "types"]);
-        expect(result.exitCode).not.toBe(0);
-        expect(result.stderr).toContain("Target: local stack");
-        expect(result.stderr).toContain("supabase start is not running");
-      },
+      ({ runNoProjectId, signal }) =>
+        runE2e(
+          Effect.gen(function* () {
+            const result = yield* runNoProjectId(["gen", "types"]);
+            expect(result.exitCode).not.toBe(0);
+            expect(result.stderr).toContain("Target: local stack");
+            expect(result.stderr).toContain("supabase start is not running");
+          }),
+          signal,
+        ),
     );
   });
 
   describe("gen:signing-key", () => {
-    testBehaviour("generates ES256 signing key by default", async ({ run }) => {
-      const result = await run(["gen", "signing-key"]);
-      expect(result.exitCode).toBe(0);
-      const key = JSON.parse(result.stdout) as Record<string, unknown>;
-      expect(key["kty"]).toBe("EC");
-      expect(key["alg"]).toBe("ES256");
-      expect(key["crv"]).toBe("P-256");
-      expect(key["use"]).toBe("sig");
-      expect(typeof key["d"]).toBe("string");
-      expect((key["d"] as string).length).toBeGreaterThan(0);
-    });
+    testBehaviour("generates ES256 signing key by default", ({ run, signal }) =>
+      runE2e(
+        Effect.gen(function* () {
+          const result = yield* run(["gen", "signing-key"]);
+          expect(result.exitCode).toBe(0);
+          const key = yield* decodeJsonOutput(Schema.Record(Schema.String, Schema.Unknown))(
+            result.stdout,
+          );
+          expect(key["kty"]).toBe("EC");
+          expect(key["alg"]).toBe("ES256");
+          expect(key["crv"]).toBe("P-256");
+          expect(key["use"]).toBe("sig");
+          expect(typeof key["d"]).toBe("string");
+          expect((key["d"] as string).length).toBeGreaterThan(0);
+        }),
+        signal,
+      ),
+    );
 
-    testBehaviour("generates RS256 signing key with --algorithm RS256", async ({ run }) => {
-      const result = await run(["gen", "signing-key", "--algorithm", "RS256"]);
-      expect(result.exitCode).toBe(0);
-      const key = JSON.parse(result.stdout) as Record<string, unknown>;
-      expect(key["kty"]).toBe("RSA");
-      expect(key["alg"]).toBe("RS256");
-      expect(key["use"]).toBe("sig");
-      expect(typeof key["n"]).toBe("string");
-      expect((key["n"] as string).length).toBeGreaterThan(0);
-    });
+    testBehaviour("generates RS256 signing key with --algorithm RS256", ({ run, signal }) =>
+      runE2e(
+        Effect.gen(function* () {
+          const result = yield* run(["gen", "signing-key", "--algorithm", "RS256"]);
+          expect(result.exitCode).toBe(0);
+          const key = yield* decodeJsonOutput(Schema.Record(Schema.String, Schema.Unknown))(
+            result.stdout,
+          );
+          expect(key["kty"]).toBe("RSA");
+          expect(key["alg"]).toBe("RS256");
+          expect(key["use"]).toBe("sig");
+          expect(typeof key["n"]).toBe("string");
+          expect((key["n"] as string).length).toBeGreaterThan(0);
+        }),
+        signal,
+      ),
+    );
   });
 
   describe("gen:bearer-jwt", () => {
-    testBehaviour("exits non-zero without --role", async ({ run }) => {
-      const result = await run(["gen", "bearer-jwt"]);
-      expect(result.exitCode).not.toBe(0);
-      expect(result.stderr).toContain('"role"');
-    });
+    testBehaviour("exits non-zero without --role", ({ run, signal }) =>
+      runE2e(
+        Effect.gen(function* () {
+          const result = yield* run(["gen", "bearer-jwt"]);
+          expect(result.exitCode).not.toBe(0);
+          expect(result.stderr).toContain('"role"');
+        }),
+        signal,
+      ),
+    );
 
-    testBehaviour("generates bearer jwt for anon role", async ({ run }) => {
-      const result = await run(["gen", "bearer-jwt", "--role", "anon"]);
-      expect(result.exitCode).toBe(0);
-      const parts = result.stdout.trim().split(".");
-      expect(parts).toHaveLength(3);
-      const header = decodeJwtPart(parts[0]!);
-      expect(header["alg"]).toBe("ES256");
-      expect(typeof header["kid"]).toBe("string");
-      const payload = decodeJwtPart(parts[1]!);
-      expect(payload["role"]).toBe("anon");
-      expect(typeof payload["exp"]).toBe("number");
-      expect(typeof payload["iat"]).toBe("number");
-    });
+    testBehaviour("generates bearer jwt for anon role", ({ run, signal }) =>
+      runE2e(
+        Effect.gen(function* () {
+          const result = yield* run(["gen", "bearer-jwt", "--role", "anon"]);
+          expect(result.exitCode).toBe(0);
+          const parts = result.stdout.trim().split(".");
+          expect(parts).toHaveLength(3);
+          const header = decodeJwtPart(parts[0]!);
+          expect(header["alg"]).toBe("ES256");
+          expect(typeof header["kid"]).toBe("string");
+          const payload = decodeJwtPart(parts[1]!);
+          expect(payload["role"]).toBe("anon");
+          expect(typeof payload["exp"]).toBe("number");
+          expect(typeof payload["iat"]).toBe("number");
+        }),
+        signal,
+      ),
+    );
 
-    testBehaviour("generates bearer jwt with custom validity", async ({ run }) => {
-      const result = await run(["gen", "bearer-jwt", "--role", "anon", "--valid-for", "1h"]);
-      expect(result.exitCode).toBe(0);
-      const parts = result.stdout.trim().split(".");
-      expect(parts).toHaveLength(3);
-      const payload = decodeJwtPart(parts[1]!);
-      expect(payload["role"]).toBe("anon");
-      expect((payload["exp"] as number) - (payload["iat"] as number)).toBe(3600);
-    });
+    testBehaviour("generates bearer jwt with custom validity", ({ run, signal }) =>
+      runE2e(
+        Effect.gen(function* () {
+          const result = yield* run(["gen", "bearer-jwt", "--role", "anon", "--valid-for", "1h"]);
+          expect(result.exitCode).toBe(0);
+          const parts = result.stdout.trim().split(".");
+          expect(parts).toHaveLength(3);
+          const payload = decodeJwtPart(parts[1]!);
+          expect(payload["role"]).toBe("anon");
+          expect((payload["exp"] as number) - (payload["iat"] as number)).toBe(3600);
+        }),
+        signal,
+      ),
+    );
 
     testBehaviour(
       "generates bearer jwt for authenticated role with custom sub",
-      async ({ run }) => {
-        const result = await run([
-          "gen",
-          "bearer-jwt",
-          "--role",
-          "authenticated",
-          "--sub",
-          "user-123",
-        ]);
-        expect(result.exitCode).toBe(0);
-        const parts = result.stdout.trim().split(".");
-        expect(parts).toHaveLength(3);
-        const payload = decodeJwtPart(parts[1]!);
-        expect(payload["role"]).toBe("authenticated");
-        expect(payload["sub"]).toBe("user-123");
-      },
+      ({ run, signal }) =>
+        runE2e(
+          Effect.gen(function* () {
+            const result = yield* run([
+              "gen",
+              "bearer-jwt",
+              "--role",
+              "authenticated",
+              "--sub",
+              "user-123",
+            ]);
+            expect(result.exitCode).toBe(0);
+            const parts = result.stdout.trim().split(".");
+            expect(parts).toHaveLength(3);
+            const payload = decodeJwtPart(parts[1]!);
+            expect(payload["role"]).toBe("authenticated");
+            expect(payload["sub"]).toBe("user-123");
+          }),
+          signal,
+        ),
     );
   });
 });

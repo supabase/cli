@@ -216,6 +216,23 @@ on a blank line. Experimental prints `Would enable webhooks for project: <ref>`.
 diff is printed before anything is written, so the consent question always follows the
 full plan.
 
+When a push would turn the email or phone provider off — `auth.email.enable_signup` or
+`auth.sms.enable_signup` (spelled `auth.email.enabled`/`auth.sms.enabled` in the file) going
+from `true` to `false` — the matching warning line prints on stderr right after the auth
+`[update]` block and before the consent question — one line per path, email first. Request
+bodies, JSON payloads, exit codes, and telemetry are unchanged:
+
+```
+Warning: auth.email.enabled = false turns off the email provider, so existing users can no longer sign in with email (password, magic link or OTP). To block new signups only, set auth.enable_signup = false and keep auth.email.enabled = true.
+Warning: auth.sms.enabled = false turns off the phone provider, so existing users can no longer sign in with a phone number (password or SMS OTP). To block new signups only, set auth.enable_signup = false and keep auth.sms.enabled = true.
+```
+
+A file that still spells `[auth.email] enable_signup` or `[auth.sms] enable_signup` (any value,
+top level or in a `[remotes.*]` block) also prints `WARN: auth.email.enable_signup is deprecated
+and will be removed in v4, use auth.email.enabled instead.` on stderr when the config loads
+(`remotes.<name>.auth.sms.enable_signup` and so on for the other forms). Both spellings decode
+to the same `enable_signup` value and `[update]` block path; `enabled` wins when both are set.
+
 When at least one resource (or the webhooks enable) will be written, a price line
 `Enabling <name> will cost you <price>.` prints for each paid add-on the push would
 switch on, then one question is asked: `Push config changes to <API, DB and Auth…> on

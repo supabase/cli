@@ -28,6 +28,8 @@ development. The generator:
    `public/schemas/<name>/v1.json`, mirroring their `https://supabase.com/schemas/` URLs. The two
    config schemas are copied from the `@supabase/config` build, which requires
    `@supabase/config#build` to have run first; `turbo.json` wires that up.
+   Stable releases publish these files to supabase.com; see the
+   [CLI reference README](../apps/cli/docs/README.md#release).
 
 The generated `content/docs/commands/` directory is git-ignored; only the hand-authored pages are
 committed.

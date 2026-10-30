@@ -50,7 +50,7 @@ const isAlreadyPublished = Effect.fnUntraced(function* (
   name: string,
   version: string,
 ) {
-  const encodedName = name.replace("/", "%2F");
+  const encodedName = name.replaceAll("/", "%2F");
   const res = yield* HttpClient.get(`${registryUrl}/${encodedName}/${version}`);
   if (res.status === 200) return true;
   if (res.status === 404) return false;
