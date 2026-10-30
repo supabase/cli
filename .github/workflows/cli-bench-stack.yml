@@ -1,7 +1,7 @@
 name: CLI benchmark (stack)
 run-name: >-
   ${{ github.event_name == 'schedule' && 'CLI benchmark stack (scheduled)' ||
-  format('CLI benchmark stack ({0}): {1}', inputs.workloads, github.ref_name) }}
+  format('CLI benchmark stack ({0}): {1}', inputs.workloads || 'all', github.ref_name) }}
 
 # Report-only comparison of a CLI build with a base build for the workloads that need a running
 # local stack or database. Starts only from the `/bench full` pull request command, the Actions UI
@@ -12,6 +12,8 @@ run-name: >-
 # required check.
 # See apps/cli/docs/tracing-monitoring.md.
 on:
+  push:
+    branches: [ci/cli-bench-stack-test]
   workflow_dispatch:
     inputs:
       workloads:
@@ -79,9 +81,9 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           EVENT_NAME: ${{ github.event_name }}
           REF_NAME: ${{ github.ref_name }}
-          INPUT_WORKLOADS: ${{ inputs.workloads }}
-          INPUT_RUNTIME: ${{ inputs.runtime }}
-          INPUT_BASE: ${{ inputs.base }}
+          INPUT_WORKLOADS: ${{ inputs.workloads || 'all' }}
+          INPUT_RUNTIME: ${{ inputs.runtime || 'both' }}
+          INPUT_BASE: ${{ inputs.base || 'merge-base' }}
         run: bun .github/scripts/cli-bench/stack-plan.ts
       - name: Mark the integration-heavy section as running
         if: steps.plan.outputs.pr_number != '' && steps.plan.outputs.run_integration == 'true'
