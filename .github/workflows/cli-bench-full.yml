@@ -1,7 +1,7 @@
-name: CLI benchmark (stack)
+name: CLI benchmark (full)
 run-name: >-
-  ${{ github.event_name == 'schedule' && 'CLI benchmark stack (scheduled)' ||
-  format('CLI benchmark stack ({0}): {1}', inputs.workloads, github.ref_name) }}
+  ${{ github.event_name == 'schedule' && 'CLI benchmark full (scheduled)' ||
+  format('CLI benchmark full ({0}): {1}', inputs.workloads, github.ref_name) }}
 
 # Report-only comparison of a CLI build with a base build for the workloads that need a running
 # local stack or database. Starts only from the `/bench full` pull request command, the Actions UI
@@ -41,7 +41,7 @@ permissions: {}
 
 # A second run for a branch waits for the first instead of cancelling it.
 concurrency:
-  group: cli-bench-stack-${{ github.ref_name }}
+  group: cli-bench-full-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -55,8 +55,6 @@ jobs:
       contents: read
       pull-requests: write
     outputs:
-      workloads: ${{ steps.plan.outputs.workloads }}
-      runtime: ${{ steps.plan.outputs.runtime }}
       base_kind: ${{ steps.plan.outputs.base_kind }}
       base_tag: ${{ steps.plan.outputs.base_tag }}
       pr_number: ${{ steps.plan.outputs.pr_number }}
@@ -82,7 +80,7 @@ jobs:
           INPUT_WORKLOADS: ${{ inputs.workloads }}
           INPUT_RUNTIME: ${{ inputs.runtime }}
           INPUT_BASE: ${{ inputs.base }}
-        run: bun .github/scripts/cli-bench/stack-plan.ts
+        run: bun .github/scripts/cli-bench/full-plan.ts
       - name: Mark the integration-heavy section as running
         if: steps.plan.outputs.pr_number != '' && steps.plan.outputs.run_integration == 'true'
         env:
@@ -184,7 +182,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: cli-bench-stack-binaries
+          name: cli-bench-full-binaries
           path: |
             ${{ runner.temp }}/bench/base
             ${{ runner.temp }}/bench/branch
@@ -219,7 +217,7 @@ jobs:
         if: needs.build.outputs.branch_build == 'ok' && needs.build.outputs.base_build == 'ok'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: cli-bench-stack-binaries
+          name: cli-bench-full-binaries
           path: ${{ runner.temp }}/bench
 
       - name: Start replay server
@@ -290,7 +288,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: cli-bench-stack-report-lightweight
+          name: cli-bench-full-report-lightweight
           path: |
             ${{ runner.temp }}/bench/report.json
             ${{ runner.temp }}/bench/report.txt
@@ -301,7 +299,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: cli-bench-stack-comment-lightweight
+          name: cli-bench-full-comment-lightweight
           path: ${{ runner.temp }}/bench/comment.md
           retention-days: 1
           if-no-files-found: ignore
@@ -341,7 +339,7 @@ jobs:
       - name: Download binaries
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: cli-bench-stack-binaries
+          name: cli-bench-full-binaries
           path: ${{ runner.temp }}/bench
 
       - name: Run benchmark
@@ -362,7 +360,7 @@ jobs:
           bun apps/cli/scripts/bench-cli.ts \
             --base "$bench/base/supabase" \
             --branch "$bench/branch/supabase" \
-            --workloads apps/cli/bench/workloads.stack.json \
+            --workloads apps/cli/bench/workloads.full.json \
             --runtime "$RUNTIME" \
             --only "$WORKLOADS" \
             "${cache_args[@]}" \
@@ -373,7 +371,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: cli-bench-stack-report-${{ matrix.runtime }}-${{ matrix.shard }}
+          name: cli-bench-full-report-${{ matrix.runtime }}-${{ matrix.shard }}
           path: |
             ${{ runner.temp }}/bench/report-${{ matrix.runtime }}-${{ matrix.shard }}.json
             ${{ runner.temp }}/bench/report-${{ matrix.runtime }}-${{ matrix.shard }}.txt
@@ -412,7 +410,7 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: cli-bench-stack-report-*-*
+          pattern: cli-bench-full-report-*-*
           path: ${{ runner.temp }}/reports
 
       - name: Merge shard reports
@@ -422,7 +420,7 @@ jobs:
           mapfile -t files < <(find "$RUNNER_TEMP/reports" -name 'report-*.json' 2>/dev/null | sort)
           if [ "${#files[@]}" -gt 0 ]; then
             bun apps/cli/scripts/bench-merge.ts \
-              --workloads apps/cli/bench/workloads.stack.json \
+              --workloads apps/cli/bench/workloads.full.json \
               --out "$RUNNER_TEMP/bench/report.json" "${files[@]}"
           fi
 
@@ -455,7 +453,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: cli-bench-stack-merged-report
+          name: cli-bench-full-merged-report
           path: ${{ runner.temp }}/bench/report.json
           retention-days: 14
           if-no-files-found: ignore
@@ -464,7 +462,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: cli-bench-stack-comment-integration-heavy
+          name: cli-bench-full-comment-integration-heavy
           path: ${{ runner.temp }}/bench/comment.md
           retention-days: 1
           if-no-files-found: ignore
@@ -496,7 +494,7 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: cli-bench-stack-comment-lightweight
+          name: cli-bench-full-comment-lightweight
           path: ${{ runner.temp }}/bench-comment
       - name: Post comment
         env:
@@ -535,7 +533,7 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: cli-bench-stack-comment-integration-heavy
+          name: cli-bench-full-comment-integration-heavy
           path: ${{ runner.temp }}/bench-comment
       - name: Post comment
         env:

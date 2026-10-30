@@ -10,7 +10,7 @@ run-name: "CLI benchmark #${{ github.event.pull_request.number || github.event.i
 # commenting exactly `/bench` re-runs the run for the pull request's current head commit, as does
 # "Re-run all jobs" in the Actions UI: a re-run benchmarks again and updates the comment's
 # Lightweight Commands section, keeping earlier runs in a collapsed list. A maintainer commenting
-# exactly `/bench full` also dispatches cli-bench-stack.yml on the pull request's branch to
+# exactly `/bench full` also dispatches cli-bench-full.yml on the pull request's branch to
 # re-measure the Integration Heavy Commands section. Pull requests from forks benchmark every push
 # and write a job summary only. A pull request that changes no benchmarked path, or more than the
 # 300 files GitHub's path filter inspects, has no run to re-run, and `/bench` says so.
@@ -80,7 +80,7 @@ jobs:
         run: bun .github/scripts/cli-bench/resolve.ts
 
   # `/bench`: re-runs this workflow's run for the pull request's current head commit. `/bench full`
-  # also dispatches the stack benchmark workflow on the pull request's branch. The only job with
+  # also dispatches the full benchmark workflow on the pull request's branch. The only job with
   # `actions: write`; it runs default branch code and no pull request code.
   rerun:
     name: Re-run benchmark

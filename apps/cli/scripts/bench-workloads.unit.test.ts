@@ -4,7 +4,7 @@ import { Effect, FileSystem } from "effect";
 import { parseWorkloadManifest, validateWorkloads } from "./bench-report.ts";
 
 const manifestPath = new URL("../bench/workloads.pr.json", import.meta.url).pathname;
-const stackManifestPath = new URL("../bench/workloads.stack.json", import.meta.url).pathname;
+const fullManifestPath = new URL("../bench/workloads.full.json", import.meta.url).pathname;
 const fixturesPath = new URL("../bench/fixtures/", import.meta.url).pathname;
 const scenariosDir = new URL("../../cli-e2e/fixtures/scenarios/", import.meta.url).pathname;
 
@@ -13,9 +13,9 @@ const loadManifest = Effect.gen(function* () {
   return yield* parseWorkloadManifest(yield* fs.readFileString(manifestPath));
 });
 
-const loadStackManifest = Effect.gen(function* () {
+const loadFullManifest = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
-  return yield* parseWorkloadManifest(yield* fs.readFileString(stackManifestPath));
+  return yield* parseWorkloadManifest(yield* fs.readFileString(fullManifestPath));
 });
 
 describe("PR workload manifest", () => {
@@ -45,10 +45,10 @@ describe("PR workload manifest", () => {
   );
 });
 
-describe("stack workload manifest", () => {
+describe("full workload manifest", () => {
   it.effect("decodes and passes the structural rules without a replay server", () =>
     Effect.gen(function* () {
-      const workloads = yield* loadStackManifest;
+      const workloads = yield* loadFullManifest;
 
       expect(workloads.length).toBeGreaterThan(0);
       expect(validateWorkloads(workloads, { apiUrl: undefined })).toEqual([]);
@@ -58,7 +58,7 @@ describe("stack workload manifest", () => {
   it.effect("names only fixtures that exist and carry a migration, seed, or test", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const workloads = yield* loadStackManifest;
+      const workloads = yield* loadFullManifest;
 
       for (const workload of workloads) {
         if (workload.fixture === undefined) continue;
@@ -70,7 +70,7 @@ describe("stack workload manifest", () => {
 
   it.effect("sizes every workload for sharding and leaves nothing running after it", () =>
     Effect.gen(function* () {
-      const workloads = yield* loadStackManifest;
+      const workloads = yield* loadFullManifest;
 
       for (const workload of workloads) {
         expect(workload.estimatedSeconds, workload.id).toBeGreaterThan(0);
@@ -83,7 +83,7 @@ describe("stack workload manifest", () => {
 
   it.effect("starts a stack before any workload that measures a command against one", () =>
     Effect.gen(function* () {
-      const workloads = yield* loadStackManifest;
+      const workloads = yield* loadFullManifest;
 
       for (const workload of workloads) {
         const measuresStart =

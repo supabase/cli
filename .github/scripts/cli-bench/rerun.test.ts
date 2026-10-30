@@ -6,8 +6,8 @@ import {
   coversIntegrationHeavy,
   handleBenchCommand,
   RERUN_WINDOW_MS,
-  type StackRun,
-  type StackWorkloads,
+  type FullRun,
+  type FullWorkloads,
   type WorkflowRun,
 } from "./rerun.ts";
 
@@ -37,7 +37,7 @@ function setup(
     pr?: BenchPr;
     runs?: ReadonlyArray<WorkflowRun>;
     rerunError?: Error;
-    stackRuns?: ReadonlyArray<StackRun>;
+    fullRuns?: ReadonlyArray<FullRun>;
     dispatchError?: Error;
     /** Short SHA the Lightweight Commands section measured. */
     lightweightSha?: string;
@@ -47,7 +47,7 @@ function setup(
     reactions: [] as Array<number>,
     replies: [] as Array<string>,
     reruns: [] as Array<number>,
-    dispatches: [] as Array<{ ref: string; workloads: StackWorkloads }>,
+    dispatches: [] as Array<{ ref: string; workloads: FullWorkloads }>,
   };
   const io: CommandIo = {
     fetchPr: async () => options.pr ?? pr(),
@@ -57,8 +57,8 @@ function setup(
       if (options.rerunError !== undefined) throw options.rerunError;
       calls.reruns.push(id);
     },
-    listStackRuns: async () => options.stackRuns ?? [],
-    dispatchStack: async (ref, workloads) => {
+    listFullRuns: async () => options.fullRuns ?? [],
+    dispatchFull: async (ref, workloads) => {
       if (options.dispatchError !== undefined) throw options.dispatchError;
       calls.dispatches.push({ ref, workloads });
     },
@@ -198,10 +198,10 @@ describe("handleBenchCommand", () => {
   });
 });
 
-const stackRun = (overrides: Partial<StackRun> = {}): StackRun => ({
+const stackRun = (overrides: Partial<FullRun> = {}): FullRun => ({
   id: 31,
   status: "in_progress",
-  displayTitle: "CLI benchmark stack (integration-heavy): feature/x",
+  displayTitle: "CLI benchmark full (integration-heavy): feature/x",
   url: "https://github.com/supabase/cli/actions/runs/31",
   ...overrides,
 });
@@ -251,7 +251,7 @@ describe("handleBenchCommand with /bench full", () => {
       "its pull request run is older than 30 days",
       [run({ createdAt: new Date(NOW.getTime() - RERUN_WINDOW_MS - 1000).toISOString() })],
     ],
-  ])("measures the lightweight workloads in the stack run when %s", async (_name, runs) => {
+  ])("measures the lightweight workloads in the full run when %s", async (_name, runs) => {
     const { io, calls } = setup({ lightweightSha: undefined, runs });
 
     const outcome = await handleBenchCommand(command("/bench full"), io);
@@ -262,7 +262,7 @@ describe("handleBenchCommand with /bench full", () => {
   });
 
   test("replies with the link of an integration-heavy run already in progress and starts nothing", async () => {
-    const { io, calls } = setup({ stackRuns: [stackRun()] });
+    const { io, calls } = setup({ fullRuns: [stackRun()] });
 
     const outcome = await handleBenchCommand(command("/bench full"), io);
 
@@ -276,7 +276,7 @@ describe("handleBenchCommand with /bench full", () => {
   test("starts a run when the one in progress measures only the lightweight workloads", async () => {
     const { io, calls } = setup({
       lightweightSha: "aaaaaaa",
-      stackRuns: [stackRun({ displayTitle: "CLI benchmark stack (lightweight): feature/x" })],
+      fullRuns: [stackRun({ displayTitle: "CLI benchmark full (lightweight): feature/x" })],
     });
 
     await handleBenchCommand(command("/bench full"), io);
@@ -287,7 +287,7 @@ describe("handleBenchCommand with /bench full", () => {
   test("starts a run when earlier ones have finished", async () => {
     const { io, calls } = setup({
       lightweightSha: "aaaaaaa",
-      stackRuns: [stackRun({ status: "completed" })],
+      fullRuns: [stackRun({ status: "completed" })],
     });
 
     await handleBenchCommand(command("/bench full"), io);
@@ -347,7 +347,7 @@ describe("handleBenchCommand with /bench full", () => {
     expect(calls.dispatches).toEqual([]);
   });
 
-  test("keeps a started stack run when re-running the lightweight run is refused", async () => {
+  test("keeps a started full run when re-running the lightweight run is refused", async () => {
     const { io, calls } = setup({
       lightweightSha: "bbbbbbb",
       rerunError: new GithubRequestError(403, "nope", "u"),
@@ -367,10 +367,10 @@ describe("handleBenchCommand with /bench full", () => {
 
 describe("coversIntegrationHeavy", () => {
   test.each([
-    ["CLI benchmark stack (all): develop", true],
-    ["CLI benchmark stack (integration-heavy): feature/x", true],
-    ["CLI benchmark stack (lightweight): feature/x", false],
-    ["CLI benchmark stack (scheduled)", false],
+    ["CLI benchmark full (all): develop", true],
+    ["CLI benchmark full (integration-heavy): feature/x", true],
+    ["CLI benchmark full (lightweight): feature/x", false],
+    ["CLI benchmark full (scheduled)", false],
   ])("reads %p as %p", (title, expected) => {
     expect(coversIntegrationHeavy(title)).toBe(expected);
   });

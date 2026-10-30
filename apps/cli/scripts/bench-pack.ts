@@ -1,5 +1,5 @@
 /**
- * Packs benchmark workloads into shards for the stack benchmark matrix. Each shard runs on one
+ * Packs benchmark workloads into shards for the full benchmark matrix. Each shard runs on one
  * runner, so base and branch of a workload always share a machine and no two workloads share one
  * at the same time. Free of runtime dependencies so the workflow's plan job can import it.
  */

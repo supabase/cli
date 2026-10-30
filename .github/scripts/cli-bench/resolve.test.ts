@@ -29,7 +29,7 @@ describe("resolveBench", () => {
   });
 
   test("benchmarks when the comment holds only an integration-heavy result", () => {
-    const stackOnly = {
+    const heavyOnly = {
       id: 5,
       body: composeBody({
         "integration-heavy": {
@@ -40,7 +40,7 @@ describe("resolveBench", () => {
       authorLogin: BOT,
     };
 
-    expect(resolveBench({ runAttempt: 1, isFork: false, comments: [stackOnly] }).shouldRun).toBe(
+    expect(resolveBench({ runAttempt: 1, isFork: false, comments: [heavyOnly] }).shouldRun).toBe(
       true,
     );
   });

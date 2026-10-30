@@ -1,12 +1,12 @@
 /**
- * Planner for the stack benchmark workflow: resolves what a run measures and against which base,
+ * Planner for the full benchmark workflow: resolves what a run measures and against which base,
  * attaches the run to its pull request, and splits the workloads into shards.
  *
  * A scheduled run measures everything against the latest stable release. A dispatched run uses its
  * inputs; its base is the merge base with `develop` unless a release tag is given. Only a
  * merge-base run on a branch with exactly one open pull request into `develop` from this
  * repository updates that pull request's comment. Needs read access only.
- * Run in CI as: `bun .github/scripts/cli-bench/stack-plan.ts`.
+ * Run in CI as: `bun .github/scripts/cli-bench/full-plan.ts`.
  */
 import { appendFileSync, readFileSync } from "node:fs";
 
@@ -19,7 +19,7 @@ export type WorkloadChoice = (typeof WORKLOAD_CHOICES)[number];
 export type RuntimeChoice = (typeof RUNTIME_CHOICES)[number];
 
 const RELEASE_TAG = /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
-const MANIFEST = "apps/cli/bench/workloads.stack.json";
+const MANIFEST = "apps/cli/bench/workloads.full.json";
 
 export interface PlanInput {
   event: string;
@@ -43,7 +43,7 @@ export interface PlanDeps {
   openPullRequests: (refName: string) => Promise<ReadonlyArray<PullRequestRef>>;
 }
 
-export interface StackPlan {
+export interface FullPlan {
   workloads: WorkloadChoice;
   runtime: RuntimeChoice;
   baseKind: "merge-base" | "release";
@@ -60,7 +60,7 @@ const isChoice = <T extends string>(choices: ReadonlyArray<T>, value: string): v
   (choices as ReadonlyArray<string>).includes(value);
 
 /** What a run measures, against what, and which shards run it. Throws on invalid inputs. */
-export async function planStackRun(input: PlanInput, deps: PlanDeps): Promise<StackPlan> {
+export async function planFullRun(input: PlanInput, deps: PlanDeps): Promise<FullPlan> {
   const scheduled = input.event === "schedule";
   const workloads = scheduled ? "all" : input.workloads;
   const runtime = scheduled ? "both" : input.runtime;
@@ -69,7 +69,7 @@ export async function planStackRun(input: PlanInput, deps: PlanDeps): Promise<St
   }
   if (!isChoice(RUNTIME_CHOICES, runtime)) throw new Error(`Unsupported runtime "${runtime}".`);
 
-  let baseKind: StackPlan["baseKind"] = "merge-base";
+  let baseKind: FullPlan["baseKind"] = "merge-base";
   let baseTag = "";
   if (scheduled) {
     baseKind = "release";
@@ -131,7 +131,7 @@ async function main(): Promise<void> {
   const [owner = ""] = repository.split("/");
   const base = `https://api.github.com/repos/${repository}`;
 
-  const plan = await planStackRun(
+  const plan = await planFullRun(
     {
       event: requireEnv("EVENT_NAME"),
       workloads: process.env.INPUT_WORKLOADS ?? "all",
@@ -165,8 +165,6 @@ async function main(): Promise<void> {
   );
 
   const outputs: Record<string, string> = {
-    workloads: plan.workloads,
-    runtime: plan.runtime,
     base_kind: plan.baseKind,
     base_tag: plan.baseTag,
     pr_number: plan.prNumber,
@@ -176,7 +174,7 @@ async function main(): Promise<void> {
     matrix: JSON.stringify(plan.matrix),
   };
   console.log(
-    `CLI stack benchmark plan: workloads=${plan.workloads} runtime=${plan.runtime} ` +
+    `CLI full benchmark plan: workloads=${plan.workloads} runtime=${plan.runtime} ` +
       `base=${plan.baseKind === "release" ? plan.baseTag : "merge-base"} pr=${plan.prNumber || "none"} ` +
       `shards=${plan.matrix.include.length}`,
   );

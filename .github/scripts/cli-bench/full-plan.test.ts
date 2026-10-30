@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { planStackRun, readManifest, type PlanDeps, type PlanInput } from "./stack-plan.ts";
+import { planFullRun, readManifest, type PlanDeps, type PlanInput } from "./full-plan.ts";
 
 const REPO = "supabase/cli";
 const manifest = readManifest(
@@ -29,9 +29,9 @@ const deps = (overrides: Partial<PlanDeps> = {}): PlanDeps => ({
   ...overrides,
 });
 
-describe("planStackRun", () => {
+describe("planFullRun", () => {
   test("measures everything against the latest stable release on a schedule, with no pull request", async () => {
-    const plan = await planStackRun(
+    const plan = await planFullRun(
       input({ event: "schedule", workloads: "", runtime: "", base: "", refName: "develop" }),
       deps(),
     );
@@ -48,7 +48,7 @@ describe("planStackRun", () => {
   });
 
   test("attaches a merge-base run to the branch's single open pull request", async () => {
-    const plan = await planStackRun(input(), deps());
+    const plan = await planFullRun(input(), deps());
 
     expect(plan).toMatchObject({ baseKind: "merge-base", baseTag: "", prNumber: "12" });
   });
@@ -64,13 +64,13 @@ describe("planStackRun", () => {
     ],
     ["a pull request from a fork", [{ number: 3, headRepoFullName: "someone/cli" }]],
   ])("attaches no pull request when the branch has %s", async (_name, pulls) => {
-    const plan = await planStackRun(input(), deps({ openPullRequests: async () => pulls }));
+    const plan = await planFullRun(input(), deps({ openPullRequests: async () => pulls }));
 
     expect(plan.prNumber).toBe("");
   });
 
   test("leaves the pull request comment alone for a run against a release tag", async () => {
-    const plan = await planStackRun(input({ base: "v3.0.0" }), deps());
+    const plan = await planFullRun(input({ base: "v3.0.0" }), deps());
 
     expect(plan).toMatchObject({ baseKind: "release", baseTag: "v3.0.0", prNumber: "" });
   });
@@ -78,7 +78,7 @@ describe("planStackRun", () => {
   test.each(["main", "v3", "v3.0.0; rm -rf /", "$(id)", "../v3.0.0"])(
     "rejects the base %p",
     async (base) => {
-      await expect(planStackRun(input({ base }), deps())).rejects.toThrow("Unsupported base");
+      await expect(planFullRun(input({ base }), deps())).rejects.toThrow("Unsupported base");
     },
   );
 
@@ -87,7 +87,7 @@ describe("planStackRun", () => {
     ["integration-heavy", { runLightweight: false, runIntegration: true, shards: 3 }],
     ["all", { runLightweight: true, runIntegration: true, shards: 3 }],
   ])("plans shards for workloads=%s", async (workloads, expected) => {
-    const plan = await planStackRun(input({ workloads }), deps());
+    const plan = await planFullRun(input({ workloads }), deps());
 
     expect(plan.runLightweight).toBe(expected.runLightweight);
     expect(plan.runIntegration).toBe(expected.runIntegration);
@@ -95,7 +95,7 @@ describe("planStackRun", () => {
   });
 
   test("keeps only the requested runtime's shards", async () => {
-    const plan = await planStackRun(input({ runtime: "native" }), deps());
+    const plan = await planFullRun(input({ runtime: "native" }), deps());
 
     expect(plan.matrix.include).toEqual([
       expect.objectContaining({ runtime: "native", workloads: "stack-start-native" }),
@@ -103,7 +103,7 @@ describe("planStackRun", () => {
   });
 
   test("rejects an unknown runtime or workloads choice", async () => {
-    await expect(planStackRun(input({ runtime: "podman" }), deps())).rejects.toThrow("runtime");
-    await expect(planStackRun(input({ workloads: "none" }), deps())).rejects.toThrow("workloads");
+    await expect(planFullRun(input({ runtime: "podman" }), deps())).rejects.toThrow("runtime");
+    await expect(planFullRun(input({ workloads: "none" }), deps())).rejects.toThrow("workloads");
   });
 });

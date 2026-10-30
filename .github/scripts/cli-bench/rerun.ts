@@ -5,7 +5,7 @@
  * the repository owner or hold write access, and the pull request must be an open, ready one from
  * this repository into `develop`. `/bench` re-runs the existing `pull_request` run, which
  * benchmarks and updates the Lightweight Commands section. `/bench full` always re-measures the
- * Integration Heavy Commands section by dispatching the stack benchmark workflow on the pull
+ * Integration Heavy Commands section by dispatching the full benchmark workflow on the pull
  * request's branch, and re-runs the lightweight part only when that section is behind the head
  * commit; the pull request gets a reply when nothing can run.
  * Run in CI as: `bun .github/scripts/cli-bench/rerun.ts`.
@@ -23,7 +23,7 @@ export const BENCH_BASE_BRANCHES: ReadonlyArray<string> = ["develop"];
 /** The workflow file whose runs `/bench` re-runs. */
 export const WORKFLOW_FILE = "cli-bench.yml";
 /** The workflow `/bench full` dispatches. */
-export const STACK_WORKFLOW_FILE = "cli-bench-stack.yml";
+export const FULL_WORKFLOW_FILE = "cli-bench-full.yml";
 /** GitHub refuses to re-run a workflow run older than this. */
 export const RERUN_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -45,7 +45,7 @@ export interface WorkflowRun {
   createdAt: string;
 }
 
-export interface StackRun {
+export interface FullRun {
   id: number;
   status: string;
   /** The run name, which carries the `workloads` input. */
@@ -53,8 +53,8 @@ export interface StackRun {
   url: string;
 }
 
-/** What a dispatched stack run measures. */
-export type StackWorkloads = "integration-heavy" | "all";
+/** What a dispatched full run measures. */
+export type FullWorkloads = "integration-heavy" | "all";
 
 export interface CommandInput {
   prNumber: number;
@@ -68,9 +68,9 @@ export interface CommandIo {
   /** Runs of the benchmark workflow triggered by `pull_request` for this commit, any order. */
   listRuns: (headSha: string) => Promise<ReadonlyArray<WorkflowRun>>;
   rerun: (runId: number) => Promise<void>;
-  /** Dispatched runs of the stack workflow on a branch, any order. */
-  listStackRuns: (headRef: string) => Promise<ReadonlyArray<StackRun>>;
-  dispatchStack: (headRef: string, workloads: StackWorkloads) => Promise<void>;
+  /** Dispatched runs of the full workflow on a branch, any order. */
+  listFullRuns: (headRef: string) => Promise<ReadonlyArray<FullRun>>;
+  dispatchFull: (headRef: string, workloads: FullWorkloads) => Promise<void>;
   /** Short SHA of the commit the comment's Lightweight Commands section measured, if it has one. */
   lightweightSha: (prNumber: number) => Promise<string | undefined>;
   reactToComment: (commentId: number) => Promise<void>;
@@ -81,7 +81,7 @@ export type CommandOutcome =
   | { kind: "ignored"; reason: string }
   | { kind: "replied"; reason: string }
   | { kind: "rerun"; runId: number }
-  | { kind: "dispatched"; workloads: StackWorkloads; rerunId: number | undefined };
+  | { kind: "dispatched"; workloads: FullWorkloads; rerunId: number | undefined };
 
 const short = (sha: string) => sha.slice(0, 7);
 
@@ -106,22 +106,22 @@ export const replies = {
   notEligible: () =>
     `\`${BENCH_FULL_COMMAND}\` runs only on pull requests from this repository into ` +
     `${BENCH_BASE_BRANCHES.join(" or ")}.`,
-  stackRunning: (url: string) =>
+  fullRunning: (url: string) =>
     `An integration-heavy benchmark is already queued or running for this pull request: ${url}. ` +
     "The comment updates when it finishes.",
-  noStackWorkflow: () =>
-    "This branch does not have the stack benchmark workflow yet. Merge `develop` into the branch " +
+  noFullWorkflow: () =>
+    "This branch does not have the full benchmark workflow yet. Merge `develop` into the branch " +
     `and comment \`${BENCH_FULL_COMMAND}\` again.`,
-  stackRefused: (status: number, detail: string) =>
+  fullRefused: (status: number, detail: string) =>
     `The integration-heavy benchmark could not be started: GitHub refused the request ` +
     `(${status} ${quoted(detail)}).`,
 };
 
-const STACK_RUN_WORKLOADS = /\((lightweight|integration-heavy|all)\)/u;
+const FULL_RUN_WORKLOADS = /\((lightweight|integration-heavy|all)\)/u;
 
-/** Whether a stack run's name says it measures the integration-heavy workloads. */
+/** Whether a full run's name says it measures the integration-heavy workloads. */
 export function coversIntegrationHeavy(displayTitle: string): boolean {
-  const workloads = STACK_RUN_WORKLOADS.exec(displayTitle)?.[1];
+  const workloads = FULL_RUN_WORKLOADS.exec(displayTitle)?.[1];
   return workloads === "integration-heavy" || workloads === "all";
 }
 
@@ -200,29 +200,29 @@ export async function handleBenchCommand(
     return { kind: "rerun", runId: latest.id };
   }
 
-  const active = (await io.listStackRuns(pr.headRef)).find(
+  const active = (await io.listFullRuns(pr.headRef)).find(
     (stackRun) => stackRun.status !== "completed" && coversIntegrationHeavy(stackRun.displayTitle),
   );
-  if (active !== undefined) return reply(replies.stackRunning(active.url));
+  if (active !== undefined) return reply(replies.fullRunning(active.url));
 
   // The lightweight part refreshes only when its section is behind the head commit and no
-  // lightweight run is already in flight; with no run to re-run, the stack run measures it too.
+  // lightweight run is already in flight; with no run to re-run, the full run measures it too.
   const sectionSha = await io.lightweightSha(prNumber);
   const lightweightCurrent = sectionSha !== undefined && pr.headSha.startsWith(sectionSha);
   const lightweightInFlight = latest !== undefined && latest.status !== "completed";
   const needsLightweight = !lightweightCurrent && !lightweightInFlight;
   const rerunnable = latest !== undefined && !expired ? latest : undefined;
-  const workloads: StackWorkloads =
+  const workloads: FullWorkloads =
     needsLightweight && rerunnable === undefined ? "all" : "integration-heavy";
 
   try {
-    await io.dispatchStack(pr.headRef, workloads);
+    await io.dispatchFull(pr.headRef, workloads);
   } catch (error) {
     if (!(error instanceof GithubRequestError)) throw error;
     const missing =
       error.status === 404 || (error.status === 422 && /workflow_dispatch/u.test(error.detail));
     return reply(
-      missing ? replies.noStackWorkflow() : replies.stackRefused(error.status, error.detail),
+      missing ? replies.noFullWorkflow() : replies.fullRefused(error.status, error.detail),
     );
   }
 
@@ -232,7 +232,7 @@ export async function handleBenchCommand(
       await io.rerun(rerunnable.id);
       rerunId = rerunnable.id;
     } catch (error) {
-      // The stack run is already under way; a refused lightweight re-run must not hide it.
+      // The full run is already under way; a refused lightweight re-run must not hide it.
       console.warn(
         `Could not re-run the lightweight benchmark run ${rerunnable.id}: ${String(error)}`,
       );
@@ -290,9 +290,9 @@ async function main(): Promise<void> {
     rerun: async (runId) => {
       await githubFetch(`${base}/actions/runs/${runId}/rerun`, token, { method: "POST" });
     },
-    listStackRuns: async (headRef) => {
+    listFullRuns: async (headRef) => {
       const url =
-        `${base}/actions/workflows/${STACK_WORKFLOW_FILE}/runs` +
+        `${base}/actions/workflows/${FULL_WORKFLOW_FILE}/runs` +
         `?event=workflow_dispatch&branch=${encodeURIComponent(headRef)}&per_page=50`;
       const payload = await githubFetch(url, token).then(
         (response) =>
@@ -319,8 +319,8 @@ async function main(): Promise<void> {
         url: run.html_url,
       }));
     },
-    dispatchStack: async (headRef, workloads) => {
-      await githubFetch(`${base}/actions/workflows/${STACK_WORKFLOW_FILE}/dispatches`, token, {
+    dispatchFull: async (headRef, workloads) => {
+      await githubFetch(`${base}/actions/workflows/${FULL_WORKFLOW_FILE}/dispatches`, token, {
         method: "POST",
         body: JSON.stringify({
           ref: `refs/heads/${headRef}`,
@@ -363,7 +363,7 @@ async function main(): Promise<void> {
     outcome.kind === "rerun"
       ? `Re-running benchmark run ${outcome.runId} for PR #${prNumber}.`
       : outcome.kind === "dispatched"
-        ? `Dispatched the stack benchmark (${outcome.workloads}) for PR #${prNumber}${
+        ? `Dispatched the full benchmark (${outcome.workloads}) for PR #${prNumber}${
             outcome.rerunId === undefined ? "" : ` and re-running benchmark run ${outcome.rerunId}`
           }.`
         : `${outcome.kind === "replied" ? "Replied on" : "Ignored command on"} PR #${prNumber}: ${outcome.reason}`;

@@ -97,7 +97,7 @@ prompts.
 
 The first push to a pull request from this repository benchmarks and posts one comment, tagged with
 the hidden marker `<!-- cli-bench:pr -->`. The comment has two sections, "Lightweight Commands" (this
-run's workloads) and "Integration Heavy Commands" (the [stack benchmark](#stack-benchmark)); each
+run's workloads) and "Integration Heavy Commands" (the [full benchmark](#full-benchmark)); each
 section is written by its own run and shows the commit it measured. Later pushes skip the benchmark,
 and the job summary says so, while the Lightweight Commands section reports a result; a section that
 reports a failed run is benchmarked again on the next push. Pull requests from forks have a read-only token, so they get the job summary only
@@ -227,7 +227,7 @@ Caveats:
   the choice but are not what the benchmark measures.
 - Excluded high-usage commands: `start`, `status`, `stop`, `db start`, `db reset`, `test db`,
   `db push`, `db lint`, `db dump`, `db diff`, `migration list`, and `migration up` need Docker or a
-  database and run in the [stack benchmark](#stack-benchmark) instead; `migration repair` and
+  database and run in the [full benchmark](#full-benchmark) instead; `migration repair` and
   `db schema declarative sync` are not benchmarked; `link` probes `https://<ref>.<project_host>`, which never reaches the replay server;
   `functions deploy` uses Docker by default and its API path has no success scenario; `login` is
   interactive unless a token is passed; `functions serve` needs Docker.
@@ -235,9 +235,9 @@ Caveats:
 - Launches write a profile file, so numbers from runs with `--api-url` are not comparable with runs
   without it.
 
-### Stack benchmark
+### Full benchmark
 
-`.github/workflows/cli-bench-stack.yml` measures the workloads that need a running local stack or
+`.github/workflows/cli-bench-full.yml` measures the workloads that need a running local stack or
 database: `start`, `status`, `stop`, `db start`, `db reset`, `db query`, `test db`, `gen types` at
 three schema sizes, `db diff` (cold and warm), `db dump`, `db lint`, `migration up`, `db push --local`,
 and `migration list`, plus the `stack start|status|stop` lifecycle and `db query` and `db reset`
@@ -251,7 +251,7 @@ merge. It never runs on a push; it starts in three ways:
   does not already show the head commit and no lightweight run is queued or running; with no run to
   re-run, the dispatch measures those workloads itself. While an integration-heavy run for the pull
   request is queued or running, the command replies with that run's link and does nothing else. The
-  pull request also gets a reply when the branch has no stack workflow file yet (merge `develop`
+  pull request also gets a reply when the branch has no full benchmark workflow file yet (merge `develop`
   into it), when the pull request is a draft, from a fork, or not into `develop`, and when GitHub
   refuses the dispatch (with the status and message). An eyes reaction means the dispatch was
   accepted.
@@ -284,7 +284,7 @@ archives are fetched before the measured launches, and each shard shares one nat
 across all launches through `--artifact-cache`, which links it in as `cache/stack` of every launch's
 fresh `SUPABASE_HOME`.
 
-The workload manifest `apps/cli/bench/workloads.stack.json` adds these fields to the entries
+The workload manifest `apps/cli/bench/workloads.full.json` adds these fields to the entries
 described above:
 
 | Field                                | Meaning                                                                                                                |
@@ -314,7 +314,7 @@ To run it locally, build two binaries as above and run a subset:
 
 ```sh
 bun apps/cli/scripts/bench-cli.ts --base <base-binary> --branch <branch-binary> \
-  --workloads apps/cli/bench/workloads.stack.json --runtime docker --only status,db-query \
+  --workloads apps/cli/bench/workloads.full.json --runtime docker --only status,db-query \
   --trace --out /tmp/report.json
 bun apps/cli/scripts/bench-summary.ts --section integration-heavy --report /tmp/report.json
 ```
