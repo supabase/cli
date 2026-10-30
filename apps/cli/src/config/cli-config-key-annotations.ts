@@ -308,6 +308,7 @@ export const CLI_NON_CONFIG_ENV_NAMES: Readonly<Record<string, string>> = {
   SUPABASE_DB_URL: "functions runtime env",
   SUPABASE_DEBUG: "global flag",
   SUPABASE_ENV: "dotenv file selector",
+  SUPABASE_EVAL: "telemetry",
   SUPABASE_EXPERIMENTAL: "global flag",
   SUPABASE_FOO_BAR: "documentation example",
   SUPABASE_FUNCTIONS_DIR: "functions deploy constant",
