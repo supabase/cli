@@ -14,7 +14,7 @@ Bun monorepo with workspaces under `apps/` and `packages/`. `pnpm` is the packag
 
 Use an existing TypeScript/Bun workspace, especially `packages/api`, as the package-structure
 reference. Published `apps/cli` and `packages/config` are not private; `apps/docs` and
-`packages/cli-*` have their own shapes. Generic lint, format, and unused-code tooling is
+`packages/cli-*` have their own shapes. Lint, format, and unused-code tooling is
 root-owned.
 
 ### Config Naming Vocabulary
@@ -35,8 +35,10 @@ all TypeScript runtime code in Effect. Promise-returning APIs are allowed only a
 for consumers that do not use Effect.
 The skill is authoritative for Effect coding practices when repository instructions conflict.
 
-Effect linting uses oxlint via `.oxlintrc.effect.json`; run `pnpm lint:effect:check` or
-`pnpm lint:effect:fix` from the repository root.
+Effect linting is part of the repo lint (`.oxlintrc.json` extends the Effect oxlint preset); run
+`pnpm lint:check` or `pnpm lint:fix` from the repository root; `lint:fix` also applies suggestion
+fixes, so review its diff. `ignorePatterns` keeps `.github/scripts`, the npm launcher shim, compute
+stack templates and the generated API contracts and feedback types out of the lint.
 
 Instrument by default: when you add or change code that does I/O (HTTP, SQL, filesystem beyond a
 small read, child processes, containers, waits) or millisecond-scale work, give it a named span
@@ -67,9 +69,9 @@ Keep the local feedback loop fast; full CI runs for ready PRs targeting `develop
 Use `pnpm test` only when its scope fits the change; the CLI's aggregate script includes full E2E,
 so use `pnpm run test:unit` and `pnpm run test:integration` with affected test files locally.
 When repo-wide validation is warranted, use root `pnpm check:all` or `pnpm fix:all`. These are the
-repo-wide quality entrypoints: `check:all` runs generic and Effect lint, format, knip, type, and
+repo-wide quality entrypoints: `check:all` runs lint, format, knip, type, and
 GitHub Actions workflow checks (jactionlint and shellcheck, installed by mise); `fix:all` applies
-generic and Effect lint, format, and knip fixes. Do not use production `as` casts to silence type
+lint, format, and knip fixes. Do not use production `as` casts to silence type
 errors.
 
 Use root Turbo entrypoints for live and auxiliary workflows:
