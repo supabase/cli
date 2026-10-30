@@ -8,10 +8,7 @@ import { readRequestLogCount, resetReplay } from "./replay-control.ts";
 const fixturesDir = new URL("../../cli-e2e/fixtures", import.meta.url).pathname;
 const SCENARIO = "projects-list-renders-project-list";
 
-const replayServer = Effect.acquireRelease(
-  Effect.promise(() => startReplayServer({ fixturesDir, record: false, stagingUrl: undefined })),
-  (server) => Effect.promise(() => server.stop()),
-);
+const replayServer = startReplayServer({ fixturesDir, record: false, stagingUrl: undefined });
 
 const callApi = (url: string, path: string) =>
   HttpClient.HttpClient.use((client) => client.get(new URL(path, url).toString()));

@@ -28,12 +28,11 @@ describe("runWorkloadBench", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        const server = yield* Effect.acquireRelease(
-          Effect.promise(() =>
-            startReplayServer({ fixturesDir, record: false, stagingUrl: undefined }),
-          ),
-          (handle) => Effect.promise(() => handle.stop()),
-        );
+        const server = yield* startReplayServer({
+          fixturesDir,
+          record: false,
+          stagingUrl: undefined,
+        });
         const dir = yield* fs.makeTempDirectoryScoped({ prefix: "bench-fake-cli-" });
         const binary = `${dir}/supabase`;
         yield* fs.writeFileString(binary, FAKE_CLI);

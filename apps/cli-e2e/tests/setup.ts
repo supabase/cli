@@ -41,15 +41,6 @@ const resolveDockerSocket = Effect.gen(function* () {
   return "/var/run/docker.sock";
 });
 
-/** The replay server could not be started or stopped. */
-class ReplayServerError extends Data.TaggedError("ReplayServerError")<{
-  readonly message: string;
-  readonly cause: unknown;
-}> {}
-
-const replayServerError = (cause: unknown) =>
-  new ReplayServerError({ message: cause instanceof Error ? cause.message : String(cause), cause });
-
 /** The api-keys endpoint answered with a non-2xx status. */
 class ApiKeysNotReady extends Data.TaggedError("ApiKeysNotReady")<{
   readonly response: HttpClientResponse.HttpClientResponse;
@@ -71,15 +62,11 @@ const globalSetup = Effect.fn("E2eSetup.globalSetup")(function* (provide: Provid
   const pgMock = startPgMock();
   provide("pgMockPort", pgMock.port);
 
-  const server = yield* Effect.tryPromise({
-    try: () =>
-      startReplayServer({
-        fixturesDir: FIXTURES_DIR,
-        pgMock,
-        record: isRecording,
-        stagingUrl: STAGING_URL,
-      }),
-    catch: replayServerError,
+  const server = yield* startReplayServer({
+    fixturesDir: FIXTURES_DIR,
+    pgMock,
+    record: isRecording,
+    stagingUrl: STAGING_URL,
   });
   provide("replayServerUrl", server.url);
 
@@ -89,13 +76,8 @@ const globalSetup = Effect.fn("E2eSetup.globalSetup")(function* (provide: Provid
   const dockerHostUrl = server.url.replace(/^http:\/\//, "tcp://");
   provide("dockerHostUrl", dockerHostUrl);
 
-  const stopServers = Effect.gen(function* () {
-    pgMock.stop();
-    yield* Effect.tryPromise({
-      try: () => server.stop(),
-      catch: replayServerError,
-    });
-  });
+  /* The replay server stops after this, when its own finalizers run. */
+  const stopPgMock = Effect.sync(() => pgMock.stop());
 
   if (!isRecording) {
     // Replay mode — no real API calls; PROJECT_REF and ORG_ID default to the ref
@@ -103,7 +85,7 @@ const globalSetup = Effect.fn("E2eSetup.globalSetup")(function* (provide: Provid
     provide("projectRef", PROJECT_REF);
     provide("orgId", ORG_ID);
     provide("storageBucket", "cli-e2e-bucket");
-    yield* Effect.addFinalizer(() => stopServers.pipe(Effect.orDie));
+    yield* Effect.addFinalizer(() => stopPgMock);
     return;
   }
 
@@ -186,7 +168,7 @@ const globalSetup = Effect.fn("E2eSetup.globalSetup")(function* (provide: Provid
       // does not delete it, so we clean it up here.
       yield* cleanupProjectsByName(server.url, ["my-project"]);
       yield* deleteTestProject(server.url, projectRef);
-      yield* stopServers;
+      yield* stopPgMock;
     }).pipe(Effect.orDie),
   );
 });

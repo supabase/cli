@@ -30,7 +30,7 @@ export type FixtureEntry = typeof FixtureEntry.Type;
 export type FixtureStore = Map<string, FixtureEntry[]>;
 
 /* Mirrors `existsSync`: any failure to reach the path counts as absent. */
-const pathExists = (fs: FileSystem.FileSystem, path: string) =>
+export const pathExists = (fs: FileSystem.FileSystem, path: string) =>
   fs.exists(path).pipe(Effect.orElseSucceed(() => false));
 
 /** A fixture file is missing or does not hold valid JSON. */

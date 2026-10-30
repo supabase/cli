@@ -16,8 +16,6 @@
     "!tools/**",
     // Last match wins across the whole list: keep bare re-exclusions after every
     // `!` entry that would otherwise re-include them.
-    "apps/cli-e2e/scripts/replay-serve.ts",
-    "apps/cli-e2e/src/server/replay-server.ts",
     "apps/cli/src/shared/cli/bin.ts",
     "apps/cli/src/shared/compute/stacks/**",
     "apps/cli/src/shared/feedback/database.types.ts",
