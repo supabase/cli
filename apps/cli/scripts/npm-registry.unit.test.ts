@@ -115,13 +115,37 @@ describe("waitUntilInstallable", () => {
       const error = yield* Fiber.join(fiber);
 
       expect(error).toBeInstanceOf(NpmPackagesNotInstallable);
-      expect(error.message).toContain(`${WINDOWS.name}@${VERSION}`);
+      expect(error.message).toContain(
+        `${WINDOWS.name}@${VERSION} (last probe: ${VERSION} not listed yet)`,
+      );
       expect(error.message).not.toContain(DARWIN.name);
       expect(installable).toEqual([DARWIN.name]);
     }).pipe(Effect.provide(registry.layer));
   });
 
-  it.effect("fails immediately on a client error other than 404", () => {
+  it.effect("keeps polling through request timeouts and throttling", () => {
+    const registry = stubRegistry((_url, attempt) =>
+      attempt === 0
+        ? new Response("{}", { status: 408 })
+        : attempt === 1
+          ? new Response("{}", { status: 429 })
+          : packument([VERSION]),
+    );
+    return Effect.gen(function* () {
+      const fiber = yield* waitUntilInstallable({
+        registryUrl: REGISTRY_URL,
+        packages: [DARWIN],
+        onInstallable: () => Effect.void,
+      }).pipe(Effect.forkChild({ startImmediately: true }));
+
+      yield* TestClock.adjust("20 seconds");
+      yield* Fiber.join(fiber);
+
+      expect(registry.requests).toHaveLength(3);
+    }).pipe(Effect.provide(registry.layer));
+  });
+
+  it.effect("fails immediately on a client error other than 404, 408 or 429", () => {
     const registry = stubRegistry(() => forbidden());
     return Effect.gen(function* () {
       const fiber = yield* waitUntilInstallable({
