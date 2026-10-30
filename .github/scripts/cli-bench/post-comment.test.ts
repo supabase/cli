@@ -212,6 +212,12 @@ describe("sanitize", () => {
     expect(clean).toContain("<details>");
   });
 
+  test("keeps an escaped bracket from becoming a live link", () => {
+    const clean = sanitize("\\[x\\](//evil.example/p)");
+
+    expect(clean).toBe("\\\\\\[x\\\\\\](//evil.example/p)");
+  });
+
   test("keeps a report from forging a section marker", () => {
     const forged = sanitize("<!-- cli-bench:section-end lightweight -->");
 

@@ -65,6 +65,7 @@ const RUN_URL = /^https:\/\/[^\s)<>]+\/actions\/runs\/\d+(?:\/attempts\/\d+)?$/u
 /** Keeps mentions, links, images and raw HTML in untrusted markdown from rendering. */
 export function sanitize(markdown: string): string {
   return markdown
+    .replaceAll("\\", "\\\\")
     .replaceAll("&", "&amp;")
     .replaceAll(/<[^>\n]*>?/gu, (tag) =>
       ALLOWED_TAGS.has(tag) ? tag : tag.replaceAll("<", "&lt;"),
@@ -184,7 +185,8 @@ export function composeBody(sections: Sections, entries: ReadonlyArray<RunEntry>
       content:
         state.content.length <= share
           ? state.content
-          : state.content.slice(0, share - TRUNCATION_NOTICE.length) + TRUNCATION_NOTICE,
+          : state.content.slice(0, Math.max(0, share - TRUNCATION_NOTICE.length)) +
+            TRUNCATION_NOTICE,
     };
   }
   return assemble(cut, []);

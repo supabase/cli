@@ -323,7 +323,7 @@ async function main(): Promise<void> {
       await githubFetch(`${base}/actions/workflows/${STACK_WORKFLOW_FILE}/dispatches`, token, {
         method: "POST",
         body: JSON.stringify({
-          ref: headRef,
+          ref: `refs/heads/${headRef}`,
           inputs: { workloads, runtime: "both", base: "merge-base" },
         }),
       });

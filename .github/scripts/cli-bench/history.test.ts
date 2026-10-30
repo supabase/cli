@@ -120,6 +120,13 @@ describe("previousEntries", () => {
 });
 
 describe("renderHistory and decodeHistory", () => {
+  test("reads an entry written before sections existed as a lightweight run", () => {
+    const legacy = { ...entry(1), section: undefined };
+    const body = `<!-- cli-bench:history ${Buffer.from(JSON.stringify([legacy])).toString("base64")} -->`;
+
+    expect(decodeHistory(body)).toEqual([entry(1)]);
+  });
+
   test("round-trips the entries through the hidden marker", () => {
     const entries = [entry(3), heavy(2), entry(1)];
 
@@ -148,10 +155,6 @@ describe("renderHistory and decodeHistory", () => {
     ["no marker", "plain comment"],
     ["not base64 json", "<!-- cli-bench:history bm90IGpzb24= -->"],
     ["wrong shape", `<!-- cli-bench:history ${Buffer.from('[{"sha":1}]').toString("base64")} -->`],
-    [
-      "an entry without a section",
-      `<!-- cli-bench:history ${Buffer.from(JSON.stringify([{ ...entry(1), section: undefined }])).toString("base64")} -->`,
-    ],
     [
       "a forged run link",
       `<!-- cli-bench:history ${Buffer.from(JSON.stringify([entry(1, { url: "https://evil.test/x" })])).toString("base64")} -->`,

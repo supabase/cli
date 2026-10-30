@@ -85,11 +85,14 @@ export function decodeHistory(body: string): Array<RunEntry> {
   if (encoded === undefined || encoded.length > MAX_ENCODED_CHARS) return [];
   try {
     const value: unknown = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
-    return Array.isArray(value) &&
-      value.length <= MAX_PREVIOUS_RUNS + SECTIONS.length &&
-      value.every(isEntry)
-      ? value
-      : [];
+    if (!Array.isArray(value) || value.length > MAX_PREVIOUS_RUNS + SECTIONS.length) return [];
+    // Entries written before comments had sections belong to the lightweight run.
+    const entries = value.map((entry: unknown) =>
+      typeof entry === "object" && entry !== null && !("section" in entry)
+        ? { ...entry, section: "lightweight" }
+        : entry,
+    );
+    return entries.every(isEntry) ? entries : [];
   } catch {
     return [];
   }
