@@ -4,6 +4,7 @@ import { parseArgs } from "node:util";
 import { BunFileSystem, BunPath } from "@effect/platform-bun";
 import { Console, Data, Effect, Fiber, FileSystem, Layer, Path, Predicate } from "effect";
 import { FetchHttpClient, HttpClient } from "effect/http";
+import { waitUntilInstallable } from "./npm-registry.ts";
 import { isPublishableNpmTag, PUBLISHABLE_NPM_TAGS_HINT } from "./release-channels.ts";
 
 const PLATFORM_PACKAGES = [
@@ -156,6 +157,20 @@ const main = Effect.gen(function* () {
       }).pipe(Effect.forkDetach({ startImmediately: true })),
     ),
   );
+
+  // npm makes large tarballs installable minutes after the PUT returns, so the umbrella must wait
+  // for its binaries or installs in that window get no binary.
+  if (!dryRun) {
+    yield* Console.log("\nWaiting for platform packages to become installable...");
+    yield* waitUntilInstallable({
+      registryUrl,
+      packages: PLATFORM_PACKAGES.map((pkg) => ({
+        name: `@supabase/${pkg}`,
+        version: umbrellaVersion,
+      })),
+      onInstallable: ({ name, version }) => Console.log(`  ${name}@${version} is installable.`),
+    });
+  }
 
   yield* Console.log("\nBuilding umbrella package shim...");
   yield* step(() => $`pnpm build:shim`.cwd(cliDir));
