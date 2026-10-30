@@ -34,8 +34,10 @@ export function mergeReports(
   const cpuProfilePath = reports.find(
     (report) => report.cpuProfilePath !== undefined,
   )?.cpuProfilePath;
+  const apiUrl = reports.find((report) => report.apiUrl !== undefined)?.apiUrl;
   return {
     ...first,
+    ...(apiUrl === undefined ? {} : { apiUrl }),
     workloads: [...byId.values()].sort((a, b) => rank(a.id) - rank(b.id)),
     ...(cpuProfilePath === undefined ? {} : { cpuProfilePath }),
   };

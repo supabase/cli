@@ -320,6 +320,70 @@ describe("renderSummary for integration-heavy commands", () => {
     expect(markdown).not.toContain("container commands");
   });
 
+  const counted = (calls: number, extra: Partial<RunSample> = {}, external = 0): RunSample => ({
+    ...run(30, calls, calls === 0 ? {} : { "GET /v1/projects": calls }),
+    ...extra,
+    trace: {
+      skippedLines: 0,
+      spans: { "cli.run": { totalMs: 15, count: 1 } },
+      api: {
+        apiCalls: calls,
+        externalCalls: external,
+        errorStatuses: 0,
+        endpoints: calls === 0 ? {} : { "GET /v1/projects": calls },
+        requestLogCount: calls,
+      },
+    },
+  });
+  const withApi = (id: string, base: RunSample, branch: RunSample) => ({
+    id,
+    args: ["status"],
+    stack: true,
+    runtime: "native" as const,
+    base: runs(5, () => base),
+    branch: runs(5, () => branch),
+  });
+
+  it("reports a command that made no API calls as counted, not as not counted", () => {
+    const markdown = render([withApi("status", counted(0), counted(0))]);
+
+    expect(markdown).toContain("API calls: none, before or after, for the command.");
+    expect(markdown).not.toContain("API calls were not counted.");
+    expect(markdown).toContain("| `supabase status` | 0 | 0 |");
+  });
+
+  it("says API calls were not counted when no launch was traced against the test server", () => {
+    const untraced = { wallMs: 30, exitCode: 0 };
+    const markdown = render([withApi("status", untraced, untraced)]);
+
+    expect(markdown).toContain("API calls were not counted.");
+  });
+
+  it("flags a Management API call that first appears on the branch", () => {
+    const markdown = render([withApi("status", counted(0), counted(1))]);
+
+    expect(markdown).toContain("now calls the Management API");
+    expect(markdown).toContain("## CLI benchmark (Integration Heavy Commands): 1 thing to check");
+  });
+
+  it("does not flag a local stack's calls to other hosts", () => {
+    const markdown = render([withApi("status", counted(0, {}, 12), counted(0, {}, 12))]);
+
+    expect(markdown).toContain("no changes found");
+    expect(markdown).not.toContain("hosts other than");
+  });
+
+  it("flags an error response from the empty test server in plain words", () => {
+    const failing = counted(1);
+    const errored: RunSample = {
+      ...failing,
+      trace: { ...failing.trace!, api: { ...failing.trace!.api!, errorStatuses: 1 } },
+    };
+    const markdown = render([withApi("status", counted(0), errored)]);
+
+    expect(markdown).toContain("expected to make no API calls");
+  });
+
   it("leaves container operations out of the lightweight section", () => {
     const markdown = renderSummary(report([heavy("status", { ps: 1 }, { ps: 1 })]), "unused", {});
 
