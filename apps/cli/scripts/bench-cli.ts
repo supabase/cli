@@ -533,9 +533,12 @@ const runUnit = Effect.fn("BenchCli.runUnit")(function* (params: {
       }
       // A failed setup leaves nothing real to measure, so every launch reports the failing exit code.
       if (setupExitCode !== 0) {
-        return launches.map(
-          (kind): LaunchOutcome => ({ kind, wallMs: 0, exitCode: setupExitCode, trace: undefined }),
-        );
+        return launches.map((kind): LaunchOutcome => ({
+          kind,
+          wallMs: 0,
+          exitCode: setupExitCode,
+          trace: undefined,
+        }));
       }
 
       // Resets the replay server before each launch, so setup's own requests and a previous

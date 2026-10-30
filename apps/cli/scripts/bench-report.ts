@@ -199,7 +199,9 @@ export function validateWorkloads(
       }
     }
     if (workload.fixtureAfterSetup !== undefined && workload.setupScope === "block") {
-      problems.push(`${name} stages fixtureAfterSetup, which a block-scoped workload applies only once`);
+      problems.push(
+        `${name} stages fixtureAfterSetup, which a block-scoped workload applies only once`,
+      );
     }
     if (workload.estimatedSeconds !== undefined && !(workload.estimatedSeconds > 0)) {
       problems.push(`${name} has an invalid estimatedSeconds`);
