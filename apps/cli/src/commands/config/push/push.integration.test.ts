@@ -15,7 +15,10 @@ import {
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
-import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import {
+  cliConfigValuesTestLayer,
+  configValuesLayer,
+} from "../../../../tests/helpers/config-values-layer.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
   buildTestRuntime,
@@ -455,7 +458,7 @@ function setup(opts: SetupOptions) {
     Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
     workdirFilesLayer(opts.toml, opts.seed),
     cliConfigProviderLayer,
-    cliConfigValuesTestLayer,
+    configValuesLayer({ output: out.layer }),
   );
   return { layer, out, api, telemetry, linkedProjectCache };
 }
@@ -937,6 +940,66 @@ max_rows = 1000
       expect(out.promptConfirmCalls).toHaveLength(0);
       expect(api.requests.some((r) => r.method !== "GET")).toBe(false);
     }).pipe(Effect.provide(layer));
+  });
+
+  describe("email provider disable", () => {
+    const DISABLE_TOML = 'project_id = "test"\n[auth.email]\nenabled = false\n';
+    const EMAIL_WARNING =
+      "Warning: auth.email.enabled = false turns off the email provider, so existing users can no longer sign in with email";
+    const authPatch = (api: ReturnType<typeof setup>["api"]) =>
+      api.requests.find((r) => r.method === "PATCH" && r.url.includes("/config/auth"));
+
+    it.effect("warns after the update block and before the confirmation, then pushes", () => {
+      const { layer, out, api } = setup({ toml: DISABLE_TOML, yes: true });
+      return Effect.gen(function* () {
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
+        const block = out.stderrText.indexOf("auth.email.enable_signup [update]");
+        const warning = out.stderrText.indexOf(EMAIL_WARNING);
+        const confirmed = out.stderrText.indexOf("Confirmed by --yes: Push config changes to Auth");
+        expect(block).toBeGreaterThanOrEqual(0);
+        expect(warning).toBeGreaterThan(block);
+        expect(confirmed).toBeGreaterThan(warning);
+        expect(authPatch(api)?.body).toEqual({ external_email_enabled: false });
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("the deprecated enable_signup still pushes the disable and warns on stderr", () => {
+      const { layer, out, api } = setup({
+        toml: 'project_id = "test"\n[auth.email]\nenable_signup = false\n',
+        yes: true,
+      });
+      return Effect.gen(function* () {
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
+        const deprecation =
+          "WARN: auth.email.enable_signup is deprecated and will be removed in v4, use auth.email.enabled instead.\n";
+        const confirmed = out.stderrText.indexOf("Confirmed by --yes: Push config changes to Auth");
+        expect(out.stderrText.split(deprecation)).toHaveLength(2);
+        expect(out.stderrText.indexOf(deprecation)).toBeLessThan(confirmed);
+        expect(out.stderrText).toContain(EMAIL_WARNING);
+        expect(authPatch(api)?.body).toEqual({ external_email_enabled: false });
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("re-enabling the provider prints no warning", () => {
+      const { layer, out, api } = setup({
+        toml: 'project_id = "test"\n[auth.email]\nenabled = true\n',
+        yes: true,
+        v2: {
+          status: 200,
+          body: v2Response({
+            attributes: (a) => ({
+              ...a,
+              auth: { ...asJsonRecord(a["auth"]), external_email_enabled: false },
+            }),
+          }),
+        },
+      });
+      return Effect.gen(function* () {
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
+        expect(out.stderrText).not.toContain("Warning:");
+        expect(authPatch(api)?.body).toEqual({ external_email_enabled: true });
+      }).pipe(Effect.provide(layer));
+    });
   });
 
   it.effect(

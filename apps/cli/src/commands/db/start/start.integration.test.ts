@@ -2,7 +2,6 @@ import { BunServices } from "@effect/platform-bun";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import {
   Cause,
-  Clock,
   Deferred,
   Effect,
   Exit,
@@ -28,7 +27,6 @@ import {
   mockRuntimeInfo,
 } from "../../../../tests/helpers/mocks.ts";
 import { EXEC_FAILED_STATE } from "../../../../tests/helpers/docker-health.ts";
-import { observeMakeDirectory, startLockState } from "../../../../tests/helpers/start-lock.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { configValuesLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
@@ -42,7 +40,6 @@ import {
   withEmptyConfigEnv,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { classifyCliErrorActionability } from "../../../shared/telemetry/error-actionability.ts";
 import {
   DebugFlag,
   ExperimentalFlag,
@@ -55,7 +52,6 @@ import { HealthCheckTimeoutError } from "../../../command-internal/db-bootstrap/
 import { DbConnectError } from "../../../command-internal/db-connection.errors.ts";
 import { DbConnection, type DbSession } from "../../../command-internal/db-connection.service.ts";
 import { dockerRunLayer } from "../../../command-internal/docker-run.layer.ts";
-import { LocalStackStartBusyError } from "../../../command-internal/local-stack-start-lock.ts";
 import { dbStart } from "./start.handler.ts";
 import type { DbStartFlags } from "./start.command.ts";
 import { stackLocalDatabaseConn } from "../../../command-internal/stack-local-database.ts";
@@ -68,7 +64,8 @@ import {
 } from "../../../command-internal/stack-catalog-setup.ts";
 import {
   StackError,
-  holdLock,
+  holdExclusiveLock,
+  isLockBusy,
   type DatabaseInstance,
   type ServiceCreation,
   type ServiceCreationInput,
@@ -1220,76 +1217,34 @@ describe("db start", () => {
     }
   });
 
-  describe("per-project start lock", () => {
-    const WAITING_LINE = "Waiting for another supabase start for this project to finish...\n";
-
-    const startLockFile = Effect.fnUntraced(function* (workdir: string) {
+  describe("project lifecycle lock", () => {
+    // `db start` holds the shared gate, so an exclusive probe reads `busy` while it is in flight.
+    const lifecycleGateFile = Effect.fnUntraced(function* (workdir: string) {
       const path = yield* Path.Path;
-      return path.join(workdir, ".supabase", "locks", "start-test.lock");
+      return path.join(workdir, ".supabase", "locks", "docker-lifecycle.lock");
     });
-
-    it.effect(
-      "waits the 10 minute budget for a concurrent start of the same project, then fails without touching Docker",
-      () =>
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const lockFile = yield* startLockFile(tempRoot.current);
-          yield* fs.makeDirectory(path.dirname(lockFile), { recursive: true });
-          yield* holdLock(lockFile, "0 millis", "concurrent start");
-          const lockDirReady = yield* Deferred.make<void>();
-          const { layer, out, child } = setup();
-
-          const forkedAt = yield* Clock.currentTimeMillis;
-          const fiber = yield* dbStart(DEFAULT_FLAGS).pipe(
-            Effect.provide(
-              Layer.mergeAll(
-                layer,
-                observeMakeDirectory((made) =>
-                  made === path.dirname(lockFile)
-                    ? Deferred.succeed(lockDirReady, undefined).pipe(Effect.asVoid)
-                    : Effect.void,
-                ),
-              ),
-            ),
-            Effect.flip,
-            Effect.forkChild({ startImmediately: true }),
-          );
-          yield* Effect.raceFirst(Deferred.await(lockDirReady), Fiber.await(fiber));
-          for (let minute = 0; minute < 60 && fiber.pollUnsafe() === undefined; minute++) {
-            yield* TestClock.adjust("1 minute");
-          }
-          const error = yield* Fiber.join(fiber);
-          const waitedMillis = (yield* Clock.currentTimeMillis) - forkedAt;
-
-          expect(error).toBeInstanceOf(LocalStackStartBusyError);
-          expect(error).toMatchObject({
-            _tag: "LocalStackStartBusyError",
-            message: "another supabase start is still running for this project",
-            suggestion: expect.stringContaining("supabase start"),
-          });
-          expect(classifyCliErrorActionability(error)).toMatchObject({
-            error_fingerprint: "tag:LocalStackStartBusyError:lease_held",
-          });
-          expect(out.stderrText).toContain(WAITING_LINE);
-          expect(waitedMillis).toBeGreaterThanOrEqual(10 * 60_000);
-          expect(waitedMillis).toBeLessThanOrEqual(11 * 60_000);
-          expect(child.spawned).toEqual([]);
-        }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
-      60_000,
-    );
+    const gateState = (gate: string) =>
+      TestClock.withLive(
+        holdExclusiveLock(gate, "0 millis", "probe").pipe(
+          Effect.scoped,
+          Effect.match({
+            onSuccess: () => "free" as const,
+            onFailure: (error) => (isLockBusy(error) ? ("busy" as const) : ("error" as const)),
+          }),
+        ),
+      );
 
     for (const outcome of ["succeeds", "fails"] as const) {
       it.effect(
-        `holds the lock while the database comes up and releases it when the start ${outcome}`,
+        `holds the lifecycle lock while the database comes up and releases it when the start ${outcome}`,
         () => {
           const { layer, dbSession } = setup({ route: freshVolumeRoute(defaultRoute()) });
           return Effect.gen(function* () {
-            const lockFile = yield* startLockFile(tempRoot.current);
+            const gate = yield* lifecycleGateFile(tempRoot.current);
             const stateAtConnect: Array<"free" | "busy" | "error"> = [];
             const probingConnection = Layer.succeed(DbConnection, {
               connect: () =>
-                startLockState(lockFile).pipe(
+                gateState(gate).pipe(
                   Effect.flatMap((state) => {
                     stateAtConnect.push(state);
                     return outcome === "fails" && stateAtConnect.length > 1
@@ -1307,7 +1262,7 @@ describe("db start", () => {
             expect(Exit.isSuccess(exit)).toBe(outcome === "succeeds");
             expect(stateAtConnect.length).toBeGreaterThan(1);
             expect(stateAtConnect.every((state) => state === "busy")).toBe(true);
-            expect(yield* startLockState(lockFile)).toBe("free");
+            expect(yield* gateState(gate)).toBe("free");
           }).pipe(Effect.provide(BunServices.layer));
         },
       );

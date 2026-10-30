@@ -104,7 +104,15 @@ followed by a `Note: N block(s) … not returned by the API and … not compared
 …` line when the response omitted a block entirely, a `Note: … (masked by the
 API): …` line when the file sets masked secrets, and a `Note: … is not
 managed while its section is disabled and … not compared: …` line for
-declared properties whose containing feature is switched off. Every
+declared properties whose containing feature is switched off. When a declared
+`auth.email.enabled` or `auth.sms.enabled` (or the deprecated `enable_signup`) of `false`
+would turn off a provider that is currently on, a `Warning: auth.<provider>.enabled = false turns off the
+<email|phone> provider, so existing users can no longer sign in …` line follows the `Note:`
+lines (text mode only; the JSON payload is unchanged). A file that still spells
+`[auth.email] enable_signup` or `[auth.sms] enable_signup` also prints a `WARN:
+auth.email.enable_signup is deprecated and will be removed in v4, use auth.email.enabled
+instead.` line on stderr at load; the `enabled` spelling decodes to the same
+`enable_signup` path, so change paths are identical either way. Every
 non-constant string (path segments, env-var names,
 remotes/branch names) is sanitized against control characters before
 rendering.

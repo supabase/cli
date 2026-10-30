@@ -5,7 +5,7 @@ import { ConfigProvider, Effect, Layer, Option, Schema } from "effect";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import { useTempWorkdir } from "../../tests/helpers/command-mocks.ts";
-import { mockRuntimeInfo, mockTty } from "../../tests/helpers/mocks.ts";
+import { mockRuntimeInfo, mockTty, processEnvLayer } from "../../tests/helpers/mocks.ts";
 import { CliSettings } from "../shared/config/cli-settings.service.ts";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
 import { writeProjectLink } from "../shared/config/project-link.ts";
@@ -13,6 +13,68 @@ import { analyticsLayer, analyticsLayerFor } from "./analytics.layer.ts";
 
 const tempRoot = useTempWorkdir("supabase-analytics-destination-");
 const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+const decodeCapturedEvents = Schema.decodeUnknownEffect(
+  Schema.Array(
+    Schema.Struct({
+      event: Schema.String,
+      properties: Schema.Record(Schema.String, Schema.Unknown),
+    }),
+  ),
+);
+
+const recordingPosthogClient = (events: unknown[]) =>
+  HttpClient.make((request) =>
+    Effect.gen(function* () {
+      if (request.body._tag === "Raw" && request.body.body instanceof Uint8Array) {
+        const bytes =
+          request.headers["content-encoding"] === "gzip"
+            ? gunzipSync(request.body.body)
+            : request.body.body;
+        const payload = yield* decodeJson(new TextDecoder().decode(bytes)).pipe(Effect.orDie);
+        const batch = typeof payload === "object" ? Reflect.get(payload ?? {}, "batch") : undefined;
+        if (Array.isArray(batch)) events.push(...batch);
+      }
+      return HttpClientResponse.fromWeb(request, Response.json({ status: 1 }));
+    }),
+  );
+
+const captureWithProcessEnv = (env: Record<string, string>) =>
+  Effect.gen(function* () {
+    const events: unknown[] = [];
+    const layer = analyticsLayer.pipe(
+      Layer.provide(
+        Layer.succeed(CliSettings, {
+          apiUrl: "https://api.supabase.com",
+          dashboardUrl: "https://supabase.com/dashboard",
+          projectHost: "supabase.co",
+          telemetryPosthogHost: "https://project-telemetry.invalid",
+          telemetryPosthogKey: Option.none(),
+          accessToken: Option.none(),
+          noKeyring: Option.none(),
+          supabaseHome: tempRoot.current,
+          debug: Option.none(),
+          telemetryDebug: Option.none(),
+          telemetryDisabled: Option.none(),
+          doNotTrack: Option.none(),
+        }),
+      ),
+      Layer.provide(mockRuntimeInfo({ homeDir: tempRoot.current, cwd: tempRoot.current })),
+      Layer.provide(mockTty({ stdoutIsTty: false })),
+      Layer.provide(BunServices.layer),
+      Layer.provide(Layer.succeed(HttpClient.HttpClient, recordingPosthogClient(events))),
+      Layer.provide(
+        processEnvLayer({
+          SUPABASE_TELEMETRY_POSTHOG_HOST: "https://ambient-telemetry.invalid",
+          SUPABASE_TELEMETRY_POSTHOG_KEY: "ambient-key",
+          ...env,
+        }),
+      ),
+    );
+    yield* Analytics.use((analytics) => analytics.capture("base_properties_test")).pipe(
+      Effect.provide(layer),
+    );
+    return yield* decodeCapturedEvents(events);
+  });
 
 describe("analytics destination", () => {
   it.live("uses ambient telemetry configuration despite project destination settings", () => {
@@ -65,21 +127,7 @@ describe("analytics destination", () => {
 
   it.live("attributes events to the organization and project of a stack-mode link document", () => {
     const events: unknown[] = [];
-    const recordingClient = HttpClient.make((request) =>
-      Effect.gen(function* () {
-        if (request.body._tag === "Raw" && request.body.body instanceof Uint8Array) {
-          const bytes =
-            request.headers["content-encoding"] === "gzip"
-              ? gunzipSync(request.body.body)
-              : request.body.body;
-          const payload = yield* decodeJson(new TextDecoder().decode(bytes)).pipe(Effect.orDie);
-          const batch =
-            typeof payload === "object" ? Reflect.get(payload ?? {}, "batch") : undefined;
-          if (Array.isArray(batch)) events.push(...batch);
-        }
-        return HttpClientResponse.fromWeb(request, Response.json({ status: 1 }));
-      }),
-    );
+    const recordingClient = recordingPosthogClient(events);
     const settings = Layer.succeed(CliSettings, {
       apiUrl: "https://api.supabase.com",
       dashboardUrl: "https://supabase.com/dashboard",
@@ -133,4 +181,27 @@ describe("analytics destination", () => {
       ),
     );
   });
+});
+
+describe("analytics base properties", () => {
+  it.live("tags eval runs and names the detected agent on captured events", () =>
+    Effect.gen(function* () {
+      const captured = yield* captureWithProcessEnv({ SUPABASE_EVAL: "1", CLAUDECODE: "1" });
+      expect(captured.map(({ event }) => event)).toEqual(["base_properties_test"]);
+      expect(captured[0]?.properties).toMatchObject({
+        is_eval: true,
+        is_agent: true,
+        agent_name: "claude",
+      });
+    }),
+  );
+
+  it.live("reports no eval and omits the agent name on plain runs", () =>
+    Effect.gen(function* () {
+      const captured = yield* captureWithProcessEnv({});
+      expect(captured.map(({ event }) => event)).toEqual(["base_properties_test"]);
+      expect(captured[0]?.properties).toMatchObject({ is_eval: false, is_agent: false });
+      expect(captured[0]?.properties).not.toHaveProperty("agent_name");
+    }),
+  );
 });
