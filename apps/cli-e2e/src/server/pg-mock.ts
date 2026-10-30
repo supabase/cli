@@ -22,6 +22,8 @@
  *   - Terminate ('X') → closes connection gracefully
  */
 
+import { Console, Effect } from "effect";
+
 export interface PgFixture {
   /** Lowercase column names, matching the field names the inspect commands map query results onto. */
   columns: string[];
@@ -440,13 +442,13 @@ export function startPgMock(): PgMockHandle {
         try {
           processMessages(socket, () => state);
         } catch (err) {
-          console.error("[pg-mock] error processing message:", err);
+          Effect.runSync(Console.error("[pg-mock] error processing message:", err));
           socket.end();
         }
       },
       close(_socket) {},
       error(_socket, err) {
-        console.error("[pg-mock] socket error:", err);
+        Effect.runSync(Console.error("[pg-mock] socket error:", err));
       },
     },
   });

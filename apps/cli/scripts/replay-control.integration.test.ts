@@ -9,7 +9,7 @@ const fixturesDir = new URL("../../cli-e2e/fixtures", import.meta.url).pathname;
 const SCENARIO = "projects-list-renders-project-list";
 
 const replayServer = Effect.acquireRelease(
-  Effect.promise(() => startReplayServer({ fixturesDir })),
+  Effect.promise(() => startReplayServer({ fixturesDir, record: false, stagingUrl: undefined })),
   (server) => Effect.promise(() => server.stop()),
 );
 

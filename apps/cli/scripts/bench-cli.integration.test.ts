@@ -29,7 +29,9 @@ describe("runWorkloadBench", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const server = yield* Effect.acquireRelease(
-          Effect.promise(() => startReplayServer({ fixturesDir })),
+          Effect.promise(() =>
+            startReplayServer({ fixturesDir, record: false, stagingUrl: undefined }),
+          ),
           (handle) => Effect.promise(() => handle.stop()),
         );
         const dir = yield* fs.makeTempDirectoryScoped({ prefix: "bench-fake-cli-" });
