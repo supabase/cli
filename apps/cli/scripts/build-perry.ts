@@ -90,7 +90,9 @@ export const COMPUTE_STACKS: Record<ComputeRuntime, ComputeStack> = ${yield* enc
 
   yield* fs.writeFileString(
     path.join(outdir, "perry.json"),
-    yield* encodeJson({ define: yield* localBuildDefine }),
+    yield* encodeJson({
+      define: { ...(yield* localBuildDefine), SUPABASE_STACK_STANDALONE: "true" },
+    }),
   );
   yield* fs.writeFileString(path.join(outdir, "package.json"), yield* encodeJson(perryPackageJson));
 });
@@ -99,7 +101,7 @@ const compile = Effect.fn("BuildPerry.compile")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const perry = yield* Config.String("PERRY").pipe(Config.withDefault("perry"));
   const exitCode = yield* spawner.exitCode(
-    ChildProcess.make(perry, ["compile", "src/main.ts", "--platform", "bun", "-o", "supabase"], {
+    ChildProcess.make(perry, ["compile", "src/main.ts", "-o", "supabase"], {
       cwd: outdir,
       extendEnv: true,
       env: {
