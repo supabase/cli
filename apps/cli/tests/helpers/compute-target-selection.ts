@@ -22,7 +22,7 @@ export interface ComputeTargetSelectionScenario {
   readonly routes: (ref: string) => ComputeHttpRoutes;
   readonly run: (
     flags: TargetSelectionFlags,
-  ) => Effect.Effect<unknown, unknown, ComputeTargetSelectionServices>;
+  ) => Effect.Effect<unknown, Error, ComputeTargetSelectionServices>;
   readonly activeFlags?: ActiveFlags;
 }
 

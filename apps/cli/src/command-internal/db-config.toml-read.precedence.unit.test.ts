@@ -231,10 +231,9 @@ describe("db toml reader precedence goldens", () => {
             .expect(Result.isSuccess(outcome) ? outcome.success.projectId : undefined)
             .toBe(fixture.expectedProjectId);
         }
+        const goldenText = yield* goldenJson(snapshot, { [workdir]: "<WORKDIR>" });
         yield* Effect.promise(() =>
-          ctx
-            .expect(goldenJson(snapshot, { [workdir]: "<WORKDIR>" }))
-            .toMatchFileSnapshot(`${GOLDEN_DIR}/${fixture.golden}.json`),
+          ctx.expect(goldenText).toMatchFileSnapshot(`${GOLDEN_DIR}/${fixture.golden}.json`),
         );
       }).pipe(Effect.provide(BunServices.layer)),
     );
