@@ -147,7 +147,7 @@ describe("project init templates", () => {
   it("pins init's OrioleDB version to the newest OrioleDB 17 build the catalog publishes", () => {
     const pinned = orioledbVersions().filter((version) => postgresMajor(version) === "17");
     for (const experimentalStack of [false, true]) {
-      const rendered = renderCliConfigTemplate("demo-project", true, experimentalStack);
+      const rendered = renderCliConfigTemplate("demo-project", true, { experimentalStack });
       const version = /^orioledb_version = "(.+)"$/m.exec(rendered)?.[1] ?? "";
       expect(pinned).toContain(version);
       for (const other of pinned)
@@ -181,7 +181,7 @@ describe("project init templates", () => {
   });
 
   it("opts the experimental stack template into stack=true without default listener ports", () => {
-    const rendered = renderCliConfigTemplate("demo-project", false, true);
+    const rendered = renderCliConfigTemplate("demo-project", false, { experimentalStack: true });
     expect(rendered).toMatch(
       /\[experimental\]\n# Use the new local stack backend for start, stop, and status, and for --local targets of db, migration, test db, gen types, inspect, and pull.\nstack = true\n/,
     );

@@ -191,7 +191,9 @@ max_rows = 250
 
   it.effect("leaves stack-opt-in init listeners automatic except disabled pooler", () =>
     Effect.gen(function* () {
-      const root = yield* project(renderCliConfigTemplate("stack-config-init", false, true));
+      const root = yield* project(
+        renderCliConfigTemplate("stack-config-init", false, { experimentalStack: true }),
+      );
       const config = yield* load(root);
       const services = byService(yield* config.creations("stack-config-init"));
       expect(services.get("database")?.endpoints).toEqual({ sql: { port: "auto" } });

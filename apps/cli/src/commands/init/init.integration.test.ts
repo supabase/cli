@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import * as SmolToml from "smol-toml";
 import { orioledbVersions } from "@supabase/stack/internal/artifacts";
+import { loadCliConfig, MIGRATION_CHECK_RULES } from "@supabase/config/internal";
 import {
   Cause,
   ConfigProvider,
@@ -16,6 +17,7 @@ import {
   Stdio,
 } from "effect";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
+import { resolveMigrationChecksPolicy } from "../../command-internal/migration-checks-policy.ts";
 import { ExperimentalFlag, WorkdirFlag, YesFlag } from "../../command-internal/global-flags.ts";
 import { normalizeCause } from "../../shared/output/normalize-error.ts";
 import { textOutputLayer } from "../../shared/output/output.layer.ts";
@@ -145,9 +147,41 @@ describe("init", () => {
       expect(content).toContain("major_version = 17");
       expect(content).toContain("port = 54321");
       expect(content).not.toContain("stack = true");
+      expect(content).not.toContain("[db.migrations.checks]");
       expect(out.stdoutText).toBe("Finished supabase init.\n");
     });
   });
+
+  it.effect(
+    "writes every migration check at warn when SUPABASE_EXPERIMENTAL_MIGRATION_CHECKS is set",
+    () => {
+      const tempDir = tempRoot.current;
+
+      return Effect.gen(function* () {
+        const { layer } = setup(tempDir, { env: { SUPABASE_EXPERIMENTAL_MIGRATION_CHECKS: "1" } });
+
+        yield* init({
+          interactive: false,
+          useOrioledb: false,
+          force: false,
+          withVscodeWorkspace: false,
+          withVscodeSettings: false,
+          withIntellijSettings: false,
+        }).pipe(Effect.provide(layer));
+
+        const loaded = yield* loadCliConfig(tempDir, { cliCompat: true }).pipe(
+          Effect.provide(BunServices.layer),
+        );
+        const checks = loaded?.config.db.migrations.checks;
+
+        expect(Object.keys(checks ?? {}).toSorted()).toEqual(MIGRATION_CHECK_RULES.toSorted());
+        expect(resolveMigrationChecksPolicy(checks)).toEqual({
+          severities: Object.fromEntries(MIGRATION_CHECK_RULES.map((rule) => [rule, "warn"])),
+          exclude: [],
+        });
+      });
+    },
+  );
 
   it.effect.each([
     { experimental: false, label: "without --experimental" },

@@ -310,6 +310,7 @@ export const CLI_NON_CONFIG_ENV_NAMES: Readonly<Record<string, string>> = {
   SUPABASE_ENV: "dotenv file selector",
   SUPABASE_EVAL: "telemetry",
   SUPABASE_EXPERIMENTAL: "global flag",
+  SUPABASE_EXPERIMENTAL_MIGRATION_CHECKS: "init migration checks opt-in",
   SUPABASE_FOO_BAR: "documentation example",
   SUPABASE_FUNCTIONS_DIR: "functions deploy constant",
   SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: "functions serve",
