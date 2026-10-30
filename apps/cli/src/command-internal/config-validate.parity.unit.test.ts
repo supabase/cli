@@ -33,16 +33,11 @@ const withConfig = (content: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const dir = yield* fs.makeTempDirectory({ prefix: "config-validate-parity-" });
+    const dir = yield* fs.makeTempDirectoryScoped({ prefix: "config-validate-parity-" });
     yield* fs.makeDirectory(path.join(dir, "supabase"), { recursive: true });
     yield* fs.writeFileString(path.join(dir, "supabase", "config.toml"), content);
     return dir;
   }).pipe(Effect.provide(BunServices.layer));
-
-const removeConfig = (dir: string) =>
-  FileSystem.FileSystem.use((fs) => fs.remove(dir, { recursive: true, force: true })).pipe(
-    Effect.provide(BunServices.layer),
-  );
 
 const readD = (workdir: string) =>
   Effect.gen(function* () {
@@ -60,8 +55,7 @@ function failsWithD(tomlLines: ReadonlyArray<string>, message: string) {
     if (Exit.isFailure(exit)) {
       expect(stringifyJson(exit.cause)).toContain(message);
     }
-    yield* removeConfig(dir);
-  });
+  }).pipe(Effect.scoped);
 }
 
 const decodeConfig = Schema.decodeUnknownSync(CliConfigSchema);
@@ -365,8 +359,7 @@ describe("shared api + auth validation branches, cross-caller parity (S vs L)", 
       if (Exit.isFailure(exit)) {
         expect(stringifyJson(exit.cause)).toContain(message);
       }
-      yield* removeConfig(dir);
-    });
+    }).pipe(Effect.scoped);
 
   // Ambient SUPABASE_API_* / SUPABASE_AUTH_* values would override the config
   // under test, so pin every participating key to unset for the duration of
