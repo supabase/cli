@@ -390,16 +390,14 @@ export function localDbState(
       if (!isContainerNotFoundMessage(stderr)) {
         // Surface the Docker install hint instead of raw stderr when the daemon is unreachable.
         const daemonDown = isDockerDaemonUnreachable(stderr);
-        return yield* Effect.fail(
-          new LocalDbRunningError({
-            message:
-              stderr.length > 0
-                ? `failed to inspect service: ${stderr}`
-                : "failed to inspect service",
-            daemonDown,
-            ...(daemonDown ? { suggestion: SUGGEST_DOCKER_INSTALL } : {}),
-          }),
-        );
+        return yield* new LocalDbRunningError({
+          message:
+            stderr.length > 0
+              ? `failed to inspect service: ${stderr}`
+              : "failed to inspect service",
+          daemonDown,
+          ...(daemonDown ? { suggestion: SUGGEST_DOCKER_INSTALL } : {}),
+        });
       }
       return { exists: false } satisfies LocalDbState;
     }),

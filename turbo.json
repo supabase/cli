@@ -17,12 +17,6 @@
     "lint:fix": {
       "cache": false
     },
-    "lint:effect:check": {
-      "cache": false
-    },
-    "lint:effect:fix": {
-      "cache": false
-    },
     "lint:actions:check": {
       "cache": false
     },

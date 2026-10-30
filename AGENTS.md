@@ -35,8 +35,11 @@ all TypeScript runtime code in Effect. Promise-returning APIs are allowed only a
 for consumers that do not use Effect.
 The skill is authoritative for Effect coding practices when repository instructions conflict.
 
-Effect linting uses oxlint via `.oxlintrc.effect.json`; run `pnpm lint:effect:check` or
-`pnpm lint:effect:fix` from the repository root.
+Effect linting is part of the repo lint (`.oxlintrc.json` extends the Effect oxlint preset); run
+`pnpm lint:check` or `pnpm lint:fix` from the repository root; `lint:fix` also applies suggestion
+fixes, so review its diff. Its last override turns the Effect rules off for files kept outside the
+Effect lint: `.github/scripts`, the npm launcher shim, compute stack templates and generated code.
+When an `@effect/tsgo` bump adds, removes or renames a rule, update that override.
 
 Instrument by default: when you add or change code that does I/O (HTTP, SQL, filesystem beyond a
 small read, child processes, containers, waits) or millisecond-scale work, give it a named span
