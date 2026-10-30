@@ -69,7 +69,9 @@ jobs:
         run: |
           set -euo pipefail
           git rev-parse HEAD
-          cargo build --profile prod -p perry -p perry-runtime-static -p perry-stdlib-static
+          cargo build --profile prod -p perry -p perry-runtime-static -p perry-stdlib-static \
+            -p perry-wasm-host -p perry-ext-http -p perry-ext-net -p perry-ext-typescript \
+            -p perry-ext-undici -p perry-ext-ws -p perry-ext-zlib
           scripts/gc_call_effects/sidecars.sh target/prod
 
       - name: Setup
