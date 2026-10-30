@@ -70,7 +70,8 @@ flag for more than one command, and use `--cwd-setup init` when a command, such 
 run inside an initialized project. Pass `--json` for a machine-readable report, `--out <file>` to
 also write the raw per-run samples, and `--cpu-prof` to capture a Bun CPU profile of one untimed
 branch launch (`BUN_OPTIONS=--cpu-prof`), printing its `.cpuprofile` path. Launches set
-`SUPABASE_NO_UPDATE_NOTIFIER=1`; pass `--update-check` to include the release check. Each launch's
+`SUPABASE_NO_UPDATE_NOTIFIER=1`, `DO_NOT_TRACK=1`, and `SUPABASE_TELEMETRY_DISABLED=1`, so benchmark
+runs never send product telemetry; pass `--update-check` to include the release check. Each launch's
 fresh `SUPABASE_HOME` has no cached release tag, so the check calls GitHub on every launch, except
 with `--cwd-setup init`, where the setup `init` caches the tag in the project before the measured
 command runs. The extra traced launches add machine load, so take wall-time conclusions from a run
@@ -95,19 +96,23 @@ start replaces the comparison with a notice naming the step. The workloads use n
 prompts.
 
 The first push to a pull request from this repository benchmarks and posts one comment, tagged with
-the hidden marker `<!-- cli-bench:pr -->`. Later pushes skip the benchmark, and the job summary says
-so, while that comment reports a result; a comment that reports a failed run is benchmarked again
-on the next push. Pull requests from forks have a read-only token, so they get the job summary only
+the hidden marker `<!-- cli-bench:pr -->`. The comment has two sections, "Lightweight Commands" (this
+run's workloads) and "Integration Heavy Commands" (the [stack benchmark](#stack-benchmark)); each
+section is written by its own run and shows the commit it measured. Later pushes skip the benchmark,
+and the job summary says so, while the Lightweight Commands section reports a result; a section that
+reports a failed run is benchmarked again on the next push. Pull requests from forks have a read-only token, so they get the job summary only
 and benchmark every push.
 
 A maintainer can comment exactly `/bench` to run the benchmark again on the pull request's current
 head commit. The command re-runs that commit's `pull_request` workflow run, as "Re-run all jobs" in
-the Actions UI does, and the re-run updates the comment in place, or creates it if it is missing.
-The comment keeps a collapsed "Previous runs" list below the report with the commit, time (UTC),
-headline, and link of each earlier run, newest first and up to 20, stored in a hidden marker in the
-comment. Only the repository owner and people with write access can run it, and only on open,
-non-draft pull requests into `develop` from this repository; the command must be the whole comment,
-so `/bench full` and anything else is ignored. An eyes reaction on the comment means GitHub accepted
+the Actions UI does, and the re-run updates the Lightweight Commands section in place, or creates the comment if it is
+missing. The comment keeps a collapsed "Previous runs" list below the sections with the section,
+commit, time (UTC), headline, and link of each result a section replaced, newest first and up to 20
+across both sections, stored in a hidden marker in the comment. One note under the sections tells
+readers to comment `/bench` (lightweight benchmarks only) or `/bench full` to run it again. Only the
+repository owner and people with write access can run either command, and only on open, non-draft
+pull requests into `develop` from this repository; the command must be the whole comment, so
+anything other than `/bench` or `/bench full` is ignored. An eyes reaction on the comment means GitHub accepted
 the re-run and a benchmark is running; the result arrives as the updated benchmark comment, whether
 it succeeded or failed. When no re-run can start, the pull request gets a reply saying why: a
 benchmark is already running for the commit, the run is older than 30 days, GitHub refused the
@@ -117,8 +122,8 @@ Known gap: a pull request whose changes match none of the workflow's path filter
 more files than GitHub's path filter inspects (300), gets no run, so there is nothing for `/bench`
 to re-run and it replies that there is none.
 
-Workflows triggered by comments run from the default branch, so `/bench` works only once the
-workflow is on `develop`. The `/bench` job runs default branch code only: it never checks out or
+Workflows triggered by comments run from the default branch, so `/bench` and `/bench full` work only
+once the workflows are on `develop`. The `/bench` job runs default branch code only: it never checks out or
 runs pull request code, because a comment-triggered run shares the default branch's cache scope.
 Benchmarks always run in the `pull_request` run. `resolve` (read-only) decides whether a push
 benchmarks; `rerun` is the only job with `actions: write`. `bench` has read-only permissions, and
@@ -220,15 +225,103 @@ Caveats:
 - `device_id` counts machines, not people, short-lived CI runners inflate it, and a large share of
   runs come from agents. Telemetry durations include network, Docker, and wait time, so they guided
   the choice but are not what the benchmark measures.
-- Excluded high-usage commands: `start`, `status`, `stop`, `db start`, `db reset`, and `test db`
-  need Docker; `db push`, `db lint`, `db dump`, `db diff`, `migration list`, `migration up`,
-  `migration repair`, and `db schema declarative sync` need a database (a nightly tier);
-  `link` probes `https://<ref>.<project_host>`, which never reaches the replay server;
+- Excluded high-usage commands: `start`, `status`, `stop`, `db start`, `db reset`, `test db`,
+  `db push`, `db lint`, `db dump`, `db diff`, `migration list`, and `migration up` need Docker or a
+  database and run in the [stack benchmark](#stack-benchmark) instead; `migration repair` and
+  `db schema declarative sync` are not benchmarked; `link` probes `https://<ref>.<project_host>`, which never reaches the replay server;
   `functions deploy` uses Docker by default and its API path has no success scenario; `login` is
   interactive unless a token is passed; `functions serve` needs Docker.
 - The first launch of a process is slower (credential loading); the warm-up runs absorb it.
 - Launches write a profile file, so numbers from runs with `--api-url` are not comparable with runs
   without it.
+
+### Stack benchmark
+
+`.github/workflows/cli-bench-stack.yml` measures the workloads that need a running local stack or
+database: `start`, `status`, `stop`, `db start`, `db reset`, `db query`, `test db`, `gen types` at
+three schema sizes, `db diff` (cold and warm), `db dump`, `db lint`, `migration up`, `db push --local`,
+and `migration list`, plus the `stack start|status|stop` lifecycle and `db query` and `db reset`
+against the stack backend. Like the pull request benchmark it is report only and never blocks a
+merge. It never runs on a push; it starts in three ways:
+
+- A maintainer comments exactly `/bench full` on an open, non-draft pull request into `develop` from
+  this repository (same permission rules as `/bench`). The command re-measures the Integration Heavy
+  Commands section by dispatching the workflow on the pull request's branch. It also refreshes the
+  Lightweight Commands section, by re-running that commit's `pull_request` run, only when the section
+  does not already show the head commit and no lightweight run is queued or running; with no run to
+  re-run, the dispatch measures those workloads itself. While an integration-heavy run for the pull
+  request is queued or running, the command replies with that run's link and does nothing else. The
+  pull request also gets a reply when the branch has no stack workflow file yet (merge `develop`
+  into it), when the pull request is a draft, from a fork, or not into `develop`, and when GitHub
+  refuses the dispatch (with the status and message). An eyes reaction means the dispatch was
+  accepted.
+- From the Actions UI, on any branch, with inputs `workloads` (`all`, `lightweight`, or
+  `integration-heavy`), `runtime` (`both`, `docker`, or `native`), and `base` (`merge-base`, the
+  default, or a release tag such as `v3.0.0`). The job summary always has the report. The pull
+  request comment is updated too only when `base` is `merge-base` and the branch has exactly one
+  open pull request into `develop` from this repository.
+- Weekly, on a schedule (Sunday 03:00 UTC) on `develop`, against the latest stable release resolved
+  at run time, so each report shows what changed since the last release. The report goes to the job
+  summary and the run's artifacts; nobody is notified. Slack notifications come later, once the data
+  proves valid and useful. To compare two releases by hand, dispatch the workflow on the newer tag
+  with `base` set to the older one.
+
+A dispatch run uses the workflow file and code of the branch it was started on. Because GitHub runs
+dispatch, schedule, and comment-triggered workflows only from the default branch, none of these can
+run before the workflow is on `develop`.
+
+The workflow plans, builds, measures, and reports in separate jobs. `plan` resolves the base, packs
+the workloads into shards of roughly ten minutes each from each workload's `estimatedSeconds`, and
+marks the Integration Heavy Commands section as running with a link to the run. `build` builds the
+branch binary once, and the base binary from the merge base or the release asset. Each shard is one
+runner per runtime; it alternates base and branch on that machine and runs no other workload at the
+same time. `report` merges the shard reports into the job summary and the comment section. A failed
+run shows the failure and a link to the run in its section.
+
+Runtimes are Docker (default-mode commands and `--runtime docker`) and the native backend
+(`--runtime native`), both on Linux x64. Cold downloads are not measured: images and native
+archives are fetched before the measured launches, and each shard shares one native artifact cache
+across all launches through `--artifact-cache`, which links it in as `cache/stack` of every launch's
+fresh `SUPABASE_HOME`.
+
+The workload manifest `apps/cli/bench/workloads.stack.json` adds these fields to the entries
+described above:
+
+| Field                                | Meaning                                                                                                                |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `setup`, `teardown`                  | Lists of CLI arguments run untimed with the build under test. `teardown` always runs, even after a failure or timeout. |
+| `setupScope`                         | `run` (default) repeats setup and teardown for every launch; `block` starts one stack per block of five launches.      |
+| `stack`                              | Sets `SUPABASE_EXPERIMENTAL_STACK=1` on every launch of the workload, the only variable a workload can set.            |
+| `runtime`                            | `docker` or `native`. A stack workload must pass the same `--runtime` to every `stack start`.                          |
+| `fixture`                            | A directory under `apps/cli/bench/fixtures/` copied into the project's `supabase/` directory after `init`.             |
+| `runs`, `warmup`, `traceRuns`        | Per-workload overrides; `--runs` and `--warmup` on the command line win. `traceRuns` is the traced launches per build. |
+| `timeoutSeconds`, `estimatedSeconds` | Launch timeout (default 60) and the seconds one pass over both builds takes, which sizes the shards.                   |
+
+Setup, the measured launches, and teardown of one run (or block) share one project directory and
+`SUPABASE_HOME`; every launch still gets its own telemetry and trace settings. Read-only workloads
+use `block` scope; workloads that change state use `run`. Only one stack is ever up at a time per
+runner. Stack mode supports only pg-delta for `db diff`, so the `db diff` workloads pass
+`--use-pg-delta` in both modes. A workload that fails on the base build, such as one using a flag
+the base does not have, shows as a base failure and is not compared.
+
+The Integration Heavy Commands report adds a container operations table: the number of container
+CLI calls per run for each verb, such as `container inspect`, flagged when a count changes, appears,
+or drops to zero. Container work in the stack backend runs outside the CLI's trace, so stack
+workloads show no container counts. The fixtures under `apps/cli/bench/fixtures/` are generated by
+`bun apps/cli/scripts/bench-fixtures.ts` and committed; changing one starts a new series of results.
+
+To run it locally, build two binaries as above and run a subset:
+
+```sh
+bun apps/cli/scripts/bench-cli.ts --base <base-binary> --branch <branch-binary> \
+  --workloads apps/cli/bench/workloads.stack.json --runtime docker --only status,db-query \
+  --trace --out /tmp/report.json
+bun apps/cli/scripts/bench-summary.ts --section integration-heavy --report /tmp/report.json
+```
+
+Use `--runtime native` with `--artifact-cache <dir>` for the native workloads. Refresh the list from
+the same usage query as the pull request benchmark, keeping the commands that need a stack or
+database instead of dropping them.
 
 ## Grafana, Tempo, or Jaeger
 
