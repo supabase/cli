@@ -527,7 +527,6 @@ describe("src/internal.ts export surface", () => {
         "loadCliConfig",
         "mapMigrationCheckRules",
         "mergeParsedCliConfig",
-        "normalizeDeprecatedProviderSignupKeys",
         "parseCliConfigDocument",
         "parseCliConfigDocumentFile",
         "projectConfigApiBlockKeys",

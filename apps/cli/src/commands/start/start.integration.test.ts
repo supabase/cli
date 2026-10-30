@@ -5138,6 +5138,35 @@ content_path = "./supabase/templates/custom_notice.html"
         expect(gotrueCreate?.env[env]).toBe(expected);
       }).pipe(Effect.provide(BunServices.layer)),
     );
+
+    it.effect.each([
+      {
+        name: "[auth.email]",
+        config: 'project_id = "demo"\n[auth.email]\nenabled = false\n',
+        shellEnv: "SUPABASE_AUTH_EMAIL_ENABLED",
+        gotrueEnv: "GOTRUE_EXTERNAL_EMAIL_ENABLED",
+      },
+      {
+        name: "[auth.sms]",
+        config: `project_id = "demo"\n[auth.sms]\nenabled = false\n${TWILIO}`,
+        shellEnv: "SUPABASE_AUTH_SMS_ENABLED",
+        gotrueEnv: "GOTRUE_EXTERNAL_PHONE_ENABLED",
+      },
+    ])("sets $gotrueEnv from $shellEnv=true over $name enabled = false", (row) =>
+      withEnvVar(
+        row.shellEnv,
+        "true",
+        Effect.gen(function* () {
+          const { layer, child } = yield* setup({ configContents: row.config });
+
+          yield* start(flags()).pipe(Effect.provide(layer));
+          const gotrueCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+          );
+          expect(gotrueCreate?.env[row.gotrueEnv]).toBe("true");
+        }).pipe(Effect.provide(BunServices.layer)),
+      ).pipe(Effect.provide(BunServices.layer)),
+    );
   });
 
   describe("SUPABASE_DB_PORT override", () => {

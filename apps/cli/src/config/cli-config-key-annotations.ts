@@ -1,3 +1,4 @@
+import { PROVIDER_SIGNUP_ALIASES } from "@supabase/config/internal";
 import {
   DEFAULT_LOCAL_DATABASE_PASSWORD,
   DEFAULT_POSTGRES_ROOT_KEY,
@@ -60,6 +61,24 @@ export const CLI_CONFIG_SCHEMA_EXCLUDED: Readonly<Record<string, string>> = {
   "experimental.orioledb_version":
     "removed; only an empty value is accepted and the loader drops it",
 };
+
+/**
+ * Schema leaves whose env names derive from other paths, `[0]` canonical; an empty list means no
+ * env override. The preferred provider switch claims the name so it beats the legacy one.
+ */
+export const CLI_CONFIG_ENV_NAME_PATHS: Readonly<Record<string, ReadonlyArray<string>>> =
+  Object.fromEntries(
+    PROVIDER_SIGNUP_ALIASES.flatMap(
+      ({ path, preferred, legacy }): ReadonlyArray<readonly [string, ReadonlyArray<string>]> => {
+        const preferredPath = [...path, preferred].join(".");
+        const legacyPath = [...path, legacy].join(".");
+        return [
+          [legacyPath, [preferredPath, legacyPath]],
+          [preferredPath, []],
+        ];
+      },
+    ),
+  );
 
 /** Schema sections whose keys take no `SUPABASE_*` override, with the reason. */
 export const CLI_CONFIG_NO_ENV_SECTIONS: Readonly<Record<string, string>> = {

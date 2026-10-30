@@ -369,6 +369,42 @@ major_version = 15
   );
 });
 
+describe("CliConfigValues provider switch env names", () => {
+  it.live.each([
+    { section: "email", upper: "EMAIL" },
+    { section: "sms", upper: "SMS" },
+  ] as const)(
+    "lets the _ENABLED env name beat the config and _ENABLE_SIGNUP for [auth.$section]",
+    ({ section, upper }) =>
+      Effect.gen(function* () {
+        const enabledName = `SUPABASE_AUTH_${upper}_ENABLED`;
+        const legacyName = `SUPABASE_AUTH_${upper}_ENABLE_SIGNUP`;
+        const root = yield* project(`project_id = "p"\n[auth.${section}]\nenabled = false\n`);
+        const key = CliConfigKeys.auth[section].enableSignup;
+        const resolve = (shell: Readonly<Record<string, string>>) =>
+          CliConfigValues.use((values) =>
+            Effect.flatMap(values.load({ workdir: root, projectRef: Option.none() }), (resolved) =>
+              resolved.get(key),
+            ),
+          ).pipe(Effect.provide(configValuesLayer()), (effect) => withShell(shell, effect));
+
+        expect(yield* resolve({})).toMatchObject({ value: false, origin: { tier: "config" } });
+        expect(yield* resolve({ [enabledName]: "true" })).toMatchObject({
+          value: true,
+          origin: { tier: "shell", envName: enabledName },
+        });
+        expect(yield* resolve({ [enabledName]: "false", [legacyName]: "true" })).toMatchObject({
+          value: false,
+          origin: { tier: "shell", envName: enabledName },
+        });
+        expect(yield* resolve({ [legacyName]: "true" })).toMatchObject({
+          value: true,
+          origin: { tier: "shell", envName: legacyName },
+        });
+      }).pipe(Effect.provide(BunServices.layer), Effect.scoped),
+  );
+});
+
 describe("CliConfigValues memoisation", () => {
   it.live("memoises a load per target and drops the memo after a write", () =>
     Effect.gen(function* () {

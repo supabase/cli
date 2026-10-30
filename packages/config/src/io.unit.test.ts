@@ -2890,15 +2890,15 @@ describe("writeCliConfigDocumentText", () => {
 });
 
 describe("decodeCliConfigDocumentForValidationEffect", () => {
-  test("accepts an unfolded auth.{email,sms}.enabled, as a pull-edited document carries it", () =>
+  test("folds an unfolded auth.{email,sms}.enabled into enable_signup, as a pull-edited document carries it", () =>
     runConfigEffect(
       Effect.gen(function* () {
         const config = yield* decodeCliConfigDocumentForValidationEffect(
           { project_id: "abc123", auth: { email: { enabled: false }, sms: { enabled: true } } },
           { cliCompat: true, path: "supabase/config.toml", format: "toml" },
         );
-        expect(config.auth.email.enabled).toBe(false);
-        expect(config.auth.sms.enabled).toBe(true);
+        expect(config.auth.email.enable_signup).toBe(false);
+        expect(config.auth.sms.enable_signup).toBe(true);
       }),
     ));
 

@@ -20,7 +20,7 @@ import {
   CliConfigWriteError,
 } from "./errors.ts";
 import { interpolateEnvReferencesAgainstSchema } from "./lib/env.ts";
-import { PROVIDER_SIGNUP_ALIASES } from "./lib/provider-signup.ts";
+import { normalizeDeprecatedProviderSignupKeys } from "./lib/provider-signup.ts";
 import { findCliProjectPaths } from "./paths.ts";
 import { rejectRemovedConfigKeys } from "./removed-config-keys.ts";
 import { setOwnProperty } from "./sparse.ts";
@@ -219,78 +219,6 @@ const applyRemoteOverride = Effect.fnUntraced(function* (
 
 export function parseCliConfigDocument(content: string, format: ConfigFormat): unknown {
   return format === "json" ? JSON.parse(content) : SmolToml.parse(content);
-}
-
-export interface NormalizedProviderSignupDocument {
-  readonly document: unknown;
-  /**
-   * Dotted paths of every present legacy `enable_signup`, whatever its value, e.g.
-   * `auth.email.enable_signup` or `remotes.staging.auth.sms.enable_signup`.
-   */
-  readonly deprecatedPaths: ReadonlyArray<string>;
-}
-
-function foldProviderSignupKeys(
-  layer: Record<string, unknown>,
-  prefix: string,
-): { readonly layer: Record<string, unknown>; readonly deprecatedPaths: ReadonlyArray<string> } {
-  const deprecatedPaths: Array<string> = [];
-  let normalized = layer;
-  for (const {
-    path: [parentKey, sectionKey],
-    preferred,
-    legacy,
-  } of PROVIDER_SIGNUP_ALIASES) {
-    const parent = normalized[parentKey];
-    const section = isObject(parent) ? parent[sectionKey] : undefined;
-    if (!isObject(parent) || !isObject(section)) {
-      continue;
-    }
-    if (legacy in section) {
-      deprecatedPaths.push(`${prefix}${parentKey}.${sectionKey}.${legacy}`);
-    }
-    if (preferred in section) {
-      const { [preferred]: value, ...rest } = section;
-      normalized = {
-        ...normalized,
-        [parentKey]: { ...parent, [sectionKey]: { ...rest, [legacy]: value } },
-      };
-    }
-  }
-  return { layer: normalized, deprecatedPaths };
-}
-
-/**
- * Folds `auth.{email,sms}.enabled` into the canonical `enable_signup` (the new key wins),
- * separately for the top level and each `[remotes.*]` block so a remote's own key beats the base's.
- * Exposed via `@supabase/config/internal` so `apps/cli`'s raw TOML reader can fold before its own
- * `[remotes.*]` merge.
- */
-export function normalizeDeprecatedProviderSignupKeys(
-  document: unknown,
-): NormalizedProviderSignupDocument {
-  if (!isObject(document)) {
-    return { document, deprecatedPaths: [] };
-  }
-  const top = foldProviderSignupKeys(document, "");
-  const deprecatedPaths = [...top.deprecatedPaths];
-  let normalized = top.layer;
-  if (isObject(normalized.remotes)) {
-    normalized = {
-      ...normalized,
-      remotes: Object.fromEntries(
-        Object.entries(normalized.remotes).map(([name, remote]) => {
-          if (!isObject(remote)) {
-            return [name, remote];
-          }
-          const result = foldProviderSignupKeys(remote, `remotes.${name}.`);
-          deprecatedPaths.push(...result.deprecatedPaths);
-          return [name, result.layer];
-        }),
-      ),
-    };
-  }
-  return { document: normalized, deprecatedPaths };
 }
 
 /**

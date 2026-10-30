@@ -45,7 +45,6 @@ export {
   writeCliConfigDocumentText,
   decodeCliConfigDocumentForValidationEffect,
   type DecodeCliConfigDocumentForValidationEffectOptions,
-  normalizeDeprecatedProviderSignupKeys,
   parseCliConfigDocument,
 } from "./io.ts";
 export { PROVIDER_SIGNUP_ALIASES } from "./lib/provider-signup.ts";

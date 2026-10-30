@@ -393,6 +393,8 @@ These are different mechanisms and both apply:
 - A `SUPABASE_<UPPER_SNAKE_PATH>` variable overrides the key at the env tier. An empty variable is
   ignored and falls through to config. A value of the form `env(NAME)` in the variable expands once.
   A shell variable, even an empty one, shadows the same name in a project `.env` file.
+  `SUPABASE_AUTH_EMAIL_ENABLED` and `SUPABASE_AUTH_SMS_ENABLED` are the exception: they set
+  `enable_signup` in their section and beat `..._ENABLE_SIGNUP` at the same tier.
 
 An override is parsed with a codec derived from the schema type, so an unparsable value fails the
 command that loads config instead of falling back to the file.
