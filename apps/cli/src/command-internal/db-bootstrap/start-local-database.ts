@@ -28,7 +28,7 @@ import { parseUrl } from "../storage-url.ts";
 import { loadLocalProjectContext } from "../local-project-context.ts";
 import { cliProjectFilterValue, localDbContainerId } from "../docker-ids.ts";
 import { isBitbucketPipeline } from "../bitbucket-pipeline.ts";
-import { holdLocalStackStartLock } from "../local-stack-start-lock.ts";
+import { holdProjectLifecycleLock } from "../project-lifecycle-lock.ts";
 import { dbNotRunningError } from "../status-errors.ts";
 import { buildLocalDbContainerInputs } from "./local-container-inputs.ts";
 import { removeContainer } from "./container-lifecycle.ts";
@@ -61,6 +61,7 @@ interface StartLocalDatabaseResult {
   readonly status: StartLocalDatabaseStatus;
 }
 
+/** Takes the project lifecycle lock into its scope; {@link startLocalDatabase} closes that scope after rollback. */
 const startLocalDatabaseInScope = Effect.fn("DbBootstrap.startLocalDatabase")(function* (
   fromBackupFlag?: string,
 ) {
@@ -173,8 +174,8 @@ const startLocalDatabaseInScope = Effect.fn("DbBootstrap.startLocalDatabase")(fu
     document,
   ).pipe(Effect.mapError((cause) => new DbConfigLoadError({ message: cause.message })));
 
-  // Held through bring-up and rollback so a concurrent start cannot prune this run's containers.
-  yield* holdLocalStackStartLock(context.projectId);
+  // Held until this call returns, after any rollback has run.
+  yield* holdProjectLifecycleLock(context.projectId);
 
   // If the db container is already up, tell the caller and stop here. Runs after the config
   // load/validation above.

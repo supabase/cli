@@ -1,13 +1,20 @@
 import { Effect, Exit, Schedule, Schema, Scope } from "effect";
 import type { Duration } from "effect";
 import { namespaceError, type NamespaceError } from "./Capabilities.ts";
-import { acquireLock, isBusy, takeLock } from "./drivers/Sqlite.ts";
+import type { DatabaseSync } from "node:sqlite";
+import {
+  acquireLock,
+  isBusy,
+  takeExclusiveLock,
+  takeLock,
+  takeSharedLock,
+} from "./drivers/Sqlite.ts";
 
 class LockBusy extends Schema.TaggedError<LockBusy>()("Namespace.LockBusy", {
   message: Schema.String,
 }) {}
 
-/** Whether `error` is a {@link holdLock} failure because another holder kept the lock for the whole budget. */
+/** Whether `error` is a lock acquisition failure because another holder kept the lock for the whole budget. */
 export const isLockBusy = (error: NamespaceError): boolean => Schema.is(LockBusy)(error.cause);
 
 /**
@@ -15,6 +22,35 @@ export const isLockBusy = (error: NamespaceError): boolean => Schema.is(LockBusy
  * holder. Each attempt owns a child scope, so a failed open or lock never leaks the connection.
  */
 export const holdLock = (
+  file: string,
+  budget: Duration.Input,
+  subject: string,
+): Effect.Effect<void, NamespaceError, Scope.Scope> => holdWith(takeLock, file, budget, subject);
+
+/**
+ * Takes a shared lock at `file` for the enclosing scope: shared holders coexist, and only a
+ * {@link holdExclusiveLock} holder makes them wait, up to `budget`.
+ */
+export const holdSharedLock = (
+  file: string,
+  budget: Duration.Input,
+  subject: string,
+): Effect.Effect<void, NamespaceError, Scope.Scope> =>
+  holdWith(takeSharedLock, file, budget, subject);
+
+/**
+ * Takes the lock at `file` exclusively of every {@link holdSharedLock} holder for the enclosing
+ * scope, waiting up to `budget` for them to release.
+ */
+export const holdExclusiveLock = (
+  file: string,
+  budget: Duration.Input,
+  subject: string,
+): Effect.Effect<void, NamespaceError, Scope.Scope> =>
+  holdWith(takeExclusiveLock, file, budget, subject);
+
+const holdWith = (
+  take: (connection: DatabaseSync) => Effect.Effect<void, NamespaceError>,
   file: string,
   budget: Duration.Input,
   subject: string,
@@ -26,7 +62,7 @@ export const holdLock = (
         const attempt = yield* Scope.fork(held, "sequential");
         yield* acquireLock(file, "create").pipe(
           Scope.provide(attempt),
-          Effect.flatMap(takeLock),
+          Effect.flatMap(take),
           Effect.onExit((exit) =>
             Exit.isFailure(exit) ? Scope.close(attempt, exit) : Effect.void,
           ),
