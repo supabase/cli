@@ -3,6 +3,9 @@ import { copyFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
+import { Console, Effect } from "effect";
+import { FetchHttpClient } from "effect/http";
+import { waitUntilInstallable } from "./npm-registry.ts";
 import { isPublishableNpmTag, PUBLISHABLE_NPM_TAGS_HINT } from "./release-channels.ts";
 
 const root = path.resolve(import.meta.dir, "../../..");
@@ -123,6 +126,22 @@ const platformResults = await Promise.all(
     }),
   ),
 );
+
+// npm makes large tarballs installable minutes after the PUT returns, so the umbrella must wait
+// for its binaries or installs in that window get no binary.
+if (!dryRun) {
+  console.log("\nWaiting for platform packages to become installable...");
+  await Effect.runPromise(
+    waitUntilInstallable({
+      registryUrl,
+      packages: PLATFORM_PACKAGES.map((pkg) => ({
+        name: `@supabase/${pkg}`,
+        version: umbrellaVersion,
+      })),
+      onInstallable: ({ name, version }) => Console.log(`  ${name}@${version} is installable.`),
+    }).pipe(Effect.provide(FetchHttpClient.layer)),
+  );
+}
 
 console.log("\nBuilding umbrella package shim...");
 await $`pnpm build:shim`.cwd(cliDir);
