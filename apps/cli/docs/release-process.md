@@ -262,7 +262,7 @@ flowchart TD
     pub --> rel["softprops/action-gh-release (empty draft)<br/>→ upload-release-assets.ts upload (gh release upload per asset)<br/>→ upload-release-assets.ts verify → gh release edit --draft=false<br/>(--latest=false for maintenance)"]
     rel --> hb["publish-homebrew<br/>App-token-authed clone of homebrew-tap<br/>update-homebrew.ts --name <brew_name><br/>(beta, stable, maintenance)"]
     rel --> sc["publish-scoop<br/>App-token-authed clone of scoop-bucket<br/>update-scoop.ts --name <scoop_name><br/>(beta, stable, maintenance)"]
-    rel --> sucs["setup-cli-smoke<br/>install via supabase/setup-cli<br/>(GitHub Release download)"]
+    rel --> sucs["setup-cli-smoke<br/>install via supabase/setup-cli<br/>(v1/v2 GitHub Release download, v3 npm)"]
     hb --> vic["verify-install-channels<br/>real brew/scoop/install-script installs<br/>against the live channels"]
     sc --> vic
 ```
@@ -529,7 +529,7 @@ Both updaters run automatically from `release-shared.yml`'s `publish-homebrew` a
 
 Once the channels are live, two reusable workflows run automatically (last in `release-shared.yml`, non-gating — by the time they run the artifacts are already published, so a failure surfaces as a red post-release signal rather than blocking distribution):
 
-- `[setup-cli-smoke-test.yml](../../../.github/workflows/setup-cli-smoke-test.yml)` (`setup-cli-smoke` job) — installs the released version through `supabase/setup-cli` (the GitHub Release download path) on Linux, macOS, Windows, and Alpine.
+- `[setup-cli-smoke-test.yml](../../../.github/workflows/setup-cli-smoke-test.yml)` (`setup-cli-smoke` job) — installs the released version through `supabase/setup-cli` v1 and v2 (the GitHub Release download path) and v3 (the npm package) on Linux, macOS, Windows, and Alpine.
 - `[verify-install-channels.yml](../../../.github/workflows/verify-install-channels.yml)` (`verify-install-channels` job) — runs a **real** `brew install` (macOS **and** Linux, so both the `on_macos` and `on_linux` stanzas of the formula are exercised), `scoop install`, and `curl|bash` install of the **published** install script (fetched from the release asset, not the repo checkout) against the just-published Homebrew tap, Scoop bucket, and GitHub Release. Each leg then asserts `supabase --version` matches and runs `supabase --help` to exercise the actual command tree. brew, scoop, and the install script each verify the published `sha256`/`hash` against the downloaded tarball, so this is the signal that would have caught CLI v2.107.0 (where the brew/scoop manifests shipped checksums that did not match the release tarballs and every `brew install` / `scoop install` failed). It only runs for `beta`/`stable`/`maintenance` (the channels that publish brew/scoop) and can be dispatched manually against any already-published version via the Actions tab.
 
 ### Code signing (macOS)
