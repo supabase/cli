@@ -5,7 +5,7 @@ import {
   Crypto,
   Data,
   Deferred,
-  type Duration,
+  Duration,
   Effect,
   Exit,
   FileSystem,
@@ -133,6 +133,32 @@ const engineKind = (
         : portAllocated(message)
           ? "port-allocation"
           : undefined;
+
+const MANAGEMENT_COMMANDS = new Set([
+  "container",
+  "context",
+  "image",
+  "network",
+  "system",
+  "volume",
+]);
+
+/** Names the stalled engine subcommand and its latest stderr, never the full argv. */
+const commandTimedOut = (
+  args: ReadonlyArray<string>,
+  timeout: Duration.Input,
+  stderr: string,
+): Cause.TimeoutError => {
+  const [first = "command", second] = args;
+  const subcommand =
+    MANAGEMENT_COMMANDS.has(first) && second !== undefined && !second.startsWith("-")
+      ? `${first} ${second}`
+      : first;
+  const tail = stderr.trim().slice(-2000);
+  return new Cause.TimeoutError(
+    `Engine command '${subcommand}' did not finish within ${Duration.format(Duration.fromInputUnsafe(timeout))}${tail.length > 0 ? `; stderr: ${tail}` : ""}`,
+  );
+};
 
 const errorFor = (operation: string, cause: unknown): ContainerError => {
   const message = cause instanceof Error ? cause.message : String(cause);
@@ -527,19 +553,25 @@ export const makeContainerRuntime = (options: {
         "process.arg_count": args.length,
         "container.command": args[0] ?? "",
       });
+      const stderrSoFar = yield* Ref.make("");
       return yield* Effect.scoped(
         Effect.gen(function* () {
           const child = yield* spawner.spawn(command(args));
-          const tail = (stream: typeof child.stdout) =>
+          const tail = (stream: typeof child.stdout, progress?: Ref.Ref<string>) =>
             stream.pipe(
               Stream.decodeText,
-              Stream.runFold(
+              Stream.runFoldEffect(
                 () => "",
-                (text, chunk) => (text + chunk).slice(-65536),
+                (text, chunk) => {
+                  const next = (text + chunk).slice(-65536);
+                  return progress === undefined
+                    ? Effect.succeed(next)
+                    : Ref.set(progress, next).pipe(Effect.as(next));
+                },
               ),
             );
           const [stdout, stderr, code] = yield* Effect.all(
-            [tail(child.stdout), tail(child.stderr), child.exitCode],
+            [tail(child.stdout), tail(child.stderr, stderrSoFar), child.exitCode],
             { concurrency: "unbounded" },
           );
           yield* Effect.annotateCurrentSpan("process.exit_code", Number(code));
@@ -551,10 +583,22 @@ export const makeContainerRuntime = (options: {
           return stdout.trim();
         }),
       ).pipe(
-        (effect) =>
-          commandOptions.timeout === undefined
+        (effect) => {
+          const timeout = commandOptions.timeout;
+          return timeout === undefined
             ? effect
-            : effect.pipe(Effect.timeout(commandOptions.timeout)),
+            : effect.pipe(
+                Effect.timeoutOrElse({
+                  duration: timeout,
+                  orElse: () =>
+                    Ref.get(stderrSoFar).pipe(
+                      Effect.flatMap((stderr) =>
+                        Effect.fail(commandTimedOut(args, timeout, stderr)),
+                      ),
+                    ),
+                }),
+              );
+        },
         Effect.mapError((cause) => errorFor(args[0] ?? "command", cause)),
       );
     });
