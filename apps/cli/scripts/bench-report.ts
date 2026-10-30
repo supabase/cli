@@ -161,6 +161,8 @@ const Workload = Schema.Struct({
   runtime: Schema.optionalKey(Schema.Literals(["docker", "native"])),
   /** Directory under the manifest's `fixtures/` copied into the project's `supabase/` directory after `init`. */
   fixture: Schema.optionalKey(Schema.NonEmptyString),
+  /** Directory under `fixtures/` copied into `supabase/` after setup, so the launch finds changes setup has not applied. */
+  fixtureAfterSetup: Schema.optionalKey(Schema.NonEmptyString),
   runs: Schema.optionalKey(Schema.Finite),
   warmup: Schema.optionalKey(Schema.Finite),
   /** Traced launches per build; defaults to one per measured run. */
@@ -195,6 +197,9 @@ export function validateWorkloads(
       if (value !== undefined && (!Number.isInteger(value) || value < minimum)) {
         problems.push(`${name} has an invalid ${field}`);
       }
+    }
+    if (workload.fixtureAfterSetup !== undefined && workload.setupScope === "block") {
+      problems.push(`${name} stages fixtureAfterSetup, which a block-scoped workload applies only once`);
     }
     if (workload.estimatedSeconds !== undefined && !(workload.estimatedSeconds > 0)) {
       problems.push(`${name} has an invalid estimatedSeconds`);

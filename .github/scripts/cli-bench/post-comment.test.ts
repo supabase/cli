@@ -31,9 +31,13 @@ const withSections = (id: number, body: string): ExistingComment => ({
 function fakeThread(initial: Array<ExistingComment> = []) {
   const comments = [...initial];
   let nextId = 100;
-  const hooks: { afterUpdate?: () => void; afterCreate?: () => void } = {};
+  const hooks: { afterUpdate?: () => void; afterCreate?: () => void; afterList?: () => void } = {};
   const io: CommentIo = {
-    list: async () => comments.map((comment) => ({ ...comment })),
+    list: async () => {
+      const snapshot = comments.map((comment) => ({ ...comment }));
+      hooks.afterList?.();
+      return snapshot;
+    },
     get: async (id) => comments.find((comment) => comment.id === id),
     create: async (body) => {
       const created = withSections(nextId++, body);
@@ -123,13 +127,13 @@ describe("planComment", () => {
 });
 
 describe("composeBody", () => {
-  test("puts the marker first exactly once and ends with the rerun note for both commands", () => {
+  test("puts the marker first and ends with the rerun note for both commands", () => {
     const body = composeBody({
-      lightweight: { sha: "abc1234", content: `text ${BENCH_MARKER} more` },
+      lightweight: { sha: "abc1234", content: report("new", "Lightweight") },
     });
 
     expect(body.startsWith(`${BENCH_MARKER}\n`)).toBe(true);
-    expect(body.split(BENCH_MARKER).length - 1).toBeGreaterThanOrEqual(1);
+    expect(body.split(BENCH_MARKER).length - 1).toBe(1);
     expect(body).toContain(RERUN_NOTE);
     expect(RERUN_NOTE).toBe(
       "Comment `/bench` (only includes lightweight benchmarks) or `/bench full` to run it again on the latest commit.",
@@ -183,6 +187,32 @@ describe("composeBody", () => {
     expect(kept[0]).toEqual(history[0]);
   });
 
+  test("keeps each section's newest run when the sections alone fill the body", () => {
+    const heavy = { ...run(9), section: "integration-heavy" as const };
+    const body = composeBody(
+      {
+        lightweight: { sha: "abc1234", content: "x".repeat(200_000) },
+        "integration-heavy": { sha: "abc1234", content: "y".repeat(200_000) },
+      },
+      [run(8), heavy, run(7)],
+    );
+
+    expect(body.length).toBeLessThanOrEqual(MAX_BODY_CHARS);
+    expect(decodeHistory(body)).toEqual([run(8), heavy]);
+  });
+
+  test("lets a larger section use the space a smaller one leaves", () => {
+    const small = "s".repeat(1_000);
+    const body = composeBody({
+      lightweight: { sha: "abc1234", content: small },
+      "integration-heavy": { sha: "abc1234", content: "y".repeat(200_000) },
+    });
+
+    const sections = parseSections(body);
+    expect(sections.lightweight?.content).toBe(small);
+    expect(sections["integration-heavy"]?.content.length).toBeGreaterThan(MAX_BODY_CHARS / 2);
+  });
+
   test("renders a previous run's headline through the sanitizer", () => {
     const hostile = { ...run(1), headline: "@team <img src=x>" };
 
@@ -192,7 +222,7 @@ describe("composeBody", () => {
     );
 
     expect(body).not.toContain("<img");
-    expect(body).not.toMatch(/@(?!​)/u);
+    expect(body).not.toMatch(/@(?!\u200b)/u);
   });
 });
 
@@ -203,7 +233,7 @@ describe("sanitize", () => {
 
     const clean = sanitize(hostile);
 
-    expect(clean).not.toMatch(/@(?!​)/u);
+    expect(clean).not.toMatch(/@(?!\u200b)/u);
     expect(clean).not.toContain("&#64;");
     expect(clean).not.toMatch(/(?<!\\)\[/u);
     expect(clean).not.toContain("www.");
@@ -216,6 +246,12 @@ describe("sanitize", () => {
     const clean = sanitize("\\[x\\](//evil.example/p)");
 
     expect(clean).toBe("\\\\\\[x\\\\\\](//evil.example/p)");
+  });
+
+  test("keeps the escaped pipes of a table cell intact", () => {
+    expect(sanitize("| `supabase db query a\\|b` | 1 ms |")).toBe(
+      "| `supabase db query a\\|b` | 1 ms |",
+    );
   });
 
   test("keeps a report from forging a section marker", () => {
@@ -304,6 +340,42 @@ describe("writeSection", () => {
     expect(body).toContain(
       `Integration Heavy Commands · \`0123456\` · 2026-10-28 09:05 UTC · 2 things to check`,
     );
+  });
+
+  test("rebuilds from the comment when another writer changed it after the listing", async () => {
+    const thread = fakeThread([
+      withSections(
+        7,
+        composeBody({ lightweight: { sha: "abc1234", content: report("old", "Lightweight") } }),
+      ),
+    ]);
+    let interleaved = false;
+    thread.hooks.afterList = () => {
+      if (interleaved) return;
+      interleaved = true;
+      thread.comments[0]!.body = composeBody({
+        lightweight: { sha: "abc1234", content: report("old", "Lightweight") },
+        "integration-heavy": { sha: "def5678", content: report("other", "Integration Heavy") },
+      });
+    };
+
+    const result = await writeSection(thread.io, input({ markdown: report("new", "Lightweight") }));
+
+    expect(result).toMatchObject({ kind: "written", attempts: 2 });
+    const sections = parseSections(thread.comments[0]!.body);
+    expect(sections.lightweight?.content).toContain("new");
+    expect(sections["integration-heavy"]?.content).toContain("other");
+  });
+
+  test("keeps a report's own marker out of the comment", async () => {
+    const thread = fakeThread();
+
+    await writeSection(
+      thread.io,
+      input({ markdown: `${report("new", "Lightweight")} ${BENCH_MARKER}` }),
+    );
+
+    expect(thread.comments[0]!.body.split(BENCH_MARKER).length - 1).toBe(1);
   });
 
   test("retries when a concurrent writer overwrites its section, and ends with both sections", async () => {

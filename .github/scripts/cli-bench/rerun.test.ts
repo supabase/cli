@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { GithubRequestError } from "./github.ts";
+import { composeBody, failureMarkdown } from "./post-comment.ts";
 import {
   type BenchPr,
   type CommandIo,
   coversIntegrationHeavy,
   handleBenchCommand,
+  reportedLightweightSha,
   RERUN_WINDOW_MS,
   type FullRun,
   type FullWorkloads,
@@ -373,5 +375,23 @@ describe("coversIntegrationHeavy", () => {
     ["CLI benchmark full (scheduled)", false],
   ])("reads %p as %p", (title, expected) => {
     expect(coversIntegrationHeavy(title)).toBe(expected);
+  });
+});
+
+describe("reportedLightweightSha", () => {
+  test("names the commit of a lightweight section that reports a result", () => {
+    const body = composeBody({
+      lightweight: { sha: "abc1234", content: "### Lightweight Commands: no changes found" },
+    });
+
+    expect(reportedLightweightSha(body)).toBe("abc1234");
+  });
+
+  test("names no commit for a lightweight section whose run failed", () => {
+    const body = composeBody({
+      lightweight: { sha: "abc1234", content: failureMarkdown("lightweight") },
+    });
+
+    expect(reportedLightweightSha(body)).toBeUndefined();
   });
 });

@@ -266,9 +266,9 @@ merge. It never runs on a push; it starts in three ways:
   proves valid and useful. To compare two releases by hand, dispatch the workflow on the newer tag
   with `base` set to the older one.
 
-A dispatch run uses the workflow file and code of the branch it was started on. Because GitHub runs
-dispatch, schedule, and comment-triggered workflows only from the default branch, none of these can
-run before the workflow is on `develop`.
+A dispatch run uses the workflow file and code of the branch it was started on. GitHub registers
+the workflow for dispatch, schedule, and comment-triggered runs only from the default branch, so
+none of these can start before the workflow is on `develop`.
 
 The workflow plans, builds, measures, and reports in separate jobs. `plan` resolves the base, packs
 the workloads into shards of roughly ten minutes each from each workload's `estimatedSeconds`, and
@@ -294,6 +294,7 @@ described above:
 | `stack`                              | Sets `SUPABASE_EXPERIMENTAL_STACK=1` on every launch of the workload, the only variable a workload can set.            |
 | `runtime`                            | `docker` or `native`. A stack workload must pass the same `--runtime` to every `stack start`.                          |
 | `fixture`                            | A directory under `apps/cli/bench/fixtures/` copied into the project's `supabase/` directory after `init`.             |
+| `fixtureAfterSetup`                  | Like `fixture`, but copied after `setup`, so the launch finds changes that setup has not applied. Not for `block`.     |
 | `runs`, `warmup`, `traceRuns`        | Per-workload overrides; `--runs` and `--warmup` on the command line win. `traceRuns` is the traced launches per build. |
 | `timeoutSeconds`, `estimatedSeconds` | Launch timeout (default 60) and the seconds one pass over both builds takes, which sizes the shards.                   |
 
@@ -302,7 +303,9 @@ Setup, the measured launches, and teardown of one run (or block) share one proje
 use `block` scope; workloads that change state use `run`. Only one stack is ever up at a time per
 runner. Stack mode supports only pg-delta for `db diff`, so the `db diff` workloads pass
 `--use-pg-delta` in both modes. A workload that fails on the base build, such as one using a flag
-the base does not have, shows as a base failure and is not compared.
+the base does not have, shows as a base failure and is not compared. A failing `setup` step skips
+the launches of that run and records its exit code for each, so the workload is flagged instead of
+measuring a half-prepared run.
 
 The Integration Heavy Commands report adds a container operations table: the number of container
 CLI calls per run for each verb, such as `container inspect`, flagged when a count changes, appears,

@@ -58,7 +58,7 @@ export type CommentPlan =
   | { kind: "update"; id: number; previousBody: string };
 
 const ALLOWED_TAGS = new Set(["<details>", "</details>", "<summary>", "</summary>", "<br>"]);
-const ZERO_WIDTH_SPACE = "​";
+const ZERO_WIDTH_SPACE = "\u200b";
 export const MAX_FILE_BYTES = 1_000_000;
 const RUN_URL = /^https:\/\/[^\s)<>]+\/actions\/runs\/\d+(?:\/attempts\/\d+)?$/u;
 
@@ -66,6 +66,7 @@ const RUN_URL = /^https:\/\/[^\s)<>]+\/actions\/runs\/\d+(?:\/attempts\/\d+)?$/u
 export function sanitize(markdown: string): string {
   return markdown
     .replaceAll("\\", "\\\\")
+    .replaceAll("\\\\|", "\\|")
     .replaceAll("&", "&amp;")
     .replaceAll(/<[^>\n]*>?/gu, (tag) =>
       ALLOWED_TAGS.has(tag) ? tag : tag.replaceAll("<", "&lt;"),
@@ -162,34 +163,51 @@ function assemble(sections: Sections, entries: ReadonlyArray<RunEntry>): string 
 
 /**
  * The comment body: the marker, each section, the re-run note, then the run history. `entries`
- * lists the newest run first; the oldest are dropped until the body fits, and then each section is
- * cut to its share of the limit.
+ * lists the newest run first; the oldest previous runs are dropped until the body fits, then each
+ * section is cut to its share of the limit, with small sections keeping all of theirs. Each
+ * section's newest entry is always kept.
  */
 export function composeBody(sections: Sections, entries: ReadonlyArray<RunEntry> = []): string {
-  for (let kept = entries.length; kept >= 0; kept--) {
-    const body = assemble(sections, entries.slice(0, kept));
+  const newest = new Set<RunEntry>();
+  const seen = new Set<Section>();
+  for (const entry of entries) {
+    if (seen.has(entry.section)) continue;
+    seen.add(entry.section);
+    newest.add(entry);
+  }
+  const older = entries.filter((entry) => !newest.has(entry));
+  const withOlder = (count: number) => {
+    const kept = new Set(older.slice(0, count));
+    return entries.filter((entry) => newest.has(entry) || kept.has(entry));
+  };
+  for (let count = older.length; count >= 0; count--) {
+    const body = assemble(sections, withOlder(count));
     if (body.length <= MAX_BODY_CHARS) return body;
   }
+  const history = withOlder(0);
   const present = SECTIONS.filter((section) => sections[section] !== undefined);
   const overhead = assemble(
     Object.fromEntries(present.map((section) => [section, { sha: "0000000", content: "" }])),
-    [],
+    history,
   ).length;
-  const share = Math.floor((MAX_BODY_CHARS - overhead) / Math.max(present.length, 1));
+  let remaining = MAX_BODY_CHARS - overhead;
   const cut: Sections = {};
-  for (const section of present) {
-    const state = sections[section];
-    if (state === undefined) continue;
-    cut[section] = {
-      sha: state.sha,
-      content:
-        state.content.length <= share
-          ? state.content
-          : state.content.slice(0, Math.max(0, share - TRUNCATION_NOTICE.length)) +
-            TRUNCATION_NOTICE,
-    };
-  }
-  return assemble(cut, []);
+  const bySize = present
+    .flatMap((section) => {
+      const state = sections[section];
+      return state === undefined ? [] : [{ section, state }];
+    })
+    .sort((a, b) => a.state.content.length - b.state.content.length);
+  bySize.forEach(({ section, state }, index) => {
+    const share = Math.floor(remaining / (bySize.length - index));
+    const content =
+      state.content.length <= share
+        ? state.content
+        : state.content.slice(0, Math.max(0, share - TRUNCATION_NOTICE.length)) + TRUNCATION_NOTICE;
+    remaining -= content.length;
+    cut[section] = { sha: state.sha, content };
+  });
+  return assemble(cut, history);
 }
 
 /** The workflow bot's benchmark comment, if any; the oldest wins when concurrent writers made two. */
@@ -282,6 +300,9 @@ export async function writeSection(io: CommentIo, input: WriteInput): Promise<Wr
     let id: number;
     if (plan.kind === "update") {
       id = plan.id;
+      // Another writer's change since the listing would be lost by this write; rebuild from it.
+      const latest = await io.get(id);
+      if (latest?.body !== plan.previousBody) continue;
       await io.update(id, body);
     } else {
       id = await io.create(body);

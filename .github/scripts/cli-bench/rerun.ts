@@ -14,7 +14,7 @@ import { appendFileSync } from "node:fs";
 
 import { fetchAuthorPermission, WRITE_PERMISSIONS } from "../contribution-gate.ts";
 import { githubFetch, GithubRequestError, listIssueComments, requireEnv } from "./github.ts";
-import { findBenchComment, parseSections } from "./post-comment.ts";
+import { findBenchComment, parseSections, sectionFailed } from "./post-comment.ts";
 
 export const BENCH_COMMAND = "/bench";
 export const BENCH_FULL_COMMAND = "/bench full";
@@ -116,6 +116,12 @@ export const replies = {
     `The integration-heavy benchmark could not be started: GitHub refused the request ` +
     `(${status} ${quoted(detail)}).`,
 };
+
+/** The commit of a comment's lightweight section, unless that section reports a failed run. */
+export function reportedLightweightSha(body: string): string | undefined {
+  const section = parseSections(body).lightweight;
+  return section === undefined || sectionFailed(section.content) ? undefined : section.sha;
+}
 
 const FULL_RUN_WORKLOADS = /\((lightweight|integration-heavy|all)\)/u;
 
@@ -330,7 +336,7 @@ async function main(): Promise<void> {
     },
     lightweightSha: async (n) => {
       const existing = findBenchComment(await listIssueComments(token, base, n));
-      return existing === undefined ? undefined : parseSections(existing.body).lightweight?.sha;
+      return existing === undefined ? undefined : reportedLightweightSha(existing.body);
     },
     reactToComment: async (commentId) => {
       await githubFetch(`${base}/issues/comments/${commentId}/reactions`, token, {

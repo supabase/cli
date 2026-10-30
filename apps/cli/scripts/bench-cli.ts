@@ -349,6 +349,20 @@ export interface Unit {
   readonly env: Record<string, string>;
 }
 
+/** Copies a fixture from the manifest's `fixtures/` directory into the project's `supabase/` directory. */
+const copyFixture = (options: BenchOptions, fixture: string, projectDir: string) =>
+  Effect.gen(function* () {
+    if (options.workloadsFile === undefined) return;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    // The fixtures sit outside any `supabase/` directory, which the repository ignores.
+    const target = path.join(projectDir, "supabase");
+    yield* fs.makeDirectory(target, { recursive: true });
+    yield* fs.copy(path.join(path.dirname(options.workloadsFile), "fixtures", fixture), target, {
+      overwrite: true,
+    });
+  });
+
 /**
  * A project directory and `SUPABASE_HOME` shared by one unit's setup, launches and teardown, with
  * the replay profile written, the workload's `cwdSetup` applied, its fixture copied in, and the
@@ -383,15 +397,8 @@ const prepareUnit = (options: BenchOptions, workload: Workload, binary: string) 
         );
       }
     }
-    if (workload.fixture !== undefined && options.workloadsFile !== undefined) {
-      // The fixtures sit outside any `supabase/` directory, which the repository ignores.
-      const target = path.join(projectDir, "supabase");
-      yield* fs.makeDirectory(target, { recursive: true });
-      yield* fs.copy(
-        path.join(path.dirname(options.workloadsFile), "fixtures", workload.fixture),
-        target,
-        { overwrite: true },
-      );
+    if (workload.fixture !== undefined) {
+      yield* copyFixture(options, workload.fixture, projectDir);
     }
     return { projectDir, env } satisfies Unit;
   });
@@ -415,6 +422,7 @@ const runStep = Effect.fn("BenchCli.runStep")(function* (
       `warning: ${kind} step "${args.join(" ")}" exited ${result.exitCode}; the workload may not reflect a real stack`,
     );
   }
+  return result.exitCode;
 });
 
 /** Pulls images or downloads archives for each stack runtime, so no measured launch downloads anything. */
@@ -515,9 +523,20 @@ const runUnit = Effect.fn("BenchCli.runUnit")(function* (params: {
           discard: true,
         }).pipe(Effect.ignore),
       );
-      yield* Effect.forEach(workload.setup ?? [], (args) => runStep("setup", binary, unit, args), {
-        discard: true,
-      });
+      let setupExitCode = 0;
+      for (const args of workload.setup ?? []) {
+        setupExitCode = yield* runStep("setup", binary, unit, args);
+        if (setupExitCode !== 0) break;
+      }
+      if (setupExitCode === 0 && workload.fixtureAfterSetup !== undefined) {
+        yield* copyFixture(options, workload.fixtureAfterSetup, unit.projectDir);
+      }
+      // A failed setup leaves nothing real to measure, so every launch reports the failing exit code.
+      if (setupExitCode !== 0) {
+        return launches.map(
+          (kind): LaunchOutcome => ({ kind, wallMs: 0, exitCode: setupExitCode, trace: undefined }),
+        );
+      }
 
       // Resets the replay server before each launch, so setup's own requests and a previous
       // launch's consumed scenario never reach the launch that follows.

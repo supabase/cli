@@ -54,6 +54,8 @@ LOG="$(dirname "$0")/calls.log"
 echo "$(basename "$0") $* stack=\${SUPABASE_EXPERIMENTAL_STACK:-} dnt=\${DO_NOT_TRACK:-} tel=\${SUPABASE_TELEMETRY_DISABLED:-} home=\${SUPABASE_HOME:-} cwd=$PWD" >> "$LOG"
 case "$1" in
   slow) exec /bin/sleep 30 ;;
+  fail) exit 3 ;;
+  boot) if [ -f supabase/seed.sql ]; then echo "fixture present at setup" >> "$LOG"; fi ;;
   check) if [ -f supabase/seed.sql ]; then echo "fixture present" >> "$LOG"; fi ;;
   cache) if [ -L "$SUPABASE_HOME/cache/stack" ]; then echo "cache linked to $(readlink "$SUPABASE_HOME/cache/stack")" >> "$LOG"; fi ;;
 esac
@@ -293,6 +295,58 @@ describe("runWorkloadBench", () => {
           expect(log.match(new RegExp(`cache linked to ${cache}`, "gu"))).toHaveLength(2);
         }),
       ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer))),
+  );
+
+  it.effect("copies fixtureAfterSetup only once setup has finished", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const builds = yield* makeBuilds;
+        const manifestDir = yield* fs.makeTempDirectoryScoped({ prefix: "bench-manifest-" });
+        yield* fs.makeDirectory(`${manifestDir}/fixtures/seeded`, { recursive: true });
+        yield* fs.writeFileString(`${manifestDir}/fixtures/seeded/seed.sql`, "select 1;");
+
+        yield* runWorkloadBench(
+          baseOptions(builds.base, {
+            branch: builds.branch,
+            runs: 1,
+            warmup: 0,
+            workloadsFile: `${manifestDir}/workloads.json`,
+          }),
+          stackWorkload({ args: ["check"], setup: [["boot"]], fixtureAfterSetup: "seeded" }),
+          yield* Ref.make(false),
+        );
+
+        const log = yield* builds.calls;
+        expect(log).not.toContain("fixture present at setup");
+        expect(log.match(/fixture present/gu)).toHaveLength(2);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer))),
+  );
+
+  it.effect("skips the launches and records a failing exit code when setup fails", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const builds = yield* makeBuilds;
+
+        const { report } = yield* runWorkloadBench(
+          baseOptions(builds.base, { branch: builds.branch, runs: 2, warmup: 0 }),
+          stackWorkload({ setup: [["fail"], ["boot"]], teardown: [["halt"]] }),
+          yield* Ref.make(false),
+        );
+
+        const commands = parseCalls(yield* builds.calls).map((call) => call.command);
+        expect(commands).not.toContain("work");
+        expect(commands).not.toContain("boot");
+        expect(commands.filter((command) => command === "halt")).toHaveLength(4);
+        for (const samples of [report.base, report.branch]) {
+          expect(samples.map((sample) => sample.exitCode)).toEqual([3, 3]);
+        }
+        expect(collectFlags(analyzeWorkload(report, false)).map((flag) => flag.kind)).toContain(
+          "non-zero-exit",
+        );
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer))),
   );
 
   it.effect(
