@@ -39,14 +39,16 @@ on:
 
 permissions: {}
 
-# A second run for a branch waits for the first instead of cancelling it.
+# A second run for a branch waits for the first instead of cancelling it, which also takes turns
+# between the writers of the integration-heavy comment; a run still waiting when a newer one
+# queues never started, so it had written nothing.
 concurrency:
   group: cli-bench-full-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   # Decides what this run measures and against which base, splits the workloads into shards, and
-  # marks the pull request's Integration Heavy Commands section as running.
+  # marks the pull request's integration-heavy comment as running.
   plan:
     name: Plan
     runs-on: ubuntu-latest
@@ -81,14 +83,14 @@ jobs:
           INPUT_RUNTIME: ${{ inputs.runtime }}
           INPUT_BASE: ${{ inputs.base }}
         run: bun .github/scripts/cli-bench/full-plan.ts
-      - name: Mark the integration-heavy section as running
+      - name: Mark the integration-heavy comment as running
         if: steps.plan.outputs.pr_number != '' && steps.plan.outputs.run_integration == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ steps.plan.outputs.pr_number }}
           MODE: running
-          SECTION: integration-heavy
+          KIND: integration-heavy
           HEAD_SHA: ${{ github.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
         run: bun .github/scripts/cli-bench/post-comment.ts
@@ -383,7 +385,7 @@ jobs:
         if: always() && matrix.runtime == 'docker'
         run: sudo systemctl stop docker.socket docker.service
 
-  # Combines the shard reports, writes the job summary and the comment section.
+  # Combines the shard reports, writes the job summary and the comment.
   report:
     name: Report
     needs:
@@ -471,7 +473,7 @@ jobs:
   # rendered markdown as data; a dispatch uses this file from the dispatched branch, which only
   # people with write access can push or dispatch.
   comment-lightweight:
-    name: Post lightweight section
+    name: Post lightweight comment
     needs:
       - plan
       - lightweight
@@ -479,6 +481,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     continue-on-error: true
+    # Shares its turn with the lightweight benchmark workflow, the other writer of this comment.
+    concurrency:
+      group: cli-bench-comment-lightweight-${{ needs.plan.outputs.pr_number }}
+      cancel-in-progress: false
     permissions:
       contents: read
       pull-requests: write
@@ -502,7 +508,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ needs.plan.outputs.pr_number }}
           MODE: upsert
-          SECTION: lightweight
+          KIND: lightweight
           MISSING_BODY: failure
           HEAD_SHA: ${{ github.sha }}
           BODY_FILE: ${{ runner.temp }}/bench-comment/comment.md
@@ -510,7 +516,7 @@ jobs:
         run: bun .github/scripts/cli-bench/post-comment.ts
 
   comment:
-    name: Post integration-heavy section
+    name: Post integration-heavy comment
     needs:
       - plan
       - report
@@ -541,7 +547,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ needs.plan.outputs.pr_number }}
           MODE: upsert
-          SECTION: integration-heavy
+          KIND: integration-heavy
           MISSING_BODY: failure
           HEAD_SHA: ${{ github.sha }}
           BODY_FILE: ${{ runner.temp }}/bench-comment/comment.md

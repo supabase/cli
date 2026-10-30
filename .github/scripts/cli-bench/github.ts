@@ -67,22 +67,3 @@ export async function listIssueComments(
     if (batch.length < 100) return comments;
   }
 }
-
-/** One comment by id, or undefined when it no longer exists. */
-export async function getIssueComment(
-  token: string,
-  base: string,
-  id: number,
-): Promise<IssueComment | undefined> {
-  try {
-    const entry = (await (await githubFetch(`${base}/issues/comments/${id}`, token)).json()) as {
-      id: number;
-      body: string | null;
-      user: { login: string } | null;
-    };
-    return { id: entry.id, body: entry.body ?? "", authorLogin: entry.user?.login ?? "" };
-  } catch (error) {
-    if (error instanceof GithubRequestError && error.status === 404) return undefined;
-    throw error;
-  }
-}

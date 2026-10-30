@@ -50,7 +50,6 @@ describe("renderSummary", () => {
       branchSizeBytes: 140269744,
     };
     const markdown = renderSummary(sized, "unused", {
-      target: "summary",
       headSha: "abcdef1234567890",
       baseRef: "develop",
       mergeBase: "1234567890abcdef",
@@ -119,9 +118,7 @@ describe("renderSummary", () => {
   });
 
   it("names the failed step and stays a notice when there is no report", () => {
-    const markdown = renderSummary(undefined, "The build of this commit failed.", {
-      target: "summary",
-    });
+    const markdown = renderSummary(undefined, "The build of this commit failed.", {});
 
     expect(markdown).toContain("## CLI benchmark: could not run");
     expect(markdown).toContain("The build of this commit failed.");
@@ -129,14 +126,17 @@ describe("renderSummary", () => {
   });
 
   it.each([
-    { section: "lightweight", heading: "### Lightweight Commands: no changes found" },
-    { section: "integration-heavy", heading: "### Integration Heavy Commands: no changes found" },
+    { section: "lightweight", heading: "## CLI benchmark: no changes found" },
+    {
+      section: "integration-heavy",
+      heading: "## CLI benchmark (Integration Heavy Commands): no changes found",
+    },
   ] as const)(
-    "titles a $section comment section with its name and leaves the markers and re-run note to the poster",
+    "titles a $section report with its name and leaves the markers and re-run note to the poster",
     ({ section, heading }) => {
       const input = report([steady("version", ["--version"])]);
 
-      const comment = renderSummary(input, "unused", { target: "comment", section });
+      const comment = renderSummary(input, "unused", { section });
 
       expect(comment.startsWith(`${heading}\n`)).toBe(true);
       expect(comment).not.toContain("<!--");
@@ -144,18 +144,8 @@ describe("renderSummary", () => {
     },
   );
 
-  it("titles the job summary of the integration-heavy section with its name", () => {
-    const summary = renderSummary(report([steady("version", ["--version"])]), "unused", {
-      target: "summary",
-      section: "integration-heavy",
-    });
-
-    expect(summary).toContain("## CLI benchmark (Integration Heavy Commands): no changes found");
-  });
-
   it("shows a note above the results", () => {
     const markdown = renderSummary(report([steady("version", ["--version"])]), "unused", {
-      target: "summary",
       note: "Some shards did not finish.",
     });
 
@@ -280,7 +270,7 @@ describe("renderSummary for integration-heavy commands", () => {
     ...extra,
   });
   const render = (workloads: BenchReport["workloads"]) =>
-    renderSummary(report(workloads), "unused", { target: "summary", section: "integration-heavy" });
+    renderSummary(report(workloads), "unused", { section: "integration-heavy" });
 
   it("shows unchanged container operations with the runtime column", () => {
     const markdown = render([
@@ -326,9 +316,7 @@ describe("renderSummary for integration-heavy commands", () => {
   });
 
   it("leaves container operations out of the lightweight section", () => {
-    const markdown = renderSummary(report([heavy("status", { ps: 1 }, { ps: 1 })]), "unused", {
-      target: "summary",
-    });
+    const markdown = renderSummary(report([heavy("status", { ps: 1 }, { ps: 1 })]), "unused", {});
 
     expect(markdown).not.toContain("Container operations");
   });

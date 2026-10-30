@@ -5,10 +5,10 @@ import { resolveBench, SKIP_REASON } from "./resolve.ts";
 const BOT = "github-actions[bot]";
 const lightweight = (content: string) => ({
   id: 5,
-  body: composeBody({ lightweight: { sha: "abc1234", content } }),
+  body: composeBody("lightweight", content),
   authorLogin: BOT,
 });
-const reported = lightweight("### Lightweight Commands: no changes found");
+const reported = lightweight("## CLI benchmark: no changes found");
 
 describe("resolveBench", () => {
   test("benchmarks the first push of a pull request that has no comment yet", () => {
@@ -23,20 +23,18 @@ describe("resolveBench", () => {
   });
 
   test("benchmarks again when the comment reports a failed run", () => {
-    const failed = lightweight(failureMarkdown("lightweight"));
+    const failed = lightweight(failureMarkdown("lightweight", "abc1234"));
 
     expect(resolveBench({ runAttempt: 1, isFork: false, comments: [failed] }).shouldRun).toBe(true);
   });
 
-  test("benchmarks when the comment holds only an integration-heavy result", () => {
+  test("benchmarks when only the integration-heavy comment exists", () => {
     const heavyOnly = {
       id: 5,
-      body: composeBody({
-        "integration-heavy": {
-          sha: "abc1234",
-          content: "### Integration Heavy Commands: no changes found",
-        },
-      }),
+      body: composeBody(
+        "integration-heavy",
+        "## CLI benchmark (Integration Heavy Commands): no changes found",
+      ),
       authorLogin: BOT,
     };
 

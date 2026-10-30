@@ -4,17 +4,17 @@
  * Runs default branch code and never checks out or runs pull request code. The commenter must be
  * the repository owner or hold write access, and the pull request must be an open, ready one from
  * this repository into `develop`. `/bench` re-runs the existing `pull_request` run, which
- * benchmarks and updates the Lightweight Commands section. `/bench full` always re-measures the
- * Integration Heavy Commands section by dispatching the full benchmark workflow on the pull
- * request's branch, and re-runs the lightweight part only when that section is behind the head
- * commit; the pull request gets a reply when nothing can run.
+ * benchmarks and updates the lightweight comment. `/bench full` always re-measures the
+ * integration-heavy benchmark, which has its own comment, by dispatching the full benchmark
+ * workflow on the pull request's branch, and re-runs the lightweight part only when its comment
+ * is behind the head commit; the pull request gets a reply when nothing can run.
  * Run in CI as: `bun .github/scripts/cli-bench/rerun.ts`.
  */
 import { appendFileSync } from "node:fs";
 
 import { fetchAuthorPermission, WRITE_PERMISSIONS } from "../contribution-gate.ts";
 import { githubFetch, GithubRequestError, listIssueComments, requireEnv } from "./github.ts";
-import { findBenchComment, parseSections, sectionFailed } from "./post-comment.ts";
+import { findComment, measuredSha } from "./post-comment.ts";
 
 export const BENCH_COMMAND = "/bench";
 export const BENCH_FULL_COMMAND = "/bench full";
@@ -71,7 +71,7 @@ export interface CommandIo {
   /** Dispatched runs of the full workflow on a branch, any order. */
   listFullRuns: (headRef: string) => Promise<ReadonlyArray<FullRun>>;
   dispatchFull: (headRef: string, workloads: FullWorkloads) => Promise<void>;
-  /** Short SHA of the commit the comment's Lightweight Commands section measured, if it has one. */
+  /** Short SHA of the commit the lightweight comment measured, if it reports a result. */
   lightweightSha: (prNumber: number) => Promise<string | undefined>;
   reactToComment: (commentId: number) => Promise<void>;
   replyToPr: (prNumber: number, body: string) => Promise<void>;
@@ -116,12 +116,6 @@ export const replies = {
     `The integration-heavy benchmark could not be started: GitHub refused the request ` +
     `(${status} ${quoted(detail)}).`,
 };
-
-/** The commit of a comment's lightweight section, unless that section reports a failed run. */
-export function reportedLightweightSha(body: string): string | undefined {
-  const section = parseSections(body).lightweight;
-  return section === undefined || sectionFailed(section.content) ? undefined : section.sha;
-}
 
 const FULL_RUN_WORKLOADS = /\((lightweight|integration-heavy|all)\)/u;
 
@@ -211,10 +205,10 @@ export async function handleBenchCommand(
   );
   if (active !== undefined) return reply(replies.fullRunning(active.url));
 
-  // The lightweight part refreshes only when its section is behind the head commit and no
+  // The lightweight part refreshes only when its comment is behind the head commit and no
   // lightweight run is already in flight; with no run to re-run, the full run measures it too.
-  const sectionSha = await io.lightweightSha(prNumber);
-  const lightweightCurrent = sectionSha !== undefined && pr.headSha.startsWith(sectionSha);
+  const commentSha = await io.lightweightSha(prNumber);
+  const lightweightCurrent = commentSha !== undefined && pr.headSha.startsWith(commentSha);
   const lightweightInFlight = latest !== undefined && latest.status !== "completed";
   const needsLightweight = !lightweightCurrent && !lightweightInFlight;
   const rerunnable = latest !== undefined && !expired ? latest : undefined;
@@ -335,8 +329,8 @@ async function main(): Promise<void> {
       });
     },
     lightweightSha: async (n) => {
-      const existing = findBenchComment(await listIssueComments(token, base, n));
-      return existing === undefined ? undefined : reportedLightweightSha(existing.body);
+      const existing = findComment("lightweight", await listIssueComments(token, base, n));
+      return existing === undefined ? undefined : measuredSha(existing.body);
     },
     reactToComment: async (commentId) => {
       await githubFetch(`${base}/issues/comments/${commentId}/reactions`, token, {

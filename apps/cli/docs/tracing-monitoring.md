@@ -96,20 +96,25 @@ start replaces the comparison with a notice naming the step. The workloads use n
 prompts.
 
 The first push to a pull request from this repository benchmarks and posts one comment, tagged with
-the hidden marker `<!-- cli-bench:pr -->`. The comment has two sections, "Lightweight Commands" (this
-run's workloads) and "Integration Heavy Commands" (the [full benchmark](#full-benchmark)); each
-section is written by its own run and shows the commit it measured. Later pushes skip the benchmark,
-and the job summary says so, while the Lightweight Commands section reports a result; a section that
-reports a failed run is benchmarked again on the next push. Pull requests from forks have a read-only token, so they get the job summary only
-and benchmark every push.
+the hidden marker `<!-- cli-bench:pr -->`. The comment shows the commit it measured. Later pushes
+skip the benchmark, and the job summary says so, while the comment reports a result; a comment that
+reports a failed run is benchmarked again on the next push. The [full benchmark](#full-benchmark)
+keeps a separate comment, tagged `<!-- cli-bench:full -->`, so each workflow writes only its own
+comment. Pull requests from forks have a read-only token, so they get the job summary only and
+benchmark every push.
 
 A maintainer can comment exactly `/bench` to run the benchmark again on the pull request's current
 head commit. The command re-runs that commit's `pull_request` workflow run, as "Re-run all jobs" in
-the Actions UI does, and the re-run updates the Lightweight Commands section in place, or creates the comment if it is
-missing. The comment keeps a collapsed "Previous runs" list below the sections with the section,
-commit, time (UTC), headline, and link of each result a section replaced, newest first and up to 20
-across both sections, stored in a hidden marker in the comment. One note under the sections tells
-readers to comment `/bench` (lightweight benchmarks only) or `/bench full` to run it again. Only the
+the Actions UI does, and the re-run updates the comment in place, or creates it if it is missing.
+Each comment keeps a collapsed "Previous runs" list with the commit, time (UTC), headline, and link
+of each result it replaced, newest first and up to 20, stored in a hidden marker in the comment.
+Each comment ends with a note for its own benchmark. The lightweight comment says: "Comment `/bench`
+to run the lightweight benchmark (this comment) again on the latest commit, or `/bench full` to
+also run the integration-heavy benchmark, which posts in its own comment." The integration-heavy
+comment says: "Comment `/bench full` to run this benchmark again on the latest commit, which also
+refreshes the lightweight comment if it is behind. `/bench` runs only the lightweight benchmark."
+The writers of one comment take turns through a concurrency group, and a comment that outgrows
+GitHub's size limit drops its oldest previous runs first and then cuts its report. Only the
 repository owner and people with write access can run either command, and only on open, non-draft
 pull requests into `develop` from this repository; the command must be the whole comment, so
 anything other than `/bench` or `/bench full` is ignored. An eyes reaction on the comment means GitHub accepted
@@ -245,9 +250,9 @@ against the stack backend. Like the pull request benchmark it is report only and
 merge. It never runs on a push; it starts in three ways:
 
 - A maintainer comments exactly `/bench full` on an open, non-draft pull request into `develop` from
-  this repository (same permission rules as `/bench`). The command re-measures the Integration Heavy
-  Commands section by dispatching the workflow on the pull request's branch. It also refreshes the
-  Lightweight Commands section, by re-running that commit's `pull_request` run, only when the section
+  this repository (same permission rules as `/bench`). The command re-measures the integration-heavy
+  benchmark by dispatching the workflow on the pull request's branch. It also refreshes the
+  lightweight comment, by re-running that commit's `pull_request` run, only when that comment
   does not already show the head commit and no lightweight run is queued or running; with no run to
   re-run, the dispatch measures those workloads itself. While an integration-heavy run for the pull
   request is queued or running, the command replies with that run's link and does nothing else. The
@@ -272,11 +277,11 @@ none of these can start before the workflow is on `develop`.
 
 The workflow plans, builds, measures, and reports in separate jobs. `plan` resolves the base, packs
 the workloads into shards of roughly ten minutes each from each workload's `estimatedSeconds`, and
-marks the Integration Heavy Commands section as running with a link to the run. `build` builds the
+writes "running" with the start time and a link to the run into the integration-heavy comment, creating it if it is missing. `build` builds the
 branch binary once, and the base binary from the merge base or the release asset. Each shard is one
 runner per runtime; it alternates base and branch on that machine and runs no other workload at the
-same time. `report` merges the shard reports into the job summary and the comment section. A failed
-run shows the failure and a link to the run in its section.
+same time. `report` merges the shard reports into the job summary and the integration-heavy comment. A failed
+run shows the failure and a link to the run in that comment.
 
 Runtimes are Docker (default-mode commands and `--runtime docker`) and the native backend
 (`--runtime native`), both on Linux x64. Cold downloads are not measured: images and native

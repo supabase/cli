@@ -1,61 +1,60 @@
 /**
- * Posts a CLI benchmark section into the pull request's single marker comment.
+ * Posts one CLI benchmark report as its own pull request comment.
  *
- * The comment has one section per kind of run ("Lightweight Commands" and "Integration Heavy
- * Commands"). Each writer replaces only its own section, re-reads the comment to check that the
- * section landed, and retries when a concurrent writer overwrote it. Runs in the jobs that can
- * write comments and treats the rendered markdown as untrusted data (pull request code produced
- * it): it reads a bounded regular file, neutralizes mentions, links and HTML, adds the markers and
- * the run link itself, truncates to GitHub's body limit, and creates or updates the comment.
- * Run in CI as: `bun .github/scripts/cli-bench/post-comment.ts`.
+ * Each kind of run owns a comment identified by a hidden marker: the lightweight benchmark and
+ * the integration-heavy (full) benchmark never touch each other's comment. Runs in the jobs that
+ * can write comments and treats the rendered markdown as untrusted data (pull request code
+ * produced it): it reads a bounded regular file, neutralizes mentions, links and HTML, adds the
+ * marker, the re-run note and the run link itself, truncates to GitHub's body limit, and creates
+ * or updates the comment. Run in CI as: `bun .github/scripts/cli-bench/post-comment.ts`.
  *
- * Modes: `create-if-missing` leaves a section that already reports a result alone (first run on a
- * pull request); `upsert` replaces it (a re-run or a command); `running` replaces it with a
- * placeholder that links to the run. Every result also goes into the history of earlier runs.
+ * Modes: `create-if-missing` leaves an existing comment alone unless it reports a failed run
+ * (first run on a pull request); `upsert` updates it in place or creates it; `running` replaces
+ * the current result with a placeholder that links to the run. Every result also goes into the
+ * comment's history of earlier runs. The workflow serializes the writers of one comment.
  */
 import { lstatSync, readFileSync } from "node:fs";
 
-import {
-  getIssueComment,
-  githubFetch,
-  listIssueComments,
-  requireEnv,
-  type IssueComment,
-} from "./github.ts";
+import { githubFetch, listIssueComments, requireEnv, type IssueComment } from "./github.ts";
 import {
   decodeHistory,
   headlineOf,
   makeEntry,
   mergeHistory,
+  MAX_PREVIOUS_RUNS,
   renderHistory,
-  SECTION_NAMES,
-  SECTIONS,
   type RunEntry,
-  type Section,
 } from "./history.ts";
 
-/** Hidden tag identifying the benchmark comment. */
-export const BENCH_MARKER = "<!-- cli-bench:pr -->";
-/** The one note under every comment, naming both commands. */
-export const RERUN_NOTE =
-  "Comment `/bench` (only includes lightweight benchmarks) or `/bench full` to run it again on the latest commit.";
+/** The two comments a pull request can have. */
+export type Kind = "lightweight" | "integration-heavy";
+
+/** Hidden tags identifying each comment; the lightweight one is the original benchmark marker. */
+export const MARKERS: Record<Kind, string> = {
+  lightweight: "<!-- cli-bench:pr -->",
+  "integration-heavy": "<!-- cli-bench:full -->",
+};
+/** The line under each comment telling readers which command re-runs what. */
+export const RERUN_NOTES: Record<Kind, string> = {
+  lightweight:
+    "Comment `/bench` to run the lightweight benchmark (this comment) again on the latest commit, or `/bench full` to also run the integration-heavy benchmark, which posts in its own comment.",
+  "integration-heavy":
+    "Comment `/bench full` to run this benchmark again on the latest commit, which also refreshes the lightweight comment if it is behind. `/bench` runs only the lightweight benchmark.",
+};
+const TITLES: Record<Kind, string> = {
+  lightweight: "## CLI benchmark",
+  "integration-heavy": "## CLI benchmark (Integration Heavy Commands)",
+};
 /** Login of comments posted with the workflow's `GITHUB_TOKEN`. */
 const WORKFLOW_BOT_LOGIN = "github-actions[bot]";
 /** GitHub rejects comment bodies longer than 65536 characters. */
 export const MAX_BODY_CHARS = 65_000;
 const TRUNCATION_NOTICE =
   "\n\n</details>\n\n_The report was truncated; see the workflow run for the rest._\n";
-/** Writes attempted before giving up on a section that keeps being overwritten. */
-export const MAX_WRITE_ATTEMPTS = 3;
 
 export type Mode = "create-if-missing" | "upsert" | "running";
 
 export type ExistingComment = IssueComment;
-
-export type CommentPlan =
-  | { kind: "skip" }
-  | { kind: "create" }
-  | { kind: "update"; id: number; previousBody: string };
 
 const ALLOWED_TAGS = new Set(["<details>", "</details>", "<summary>", "</summary>", "<br>"]);
 const ZERO_WIDTH_SPACE = "\u200b";
@@ -78,252 +77,152 @@ export function sanitize(markdown: string): string {
     .replaceAll("]", "\\]");
 }
 
-export interface SectionState {
-  /** Short SHA of the commit the section measured. */
-  sha: string;
-  /** The section's Markdown, from its heading to its run link. */
-  content: string;
-}
-export type Sections = Partial<Record<Section, SectionState>>;
-
-const startMarker = (section: Section, sha: string) =>
-  `<!-- cli-bench:section ${section} ${sha} -->`;
-const endMarker = (section: Section) => `<!-- cli-bench:section-end ${section} -->`;
-
-/** The sections recorded in a comment body. */
-export function parseSections(body: string): Sections {
-  const sections: Sections = {};
-  for (const section of SECTIONS) {
-    const match = new RegExp(
-      `<!-- cli-bench:section ${section} ([0-9a-f]{7,40}) -->\\n([\\s\\S]*?)\\n${endMarker(section)}`,
-      "u",
-    ).exec(body);
-    if (match?.[1] !== undefined && match[2] !== undefined) {
-      sections[section] = { sha: match[1], content: match[2] };
-    }
-  }
-  return sections;
-}
-
-/** Whether a section's heading says the run produced no comparison. */
-export const sectionFailed = (content: string) => /^### [^:\n]+: could not run$/mu.test(content);
-const sectionRunning = (content: string) => /^### [^:\n]+: running$/mu.test(content);
-
 const short = (sha: string) => sha.slice(0, 7);
+const runLink = (runUrl: string | undefined) =>
+  runUrl !== undefined && RUN_URL.test(runUrl) ? ` [Workflow run](${runUrl})` : "";
+
+/** Whether a comment reports a run that produced no comparison. */
+export const commentFailed = (body: string) =>
+  /^## CLI benchmark[^\n]*: could not run$/mu.test(body);
 
 /** The placeholder shown while a run is in progress. */
 export function runningContent(
-  section: Section,
+  kind: Kind,
   sha: string,
   now: Date,
   runUrl: string | undefined,
 ): string {
-  const link = runUrl !== undefined && RUN_URL.test(runUrl) ? ` [Workflow run](${runUrl})` : "";
   return (
-    `### ${SECTION_NAMES[section]}: running\n\n` +
-    `Started ${now.toISOString().slice(0, 16).replace("T", " ")} UTC for commit \`${short(sha)}\`.${link}`
+    `${TITLES[kind]}: running\n\n` +
+    `Started ${now.toISOString().slice(0, 16).replace("T", " ")} UTC for commit \`${short(sha)}\`.${runLink(runUrl)}`
   );
 }
 
-/** The section for a run that produced no report. */
-export function failureMarkdown(section: Section): string {
-  return `### ${SECTION_NAMES[section]}: could not run\n\nThe benchmark did not finish. See the workflow run.`;
+/** The report for a run that produced none. */
+export function failureMarkdown(kind: Kind, sha: string): string {
+  return `${TITLES[kind]}: could not run\n\nThe benchmark did not finish for commit \`${short(sha)}\`. See the workflow run.`;
 }
 
 /** The sanitized report, then the trusted run link. */
-export function sectionContent(markdown: string, runUrl: string | undefined): string {
-  const content = sanitize(markdown.replaceAll(BENCH_MARKER, "")).trim();
+export function reportContent(markdown: string, runUrl: string | undefined): string {
+  const stripped = Object.values(MARKERS).reduce(
+    (text, marker) => text.replaceAll(marker, ""),
+    markdown,
+  );
   const link = runUrl !== undefined && RUN_URL.test(runUrl) ? `\n\n[Workflow run](${runUrl})` : "";
-  return `${content}${link}`;
+  return `${sanitize(stripped).trim()}${link}`;
 }
 
-function assemble(sections: Sections, entries: ReadonlyArray<RunEntry>): string {
-  const running = new Set(
-    SECTIONS.filter((section) => {
-      const state = sections[section];
-      return state !== undefined && sectionRunning(state.content);
-    }),
-  );
-  const blocks = SECTIONS.flatMap((section) => {
-    const state = sections[section];
-    return state === undefined
-      ? []
-      : [`${startMarker(section, state.sha)}\n${state.content}\n${endMarker(section)}`];
-  });
+/**
+ * The short SHA of the commit a comment's newest result measured, or undefined when the comment
+ * reports a failed or running benchmark or has no recorded result.
+ */
+export function measuredSha(body: string): string | undefined {
+  if (commentFailed(body) || /^## CLI benchmark[^\n]*: running$/mu.test(body)) return undefined;
+  return decodeHistory(body)[0]?.sha;
+}
+
+function assemble(
+  kind: Kind,
+  content: string,
+  entries: ReadonlyArray<RunEntry>,
+  running: boolean,
+): string {
   return (
-    [
-      BENCH_MARKER,
-      "## CLI benchmark",
-      ...blocks,
-      RERUN_NOTE,
-      renderHistory(entries, sanitize, running),
-    ].join("\n\n") + "\n"
+    [MARKERS[kind], content, RERUN_NOTES[kind], renderHistory(entries, sanitize, running)].join(
+      "\n\n",
+    ) + "\n"
   );
 }
 
 /**
- * The comment body: the marker, each section, the re-run note, then the run history. `entries`
- * lists the newest run first; the oldest previous runs are dropped until the body fits, then each
- * section is cut to its share of the limit, with small sections keeping all of theirs. Each
- * section's newest entry is always kept.
+ * The comment body: the marker, the report, the re-run note, then the run history. `entries`
+ * lists the newest run first; the oldest are dropped until the body fits, always keeping the
+ * newest, and only then is the report cut.
  */
-export function composeBody(sections: Sections, entries: ReadonlyArray<RunEntry> = []): string {
-  const newest = new Set<RunEntry>();
-  const seen = new Set<Section>();
-  for (const entry of entries) {
-    if (seen.has(entry.section)) continue;
-    seen.add(entry.section);
-    newest.add(entry);
-  }
-  const older = entries.filter((entry) => !newest.has(entry));
-  const withOlder = (count: number) => {
-    const kept = new Set(older.slice(0, count));
-    return entries.filter((entry) => newest.has(entry) || kept.has(entry));
-  };
-  for (let count = older.length; count >= 0; count--) {
-    const body = assemble(sections, withOlder(count));
+export function composeBody(
+  kind: Kind,
+  content: string,
+  entries: ReadonlyArray<RunEntry> = [],
+  running = false,
+): string {
+  const shown = running ? entries.slice(0, MAX_PREVIOUS_RUNS) : entries;
+  for (let kept = shown.length; kept >= 1; kept--) {
+    const body = assemble(kind, content, shown.slice(0, kept), running);
     if (body.length <= MAX_BODY_CHARS) return body;
   }
-  const history = withOlder(0);
-  const present = SECTIONS.filter((section) => sections[section] !== undefined);
-  const overhead = assemble(
-    Object.fromEntries(present.map((section) => [section, { sha: "0000000", content: "" }])),
-    history,
-  ).length;
-  let remaining = MAX_BODY_CHARS - overhead;
-  const cut: Sections = {};
-  const bySize = present
-    .flatMap((section) => {
-      const state = sections[section];
-      return state === undefined ? [] : [{ section, state }];
-    })
-    .sort((a, b) => a.state.content.length - b.state.content.length);
-  bySize.forEach(({ section, state }, index) => {
-    const share = Math.floor(remaining / (bySize.length - index));
-    const content =
-      state.content.length <= share
-        ? state.content
-        : state.content.slice(0, Math.max(0, share - TRUNCATION_NOTICE.length)) + TRUNCATION_NOTICE;
-    remaining -= content.length;
-    cut[section] = { sha: state.sha, content };
-  });
-  return assemble(cut, history);
+  const newest = shown.slice(0, 1);
+  const limit = MAX_BODY_CHARS - assemble(kind, "", newest, running).length;
+  const fitted =
+    content.length <= limit
+      ? content
+      : content.slice(0, Math.max(0, limit - TRUNCATION_NOTICE.length)) + TRUNCATION_NOTICE;
+  return assemble(kind, fitted, newest, running);
 }
 
-/** The workflow bot's benchmark comment, if any; the oldest wins when concurrent writers made two. */
-export function findBenchComment(
+/** The workflow bot's comment for `kind`, if any; the oldest wins should two exist. */
+export function findComment(
+  kind: Kind,
   comments: ReadonlyArray<ExistingComment>,
 ): ExistingComment | undefined {
   return [...comments]
     .filter(
       (comment) =>
-        comment.authorLogin === WORKFLOW_BOT_LOGIN && comment.body.includes(BENCH_MARKER),
+        comment.authorLogin === WORKFLOW_BOT_LOGIN && comment.body.includes(MARKERS[kind]),
     )
     .sort((a, b) => a.id - b.id)[0];
 }
 
-/** What to do with the pull request's benchmark comment for `section`. */
-export function planComment(
-  mode: Mode,
-  section: Section,
-  comments: ReadonlyArray<ExistingComment>,
-): CommentPlan {
-  const existing = findBenchComment(comments);
-  if (existing === undefined) return { kind: "create" };
-  const state = parseSections(existing.body)[section];
-  // A first run that could not compare anything must not block the next push's real result.
-  const replaceable =
-    mode !== "create-if-missing" || state === undefined || sectionFailed(state.content);
-  return replaceable
-    ? { kind: "update", id: existing.id, previousBody: existing.body }
-    : { kind: "skip" };
-}
-
 export interface CommentIo {
   list: () => Promise<ReadonlyArray<ExistingComment>>;
-  get: (id: number) => Promise<ExistingComment | undefined>;
   create: (body: string) => Promise<number>;
   update: (id: number, body: string) => Promise<void>;
-  remove: (id: number) => Promise<void>;
 }
 
 export interface WriteInput {
   mode: Mode;
-  section: Section;
+  kind: Kind;
   /** The commit the run measured. */
   sha: string;
-  /** The rendered section; absent for `running`. */
+  /** The rendered report; absent for `running`. */
   markdown: string | undefined;
   runUrl: string | undefined;
   now: Date;
 }
 
-export type WriteResult =
-  | { kind: "skipped" }
-  | { kind: "written"; id: number; created: boolean; attempts: number }
-  | { kind: "unverified"; attempts: number };
+export type WriteResult = { kind: "skipped" } | { kind: "written"; id: number; created: boolean };
 
-/**
- * Writes `section` into the comment and verifies it by reading the comment back, retrying up to
- * {@link MAX_WRITE_ATTEMPTS} times when a concurrent writer overwrote it. A comment created while
- * another writer created one too is removed in favour of the older one.
- */
-export async function writeSection(io: CommentIo, input: WriteInput): Promise<WriteResult> {
-  const { mode, section } = input;
-  const content =
-    mode === "running" || input.markdown === undefined
-      ? runningContent(section, input.sha, input.now, input.runUrl)
-      : sectionContent(input.markdown, input.runUrl);
-  const entry =
-    mode === "running" || input.markdown === undefined
-      ? undefined
-      : makeEntry({
-          section,
-          sha: input.sha,
-          now: input.now,
-          headline: headlineOf(input.markdown),
-          url: input.runUrl ?? "",
-        });
-
-  for (let attempt = 1; attempt <= MAX_WRITE_ATTEMPTS; attempt++) {
-    const plan = planComment(mode, section, await io.list());
-    if (plan.kind === "skip") return { kind: "skipped" };
-    const earlier = plan.kind === "update" ? plan.previousBody : "";
-    const sections = parseSections(earlier);
-    sections[section] = { sha: short(input.sha), content };
-    const history = decodeHistory(earlier);
-    const body = composeBody(
-      sections,
-      entry === undefined ? history : mergeHistory(history, entry),
-    );
-
-    let id: number;
-    if (plan.kind === "update") {
-      id = plan.id;
-      // Another writer's change since the listing would be lost by this write; rebuild from it.
-      const latest = await io.get(id);
-      if (latest?.body !== plan.previousBody) continue;
-      await io.update(id, body);
-    } else {
-      id = await io.create(body);
-    }
-
-    const written = await io.get(id);
-    // Compare with the section as composed, which may have been truncated to fit.
-    const intended = parseSections(body)[section];
-    const actual = written === undefined ? undefined : parseSections(written.body)[section];
-    const landed =
-      intended !== undefined && actual?.sha === intended.sha && actual.content === intended.content;
-    if (plan.kind === "create") {
-      const canonical = findBenchComment(await io.list());
-      if (canonical !== undefined && canonical.id !== id) {
-        await io.remove(id);
-        continue;
-      }
-    }
-    if (landed) return { kind: "written", id, created: plan.kind === "create", attempts: attempt };
+/** Writes the comment for `input.kind`, carrying its history on; no other comment is read or changed. */
+export async function writeComment(io: CommentIo, input: WriteInput): Promise<WriteResult> {
+  const { mode, kind } = input;
+  const existing = findComment(kind, await io.list());
+  if (mode === "create-if-missing" && existing !== undefined && !commentFailed(existing.body)) {
+    return { kind: "skipped" };
   }
-  return { kind: "unverified", attempts: MAX_WRITE_ATTEMPTS };
+  const running = mode === "running" || input.markdown === undefined;
+  const history = decodeHistory(existing?.body ?? "");
+  const entry = running
+    ? undefined
+    : makeEntry({
+        sha: input.sha,
+        now: input.now,
+        headline: headlineOf(input.markdown ?? ""),
+        url: input.runUrl ?? "",
+      });
+  const content = running
+    ? runningContent(kind, input.sha, input.now, input.runUrl)
+    : reportContent(input.markdown ?? "", input.runUrl);
+  const body = composeBody(
+    kind,
+    content,
+    entry === undefined ? history : mergeHistory(history, entry),
+    running,
+  );
+  if (existing === undefined) {
+    return { kind: "written", id: await io.create(body), created: true };
+  }
+  await io.update(existing.id, body);
+  return { kind: "written", id: existing.id, created: false };
 }
 
 async function main(): Promise<void> {
@@ -334,10 +233,11 @@ async function main(): Promise<void> {
   if (mode !== "create-if-missing" && mode !== "upsert" && mode !== "running") {
     throw new Error(`Unsupported MODE "${mode}".`);
   }
-  const section = process.env.SECTION ?? "lightweight";
-  if (section !== "lightweight" && section !== "integration-heavy") {
-    throw new Error(`Unsupported SECTION "${section}".`);
+  const kind = process.env.KIND ?? "lightweight";
+  if (kind !== "lightweight" && kind !== "integration-heavy") {
+    throw new Error(`Unsupported KIND "${kind}".`);
   }
+  const sha = requireEnv("HEAD_SHA");
 
   let markdown: string | undefined;
   if (mode !== "running") {
@@ -353,7 +253,7 @@ async function main(): Promise<void> {
         console.log("The benchmark job produced no comment.");
         return;
       }
-      markdown = failureMarkdown(section);
+      markdown = failureMarkdown(kind, sha);
     } else {
       if (!stat.isFile() || stat.size > MAX_FILE_BYTES) {
         throw new Error("The benchmark comment file is not a regular file under the size limit.");
@@ -364,7 +264,6 @@ async function main(): Promise<void> {
 
   const io: CommentIo = {
     list: () => listIssueComments(token, base, pr),
-    get: (id) => getIssueComment(token, base, id),
     create: async (body) => {
       const created = (await (
         await githubFetch(`${base}/issues/${pr}/comments`, token, {
@@ -380,30 +279,21 @@ async function main(): Promise<void> {
         body: JSON.stringify({ body }),
       });
     },
-    remove: async (id) => {
-      await githubFetch(`${base}/issues/comments/${id}`, token, { method: "DELETE" });
-    },
   };
 
-  const result = await writeSection(io, {
+  const result = await writeComment(io, {
     mode,
-    section,
-    sha: requireEnv("HEAD_SHA"),
+    kind,
+    sha,
     markdown,
     runUrl: process.env.RUN_URL,
     now: new Date(),
   });
-  if (result.kind === "skipped") {
-    console.log(`PR #${pr} already has a ${section} result; leaving it untouched.`);
-  } else if (result.kind === "written") {
-    console.log(
-      `${result.created ? "Created" : "Updated"} benchmark comment ${result.id} on PR #${pr} (${section}).`,
-    );
-  } else {
-    throw new Error(
-      `The ${section} section did not land after ${result.attempts} attempts; another writer kept replacing it.`,
-    );
-  }
+  console.log(
+    result.kind === "skipped"
+      ? `PR #${pr} already has a ${kind} result; leaving it untouched.`
+      : `${result.created ? "Created" : "Updated"} ${kind} benchmark comment ${result.id} on PR #${pr}.`,
+  );
 }
 
 if (import.meta.main) {

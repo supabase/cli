@@ -8,10 +8,9 @@ run-name: "CLI benchmark #${{ github.event.pull_request.number || github.event.i
 # The first push to a pull request from this repository benchmarks and posts one comment tagged
 # `<!-- cli-bench:pr -->`; later pushes skip while that comment reports a result. A maintainer
 # commenting exactly `/bench` re-runs the run for the pull request's current head commit, as does
-# "Re-run all jobs" in the Actions UI: a re-run benchmarks again and updates the comment's
-# Lightweight Commands section, keeping earlier runs in a collapsed list. A maintainer commenting
-# exactly `/bench full` also dispatches cli-bench-full.yml on the pull request's branch to
-# re-measure the Integration Heavy Commands section. Pull requests from forks benchmark every push
+# "Re-run all jobs" in the Actions UI: a re-run benchmarks again and updates that comment, keeping
+# earlier runs in a collapsed list. A maintainer commenting exactly `/bench full` also dispatches
+# cli-bench-full.yml on the pull request's branch, which keeps its own comment. Pull requests from forks benchmark every push
 # and write a job summary only. A pull request that changes no benchmarked path, or more than the
 # 300 files GitHub's path filter inspects, has no run to re-run, and `/bench` says so.
 # See apps/cli/docs/tracing-monitoring.md.
@@ -268,6 +267,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     continue-on-error: true
+    # Writers of the lightweight comment, here and in cli-bench-full.yml, take turns; a waiting
+    # writer is never cancelled by a newer one that has not started.
+    concurrency:
+      group: cli-bench-comment-lightweight-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
     # The only pull_request job that can write to the pull request. It checks out the merge commit,
     # which its author can already run with this token by editing the workflow. It never builds or
     # runs the benchmarked binaries and reads the rendered markdown as data.
@@ -294,7 +298,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           MODE: ${{ github.run_attempt > 1 && 'upsert' || 'create-if-missing' }}
-          SECTION: lightweight
+          KIND: lightweight
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           BODY_FILE: ${{ runner.temp }}/bench-comment/comment.md
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}

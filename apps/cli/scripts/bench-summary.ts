@@ -26,7 +26,7 @@ const USAGE =
 
 type Outcome = "ok" | "failed";
 
-/** A part of the benchmark comment; each is written by its own run. */
+/** The benchmark a report covers; each has its own pull request comment. */
 export type Section = "lightweight" | "integration-heavy";
 
 export const SECTION_NAMES: Record<Section, string> = {
@@ -380,8 +380,6 @@ function phaseDetail(analyses: ReadonlyArray<WorkloadAnalysis>): string {
 export interface RenderContext {
   /** A warning shown above the results, such as shards that did not finish. */
   readonly note?: string | undefined;
-  /** `comment` renders the section for the pull request comment; `summary` is the job summary. */
-  readonly target: "summary" | "comment";
   readonly section?: Section;
   readonly headSha?: string | undefined;
   readonly baseRef?: string | undefined;
@@ -427,11 +425,9 @@ function frame(
 ): string {
   const section = context.section ?? "lightweight";
   const heading =
-    context.target === "comment"
-      ? `### ${SECTION_NAMES[section]}: ${title}`
-      : section === "lightweight"
-        ? `## CLI benchmark: ${title}`
-        : `## CLI benchmark (${SECTION_NAMES[section]}): ${title}`;
+    section === "lightweight"
+      ? `## CLI benchmark: ${title}`
+      : `## CLI benchmark (${SECTION_NAMES[section]}): ${title}`;
   const note = context.note === undefined || context.note === "" ? [] : [`⚠️ ${context.note}`];
   return [heading, contextLine(report, context), ...note, ...body].join("\n\n") + "\n";
 }
@@ -440,7 +436,7 @@ function frame(
 export function renderSummary(
   report: BenchReport | undefined,
   notice: string,
-  context: RenderContext = { target: "summary" },
+  context: RenderContext = {},
 ): string {
   if (report === undefined) return frame("could not run", [notice], context);
   const analyses = report.workloads.map((workload) => analyzeWorkload(workload, report.trace));
@@ -539,7 +535,7 @@ const main = Effect.gen(function* () {
     baseRef: options.baseRef,
     mergeBase: options.mergeBase,
   };
-  const markdown = renderSummary(loaded.report, loaded.notice, { target: "summary", ...context });
+  const markdown = renderSummary(loaded.report, loaded.notice, context);
   const summaryFile = yield* Config.option(Config.String("GITHUB_STEP_SUMMARY"));
   if (Option.isSome(summaryFile) && summaryFile.value !== "") {
     yield* fs.writeFileString(summaryFile.value, markdown, { flag: "a" });
@@ -548,10 +544,7 @@ const main = Effect.gen(function* () {
   }
 
   if (options.commentOut !== undefined) {
-    yield* fs.writeFileString(
-      options.commentOut,
-      renderSummary(loaded.report, loaded.notice, { target: "comment", ...context }),
-    );
+    yield* fs.writeFileString(options.commentOut, markdown);
   }
 });
 

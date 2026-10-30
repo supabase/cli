@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { GithubRequestError } from "./github.ts";
-import { composeBody, failureMarkdown } from "./post-comment.ts";
+import { makeEntry } from "./history.ts";
+import { composeBody, failureMarkdown, measuredSha, runningContent } from "./post-comment.ts";
 import {
   type BenchPr,
   type CommandIo,
   coversIntegrationHeavy,
   handleBenchCommand,
-  reportedLightweightSha,
   RERUN_WINDOW_MS,
   type FullRun,
   type FullWorkloads,
@@ -41,7 +41,7 @@ function setup(
     rerunError?: Error;
     fullRuns?: ReadonlyArray<FullRun>;
     dispatchError?: Error;
-    /** Short SHA the Lightweight Commands section measured. */
+    /** Short SHA the lightweight comment measured. */
     lightweightSha?: string;
   } = {},
 ) {
@@ -209,7 +209,7 @@ const stackRun = (overrides: Partial<FullRun> = {}): FullRun => ({
 });
 
 describe("handleBenchCommand with /bench full", () => {
-  test("dispatches the integration-heavy workloads on the branch and leaves a current lightweight section alone", async () => {
+  test("dispatches the integration-heavy workloads on the branch and leaves a current lightweight comment alone", async () => {
     const { io, calls } = setup({ lightweightSha: "aaaaaaa" });
 
     const outcome = await handleBenchCommand(command("/bench full\n"), io);
@@ -225,7 +225,7 @@ describe("handleBenchCommand with /bench full", () => {
     expect(calls.replies).toEqual([]);
   });
 
-  test("also re-runs the lightweight run when its section is behind the head commit", async () => {
+  test("also re-runs the lightweight run when its comment is behind the head commit", async () => {
     const { io, calls } = setup({ lightweightSha: "bbbbbbb", runs: [run({ id: 4 })] });
 
     const outcome = await handleBenchCommand(command("/bench full"), io);
@@ -378,20 +378,41 @@ describe("coversIntegrationHeavy", () => {
   });
 });
 
-describe("reportedLightweightSha", () => {
-  test("names the commit of a lightweight section that reports a result", () => {
-    const body = composeBody({
-      lightweight: { sha: "abc1234", content: "### Lightweight Commands: no changes found" },
-    });
+describe("measuredSha", () => {
+  const run = "https://github.com/o/r/actions/runs/7";
+  const recorded = (sha: string, headline: string) =>
+    makeEntry({ sha, now: NOW, headline, url: run });
+  const entries = (...list: Array<ReturnType<typeof recorded>>) =>
+    list.flatMap((item) => (item === undefined ? [] : [item]));
 
-    expect(reportedLightweightSha(body)).toBe("abc1234");
+  test("names the commit of a lightweight comment that reports a result", () => {
+    const body = composeBody(
+      "lightweight",
+      "## CLI benchmark: no changes found",
+      entries(recorded("abc1234", "no changes found")),
+    );
+
+    expect(measuredSha(body)).toBe("abc1234");
   });
 
-  test("names no commit for a lightweight section whose run failed", () => {
-    const body = composeBody({
-      lightweight: { sha: "abc1234", content: failureMarkdown("lightweight") },
-    });
+  test("names no commit when the run failed", () => {
+    const body = composeBody(
+      "lightweight",
+      failureMarkdown("lightweight", "abc1234def"),
+      entries(recorded("abc1234", "could not run")),
+    );
 
-    expect(reportedLightweightSha(body)).toBeUndefined();
+    expect(measuredSha(body)).toBeUndefined();
+  });
+
+  test("names no commit while a run is in progress", () => {
+    const body = composeBody(
+      "integration-heavy",
+      runningContent("integration-heavy", "abc1234def", NOW, run),
+      entries(recorded("1111111", "no changes found")),
+      true,
+    );
+
+    expect(measuredSha(body)).toBeUndefined();
   });
 });
