@@ -49,12 +49,15 @@ export const execCli = (harness: CLIHarness, cmd: string[], execOpts?: ExecOptio
       new CliExecError({ message: cause instanceof Error ? cause.message : String(cause), cause }),
   });
 
-/** POSTs a JSON body to a replay server control endpoint. */
-export const postControl = (url: string, body: unknown) =>
+const sendControl = (url: string, body: unknown) =>
   HttpClientRequest.post(url).pipe(
     HttpClientRequest.bodyJson(body),
     Effect.flatMap(HttpClient.execute),
   );
+
+/** POSTs a JSON body to a replay server control endpoint; a non-2xx answer fails. */
+export const postControl = (url: string, body: unknown) =>
+  sendControl(url, body).pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
 
 const httpLayer = Layer.mergeAll(
   FetchHttpClient.layer,
@@ -149,7 +152,7 @@ export const testBehaviour = test.extend<BehaviourFixtures>({
         // Truncate to 40 chars to keep temp dir names manageable.
         const dir = yield* Effect.promise(() => makeTempDir(`cli-e2e-${slug.slice(0, 40)}-`));
 
-        const res = yield* postControl(`${serverUrl}/_ctrl/scenario`, { name: slug });
+        const res = yield* sendControl(`${serverUrl}/_ctrl/scenario`, { name: slug });
         if (res.status < 200 || res.status >= 300) {
           yield* Effect.promise(() => dir[Symbol.asyncDispose]());
           const { message } = yield* HttpClientResponse.schemaBodyJson(ScenarioFailure)(res);
