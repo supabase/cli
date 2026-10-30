@@ -16,7 +16,7 @@
     "test:e2e": "pnpm exec turbo run supabase#build && pnpm exec turbo run test:e2e:run --only --concurrency=1 --continue=always --",
     "test:vitest": "bun --bun vitest run --project '!*e2e*' --project '!*live*'",
     "check:all": "pnpm exec turbo run types:check lint:check fmt:check knip:check lint:actions:check",
-    "fix:all": "pnpm exec turbo run knip:fix && pnpm exec turbo run lint:fix && pnpm exec turbo run fmt:fix",
+    "fix:all": "pnpm exec turbo run fmt:fix --continue=always",
     "lint:check": "oxlint --config .oxlintrc.json",
     "lint:fix": "oxlint --config .oxlintrc.json --fix --fix-suggestions",
     "lint:actions:check": "jactionlint",

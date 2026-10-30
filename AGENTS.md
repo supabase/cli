@@ -37,9 +37,8 @@ The skill is authoritative for Effect coding practices when repository instructi
 
 Effect linting is part of the repo lint (`.oxlintrc.json` extends the Effect oxlint preset); run
 `pnpm lint:check` or `pnpm lint:fix` from the repository root; `lint:fix` also applies suggestion
-fixes, so review its diff. Its last override turns the Effect rules off for files kept outside the
-Effect lint: `.github/scripts`, the npm launcher shim, compute stack templates and generated code.
-When an `@effect/tsgo` bump adds, removes or renames a rule, update that override.
+fixes, so review its diff. `ignorePatterns` keeps `.github/scripts`, the npm launcher shim, compute
+stack templates and the generated API contracts and feedback types out of the lint.
 
 Instrument by default: when you add or change code that does I/O (HTTP, SQL, filesystem beyond a
 small read, child processes, containers, waits) or millisecond-scale work, give it a named span
