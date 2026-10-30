@@ -1,7 +1,7 @@
 name: Node runtime CI
 
-# Runs the full Test suite and a Node 26 smoke test of the Node bundle on pushes to the Node
-# runtime branch, which has no pull request.
+# Runs the full Test suite, plus a smoke test and the CLI end-to-end suites against the Node 26 bundle,
+# on pushes to the Node runtime branch, which has no pull request.
 on:
   push:
     branches:
@@ -69,6 +69,69 @@ jobs:
           rest_url=$(node "$CLI" start --output-format json | jq -r .env.REST_URL)
           curl --fail --silent --show-error --output /dev/null "$rest_url/"
           node "$CLI" stop
+
+      # Releases /var/lib/docker so the image disk unmounts cleanly.
+      - name: Stop Docker
+        if: always()
+        run: sudo systemctl stop docker.socket docker.service
+
+  test-e2e-node:
+    name: Run CLI end-to-end tests on Node 26 (${{ matrix.name }})
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { suite: cli, shard: 1, shards: 5, name: cli 1/5 }
+          - { suite: cli, shard: 2, shards: 5, name: cli 2/5 }
+          - { suite: cli, shard: 3, shards: 5, name: cli 3/5 }
+          - { suite: cli, shard: 4, shards: 5, name: cli 4/5 }
+          - { suite: cli, shard: 5, shards: 5, name: cli 5/5 }
+          - { suite: cli-e2e, shard: 1, shards: 2, name: cli-e2e 1/2 }
+          - { suite: cli-e2e, shard: 2, shards: 2, name: cli-e2e 2/2 }
+    steps:
+      - name: Checkout
+        uses: useblacksmith/checkout@6fd481652155169ed4d2f25ebaf97464f685175f # v1.0.0-beta
+        with:
+          fetch-depth: 0
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          sticky-disks: "true"
+          docker-images: "true"
+
+      - name: Build CLI
+        run: pnpm exec turbo run supabase#build supabase#build:node
+
+      - name: Install Node 26
+        run: mise install node@26
+
+      # The e2e harness runs `apps/cli/dist/supabase.js`, which spawns `apps/cli/dist/supabase`.
+      - name: Replace the Bun binary with a Node 26 launcher
+        run: |
+          set -euo pipefail
+          node26="$(mise where node@26)/bin/node"
+          printf '#!/bin/sh\nexec "%s" "%s" "$@"\n' "$node26" "$GITHUB_WORKSPACE/apps/cli/dist-node/main.js" \
+            > apps/cli/dist/supabase
+          chmod 755 apps/cli/dist/supabase
+          cat apps/cli/dist/supabase
+          apps/cli/dist/supabase --version
+
+      - name: Run end-to-end tests
+        if: matrix.suite == 'cli'
+        run: pnpm exec turbo run test:e2e:run --only --filter=supabase -- --shard=${{ matrix.shard }}/${{ matrix.shards }}
+        env:
+          SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
+          SUPABASE_E2E_WORKERS: "4"
+
+      - name: Run cli-e2e end-to-end tests
+        if: matrix.suite == 'cli-e2e'
+        run: pnpm exec turbo run test:e2e:run --only --filter=@supabase/cli-e2e -- --shard=${{ matrix.shard }}/${{ matrix.shards }}
+        env:
+          SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
 
       # Releases /var/lib/docker so the image disk unmounts cleanly.
       - name: Stop Docker
