@@ -1,11 +1,7 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import http from "node:http";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
-import { BunServices } from "@effect/platform-bun";
+import { BunHttpServer, BunServices, BunSocketServer } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect";
+import { ConfigProvider, Effect, FileSystem, Layer, Option, Path, Schedule, Stream } from "effect";
+import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
 import { configValuesLayer } from "../../../tests/helpers/config-values-layer.ts";
@@ -44,68 +40,85 @@ function withDockerHost<A, E, R>(
   endpoint: string,
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> {
-  return Effect.suspend(() => {
-    const previous = process.env["DOCKER_HOST"];
-    process.env["DOCKER_HOST"] = endpoint;
-    return effect.pipe(
-      Effect.provideService(
-        ConfigProvider.ConfigProvider,
-        ConfigProvider.fromEnv({ preserveEmptyStrings: true }),
-      ),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env["DOCKER_HOST"];
-          else process.env["DOCKER_HOST"] = previous;
-        }),
-      ),
-    );
-  });
+  return effect.pipe(
+    Effect.provideService(
+      ConfigProvider.ConfigProvider,
+      ConfigProvider.fromEnv({ env: { DOCKER_HOST: endpoint }, preserveEmptyStrings: true }),
+    ),
+  );
 }
 
 const ENGINE_IDENTITY_HEADERS = { "api-version": "1.55" };
 
-const makeEngineServer = (respond: (req: http.IncomingMessage, res: http.ServerResponse) => void) =>
-  Effect.acquireRelease(
-    Effect.callback<{
-      readonly socketPath: string;
-      readonly requestedUrls: Array<string>;
-      readonly server: http.Server;
-      readonly dir: string;
-    }>((resume) => {
-      let settled = false;
-      const dir = mkdtempSync(join(tmpdir(), "ldbeng-"));
-      const socketPath = join(dir, "d.sock");
-      const requestedUrls: Array<string> = [];
-      const server = http.createServer((req, res) => {
-        requestedUrls.push(req.url ?? "");
-        respond(req, res);
-      });
-      server.once("error", (cause) => {
-        if (settled) return;
-        settled = true;
-        rmSync(dir, { recursive: true, force: true });
-        resume(Effect.die(cause));
-      });
-      server.listen(socketPath, () => {
-        if (settled) return;
-        settled = true;
-        resume(Effect.succeed({ socketPath, requestedUrls, server, dir }));
-      });
-      return Effect.sync(() => {
-        settled = true;
-        server.close();
-        rmSync(dir, { recursive: true, force: true });
-      });
-    }),
-    ({ dir, server }) =>
-      Effect.callback<void>((resume) => {
-        server.closeAllConnections?.();
-        server.close(() => {
-          rmSync(dir, { recursive: true, force: true });
-          resume(Effect.void);
-        });
+const engineJson = (status: number, body: string) =>
+  HttpServerResponse.text(body, {
+    status,
+    headers: ENGINE_IDENTITY_HEADERS,
+    contentType: "application/json",
+  });
+
+const makeEngineServer = (
+  respond: (
+    request: HttpServerRequest.HttpServerRequest,
+  ) => Effect.Effect<HttpServerResponse.HttpServerResponse>,
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dir = yield* fs.makeTempDirectoryScoped({ prefix: "ldbeng-" });
+    const socketPath = path.join(dir, "d.sock");
+    const requestedUrls: Array<string> = [];
+    const server = yield* BunHttpServer.make({ unix: socketPath });
+    yield* server.serve(
+      Effect.gen(function* () {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        requestedUrls.push(request.url);
+        return yield* respond(request);
       }),
-  );
+    );
+    return { socketPath, requestedUrls };
+  });
+
+/*
+ * A raw-socket peer for wire shapes an HTTP server will not produce: it reads
+ * the request head, writes `reply` verbatim, then closes the connection. With
+ * no `reply` it holds the connection open without answering.
+ */
+const makeRawEngineServer = (reply: string | undefined) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dir = yield* fs.makeTempDirectoryScoped({ prefix: "ldbraw-" });
+    const socketPath = path.join(dir, "d.sock");
+    const server = yield* BunSocketServer.make({ path: socketPath });
+    yield* server
+      .run((socket) =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const reader = yield* socket.reader;
+            const writer = yield* socket.writer;
+            const decoder = new TextDecoder();
+            let head = "";
+            while (!head.includes("\r\n\r\n")) {
+              for (const chunk of yield* reader.pull) {
+                head += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
+              }
+            }
+            if (reply === undefined) return yield* Effect.never;
+            yield* writer.write(reply);
+          }),
+        ),
+      )
+      .pipe(Effect.forkScoped);
+    return { socketPath };
+  });
+
+const missingSocketEndpoint = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const dir = yield* fs.makeTempDirectoryScoped({ prefix: "ldbgone-" });
+  return `unix://${path.join(dir, "never-created.sock")}`;
+});
 
 const localDockerEngineTestLayer = localDockerEngineLayer.pipe(
   Layer.provide(BunServices.layer),
@@ -123,10 +136,14 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
     it.live("answers present for an Engine 200 inspect payload on the documented route", () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const engine = yield* makeEngineServer((_req, res) => {
-            res.writeHead(200, { "content-type": "application/json", ...ENGINE_IDENTITY_HEADERS });
-            res.end(JSON.stringify({ Id: "abc123", State: { Running: true, Status: "running" } }));
-          });
+          const engine = yield* makeEngineServer(() =>
+            Effect.succeed(
+              engineJson(
+                200,
+                JSON.stringify({ Id: "abc123", State: { Running: true, Status: "running" } }),
+              ),
+            ),
+          );
           const answer = yield* withDockerHost(
             `unix://${engine.socketPath}`,
             engineInspectContainer("supabase_db_engine-probe"),
@@ -134,7 +151,7 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
           expect(answer).toEqual(Option.some({ exists: true, running: true, status: "running" }));
           expect(engine.requestedUrls).toEqual(["/containers/supabase_db_engine-probe/json"]);
         }),
-      ),
+      ).pipe(Effect.provide(BunServices.layer)),
     );
 
     it.live.each([
@@ -148,56 +165,62 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
       ([, state, running, status]) =>
         Effect.scoped(
           Effect.gen(function* () {
-            const engine = yield* makeEngineServer((_req, res) => {
-              res.writeHead(200, {
-                "content-type": "application/json",
-                ...ENGINE_IDENTITY_HEADERS,
-              });
-              res.end(
-                JSON.stringify({ Id: "abc123", ...(state === undefined ? {} : { State: state }) }),
-              );
-            });
+            const engine = yield* makeEngineServer(() =>
+              Effect.succeed(
+                engineJson(
+                  200,
+                  JSON.stringify({
+                    Id: "abc123",
+                    ...(state === undefined ? {} : { State: state }),
+                  }),
+                ),
+              ),
+            );
             const answer = yield* withDockerHost(
               `unix://${engine.socketPath}`,
               engineInspectContainer("supabase_db_engine-probe"),
             );
             expect(answer).toEqual(Option.some({ exists: true, running, status }));
           }),
-        ),
+        ).pipe(Effect.provide(BunServices.layer)),
     );
 
     it.live("answers absent for an Engine 404", () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const engine = yield* makeEngineServer((_req, res) => {
-            res.writeHead(404, { "content-type": "application/json", ...ENGINE_IDENTITY_HEADERS });
-            res.end(JSON.stringify({ message: "No such container" }));
-          });
+          const engine = yield* makeEngineServer(() =>
+            Effect.succeed(engineJson(404, JSON.stringify({ message: "No such container" }))),
+          );
           const answer = yield* withDockerHost(
             `unix://${engine.socketPath}`,
             engineInspectContainer("supabase_db_engine-probe"),
           );
           expect(answer).toEqual(Option.some({ exists: false }));
         }),
-      ),
+      ).pipe(Effect.provide(BunServices.layer)),
     );
 
     it.live("gives no answer for a responder that does not identify as a Docker engine", () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const engine = yield* makeEngineServer((req, res) => {
-            if (req.url?.includes("present") === true) {
-              res.writeHead(200, { "content-type": "application/json" });
-              res.end(JSON.stringify({ Id: "not-an-engine" }));
-              return;
+          const engine = yield* makeEngineServer((request) => {
+            if (request.url.includes("present")) {
+              return Effect.succeed(
+                HttpServerResponse.text(JSON.stringify({ Id: "not-an-engine" }), {
+                  status: 200,
+                  contentType: "application/json",
+                }),
+              );
             }
-            if (req.url?.includes("server-header") === true) {
-              res.writeHead(404, { server: "Docker/28.5.2 (linux)" });
-              res.end(JSON.stringify({ message: "No such container" }));
-              return;
+            if (request.url.includes("server-header")) {
+              return Effect.succeed(
+                HttpServerResponse.text(JSON.stringify({ message: "No such container" }), {
+                  status: 404,
+                  headers: { server: "Docker/28.5.2 (linux)" },
+                }),
+              );
             }
-            res.writeHead(404);
-            res.end();
+            return Effect.succeed(HttpServerResponse.empty({ status: 404 }));
           });
           const present = yield* withDockerHost(
             `unix://${engine.socketPath}`,
@@ -215,18 +238,20 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
           expect(absent).toEqual(Option.none());
           expect(viaServerHeader).toEqual(Option.some({ exists: false }));
         }),
-      ),
+      ).pipe(Effect.provide(BunServices.layer)),
     );
 
     it.live("gives no answer for an empty or malformed Engine 200 body", () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const engine = yield* makeEngineServer((req, res) => {
-            res.writeHead(200, { "content-type": "application/json", ...ENGINE_IDENTITY_HEADERS });
-            res.end(
-              req.url?.includes("empty") === true ? "" : JSON.stringify(["not", "an", "object"]),
-            );
-          });
+          const engine = yield* makeEngineServer((request) =>
+            Effect.succeed(
+              engineJson(
+                200,
+                request.url.includes("empty") ? "" : JSON.stringify(["not", "an", "object"]),
+              ),
+            ),
+          );
           const empty = yield* withDockerHost(
             `unix://${engine.socketPath}`,
             engineInspectContainer("empty"),
@@ -238,7 +263,7 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
           expect(empty).toEqual(Option.none());
           expect(malformed).toEqual(Option.none());
         }),
-      ),
+      ).pipe(Effect.provide(BunServices.layer)),
     );
 
     it.live(
@@ -246,20 +271,16 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
       () =>
         Effect.scoped(
           Effect.gen(function* () {
-            const engine = yield* makeEngineServer((_req, res) => {
-              res.writeHead(500, {
-                "content-type": "application/json",
-                ...ENGINE_IDENTITY_HEADERS,
-              });
-              res.end(JSON.stringify({ message: "layer store corrupted" }));
-            });
+            const engine = yield* makeEngineServer(() =>
+              Effect.succeed(engineJson(500, JSON.stringify({ message: "layer store corrupted" }))),
+            );
             const answer = yield* withDockerHost(
               `unix://${engine.socketPath}`,
               engineInspectContainer("supabase_db_engine-probe"),
             );
             expect(answer).toEqual(Option.none());
           }),
-        ),
+        ).pipe(Effect.provide(BunServices.layer)),
     );
 
     it.live(
@@ -267,52 +288,46 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
       () =>
         Effect.scoped(
           Effect.gen(function* () {
-            const engine = yield* makeEngineServer(() => {});
+            const engine = yield* makeRawEngineServer(undefined);
             const answer = yield* withDockerHost(
               `unix://${engine.socketPath}`,
               engineInspectContainer("supabase_db_engine-probe"),
             );
             expect(answer).toEqual(Option.none());
           }),
-        ),
+        ).pipe(Effect.provide(BunServices.layer)),
       15_000,
     );
 
     it.live("gives no answer for an oversized body", () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const engine = yield* makeEngineServer((_req, res) => {
-            res.writeHead(200, { "content-type": "application/json", ...ENGINE_IDENTITY_HEADERS });
-            res.end(`{"Id":"${"a".repeat(80 * 1024)}"}`);
-          });
+          const engine = yield* makeEngineServer(() =>
+            Effect.succeed(engineJson(200, `{"Id":"${"a".repeat(80 * 1024)}"}`)),
+          );
           const answer = yield* withDockerHost(
             `unix://${engine.socketPath}`,
             engineInspectContainer("supabase_db_engine-probe"),
           );
           expect(answer).toEqual(Option.none());
         }),
-      ),
+      ).pipe(Effect.provide(BunServices.layer)),
     );
 
     it.live("gives no answer when the peer resets after the headers", () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const engine = yield* makeEngineServer((_req, res) => {
-            res.writeHead(200, {
-              "content-type": "application/json",
-              "content-length": "1000",
-              ...ENGINE_IDENTITY_HEADERS,
-            });
-            res.write('{"Id":');
-            res.socket?.destroy();
-          });
+          const engine = yield* makeRawEngineServer(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 1000\r\n" +
+              'api-version: 1.55\r\n\r\n{"Id":',
+          );
           const answer = yield* withDockerHost(
             `unix://${engine.socketPath}`,
             engineInspectContainer("supabase_db_engine-probe"),
           );
           expect(answer).toEqual(Option.none());
         }),
-      ),
+      ).pipe(Effect.provide(BunServices.layer)),
     );
 
     it.live("traces the request, the decline, and the fallback through DebugLogger", () => {
@@ -333,10 +348,9 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
       }).pipe(Effect.provide(localDockerEngineTestLayer.pipe(Layer.provide(recorder))));
       return Effect.scoped(
         Effect.gen(function* () {
-          const engine = yield* makeEngineServer((_req, res) => {
-            res.writeHead(404, { "content-type": "application/json", ...ENGINE_IDENTITY_HEADERS });
-            res.end(JSON.stringify({ message: "No such container" }));
-          });
+          const engine = yield* makeEngineServer(() =>
+            Effect.succeed(engineJson(404, JSON.stringify({ message: "No such container" }))),
+          );
           yield* withDockerHost(`unix://${engine.socketPath}`, traced);
           expect(
             lines.some(
@@ -360,17 +374,12 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
           yield* withDockerHost("deploy:hunter4@10.0.0.5:2376", traced);
           expect(lines.some((l) => l.includes("not directly addressable (no scheme)"))).toBe(true);
           expect(lines.some((l) => l.includes("hunter4") || l.includes("deploy"))).toBe(false);
-          const missingDir = mkdtempSync(join(tmpdir(), "ldbgone-"));
-          yield* withDockerHost(`unix://${join(missingDir, "never-created.sock")}`, traced).pipe(
-            Effect.ensuring(
-              Effect.sync(() => rmSync(missingDir, { recursive: true, force: true })),
-            ),
-          );
+          yield* withDockerHost(yield* missingSocketEndpoint, traced);
           expect(
             lines.some((l) => l.startsWith("debug:") && l.includes("no definitive Engine answer")),
           ).toBe(true);
         }),
-      );
+      ).pipe(Effect.provide(BunServices.layer));
     });
 
     it.live(
@@ -378,41 +387,41 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
       () =>
         Effect.scoped(
           Effect.gen(function* () {
-            const engine = yield* makeEngineServer((_req, res) => {
-              res.writeHead(200, {
-                "content-type": "application/json",
-                ...ENGINE_IDENTITY_HEADERS,
-              });
-              const drip = setInterval(() => {
-                res.write("a");
-              }, 500);
-              res.on("close", () => {
-                clearInterval(drip);
-              });
-            });
+            const drip = new TextEncoder().encode("a");
+            const engine = yield* makeEngineServer(() =>
+              Effect.succeed(
+                HttpServerResponse.stream(
+                  Stream.fromSchedule(Schedule.spaced("500 millis")).pipe(Stream.as(drip)),
+                  {
+                    status: 200,
+                    headers: ENGINE_IDENTITY_HEADERS,
+                    contentType: "application/json",
+                  },
+                ),
+              ),
+            );
             const answer = yield* withDockerHost(
               `unix://${engine.socketPath}`,
               engineInspectContainer("supabase_db_engine-probe"),
             );
             expect(answer).toEqual(Option.none());
           }),
-        ),
+        ).pipe(Effect.provide(BunServices.layer)),
       15_000,
     );
   });
 
-  it.live("gives no answer when the local socket cannot be dialed", () => {
-    const missingDir = mkdtempSync(join(tmpdir(), "ldbgone-"));
-    return withDockerHost(
-      `unix://${join(missingDir, "never-created.sock")}`,
-      engineInspectContainer("supabase_db_engine-probe"),
-    ).pipe(
-      Effect.ensuring(Effect.sync(() => rmSync(missingDir, { recursive: true, force: true }))),
-      Effect.map((answer) => {
+  it.live("gives no answer when the local socket cannot be dialed", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const answer = yield* withDockerHost(
+          yield* missingSocketEndpoint,
+          engineInspectContainer("supabase_db_engine-probe"),
+        );
         expect(answer).toEqual(Option.none());
       }),
-    );
-  });
+    ).pipe(Effect.provide(BunServices.layer)),
+  );
 
   it.live("gives no answer for an endpoint the transport cannot address (ssh)", () =>
     withDockerHost(
@@ -433,22 +442,24 @@ describe("isLocalDbRunning", () => {
       toml: 'project_id = "engine-probe"\n',
     },
   ) =>
-    Effect.gen(function* () {
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const workdir = mkdtempSync(join(tmpdir(), "ldbrun-"));
-      if (options.toml !== undefined) {
-        yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
-        yield* fs.writeFileString(path.join(workdir, "supabase", "config.toml"), options.toml);
-      }
-      return yield* isLocalDbRunning(spawner, fs, path, workdir).pipe(
-        Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))),
-      );
-    }).pipe(
-      Effect.provide(configValuesLayer({ output: mockOutput().layer, env: options.env })),
-      Effect.provide(spawnerLayer),
-      Effect.provide(BunServices.layer),
+    Effect.scoped(
+      Effect.gen(function* () {
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const workdir = yield* fs.makeTempDirectoryScoped({ prefix: "ldbrun-" });
+        if (options.toml !== undefined) {
+          yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+          yield* fs.writeFileString(path.join(workdir, "supabase", "config.toml"), options.toml);
+        }
+        return yield* isLocalDbRunning(spawner, fs, path, workdir);
+      }),
+    ).pipe(
+      Effect.provide(
+        configValuesLayer({ output: mockOutput().layer, env: options.env }).pipe(
+          Layer.provideMerge(Layer.mergeAll(BunServices.layer, spawnerLayer)),
+        ),
+      ),
     );
 
   it.live("probes the container named by config.toml's project_id", () => {
@@ -570,37 +581,38 @@ describe("isLocalDbRunning", () => {
         exitCode: 1,
         stderr: ["Error response from daemon: No such container: supabase_db_engine-probe"],
       }));
-      const missingDir = mkdtempSync(join(tmpdir(), "ldbgone-"));
-      return withDockerHost(
-        `unix://${join(missingDir, "never-created.sock")}`,
-        probe(mock.layer).pipe(Effect.provide(localDockerEngineTestLayer)),
-      ).pipe(
-        Effect.ensuring(Effect.sync(() => rmSync(missingDir, { recursive: true, force: true }))),
-        Effect.map((running) => {
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const running = yield* withDockerHost(
+            yield* missingSocketEndpoint,
+            probe(mock.layer).pipe(Effect.provide(localDockerEngineTestLayer)),
+          );
           expect(running).toBe(false);
           expect(mock.spawned.map((s) => s.args)).toEqual([
             ["container", "inspect", "supabase_db_engine-probe"],
           ]);
         }),
-      );
+      ).pipe(Effect.provide(BunServices.layer));
     },
   );
 });
 
 describe("localDbState", () => {
   const stateOf = (spawnerLayer: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>) =>
-    Effect.gen(function* () {
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const workdir = mkdtempSync(join(tmpdir(), "ldbstate-"));
-      return yield* localDbState(spawner, fs, path, workdir, "engine-probe").pipe(
-        Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))),
-      );
-    }).pipe(
-      Effect.provide(configValuesLayer({ output: mockOutput().layer })),
-      Effect.provide(spawnerLayer),
-      Effect.provide(BunServices.layer),
+    Effect.scoped(
+      Effect.gen(function* () {
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const workdir = yield* fs.makeTempDirectoryScoped({ prefix: "ldbstate-" });
+        return yield* localDbState(spawner, fs, path, workdir, "engine-probe");
+      }),
+    ).pipe(
+      Effect.provide(
+        configValuesLayer({ output: mockOutput().layer }).pipe(
+          Layer.provideMerge(Layer.mergeAll(BunServices.layer, spawnerLayer)),
+        ),
+      ),
       Effect.provideService(LocalDockerEngine, {
         inspectContainer: () => Effect.succeed(Option.none()),
       }),

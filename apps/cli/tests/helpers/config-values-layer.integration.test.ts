@@ -1,5 +1,5 @@
 import { BunServices } from "@effect/platform-bun";
-import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
 import { Effect, FileSystem, Option } from "effect";
 
 import { CliConfigKeys } from "../../src/config/cli-config-keys.ts";
@@ -11,14 +11,11 @@ import { mockOutput } from "./mocks.ts";
 const STRAY_PORT = "11111";
 const AMBIENT_NAME = "SUPABASE_DB_PORT";
 
-let previous: string | undefined;
 beforeEach(() => {
-  previous = process.env[AMBIENT_NAME];
-  process.env[AMBIENT_NAME] = STRAY_PORT;
+  vi.stubEnv(AMBIENT_NAME, STRAY_PORT);
 });
 afterEach(() => {
-  if (previous === undefined) delete process.env[AMBIENT_NAME];
-  else process.env[AMBIENT_NAME] = previous;
+  vi.unstubAllEnvs();
 });
 
 const readDbPort = Effect.gen(function* () {

@@ -12,7 +12,10 @@
     "types:check": "tsc --noEmit"
   },
   "dependencies": {
-    "@supabase/cli-test-helpers": "workspace:*"
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "@supabase/cli-test-helpers": "workspace:*",
+    "effect": "catalog:"
   },
   "devDependencies": {
     "@tsconfig/bun": "catalog:",

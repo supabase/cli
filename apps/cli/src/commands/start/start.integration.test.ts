@@ -4963,6 +4963,65 @@ content_path = "./supabase/templates/custom_notice.html"
     );
   });
 
+  describe("auth.{email,sms}.enabled reaches GoTrue's container", () => {
+    const TWILIO =
+      '[auth.sms.twilio]\nenabled = true\naccount_sid = "AC123"\nauth_token = "test-auth-token"\nmessage_service_sid = "MG123"\n';
+
+    it.effect.each([
+      {
+        name: "[auth.sms] enabled = true with a configured provider",
+        config: `project_id = "demo"\n[auth.sms]\nenabled = true\n${TWILIO}`,
+        env: "GOTRUE_EXTERNAL_PHONE_ENABLED",
+        expected: "true",
+      },
+      {
+        name: "[auth.email] enabled = false",
+        config: 'project_id = "demo"\n[auth.email]\nenabled = false\n',
+        env: "GOTRUE_EXTERNAL_EMAIL_ENABLED",
+        expected: "false",
+      },
+    ])("sets $env from $name", ({ config, env, expected }) =>
+      Effect.gen(function* () {
+        const { layer, child } = yield* setup({ configContents: config });
+
+        yield* start(flags()).pipe(Effect.provide(layer));
+        const gotrueCreate = child.spawned.find(
+          (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+        );
+        expect(gotrueCreate?.env[env]).toBe(expected);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect.each([
+      {
+        name: "[auth.email]",
+        config: 'project_id = "demo"\n[auth.email]\nenabled = false\n',
+        shellEnv: "SUPABASE_AUTH_EMAIL_ENABLED",
+        gotrueEnv: "GOTRUE_EXTERNAL_EMAIL_ENABLED",
+      },
+      {
+        name: "[auth.sms]",
+        config: `project_id = "demo"\n[auth.sms]\nenabled = false\n${TWILIO}`,
+        shellEnv: "SUPABASE_AUTH_SMS_ENABLED",
+        gotrueEnv: "GOTRUE_EXTERNAL_PHONE_ENABLED",
+      },
+    ])("sets $gotrueEnv from $shellEnv=true over $name enabled = false", (row) =>
+      withEnvVar(
+        row.shellEnv,
+        "true",
+        Effect.gen(function* () {
+          const { layer, child } = yield* setup({ configContents: row.config });
+
+          yield* start(flags()).pipe(Effect.provide(layer));
+          const gotrueCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+          );
+          expect(gotrueCreate?.env[row.gotrueEnv]).toBe("true");
+        }).pipe(Effect.provide(BunServices.layer)),
+      ).pipe(Effect.provide(BunServices.layer)),
+    );
+  });
+
   describe("SUPABASE_DB_PORT override", () => {
     it.effect("publishes Postgres on the env-overridden DB port, not config.db.port", () =>
       withEnvVar(

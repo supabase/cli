@@ -1,7 +1,4 @@
 import { unusedStackServices } from "../../tests/helpers/unused-stack.ts";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { CliConfigSchema, type CliConfig } from "@supabase/config";
@@ -32,12 +29,15 @@ const stringifyJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
  * the `baseConfig`/`WORKDIR` pattern from `local-config-values.unit.test.ts`.
  */
 
-function withConfig(content: string) {
-  const dir = mkdtempSync(join(tmpdir(), "config-validate-parity-"));
-  mkdirSync(join(dir, "supabase"), { recursive: true });
-  writeFileSync(join(dir, "supabase", "config.toml"), content);
-  return dir;
-}
+const withConfig = (content: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dir = yield* fs.makeTempDirectoryScoped({ prefix: "config-validate-parity-" });
+    yield* fs.makeDirectory(path.join(dir, "supabase"), { recursive: true });
+    yield* fs.writeFileString(path.join(dir, "supabase", "config.toml"), content);
+    return dir;
+  }).pipe(Effect.provide(BunServices.layer));
 
 const readD = (workdir: string) =>
   Effect.gen(function* () {
@@ -49,14 +49,13 @@ const readD = (workdir: string) =>
 /** Drives D's real pipeline and asserts the failure message contains `message`. */
 function failsWithD(tomlLines: ReadonlyArray<string>, message: string) {
   return Effect.gen(function* () {
-    const dir = withConfig(tomlLines.join("\n"));
+    const dir = yield* withConfig(tomlLines.join("\n"));
     const exit = yield* readD(dir).pipe(Effect.exit);
     expect(Exit.isFailure(exit), `D: expected failure containing: ${message}`).toBe(true);
     if (Exit.isFailure(exit)) {
       expect(stringifyJson(exit.cause)).toContain(message);
     }
-    rmSync(dir, { recursive: true, force: true });
-  });
+  }).pipe(Effect.scoped);
 }
 
 const decodeConfig = Schema.decodeUnknownSync(CliConfigSchema);
@@ -338,7 +337,7 @@ describe("shared api + auth validation branches, cross-caller parity (S vs L)", 
   /** Drives S's real pipeline (`resolveStorageCredentials`, local branch) to failure. */
   const failsWithS = (overrides: Record<string, unknown>, message: string) =>
     Effect.gen(function* () {
-      const dir = withConfig(stringifyToml({ project_id: "test", ...overrides }));
+      const dir = yield* withConfig(stringifyToml({ project_id: "test", ...overrides }));
       const exit = yield* resolveStorageCredentials({ projectRef: "" }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -360,8 +359,7 @@ describe("shared api + auth validation branches, cross-caller parity (S vs L)", 
       if (Exit.isFailure(exit)) {
         expect(stringifyJson(exit.cause)).toContain(message);
       }
-      rmSync(dir, { recursive: true, force: true });
-    });
+    }).pipe(Effect.scoped);
 
   // Ambient SUPABASE_API_* / SUPABASE_AUTH_* values would override the config
   // under test, so pin every participating key to unset for the duration of

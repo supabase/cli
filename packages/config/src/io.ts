@@ -20,6 +20,7 @@ import {
   CliConfigWriteError,
 } from "./errors.ts";
 import { interpolateEnvReferencesAgainstSchema } from "./lib/env.ts";
+import { normalizeDeprecatedProviderSignupKeys } from "./lib/provider-signup.ts";
 import { findCliProjectPaths } from "./paths.ts";
 import { rejectRemovedConfigKeys } from "./removed-config-keys.ts";
 import { setOwnProperty } from "./sparse.ts";
@@ -216,7 +217,7 @@ const applyRemoteOverride = Effect.fnUntraced(function* (
   return { document: merged, appliedRemote: name, remoteLeafPaths };
 });
 
-function parseCliConfigDocument(content: string, format: ConfigFormat): unknown {
+export function parseCliConfigDocument(content: string, format: ConfigFormat): unknown {
   return format === "json" ? JSON.parse(content) : SmolToml.parse(content);
 }
 
@@ -385,10 +386,12 @@ const readCliConfigDocumentFile = Effect.fnUntraced(function* (filePath: string)
 
 const readAndNormalizeCliConfigFile = Effect.fnUntraced(function* (filePath: string) {
   const { format, content, document } = yield* readCliConfigDocumentFile(filePath);
-  const normalized = isObject(document)
+  const withoutRemoved = isObject(document)
     ? yield* rejectRemovedConfigKeys(document, filePath, format)
     : document;
-  return { format, content, document, normalized } as const;
+  const { document: normalized, deprecatedPaths } =
+    normalizeDeprecatedProviderSignupKeys(withoutRemoved);
+  return { format, content, document, normalized, deprecatedPaths } as const;
 });
 
 /**
@@ -402,6 +405,8 @@ export interface MergedCliConfigDocument {
   readonly rawText: string;
   readonly schemaRef: string | undefined;
   readonly ignoredPaths: ReadonlyArray<string>;
+  /** Dotted paths of keys written with a deprecated spelling, e.g. `auth.email.enable_signup`. */
+  readonly deprecatedPaths: ReadonlyArray<string>;
   /** The document as parsed, before any `[remotes.*]` merge. */
   readonly rawDocument: Record<string, unknown> | undefined;
   /** The merged document; `remotes` is stripped when a block matched. */
@@ -545,6 +550,7 @@ export const decodeMergedCliConfig = Effect.fn("CliConfig.decodeMerged")(functio
     config,
     schemaRef: merged.schemaRef,
     ignoredPaths: merged.ignoredPaths,
+    deprecatedPaths: merged.deprecatedPaths,
     rawText: merged.rawText,
     document: isObject(documentForDecode) ? documentForDecode : undefined,
     rawDocument: merged.rawDocument,
@@ -559,7 +565,8 @@ export const loadCliConfigFile = Effect.fn("CliConfig.loadFile")(function* (
   options?: InternalLoadCliConfigOptions,
 ) {
   const path = yield* Path.Path;
-  const { format, content, document, normalized } = yield* readAndNormalizeCliConfigFile(filePath);
+  const { format, content, document, normalized, deprecatedPaths } =
+    yield* readAndNormalizeCliConfigFile(filePath);
 
   // Substitute `env(VAR)` references against `.env`/`.env.local`/ambient env before schema
   // decode, since a numeric/boolean field would otherwise crash the strict decoder on a string.
@@ -605,6 +612,7 @@ export const loadCliConfigFile = Effect.fn("CliConfig.loadFile")(function* (
       rawText: content,
       schemaRef: getSchemaRef(document),
       ignoredPaths: [],
+      deprecatedPaths,
       rawDocument: isObject(normalized) ? normalized : undefined,
       document: resolved.document,
       appliedRemote: resolved.appliedRemote,
@@ -672,6 +680,7 @@ export interface ParsedCliConfigDocument {
   readonly rawText: string;
   readonly schemaRef: string | undefined;
   readonly ignoredPaths: ReadonlyArray<string>;
+  readonly deprecatedPaths: ReadonlyArray<string>;
   readonly rawDocument: Record<string, unknown> | undefined;
   readonly normalized: unknown;
 }
@@ -694,9 +703,8 @@ export const parseCliConfigDocumentFile = Effect.fn("CliConfig.parseDocument")(f
     return null;
   }
 
-  const { format, content, document, normalized } = yield* readAndNormalizeCliConfigFile(
-    located.filePath,
-  );
+  const { format, content, document, normalized, deprecatedPaths } =
+    yield* readAndNormalizeCliConfigFile(located.filePath);
 
   return {
     path: located.filePath,
@@ -704,6 +712,7 @@ export const parseCliConfigDocumentFile = Effect.fn("CliConfig.parseDocument")(f
     rawText: content,
     schemaRef: getSchemaRef(document),
     ignoredPaths: located.ignoredPaths,
+    deprecatedPaths,
     rawDocument: isObject(normalized) ? normalized : undefined,
     normalized,
   } satisfies ParsedCliConfigDocument;
@@ -731,6 +740,7 @@ export const mergeParsedCliConfig = Effect.fn("CliConfig.mergeParsed")(function*
     rawText: parsed.rawText,
     schemaRef: parsed.schemaRef,
     ignoredPaths: parsed.ignoredPaths,
+    deprecatedPaths: parsed.deprecatedPaths,
     rawDocument: parsed.rawDocument,
     document: resolved.document,
     appliedRemote: resolved.appliedRemote,
@@ -824,6 +834,7 @@ export const saveCliConfig = Effect.fn("CliConfig.save")(function* (options: Sav
     config: options.config,
     schemaRef,
     ignoredPaths: [],
+    deprecatedPaths: [],
   } satisfies LoadedCliConfig;
 });
 

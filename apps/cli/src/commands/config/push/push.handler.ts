@@ -32,6 +32,7 @@ import { mapConfigLoadError } from "../config.load.ts";
 import {
   configApiScope,
   configEnvOriginLookup,
+  configProviderDisableWarnings,
   configScopeLine,
   type ConfigEnvOriginLookup,
 } from "../config.format.ts";
@@ -536,10 +537,11 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
       const { changes, encoded, secrets: resourceSecrets } = resourcePlan;
       unencodable.push(...encoded.unencodable);
       if (encoded.body !== undefined) {
+        const communicated = changesCommunicated(changes, encoded.encoded);
         yield* output.raw(
           pushUpdatingLine({
             resource,
-            changes: changesCommunicated(changes, encoded.encoded),
+            changes: communicated,
             secrets: resourceSecrets.map(toSecretReport),
             secretsEncoded: encoded.secretsEncoded ?? [],
             extras: encoded.extras,
@@ -548,6 +550,9 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
           }),
           "stderr",
         );
+        for (const warning of configProviderDisableWarnings(communicated)) {
+          yield* output.raw(`${warning}\n`, "stderr");
+        }
       } else if (encoded.unencodable.length > 0) {
         yield* output.raw(pushNotPushableLine(resource, encoded.unencodable.length), "stderr");
       } else {

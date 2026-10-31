@@ -1,4 +1,5 @@
 import type { CliConfigValueOrigin } from "./config-document.ts";
+import { normalizeDeprecatedProviderSignupKeys } from "./lib/provider-signup.ts";
 import {
   type CliConfigWithRawPresence,
   type ConfigAbsencePolicy,
@@ -357,7 +358,10 @@ function defaultProjection(): ProjectConfig {
  */
 export function diffProjectConfig(options: DiffProjectConfigOptions): ConfigChangeSet {
   const local = fromConfigDocument(options.local);
-  const declaredRoot = options.local.document ?? {};
+  const declaredRoot =
+    options.local.document === undefined
+      ? {}
+      : normalizeDeprecatedProviderSignupKeys(options.local.document).document;
   const absencePolicy: ConfigAbsencePolicy =
     options.local.document !== undefined ? "absent-is-hands-off" : "absent-is-default";
   const envReferences = new Map<string, ReadonlyArray<string>>();
