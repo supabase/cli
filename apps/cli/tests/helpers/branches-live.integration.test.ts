@@ -275,6 +275,35 @@ describe("live branch lifecycle helpers", () => {
       }),
   );
 
+  it.effect("re-issues create once after the platform drops TLS while setting the password", () =>
+    Effect.gen(function* () {
+      let creates = 0;
+      const cli: BranchCli = (args) =>
+        Effect.sync(() => {
+          if (args[1] === "create") {
+            creates += 1;
+            return creates === 1
+              ? result(
+                  JSON.stringify({
+                    _tag: "Error",
+                    error: {
+                      message:
+                        'unexpected create branch status 400: {"message":"Failed to update password: Client network socket disconnected before secure TLS connection was established"}',
+                    },
+                  }),
+                  "",
+                  1,
+                )
+              : result(JSON.stringify(branch));
+          }
+          return result(JSON.stringify([defaultBranch]));
+        });
+      const ref = yield* createLiveBranchEffect(cli, project, branch.name);
+      expect(ref).toBe(branchRef);
+      expect(creates).toBe(2);
+    }),
+  );
+
   it.effect("fails a create rejected by a second platform database restart", () =>
     Effect.gen(function* () {
       let creates = 0;
