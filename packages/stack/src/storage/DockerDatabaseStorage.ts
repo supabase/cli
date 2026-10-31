@@ -375,7 +375,10 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
       );
 
       const engineCommand = Effect.fn("DockerDatabaseStorage.engineCommand")(
-        (args: ReadonlyArray<string>): Effect.Effect<string, DockerDatabaseStorageError> =>
+        (
+          args: ReadonlyArray<string>,
+          output: "stdout" | "all" = "stdout",
+        ): Effect.Effect<string, DockerDatabaseStorageError> =>
           Effect.scoped(
             Effect.gen(function* () {
               yield* Effect.annotateCurrentSpan({
@@ -415,7 +418,9 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                   "engine",
                   stderr.trim() || `Container engine exited with ${code}`,
                 );
-              return stdout.trim();
+              return output === "all"
+                ? [stdout.trim(), stderr.trim()].filter((part) => part !== "").join("\n")
+                : stdout.trim();
             }),
           ).pipe(Effect.mapError((cause) => errorFor("engine", cause))),
       );
@@ -638,6 +643,33 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           )
           .pipe(Effect.mapError((cause) => errorFor("helper", cause)));
         const stderr = yield* stderrTail(child);
+        const stalledHelperState = Effect.fn("DockerDatabaseStorage.stalledHelperState")(
+          function* () {
+            const [state, logs] = yield* Effect.all(
+              [
+                engineCommand([
+                  "inspect",
+                  "--format",
+                  "{{.State.Status}} (exit {{.State.ExitCode}}){{if .State.Error}}: {{.State.Error}}{{end}}",
+                  name,
+                ]),
+                // `logs` relays the helper's stderr on the engine's own stderr.
+                engineCommand(["logs", "--tail", "20", name], "all"),
+              ].map((command) =>
+                command.pipe(
+                  Effect.timeoutOrElse({
+                    duration: "5 seconds",
+                    orElse: () => Effect.succeed("unavailable: timed out after 5 seconds"),
+                  }),
+                  Effect.catch((cause) => Effect.succeed(`unavailable: ${cause.message}`)),
+                ),
+              ),
+              { concurrency: "unbounded" },
+            );
+            yield* Effect.annotateCurrentSpan("helper.state", state);
+            return `helper state: ${state}\nhelper logs: ${logs || "(empty)"}`;
+          },
+        );
         return yield* child.stdout.pipe(
           Stream.decodeText,
           Stream.splitLines,
@@ -650,6 +682,11 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             exit.value.value === "supabase-helper-ready"
               ? Effect.succeed(name)
               : Effect.gen(function* () {
+                  const timedOut =
+                    Exit.isFailure(exit) &&
+                    Option.exists(Cause.findErrorOption(exit.cause), Cause.isTimeoutError);
+                  // Inspect before the kill: `--rm` removes the helper once its attach ends.
+                  const state = timedOut ? yield* stalledHelperState() : "";
                   yield* child
                     .kill({ killSignal: "SIGTERM", forceKillAfter: "5 seconds" })
                     .pipe(Effect.ignore);
@@ -659,7 +696,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                   );
                   // Docker prints warnings such as a platform mismatch on `create`, so keep that
                   // output alongside what `start` wrote.
-                  const tail = [createTail, diagnostic.trim()]
+                  const tail = [createTail, diagnostic.trim(), state]
                     .filter((part) => part !== "")
                     .join("\n");
                   const reason = Exit.isFailure(exit)
