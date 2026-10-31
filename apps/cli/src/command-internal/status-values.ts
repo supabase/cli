@@ -1,17 +1,14 @@
 import type { CliConfig } from "@supabase/config";
+import { Effect } from "effect";
 
 import { dockerfileServiceImageRaw } from "../shared/services/dockerfile-images.ts";
 import { serviceContainerIds } from "./docker-ids.ts";
-import {
-  envOverrideBool,
-  resolveLocalConfigValues,
-  type LocalConfigValues,
-} from "./local-config-values.ts";
+import { resolveLocalConfigValues, type LocalConfigValues } from "./local-config-values.ts";
 
 /**
  * A status output field: the dotted key `--override-name <key>=<name>` matches against
  * (`fieldKey`), and its default output env-var name (`defaultName`). Deprecated fields
- * (`inbucket`, `jwt_secret`, `anon_key`, `service_role_key`) are still emitted.
+ * (`jwt_secret`, `anon_key`, `service_role_key`) are still emitted.
  */
 export interface StatusField {
   readonly fieldKey: string;
@@ -32,7 +29,6 @@ const FUNCTIONS_URL: StatusField = {
 };
 const DB_URL: StatusField = { fieldKey: "db.url", defaultName: "DB_URL" };
 const STUDIO_URL: StatusField = { fieldKey: "studio.url", defaultName: "STUDIO_URL" };
-const INBUCKET_URL: StatusField = { fieldKey: "inbucket.url", defaultName: "INBUCKET_URL" };
 const MAILPIT_URL: StatusField = { fieldKey: "mailpit.url", defaultName: "MAILPIT_URL" };
 const PUBLISHABLE_KEY: StatusField = {
   fieldKey: "auth.publishable_key",
@@ -58,7 +54,7 @@ const STORAGE_S3_REGION: StatusField = {
   defaultName: "S3_PROTOCOL_REGION",
 };
 
-/** All 18 fields, in declaration order. */
+/** All 17 fields, in declaration order. */
 export const STATUS_FIELDS: ReadonlyArray<StatusField> = [
   API_URL,
   REST_URL,
@@ -68,7 +64,6 @@ export const STATUS_FIELDS: ReadonlyArray<StatusField> = [
   FUNCTIONS_URL,
   DB_URL,
   STUDIO_URL,
-  INBUCKET_URL,
   MAILPIT_URL,
   PUBLISHABLE_KEY,
   SECRET_KEY,
@@ -209,7 +204,7 @@ export interface StatusState {
 }
 
 /**
- * The validating half of {@link StatusState}: everything that can throw, and none of it
+ * The validating half of {@link StatusState}: everything that can fail, and none of it
  * depends on `excluded`/`containerIds`. Split out so `status.handler.ts` can resolve and
  * validate this before any Docker call — a bad `auth.jwt_secret` or malformed
  * `SUPABASE_*_PORT`/`SUPABASE_*_ENABLED` override must fail here, not be masked by a
@@ -228,21 +223,16 @@ export interface StatusLocalState {
 }
 
 /**
- * Resolves local config values (URLs, keys — can throw, see {@link resolveLocalConfigValues})
+ * Resolves local config values (URLs, keys — can fail, see {@link resolveLocalConfigValues})
  * and the per-service `.enabled` gates, with no reference to `excluded`/`containerIds` — see
- * {@link gateStatusState} for the Docker-dependent half this composes with. Each `.enabled`
- * gate is read through {@link envOverrideBool}, not the raw decoded `config.<section>.enabled`,
- * so an env-overridden stack's running services match what `status` reports.
+ * {@link gateStatusState} for the Docker-dependent half this composes with. `config` must be
+ * the resolved config's materialized config so env overrides are already applied to every gate.
  *
  * @throws {InvalidJwtSecretError} when `auth.jwt_secret` is set but too short.
- * @throws {InvalidPortEnvOverrideError} when a `SUPABASE_*_PORT` env/dotenv override doesn't
- * parse as a valid port.
- * @throws {InvalidBoolEnvOverrideError} when a `SUPABASE_*_ENABLED` env/dotenv override
- * doesn't parse as a valid bool.
  * @throws when `auth.signing_keys_path` is set but the file is missing, malformed, or its
- * first key is unsupported — see {@link generateAsymmetricGoJwt}.
+ * first key is unsupported — see {@link generateAsymmetricLocalJwt}.
  */
-export function resolveStatusLocalState(
+export const resolveStatusLocalState = Effect.fnUntraced(function* (
   config: CliConfig,
   hostname: string,
   workdir: string,
@@ -253,58 +243,22 @@ export function resolveStatusLocalState(
    * An already-resolved {@link resolveLocalConfigValues} result to reuse instead of
    * re-deriving one. Callers that resolved `local` earlier in the same process (e.g.
    * `start`'s success-path status print) must pass it here: a second call re-mints a
-   * time-dependent asymmetric JWT (`auth.signing_keys_path` + {@link generateAsymmetricGoJwt}'s
+   * time-dependent asymmetric JWT (`auth.signing_keys_path` + {@link generateAsymmetricLocalJwt}'s
    * `exp` claim) with a different signature than the one baked into the already-running
    * containers.
    */
   precomputedLocal?: LocalConfigValues,
-): StatusLocalState {
+) {
   const local =
-    precomputedLocal ??
-    resolveLocalConfigValues(config, hostname, workdir, projectEnvValues, document);
+    precomputedLocal ?? (yield* resolveLocalConfigValues(config, hostname, workdir, document));
 
-  const apiEnabled = envOverrideBool(
-    "SUPABASE_API_ENABLED",
-    config.api.enabled,
-    "api.enabled",
-    projectEnvValues,
-  );
-  const studioSectionEnabled = envOverrideBool(
-    "SUPABASE_STUDIO_ENABLED",
-    config.studio.enabled,
-    "studio.enabled",
-    projectEnvValues,
-  );
-  const authSectionEnabled = envOverrideBool(
-    "SUPABASE_AUTH_ENABLED",
-    config.auth.enabled,
-    "auth.enabled",
-    projectEnvValues,
-  );
-  const inbucketSectionEnabled = envOverrideBool(
-    "SUPABASE_LOCAL_SMTP_ENABLED",
-    config.local_smtp.enabled,
-    "local_smtp.enabled",
-    projectEnvValues,
-  );
-  const storageSectionEnabled = envOverrideBool(
-    "SUPABASE_STORAGE_ENABLED",
-    config.storage.enabled,
-    "storage.enabled",
-    projectEnvValues,
-  );
-  const edgeRuntimeEnabled = envOverrideBool(
-    "SUPABASE_EDGE_RUNTIME_ENABLED",
-    config.edge_runtime.enabled,
-    "edge_runtime.enabled",
-    projectEnvValues,
-  );
-  const storageS3ProtocolEnabled = envOverrideBool(
-    "SUPABASE_STORAGE_S3_PROTOCOL_ENABLED",
-    config.storage.s3_protocol.enabled,
-    "storage.s3_protocol.enabled",
-    projectEnvValues,
-  );
+  const apiEnabled = config.api.enabled;
+  const studioSectionEnabled = config.studio.enabled;
+  const authSectionEnabled = config.auth.enabled;
+  const inbucketSectionEnabled = config.local_smtp.enabled;
+  const storageSectionEnabled = config.storage.enabled;
+  const edgeRuntimeEnabled = config.edge_runtime.enabled;
+  const storageS3ProtocolEnabled = config.storage.s3_protocol.enabled;
 
   return {
     config,
@@ -316,14 +270,14 @@ export function resolveStatusLocalState(
     storageSectionEnabled,
     edgeRuntimeEnabled,
     storageS3ProtocolEnabled,
-  };
-}
+  } satisfies StatusLocalState;
+});
 
 /**
  * The Docker-dependent, non-throwing half of status resolution: applies `excluded`, matching
  * each gated service by its container id ({@link statusContainerIds}) or its default Docker
  * image short name ({@link shortContainerImageName}) — service images are never
- * user-overridable, so the default is always the one to check. Pure: every throwing concern
+ * user-overridable, so the default is always the one to check. Pure: every fallible concern
  * already ran in {@link resolveStatusLocalState}.
  */
 export function gateStatusState(
@@ -411,7 +365,6 @@ export function statusValuesFromState(
   }
   if (inbucketEnabled) {
     values[names.mailpitUrl] = local.mailpitUrl;
-    values[overrides.get(INBUCKET_URL.fieldKey) ?? INBUCKET_URL.defaultName] = local.mailpitUrl;
   }
   if (storageEnabled && storageS3ProtocolEnabled) {
     values[names.storageS3Url] = local.storageS3Url;
@@ -423,23 +376,13 @@ export function statusValuesFromState(
   return { values, names, local };
 }
 
-/** The stderr warning for the deprecated `INBUCKET_URL` field, when {@link statusValuesFromState} emits it. */
-export function deprecatedStatusFieldWarning(
-  state: StatusState,
-  overrides: ReadonlyMap<string, string>,
-): string | undefined {
-  if (!state.inbucketEnabled) return undefined;
-  const nameFor = (field: StatusField) => overrides.get(field.fieldKey) ?? field.defaultName;
-  return `WARN: ${nameFor(INBUCKET_URL)} is deprecated and will be removed in v3, use ${nameFor(MAILPIT_URL)} instead.\n`;
-}
-
 /**
  * Convenience wrapper combining {@link resolveStatusLocalState}, {@link gateStatusState}, and
  * {@link statusValuesFromState} in one call — used by tests needing only a single override
  * map. `status.handler.ts` calls the three separately so it can validate before any Docker
  * call and reuse the gated state for both the real and pretty-mode value maps.
  */
-export function statusValues(
+export const statusValues = Effect.fnUntraced(function* (
   config: CliConfig,
   containerIds: StatusContainerIds,
   hostname: string,
@@ -449,8 +392,14 @@ export function statusValues(
   projectEnvValues?: Readonly<Record<string, string>>,
   /** `LoadedCliConfig.document` — see {@link resolveLocalConfigValues}'s doc comment. */
   document?: Readonly<Record<string, unknown>>,
-): StatusValuesResult {
-  const localState = resolveStatusLocalState(config, hostname, workdir, projectEnvValues, document);
+) {
+  const localState = yield* resolveStatusLocalState(
+    config,
+    hostname,
+    workdir,
+    projectEnvValues,
+    document,
+  );
   const state = gateStatusState(localState, containerIds, excluded);
   return statusValuesFromState(state, overrides);
-}
+});

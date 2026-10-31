@@ -4,9 +4,16 @@
  *
  * `loadCliConfig`/`resolveCliConfigValue`/`resolveCliConfigSubtree` below are the same runtime
  * functions `./effect` exports, re-typed here to widen their options parameter to the
- * internal-only `goViperCompat` knob.
+ * internal-only `cliCompat` knob.
  */
 export { ENV_CAPTURE_REGEX } from "./lib/env.ts";
+export {
+  DEFAULT_MIGRATION_CHECK_SEVERITY,
+  MIGRATION_CHECK_RULES,
+  mapMigrationCheckRules,
+  type MigrationCheckRule,
+  type MigrationCheckSeverity,
+} from "./db-migration-checks.ts";
 export {
   type AppliedConfigEdit,
   applyConfigEdits,
@@ -25,12 +32,20 @@ export { type ProjectConfigApiAttributes } from "./project-config/api-attributes
 export { type InternalLoadCliConfigOptions } from "./config-document.ts";
 export { resolveCliConfigValue, resolveCliConfigSubtree } from "./project.ts";
 export {
+  decodeMergedCliConfig,
+  type DecodeMergedCliConfigOptions,
   loadCliConfig,
+  mergeParsedCliConfig,
+  type MergedCliConfigDocument,
+  parseCliConfigDocumentFile,
+  type ParsedCliConfigDocument,
+  type ParseMergeCliConfigOptions,
   remoteNameForProjectRef,
   remoteProjectIdEntries,
   writeCliConfigDocumentText,
   decodeCliConfigDocumentForValidationEffect,
   type DecodeCliConfigDocumentForValidationEffectOptions,
-  normalizeDeprecatedOrioleDBVersion,
+  parseCliConfigDocument,
 } from "./io.ts";
+export { PROVIDER_SIGNUP_ALIASES } from "./lib/provider-signup.ts";
 export { CliConfigWriteError } from "./errors.ts";

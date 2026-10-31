@@ -10,6 +10,8 @@ import { commandCredentialsLayer } from "../../auth/command-credentials.layer.ts
 import { commandPlatformApiFactoryLayer } from "../../auth/command-platform-api-factory.layer.ts";
 import { httpClientLayer } from "../../auth/http-debug.layer.ts";
 import { commandSettingsLayer } from "../../config/command-settings.layer.ts";
+import { withCliConfigFlags } from "../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
 import { dbConnectionLayer } from "../../command-internal/db-connection.sql-pg.layer.ts";
 import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
 import { dockerRunLayer } from "../../command-internal/docker-run.layer.ts";
@@ -20,9 +22,10 @@ import { telemetryStateLayer } from "../../telemetry/telemetry-state.layer.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { START_EXCLUDABLE_KEYS } from "./start.exclude.ts";
 import { start } from "./start.handler.ts";
+import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
 
 /**
- * A pflag-style string-slice flag: CSV-splits each occurrence (`--exclude gotrue,realtime` -> two
+ * A string-slice flag: CSV-splits each occurrence (`--exclude gotrue,realtime` -> two
  * values) and accumulates across repeats, matching `status`'s own `--exclude` handling.
  */
 export const startExcludeFlag = stringSliceFlag(
@@ -71,6 +74,7 @@ const platformApiFactory = commandPlatformApiFactoryLayer.pipe(
 
 const startRuntimeLayer = Layer.mergeAll(
   cliSettings,
+  debugLoggerLayer,
   telemetryStateLayer,
   commandRuntimeLayer(["start"]),
   dockerRunLayer,
@@ -95,4 +99,7 @@ export const startCommand = Command.make("start", config).pipe(
     start(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(startRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

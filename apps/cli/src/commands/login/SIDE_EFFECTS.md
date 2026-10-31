@@ -1,5 +1,7 @@
 # `supabase login`
 
+Target: account, no consent — see [Command target](../../../docs/command-target.md)
+
 Writes the access token, then stitches/clears the telemetry identity and
 captures `cli_login_completed`.
 
@@ -16,7 +18,7 @@ captures `cli_login_completed`.
 | ----------------------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------- |
 | OS keyring (`Supabase CLI` / profile)           | token string              | always on success when the keyring is available                                                    |
 | `~/.supabase/access-token`                      | plain text (mode `0600`)  | on success when the keyring is unavailable (WSL / `SUPABASE_NO_KEYRING`)                           |
-| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON                      | always (PersistentPostRun flush); `distinct_id` set on stitch, removed on clear                    |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON                      | always (post-run flush); `distinct_id` set on stitch, removed on clear                             |
 | `~/.supabase/profile`                           | plain text (profile name) | on success only, when a profile is explicitly set (`--profile` ≠ default, else `SUPABASE_PROFILE`) |
 
 ## API Routes

@@ -1,6 +1,6 @@
 import type { CliConfig } from "@supabase/config";
 import type { ServiceCreation } from "@supabase/stack/effect";
-import { Effect } from "effect";
+import { Effect, Struct } from "effect";
 import type { ResolvedAuthExternalProvider } from "./local-config-values.ts";
 import { passwordRequirementsToChar } from "./password-requirements.ts";
 
@@ -28,6 +28,7 @@ const passThrough =
     section;
 
 interface ResolvedAuthOptions {
+  readonly smtpEnabled: boolean;
   readonly authExternalUrl?: string;
   readonly apiExternalUrl?: string;
   readonly passkeyEnabled?: boolean;
@@ -89,7 +90,7 @@ export const resolveAuthConfig = Effect.fn("StackAuthConfig.resolve")(
             ]),
           ),
         },
-        sms: passThrough<AuthSettings["sms"]>()(auth.sms),
+        sms: passThrough<AuthSettings["sms"]>()(Struct.omit(auth.sms, ["enabled"])),
         ...(auth.captcha === undefined
           ? {}
           : { captcha: passThrough<AuthSettings["captcha"]>()(auth.captcha) }),
@@ -115,7 +116,7 @@ export const resolveAuthConfig = Effect.fn("StackAuthConfig.resolve")(
         web3: passThrough<AuthSettings["web3"]>()(auth.web3),
         oauthServer: passThrough<AuthSettings["oauthServer"]>()(auth.oauth_server),
       },
-      ...(auth.email.smtp?.enabled !== true
+      ...(options.smtpEnabled !== true || auth.email.smtp === undefined
         ? localSmtp.enabled
           ? {
               smtpAdminEmail: localSmtp.admin_email ?? "admin@email.com",

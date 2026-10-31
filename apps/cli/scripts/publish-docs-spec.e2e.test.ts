@@ -1,8 +1,8 @@
-import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { stringify } from "yaml";
 
-const cliRoot = path.resolve(import.meta.dirname, "..");
+const cliRoot = fileURLToPath(new URL("..", import.meta.url));
 
 function runScript(
   args: ReadonlyArray<string>,

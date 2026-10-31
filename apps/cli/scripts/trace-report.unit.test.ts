@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { Effect, FileSystem } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
 import {
   analyzeTrace,
   parseTraceReportArgs,
@@ -115,7 +115,7 @@ describe("reportSpanName", () => {
 });
 
 describe("readSpans", () => {
-  it("keeps decodable batches and counts lines that do not decode", async () => {
+  it.effect("keeps decodable batches and counts lines that do not decode", () => {
     const batch = JSON.stringify({
       resourceSpans: [
         {
@@ -137,19 +137,83 @@ describe("readSpans", () => {
       ],
     });
 
-    const result = await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const file = yield* fs.makeTempFileScoped({ suffix: ".jsonl" });
-          yield* fs.writeFileString(file, `${batch}\n{"resourceSpans": [\n`);
-          return yield* readSpans(file);
-        }),
-      ).pipe(Effect.provide(BunServices.layer)),
-    );
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const file = yield* fs.makeTempFileScoped({ suffix: ".jsonl" });
+      yield* fs.writeFileString(file, `${batch}\n{"resourceSpans": [\n`);
+      const result = yield* readSpans(file);
 
-    expect(result.spans.map((span) => span.name)).toEqual(["cli.run"]);
-    expect(result.skippedLines).toBe(1);
+      expect(result.spans.map((span) => span.name)).toEqual(["cli.run"]);
+      expect(result.skippedLines).toBe(1);
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+});
+
+describe("readSpans HTTP attributes", () => {
+  const fixture = new URL("./__fixtures__/api-call-trace.jsonl", import.meta.url).pathname;
+
+  it.effect("reads method, path, host, port and status from traces of both CLI generations", () =>
+    Effect.gen(function* () {
+      const { spans, skippedLines } = yield* readSpans(fixture);
+      const http = spans.flatMap((span) => (span.http === undefined ? [] : [span.http]));
+
+      expect(skippedLines).toBe(0);
+      expect(http).toHaveLength(2);
+      for (const call of http) {
+        expect(call).toEqual({
+          method: "GET",
+          path: "/v1/projects",
+          address: "127.0.0.1",
+          port: 62824,
+          status: 200,
+        });
+      }
+      expect(spans.find((span) => span.name === "cli.run")?.http).toBeUndefined();
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("accepts OTLP string-encoded integers and drops the query string from the path", () => {
+    const batch = JSON.stringify({
+      resourceSpans: [
+        {
+          scopeSpans: [
+            {
+              spans: [
+                {
+                  traceId: "t",
+                  spanId: "s",
+                  name: "POST",
+                  startTimeUnixNano: "0",
+                  endTimeUnixNano: "1000000",
+                  status: { code: 1 },
+                  attributes: [
+                    { key: "http.request.method", value: { stringValue: "POST" } },
+                    { key: "url.path", value: { stringValue: "/v1/x?limit=1" } },
+                    { key: "server.port", value: { intValue: "8443" } },
+                    { key: "http.response.status_code", value: { intValue: "503" } },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const file = yield* fs.makeTempFileScoped({ suffix: ".jsonl" });
+      yield* fs.writeFileString(file, `${batch}\n`);
+      const { spans } = yield* readSpans(file);
+
+      expect(spans[0]?.http).toEqual({
+        method: "POST",
+        path: "/v1/x",
+        address: undefined,
+        port: 8443,
+        status: 503,
+      });
+    }).pipe(Effect.provide(BunServices.layer));
   });
 });
 

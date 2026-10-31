@@ -83,9 +83,10 @@ export const CliConfigSchema = Schema.Struct({
 });
 
 export function toCliConfigJsonSchema() {
-  return toPublishedJsonSchemaDocument(
-    Schema.toJsonSchemaDocument(CliConfigSchema, { onExcessProperty: "error" }),
-  );
+  return toPublishedJsonSchemaDocument(CliConfigSchema, {
+    onExcessProperty: "error",
+    acceptEnvReferences: true,
+  });
 }
 
 export type CliConfig = typeof CliConfigSchema.Type;

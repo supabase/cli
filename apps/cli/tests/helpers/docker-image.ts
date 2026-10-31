@@ -1,5 +1,5 @@
 import { BunServices } from "@effect/platform-bun";
-import { Cause, Duration, Effect, Layer } from "effect";
+import { Cause, Clock, Data, Duration, Effect, Layer } from "effect";
 import * as ChildProcess from "effect/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerTag } from "effect/process/ChildProcessSpawner";
@@ -11,6 +11,10 @@ type Spawner = ChildProcessSpawnerTag["Service"];
 // Overall per-image ceiling, kept below the tightest e2e test budget (120s): a stalled registry
 // must leave the caller room to run its test body.
 export const RESOLVE_BUDGET_MS = 90_000;
+
+class DockerImageError extends Data.TaggedError("DockerImageError")<{
+  readonly message: string;
+}> {}
 
 const resolvedImages = new Map<string, Promise<string>>();
 
@@ -57,8 +61,19 @@ export function ensureImage(
       // enqueued it — otherwise time spent waiting behind another image's resolution would
       // silently shrink this one's window. An explicit deadline is shared budget by contract and
       // is left as given.
-      return yield* resolveImage(spawner, image, deadline ?? resolveDeadline());
-    }).pipe(Effect.provide(services), Effect.runPromise),
+      return yield* resolveImage(
+        spawner,
+        image,
+        deadline ?? (yield* deadlineAfter(RESOLVE_BUDGET_MS)),
+      );
+    }).pipe(
+      /* The Promise rejects with a plain Error carrying the message. */
+      Effect.catch((error) =>
+        Effect.die(error instanceof DockerImageError ? new Error(error.message) : error),
+      ),
+      Effect.provide(services),
+      Effect.runPromise,
+    ),
   );
   // Both the queue link and the memo swallow nothing: callers still see the
   // rejection, this only stops one failure from becoming an unhandled rejection
@@ -76,7 +91,11 @@ export function ensureImage(
  * window.
  */
 export function resolveDeadline(budgetMs = RESOLVE_BUDGET_MS): number {
-  return Date.now() + budgetMs;
+  return Effect.runSync(deadlineAfter(budgetMs));
+}
+
+function deadlineAfter(budgetMs: number): Effect.Effect<number> {
+  return Effect.map(Clock.currentTimeMillis, (now) => now + budgetMs);
 }
 
 /**
@@ -89,10 +108,16 @@ export function resolveDeadline(budgetMs = RESOLVE_BUDGET_MS): number {
  */
 function requireDocker(spawner: Spawner): Effect.Effect<void, Error> {
   return spawner.exitCode(ChildProcess.make("docker", ["--version"])).pipe(
-    Effect.mapError(() => new Error("docker is required for this test but could not be spawned")),
+    Effect.mapError(
+      () =>
+        new DockerImageError({
+          message: "docker is required for this test but could not be spawned",
+        }),
+    ),
     Effect.filterOrFail(
       (exitCode) => Number(exitCode) === 0,
-      () => new Error("docker is required for this test but exited non-zero"),
+      () =>
+        new DockerImageError({ message: "docker is required for this test but exited non-zero" }),
     ),
     Effect.asVoid,
   );
@@ -102,13 +127,17 @@ function requireDocker(spawner: Spawner): Effect.Effect<void, Error> {
  * The resolve itself, taking its spawner explicitly so unit tests can drive it
  * with a fake instead of a real Docker daemon.
  */
-export function resolveImage(
+export const resolveImage: (
   spawner: Spawner,
   image: string,
   deadline: number,
-): Effect.Effect<string, Error> {
-  const remainingMs = Math.max(1, deadline - Date.now());
-  return requireDocker(spawner).pipe(
+) => Effect.Effect<string, Error> = Effect.fn("DockerImage.resolveImage")(function* (
+  spawner: Spawner,
+  image: string,
+  deadline: number,
+) {
+  const remainingMs = Math.max(1, deadline - (yield* Clock.currentTimeMillis));
+  return yield* requireDocker(spawner).pipe(
     // The deadline goes into the resolver, which divides it across the registry candidates — a
     // stalled registry cannot starve the ECR → GHCR → Docker Hub fallbacks behind it, and an
     // exhausted share is reported against the candidate that spent it. The outer timeout is only
@@ -119,9 +148,9 @@ export function resolveImage(
     Effect.timeout(Duration.millis(remainingMs + 1_000)),
     Effect.mapError((cause) => {
       if (Cause.isTimeoutError(cause)) {
-        return new Error(
-          `timed out resolving ${image} after ${remainingMs}ms — is the docker daemon responding?`,
-        );
+        return new DockerImageError({
+          message: `timed out resolving ${image} after ${remainingMs}ms — is the docker daemon responding?`,
+        });
       }
       // The registry-pin hint only helps when the registries themselves were
       // the problem; gluing it onto a missing binary or an unreachable daemon
@@ -129,7 +158,9 @@ export function resolveImage(
       const hint = cause.message.includes("failed to pull docker image from all registries")
         ? " (set SUPABASE_INTERNAL_IMAGE_REGISTRY to pin one)"
         : "";
-      return new Error(`failed to resolve ${image}${hint}: ${cause.message}`);
+      return new DockerImageError({
+        message: `failed to resolve ${image}${hint}: ${cause.message}`,
+      });
     }),
   );
-}
+});

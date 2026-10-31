@@ -1,11 +1,10 @@
 // Rewrites the slim-capable `FROM ... AS <alias>` lines of
-// apps/cli/src/shared/services/Dockerfile (and its byte-identical Go copy,
-// apps/cli-go/pkg/config/templates/Dockerfile) in place, from the stack catalog
+// apps/cli/src/shared/services/Dockerfile in place, from the stack catalog
 // (packages/stack/src/Artifacts.ts): each such line's tag comes from that service's catalog pin
 // `upstreamImage`. Every other line — comments, kong, the Postgres 14 pin (no slim build), and
 // the one-shot job images — is hand- or Dependabot-managed and left byte-for-byte untouched.
 //
-//   bun apps/cli/scripts/render-service-dockerfile.ts          # writes both files
+//   bun apps/cli/scripts/render-service-dockerfile.ts          # writes the file
 //   bun apps/cli/scripts/render-service-dockerfile.ts --check  # fails on drift, writes nothing
 //
 // The `--check` mode is what CI runs (as a `render-service-dockerfile.unit.test.ts` assertion) to
@@ -16,14 +15,12 @@ import {
   isOrioledbVersion,
   type ArtifactPin,
 } from "@supabase/stack/internal/artifacts";
+import { Console, Data, Effect } from "effect";
 
 // Resolved from this module's own URL, so both the CLI invocation (cwd = repo root) and the
 // vitest unit test (cwd = apps/cli) read the same files.
 export const TS_DOCKERFILE_PATH = fileURLToPath(
   new URL("../src/shared/services/Dockerfile", import.meta.url),
-);
-export const GO_DOCKERFILE_PATH = fileURLToPath(
-  new URL("../../cli-go/pkg/config/templates/Dockerfile", import.meta.url),
 );
 
 type CatalogEntry = ReturnType<typeof catalogPins>[number];
@@ -160,43 +157,43 @@ export function renderDockerfile(currentDockerfile: string): string {
   return lines.join("\n");
 }
 
-async function main(argv: ReadonlyArray<string>): Promise<void> {
+class RenderStepFailed extends Data.TaggedError("RenderStepFailed")<{ readonly cause: unknown }> {}
+
+const step = <A>(run: () => PromiseLike<A>) =>
+  Effect.tryPromise({ try: run, catch: (cause) => new RenderStepFailed({ cause }) });
+
+const main = Effect.fnUntraced(function* (argv: ReadonlyArray<string>) {
   const check = argv.includes("--check");
-  const current = await Bun.file(TS_DOCKERFILE_PATH).text();
-  const rendered = renderDockerfile(current);
+  const current = yield* step(() => Bun.file(TS_DOCKERFILE_PATH).text());
+  const rendered = yield* Effect.try({
+    try: () => renderDockerfile(current),
+    catch: (cause) => new RenderStepFailed({ cause }),
+  });
 
   if (check) {
-    const go = await Bun.file(GO_DOCKERFILE_PATH).text();
-    let failed = false;
     if (current !== rendered) {
-      console.log(
+      yield* Console.log(
         `::error ::${TS_DOCKERFILE_PATH} has drifted from packages/stack/src/Artifacts.ts. Run ` +
           "`bun apps/cli/scripts/render-service-dockerfile.ts` and commit the result.",
       );
-      failed = true;
+      return yield* Effect.sync(() => process.exit(1));
     }
-    if (go !== rendered) {
-      console.log(
-        `::error ::${GO_DOCKERFILE_PATH} is not a byte copy of ${TS_DOCKERFILE_PATH}. Run ` +
-          "`bun apps/cli/scripts/render-service-dockerfile.ts` and commit the result.",
-      );
-      failed = true;
-    }
-    if (failed) {
-      process.exit(1);
-    }
-    console.log("Both Dockerfiles match the catalog.");
+    yield* Console.log("The Dockerfile matches the catalog.");
     return;
   }
 
-  await Bun.write(TS_DOCKERFILE_PATH, rendered);
-  await Bun.write(GO_DOCKERFILE_PATH, rendered);
-  console.log(`Regenerated ${TS_DOCKERFILE_PATH} and ${GO_DOCKERFILE_PATH} from the catalog.`);
-}
+  yield* step(() => Bun.write(TS_DOCKERFILE_PATH, rendered));
+  yield* Console.log(`Regenerated ${TS_DOCKERFILE_PATH} from the catalog.`);
+});
 
 if (import.meta.main) {
-  main(process.argv.slice(2)).catch((error: unknown) => {
-    console.log(`::error ::${error instanceof Error ? error.message : String(error)}`);
-    process.exit(1);
-  });
+  await Effect.runPromise(
+    main(process.argv.slice(2)).pipe(
+      Effect.catch(({ cause }) =>
+        Console.log(`::error ::${cause instanceof Error ? cause.message : String(cause)}`).pipe(
+          Effect.andThen(Effect.sync(() => process.exit(1))),
+        ),
+      ),
+    ),
+  );
 }

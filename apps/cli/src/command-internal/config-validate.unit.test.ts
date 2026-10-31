@@ -1,16 +1,7 @@
-import {
-  chmodSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  realpathSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it, layer } from "@effect/vitest";
+import { Effect, FileSystem, Path, PlatformError, Predicate } from "effect";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
   BUCKET_NAME_PATTERN,
@@ -21,27 +12,29 @@ import {
   ConfigValidateError,
   type AuthInput,
   type ConfigValidationInput,
-  parseGoBool,
   resolveEmailTemplateContentPath,
   validateResolvedConfig,
 } from "./config-validate.ts";
+import { parseBoolLiteral } from "../shared/config/config-bool.ts";
 
-describe("parseGoBool", () => {
-  it("accepts Go's strconv.ParseBool true forms", () => {
+describe("parseBoolLiteral", () => {
+  it("accepts the true forms", () => {
     for (const value of ["1", "t", "T", "TRUE", "true", "True"]) {
-      expect(parseGoBool(value)).toBe(true);
+      expect(parseBoolLiteral(value)).toBe(true);
     }
   });
 
-  it("accepts Go's strconv.ParseBool false forms, including the empty string", () => {
+  it("accepts the false forms, including the empty string", () => {
     for (const value of ["0", "f", "F", "FALSE", "false", "False", ""]) {
-      expect(parseGoBool(value)).toBe(false);
+      expect(parseBoolLiteral(value)).toBe(false);
     }
   });
 
-  it("returns undefined for a value outside Go's strconv.ParseBool acceptance set", () => {
-    expect(parseGoBool("yes")).toBeUndefined();
-    expect(parseGoBool("2")).toBeUndefined();
+  it("returns undefined for a value outside the accepted set", () => {
+    expect(parseBoolLiteral("yes")).toBeUndefined();
+    expect(parseBoolLiteral("2")).toBeUndefined();
+    expect(parseBoolLiteral("tRuE")).toBeUndefined();
+    expect(parseBoolLiteral("tRue")).toBeUndefined();
   });
 });
 
@@ -57,11 +50,11 @@ describe("PROJECT_REF_PATTERN", () => {
 });
 
 describe("BUCKET_NAME_PATTERN", () => {
-  it("matches Go-legal bucket name characters", () => {
+  it("matches legal bucket name characters", () => {
     expect(BUCKET_NAME_PATTERN.test("my-bucket.1")).toBe(true);
   });
 
-  it("rejects characters outside Go's bucketNamePattern", () => {
+  it("rejects characters outside the bucket name pattern", () => {
     expect(BUCKET_NAME_PATTERN.test("bad#name")).toBe(false);
     expect(BUCKET_NAME_PATTERN.test("bad/name")).toBe(false);
   });
@@ -84,7 +77,7 @@ describe("HOOK_SECRET_PATTERN", () => {
     expect(HOOK_SECRET_PATTERN.test(`v1,whsec_${"a".repeat(32)}`)).toBe(true);
   });
 
-  it("rejects a secret that doesn't match Go's hookSecretPattern", () => {
+  it("rejects a secret that doesn't match the hook secret pattern", () => {
     expect(HOOK_SECRET_PATTERN.test("not-a-valid-secret")).toBe(false);
   });
 });
@@ -98,7 +91,7 @@ describe("CLERK_DOMAIN_PATTERN", () => {
     expect(CLERK_DOMAIN_PATTERN.test("example.clerk.accounts.dev")).toBe(true);
   });
 
-  it("rejects a domain that doesn't match Go's clerkDomainPattern", () => {
+  it("rejects a domain that doesn't match the clerk domain pattern", () => {
     expect(CLERK_DOMAIN_PATTERN.test("not-a-clerk-domain")).toBe(false);
   });
 });
@@ -106,33 +99,31 @@ describe("CLERK_DOMAIN_PATTERN", () => {
 // Direct coverage for the containment check shared by every caller (config push's
 // loadAuthEmailContent, db-config.toml-read.ts, local-config-values.ts, start.handler.ts's
 // pre-Docker pass), cheaper to pin here than to re-derive through every caller's own fixtures.
-describe("resolveEmailTemplateContentPath", () => {
-  let projectRoot = "";
-  let outsideDir = "";
+layer(BunServices.layer)("resolveEmailTemplateContentPath", (it) => {
+  const tempDir = (prefix: string) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      return yield* fs.makeTempDirectoryScoped({ prefix });
+    });
 
-  afterEach(() => {
-    if (projectRoot.length > 0) {
-      rmSync(projectRoot, { recursive: true, force: true });
-      projectRoot = "";
-    }
-    if (outsideDir.length > 0) {
-      rmSync(outsideDir, { recursive: true, force: true });
-      outsideDir = "";
-    }
-  });
-
-  function setup(): string {
-    projectRoot = mkdtempSync(join(tmpdir(), "config-validate-email-content-"));
-    return projectRoot;
-  }
+  const setup = () => tempDir("config-validate-email-content-");
 
   /** A real file outside `base`, so a containment test proves the escape check fires rather than a missing-file error. */
-  function setupOutsideFile(): string {
-    outsideDir = mkdtempSync(join(tmpdir(), "config-validate-email-content-outside-"));
-    const outsideFile = join(outsideDir, "secret.html");
-    writeFileSync(outsideFile, "<p>Outside</p>");
+  const setupOutsideFile = Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const outsideDir = yield* tempDir("config-validate-email-content-outside-");
+    const outsideFile = path.join(outsideDir, "secret.html");
+    yield* fs.writeFileString(outsideFile, "<p>Outside</p>");
     return outsideFile;
-  }
+  });
+
+  /** Whether `chmod 000` actually blocks reading `dir` here (it doesn't when running as root). */
+  const permissionEnforced = (dir: string) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      return !(yield* fs.readDirectory(dir).pipe(Effect.isSuccess));
+    });
 
   function resolveContentPath(
     section: "template" | "notification",
@@ -148,252 +139,361 @@ describe("resolveEmailTemplateContentPath", () => {
     });
   }
 
-  it.each(["template", "notification"] as const)(
+  it.effect.each(["template", "notification"] as const)(
     "rejects an absolute %s content_path outside the project root",
-    (section) => {
-      const base = setup();
-      const outsideFile = setupOutsideFile();
+    (section) =>
+      Effect.gen(function* () {
+        const base = yield* setup();
+        const outsideFile = yield* setupOutsideFile;
 
-      expect(() => resolveContentPath(section, outsideFile, base)).toThrow(ConfigValidateError);
-      expect(() => resolveContentPath(section, outsideFile, base)).toThrow(
-        /resolves outside the project root/,
-      );
-    },
+        expect(yield* Effect.flip(resolveContentPath(section, outsideFile, base))).toBeInstanceOf(
+          ConfigValidateError,
+        );
+        expect(
+          (yield* Effect.flip(resolveContentPath(section, outsideFile, base))).message,
+        ).toMatch(/resolves outside the project root/);
+      }),
   );
 
-  it.each(["template", "notification"] as const)(
+  it.effect.each(["template", "notification"] as const)(
     "rejects a relative %s content_path that escapes the project root via ..",
-    (section) => {
-      const base = setup();
-      const outsideFile = setupOutsideFile();
-      const escapePath = relative(base, outsideFile);
+    (section) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const base = yield* setup();
+        const outsideFile = yield* setupOutsideFile;
+        const escapePath = path.relative(base, outsideFile);
 
-      expect(() => resolveContentPath(section, escapePath, base)).toThrow(
-        /resolves outside the project root/,
-      );
-    },
+        expect((yield* Effect.flip(resolveContentPath(section, escapePath, base))).message).toMatch(
+          /resolves outside the project root/,
+        );
+      }),
   );
 
-  it.each(["template", "notification"] as const)(
+  it.effect.each(["template", "notification"] as const)(
     "rejects a %s content_path that is an in-root symlink pointing outside the project root",
-    (section) => {
-      const base = setup();
-      const outsideFile = setupOutsideFile();
-      const symlinkPath = join(base, "evil.html");
-      symlinkSync(outsideFile, symlinkPath);
+    (section) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const base = yield* setup();
+        const outsideFile = yield* setupOutsideFile;
+        const symlinkPath = path.join(base, "evil.html");
+        yield* fs.symlink(outsideFile, symlinkPath);
 
-      expect(() => resolveContentPath(section, "./evil.html", base)).toThrow(
-        /resolves outside the project root/,
-      );
-    },
+        expect(
+          (yield* Effect.flip(resolveContentPath(section, "./evil.html", base))).message,
+        ).toMatch(/resolves outside the project root/);
+      }),
   );
 
-  it("accepts an in-root sibling path whose name literally starts with two dots, distinct from a .. escape", () => {
-    const base = setup();
-    const dotDir = join(base, "..templates");
-    mkdirSync(dotDir, { recursive: true });
-    writeFileSync(join(dotDir, "invite.html"), "<h1>Invite</h1>");
+  it.effect(
+    "accepts an in-root sibling path whose name literally starts with two dots, distinct from a .. escape",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const base = yield* setup();
+        const dotDir = path.join(base, "..templates");
+        yield* fs.makeDirectory(dotDir, { recursive: true });
+        yield* fs.writeFileString(path.join(dotDir, "invite.html"), "<h1>Invite</h1>");
 
-    const resolved = resolveContentPath("template", "..templates/invite.html", base);
+        const resolved = yield* resolveContentPath("template", "..templates/invite.html", base);
 
-    expect(resolved).toBe(join(realpathSync(base), "..templates", "invite.html"));
-  });
+        expect(resolved).toBe(path.join(yield* fs.realPath(base), "..templates", "invite.html"));
+      }),
+  );
 
-  it("accepts a content_path that resolves to exactly the project root", () => {
-    const base = setup();
+  it.effect("accepts a content_path that resolves to exactly the project root", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const base = yield* setup();
 
-    const resolved = resolveContentPath("template", ".", base);
+      const resolved = yield* resolveContentPath("template", ".", base);
 
-    expect(resolved).toBe(realpathSync(base));
-  });
+      expect(resolved).toBe(yield* fs.realPath(base));
+    }),
+  );
 
-  it("resolves a missing in-root file behind a symlinked project root instead of raising the containment error", () => {
-    const realDir = mkdtempSync(join(tmpdir(), "config-validate-email-content-real-"));
-    const linkContainer = mkdtempSync(join(tmpdir(), "config-validate-email-content-link-"));
-    const symlinkedRoot = join(linkContainer, "project-root");
-    symlinkSync(realDir, symlinkedRoot, "dir");
+  it.effect(
+    "resolves a missing in-root file behind a symlinked project root instead of raising the containment error",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const realDir = yield* tempDir("config-validate-email-content-real-");
+        const linkContainer = yield* tempDir("config-validate-email-content-link-");
+        const symlinkedRoot = path.join(linkContainer, "project-root");
+        yield* fs.symlink(realDir, symlinkedRoot);
 
-    try {
-      const resolved = resolveContentPath("template", "missing-invite.html", symlinkedRoot);
-      expect(resolved).toBe(join(realpathSync(symlinkedRoot), "missing-invite.html"));
-    } finally {
-      rmSync(linkContainer, { recursive: true, force: true });
-      rmSync(realDir, { recursive: true, force: true });
-    }
-  });
+        const resolved = yield* resolveContentPath(
+          "template",
+          "missing-invite.html",
+          symlinkedRoot,
+        );
+        expect(resolved).toBe(path.join(yield* fs.realPath(symlinkedRoot), "missing-invite.html"));
+      }),
+  );
 
-  it.each(["template", "notification"] as const)(
+  it.effect.each(["template", "notification"] as const)(
     "rejects a %s content_path that is an in-root dangling symlink pointing to a nonexistent target outside the project root",
-    (section) => {
-      const base = setup();
-      outsideDir = mkdtempSync(join(tmpdir(), "config-validate-email-content-outside-"));
-      const neverCreatedOutsideTarget = join(outsideDir, "never-created.html");
-      const danglingSymlinkPath = join(base, "dangling.html");
-      symlinkSync(neverCreatedOutsideTarget, danglingSymlinkPath);
+    (section) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const base = yield* setup();
+        const outsideDir = yield* tempDir("config-validate-email-content-outside-");
+        const neverCreatedOutsideTarget = path.join(outsideDir, "never-created.html");
+        const danglingSymlinkPath = path.join(base, "dangling.html");
+        yield* fs.symlink(neverCreatedOutsideTarget, danglingSymlinkPath);
 
-      expect(() => resolveContentPath(section, "./dangling.html", base)).toThrow(
-        ConfigValidateError,
-      );
-      expect(() => resolveContentPath(section, "./dangling.html", base)).toThrow(
-        /resolves outside the project root/,
-      );
-    },
+        expect(
+          yield* Effect.flip(resolveContentPath(section, "./dangling.html", base)),
+        ).toBeInstanceOf(ConfigValidateError);
+        expect(
+          (yield* Effect.flip(resolveContentPath(section, "./dangling.html", base))).message,
+        ).toMatch(/resolves outside the project root/);
+      }),
   );
 
-  it.each(["template", "notification"] as const)(
-    "rejects a %s content_path that is an in-root symlink whose outside target sits behind an unsearchable (EACCES) directory",
-    (section) => {
-      // Skipped when this environment doesn't enforce chmod 000 (e.g. running as root); the
-      // dangling-symlink case above already covers the core regression without a permission trick.
-      const base = setup();
-      outsideDir = mkdtempSync(join(tmpdir(), "config-validate-email-content-outside-"));
-      const unsearchableDir = join(outsideDir, "locked");
-      mkdirSync(unsearchableDir);
-      const target = join(unsearchableDir, "secret.html");
-      writeFileSync(target, "<p>Locked</p>");
-      chmodSync(unsearchableDir, 0o000);
-
-      try {
-        let permissionEnforced = true;
-        try {
-          readdirSync(unsearchableDir);
-          permissionEnforced = false;
-        } catch {
-          // expected in a normal, unprivileged environment — confirms chmod 000 actually blocks access here.
-        }
-        if (!permissionEnforced) {
+  it.effect.each(["template", "notification"] as const)(
+    "rejects a %s content_path that is an in-root dangling symlink whose own mode denies reading it",
+    (section) =>
+      Effect.gen(function* () {
+        /* Skipped where symlink modes can't be set or aren't enforced (Linux, root). */
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const base = yield* setup();
+        const outsideDir = yield* tempDir("config-validate-email-content-outside-");
+        const lockedSymlinkPath = path.join(base, "locked.html");
+        yield* fs.symlink(path.join(outsideDir, "never-created.html"), lockedSymlinkPath);
+        const locked = yield* spawner
+          .exitCode(ChildProcess.make("chmod", ["-h", "000", lockedSymlinkPath]))
+          .pipe(
+            Effect.map((exitCode) => exitCode === 0),
+            Effect.orElseSucceed(() => false),
+          );
+        if (!locked || (yield* fs.readLink(lockedSymlinkPath).pipe(Effect.isSuccess))) {
           return;
         }
 
-        const symlinkPath = join(base, "unsearchable.html");
-        symlinkSync(target, symlinkPath);
-
-        expect(() => resolveContentPath(section, "./unsearchable.html", base)).toThrow(
-          ConfigValidateError,
-        );
-        expect(() => resolveContentPath(section, "./unsearchable.html", base)).toThrow(
-          /resolves outside the project root/,
-        );
-      } finally {
-        chmodSync(unsearchableDir, 0o755);
-      }
-    },
+        const failure = yield* Effect.flip(resolveContentPath(section, "./locked.html", base));
+        expect(
+          failure instanceof PlatformError.PlatformError &&
+            Predicate.isTagged(failure.reason, "PermissionDenied"),
+        ).toBe(true);
+      }),
   );
 
-  it("accepts a genuinely in-root file behind an unsearchable (EACCES) directory, even when the project root itself is reached through a symlink", () => {
-    const realDir = mkdtempSync(join(tmpdir(), "config-validate-email-content-real-"));
-    const linkContainer = mkdtempSync(join(tmpdir(), "config-validate-email-content-link-"));
-    const symlinkedRoot = join(linkContainer, "project-root");
-    symlinkSync(realDir, symlinkedRoot, "dir");
-    const lockedDir = join(realDir, "locked");
-    mkdirSync(lockedDir);
-    const target = join(lockedDir, "invite.html");
-    writeFileSync(target, "<h1>Invite</h1>");
-    chmodSync(lockedDir, 0o000);
+  /* Linux ignores a symlink's own mode, so a `readLink` denied by the symlink itself is driven
+     through a `FileSystem` that denies it, with the parent `stat` passing or failing. */
+  const denyingReadLink = (lockedPath: string, parentSearchable: boolean) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parentProbe = `${path.dirname(lockedPath)}${path.sep}.`;
+      const parentInfo = yield* fs.stat(parentProbe);
+      const denied = (method: string, pathOrDescriptor: string) =>
+        PlatformError.systemError({
+          _tag: "PermissionDenied",
+          module: "FileSystem",
+          method,
+          pathOrDescriptor,
+        });
+      return FileSystem.FileSystem.of({
+        ...fs,
+        readLink: (p) => (p === lockedPath ? Effect.fail(denied("readLink", p)) : fs.readLink(p)),
+        stat: (p) =>
+          p !== parentProbe
+            ? fs.stat(p)
+            : parentSearchable
+              ? Effect.succeed(parentInfo)
+              : Effect.fail(denied("stat", p)),
+      });
+    });
 
-    try {
-      let permissionEnforced = true;
-      try {
-        readdirSync(lockedDir);
-        permissionEnforced = false;
-      } catch {
-        // expected in a normal, unprivileged environment — confirms chmod 000 actually blocks access here.
-      }
-      if (!permissionEnforced) {
-        return;
-      }
+  it.effect("rejects a content_path whose own readLink is denied under a searchable parent", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const base = yield* setup();
+      const lockedFs = yield* denyingReadLink(path.join(base, "locked.html"), true);
 
-      const resolved = resolveContentPath("template", "./locked/invite.html", symlinkedRoot);
+      const failure = yield* Effect.flip(
+        resolveContentPath("template", "./locked.html", base).pipe(
+          Effect.provideService(FileSystem.FileSystem, lockedFs),
+        ),
+      );
+      expect(
+        failure instanceof PlatformError.PlatformError &&
+          Predicate.isTagged(failure.reason, "PermissionDenied"),
+      ).toBe(true);
+    }),
+  );
 
-      expect(resolved).toBe(join(realpathSync(symlinkedRoot), "locked", "invite.html"));
-    } finally {
-      chmodSync(lockedDir, 0o755);
-      rmSync(linkContainer, { recursive: true, force: true });
-      rmSync(realDir, { recursive: true, force: true });
-    }
-  });
+  it.effect("accepts a content_path whose readLink is denied by an unsearchable parent", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const base = yield* setup();
+      const lockedFs = yield* denyingReadLink(path.join(base, "locked.html"), false);
 
-  it.each(["template", "notification"] as const)(
+      const resolved = yield* resolveContentPath("template", "./locked.html", base).pipe(
+        Effect.provideService(FileSystem.FileSystem, lockedFs),
+      );
+      expect(resolved).toBe(path.join(yield* fs.realPath(base), "locked.html"));
+    }),
+  );
+
+  it.effect.each(["template", "notification"] as const)(
+    "rejects a %s content_path that is an in-root symlink whose outside target sits behind an unsearchable (EACCES) directory",
+    (section) =>
+      Effect.gen(function* () {
+        // Skipped when this environment doesn't enforce chmod 000 (e.g. running as root); the
+        // dangling-symlink case above already covers the core regression without a permission trick.
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const base = yield* setup();
+        const outsideDir = yield* tempDir("config-validate-email-content-outside-");
+        const unsearchableDir = path.join(outsideDir, "locked");
+        yield* fs.makeDirectory(unsearchableDir);
+        const target = path.join(unsearchableDir, "secret.html");
+        yield* fs.writeFileString(target, "<p>Locked</p>");
+        yield* fs.chmod(unsearchableDir, 0o000);
+
+        yield* Effect.gen(function* () {
+          if (!(yield* permissionEnforced(unsearchableDir))) {
+            return;
+          }
+
+          const symlinkPath = path.join(base, "unsearchable.html");
+          yield* fs.symlink(target, symlinkPath);
+
+          expect(
+            yield* Effect.flip(resolveContentPath(section, "./unsearchable.html", base)),
+          ).toBeInstanceOf(ConfigValidateError);
+          expect(
+            (yield* Effect.flip(resolveContentPath(section, "./unsearchable.html", base))).message,
+          ).toMatch(/resolves outside the project root/);
+        }).pipe(Effect.ensuring(fs.chmod(unsearchableDir, 0o755).pipe(Effect.orDie)));
+      }),
+  );
+
+  it.effect(
+    "accepts a genuinely in-root file behind an unsearchable (EACCES) directory, even when the project root itself is reached through a symlink",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const realDir = yield* tempDir("config-validate-email-content-real-");
+        const linkContainer = yield* tempDir("config-validate-email-content-link-");
+        const symlinkedRoot = path.join(linkContainer, "project-root");
+        yield* fs.symlink(realDir, symlinkedRoot);
+        const lockedDir = path.join(realDir, "locked");
+        yield* fs.makeDirectory(lockedDir);
+        const target = path.join(lockedDir, "invite.html");
+        yield* fs.writeFileString(target, "<h1>Invite</h1>");
+        yield* fs.chmod(lockedDir, 0o000);
+
+        yield* Effect.gen(function* () {
+          if (!(yield* permissionEnforced(lockedDir))) {
+            return;
+          }
+
+          const resolved = yield* resolveContentPath(
+            "template",
+            "./locked/invite.html",
+            symlinkedRoot,
+          );
+
+          expect(resolved).toBe(
+            path.join(yield* fs.realPath(symlinkedRoot), "locked", "invite.html"),
+          );
+        }).pipe(Effect.ensuring(fs.chmod(lockedDir, 0o755).pipe(Effect.orDie)));
+      }),
+  );
+
+  it.effect.each(["template", "notification"] as const)(
     "rejects a %s content_path that is an in-root symlink pointing to an unstattable (ENAMETOOLONG) target name, without relying on directory permissions",
-    (section) => {
-      const base = setup();
-      outsideDir = mkdtempSync(join(tmpdir(), "config-validate-email-content-outside-"));
-      const tooLongName = `${"a".repeat(300)}.html`;
-      const symlinkPath = join(base, "toolong.html");
-      try {
-        symlinkSync(join(outsideDir, tooLongName), symlinkPath);
-      } catch {
+    (section) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const base = yield* setup();
+        const outsideDir = yield* tempDir("config-validate-email-content-outside-");
+        const tooLongName = `${"a".repeat(300)}.html`;
+        const symlinkPath = path.join(base, "toolong.html");
         // Unprivileged symlink creation isn't unconditionally available (e.g. Windows without
         // Developer Mode/admin) — skip rather than fail an environment that can't set this up.
-        return;
-      }
+        if (
+          !(yield* fs
+            .symlink(path.join(outsideDir, tooLongName), symlinkPath)
+            .pipe(Effect.isSuccess))
+        ) {
+          return;
+        }
 
-      expect(() => resolveContentPath(section, "./toolong.html", base)).toThrow(
-        ConfigValidateError,
-      );
-      expect(() => resolveContentPath(section, "./toolong.html", base)).toThrow(
-        /resolves outside the project root/,
-      );
-    },
+        expect(
+          yield* Effect.flip(resolveContentPath(section, "./toolong.html", base)),
+        ).toBeInstanceOf(ConfigValidateError);
+        expect(
+          (yield* Effect.flip(resolveContentPath(section, "./toolong.html", base))).message,
+        ).toMatch(/resolves outside the project root/);
+      }),
   );
 
-  it.each(["template", "notification"] as const)(
+  it.effect.each(["template", "notification"] as const)(
     "rejects an in-root %s symlink loop instead of hanging or crashing",
-    (section) => {
-      // Reuses the symlinked-root fixture (rather than relying on incidental ambient-tmpdir
-      // symlinks) so there's a guaranteed canonicalization gap between root and the loop path.
-      const realDir = mkdtempSync(join(tmpdir(), "config-validate-email-content-real-"));
-      const linkContainer = mkdtempSync(join(tmpdir(), "config-validate-email-content-link-"));
-      const symlinkedRoot = join(linkContainer, "project-root");
-      symlinkSync(realDir, symlinkedRoot, "dir");
+    (section) =>
+      Effect.gen(function* () {
+        // Reuses the symlinked-root fixture (rather than relying on incidental ambient-tmpdir
+        // symlinks) so there's a guaranteed canonicalization gap between root and the loop path.
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const realDir = yield* tempDir("config-validate-email-content-real-");
+        const linkContainer = yield* tempDir("config-validate-email-content-link-");
+        const symlinkedRoot = path.join(linkContainer, "project-root");
+        yield* fs.symlink(realDir, symlinkedRoot);
 
-      try {
-        const loopA = join(symlinkedRoot, "loop-a.html");
-        const loopB = join(symlinkedRoot, "loop-b.html");
-        symlinkSync(loopB, loopA);
-        symlinkSync(loopA, loopB);
+        const loopA = path.join(symlinkedRoot, "loop-a.html");
+        const loopB = path.join(symlinkedRoot, "loop-b.html");
+        yield* fs.symlink(loopB, loopA);
+        yield* fs.symlink(loopA, loopB);
 
-        expect(() => resolveContentPath(section, "./loop-a.html", symlinkedRoot)).toThrow(
-          ConfigValidateError,
-        );
-        expect(() => resolveContentPath(section, "./loop-a.html", symlinkedRoot)).toThrow(
-          /resolves outside the project root/,
-        );
-      } finally {
-        rmSync(linkContainer, { recursive: true, force: true });
-        rmSync(realDir, { recursive: true, force: true });
-      }
-    },
+        expect(
+          yield* Effect.flip(resolveContentPath(section, "./loop-a.html", symlinkedRoot)),
+        ).toBeInstanceOf(ConfigValidateError);
+        expect(
+          (yield* Effect.flip(resolveContentPath(section, "./loop-a.html", symlinkedRoot))).message,
+        ).toMatch(/resolves outside the project root/);
+      }),
   );
 
-  it("never selects an unstattable notification legacy-fallback twin behind an unsearchable (EACCES) supabase/ directory", () => {
-    const base = setup();
-    const supabaseDir = join(base, "supabase");
-    mkdirSync(supabaseDir);
-    chmodSync(supabaseDir, 0o000);
+  it.effect(
+    "never selects an unstattable notification legacy-fallback twin behind an unsearchable (EACCES) supabase/ directory",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const base = yield* setup();
+        const supabaseDir = path.join(base, "supabase");
+        yield* fs.makeDirectory(supabaseDir);
+        yield* fs.chmod(supabaseDir, 0o000);
 
-    try {
-      let permissionEnforced = true;
-      try {
-        readdirSync(supabaseDir);
-        permissionEnforced = false;
-      } catch {
-        // expected in a normal, unprivileged environment — confirms chmod 000 actually blocks access here.
-      }
-      if (!permissionEnforced) {
-        return;
-      }
+        yield* Effect.gen(function* () {
+          if (!(yield* permissionEnforced(supabaseDir))) {
+            return;
+          }
 
-      const resolved = resolveContentPath("notification", "notification.html", base);
+          const resolved = yield* resolveContentPath("notification", "notification.html", base);
 
-      // The result must be the root-resolved path, not the unverified legacy twin; this
-      // function only resolves a path, it doesn't check that the file exists, so a non-throw
-      // here is expected.
-      expect(resolved).toBe(join(realpathSync(base), "notification.html"));
-    } finally {
-      chmodSync(supabaseDir, 0o755);
-    }
-  });
+          // The result must be the root-resolved path, not the unverified legacy twin; this
+          // function only resolves a path, it doesn't check that the file exists, so a non-throw
+          // here is expected.
+          expect(resolved).toBe(path.join(yield* fs.realPath(base), "notification.html"));
+        }).pipe(Effect.ensuring(fs.chmod(supabaseDir, 0o755).pipe(Effect.orDie)));
+      }),
+  );
 });
 
 /**
@@ -444,7 +544,7 @@ describe("validateResolvedConfig", () => {
       ).toThrow("Missing required field in config: db.major_version");
     });
 
-    it("rejects the unsupported Postgres 12.x major_version with Go's dedicated message", () => {
+    it("rejects the unsupported Postgres 12.x major_version with its dedicated message", () => {
       expect(() =>
         validateResolvedConfig(minimalInput({ db: { port: 5432, majorVersion: 12 } })),
       ).toThrow("Postgres version 12.x is unsupported.");
@@ -464,7 +564,7 @@ describe("validateResolvedConfig", () => {
   });
 
   describe("storage.buckets", () => {
-    it("rejects a bucket name Go's ValidateBucketName refuses", () => {
+    it("rejects an invalid bucket name", () => {
       expect(() =>
         validateResolvedConfig(minimalInput({ storageBucketNames: ["bad/name"] })),
       ).toThrow("Invalid Bucket name: bad/name.");
@@ -948,7 +1048,7 @@ describe("validateResolvedConfig", () => {
       ).toThrow("Missing required field in config: auth.hook.custom_access_token.secrets");
     });
 
-    it("rejects an http(s) hook secret that doesn't match Go's hookSecretPattern", () => {
+    it("rejects an http(s) hook secret that doesn't match the hook secret pattern", () => {
       expect(() =>
         validateResolvedConfig(
           minimalInput({
@@ -1034,7 +1134,7 @@ describe("validateResolvedConfig", () => {
       ).toThrow("auth.hook.custom_access_token.uri should be a HTTP, HTTPS, or pg-functions URI");
     });
 
-    it("rejects a hook uri that fails Go's url.Parse (malformed IPv6 host)", () => {
+    it("rejects a hook uri that fails URL parsing (malformed IPv6 host)", () => {
       expect(() =>
         validateResolvedConfig(
           minimalInput({
@@ -1150,7 +1250,7 @@ describe("validateResolvedConfig", () => {
       ).toThrow("Invalid config: auth.third_party.clerk is enabled but without a domain.");
     });
 
-    it("rejects clerk enabled with a domain that doesn't match Go's clerkDomainPattern", () => {
+    it("rejects clerk enabled with a domain that doesn't match the clerk domain pattern", () => {
       expect(() =>
         validateResolvedConfig(
           minimalInput({
@@ -1211,7 +1311,7 @@ describe("validateResolvedConfig", () => {
   });
 
   describe("functions.*", () => {
-    it("rejects a function slug Go's ValidateFunctionSlug refuses", () => {
+    it("rejects an invalid function slug", () => {
       expect(() => validateResolvedConfig(minimalInput({ functionSlugs: ["1bad"] }))).toThrow(
         "Invalid Function name: 1bad.",
       );
@@ -1269,13 +1369,13 @@ describe("validateResolvedConfig", () => {
   // Coverage for behavior only meaningfully testable at this shared layer (e.g. the captcha
   // enum), not moved from either caller's own suite.
   describe("Config.Validate divergence regression coverage", () => {
-    it("throws the Go-parity missing-required message for db.major_version = 0 (regression for the D fix in 0c62a914)", () => {
+    it("throws the missing-required message for db.major_version = 0 (regression for the D fix in 0c62a914)", () => {
       expect(() =>
         validateResolvedConfig({ ...minimalInput(), db: { port: 5432, majorVersion: 0 } }),
       ).toThrow("Missing required field in config: db.major_version");
     });
 
-    it("throws Go's decode-time enum message for an invalid auth.captcha.provider, regardless of enabled", () => {
+    it("throws the decode-time enum message for an invalid auth.captcha.provider, regardless of enabled", () => {
       // Unreachable through L's real flow: `@supabase/config`'s schema already narrows
       // `provider` to "hcaptcha" | "turnstile" | undefined, so an invalid value fails schema
       // decoding first. D's real TOML flow can reach this branch; its own suite covers that
@@ -1289,7 +1389,7 @@ describe("validateResolvedConfig", () => {
           }),
         ),
       ).toThrow(
-        "failed to parse config: decoding failed due to the following error(s):\n\n'auth.captcha.provider' must be one of [hcaptcha turnstile]",
+        "failed to parse config:\nauth.captcha.provider: must be one of hcaptcha, turnstile",
       );
     });
   });

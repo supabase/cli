@@ -122,7 +122,7 @@ function setupLogin(opts: SetupOpts = {}) {
       ? loginApi.layer
       : loginApiLayer.pipe(Layer.provide(httpApi.httpClientLayer), Layer.provide(cliSettings)),
     mockStdin(isTTY, opts.pipedStdin),
-    mockBrowser(),
+    mockBrowser,
     Layer.succeed(ProfileFlag, opts.profileFlag ?? "supabase"),
     ...(opts.argv !== undefined ? [Layer.succeed(CliArgs, { args: opts.argv })] : []),
   );

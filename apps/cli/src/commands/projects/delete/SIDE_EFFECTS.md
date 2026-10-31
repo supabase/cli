@@ -1,5 +1,7 @@
 # `supabase projects delete`
 
+Target: account, consent default No — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
 | Path                                   | Format                    | When                                                       |
@@ -17,7 +19,7 @@
 > ever stores the profile-scoped access token in the keyring (never a per-ref
 > entry), so the delete always targets a non-existent entry — a no-op. The
 > "Keyring is not supported on WSL" stderr line (system keyring unavailable,
-> e.g. headless CI) is keyring-backend noise normalized away in the parity
+> e.g. headless CI) is keyring-backend noise normalized away in the cli-e2e
 > harness.
 
 ## API Routes
@@ -43,7 +45,9 @@
 | `1`  | project not found — 404 response from `/v1/projects/{ref}`                                               |
 | `1`  | API error — non-2xx/404 response from `/v1/projects/{ref}`                                               |
 | `1`  | network / connection failure                                                                             |
-| `1`  | declined confirmation (cancellation) / no ref on a non-TTY                                               |
+| `1`  | confirmation declined                                                                                    |
+| `1`  | confirmation needed but this run can't prompt, and no `--yes`                                            |
+| `1`  | no ref on a non-TTY                                                                                      |
 | `1`  | `SUPABASE_EXPERIMENTAL_STACK` is set to a non-empty value other than `0` or `1` (before the DELETE call) |
 
 ## Telemetry Events Fired
@@ -62,13 +66,14 @@
 
 ### `--output-format text`
 
-Prompts `Do you want to delete project <ref>? This action is irreversible.` (default
-**No**, honours the global `--yes`), then on success prints `Deleted project: <name>`
-to stdout.
+Prints `This action is irreversible.` and asks `Delete project <ref>?` (default
+**No**), then on success prints `Deleted project: <name>` to stdout. Under `--yes` it prints
+`Confirmed by --yes: Delete project <ref>` on stderr instead of asking.
 
 ### `--output-format json`
 
-`success("Deleted project", { name })`.
+Requires `--yes`: a machine format can't prompt, so without it the command fails with
+the consent-required error before any `DELETE`. On success, `success("Deleted project", { name })`.
 
 ```json
 { "name": "my-project" }
@@ -110,5 +115,4 @@ matches.
   user to select a project to delete.
 - In non-interactive mode (when stdin is not a TTY), the project ref positional argument
   is required.
-- A `PreRun` check is performed before the DELETE call to validate the project ref and
-  display a confirmation prompt in interactive mode.
+- The confirmation runs after the project ref is resolved and before the DELETE call.

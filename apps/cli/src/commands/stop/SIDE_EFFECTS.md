@@ -11,8 +11,8 @@ environment override is unset or empty, an unreadable, malformed, or invalid pro
 falls back to the legacy backend; an invalid environment override remains an error.
 
 Talks directly to Docker via subprocess
-(`docker`/`podman`), replicating the old Go CLI's label-filtering and container-naming
-scheme byte-for-byte — it does not go through `@supabase/stack/effect`'s orchestration
+(`docker`/`podman`), using a fixed label-filtering and container-naming
+scheme — it does not go through `@supabase/stack/effect`'s orchestration
 model (see the CLI-1324 plan's "Critical architectural finding" for why).
 
 ## Files Read
@@ -21,18 +21,19 @@ model (see the CLI-1324 plan's "Critical architectural finding" for why).
 | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `<workdir>/supabase/config.json` or `config.toml`                                                  | JSON or TOML                                                                          | backend routing before command parsing when `SUPABASE_EXPERIMENTAL_STACK` is unset or empty; JSON takes precedence when both exist                                                                                                                                                                                                              |
 | `<workdir>/supabase/config.toml`                                                                   | TOML                                                                                  | legacy handler default path only; skipped with `--project-id` or `--all`                                                                                                                                                                                                                                                                        |
-| `auth.email.template.*` / `auth.email.notification.*` `content_path` (config-relative or absolute) | text (existence/readability only — bytes discarded, used only to validate the config) | default path only, only when `auth.enabled`, for every configured template and every notification with `enabled = true`, as part of `resolveLocalConfigValues`'s own `Config.Validate` pass; the resolved path is CONFINED to the project root (symlinks dereferenced with `realpathSync`) — a path resolving outside it aborts before the read |
+| `auth.email.template.*` / `auth.email.notification.*` `content_path` (config-relative or absolute) | text (existence/readability only — bytes discarded, used only to validate the config) | default path only, only when `auth.enabled`, for every configured template and every notification with `enabled = true`, as part of `resolveLocalConfigValues`'s own `Config.Validate` pass; the resolved path is CONFINED to the project root (symlinks dereferenced using `fs.realPath`) — a path resolving outside it aborts before the read |
 
 ## Files Written
 
-| Path                                                                | Format              | When                                                                                    |
-| ------------------------------------------------------------------- | ------------------- | --------------------------------------------------------------------------------------- |
-| `~/.supabase/telemetry.json`                                        | JSON                | always (in `Effect.ensuring`) at end of command                                         |
-| `<workdir>/supabase/.temp/start-secrets/<container-name>` (removed) | plaintext, per-file | after teardown succeeds, for every container name torn down that had a staged directory |
+| Path                                                                | Format              | When                                                                                                                                                                                                               |
+| ------------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `~/.supabase/telemetry.json`                                        | JSON                | always (in `Effect.ensuring`) at end of command                                                                                                                                                                    |
+| `<workdir>/supabase/.temp/start-secrets/<container-name>` (removed) | plaintext, per-file | after teardown succeeds, for every container name torn down that had a staged directory                                                                                                                            |
+| `$SUPABASE_HOME/locks/docker-lifecycle.lock`                        | SQLite lock file    | held for the whole run: shared for one project, exclusive for `stop --all`; waits up to 10 minutes for a conflicting command (skipped, with a debug line, when `$SUPABASE_HOME/locks` cannot be created or opened) |
+| `$SUPABASE_HOME/locks/docker-project-<sha256(project label)>.lock`  | SQLite lock file    | held for the whole run: serializes lifecycle commands for the same project (not taken by `--all`); waits up to 10 minutes (skipped, with a debug line, when `$SUPABASE_HOME/locks` cannot be created or opened)    |
 
-The `start-secrets` removal is a TS-port-only hygiene step (`cleanupStartSecrets`,
-`command-internal/start-secrets-cleanup.ts`) — the old Go CLI never staged secrets on
-host disk in the first place, so it has nothing to clean up here. Only Edge Runtime's own
+The `start-secrets` removal is a hygiene step (`cleanupStartSecrets`,
+`command-internal/start-secrets-cleanup.ts`). Only Edge Runtime's own
 JWT/service-role-key/secret env artifacts (`shared/functions/serve.ts`'s
 `writeDockerEnvFile`/`writeDockerMultilineEnvScript`) still
 land on host disk this way, because that container's bring-up shells out to the docker
@@ -48,7 +49,7 @@ stop/prune stages have even run — so a container the stop stage itself failed 
 `container prune` never ran and nothing was actually removed) keeps its secrets, and a
 container still running after a later, unrelated failure (volume/network prune) is never
 touched. The hook is fed by `dockerRemoveAll`'s single internal `docker ps` listing
-(no separate, second `docker ps` call — see that function's doc comment for the parity
+(no separate, second `docker ps` call — see that function's doc comment for the
 rationale), so cleanup targets exactly the containers this run actually tore down — never
 a blanket delete of the whole `start-secrets/` parent (unsafe if a workdir's project id
 ever changes across `start` runs without an intervening `stop`).
@@ -76,10 +77,10 @@ No Management API calls. Everything is local Docker + local `config.toml`.
 
 ## Environment Variables
 
-| Variable              | Purpose                                                                                            | Required?                                                         |
-| --------------------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `SUPABASE_PROJECT_ID` | overrides the resolved local project id on the default path (env → config.toml → workdir basename) | no                                                                |
-| `SUPABASE_WORKDIR`    | resolves `CommandSettings.workdir`, which locates `config.toml` on the default path                | no (falls back to walking up from cwd for `supabase/config.toml`) |
+| Variable              | Purpose                                                                                            | Required?                                                                                   |
+| --------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `SUPABASE_PROJECT_ID` | overrides the resolved local project id on the default path (env → config.toml → workdir basename) | no                                                                                          |
+| `SUPABASE_WORKDIR`    | resolves `CommandSettings.workdir`, which locates `config.toml` on the default path                | no (falls back to walking up from cwd for `supabase/config.toml` or `supabase/config.json`) |
 
 `docker`/`podman` must be resolvable on `PATH` (or reachable via the configured Docker
 context) — `spawnContainerCli` tries `docker` first and falls back to `podman`. When
@@ -89,17 +90,18 @@ and ensure it is on PATH") rather than a generic "failed to ..." string.
 
 ## Exit Codes
 
-| Code | Condition                                                                                          |
-| ---- | -------------------------------------------------------------------------------------------------- |
-| `0`  | success — containers/volumes/networks pruned                                                       |
-| `1`  | `--project-id` and `--all` both set (`StopMutuallyExclusiveError`)                                 |
-| `1`  | `config.toml` present but malformed (`StopConfigLoadError`) — an **absent** file is not an error   |
-| `1`  | listing containers failed (`StopListError`)                                                        |
-| `1`  | stopping one or more containers failed (`StopContainerError`)                                      |
-| `1`  | `docker container prune` failed (`StopContainerPruneError`)                                        |
-| `1`  | `docker volume prune` failed, only reached when volumes are being deleted (`StopVolumePruneError`) |
-| `1`  | `docker network prune` failed (`StopNetworkPruneError`)                                            |
-| `1`  | `docker`/`podman` both absent from `PATH` (surfaces as one of the errors above)                    |
+| Code | Condition                                                                                                                                                                 |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — containers/volumes/networks pruned                                                                                                                              |
+| `1`  | `--project-id` and `--all` both set (`StopMutuallyExclusiveError`)                                                                                                        |
+| `1`  | another lifecycle command still holds the lock after 10 minutes (`ProjectLifecycleLockBusyError`); `--all` waits for every other lifecycle command                        |
+| `1`  | `config.toml` present but malformed (`StopConfigLoadError`), or a config value is invalid (`CliConfigValueError`, naming its source) — an **absent** file is not an error |
+| `1`  | listing containers failed (`StopListError`)                                                                                                                               |
+| `1`  | stopping one or more containers failed (`StopContainerError`)                                                                                                             |
+| `1`  | `docker container prune` failed (`StopContainerPruneError`)                                                                                                               |
+| `1`  | `docker volume prune` failed, only reached when volumes are being deleted (`StopVolumePruneError`)                                                                        |
+| `1`  | `docker network prune` failed (`StopNetworkPruneError`)                                                                                                                   |
+| `1`  | `docker`/`podman` both absent from `PATH` (surfaces as one of the errors above)                                                                                           |
 
 ## Telemetry Events Fired
 
@@ -128,7 +130,7 @@ the TS-native `--output-format` is consulted by this handler's own logic below.
 
 ### `--output-format json`
 
-Additive — no Go CLI equivalent. Single JSON object via `Output.success`:
+Single JSON object via `Output.success`:
 
 ```json
 { "project_id_filter": "demo", "backup": true }
@@ -154,10 +156,9 @@ Same payload as `json`, delivered as a `result` NDJSON event.
   `auth.email.*.content_path` that resolves outside the project root) fails the command
   and the running stack is **not** torn down. `--all`/`--project-id` bypass config
   loading entirely (see the bullet above) and so are unaffected by this handler failure mode.
-- The hidden `--backup` flag exists only for CLI surface parity with the old Go CLI — it
-  has **no effect**. The old Go CLI declared it but never wired its value into anything,
-  so it always deleted volumes based on `!noBackup` regardless of `--backup`. The TS port
-  matches this exactly: `deleteVolumes =
+- The hidden `--backup` flag exists only for CLI surface compatibility — it
+  has **no effect**. Volumes are always deleted based on `!noBackup` regardless of
+  `--backup`: `deleteVolumes =
 flags.noBackup`. `--backup=false` alone does **not** delete volumes; only
   `--no-backup` does.
 - Volume prune gates `--all` on the Docker client and daemon API versions (`container-cli.ts`'s
@@ -169,9 +170,8 @@ flags.noBackup`. `--backup=false` alone does **not** delete volumes; only
   pruning a narrower set. On the Podman fallback,
   `--all` is omitted unconditionally instead: no released Podman `volume prune` (checked
   v4.3 through the current v5.7) accepts that flag, and Podman already prunes every unused
-  volume by default, so dropping it there is lossless. Podman itself is a TS-only fallback
-  (the old Go CLI talked to the Docker Engine API directly rather than shelling out to a
-  `docker`/`podman` binary), so there's no parity concern here either way.
+  volume by default, so dropping it there is lossless. Podman is a fallback runtime reached by
+  shelling out to the `podman` binary.
 - Containers are stopped concurrently, at most `CONTAINER_CLI_CONCURRENCY` in flight on Docker and
   Podman alike (shared with start image prepull), so stopping more than that many containers that
   ignore their stop signal can take more than one 10 s grace period.

@@ -19,7 +19,7 @@ import { BunServices } from "@effect/platform-bun";
 import { Effect, FileSystem, Option, Path } from "effect";
 import { afterEach, describe, expect, test } from "vitest";
 
-import { makeTempHome, runSupabase } from "../../../tests/helpers/cli.ts";
+import { createTempHome, runSupabase, type TempHome } from "../../../tests/helpers/cli.ts";
 
 const CLEANUP_TIMEOUT_MS = 120_000;
 
@@ -46,7 +46,7 @@ const STACK_PORT_ASSIGNMENT =
  */
 const SHADOW_PORT_CANDIDATE_COUNT = 8;
 
-const DIFF_ARGS = ["db", "diff", "--local", "--use-pg-delta"] as const;
+const DIFF_ARGS = ["db", "diff", "--use-pg-delta"] as const;
 
 /** `shadow-cache.ts`'s published artifact name — `shadow-baseline-<16 hex key>.tar`. */
 const BASELINE_TAR_PATTERN = /^shadow-baseline-[0-9a-f]{16}\.tar$/u;
@@ -97,7 +97,7 @@ const mtimeMs = Effect.fnUntraced(function* (filePath: string) {
 
 describe("shadow baseline cache (e2e, local Docker stack)", () => {
   let projectDir: string | undefined;
-  let home: ReturnType<typeof makeTempHome> | undefined;
+  let home: TempHome | undefined;
 
   afterEach(() =>
     Effect.runPromise(
@@ -116,7 +116,7 @@ describe("shadow baseline cache (e2e, local Docker stack)", () => {
           yield* fs.remove(projectDir, { recursive: true, force: true }).pipe(Effect.ignore);
         }
         // Disposes the temp `SUPABASE_HOME`, and with it the ~90MB baseline tar this suite published.
-        home?.[Symbol.dispose]();
+        if (home !== undefined) yield* home.dispose;
         projectDir = undefined;
         home = undefined;
       }).pipe(Effect.provide(BunServices.layer)),
@@ -140,7 +140,7 @@ describe("shadow baseline cache (e2e, local Docker stack)", () => {
           projectDir = yield* fs.makeTempDirectory({ prefix: "sb-shadow-cache-e2e-" });
           // One temp `SUPABASE_HOME` per test run so both `db diff` processes share the same cache
           // directory; `runSupabase` otherwise mints a fresh home per invocation.
-          home = makeTempHome();
+          home = yield* createTempHome;
           const homeDir = home.dir;
           const cacheDir = path.join(home.dir, "cache", "shadow-baseline");
 
@@ -192,7 +192,7 @@ describe("shadow baseline cache (e2e, local Docker stack)", () => {
           expect(shadowPortCandidates).toHaveLength(SHADOW_PORT_CANDIDATE_COUNT);
 
           // Same drift setup as `db/diff/diff.declarative.e2e.test.ts`: create a fresh function
-          // directly in the local database so `db diff --local` has real, deterministic SQL to
+          // directly in the local database so `db diff` has real, deterministic SQL to
           // produce — the byte-identity of that output across cold/warm runs is the actual
           // user-visible contract here. Schema files can't supply this drift since the next engine
           // ignores `schema_paths` when building its migrations baseline.
@@ -205,7 +205,6 @@ describe("shadow baseline cache (e2e, local Docker stack)", () => {
 returns void
 language sql
 as $$ select 1; $$;`,
-                "--local",
               ],
               { cwd: projectDir, home: homeDir },
             ),

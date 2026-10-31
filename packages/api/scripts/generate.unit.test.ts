@@ -145,6 +145,21 @@ describe("generate", () => {
     });
   });
 
+  test("drops content annotations from binary strings without touching a property named contentEncoding", () => {
+    expect(
+      renderOpenApiSchema({
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          eszip: { type: "string", format: "binary", contentEncoding: "binary" },
+          contentEncoding: { type: "string", contentMediaType: "text/plain" },
+        },
+      }),
+    ).toBe(
+      'Schema.Struct({ "eszip": Schema.optionalKey(Schema.String.annotate({ "format": "binary" })), "contentEncoding": Schema.optionalKey(Schema.String) })',
+    );
+  });
+
   test("widens multi-value string enums and keeps single-value discriminators closed", () => {
     expect(
       openStringEnums({

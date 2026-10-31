@@ -18,6 +18,7 @@ import {
   COMPUTE_RUNTIME_EXCLUSIONS,
   type ComputeRuntime,
 } from "../../../../shared/compute/compute-runtimes.ts";
+import { resolveWorkdir } from "../../../../config/command-settings.layer.ts";
 import { COMPUTE_STACKS } from "../../../../shared/compute/compute-stacks.ts";
 import { computeNew } from "./new.handler.ts";
 import { ComputeNewWorkdirError } from "./new.errors.ts";
@@ -164,7 +165,7 @@ describe("compute new", () => {
   it.effect.each([
     { label: "not interactive", setup: { interactive: false } },
     // Stdout is a TTY, but claimed by the payload, so a prompt would corrupt it.
-    { label: "-o json", setup: { goOutput: "json" as const } },
+    { label: "-o json", setup: { outputFlag: "json" as const } },
     // `printf 'orders\n' | supabase compute new`: stdout is still a
     // terminal, so `output.interactive` on its own would have fed the pipe
     // straight into the name prompt instead of taking this documented path.
@@ -494,7 +495,11 @@ describe("compute new", () => {
       });
       const sub = path.join(created.dir, "nested", "dir");
       yield* fs.makeDirectory(sub, { recursive: true });
-      const { layer } = setupCompute({ workdir: sub, explicitWorkdir: false });
+      const resolved = yield* resolveWorkdir(Option.none(), Option.none(), sub, path);
+      const { layer } = setupCompute({
+        workdir: resolved.workdir,
+        explicitWorkdir: resolved.explicit,
+      });
 
       return yield* Effect.gen(function* () {
         const error = yield* computeNew(
@@ -690,7 +695,7 @@ describe("compute new", () => {
   it.effect("keeps stdout parseable under -o json", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer, out } = setupCompute({ workdir: repo.dir, goOutput: "json" });
+      const { layer, out } = setupCompute({ workdir: repo.dir, outputFlag: "json" });
 
       return yield* Effect.gen(function* () {
         yield* computeNew(flags({ runtime: Option.some("node") }));
@@ -720,7 +725,7 @@ describe("compute new", () => {
   it.effect("reports the chosen exposure and count under -o json", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer, out } = setupCompute({ workdir: repo.dir, goOutput: "json" });
+      const { layer, out } = setupCompute({ workdir: repo.dir, outputFlag: "json" });
 
       return yield* Effect.gen(function* () {
         yield* computeNew(
@@ -946,7 +951,11 @@ describe("compute new", () => {
       const repo = yield* makeComputeProject({ "supabase/config.json": configJson });
       const child = path.join(repo.dir, "nested");
       yield* fs.makeDirectory(child);
-      const { layer, out } = setupCompute({ workdir: child, explicitWorkdir: false });
+      const resolved = yield* resolveWorkdir(Option.none(), Option.none(), child, path);
+      const { layer, out } = setupCompute({
+        workdir: resolved.workdir,
+        explicitWorkdir: resolved.explicit,
+      });
       return yield* Effect.gen(function* () {
         const error = yield* computeNew(flags({ name: Option.none() })).pipe(Effect.flip);
         expect(error).toBeInstanceOf(ComputeJsonConfigUnsupportedError);
@@ -1079,7 +1088,7 @@ describe("compute new", () => {
       const repo = yield* project();
       const { layer, out } = setupCompute({
         workdir: repo.dir,
-        goOutput: "json",
+        outputFlag: "json",
         // Answers are available, so a prompt would succeed and corrupt stdout
         // rather than fail the test some other way.
         promptSelectResponses: ["node", "4gb"],

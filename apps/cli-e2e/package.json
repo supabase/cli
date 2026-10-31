@@ -7,11 +7,15 @@
     "test": "pnpm run test:e2e",
     "test:e2e": "pnpm exec turbo run supabase#build && pnpm exec turbo run @supabase/cli-e2e#test:e2e:run --only --",
     "test:e2e:run": "bun --bun vitest run",
+    "replay:serve": "bun scripts/replay-serve.ts",
     "record": "RECORD=true pnpm run test:e2e:run",
     "types:check": "tsc --noEmit"
   },
   "dependencies": {
-    "@supabase/cli-test-helpers": "workspace:*"
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "@supabase/cli-test-helpers": "workspace:*",
+    "effect": "catalog:"
   },
   "devDependencies": {
     "@tsconfig/bun": "catalog:",

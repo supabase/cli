@@ -489,8 +489,8 @@ describe("toProjectConfigJsonSchema", () => {
   // cast.
   const document = JSON.parse(JSON.stringify(typedDocument));
 
-  test("declares the draft 2020-12 dialect", () => {
-    expect(typedDocument.$schema).toBe("https://json-schema.org/draft/2020-12/schema");
+  test("declares the draft-07 dialect", () => {
+    expect(typedDocument.$schema).toBe("http://json-schema.org/draft-07/schema#");
   });
 
   test("top-level properties are the seven hosted sections minus the fully-local realtime section", () => {

@@ -27,7 +27,8 @@ import {
   startReleaseFixture,
   type ReleaseFixture,
 } from "../../../tests/helpers/release-fixture.ts";
-import { projectStateModeLayer } from "../../command-internal/project-state-mode.ts";
+import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-values-layer.ts";
+import { projectStateModeLayer } from "../../shared/config/project-state-mode.ts";
 import { ExperimentalFlag } from "../../command-internal/global-flags.ts";
 import { stackUpdate } from "../experimental/stack/update/update.handler.ts";
 import { link } from "./link.handler.ts";
@@ -146,8 +147,8 @@ interface World {
   readonly host: ReleaseFixture;
   readonly tenant: Tenant;
   readonly workdir: string;
-  /** Switches the link target between the project and its feature branch, and sets the hosted database version. */
-  readonly target: { onBranch: boolean; database: string };
+  /** Switches the link target between the project and its feature branch, sets the hosted database version, and refuses `reveal=true`. */
+  readonly target: { onBranch: boolean; database: string; revealRefused: boolean };
 }
 
 const startWorld = Effect.gen(function* () {
@@ -161,7 +162,7 @@ const startWorld = Effect.gen(function* () {
     host,
     tenant: hostedTenant(),
     workdir,
-    target: { onBranch: false, database: PROJECT.database.version },
+    target: { onBranch: false, database: PROJECT.database.version, revealRefused: false },
   } satisfies World;
 });
 
@@ -181,7 +182,10 @@ const layerFor = (
             }),
       getABranchConfig: () =>
         Effect.succeed({ postgres_version: "15.1.0.117", postgres_engine: "15" }),
-      getProjectApiKeys: () => Effect.succeed(SERVICE_KEYS),
+      getProjectApiKeys: () =>
+        world.target.revealRefused
+          ? Effect.fail(statusCodeFailure(403))
+          : Effect.succeed(SERVICE_KEYS),
       getPoolerConfig: () => Effect.succeed(POOLER),
       listAllBranches: () => Effect.succeed(world.target.onBranch ? [FEATURE_BRANCH] : []),
     },
@@ -195,6 +199,7 @@ const layerFor = (
       telemetry: mockTelemetryStateTracked().layer,
       ...(fileSystem === undefined ? {} : { fileSystem }),
     }),
+    cliConfigValuesTestLayer,
     projectStateModeLayer("stack"),
     mockRuntimeInfo({ platform: "linux", arch: "x64" }),
     Layer.succeed(ExperimentalFlag, false),
@@ -331,6 +336,22 @@ describe("link records hosted versions in the stack lock", () => {
       expect(warnings(out)).toEqual([
         expect.stringMatching(/^database: hosted Postgres 15\.1\.0\.117/),
       ]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("links without probing the tenant when the token cannot read secret keys", () =>
+    Effect.gen(function* () {
+      const world: World = yield* startWorld;
+      world.target.revealRefused = true;
+
+      const out = yield* runLink(world);
+
+      const services = yield* readServices(world.workdir);
+      for (const kind of ["rest", "auth", "storage"] as const) {
+        expect(services[kind].resolution).toBe("unobserved");
+      }
+      expect(world.tenant.requests).toEqual([]);
+      expect(warnings(out).join("\n")).toContain("no API key to probe with");
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

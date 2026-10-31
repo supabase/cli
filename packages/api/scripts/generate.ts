@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { NodeServices } from "@effect/platform-node";
+import { Console, Effect, FileSystem, Path, Schema } from "effect";
 import * as Arr from "effect/Array";
 import * as JsonSchema from "effect/JsonSchema";
 import * as SchemaRepresentation from "effect/SchemaRepresentation";
@@ -137,17 +137,35 @@ const httpMethods: Record<OpenApiHttpMethod, HttpMethod> = {
   head: "HEAD",
 };
 
-const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(scriptDir, "../../..");
-const sourceSpecPath = path.join(repoRoot, "packages/api/src/generated/openapi.json");
-const generatedDir = path.join(repoRoot, "packages/api/src/generated");
+const sourceSpecPath = fileURLToPath(new URL("../src/generated/openapi.json", import.meta.url));
+const generatedDir = fileURLToPath(new URL("../src/generated", import.meta.url));
+
+class GenerateError extends Schema.TaggedError<GenerateError>()("GenerateError", {
+  message: Schema.String,
+  cause: Schema.Defect(),
+}) {}
+
+const generationStep = <A>(step: () => A) =>
+  Effect.try({
+    try: step,
+    catch: (cause) =>
+      new GenerateError({ message: cause instanceof Error ? cause.message : String(cause), cause }),
+  });
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-export function loadSpec(): OpenApiDocument {
-  const parsed = JSON.parse(readFileSync(sourceSpecPath, "utf8"));
+export const loadSpec = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const source = new TextDecoder("utf-8", { ignoreBOM: true }).decode(
+    yield* fs.readFile(sourceSpecPath),
+  );
+  return yield* generationStep(() => parseSpec(source));
+});
+
+function parseSpec(source: string): OpenApiDocument {
+  const parsed = JSON.parse(source);
   if (!isRecord(parsed) || !isRecord(parsed.paths)) {
     throw new Error(`Invalid OpenAPI document at ${sourceSpecPath}`);
   }
@@ -217,6 +235,7 @@ const UUID_PATTERN =
 // Keys stripped from a schema node because they describe documentation/example
 // values, not the value's shape.
 const SCHEMA_METADATA_KEYS = new Set(["default", "example", "examples"]);
+const CONTENT_ANNOTATION_KEYS = new Set(["contentEncoding", "contentMediaType"]);
 
 // `inPropertiesMap` tracks whether the current object is the value of a
 // `properties: {...}` map; there, keys are user-defined property names (which may
@@ -250,6 +269,12 @@ export function sanitizeOpenApiSchema(
 
     // The OpenAPI 3.0 converter rejects `propertyNames`; key constraints are left to the server.
     if (!inPropertiesMap && key === "propertyNames" && isRecord(rawValue)) {
+      continue;
+    }
+
+    // The OpenAPI 3.0 converter rejects the annotation-only content keywords; `format` still
+    // carries the encoding.
+    if (!inPropertiesMap && CONTENT_ANNOTATION_KEYS.has(key)) {
       continue;
     }
 
@@ -1182,21 +1207,49 @@ ${rows.join("\n")}
 `;
 }
 
-function main() {
-  const document = loadSpec();
-  const operations = extractOperations(document);
+const encodePrettyJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }));
 
-  rmSync(generatedDir, { recursive: true, force: true });
-  mkdirSync(generatedDir, { recursive: true });
+export const renderOpenApiJson = (document: OpenApiDocument) =>
+  Effect.map(encodePrettyJson(document), (json) => `${json}\n`);
 
-  writeFileSync(path.join(generatedDir, "contracts.ts"), renderContracts(document, operations));
-  writeFileSync(path.join(generatedDir, "effect-client.ts"), renderEffectClient(operations));
-  writeFileSync(path.join(generatedDir, "permissions.ts"), renderPermissions(document));
-  writeFileSync(path.join(generatedDir, "openapi.json"), `${JSON.stringify(document, null, 2)}\n`);
+const main = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const document = yield* loadSpec;
+  const operations = yield* generationStep(() => extractOperations(document));
 
-  console.log(`Generated ${operations.length} API operations in ${generatedDir}`);
-}
+  yield* fs.remove(generatedDir, { recursive: true, force: true });
+  yield* fs.makeDirectory(generatedDir, { recursive: true });
+
+  yield* fs.writeFileString(
+    path.join(generatedDir, "contracts.ts"),
+    yield* generationStep(() => renderContracts(document, operations)),
+  );
+  yield* fs.writeFileString(
+    path.join(generatedDir, "effect-client.ts"),
+    yield* generationStep(() => renderEffectClient(operations)),
+  );
+  yield* fs.writeFileString(
+    path.join(generatedDir, "permissions.ts"),
+    yield* generationStep(() => renderPermissions(document)),
+  );
+  yield* fs.writeFileString(
+    path.join(generatedDir, "openapi.json"),
+    yield* renderOpenApiJson(document),
+  );
+
+  yield* Console.log(`Generated ${operations.length} API operations in ${generatedDir}`);
+});
 
 if (import.meta.main) {
-  main();
+  await Effect.runPromise(
+    main.pipe(
+      /* Crash with the step's original error so the uncaught report names it, not the wrapper. */
+      Effect.catchTags({
+        GenerateError: (error) => Effect.die(error.cause),
+        PlatformError: (error) => Effect.die(error.cause ?? error),
+      }),
+      Effect.provide(NodeServices.layer),
+    ),
+  );
 }

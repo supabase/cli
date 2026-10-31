@@ -1,7 +1,7 @@
-import { legacyProjectStatePaths } from "../command-internal/legacy-project-state.paths.ts";
+import { legacyProjectStatePaths } from "../shared/config/legacy-project-state.paths.ts";
 import { Config, ConfigProvider, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
-import type { ProjectStateMode } from "../command-internal/project-state-mode.ts";
-import { readProjectLink } from "../command-internal/project-link.ts";
+import type { ProjectStateMode } from "../shared/config/project-state-mode.ts";
+import { readProjectLink } from "../shared/config/project-link.ts";
 import { aiToolLayer } from "../shared/telemetry/ai-tool.layer.ts";
 import { AiTool } from "../shared/telemetry/ai-tool.service.ts";
 import {
@@ -15,12 +15,14 @@ import {
   GroupOrganization,
   GroupProject,
   MaxEnvSignalValueLength,
+  PropAgentName,
   PropArch,
   PropCliVersion,
   PropDeviceId,
   PropEnvSignals,
   PropIsAgent,
   PropIsCi,
+  PropIsEval,
   PropIsFirstRun,
   PropIsTty,
   PropOs,
@@ -112,6 +114,14 @@ export const collectEnvSignals = Effect.gen(function* () {
     : Option.some(signals);
 });
 
+/** Whether `SUPABASE_EVAL` (`1` or `true`) marks this run as an automated evaluation. */
+export const detectEval = Effect.gen(function* () {
+  const raw = yield* Config.option(Config.String("SUPABASE_EVAL"));
+  if (Option.isNone(raw)) return false;
+  const normalized = raw.value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true";
+});
+
 function makeLoadLinkedProject(
   fs: FileSystem.FileSystem,
   path: Path.Path,
@@ -186,6 +196,7 @@ export const analyticsLayerFor = (mode: ProjectStateMode) =>
 
       const isAgent = Option.isSome(aiTool.name);
       const envSignals = yield* collectEnvSignals;
+      const isEval = yield* detectEval;
 
       const baseProperties = stripUndefined({
         [PropPlatform]: "cli",
@@ -196,6 +207,8 @@ export const analyticsLayerFor = (mode: ProjectStateMode) =>
         [PropIsTty]: runtime.isTty,
         [PropIsCi]: runtime.isCi,
         [PropIsAgent]: isAgent,
+        [PropAgentName]: Option.getOrUndefined(aiTool.name),
+        [PropIsEval]: isEval,
         [PropOs]: runtime.os,
         [PropArch]: runtime.arch,
         [PropCliVersion]: runtime.cliVersion,

@@ -15,6 +15,7 @@ import {
   removeContainer,
   removeVolume,
   createContainer,
+  postgresDataInitialized,
   volumeExists,
 } from "./container-lifecycle.ts";
 import { useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
@@ -524,6 +525,40 @@ describe("createContainer secretFiles", () => {
   });
 });
 
+describe("createContainer beforeStart", () => {
+  it.live(
+    "runs the hook with the created container id after the secret copy and before start",
+    () => {
+      const mock = mockSpawner((args) => {
+        if (args[0] === "create") return { exitCode: 0, stdout: "container-id-hook\n" };
+        return { exitCode: 0 };
+      });
+      const spec: StartContainerSpec = {
+        ...baseSpec,
+        binds: [],
+        secretFiles: [{ containerPath: "/etc/kong/kong.yml", content: "super-secret-content" }],
+      };
+
+      return createContainer(
+        mock.spawner,
+        spec,
+        { projectId: "proj", isBitbucketPipeline: false, workdir: workdir.current, extraHosts: [] },
+        (containerId) => postgresDataInitialized(mock.spawner, containerId).pipe(Effect.asVoid),
+      ).pipe(
+        Effect.map((containerId) => {
+          expect(containerId).toBe("container-id-hook");
+          expect(mock.spawned).toEqual([
+            expect.arrayContaining(["create"]),
+            ["cp", "-", "container-id-hook:/"],
+            ["cp", "container-id-hook:/var/lib/postgresql/data/PG_VERSION", "-"],
+            ["start", "container-id-hook"],
+          ]);
+        }),
+      );
+    },
+  );
+});
+
 describe("ensureNetwork", () => {
   it.live("creates the network with labels when it does not exist yet", () => {
     const mock = mockSpawner((args) =>
@@ -696,17 +731,14 @@ describe("volumeExists", () => {
     );
   });
 
-  it.live(
-    "resolves true (protected, not fresh) on an ambiguous inspect failure, matching Go's IsNotFound gate",
-    () => {
-      const mock = mockSpawner(() => ({ exitCode: 1, stderr: "permission denied\n" }));
-      return volumeExists(mock.spawner, "supabase_db_proj").pipe(
-        Effect.map((exists) => {
-          expect(exists).toBe(true);
-        }),
-      );
-    },
-  );
+  it.live("resolves true (protected, not fresh) on an ambiguous inspect failure", () => {
+    const mock = mockSpawner(() => ({ exitCode: 1, stderr: "permission denied\n" }));
+    return volumeExists(mock.spawner, "supabase_db_proj").pipe(
+      Effect.map((exists) => {
+        expect(exists).toBe(true);
+      }),
+    );
+  });
 
   it.live("fails with VolumeInspectError when no runtime can be spawned", () => {
     const spawner = ChildProcessSpawner.make(() =>
@@ -723,6 +755,88 @@ describe("volumeExists", () => {
       Effect.flip,
       Effect.map((error) => {
         expect(error).toBeInstanceOf(VolumeInspectError);
+      }),
+    );
+  });
+});
+
+describe("postgresDataInitialized", () => {
+  const pgVersionProbe = ["cp", "container-id-pg:/var/lib/postgresql/data/PG_VERSION", "-"];
+
+  it.live("resolves true when PG_VERSION can be copied out (cp exits 0)", () => {
+    const mock = mockSpawner(() => ({ exitCode: 0 }));
+    return postgresDataInitialized(mock.spawner, "container-id-pg").pipe(
+      Effect.map((initialized) => {
+        expect(initialized).toBe(true);
+        expect(mock.spawned).toEqual([pgVersionProbe]);
+      }),
+    );
+  });
+
+  const missingFileStderr = {
+    Docker:
+      "Error response from daemon: Could not find the file /var/lib/postgresql/data/PG_VERSION in container container-id-pg\n",
+    Podman:
+      'Error: "/var/lib/postgresql/data/PG_VERSION" could not be found on container container-id-pg: no such file or directory\n',
+    "an older Docker client":
+      "Error: No such container:path: container-id-pg:/var/lib/postgresql/data/PG_VERSION\n",
+    "Docker after a config warning":
+      "WARNING: Error loading config file: open /home/me/.docker/config.json: no such file or directory\nError response from daemon: Could not find the file /var/lib/postgresql/data/PG_VERSION in container container-id-pg\n",
+  };
+  for (const [runtime, stderr] of Object.entries(missingFileStderr)) {
+    it.live(`resolves false when ${runtime} reports the PG_VERSION file missing`, () => {
+      const mock = mockSpawner(() => ({ exitCode: 1, stderr }));
+      return postgresDataInitialized(mock.spawner, "container-id-pg").pipe(
+        Effect.map((initialized) => {
+          expect(initialized).toBe(false);
+        }),
+      );
+    });
+  }
+
+  const otherFailureStderr = {
+    "a missing container": "Error response from daemon: No such container: container-id-pg\n",
+    "a permission error": "Error response from daemon: permission denied\n",
+    "an unreachable daemon": "Cannot connect to the Docker daemon at unix:///var/run/docker.sock\n",
+    "an unreadable Docker CLI config":
+      "open /home/me/.docker/config.json: no such file or directory\n",
+    "a Docker socket that does not exist":
+      'error during connect: Head "http://%2Fvar%2Frun%2Fdocker.sock/_ping": dial unix /var/run/docker.sock: connect: no such file or directory\n',
+    "a Docker socket that does not exist when requesting the PG_VERSION archive":
+      'error during connect: Head "http://%2Fvar%2Frun%2Fdocker.sock/v1.47/containers/container-id-pg/archive?path=%2Fvar%2Flib%2Fpostgresql%2Fdata%2FPG_VERSION": dial unix /var/run/docker.sock: connect: no such file or directory\n',
+    "a Podman socket that does not exist":
+      'Error: unable to connect to Podman socket: Get "http://d/v5.2.0/libpod/_ping": dial unix /run/user/1000/podman/podman.sock: connect: no such file or directory\n',
+    "a Podman socket that does not exist when requesting the PG_VERSION archive":
+      'Error: unable to connect to Podman socket: Get "http://d/v5.2.0/libpod/containers/container-id-pg/archive?path=%2Fvar%2Flib%2Fpostgresql%2Fdata%2FPG_VERSION": dial unix /run/user/1000/podman/podman.sock: connect: no such file or directory\n',
+    "a Docker config warning beside an unrelated PG_VERSION error":
+      "WARNING: Error loading config file: open /home/me/.docker/config.json: no such file or directory\nError response from daemon: permission denied reading /var/lib/postgresql/data/PG_VERSION\n",
+    "empty stderr": "",
+  };
+  for (const [cause, stderr] of Object.entries(otherFailureStderr)) {
+    it.live(`resolves true (never re-seeds) on a non-zero exit with ${cause}`, () => {
+      const mock = mockSpawner(() => ({ exitCode: 1, stderr }));
+      return postgresDataInitialized(mock.spawner, "container-id-pg").pipe(
+        Effect.map((initialized) => {
+          expect(initialized).toBe(true);
+        }),
+      );
+    });
+  }
+
+  it.live("resolves true when no container runtime can be spawned", () => {
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.fail(
+        PlatformError.systemError({
+          _tag: "NotFound",
+          module: "ChildProcess",
+          method: "spawn",
+          description: "spawn ENOENT",
+        }),
+      ),
+    );
+    return postgresDataInitialized(spawner, "container-id-pg").pipe(
+      Effect.map((initialized) => {
+        expect(initialized).toBe(true);
       }),
     );
   });

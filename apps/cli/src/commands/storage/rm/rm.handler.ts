@@ -1,42 +1,39 @@
 import { Effect, FileSystem, Option, Path, Ref } from "effect";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { resolveYesWithProjectEnv } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { bold } from "../../../command-internal/colors.ts";
-import { loadProjectEnv } from "../../../command-internal/db-config.toml-read.ts";
+import { loadProjectEnvValues } from "../../../command-internal/db-config.toml-read.ts";
+import { requireTargetMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
+import type { HostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.token.ts";
 import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
 import {
   DELETE_OBJECTS_LIMIT,
   type StorageGateway,
 } from "../../../command-internal/storage-gateway.ts";
 import { splitBucketPrefix, storageIsDir } from "../../../command-internal/storage-url.ts";
+import type { TargetFlagValues } from "../../../command-internal/target/target-flags.ts";
 import {
   assertStorageWorkdir,
   connectStorageGateway,
   loadStorageConfig,
   parseStorageUrlEffect,
+  resolveStorageTarget,
 } from "../storage.frame.ts";
 import {
   StorageMissingBucketError,
   StorageMissingFlagError,
-  StorageMutuallyExclusiveFlagsError,
   StorageObjectNotFoundError,
   StorageRmConfirmationRequiredError,
 } from "../storage.errors.ts";
 import { listStoragePaths } from "../storage.iterate.ts";
 
-export interface StorageRmFlags {
+export interface StorageRmFlags extends TargetFlagValues {
   readonly files: ReadonlyArray<string>;
   readonly recursive: boolean;
-  // Routing reads only `local`; `linked` is unused.
-  readonly linked: boolean;
-  readonly local: boolean;
-  // Overrides the linked project's ref; only valid when targeting --linked, not --local.
-  readonly projectRef: Option.Option<string>;
 }
 
 interface RmSummary {
@@ -55,7 +52,6 @@ export const storageRm = Effect.fn("storage.rm")(function* (flags: StorageRmFlag
   const cliSettings = yield* CommandSettings;
   const telemetryState = yield* TelemetryState;
   const linkedProjectCache = yield* LinkedProjectCache;
-  const resolver = yield* RemoteTarget;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -64,23 +60,18 @@ export const storageRm = Effect.fn("storage.rm")(function* (flags: StorageRmFlag
   yield* Effect.gen(function* () {
     yield* assertStorageWorkdir(cliSettings.workdir);
 
-    // Resolving the project ref before loading the project `.env` ensures an unlinked
-    // workdir fails with the not-linked message instead of an env-parse error.
-    if (Option.isSome(flags.projectRef) && flags.local) {
-      return yield* new StorageMutuallyExclusiveFlagsError({
-        message:
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
-      });
-    }
-
-    const projectRef = flags.local ? "" : (yield* resolver.load(flags.projectRef)).ref;
+    const { target, projectRef } = yield* resolveStorageTarget(flags);
     if (projectRef !== "") {
       yield* Ref.set(linkedRef, Option.some(projectRef));
     }
-    // `.env` loads before the confirmation prompt, so a `SUPABASE_YES` set only in
-    // `supabase/.env` also auto-confirms.
-    const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
-    const yes = yield* resolveYesWithProjectEnv(projectEnv);
+    // Only the local per-bucket prompt honours a project `.env` `SUPABASE_YES`; loaded after the
+    // target so an unlinked workdir fails as not linked, not as an env-parse error.
+    const localYes =
+      target.kind === "local"
+        ? yield* resolveYesWithProjectEnv(
+            yield* loadProjectEnvValues(fs, path, cliSettings.workdir),
+          )
+        : false;
     const loaded = yield* loadStorageConfig(cliSettings, projectRef);
     if (loaded.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
@@ -103,7 +94,7 @@ export const storageRm = Effect.fn("storage.rm")(function* (flags: StorageRmFlag
 
     // No paths and no `-r` falls through to the missing-`-r` failure below.
     const missingRecursive = groups.size === 0 && !flags.recursive;
-    if (!yes && !missingRecursive && output.format !== "text") {
+    if (target.kind === "local" && !localYes && !missingRecursive && output.format !== "text") {
       return yield* new StorageRmConfirmationRequiredError();
     }
 
@@ -122,13 +113,26 @@ export const storageRm = Effect.fn("storage.rm")(function* (flags: StorageRmFlag
             for (const b of buckets) groups.set(b.name, [""]);
           }
 
+          const consent =
+            groups.size === 0
+              ? Option.none<HostedMutationConsent>()
+              : yield* requireTargetMutationConsent(target, {
+                  action: `Delete objects in ${groups.size} bucket${groups.size === 1 ? "" : "s"}`,
+                  details: [...groups].map(
+                    ([bucket, prefixes]) =>
+                      `Delete from ${bucket}: ${prefixes.map(describePrefix).join(", ")}`,
+                  ),
+                });
+
           for (const [bucket, prefixes] of groups) {
-            const shouldDelete = yield* promptYesNo(
-              output,
-              yes,
-              `Confirm deleting files in bucket ${bold(bucket)}?`,
-              false,
-            );
+            const shouldDelete = Option.isSome(consent)
+              ? true
+              : yield* promptYesNo(
+                  output,
+                  localYes,
+                  `Confirm deleting files in bucket ${bold(bucket)}?`,
+                  false,
+                );
             if (!shouldDelete) continue;
 
             // Always try deleting first in case the paths are extensionless files.
@@ -175,6 +179,9 @@ export const storageRm = Effect.fn("storage.rm")(function* (flags: StorageRmFlag
     Effect.ensuring(telemetryState.flush),
   );
 });
+
+const describePrefix = (prefix: string): string =>
+  prefix === "" ? "every object and the bucket itself" : prefix;
 
 /** Deletes objects in chunks of DELETE_OBJECTS_LIMIT. */
 const deleteObjects = (

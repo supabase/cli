@@ -1,21 +1,28 @@
 # `supabase db start`
 
-Fully native. CLI-1954 removed the last Go delegation — the hidden `db __db-bootstrap
---mode start` case no longer exists; CLI-1955 removed the REST of that hidden command too
-— see `db reset --local`'s own `SIDE_EFFECTS.md`. This is `db start`,
+Fully native — see `db reset --local`'s own `SIDE_EFFECTS.md`. This is `db start`,
 **not** the top-level `supabase start`: no status table, no `cli_stack_started` event, no
 `Finished` line, no `--exclude`, no `--ignore-health-check`.
 
-The handler validates config, checks whether the local Postgres container is already
-running (`isLocalDbRunning` in `command-internal/db-bootstrap/local-db-running.ts`,
-shared with `db reset --local`'s own running-check — a direct Docker Engine API
-`GET /containers/<id>/json` over the active context's unix socket / named pipe, falling
-back to a spawned `docker container inspect` whenever the Engine gives no definitive,
-Engine-identified answer, so a stalled `docker` CLI binary can no longer block the
-already-running check itself — issue #6110's silent pre-output hang. The bring-up that
-follows a definitive "absent" answer still shells out, starting with the volume-freshness
-probe, so a stalled `docker` CLI still blocks an actual bring-up), and otherwise natively
-brings up the container itself, reusing
+The handler validates config, takes the project lifecycle lock (see Files Written; held until the
+command ends), inspects the local Postgres
+container (`localDbState` in `command-internal/db-bootstrap/local-db-running.ts` — a direct
+Docker Engine API `GET /containers/<id>/json` over the active context's unix socket / named
+pipe, falling back to a spawned `docker container inspect` whenever the Engine gives no
+definitive, Engine-identified answer, so a stalled `docker` CLI binary can no longer block the
+state check itself — issue #6110's silent pre-output hang; the fallback reads the inspect
+stdout's `State` as well as the exit code. `db reset --local` and `db diff` use its
+existence-only wrapper `isLocalDbRunning`). A running container short-circuits to "already
+running". A container that exists but is not running (`created`, `exited`, …) is removed with
+`docker container rm -f supabase_db_<project>` — only the db container, with the named data
+volume kept and the project's other services left alone — and then brought up like an absent one;
+the reused-volume data-directory probe decides whether setup runs. `--from-backup` against such a
+container fails with `backup volume already exists` (step 3) before the container is removed. In Bitbucket Pipelines
+(`BITBUCKET_CLONE_DIR` set) removal is skipped, since the lack of named volumes would make it
+destructive: the command fails with `<container> container is not running: <state>` and a
+`supabase stop` suggestion instead. The bring-up that follows an "absent" answer (or that
+removal) still shells out, starting with the volume-freshness probe, so a stalled `docker` CLI
+still blocks an actual bring-up. It natively brings up the container itself, reusing
 `command-internal/db-bootstrap/`'s container-bootstrap primitives (the same ones `supabase
 start` uses for its own Postgres bring-up, and `db reset --local`'s own recreate
 composition reuses too — see that command's `SIDE_EFFECTS.md`):
@@ -31,8 +38,8 @@ composition reuses too — see that command's `SIDE_EFFECTS.md`):
    `command-internal/db-bootstrap/start-database.ts`).
 5. Resolve the Postgres image (version-pin-aware) and create + start the container.
    `--from-backup` set: a THIRD entrypoint variant (`buildPostgresStartContainerSpec`'s
-   `fromBackup` branch) — schema.sql + `_supabase.sql` (no `webhook.sql`), a ported
-   `migrate.sh` (`templates/db-restore.sh.ts`, transcribed from Go's `templates/restore.sh`)
+   `fromBackup` branch) — schema.sql + `_supabase.sql` (no `webhook.sql`), a
+   `migrate.sh` (`templates/db-restore.sh.ts`)
    that restores roles then schema from the bind-mounted backup file, and
    `cron.launch_active_jobs = off` appended to `postgresql.conf` — applies regardless of
    `db.major_version`. The backup file itself is bind-mounted `:ro` at `/etc/backup.sql`
@@ -41,29 +48,48 @@ composition reuses too — see that command's `SIDE_EFFECTS.md`):
    13/15's published slim PG15 pin, `15.14.1.167`) to
    `ghcr.io/supabase/cli/postgres`; a historical `.temp/postgres-version` pin,
    PG14, OrioleDB tags the catalog does not pin, and flag-off majors 13/15 (`15.8.1.085`) stay on docker.io.
+   A failed GHCR pull falls back to the same tag and digest on `public.ecr.aws/supabase/cli/postgres`.
    The restore entrypoint is the same on both families.
-6. Wait for the container to become healthy (`db.health_timeout`, default `2m`). A timeout
-   fails the command UNLESS `--from-backup` is set, in which case it is swallowed (a large
-   restore can exceed the timeout) — the container-logs dump to stderr still happens
+6. Wait for Postgres to accept connections (`db.health_timeout`, default `2m`): every 500ms,
+   `docker container inspect` (a container that is not running fails the wait at once), then a
+   short-lived host connect to the published Postgres address (2s dial cap) — Docker's health
+   status is not read, because it needs `docker exec`, which nested or sandboxed Docker cannot
+   do, and lags connectability by up to one 10s interval. A timeout fails the command with
+   `<container> container is not ready: <connect error>` UNLESS `--from-backup` is set, in
+   which case it is swallowed (a large restore can exceed the timeout) — the container-logs dump
+   to stderr, and the `exec format error` recovery advice when the logs show it, still happen
    either way.
 7. On a fresh volume with `--from-backup` unset: run the `SetupLocalDatabase`-equivalent
-   pipeline (`command-internal/db-bootstrap/db-setup.ts`) — initial schema (PG<=14: SQL over a
+   pipeline. A volume counts as fresh when it did not exist before step 2 OR it exists but was
+   never initialised: between create and start, `docker cp <container>:/var/lib/postgresql/data/PG_VERSION -`
+   fails with a diagnostic reporting `PG_VERSION` missing from the container (any other probe outcome counts as
+   initialised). The pipeline (`command-internal/db-bootstrap/db-setup.ts`) — initial schema (PG<=14: SQL over a
    direct `DbConnection`; PG>=15: up to three one-shot `docker run --rm` migrate jobs
    for realtime/storage/auth, each gated on its own `enabled` flag; the realtime
    one-shot runs so user migrations see the tenant), API-privilege
    revocation, `[db.vault]` secret upsert, `supabase/roles.sql` seed, and finally either every
    pending migration + seed, OR — when `--experimental`/`SUPABASE_EXPERIMENTAL` is set AND
-   `[experimental.pgdelta] enabled` is false — every `db.migrations.schema_paths` file
-   (declarative schema files) instead of migrations, followed by seed either way
+   `[experimental.pgdelta] enabled = false` is set explicitly (it defaults to true) — every `db.migrations.schema_paths` file
+   (declarative schema files) instead of migrations (with `--experimental`, pg-delta enabled,
+   and non-empty `schema_paths`, a stderr warning says `schema_paths` is not applied),
+   followed by seed either way
    (`MigrateAndSeed`). Skipped IN FULL when `--from-backup` is set (not merely reduced).
 8. Write `supabase/.branches/_current_branch` = `"main"` if absent — runs on EVERY path
    that reaches this point (fresh volume, existing volume, and a swallowed
    `--from-backup` health-check timeout), but NOT on the already-running short-circuit or
    the `backup volume already exists` guard.
+9. Wait up to 15s for Docker's first health verdict, so `supabase db start && supabase status`
+   does not see `starting`: poll `docker container inspect` every 1s until the health status
+   leaves `starting`, the container stops running, or Docker cannot launch its health check. Never
+   fails the command, whatever the outcome, and is not covered by the rollback below.
 
-Any failure from step 1 onward rolls back via `rollbackStart` (stop + prune every
-container/network this project's label matches; volumes are pruned too, but ONLY when the
-volume was confirmed fresh this run).
+Any failure from step 1 onward prints `Stopping containers...` to stderr and rolls back via
+`rollbackDatabaseStart`, which only touches what this command creates: the db container
+(`docker container rm -f`), the db volume (`docker volume rm -f supabase_db_<project>`, ONLY when
+the volume was confirmed fresh this run, including a reused volume the probe found uninitialised,
+even when `docker start` then fails), and unused project-labelled networks
+(`docker network prune`). The project's other containers and volumes are left alone. A rollback
+failure is logged to stderr and never replaces the original error.
 
 ## Files Read
 
@@ -80,46 +106,50 @@ volume was confirmed fresh this run).
 | `<workdir>/supabase/migrations/*.sql`, `supabase/seed.sql`                                      | SQL    | on a fresh volume with no `--from-backup`, via the standard migration-apply + seed pipeline                                                                                  |
 | `<workdir>/supabase/<db.migrations.schema_paths entries>` (files/directories/globs)             | SQL    | on a fresh volume with no `--from-backup`, INSTEAD of `migrations/*.sql`, when `--experimental`/`SUPABASE_EXPERIMENTAL` is set and `[experimental.pgdelta] enabled` is false |
 | `<workdir>/supabase/.branches/_current_branch`                                                  | text   | always, existence check before writing (see "Files Written")                                                                                                                 |
-| `~/.docker/config.json` + Docker context store (`contexts/meta/<sha256(context)>/meta.json`)    | JSON   | resolving the daemon endpoint for the already-running probe (in-process); also read by the `docker`/`podman` CLI itself for registry auth                                    |
+| `~/.docker/config.json` + Docker context store (`contexts/meta/<sha256(context)>/meta.json`)    | JSON   | resolving the daemon endpoint for the db state probe (in-process); also read by the `docker`/`podman` CLI itself for registry auth                                           |
 
 ## Files Written
 
-| Path                                                                  | Format | When                                                                                               |
-| --------------------------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/.branches/_current_branch`                        | text   | only if absent — writes `"main"` (see the step-by-step sequence above for exactly when)            |
-| local Docker volume `supabase_db_<project>`                           | —      | the Postgres data volume, created on first start (or first `--from-backup` restore)                |
-| local Docker network `supabase_network_<project>` (or `--network-id`) | —      | created if it doesn't already exist                                                                |
-| `$SUPABASE_HOME/stacks/<stackId>/`                                    | JSON   | the stack definition, service identities, selected runtime, and service state on the stack backend |
-| `~/.supabase/telemetry.json`                                          | JSON   | always — telemetry flush (`Effect.ensuring(telemetryState.flush)`), success and failure            |
+| Path                                                                  | Format           | When                                                                                                                                                                                                               |
+| --------------------------------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `<workdir>/supabase/.branches/_current_branch`                        | text             | only if absent — writes `"main"` (see the step-by-step sequence above for exactly when)                                                                                                                            |
+| local Docker volume `supabase_db_<project>`                           | —                | the Postgres data volume, created on first start (or first `--from-backup` restore)                                                                                                                                |
+| local Docker network `supabase_network_<project>` (or `--network-id`) | —                | created if it doesn't already exist                                                                                                                                                                                |
+| `$SUPABASE_HOME/stacks/<stackId>/`                                    | JSON             | the stack definition, service identities, selected runtime, and service state on the stack backend                                                                                                                 |
+| `~/.supabase/telemetry.json`                                          | JSON             | always — telemetry flush (`Effect.ensuring(telemetryState.flush)`), success and failure                                                                                                                            |
+| `$SUPABASE_HOME/locks/docker-lifecycle.lock`                          | SQLite lock file | held for the whole run: shared for one project, exclusive for `stop --all`; waits up to 10 minutes for a conflicting command (skipped, with a debug line, when `$SUPABASE_HOME/locks` cannot be created or opened) |
+| `$SUPABASE_HOME/locks/docker-project-<sha256(project label)>.lock`    | SQLite lock file | held for the whole run: serializes lifecycle commands for the same project; waits up to 10 minutes (skipped, with a debug line, when `$SUPABASE_HOME/locks` cannot be created or opened)                           |
 
 ## Subprocesses
 
 Every step below shells out to `docker` (falling back to `podman`), matching every other
-native container command in this codebase — never `supabase-go` — except the
-already-running probe, which prefers a direct Engine-API request (see "API Routes") and
+native container command in this codebase, except the
+db state probe, which prefers a direct Engine-API request (see "API Routes") and
 only spawns on fallback.
 
-| Command                                                                                                                          | When                                                                                                                                                       |
-| -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `docker container inspect supabase_db_<project>`                                                                                 | the already-running probe — only when the direct Engine-API request (active local socket/named pipe) gives no definitive answer                            |
-| `docker network create --label ... <networkId>`                                                                                  | when not already running, unless `--network-id` names a built-in network                                                                                   |
-| `docker volume inspect supabase_db_<project>`                                                                                    | when not already running — the pre-create fresh-volume probe                                                                                               |
-| `docker image inspect` / `docker pull` (registry-fallback resolve)                                                               | when not already running — resolves the Postgres image                                                                                                     |
-| `docker volume create --label ...`                                                                                               | when not already running, unless a `--from-backup` restore onto an existing volume (fails first)                                                           |
-| `docker create` + optional `docker cp - <id>:/` + `docker start`                                                                 | when not already running — `cp` streams one in-memory tar archive containing the pgsodium root key at its exact path when the selected entrypoint needs it |
-| `docker container inspect` (repeated)                                                                                            | health-wait polling, 1s constant backoff up to `db.health_timeout`                                                                                         |
-| `docker logs <id>`                                                                                                               | on a health-check timeout (either path — swallowed or not)                                                                                                 |
-| `docker run --rm ...`                                                                                                            | fresh volume, no `--from-backup`, `db.major_version >= 15`: up to 3 one-shot migrate jobs (realtime/storage/auth)                                          |
-| `docker ps` / `docker stop` / `docker container prune` / `docker volume prune` (fresh-volume runs only) / `docker network prune` | on ANY failure from network-ensure through `_current_branch` — the rollback                                                                                |
+| Command                                                                                            | When                                                                                                                                                       |
+| -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `docker container inspect supabase_db_<project>`                                                   | the db state probe — only when the direct Engine-API request (active local socket/named pipe) gives no definitive answer                                   |
+| `docker container rm -f supabase_db_<project>`                                                     | the db container exists but is not running, outside Bitbucket Pipelines — the data volume is kept                                                          |
+| `docker network create --label ... <networkId>`                                                    | when not already running, unless `--network-id` names a built-in network                                                                                   |
+| `docker volume inspect supabase_db_<project>`                                                      | when not already running — the pre-create fresh-volume probe                                                                                               |
+| `docker image inspect` / `docker pull` (registry-fallback resolve)                                 | when not already running — resolves the Postgres image                                                                                                     |
+| `docker volume create --label ...`                                                                 | when not already running, unless a `--from-backup` restore onto an existing volume (fails first)                                                           |
+| `docker create` + optional `docker cp - <id>:/` + `docker start`                                   | when not already running — `cp` streams one in-memory tar archive containing the pgsodium root key at its exact path when the selected entrypoint needs it |
+| `docker cp <id>:/var/lib/postgresql/data/PG_VERSION -`                                             | when the volume already existed, between `docker create` and `docker start` — the data-directory probe; its stdout is discarded                            |
+| `docker container inspect` (repeated)                                                              | readiness polling every 500ms up to `db.health_timeout`, then health-settle polling every 1s for up to 15s                                                 |
+| `docker logs <id>`                                                                                 | on a health-check timeout (either path — swallowed or not)                                                                                                 |
+| `docker run --rm ...`                                                                              | fresh volume, no `--from-backup`, `db.major_version >= 15`: up to 3 one-shot migrate jobs (realtime/storage/auth)                                          |
+| `docker container rm -f` / `docker volume rm -f` (fresh-volume runs only) / `docker network prune` | on ANY failure from network-ensure through `_current_branch` — the rollback                                                                                |
 
 ## API Routes
 
-No platform (Management API) routes. The already-running probe issues one Docker Engine
+No platform (Management API) routes. The db state probe issues one Docker Engine
 API request over the active context's local unix socket / named pipe:
 
-| Method | Path                                     | Auth | Request body | Response (used fields)                                                                                                                                                          |
-| ------ | ---------------------------------------- | ---- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/containers/supabase_db_<project>/json` | —    | —            | `Api-Version`/`Server` identity headers + status; a 200 body must parse as a JSON object (identity-gated 200 → running, 404 → absent; anything else → the spawned-CLI fallback) |
+| Method | Path                                     | Auth | Request body | Response (used fields)                                                                                                                                                                                                    |
+| ------ | ---------------------------------------- | ---- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/containers/supabase_db_<project>/json` | —    | —            | `Api-Version`/`Server` identity headers + status; a 200 body must parse as a JSON object (identity-gated 200 → exists, running unless `State.Running` is `false`, 404 → absent; anything else → the spawned-CLI fallback) |
 
 ## Environment Variables
 
@@ -131,7 +161,6 @@ API request over the active context's local unix socket / named pipe:
 | `SUPABASE_DB_HEALTH_TIMEOUT`                                                                                         | overrides `db.health_timeout`                                                                                                                                                                                                                                                                                                                         | no        |
 | `SUPABASE_DB_SETTINGS_*`                                                                                             | overrides individual `[db.settings]` fields                                                                                                                                                                                                                                                                                                           | no        |
 | `SUPABASE_DB_ORIOLEDB_VERSION`                                                                                       | overrides `db.orioledb_version` (image + env)                                                                                                                                                                                                                                                                                                         | no        |
-| `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION`                                                                             | deprecated alias of `SUPABASE_DB_ORIOLEDB_VERSION`, used only while that is unset; when set, stderr gets `WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.`                                                                                                            | no        |
 | `SUPABASE_EXPERIMENTAL_S3_{HOST,REGION,ACCESS_KEY,SECRET_KEY}`                                                       | OrioleDB S3 env overrides                                                                                                                                                                                                                                                                                                                             | no        |
 | `SUPABASE_REALTIME_ENABLED`                                                                                          | gates the fresh-volume realtime migrate job                                                                                                                                                                                                                                                                                                           | no        |
 | `SUPABASE_REALTIME_IP_VERSION` / `_MAX_HEADER_LENGTH`                                                                | realtime migrate job env overrides                                                                                                                                                                                                                                                                                                                    | no        |
@@ -154,15 +183,17 @@ code is surfaced on failure.
 
 ## Exit Codes
 
-| Code | Condition                                                                   |
-| ---- | --------------------------------------------------------------------------- |
-| `0`  | success — database started, or already running                              |
-| `0`  | `--from-backup` set and the health-check timed out (swallowed)              |
-| `1`  | malformed `supabase/config.toml`                                            |
-| `1`  | Docker daemon unreachable / inspect failure                                 |
-| `1`  | `backup volume already exists` (`--from-backup` against a non-fresh volume) |
-| `1`  | a health-check timeout with `--from-backup` unset                           |
-| `1`  | any other container-bootstrap failure (network/volume/create/start/setup)   |
+| Code | Condition                                                                                                                                                                                                                                                                     |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — database started, or already running                                                                                                                                                                                                                                |
+| `0`  | `--from-backup` set and the health-check timed out (swallowed)                                                                                                                                                                                                                |
+| `1`  | malformed `supabase/config.toml`                                                                                                                                                                                                                                              |
+| `1`  | another lifecycle command still holds this project's lock after 10 minutes — prints `Waiting for another Supabase CLI command to finish with project <id>...` (or `...with local Supabase projects...` behind `stop --all`) to stderr first (`ProjectLifecycleLockBusyError`) |
+| `1`  | Docker daemon unreachable / inspect failure                                                                                                                                                                                                                                   |
+| `1`  | db container exists but is not running, in Bitbucket Pipelines (`supabase stop` suggestion)                                                                                                                                                                                   |
+| `1`  | `backup volume already exists` (`--from-backup` against a non-fresh volume)                                                                                                                                                                                                   |
+| `1`  | a health-check timeout with `--from-backup` unset                                                                                                                                                                                                                             |
+| `1`  | any other container-bootstrap failure (network/volume/create/start/setup)                                                                                                                                                                                                     |
 
 ## Output
 
@@ -212,13 +243,13 @@ The resident owner process manages the database beyond the CLI invocation. Stack
 ## Notes
 
 - **`pg_net` converges with `[experimental.webhooks]` on every non-backup start** (shared
-  `startDatabase` behavior — see `supabase start`'s SIDE_EFFECTS.md note and
-  `docs/go-cli-divergences.md`): fresh volumes install it only when webhooks are enabled or
-  migration history owns it; existing volumes with webhooks disabled DROP a `pg_net` that
+  `startDatabase` behavior — see `supabase start`'s SIDE_EFFECTS.md note): fresh volumes
+  install it only when webhooks are enabled or migration history owns it; existing volumes
+  with webhooks disabled DROP a `pg_net` that
   migration history does not own. `pg_net` installed outside migrations (Studio SQL editor)
   is dropped on the next start — accepted, documented edge.
-- `--from-backup` restores the database from a logical backup file on start; the health
-  check is skipped (not failed) for backups — a large restore can exceed
+- `--from-backup` restores the database from a logical backup file on start; a readiness-wait
+  timeout is swallowed (not failed) for backups — a large restore can exceed
   `db.health_timeout`.
 - No `cli_stack_started` telemetry — that event belongs to `supabase start`, not
   `db start`. The only event is the standard `cli_command_executed`.

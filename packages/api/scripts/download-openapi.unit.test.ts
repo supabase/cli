@@ -1,3 +1,5 @@
+import { NodeServices } from "@effect/platform-node";
+import { Effect } from "effect";
 import { describe, expect, test, vi } from "vitest";
 
 import {
@@ -299,7 +301,7 @@ describe("download-openapi", () => {
       },
     };
 
-    expect(() => assertMergedOpenApiDocument(document)).toThrow(
+    expect(() => Effect.runSync(assertMergedOpenApiDocument(document))).toThrow(
       'Duplicate OpenAPI operationId "allV2ProjectsByRefWebhooks" claimed by: GET /v2/projects/{ref}/webhooks/endpoints, GET /v2/projects/{ref}/webhooks/endpoints/{id}.',
     );
   });
@@ -307,7 +309,7 @@ describe("download-openapi", () => {
   test("throws when an operationId's version prefix disagrees with its path", () => {
     const document = { paths: { "/v2/x": { get: { operationId: "v1-x" } } } };
 
-    expect(() => assertMergedOpenApiDocument(document)).toThrow(
+    expect(() => Effect.runSync(assertMergedOpenApiDocument(document))).toThrow(
       'OpenAPI operationId "v1-x" for GET /v2/x has version prefix "v1" that does not match the path\'s leading segment "v2".',
     );
   });
@@ -316,7 +318,7 @@ describe("download-openapi", () => {
     const document = { paths: { "/v1/a": { get: {} } } };
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    expect(() => assertMergedOpenApiDocument(document)).not.toThrow();
+    expect(() => Effect.runSync(assertMergedOpenApiDocument(document))).not.toThrow();
     expect(warnSpy).toHaveBeenCalledWith(
       "OpenAPI operation GET /v1/a has no operationId; generate.ts will skip it.",
     );
@@ -365,11 +367,14 @@ describe("download-openapi", () => {
     const test_ = (path: string, value: unknown = []) => ({ op: "test", path, value });
     const replace = (path: string, value: unknown = ["x"]) => ({ op: "replace", path, value });
 
-    test("accepts the committed overrides file", async () => {
-      const overrides = await loadOpenApiOverrides();
+    test("accepts the committed overrides file", () =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const overrides = yield* loadOpenApiOverrides;
 
-      expect(overrides.length).toBeGreaterThan(0);
-    });
+          expect(overrides.length).toBeGreaterThan(0);
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ));
 
     test("rejects a replace that is not directly preceded by a test on the same path", () => {
       expect(() =>

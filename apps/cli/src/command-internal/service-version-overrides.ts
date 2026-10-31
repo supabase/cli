@@ -8,7 +8,10 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
-import { legacyProjectStatePaths, type LegacyStateFile } from "./legacy-project-state.paths.ts";
+import {
+  legacyProjectStatePaths,
+  type LegacyStateFile,
+} from "../shared/config/legacy-project-state.paths.ts";
 import { usesStackState } from "./stack-backend.ts";
 
 /** A saved `.temp` pin is not a usable image tag. The file is left unchanged. */

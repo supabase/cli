@@ -7,7 +7,7 @@ type StackRuntimePreference =
   | { readonly kind: "container"; readonly engine: "docker" | "podman" };
 
 import { NetworkIdFlag } from "./global-flags.ts";
-import { viperEnvStringWithProjectFallback } from "./viper-env.ts";
+import { supabaseEnvStringWithProjectFallback } from "./supabase-env.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { DockerRun } from "./docker-run.service.ts";
 import { DockerRunError } from "./docker-run.errors.ts";
@@ -212,7 +212,7 @@ export const dumpNetworkMode = Effect.fnUntraced(function* (
 ): Effect.fn.Return<{ readonly _tag: "named"; readonly name: string } | { readonly _tag: "host" }> {
   if (networkId !== undefined && networkId.length > 0) return { _tag: "named", name: networkId };
   if (forceHostNetwork) return { _tag: "host" };
-  const envNetworkId = yield* viperEnvStringWithProjectFallback(
+  const envNetworkId = yield* supabaseEnvStringWithProjectFallback(
     "SUPABASE_NETWORK_ID",
     projectEnvValues,
   );
@@ -232,6 +232,7 @@ const transformDumpLine = (
   line: string,
   script: string,
   env: Readonly<Record<string, string>>,
+  inQuotedSql = false,
 ): string | undefined => {
   const applyExtraSed = (value: string | undefined): string | undefined =>
     env["EXTRA_SED"] === "/^--/d" && value?.startsWith("--") ? undefined : value;
@@ -248,6 +249,13 @@ const transformDumpLine = (
     if (reservedRole.test(line))
       return dropComments(allowedConfig.test(line) ? line : `-- ${line}`);
     if (new RegExp(`GRANT ".*" TO "(${reservedRoles})"`, "u").test(line))
+      return dropComments(`-- ${line}`);
+    if (
+      !inQuotedSql &&
+      new RegExp(`^GRANT [A-Z ,]+ ON PARAMETER ".*" TO "(${reservedRoles})"([ ;]|$)`, "u").test(
+        line,
+      )
+    )
       return dropComments(`-- ${line}`);
     if (line.startsWith("-- ") && allowedConfig.test(line.slice(3)))
       return dropComments(line.slice(3));
@@ -304,6 +312,25 @@ const stackDumpStdout = <E>(
   const encoder = new TextEncoder();
   let carry = "";
   let previous: string | undefined;
+  let quote = "";
+  const transformLine = (line: string) => {
+    const inQuotedSql = quote !== "";
+    // pg_dumpall doubles quotes in literals and identifiers, including E-strings.
+    if (script.includes("pg_dumpall")) {
+      for (let i = 0; i < line.length; i++) {
+        const char = line[i];
+        const next = line[i + 1];
+        if (quote !== "") {
+          if (char === quote) {
+            if (next === quote) i++;
+            else quote = "";
+          }
+        } else if (char === "'" || char === '"') quote = char;
+        else if (char === "-" && next === "-") break;
+      }
+    }
+    return transformDumpLine(line, script, env, inQuotedSql);
+  };
   const onChunk = (bytes: Uint8Array) =>
     Effect.suspend(() => {
       carry += decoder.decode(bytes, { stream: true });
@@ -312,7 +339,7 @@ const stackDumpStdout = <E>(
       return Effect.forEach(
         lines,
         (line) => {
-          const transformed = transformDumpLine(line, script, env);
+          const transformed = transformLine(line);
           if (
             transformed === undefined ||
             (script.includes("pg_dumpall") && transformed === previous)
@@ -327,7 +354,7 @@ const stackDumpStdout = <E>(
   const flush = () =>
     Effect.suspend(() => {
       carry += decoder.decode();
-      const final = transformDumpLine(carry, script, env);
+      const final = transformLine(carry);
       return final === undefined ||
         final.length === 0 ||
         (script.includes("pg_dumpall") && final === previous)

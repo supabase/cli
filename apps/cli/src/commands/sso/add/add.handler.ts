@@ -4,18 +4,22 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { RemoteTarget } from "../../../config/remote-target.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import {
-  cobraMutuallyExclusiveErrorMessage,
+  mutuallyExclusiveFlagsMessage,
   PERSISTENT_VALUE_FLAG_NAMES,
   PERSISTENT_VALUE_FLAG_SHORTHANDS,
-  pflagArgvScan,
-} from "../../../shared/cli/cobra-flag-groups.ts";
+  scanArgvFlags,
+} from "../../../shared/cli/flag-groups.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
-import { encodeGoToml, encodeGoYaml } from "../../../command-internal/go-struct-output.encoders.ts";
-import { GO_SSO_PROVIDER_RESPONSE } from "../sso.go-payload.ts";
+import { encodeSortedJson } from "../../../command-internal/output.encoders.ts";
+import {
+  encodeStructToml,
+  encodeStructYaml,
+} from "../../../command-internal/struct-output.encoders.ts";
+import { SSO_PROVIDER_RESPONSE_SHAPE } from "../sso.response-shape.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import { accessTokenForProfile } from "../../../auth/command-credentials.layer.ts";
 import { missingAccessTokenMessage } from "../../../auth/access-token.ts";
@@ -23,13 +27,14 @@ import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.serv
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { gateResponse, suggestUpgrade } from "../../../command-internal/upgrade-suggest.ts";
 import {
-  pflagBoolValue,
-  pflagEnumValue,
-  pflagSliceValue,
-  pflagStringValue,
-  resolvePflagProfile,
-  validatePflagWorkdir,
-} from "../../../command-internal/pflag-reconcile.ts";
+  argvBoolValue,
+  argvEnumValue,
+  argvRemoteValue,
+  argvSliceValue,
+  argvStringValue,
+  resolveArgvProfile,
+  validateArgvWorkdir,
+} from "../../../command-internal/argv-flag-reconcile.ts";
 import {
   SsoAddAttributeMappingFileError,
   SsoAddMetadataFileError,
@@ -113,6 +118,7 @@ const handleAddError = <R>(
           body: mapped.body,
           message: mapped.message,
           upgradeSuggested,
+          entitlement: mapped.entitlement,
         });
       }),
     ),
@@ -123,7 +129,7 @@ const SSO_ADD_COMMAND_PATH = ["sso", "add"] as const;
 // Declaration order sets the mutex error message's bracket order.
 const SSO_ADD_MUTEX_GROUP = ["metadata-file", "metadata-url"] as const;
 
-// Value-taking flags for `pflagArgvScan`: each consumes the next argv token
+// Value-taking flags for `scanArgvFlags`: each consumes the next argv token
 // as its value. `--skip-url-validation` is this command's only boolean flag,
 // so it's excluded.
 const SSO_ADD_SCAN_SPEC = {
@@ -142,10 +148,9 @@ const SSO_ADD_SCAN_SPEC = {
 
 export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
-  const resolver = yield* RemoteTarget;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const stdio = yield* Stdio.Stdio;
@@ -153,28 +158,28 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
 
   yield* Effect.gen(function* () {
     // Required-flag and mutex validation run first, against raw argv rather
-    // than the parsed flags: pflag treats a flag as "set" once passed
-    // regardless of value, and consumes tokens differently than the TS
+    // than the parsed flags: a flag counts as "set" once passed
+    // regardless of value, and tokens are consumed differently than the TS
     // parser does.
-    const scan = pflagArgvScan(rawArgs, SSO_ADD_COMMAND_PATH, SSO_ADD_SCAN_SPEC);
+    const scan = scanArgvFlags(rawArgs, SSO_ADD_COMMAND_PATH, SSO_ADD_SCAN_SPEC);
     const occurrences = scan.occurrences;
 
-    // Validate against pflag's accepted values before the missing-value,
-    // required-flag, and mutex checks — pflag fails on the first invalid
-    // occurrence even if a later one overrides it, and its bool parsing
+    // Validate against the accepted values before the missing-value,
+    // required-flag, and mutex checks — the first invalid
+    // occurrence fails even if a later one overrides it, and bool parsing
     // excludes `yes`/`no`.
-    yield* Effect.fromResult(pflagEnumValue(occurrences, "type", ["saml"], "-t, --type")).pipe(
+    yield* Effect.fromResult(argvEnumValue(occurrences, "type", ["saml"], "-t, --type")).pipe(
       Effect.mapError((message) => new SsoInvalidFlagValueError({ message })),
     );
     const skipUrlValidation = yield* Effect.fromResult(
-      pflagBoolValue(occurrences, "skip-url-validation"),
+      argvBoolValue(occurrences, "skip-url-validation"),
     ).pipe(Effect.mapError((message) => new SsoInvalidFlagValueError({ message })));
     const nameIdFormat = yield* Effect.fromResult(
-      pflagEnumValue(occurrences, "name-id-format", SSO_NAME_ID_FORMATS),
+      argvEnumValue(occurrences, "name-id-format", SSO_NAME_ID_FORMATS),
     ).pipe(Effect.mapError((message) => new SsoInvalidFlagValueError({ message })));
 
     // A bare value-taking flag as the final token (e.g. `--domains` with
-    // nothing after) is a pflag parse error; the TS parser accepts it as
+    // nothing after) is a parse error; the TS parser accepts it as
     // unset, so this must run before every other validation.
     if (scan.missingValueError !== undefined) {
       return yield* new SsoFlagNeedsArgumentError({ message: scan.missingValueError });
@@ -185,7 +190,7 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
     // the reconciled profile decides the API host, not the parser's. Where
     // they agree this resolves to `none` and the config layer's apiUrl is
     // already correct.
-    const reconciledProfile = yield* resolvePflagProfile(scan);
+    const reconciledProfile = yield* resolveArgvProfile(scan);
     const profileApiUrl = Option.map(reconciledProfile, (profile) => profile.apiUrl);
     // Resolved once (memoized) so the token read happens after
     // required/mutex/workdir validation — a missing or invalid reconciled
@@ -205,10 +210,10 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
     // checks: when the scan and the parser disagree on what `--workdir`
     // consumed, this stops a POST that would otherwise fire against the
     // wrong metadata source.
-    yield* validatePflagWorkdir(scan);
+    yield* validateArgvWorkdir(scan);
 
-    // `--type` is required. If pflag would have consumed the `--type`/`-t`
-    // token as another flag's value rather than registering it, the
+    // `--type` is required. If the `--type`/`-t`
+    // token was consumed as another flag's value rather than registered, the
     // required-flag check must still fail — the TS parser can't see that
     // (it refuses flag-shaped values), so this reproduces it from the scan.
     if (!occurrences.has("type") && scan.consumedFlagNames.has("type")) {
@@ -218,22 +223,23 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
     const changed = SSO_ADD_MUTEX_GROUP.filter((flagName) => occurrences.has(flagName));
     if (changed.length > 1) {
       return yield* new SsoMutexFlagError({
-        message: cobraMutuallyExclusiveErrorMessage(SSO_ADD_MUTEX_GROUP, changed),
+        message: mutuallyExclusiveFlagsMessage(SSO_ADD_MUTEX_GROUP, changed),
       });
     }
 
-    // Everything below reads pflag-effective values from the scan rather
-    // than the TS-parsed flags, since pflag consumes flag-shaped tokens as
+    // Everything below reads values from the scan rather
+    // than the TS-parsed flags, since the scan consumes flag-shaped tokens as
     // values where the parser doesn't.
-    const projectRef = pflagStringValue(occurrences, "project-ref");
-    const metadataFile = pflagStringValue(occurrences, "metadata-file");
-    const metadataUrl = pflagStringValue(occurrences, "metadata-url");
-    const attributeMappingFile = pflagStringValue(occurrences, "attribute-mapping-file");
-    const domains = pflagSliceValue(occurrences, "domains", flags.domains);
+    const projectRef = argvStringValue(occurrences, "project-ref");
+    const remote = argvRemoteValue(occurrences);
+    const metadataFile = argvStringValue(occurrences, "metadata-file");
+    const metadataUrl = argvStringValue(occurrences, "metadata-url");
+    const attributeMappingFile = argvStringValue(occurrences, "attribute-mapping-file");
+    const domains = argvSliceValue(occurrences, "domains", flags.domains);
 
-    const { ref } = yield* resolver.resolve(projectRef);
+    const ref = yield* resolveProjectTarget({ remote, projectRef });
 
-    // Use the pflag-reconciled profile's host when it disagreed with
+    // Use the argv-reconciled profile's host when it disagreed with
     // `--profile`, otherwise the config layer's — applies to the POST and
     // every auxiliary call alike.
     const apiUrl = Option.getOrElse(profileApiUrl, () => cliSettings.apiUrl);
@@ -285,6 +291,16 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
         if (format !== undefined) body.name_id_format = format;
       }
 
+      yield* requireHostedMutationConsent({
+        action: "Add an SSO provider",
+        details: [
+          `Type: ${flags.type}`,
+          ...(domains.length > 0 ? [`Domains: ${domains.join(", ")}`] : []),
+          ...(Option.isSome(metadataFile) ? ["Metadata: from a file"] : []),
+          ...(Option.isSome(metadataUrl) ? ["Metadata: from a URL"] : []),
+        ],
+      });
+
       const reconciledToken =
         reconciledTokenCached === undefined
           ? undefined
@@ -320,20 +336,20 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
       );
       yield* creating?.clear ?? Effect.void;
 
-      const goFmt = Option.getOrUndefined(goOutputFlag);
+      const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
-      if (goFmt === "json") {
-        yield* output.raw(encodeGoJson(rawBody));
+      if (outputFlagFormat === "json") {
+        yield* output.raw(encodeSortedJson(rawBody));
         return;
       }
-      if (goFmt === "yaml") {
-        yield* output.raw(encodeGoYaml(rawBody, GO_SSO_PROVIDER_RESPONSE));
+      if (outputFlagFormat === "yaml") {
+        yield* output.raw(encodeStructYaml(rawBody, SSO_PROVIDER_RESPONSE_SHAPE));
         return;
       }
-      if (goFmt === "toml") {
+      if (outputFlagFormat === "toml") {
         // Same TOML-encode-failure pattern as list/show.
         const toml = yield* Effect.try({
-          try: () => encodeGoToml(rawBody, GO_SSO_PROVIDER_RESPONSE),
+          try: () => encodeStructToml(rawBody, SSO_PROVIDER_RESPONSE_SHAPE),
           catch: (cause) =>
             new SsoTomlEncodeError({
               message: `failed to output toml: ${cause instanceof Error ? cause.message : String(cause)}`,
@@ -342,7 +358,7 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
         yield* output.raw(toml);
         return;
       }
-      if (goFmt === "env") {
+      if (outputFlagFormat === "env") {
         // `-o env` emits nothing for `sso add`.
         return;
       }

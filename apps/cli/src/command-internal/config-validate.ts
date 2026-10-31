@@ -1,6 +1,6 @@
-import { statSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { Data, Effect, FileSystem, Path, type PlatformError } from "effect";
 
+import type { CliConfig } from "@supabase/config";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -9,21 +9,23 @@ import {
 } from "../shared/telemetry/error-actionability.ts";
 import { canonicalPathForContainment, isPathContainedInRoot } from "./path-containment.ts";
 import { BRANCH_PROJECT_REF_PATTERN } from "./ref-patterns.ts";
-import { goUrlParse } from "./storage-url.ts";
+import type { ResolvedAuthExternalProvider } from "./local-config-values.ts";
+import { parseUrl } from "./storage-url.ts";
 
 /**
  * Single home for config validation, shared by the two config readers:
  *
  * - **D** = `db-config.toml-read.ts`: raw TOML document, Effect-based, fails with
  *   `DbConfigLoadError`.
- * - **L** = `local-config-values.ts`: decoded `@supabase/config` `CliConfig`, synchronous,
- *   throws `Error`.
+ * - **L** = `local-config-values.ts`: decoded `@supabase/config` `CliConfig`, Effect-based,
+ *   fails with an `Error`.
  *
  * Per-command reimplementations of any branch {@link validateResolvedConfig} owns are forbidden;
- * hoist here instead. A few branches stay caller-only: `remotes[*].project_id` and
- * `auth.sms`/`auth.external` need the raw pre-decode document, and `auth.jwt_secret` length lives
- * in each key-generation flow. Each reader calls {@link validateResolvedConfig} once, after its
- * own I/O reads, so an error from a branch here surfaces before a caller-only I/O error.
+ * hoist here instead. A few branches stay caller-only: `remotes[*].project_id` needs the raw
+ * pre-decode document, and `auth.jwt_secret` length lives in each key-generation flow. Each reader
+ * calls {@link validateResolvedConfig} once, after its own I/O reads, so an error from a branch
+ * here surfaces before a caller-only I/O error. {@link validateAuthSmsProviders} and
+ * {@link validateAuthExternalProviders} are separate calls taking already-resolved inputs.
  */
 
 // Re-exported under this module's established name; `ref-patterns.ts` is the canonical
@@ -45,29 +47,17 @@ export const HOOK_SECRET_PATTERN = /^v1,whsec_[A-Za-z0-9+/=]{32,88}$/u;
 export const CLERK_DOMAIN_PATTERN =
   /^(clerk([.][a-z0-9-]+){2,}|([a-z0-9-]+[.])+clerk[.]accounts[.]dev)$/u;
 
-// Accepted boolean string forms, matching Go's `strconv.ParseBool`; any other value is a
-// parse error.
-const GO_BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
-const GO_BOOL_FALSE = new Set(["0", "f", "F", "FALSE", "false", "False", ""]);
-
 /**
- * Parses a config bool value: accepts the same string forms as `strconv.ParseBool`, returns
- * `undefined` for anything else (surfaced by callers as a `failed to parse config` error).
- * Used by both D and L for `SUPABASE_*` bool-flavored env overrides and TOML bool decoding.
- */
-export function parseGoBool(value: string): boolean | undefined {
-  if (GO_BOOL_TRUE.has(value)) return true;
-  if (GO_BOOL_FALSE.has(value)) return false;
-  return undefined;
-}
-
-/**
- * Thrown by {@link validateResolvedConfig}. Does not override `.name` — it stays the inherited
+ * Raised by {@link validateResolvedConfig} (thrown) and by the `content_path`/secret resolvers
+ * (failed). Does not override `.name` — it stays the inherited
  * `"Error"` — so `instanceof Error` and `.name` checks can't distinguish it from a plain
  * `Error`; only `.message` is meant to be observed.
  */
-export class ConfigValidateError extends Error {
+export class ConfigValidateError extends Data.Error<{ readonly message: string }> {
   static readonly [ErrorActionabilityFingerprintId] = "ConfigValidateError";
+  constructor(message: string) {
+    super({ message });
+  }
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidConfig;
   }
@@ -229,6 +219,10 @@ function messageOf(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
+/** The `node:fs` error behind a `FileSystem` failure, whose message the config errors quote. */
+export const fsErrorCause = (error: PlatformError.PlatformError): unknown =>
+  error.reason.cause ?? error.reason.description;
+
 /**
  * The canonical `api.port` branch: an enabled API with a port of `0` is
  * invalid config. Exported so the storage-credentials resolver
@@ -312,7 +306,7 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
       throw new ConfigValidateError("Missing required field in config: studio.port");
     }
     try {
-      goUrlParse(input.studio.apiUrl);
+      parseUrl(input.studio.apiUrl);
     } catch (cause) {
       throw new ConfigValidateError(`Invalid config for studio.api_url: ${messageOf(cause)}`);
     }
@@ -340,7 +334,7 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
         provider !== "turnstile"
       ) {
         throw new ConfigValidateError(
-          "failed to parse config: decoding failed due to the following error(s):\n\n'auth.captcha.provider' must be one of [hcaptcha turnstile]",
+          "failed to parse config:\nauth.captcha.provider: must be one of hcaptcha, turnstile",
         );
       }
       if (auth.captcha.enabled) {
@@ -377,12 +371,12 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
           `Missing required field in config: auth.hook.${hook.type}.uri`,
         );
       }
-      // Uses `goUrlParse`'s stricter semantics (the same port used for `studio.api_url`
+      // Uses `parseUrl`'s stricter semantics (the same port used for `studio.api_url`
       // above) so a malformed URI like an unterminated IPv6 host (`http://[::1`) fails the
       // whole load instead of passing a bare scheme-prefix regex.
       let scheme: string;
       try {
-        scheme = goUrlParse(hook.uri).scheme;
+        scheme = parseUrl(hook.uri).scheme;
       } catch (cause) {
         throw new ConfigValidateError(`failed to parse template url: ${messageOf(cause)}`);
       }
@@ -537,7 +531,7 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
     backend !== "bigquery"
   ) {
     throw new ConfigValidateError(
-      "failed to parse config: decoding failed due to the following error(s):\n\n'analytics.backend' must be one of [postgres bigquery]",
+      "failed to parse config:\nanalytics.backend: must be one of postgres, bigquery",
     );
   }
   if (input.analytics.enabled && backend === "bigquery") {
@@ -581,8 +575,14 @@ function isValidJson(value: string): boolean {
 }
 
 /** Absolute → verbatim; relative → join(workdir, "supabase", p). */
-export function resolveSigningKeysPath(workdir: string, signingKeysPath: string): string {
-  return isAbsolute(signingKeysPath) ? signingKeysPath : join(workdir, "supabase", signingKeysPath);
+export function resolveSigningKeysPath(
+  path: Path.Path,
+  workdir: string,
+  signingKeysPath: string,
+): string {
+  return path.isAbsolute(signingKeysPath)
+    ? signingKeysPath
+    : path.join(workdir, "supabase", signingKeysPath);
 }
 
 /** `failed to read signing keys: ${msg(cause)}` */
@@ -598,7 +598,7 @@ export function signingKeysDecodeErrorMessage(cause: unknown): string {
 // with the first key — that JWK-specific decode/signing logic stays in L.
 
 /**
- * Pure exclusivity decision plus the path to read for one template/notification entry. Throws
+ * Exclusivity decision plus the path to read for one template/notification entry. Fails with
  * {@link ConfigValidateError} when `contentPath === ""` and `contentPresent` (`content_path`
  * is required instead of `content`). Returns the absolute, canonicalized path to read, or
  * `undefined` when there's nothing to read; a set `contentPath` always wins over `content`
@@ -606,10 +606,10 @@ export function signingKeysDecodeErrorMessage(cause: unknown): string {
  *
  * The resolved candidate and `base` are both canonicalized and the candidate must resolve
  * inside `base` — an absolute path, a `..` escape, or an in-root symlink pointing outside the
- * project root all throw. This applies unconditionally to every caller (config validation,
+ * project root all fail. This applies unconditionally to every caller (config validation,
  * `config push` content loading, `start`'s pre-Docker containment pass) — there is no opt-out.
  */
-export function resolveEmailTemplateContentPath(args: {
+export const resolveEmailTemplateContentPath = Effect.fnUntraced(function* (args: {
   readonly section: "template" | "notification";
   readonly name: string;
   /** Post-env-expand; `""` = absent. */
@@ -617,35 +617,36 @@ export function resolveEmailTemplateContentPath(args: {
   /** Raw `content` key present in the TOML document. */
   readonly contentPresent: boolean;
   readonly base: string;
-}): string | undefined {
+}) {
   if (args.contentPath.length === 0) {
     if (args.contentPresent) {
-      throw new ConfigValidateError(
+      return yield* new ConfigValidateError(
         `Invalid config for auth.email.${args.section}.${args.name}.content: please use content_path instead`,
       );
     }
     return undefined;
   }
+  const path = yield* Path.Path;
   const candidate =
     args.section === "notification"
-      ? resolveNotificationContentPath(args.base, args.contentPath)
-      : isAbsolute(args.contentPath)
+      ? yield* resolveNotificationContentPath(args.base, args.contentPath)
+      : path.isAbsolute(args.contentPath)
         ? args.contentPath
-        : join(args.base, args.contentPath);
-  const resolvedCanonical = canonicalPathForContainment(candidate);
-  const canonicalBase = canonicalPathForContainment(args.base);
-  if (!isPathContainedInRoot(canonicalBase, resolvedCanonical)) {
+        : path.join(args.base, args.contentPath);
+  const resolvedCanonical = yield* canonicalPathForContainment(candidate);
+  const canonicalBase = yield* canonicalPathForContainment(args.base);
+  if (!isPathContainedInRoot(path, canonicalBase, resolvedCanonical)) {
     // Echoes the declared value, not `resolvedCanonical` — the declared value is already known
     // to the user (it's literally in config.toml or an env override they set), while echoing
     // the symlink-dereferenced target back would let a hostile config probe where it resolves.
-    throw new ConfigValidateError(
+    return yield* new ConfigValidateError(
       `Invalid config for auth.email.${args.section}.${args.name}.content_path: ` +
         `"${args.contentPath}" resolves outside the project root ${args.base} — ` +
         `move the file inside the project, or use a relative path that stays inside it.`,
     );
   }
   return resolvedCanonical;
-}
+});
 
 /**
  * Notification `content_path` resolution with a legacy fallback: older scaffolds documented
@@ -656,15 +657,19 @@ export function resolveEmailTemplateContentPath(args: {
  * {@link probeFile}). Shared by config validation, `config push` content loading, and the Kong
  * template mount builder so every consumer sees the same file.
  */
-function resolveNotificationContentPath(base: string, contentPath: string): string {
-  if (isAbsolute(contentPath)) return contentPath;
-  const resolved = join(base, contentPath);
-  if (probeFile(resolved) === "missing") {
-    const fallbackResolved = join(base, "supabase", contentPath);
-    if (probeFile(fallbackResolved) === "exists") return fallbackResolved;
+const resolveNotificationContentPath = Effect.fnUntraced(function* (
+  base: string,
+  contentPath: string,
+) {
+  const path = yield* Path.Path;
+  if (path.isAbsolute(contentPath)) return contentPath;
+  const resolved = path.join(base, contentPath);
+  if ((yield* probeFile(resolved)) === "missing") {
+    const fallbackResolved = path.join(base, "supabase", contentPath);
+    if ((yield* probeFile(fallbackResolved)) === "exists") return fallbackResolved;
   }
   return resolved;
-}
+});
 
 /**
  * Tri-state existence probe for the notification legacy-fallback decision above: `"exists"`
@@ -675,15 +680,20 @@ function resolveNotificationContentPath(base: string, contentPath: string): stri
  * must only be selected on a confirmed `"exists"`. A single boolean can't express both
  * defaults, so the tri-state lets each caller choose.
  */
-function probeFile(path: string): "exists" | "missing" | "unknown" {
-  try {
-    const stats = statSync(path, { throwIfNoEntry: false });
-    if (stats === undefined) return "missing";
-    return stats.isFile() ? "exists" : "missing";
-  } catch {
-    return "unknown";
-  }
-}
+const probeFile = Effect.fnUntraced(function* (path: string) {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs.stat(path).pipe(
+    Effect.map((info): "exists" | "missing" | "unknown" =>
+      info.type === "File" ? "exists" : "missing",
+    ),
+    Effect.catchReason(
+      "PlatformError",
+      "NotFound",
+      () => Effect.succeed("missing" as const),
+      () => Effect.succeed("unknown" as const),
+    ),
+  );
+});
 
 /** `Invalid config for auth.email.${section}.${name}.content_path: ${msg(cause)}` */
 export function emailContentPathReadErrorMessage(
@@ -697,8 +707,8 @@ export function emailContentPathReadErrorMessage(
 // ── api.tls cert/key (path rule: NO isAbsolute guard) ──
 
 /** Unconditional join(workdir, "supabase", p) — `path.Join` absorbs a leading "/" too. */
-export function resolveApiTlsPath(workdir: string, p: string): string {
-  return join(workdir, "supabase", p);
+export function resolveApiTlsPath(path: Path.Path, workdir: string, p: string): string {
+  return path.join(workdir, "supabase", p);
 }
 
 /** `failed to read TLS cert: ${msg(cause)}` */
@@ -709,4 +719,74 @@ export function apiTlsCertReadErrorMessage(cause: unknown): string {
 /** `failed to read TLS key: ${msg(cause)}` */
 export function apiTlsKeyReadErrorMessage(cause: unknown): string {
   return `failed to read TLS key: ${messageOf(cause)}`;
+}
+
+/**
+ * Validates only the first enabled provider in the fixed priority order; a later
+ * enabled-but-incomplete provider is never checked.
+ */
+export function validateAuthSmsProviders(sms: CliConfig["auth"]["sms"]): void {
+  function requireField(provider: string, field: string, value: string | undefined): void {
+    if (value === undefined || value.length === 0) {
+      throw new ConfigValidateError(
+        `Missing required field in config: auth.sms.${provider}.${field}`,
+      );
+    }
+  }
+
+  if (sms.twilio.enabled) {
+    requireField("twilio", "account_sid", sms.twilio.account_sid);
+    requireField("twilio", "message_service_sid", sms.twilio.message_service_sid);
+    requireField("twilio", "auth_token", sms.twilio.auth_token);
+    return;
+  }
+  if (sms.twilio_verify.enabled) {
+    requireField("twilio_verify", "account_sid", sms.twilio_verify.account_sid);
+    requireField("twilio_verify", "message_service_sid", sms.twilio_verify.message_service_sid);
+    requireField("twilio_verify", "auth_token", sms.twilio_verify.auth_token);
+    return;
+  }
+  if (sms.messagebird.enabled) {
+    requireField("messagebird", "originator", sms.messagebird.originator);
+    requireField("messagebird", "access_key", sms.messagebird.access_key);
+    return;
+  }
+  if (sms.textlocal.enabled) {
+    requireField("textlocal", "sender", sms.textlocal.sender);
+    requireField("textlocal", "api_key", sms.textlocal.api_key);
+    return;
+  }
+  if (sms.vonage.enabled) {
+    requireField("vonage", "from", sms.vonage.from);
+    requireField("vonage", "api_key", sms.vonage.api_key);
+    requireField("vonage", "api_secret", sms.vonage.api_secret);
+    return;
+  }
+}
+
+/**
+ * Validates required fields for every enabled `auth.external.<name>` provider, including
+ * custom names `@supabase/config`'s schema drops at decode time, so `resolved` must come from
+ * `resolveAuthExternalProviders` over the effective document rather than the decoded config.
+ */
+export function validateAuthExternalProviders(
+  resolved: Readonly<Record<string, ResolvedAuthExternalProvider>>,
+): void {
+  for (const [name, provider] of Object.entries(resolved)) {
+    if (!provider.enabled) continue;
+    if (provider.clientId.length === 0) {
+      throw new ConfigValidateError(
+        `Missing required field in config: auth.external.${name}.client_id`,
+      );
+    }
+    if (
+      name !== "apple" &&
+      name !== "google" &&
+      (provider.secret === undefined || provider.secret.length === 0)
+    ) {
+      throw new ConfigValidateError(
+        `Missing required field in config: auth.external.${name}.secret`,
+      );
+    }
+  }
 }

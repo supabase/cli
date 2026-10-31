@@ -1,95 +1,155 @@
-import { readdirSync } from "node:fs";
-import { join } from "node:path";
+import { Effect, FileSystem, Path } from "effect";
 import { describe, expect } from "vitest";
-import { testBehaviour } from "./test-context.ts";
+import { runE2e, testBehaviour } from "./test-context.ts";
 
 const MIGRATION_NAME = "my_change";
 
 describe("migrations", () => {
   describe("migration:new", () => {
-    testBehaviour("creates timestamped sql file", async ({ run, workspace }) => {
-      const result = await run(["migration", "new", MIGRATION_NAME]);
-      expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain("Created new migration at");
-      const files = readdirSync(join(workspace.path, "supabase", "migrations"));
-      expect(files.some((f) => f.endsWith(`_${MIGRATION_NAME}.sql`))).toBe(true);
-    });
+    testBehaviour("creates timestamped sql file", ({ run, workspace, signal }) =>
+      runE2e(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const result = yield* run(["migration", "new", MIGRATION_NAME]);
+          expect(result.exitCode).toBe(0);
+          expect(result.stdout).toContain("Created new migration at");
+          const files = yield* fs.readDirectory(
+            path.join(workspace.path, "supabase", "migrations"),
+          );
+          expect(files.some((f) => f.endsWith(`_${MIGRATION_NAME}.sql`))).toBe(true);
+        }),
+        signal,
+      ),
+    );
 
-    testBehaviour("exits non-zero without name argument", async ({ run }) => {
-      const result = await run(["migration", "new"]);
-      expect(result.exitCode).not.toBe(0);
-      // A missing positional argument's usage block prints to stderr only.
-      expect(result.stdout).toBe("");
-      expect(result.stderr).toContain("migration name");
-    });
+    testBehaviour("exits non-zero without name argument", ({ run, signal }) =>
+      runE2e(
+        Effect.gen(function* () {
+          const result = yield* run(["migration", "new"]);
+          expect(result.exitCode).not.toBe(0);
+          // A missing positional argument's usage block prints to stderr only.
+          expect(result.stdout).toBe("");
+          expect(result.stderr).toContain("migration name");
+        }),
+        signal,
+      ),
+    );
   });
 
   describe("migration:list", () => {
-    testBehaviour("exits non-zero on connection refused", async ({ run }) => {
-      const result = await run(["migration", "list", "--local"]);
-      expect(result.exitCode).not.toBe(0);
-      expect(result.stderr).toContain("failed to connect");
-    });
+    testBehaviour("exits non-zero on connection refused", ({ run, signal }) =>
+      runE2e(
+        Effect.gen(function* () {
+          const result = yield* run(["migration", "list"]);
+          expect(result.exitCode).not.toBe(0);
+          expect(result.stderr).toContain("failed to connect");
+        }),
+        signal,
+      ),
+    );
   });
 
   describe("migration:up", () => {
-    testBehaviour("exits non-zero on connection refused", async ({ run }) => {
-      const result = await run(["migration", "up", "--local"]);
-      expect(result.exitCode).not.toBe(0);
-      expect(result.stderr).toContain("failed to connect");
-    });
+    testBehaviour("exits non-zero on connection refused", ({ run, signal }) =>
+      runE2e(
+        Effect.gen(function* () {
+          const result = yield* run(["migration", "up"]);
+          expect(result.exitCode).not.toBe(0);
+          expect(result.stderr).toContain("failed to connect");
+        }),
+        signal,
+      ),
+    );
   });
 
   describe("migration:down", () => {
-    testBehaviour("exits non-zero on connection refused", async ({ run }) => {
-      const result = await run(["migration", "down", "--local"]);
-      expect(result.exitCode).not.toBe(0);
-      expect(result.stderr).toContain("failed to connect");
-    });
+    testBehaviour("exits non-zero on connection refused", ({ run, signal }) =>
+      runE2e(
+        Effect.gen(function* () {
+          const result = yield* run(["migration", "down"]);
+          expect(result.exitCode).not.toBe(0);
+          expect(result.stderr).toContain("failed to connect");
+        }),
+        signal,
+      ),
+    );
 
-    testBehaviour("exits non-zero on connection refused with --last 2", async ({ run }) => {
-      const result = await run(["migration", "down", "--last", "2", "--local"]);
-      expect(result.exitCode).not.toBe(0);
-      expect(result.stderr).toContain("failed to connect");
-    });
+    testBehaviour("exits non-zero on connection refused with --last 2", ({ run, signal }) =>
+      runE2e(
+        Effect.gen(function* () {
+          const result = yield* run(["migration", "down", "--last", "2"]);
+          expect(result.exitCode).not.toBe(0);
+          expect(result.stderr).toContain("failed to connect");
+        }),
+        signal,
+      ),
+    );
   });
 
   describe("migration:repair", () => {
-    testBehaviour("exits non-zero when --status flag is missing", async ({ run }) => {
-      const result = await run(["migration", "repair", "--local", "20230101000000"]);
-      expect(result.exitCode).not.toBe(0);
-      // A missing required flag's error prints once, without a duplicate
-      // usage dump, and spells the flag name without its `--` prefix.
-      expect(result.stderr).toContain('"status" not set');
-    });
+    testBehaviour("exits non-zero when --status flag is missing", ({ run, signal }) =>
+      runE2e(
+        Effect.gen(function* () {
+          const result = yield* run(["migration", "repair", "20230101000000"]);
+          expect(result.exitCode).not.toBe(0);
+          // A missing required flag's error prints once, without a duplicate
+          // usage dump, and spells the flag name without its `--` prefix.
+          expect(result.stderr).toContain('"status" not set');
+        }),
+        signal,
+      ),
+    );
 
-    testBehaviour("exits non-zero on connection refused", async ({ run }) => {
-      const result = await run([
-        "migration",
-        "repair",
-        "--status",
-        "applied",
-        "--local",
-        "20230101000000",
-      ]);
-      expect(result.exitCode).not.toBe(0);
-      expect(result.stderr).toContain("failed to connect");
-    });
+    testBehaviour("exits non-zero on connection refused", ({ run, workspace, signal }) =>
+      runE2e(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const migrationsDir = path.join(workspace.path, "supabase", "migrations");
+          yield* fs.makeDirectory(migrationsDir, { recursive: true });
+          yield* fs.writeFileString(
+            path.join(migrationsDir, "20230101000000_x.sql"),
+            "select 1;\n",
+          );
+          const result = yield* run([
+            "migration",
+            "repair",
+            "--status",
+            "applied",
+            "20230101000000",
+          ]);
+          expect(result.exitCode).not.toBe(0);
+          expect(result.stderr).toContain("failed to connect");
+        }),
+        signal,
+      ),
+    );
   });
 
   describe("migration:squash", () => {
-    testBehaviour("exits non-zero on connection refused", async ({ run }) => {
-      const result = await run(["migration", "squash", "--local"]);
-      expect(result.exitCode).not.toBe(0);
-      expect(result.stderr).not.toBe("");
-    });
+    testBehaviour("exits non-zero on connection refused", ({ run, signal }) =>
+      runE2e(
+        Effect.gen(function* () {
+          const result = yield* run(["migration", "squash"]);
+          expect(result.exitCode).not.toBe(0);
+          expect(result.stderr).not.toBe("");
+        }),
+        signal,
+      ),
+    );
   });
 
   describe("migration:fetch", () => {
-    testBehaviour("exits non-zero on connection refused", async ({ run }) => {
-      const result = await run(["migration", "fetch", "--local"]);
-      expect(result.exitCode).not.toBe(0);
-      expect(result.stderr).toContain("failed to connect");
-    });
+    testBehaviour("exits non-zero on connection refused", ({ run, signal }) =>
+      runE2e(
+        Effect.gen(function* () {
+          const result = yield* run(["migration", "fetch"]);
+          expect(result.exitCode).not.toBe(0);
+          expect(result.stderr).toContain("failed to connect");
+        }),
+        signal,
+      ),
+    );
   });
 });

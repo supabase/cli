@@ -59,7 +59,7 @@ const jsonText = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 function diffMaxRows(cliEffect: LiveCliEffect, ref: string, label: string) {
   return Effect.gen(function* () {
     const result = yield* cliEffect(
-      ["config", "diff", "--project-ref", ref, "--output-format", "json"],
+      ["config", "diff", "--output-format", "json", `--remote=${ref}`],
       { exitTimeoutMs: DIFF_EXIT_TIMEOUT_MS },
     ).pipe(Effect.mapError(liveFailure));
     yield* Effect.try({ try: () => requireLiveSuccess(result, label), catch: liveFailure });
@@ -107,11 +107,10 @@ test(
         const pushArgs = [
           "config",
           "push",
-          "--project-ref",
-          project.ref,
           "--yes",
           "--output-format",
           "json",
+          `--remote=${project.ref}`,
         ];
 
         // No diff entry means the remote already reads the probe value.

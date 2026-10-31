@@ -307,6 +307,8 @@ jobs:
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
+      # The cache key includes this run's id, so only this run's build job can have written it.
+      # jactionlint ignore=cache-poisoning
       - name: Restore build artifacts cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -318,10 +320,10 @@ jobs:
           fail-on-cache-miss: true
 
       - name: Sync versions
-        run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version "${VERSION}"
+        run: bun apps/cli/scripts/sync-versions.ts --version "${VERSION}"
 
       - name: Publish to npm
-        run: pnpm exec bun apps/cli/scripts/publish.ts --tag "${NPM_TAG}"
+        run: bun apps/cli/scripts/publish.ts --tag "${NPM_TAG}"
 
       - name: Configure git for release pushes
         run: |
@@ -377,25 +379,35 @@ jobs:
           done
 
       # Created empty; the next step uploads the assets so each one can be retried on its own.
+      # Re-runs skip this step when the release already exists.
       - name: Create draft GitHub Release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
-        with:
-          tag_name: v${{ inputs.version }}
-          name: v${{ inputs.version }}
-          draft: true
-          prerelease: ${{ inputs.prerelease }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          tag="v${VERSION}"
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            echo "Release ${tag} already exists; skipping."
+          else
+            args=(--draft --verify-tag --title "${tag}")
+            if [[ "$PRERELEASE" == true ]]; then
+              args+=(--prerelease)
+            fi
+            gh release create "${tag}" "${args[@]}"
+          fi
 
       # One asset at a time with per-asset retries; see apps/cli/scripts/upload-release-assets.ts.
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: pnpm exec bun apps/cli/scripts/upload-release-assets.ts upload --version "${VERSION}"
+        run: bun apps/cli/scripts/upload-release-assets.ts upload --version "${VERSION}"
 
       # Publishing makes the release immutable, so require every expected asset to be uploaded first.
       - name: Verify release assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: pnpm exec bun apps/cli/scripts/upload-release-assets.ts verify --version "${VERSION}"
+        run: bun apps/cli/scripts/upload-release-assets.ts verify --version "${VERSION}"
 
       - name: Publish GitHub Release (immutable)
         env:
@@ -434,7 +446,7 @@ jobs:
   backfill-release-notes:
     uses: ./.github/workflows/backfill-release-notes.yml
     needs: publish
-    if: ${{ !inputs.dry_run && needs.publish.result == 'success' }}
+    if: ${{ !cancelled() && !inputs.dry_run && needs.publish.result == 'success' }}
     with:
       tag: v${{ inputs.version }}
       apply: true
@@ -460,7 +472,7 @@ jobs:
 
   publish-homebrew:
     needs: publish
-    if: ${{ !inputs.dry_run && inputs.publish_brew_scoop }}
+    if: ${{ !cancelled() && !inputs.dry_run && inputs.publish_brew_scoop && needs.publish.result == 'success' }}
     # github-hosted to share a cache store with build-github/publish, whose
     # -github-v1 artifacts this job's checksums must match.
     runs-on: ubuntu-latest
@@ -514,14 +526,14 @@ jobs:
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Update Homebrew formula
-        run: pnpm exec bun apps/cli/scripts/update-homebrew.ts --version "${VERSION}" --name "${BREW_NAME}"
+        run: bun apps/cli/scripts/update-homebrew.ts --version "${VERSION}" --name "${BREW_NAME}"
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
   publish-scoop:
     needs: publish
-    if: ${{ !inputs.dry_run && inputs.publish_brew_scoop }}
+    if: ${{ !cancelled() && !inputs.dry_run && inputs.publish_brew_scoop && needs.publish.result == 'success' }}
     # github-hosted to share a cache store with build-github/publish, whose
     # -github-v1 artifacts this job's checksums must match.
     runs-on: ubuntu-latest
@@ -575,7 +587,7 @@ jobs:
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Update Scoop manifest
-        run: pnpm exec bun apps/cli/scripts/update-scoop.ts --version "${VERSION}" --name "${SCOOP_NAME}"
+        run: bun apps/cli/scripts/update-scoop.ts --version "${VERSION}" --name "${SCOOP_NAME}"
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}

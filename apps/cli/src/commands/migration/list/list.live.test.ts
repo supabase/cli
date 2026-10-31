@@ -15,7 +15,7 @@ test("lists a seeded remote migration", ({ cli, cliEffect, project, signal }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const targetArgs = ["--db-url", project.dbUrl];
+      const targetArgs = [`--remote=${project.dbUrl}`];
       const version = liveMigrationVersion();
       // Seeded outside the workspace so the version can only reach stdout through the remote column.
       const seedDir = yield* fs.makeTempDirectoryScoped({ prefix: "sb-migration-list-live-" });
@@ -27,7 +27,7 @@ test("lists a seeded remote migration", ({ cli, cliEffect, project, signal }) =>
           "select 1;\n",
         );
         const seeded = yield* cliEffect(
-          ["migration", "repair", version, "--status", "applied", ...targetArgs],
+          ["migration", "repair", version, "--status", "applied", "--yes", ...targetArgs],
           { cwd: seedDir },
         );
         requireLiveSuccess(seeded, "migration repair setup");
