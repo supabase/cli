@@ -2164,6 +2164,9 @@
           "403": {
             "description": "Forbidden action"
           },
+          "404": {
+            "description": "API key not found for project"
+          },
           "429": {
             "description": "Rate limit exceeded"
           }
@@ -2239,6 +2242,9 @@
           },
           "403": {
             "description": "Forbidden action"
+          },
+          "404": {
+            "description": "API key not found for project"
           },
           "429": {
             "description": "Rate limit exceeded"
@@ -2337,6 +2343,9 @@
           },
           "403": {
             "description": "Forbidden action"
+          },
+          "404": {
+            "description": "API key not found for project"
           },
           "429": {
             "description": "Rate limit exceeded"
@@ -9248,13 +9257,12 @@
           "content": {
             "application/vnd.denoland.eszip": {
               "schema": {
-                "type": "string",
-                "format": "binary"
+                "$ref": "#/components/schemas/V1UpdateFunctionBodyEszip"
               }
             },
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/V1UpdateFunctionBody"
+                "$ref": "#/components/schemas/V1UpdateFunctionBodyJson"
               }
             }
           }
@@ -12045,6 +12053,114 @@
         "x-fga-permissions": [["advisors_read"]]
       }
     },
+    "/v2/projects/{ref}/backups/download": {
+      "post": {
+        "operationId": "v2-download-project-backup",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DownloadBackupBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadBackupResponse_Output"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to download project backup",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Download project backup",
+        "tags": ["Projects"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: database:write",
+            "position": "after"
+          }
+        ],
+        "x-endpoint-owners": ["infra", "control-plane"],
+        "x-fga-permissions": [["backups_write"]],
+        "x-oauth-scope": "database:write"
+      }
+    },
     "/v2/projects/{ref}/branches": {
       "post": {
         "description": "Creates a database branch from the specified project. Compute and disk size can be set here so the branch is provisioned at the requested size, instead of being resized after creation.",
@@ -13816,245 +13932,6 @@
         "x-scalar-stability": "experimental"
       }
     },
-    "/v2/organizations/{slug}/members": {
-      "get": {
-        "description": "Returns a cursor-paginated list of organization members including their roles and project-scoped permissions.",
-        "operationId": "v2-list-organization-members",
-        "parameters": [
-          {
-            "name": "slug",
-            "required": true,
-            "in": "path",
-            "description": "Organization slug",
-            "schema": {
-              "pattern": "^[\\w-]+$",
-              "example": "tsrqponmlkjihgfedcba",
-              "type": "string"
-            }
-          },
-          {
-            "name": "page",
-            "required": false,
-            "in": "query",
-            "schema": {
-              "properties": {
-                "size": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 100
-                },
-                "after": {
-                  "type": "string",
-                  "format": "uuid",
-                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-                },
-                "before": {
-                  "type": "string",
-                  "format": "uuid",
-                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-                }
-              },
-              "type": "object"
-            },
-            "style": "deepObject"
-          },
-          {
-            "name": "filter",
-            "required": false,
-            "in": "query",
-            "schema": {
-              "properties": {
-                "username": {
-                  "type": "string"
-                },
-                "primary_email": {
-                  "type": "string",
-                  "format": "email",
-                  "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
-                }
-              },
-              "type": "object"
-            },
-            "style": "deepObject"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/V2ListMembersResponse_Output"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponseBody"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden action",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponseBody"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limit exceeded",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponseBody"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "List members of an organization",
-        "tags": ["Organizations"],
-        "x-badges": [
-          {
-            "name": "OAuth scope: organizations:read",
-            "position": "after"
-          }
-        ],
-        "x-endpoint-owners": ["control-plane"],
-        "x-fga-permissions": [["members_read"]],
-        "x-oauth-scope": "organizations:read"
-      }
-    },
-    "/v2/organizations/{slug}/members/{user_id}/roles": {
-      "patch": {
-        "description": "Assigns an org-wide role when projects is omitted, or creates a project-scoped assignment when projects is provided. Uses an org-level role template id from GET /v2/organizations/{slug}/roles. Stale role assignments are automatically cleaned up: if a role no longer has any projects, it is deleted; overlapping project assignments in other roles are automatically removed to avoid duplication.",
-        "operationId": "v2-assign-organization-member-role",
-        "parameters": [
-          {
-            "name": "slug",
-            "required": true,
-            "in": "path",
-            "description": "Organization slug",
-            "schema": {
-              "pattern": "^[\\w-]+$",
-              "example": "tsrqponmlkjihgfedcba",
-              "type": "string"
-            }
-          },
-          {
-            "name": "user_id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "format": "uuid",
-              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/V2AssignOrganizationMemberRoleRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OrganizationMemberRoleResponse_Output"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponseBody"
-                }
-              }
-            }
-          },
-          "402": {
-            "description": "This feature requires the Team, or Enterprise organization plan.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponseBody"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden action",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponseBody"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limit exceeded",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponseBody"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Failed to assign organization member role",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponseBody"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "Assign or change an organization member role",
-        "tags": ["Organizations"],
-        "x-allowed-plans": ["Team", "Enterprise"],
-        "x-badges": [
-          {
-            "name": "Only available on Team, Enterprise",
-            "position": "before"
-          }
-        ],
-        "x-endpoint-owners": ["control-plane"],
-        "x-fga-permissions": [["organization_admin_write"]]
-      }
-    },
     "/v2/organizations/{slug}/roles": {
       "get": {
         "description": "Returns a list of org-level roles for the organization.",
@@ -14334,6 +14211,350 @@
         "x-oauth-scope": "organizations:write"
       }
     },
+    "/v2/organizations/{slug}/members": {
+      "get": {
+        "description": "Returns a cursor-paginated list of organization members including their roles and project-scoped permissions.",
+        "operationId": "v2-list-organization-members",
+        "parameters": [
+          {
+            "name": "slug",
+            "required": true,
+            "in": "path",
+            "description": "Organization slug",
+            "schema": {
+              "pattern": "^[\\w-]+$",
+              "example": "tsrqponmlkjihgfedcba",
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "properties": {
+                "size": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100
+                },
+                "after": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "before": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                }
+              },
+              "type": "object"
+            },
+            "style": "deepObject"
+          },
+          {
+            "name": "filter",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "properties": {
+                "username": {
+                  "type": "string"
+                },
+                "primary_email": {
+                  "type": "string",
+                  "format": "email",
+                  "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                }
+              },
+              "type": "object"
+            },
+            "style": "deepObject"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2ListMembersResponse_Output"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List members of an organization",
+        "tags": ["Organizations"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: organizations:read",
+            "position": "after"
+          }
+        ],
+        "x-endpoint-owners": ["control-plane"],
+        "x-fga-permissions": [["members_read"]],
+        "x-oauth-scope": "organizations:read"
+      }
+    },
+    "/v2/organizations/{slug}/members/{user_id}/roles": {
+      "patch": {
+        "description": "Assigns an org-wide role when projects is omitted, or creates a project-scoped assignment when projects is provided. Uses an org-level role template id from GET /v2/organizations/{slug}/roles. Stale role assignments are automatically cleaned up: if a role no longer has any projects, it is deleted; overlapping project assignments in other roles are automatically removed to avoid duplication.",
+        "operationId": "v2-assign-organization-member-role",
+        "parameters": [
+          {
+            "name": "slug",
+            "required": true,
+            "in": "path",
+            "description": "Organization slug",
+            "schema": {
+              "pattern": "^[\\w-]+$",
+              "example": "tsrqponmlkjihgfedcba",
+              "type": "string"
+            }
+          },
+          {
+            "name": "user_id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V2AssignOrganizationMemberRoleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationMemberRoleResponse_Output"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "This feature requires the Team, or Enterprise organization plan.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to assign organization member role",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Assign or change an organization member role",
+        "tags": ["Organizations"],
+        "x-allowed-plans": ["Team", "Enterprise"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: organizations:write",
+            "position": "after"
+          },
+          {
+            "name": "Only available on Team, Enterprise",
+            "position": "before"
+          }
+        ],
+        "x-endpoint-owners": ["control-plane"],
+        "x-fga-permissions": [["organization_admin_write"]],
+        "x-oauth-scope": "organizations:write"
+      }
+    },
+    "/v2/organizations/{slug}/members/{user_id}": {
+      "delete": {
+        "description": "Removes one or more organization members including their roles and project-scoped permissions.",
+        "operationId": "v2-remove-organization-members",
+        "parameters": [
+          {
+            "name": "slug",
+            "required": true,
+            "in": "path",
+            "description": "Organization slug",
+            "schema": {
+              "pattern": "^[\\w-]+$",
+              "example": "tsrqponmlkjihgfedcba",
+              "type": "string"
+            }
+          },
+          {
+            "name": "user_id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Organization member not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to remove organization member",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Removes organization members",
+        "tags": ["Organizations"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: organizations:write",
+            "position": "after"
+          }
+        ],
+        "x-endpoint-owners": ["control-plane"],
+        "x-fga-permissions": [["organization_admin_write"]],
+        "x-oauth-scope": "organizations:write"
+      }
+    },
     "/v2/organizations/{slug}/projects": {
       "get": {
         "description": "Returns a cursor-paginated list of projects for the specified organization, including their databases.\n\nUse `page[after]` and `page[before]` to navigate pages and `page[size]` to control the number of projects returned per page.",
@@ -14584,6 +14805,94 @@
         "x-oauth-scope": "projects:read"
       }
     },
+    "/v2/organizations/{slug}/maintenance/windows": {
+      "get": {
+        "description": "Returns the weekly maintenance window for each region, with the open occurrence and the next five.",
+        "operationId": "v2-list-organization-maintenance-windows",
+        "parameters": [
+          {
+            "name": "slug",
+            "required": true,
+            "in": "path",
+            "description": "Organization slug",
+            "schema": {
+              "pattern": "^[\\w-]+$",
+              "example": "tsrqponmlkjihgfedcba",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2ListMaintenanceWindowsResponse_Output"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Organization not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List maintenance windows of an organization",
+        "tags": ["Organizations"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: organizations:read",
+            "position": "after"
+          }
+        ],
+        "x-endpoint-owners": ["infra"],
+        "x-fga-permissions": [["organization_admin_read"]],
+        "x-internal": true,
+        "x-oauth-scope": "organizations:read"
+      }
+    },
     "/v2/projects/{ref}/webhooks/endpoints": {
       "get": {
         "operationId": "v2-projects-ref-webhooks-endpoints-get",
@@ -14698,6 +15007,7 @@
                                         "v1.project.branch.created",
                                         "v1.project.branch.updated",
                                         "v1.project.branch.removed",
+                                        "v1.project.secrets.leaked",
                                         "v1.organization.member.invitation.created",
                                         "v1.organization.member.invitation.canceled",
                                         "v1.organization.member.added",
@@ -14707,6 +15017,7 @@
                                         "v1.organization.member.role.updated",
                                         "v1.organization.billing.plan.upgraded",
                                         "v1.organization.billing.plan.downgraded",
+                                        "v1.organization.secrets.leaked",
                                         "*"
                                       ],
                                       "description": "Webhook event type."
@@ -15473,6 +15784,7 @@
                                       "v1.project.branch.created",
                                       "v1.project.branch.updated",
                                       "v1.project.branch.removed",
+                                      "v1.project.secrets.leaked",
                                       "v1.organization.member.invitation.created",
                                       "v1.organization.member.invitation.canceled",
                                       "v1.organization.member.added",
@@ -15482,6 +15794,7 @@
                                       "v1.organization.member.role.updated",
                                       "v1.organization.billing.plan.upgraded",
                                       "v1.organization.billing.plan.downgraded",
+                                      "v1.organization.secrets.leaked",
                                       "*"
                                     ],
                                     "description": "Webhook event type."
@@ -16162,6 +16475,7 @@
                                     "v1.project.branch.created",
                                     "v1.project.branch.updated",
                                     "v1.project.branch.removed",
+                                    "v1.project.secrets.leaked",
                                     "v1.organization.member.invitation.created",
                                     "v1.organization.member.invitation.canceled",
                                     "v1.organization.member.added",
@@ -16171,6 +16485,7 @@
                                     "v1.organization.member.role.updated",
                                     "v1.organization.billing.plan.upgraded",
                                     "v1.organization.billing.plan.downgraded",
+                                    "v1.organization.secrets.leaked",
                                     "*"
                                   ],
                                   "description": "Webhook event type."
@@ -16311,6 +16626,7 @@
                                         "v1.project.branch.created",
                                         "v1.project.branch.updated",
                                         "v1.project.branch.removed",
+                                        "v1.project.secrets.leaked",
                                         "v1.organization.member.invitation.created",
                                         "v1.organization.member.invitation.canceled",
                                         "v1.organization.member.added",
@@ -16320,6 +16636,7 @@
                                         "v1.organization.member.role.updated",
                                         "v1.organization.billing.plan.upgraded",
                                         "v1.organization.billing.plan.downgraded",
+                                        "v1.organization.secrets.leaked",
                                         "*"
                                       ],
                                       "description": "Webhook event type."
@@ -17045,6 +17362,7 @@
                                       "v1.project.branch.created",
                                       "v1.project.branch.updated",
                                       "v1.project.branch.removed",
+                                      "v1.project.secrets.leaked",
                                       "v1.organization.member.invitation.created",
                                       "v1.organization.member.invitation.canceled",
                                       "v1.organization.member.added",
@@ -17054,6 +17372,7 @@
                                       "v1.organization.member.role.updated",
                                       "v1.organization.billing.plan.upgraded",
                                       "v1.organization.billing.plan.downgraded",
+                                      "v1.organization.secrets.leaked",
                                       "*"
                                     ],
                                     "description": "Webhook event type."
@@ -17871,6 +18190,7 @@
                                       "v1.project.branch.created",
                                       "v1.project.branch.updated",
                                       "v1.project.branch.removed",
+                                      "v1.project.secrets.leaked",
                                       "v1.organization.member.invitation.created",
                                       "v1.organization.member.invitation.canceled",
                                       "v1.organization.member.added",
@@ -17880,6 +18200,7 @@
                                       "v1.organization.member.role.updated",
                                       "v1.organization.billing.plan.upgraded",
                                       "v1.organization.billing.plan.downgraded",
+                                      "v1.organization.secrets.leaked",
                                       "*"
                                     ],
                                     "description": "Webhook event type."
@@ -18654,6 +18975,7 @@
                                     "v1.project.branch.created",
                                     "v1.project.branch.updated",
                                     "v1.project.branch.removed",
+                                    "v1.project.secrets.leaked",
                                     "v1.organization.member.invitation.created",
                                     "v1.organization.member.invitation.canceled",
                                     "v1.organization.member.added",
@@ -18663,6 +18985,7 @@
                                     "v1.organization.member.role.updated",
                                     "v1.organization.billing.plan.upgraded",
                                     "v1.organization.billing.plan.downgraded",
+                                    "v1.organization.secrets.leaked",
                                     "*"
                                   ],
                                   "description": "Webhook event type."
@@ -18811,6 +19134,7 @@
                                       "v1.project.branch.created",
                                       "v1.project.branch.updated",
                                       "v1.project.branch.removed",
+                                      "v1.project.secrets.leaked",
                                       "v1.organization.member.invitation.created",
                                       "v1.organization.member.invitation.canceled",
                                       "v1.organization.member.added",
@@ -18820,6 +19144,7 @@
                                       "v1.organization.member.role.updated",
                                       "v1.organization.billing.plan.upgraded",
                                       "v1.organization.billing.plan.downgraded",
+                                      "v1.organization.secrets.leaked",
                                       "*"
                                     ],
                                     "description": "Webhook event type."
@@ -19724,6 +20049,7 @@
                                       "v1.project.branch.created",
                                       "v1.project.branch.updated",
                                       "v1.project.branch.removed",
+                                      "v1.project.secrets.leaked",
                                       "v1.organization.member.invitation.created",
                                       "v1.organization.member.invitation.canceled",
                                       "v1.organization.member.added",
@@ -19732,7 +20058,8 @@
                                       "v1.organization.member.role.removed",
                                       "v1.organization.member.role.updated",
                                       "v1.organization.billing.plan.upgraded",
-                                      "v1.organization.billing.plan.downgraded"
+                                      "v1.organization.billing.plan.downgraded",
+                                      "v1.organization.secrets.leaked"
                                     ],
                                     "description": "Webhook event type."
                                   },
@@ -21429,6 +21756,7 @@
                               "v1.project.branch.created",
                               "v1.project.branch.updated",
                               "v1.project.branch.removed",
+                              "v1.project.secrets.leaked",
                               "v1.organization.member.invitation.created",
                               "v1.organization.member.invitation.canceled",
                               "v1.organization.member.added",
@@ -21437,7 +21765,8 @@
                               "v1.organization.member.role.removed",
                               "v1.organization.member.role.updated",
                               "v1.organization.billing.plan.upgraded",
-                              "v1.organization.billing.plan.downgraded"
+                              "v1.organization.billing.plan.downgraded",
+                              "v1.organization.secrets.leaked"
                             ],
                             "description": "Webhook event type."
                           }
@@ -21610,6 +21939,7 @@
                                     "v1.project.branch.created",
                                     "v1.project.branch.updated",
                                     "v1.project.branch.removed",
+                                    "v1.project.secrets.leaked",
                                     "v1.organization.member.invitation.created",
                                     "v1.organization.member.invitation.canceled",
                                     "v1.organization.member.added",
@@ -21618,7 +21948,8 @@
                                     "v1.organization.member.role.removed",
                                     "v1.organization.member.role.updated",
                                     "v1.organization.billing.plan.upgraded",
-                                    "v1.organization.billing.plan.downgraded"
+                                    "v1.organization.billing.plan.downgraded",
+                                    "v1.organization.secrets.leaked"
                                   ],
                                   "description": "Webhook event type."
                                 },
@@ -23164,6 +23495,7 @@
                                         "v1.project.branch.created",
                                         "v1.project.branch.updated",
                                         "v1.project.branch.removed",
+                                        "v1.project.secrets.leaked",
                                         "v1.organization.member.invitation.created",
                                         "v1.organization.member.invitation.canceled",
                                         "v1.organization.member.added",
@@ -23173,6 +23505,7 @@
                                         "v1.organization.member.role.updated",
                                         "v1.organization.billing.plan.upgraded",
                                         "v1.organization.billing.plan.downgraded",
+                                        "v1.organization.secrets.leaked",
                                         "*"
                                       ],
                                       "description": "Webhook event type."
@@ -23937,6 +24270,7 @@
                                       "v1.project.branch.created",
                                       "v1.project.branch.updated",
                                       "v1.project.branch.removed",
+                                      "v1.project.secrets.leaked",
                                       "v1.organization.member.invitation.created",
                                       "v1.organization.member.invitation.canceled",
                                       "v1.organization.member.added",
@@ -23946,6 +24280,7 @@
                                       "v1.organization.member.role.updated",
                                       "v1.organization.billing.plan.upgraded",
                                       "v1.organization.billing.plan.downgraded",
+                                      "v1.organization.secrets.leaked",
                                       "*"
                                     ],
                                     "description": "Webhook event type."
@@ -24626,6 +24961,7 @@
                                     "v1.project.branch.created",
                                     "v1.project.branch.updated",
                                     "v1.project.branch.removed",
+                                    "v1.project.secrets.leaked",
                                     "v1.organization.member.invitation.created",
                                     "v1.organization.member.invitation.canceled",
                                     "v1.organization.member.added",
@@ -24635,6 +24971,7 @@
                                     "v1.organization.member.role.updated",
                                     "v1.organization.billing.plan.upgraded",
                                     "v1.organization.billing.plan.downgraded",
+                                    "v1.organization.secrets.leaked",
                                     "*"
                                   ],
                                   "description": "Webhook event type."
@@ -24773,6 +25110,7 @@
                                         "v1.project.branch.created",
                                         "v1.project.branch.updated",
                                         "v1.project.branch.removed",
+                                        "v1.project.secrets.leaked",
                                         "v1.organization.member.invitation.created",
                                         "v1.organization.member.invitation.canceled",
                                         "v1.organization.member.added",
@@ -24782,6 +25120,7 @@
                                         "v1.organization.member.role.updated",
                                         "v1.organization.billing.plan.upgraded",
                                         "v1.organization.billing.plan.downgraded",
+                                        "v1.organization.secrets.leaked",
                                         "*"
                                       ],
                                       "description": "Webhook event type."
@@ -25505,6 +25844,7 @@
                                       "v1.project.branch.created",
                                       "v1.project.branch.updated",
                                       "v1.project.branch.removed",
+                                      "v1.project.secrets.leaked",
                                       "v1.organization.member.invitation.created",
                                       "v1.organization.member.invitation.canceled",
                                       "v1.organization.member.added",
@@ -25514,6 +25854,7 @@
                                       "v1.organization.member.role.updated",
                                       "v1.organization.billing.plan.upgraded",
                                       "v1.organization.billing.plan.downgraded",
+                                      "v1.organization.secrets.leaked",
                                       "*"
                                     ],
                                     "description": "Webhook event type."
@@ -26329,6 +26670,7 @@
                                       "v1.project.branch.created",
                                       "v1.project.branch.updated",
                                       "v1.project.branch.removed",
+                                      "v1.project.secrets.leaked",
                                       "v1.organization.member.invitation.created",
                                       "v1.organization.member.invitation.canceled",
                                       "v1.organization.member.added",
@@ -26338,6 +26680,7 @@
                                       "v1.organization.member.role.updated",
                                       "v1.organization.billing.plan.upgraded",
                                       "v1.organization.billing.plan.downgraded",
+                                      "v1.organization.secrets.leaked",
                                       "*"
                                     ],
                                     "description": "Webhook event type."
@@ -27112,6 +27455,7 @@
                                     "v1.project.branch.created",
                                     "v1.project.branch.updated",
                                     "v1.project.branch.removed",
+                                    "v1.project.secrets.leaked",
                                     "v1.organization.member.invitation.created",
                                     "v1.organization.member.invitation.canceled",
                                     "v1.organization.member.added",
@@ -27121,6 +27465,7 @@
                                     "v1.organization.member.role.updated",
                                     "v1.organization.billing.plan.upgraded",
                                     "v1.organization.billing.plan.downgraded",
+                                    "v1.organization.secrets.leaked",
                                     "*"
                                   ],
                                   "description": "Webhook event type."
@@ -27267,6 +27612,7 @@
                                       "v1.project.branch.created",
                                       "v1.project.branch.updated",
                                       "v1.project.branch.removed",
+                                      "v1.project.secrets.leaked",
                                       "v1.organization.member.invitation.created",
                                       "v1.organization.member.invitation.canceled",
                                       "v1.organization.member.added",
@@ -27276,6 +27622,7 @@
                                       "v1.organization.member.role.updated",
                                       "v1.organization.billing.plan.upgraded",
                                       "v1.organization.billing.plan.downgraded",
+                                      "v1.organization.secrets.leaked",
                                       "*"
                                     ],
                                     "description": "Webhook event type."
@@ -28178,6 +28525,7 @@
                                       "v1.project.branch.created",
                                       "v1.project.branch.updated",
                                       "v1.project.branch.removed",
+                                      "v1.project.secrets.leaked",
                                       "v1.organization.member.invitation.created",
                                       "v1.organization.member.invitation.canceled",
                                       "v1.organization.member.added",
@@ -28186,7 +28534,8 @@
                                       "v1.organization.member.role.removed",
                                       "v1.organization.member.role.updated",
                                       "v1.organization.billing.plan.upgraded",
-                                      "v1.organization.billing.plan.downgraded"
+                                      "v1.organization.billing.plan.downgraded",
+                                      "v1.organization.secrets.leaked"
                                     ],
                                     "description": "Webhook event type."
                                   },
@@ -29881,6 +30230,7 @@
                               "v1.project.branch.created",
                               "v1.project.branch.updated",
                               "v1.project.branch.removed",
+                              "v1.project.secrets.leaked",
                               "v1.organization.member.invitation.created",
                               "v1.organization.member.invitation.canceled",
                               "v1.organization.member.added",
@@ -29889,7 +30239,8 @@
                               "v1.organization.member.role.removed",
                               "v1.organization.member.role.updated",
                               "v1.organization.billing.plan.upgraded",
-                              "v1.organization.billing.plan.downgraded"
+                              "v1.organization.billing.plan.downgraded",
+                              "v1.organization.secrets.leaked"
                             ],
                             "description": "Webhook event type."
                           }
@@ -30060,6 +30411,7 @@
                                     "v1.project.branch.created",
                                     "v1.project.branch.updated",
                                     "v1.project.branch.removed",
+                                    "v1.project.secrets.leaked",
                                     "v1.organization.member.invitation.created",
                                     "v1.organization.member.invitation.canceled",
                                     "v1.organization.member.added",
@@ -30068,7 +30420,8 @@
                                     "v1.organization.member.role.removed",
                                     "v1.organization.member.role.updated",
                                     "v1.organization.billing.plan.upgraded",
-                                    "v1.organization.billing.plan.downgraded"
+                                    "v1.organization.billing.plan.downgraded",
+                                    "v1.organization.secrets.leaked"
                                   ],
                                   "description": "Webhook event type."
                                 },
@@ -33472,6 +33825,20 @@
             "description": "If `null`, the value is automatically configured to 10.",
             "nullable": true
           },
+          "db_pool_max_lifetime": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3600,
+            "description": "If `null`, the value is automatically configured to 1800.",
+            "nullable": true
+          },
+          "db_pool_max_idletime": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 60,
+            "description": "If `null`, the value is automatically configured to 30.",
+            "nullable": true
+          },
           "jwt_secret": {
             "type": "string"
           }
@@ -33481,7 +33848,9 @@
           "max_rows",
           "db_extra_search_path",
           "db_pool",
-          "db_pool_acquisition_timeout"
+          "db_pool_acquisition_timeout",
+          "db_pool_max_lifetime",
+          "db_pool_max_idletime"
         ]
       },
       "V1UpdatePostgrestConfigBody": {
@@ -33504,6 +33873,16 @@
             "maximum": 1000
           },
           "db_pool_acquisition_timeout": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 60
+          },
+          "db_pool_max_lifetime": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3600
+          },
+          "db_pool_max_idletime": {
             "type": "integer",
             "minimum": 0,
             "maximum": 60
@@ -33542,6 +33921,20 @@
             "maximum": 9007199254740991,
             "description": "If `null`, the value is automatically configured to 10.",
             "nullable": true
+          },
+          "db_pool_max_lifetime": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3600,
+            "description": "If `null`, the value is automatically configured to 1800.",
+            "nullable": true
+          },
+          "db_pool_max_idletime": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 60,
+            "description": "If `null`, the value is automatically configured to 30.",
+            "nullable": true
           }
         },
         "required": [
@@ -33549,7 +33942,9 @@
           "max_rows",
           "db_extra_search_path",
           "db_pool",
-          "db_pool_acquisition_timeout"
+          "db_pool_acquisition_timeout",
+          "db_pool_max_lifetime",
+          "db_pool_max_idletime"
         ]
       },
       "V1ProjectRefResponse_Output": {
@@ -37322,6 +37717,9 @@
                     "log_auth_error_rate_high",
                     "log_storage_error_rate_high",
                     "log_edge_function_error_rate_high",
+                    "realtime_authorization_timeouts",
+                    "realtime_postgres_changes_spike",
+                    "realtime_concurrent_users_near_limit",
                     "project_not_active",
                     "advisor_check_unavailable"
                   ]
@@ -38756,7 +39154,7 @@
         "type": "object",
         "properties": {}
       },
-      "V1UpdateFunctionBody": {
+      "V1UpdateFunctionBodyJson": {
         "type": "object",
         "properties": {
           "name": {
@@ -38774,6 +39172,13 @@
           "body": "Deno.serve(() => new Response('Hello again!'))",
           "verify_jwt": true
         }
+      },
+      "V1UpdateFunctionBodyEszip": {
+        "type": "string",
+        "format": "binary",
+        "contentEncoding": "binary",
+        "description": "Raw Brotli-compressed ESZIP binary file.\n\n**Validation requirements** - The file must start with the four magic bytes `EZBR` (hex: `45 5A 42 52`).\n- The `ezbr_sha256` query parameter must contain the SHA-256 hash of the uploaded ESZIP payload.\n\n**Example**\n```javascript\nimport { readFile } from 'node:fs/promises';\nimport { brotliCompress } from 'node:zlib';\nimport { promisify } from 'node:util';\nimport { createHash } from 'node:crypto';\n\nconst compress = promisify(brotliCompress);\nconst marker = Buffer.from('EZBR', 'ascii');\n\nconst file = await readFile('./function.eszip');\nconst compressed = await compress(file);\n\nconst payload = Buffer.concat([marker, compressed]);\n\nconst ezbr_sha256 = createHash('sha256')\n  .update(payload)\n  .digest('hex');\n\nconsole.log(ezbr_sha256);\n```\n\n",
+        "examples": ["Binary Brotli-compressed ESZIP file"]
       },
       "V1StorageBucketResponse_Output": {
         "type": "object",
@@ -41443,6 +41848,7 @@
               "unauthorized",
               "validation_failed",
               "agentic_credential_not_found",
+              "backup_unsupported",
               "branch_admin_required",
               "compute_build_context_too_large",
               "compute_build_in_progress",
@@ -42295,7 +42701,7 @@
                 "properties": {
                   "lints": {
                     "minItems": 1,
-                    "maxItems": 10,
+                    "maxItems": 15,
                     "type": "array",
                     "items": {
                       "type": "object",
@@ -42342,7 +42748,10 @@
                             "log_data_api_error_rate_high",
                             "log_auth_error_rate_high",
                             "log_storage_error_rate_high",
-                            "log_edge_function_error_rate_high"
+                            "log_edge_function_error_rate_high",
+                            "realtime_authorization_timeouts",
+                            "realtime_postgres_changes_spike",
+                            "realtime_concurrent_users_near_limit"
                           ]
                         }
                       },
@@ -42423,6 +42832,9 @@
                             "log_auth_error_rate_high",
                             "log_storage_error_rate_high",
                             "log_edge_function_error_rate_high",
+                            "realtime_authorization_timeouts",
+                            "realtime_postgres_changes_spike",
+                            "realtime_concurrent_users_near_limit",
                             "project_not_active",
                             "advisor_check_unavailable"
                           ]
@@ -42520,6 +42932,55 @@
               }
             },
             "required": ["type", "attributes"]
+          }
+        },
+        "required": ["data"]
+      },
+      "DownloadBackupBody": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "description": "Resource type.",
+                "enum": ["project_backup_file_url"]
+              },
+              "id": {
+                "type": "number"
+              }
+            },
+            "required": ["type", "id"]
+          }
+        },
+        "required": ["data"]
+      },
+      "DownloadBackupResponse_Output": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "description": "Resource type.",
+                "enum": ["project_backup_file_url"]
+              },
+              "id": {
+                "type": "number"
+              },
+              "attributes": {
+                "type": "object",
+                "properties": {
+                  "file_url": {
+                    "type": "string"
+                  }
+                },
+                "required": ["file_url"]
+              }
+            },
+            "required": ["type", "id", "attributes"]
           }
         },
         "required": ["data"]
@@ -43013,6 +43474,16 @@
                         "minimum": -9007199254740991,
                         "maximum": 9007199254740991
                       },
+                      "db_pool_max_lifetime": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 3600
+                      },
+                      "db_pool_max_idletime": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 60
+                      },
                       "db_pool": {
                         "type": "integer",
                         "minimum": -9007199254740991,
@@ -43026,6 +43497,8 @@
                       "db_extra_search_path",
                       "max_rows",
                       "db_pool_acquisition_timeout",
+                      "db_pool_max_lifetime",
+                      "db_pool_max_idletime",
                       "db_pool"
                     ]
                   },
@@ -44786,227 +45259,6 @@
         },
         "required": ["data"]
       },
-      "V2ListMembersResponse_Output": {
-        "type": "object",
-        "properties": {
-          "data": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "type": {
-                  "type": "string",
-                  "description": "Resource type.",
-                  "enum": ["organization_member"]
-                },
-                "id": {
-                  "type": "string",
-                  "format": "uuid",
-                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$"
-                },
-                "attributes": {
-                  "type": "object",
-                  "properties": {
-                    "username": {
-                      "type": "string",
-                      "description": "Member's username",
-                      "nullable": true
-                    },
-                    "primary_email": {
-                      "type": "string",
-                      "description": "Member's primary email",
-                      "nullable": true
-                    },
-                    "mfa_enabled": {
-                      "type": "boolean",
-                      "description": "Whether Multi-Factor Authentication is enabled for this member"
-                    },
-                    "is_sso_user": {
-                      "type": "boolean",
-                      "description": "Whether this member is a Single Sign-On user"
-                    },
-                    "avatar_url": {
-                      "type": "string",
-                      "description": "Member's avatar URL",
-                      "nullable": true
-                    },
-                    "roles": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "name": {
-                            "type": "string",
-                            "description": "Role name. For project-scoped roles this is the base role name.",
-                            "example": "developer"
-                          },
-                          "scope": {
-                            "type": "string",
-                            "enum": ["organization", "project"],
-                            "description": "Whether this role applies org-wide or is scoped to specific projects for the user."
-                          },
-                          "projects": {
-                            "type": "array",
-                            "items": {
-                              "type": "object",
-                              "properties": {
-                                "ref": {
-                                  "type": "string"
-                                },
-                                "name": {
-                                  "type": "string"
-                                }
-                              },
-                              "required": ["ref", "name"]
-                            },
-                            "description": "Project refs this role is scoped to. Empty array for org-level roles."
-                          }
-                        },
-                        "required": ["name", "scope", "projects"]
-                      },
-                      "description": "Roles assigned to this member. Includes both org-level and project-scoped roles."
-                    }
-                  },
-                  "required": [
-                    "username",
-                    "primary_email",
-                    "mfa_enabled",
-                    "is_sso_user",
-                    "avatar_url",
-                    "roles"
-                  ]
-                }
-              },
-              "required": ["type", "id", "attributes"]
-            }
-          },
-          "links": {
-            "type": "object",
-            "properties": {
-              "first": {
-                "type": "string",
-                "description": "URL path to the first page if available.",
-                "example": "/v2/organizations/my-org/members?page[size]=10",
-                "nullable": true
-              },
-              "prev": {
-                "type": "string",
-                "description": "URL path to the previous page.",
-                "example": "/v2/organizations/my-org/members?page[size]=10&page[before]=019adf7d-4513-74c5-bb9a-f1bc0f7a95d7",
-                "nullable": true
-              },
-              "next": {
-                "type": "string",
-                "description": "URL path to the next page.",
-                "example": "/v2/organizations/my-org/members?page[size]=10&page[after]=019adf7d-4513-7062-b292-78b86cc470a4",
-                "nullable": true
-              },
-              "last": {
-                "type": "string",
-                "description": "URL path to the last page if available.",
-                "example": "/v2/organizations/my-org/members?page[size]=10&page[after]=019adf7d-4513-71ba-b264-21900edb4295",
-                "nullable": true
-              }
-            },
-            "required": ["prev", "next"]
-          }
-        },
-        "required": ["data", "links"]
-      },
-      "V2AssignOrganizationMemberRoleRequest": {
-        "type": "object",
-        "properties": {
-          "data": {
-            "type": "object",
-            "properties": {
-              "type": {
-                "type": "string",
-                "description": "Resource type.",
-                "enum": ["organization_member_role"]
-              },
-              "attributes": {
-                "type": "object",
-                "properties": {
-                  "role": {
-                    "type": "string",
-                    "enum": ["owner", "administrator", "developer", "read-only", "no-access"],
-                    "description": "Role name to assign. Must be one of: owner, administrator, developer, read-only. Must be on a Team or Enterprise plan to use the read-only role.",
-                    "example": "developer"
-                  },
-                  "projects": {
-                    "description": "The projects to assign a project-scoped role for. If omitted, assigns an org-wide role.",
-                    "minItems": 1,
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "properties": {
-                        "ref": {
-                          "type": "string",
-                          "description": "Project ref",
-                          "example": "abcjuqabhgwjjutfvtpa"
-                        }
-                      },
-                      "required": ["ref"]
-                    }
-                  }
-                },
-                "required": ["role"]
-              }
-            },
-            "required": ["type", "attributes"]
-          }
-        },
-        "required": ["data"]
-      },
-      "OrganizationMemberRoleResponse_Output": {
-        "type": "object",
-        "properties": {
-          "data": {
-            "type": "object",
-            "properties": {
-              "type": {
-                "type": "string",
-                "description": "Resource type.",
-                "enum": ["organization_member_role"]
-              },
-              "attributes": {
-                "type": "object",
-                "properties": {
-                  "name": {
-                    "type": "string",
-                    "description": "Role name. For project-scoped assignments this is the base role name.",
-                    "example": "developer"
-                  },
-                  "scope": {
-                    "type": "string",
-                    "enum": ["organization", "project"],
-                    "description": "Whether this role applies org-wide or is scoped to specific projects for the user."
-                  },
-                  "projects": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "properties": {
-                        "ref": {
-                          "type": "string"
-                        },
-                        "name": {
-                          "type": "string"
-                        }
-                      },
-                      "required": ["ref", "name"]
-                    },
-                    "description": "Project refs this role is scoped to. Empty array for org-level roles."
-                  }
-                },
-                "required": ["name", "scope", "projects"]
-              }
-            },
-            "required": ["type", "attributes"]
-          }
-        },
-        "required": ["data"]
-      },
       "V2ListRolesResponse_Output": {
         "type": "object",
         "properties": {
@@ -45126,6 +45378,7 @@
                   "unauthorized",
                   "validation_failed",
                   "agentic_credential_not_found",
+                  "backup_unsupported",
                   "branch_admin_required",
                   "compute_build_context_too_large",
                   "compute_build_in_progress",
@@ -45354,6 +45607,227 @@
               },
               "required": ["type", "attributes"]
             }
+          }
+        },
+        "required": ["data"]
+      },
+      "V2ListMembersResponse_Output": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "description": "Resource type.",
+                  "enum": ["organization_member"]
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$"
+                },
+                "attributes": {
+                  "type": "object",
+                  "properties": {
+                    "username": {
+                      "type": "string",
+                      "description": "Member's username",
+                      "nullable": true
+                    },
+                    "primary_email": {
+                      "type": "string",
+                      "description": "Member's primary email",
+                      "nullable": true
+                    },
+                    "mfa_enabled": {
+                      "type": "boolean",
+                      "description": "Whether Multi-Factor Authentication is enabled for this member"
+                    },
+                    "is_sso_user": {
+                      "type": "boolean",
+                      "description": "Whether this member is a Single Sign-On user"
+                    },
+                    "avatar_url": {
+                      "type": "string",
+                      "description": "Member's avatar URL",
+                      "nullable": true
+                    },
+                    "roles": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string",
+                            "description": "Role name. For project-scoped roles this is the base role name.",
+                            "example": "developer"
+                          },
+                          "scope": {
+                            "type": "string",
+                            "enum": ["organization", "project"],
+                            "description": "Whether this role applies org-wide or is scoped to specific projects for the user."
+                          },
+                          "projects": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "ref": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["ref", "name"]
+                            },
+                            "description": "Project refs this role is scoped to. Empty array for org-level roles."
+                          }
+                        },
+                        "required": ["name", "scope", "projects"]
+                      },
+                      "description": "Roles assigned to this member. Includes both org-level and project-scoped roles."
+                    }
+                  },
+                  "required": [
+                    "username",
+                    "primary_email",
+                    "mfa_enabled",
+                    "is_sso_user",
+                    "avatar_url",
+                    "roles"
+                  ]
+                }
+              },
+              "required": ["type", "id", "attributes"]
+            }
+          },
+          "links": {
+            "type": "object",
+            "properties": {
+              "first": {
+                "type": "string",
+                "description": "URL path to the first page if available.",
+                "example": "/v2/organizations/my-org/members?page[size]=10",
+                "nullable": true
+              },
+              "prev": {
+                "type": "string",
+                "description": "URL path to the previous page.",
+                "example": "/v2/organizations/my-org/members?page[size]=10&page[before]=019adf7d-4513-74c5-bb9a-f1bc0f7a95d7",
+                "nullable": true
+              },
+              "next": {
+                "type": "string",
+                "description": "URL path to the next page.",
+                "example": "/v2/organizations/my-org/members?page[size]=10&page[after]=019adf7d-4513-7062-b292-78b86cc470a4",
+                "nullable": true
+              },
+              "last": {
+                "type": "string",
+                "description": "URL path to the last page if available.",
+                "example": "/v2/organizations/my-org/members?page[size]=10&page[after]=019adf7d-4513-71ba-b264-21900edb4295",
+                "nullable": true
+              }
+            },
+            "required": ["prev", "next"]
+          }
+        },
+        "required": ["data", "links"]
+      },
+      "V2AssignOrganizationMemberRoleRequest": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "description": "Resource type.",
+                "enum": ["organization_member_role"]
+              },
+              "attributes": {
+                "type": "object",
+                "properties": {
+                  "role": {
+                    "type": "string",
+                    "enum": ["owner", "administrator", "developer", "read-only", "no-access"],
+                    "description": "Role name to assign. Must be one of: owner, administrator, developer, read-only. Must be on a Team or Enterprise plan to use the read-only role.",
+                    "example": "developer"
+                  },
+                  "projects": {
+                    "description": "The projects to assign a project-scoped role for. If omitted, assigns an org-wide role.",
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "ref": {
+                          "type": "string",
+                          "description": "Project ref",
+                          "example": "abcjuqabhgwjjutfvtpa"
+                        }
+                      },
+                      "required": ["ref"]
+                    }
+                  }
+                },
+                "required": ["role"]
+              }
+            },
+            "required": ["type", "attributes"]
+          }
+        },
+        "required": ["data"]
+      },
+      "OrganizationMemberRoleResponse_Output": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "description": "Resource type.",
+                "enum": ["organization_member_role"]
+              },
+              "attributes": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "Role name. For project-scoped assignments this is the base role name.",
+                    "example": "developer"
+                  },
+                  "scope": {
+                    "type": "string",
+                    "enum": ["organization", "project"],
+                    "description": "Whether this role applies org-wide or is scoped to specific projects for the user."
+                  },
+                  "projects": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "ref": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["ref", "name"]
+                    },
+                    "description": "Project refs this role is scoped to. Empty array for org-level roles."
+                  }
+                },
+                "required": ["name", "scope", "projects"]
+              }
+            },
+            "required": ["type", "attributes"]
           }
         },
         "required": ["data"]
@@ -45697,6 +46171,101 @@
         },
         "required": ["data", "links"]
       },
+      "V2ListMaintenanceWindowsResponse_Output": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "description": "Resource type.",
+                  "enum": ["maintenance_window"]
+                },
+                "id": {
+                  "type": "string",
+                  "description": "AWS region.",
+                  "example": "us-east-1"
+                },
+                "attributes": {
+                  "type": "object",
+                  "properties": {
+                    "window": {
+                      "type": "object",
+                      "properties": {
+                        "day": {
+                          "type": "string",
+                          "enum": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+                          "description": "UTC day the window starts."
+                        },
+                        "start_utc": {
+                          "type": "string",
+                          "description": "UTC start time.",
+                          "example": "06:00"
+                        },
+                        "duration_minutes": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991,
+                          "example": 120
+                        }
+                      },
+                      "required": ["day", "start_utc", "duration_minutes"]
+                    },
+                    "current_window": {
+                      "type": "object",
+                      "properties": {
+                        "start_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+                          "description": "Start of the occurrence, inclusive."
+                        },
+                        "end_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+                          "description": "End of the occurrence, exclusive."
+                        }
+                      },
+                      "required": ["start_at", "end_at"],
+                      "description": "The open occurrence, or null when the window is closed.",
+                      "nullable": true
+                    },
+                    "next_windows": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "start_at": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+                            "description": "Start of the occurrence, inclusive."
+                          },
+                          "end_at": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+                            "description": "End of the occurrence, exclusive."
+                          }
+                        },
+                        "required": ["start_at", "end_at"]
+                      },
+                      "description": "The next five occurrences that start after now, in order."
+                    }
+                  },
+                  "required": ["window", "current_window", "next_windows"]
+                }
+              },
+              "required": ["type", "id", "attributes"]
+            }
+          }
+        },
+        "required": ["data"]
+      },
       "APIErrorObject": {
         "type": "object",
         "properties": {
@@ -45717,6 +46286,7 @@
               "unauthorized",
               "validation_failed",
               "agentic_credential_not_found",
+              "backup_unsupported",
               "branch_admin_required",
               "compute_build_context_too_large",
               "compute_build_in_progress",
