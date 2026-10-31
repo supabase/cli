@@ -142,11 +142,34 @@ export function exitCodesDiffer(
 
 /* Workload manifest */
 
+const CliArgs = Schema.Array(Schema.String);
+
 const Workload = Schema.Struct({
   id: Schema.NonEmptyString,
-  args: Schema.Array(Schema.String),
+  args: CliArgs,
   cwdSetup: Schema.Literals(["none", "init"]),
   scenario: Schema.optionalKey(Schema.String),
+  /** Untimed commands run with the build under test before the measured launches. */
+  setup: Schema.optionalKey(Schema.Array(CliArgs)),
+  /** Untimed commands that always run after the measured launches, even after a failure or timeout. */
+  teardown: Schema.optionalKey(Schema.Array(CliArgs)),
+  /** `run` repeats setup and teardown for every launch; `block` shares them across a block of launches. */
+  setupScope: Schema.optionalKey(Schema.Literals(["run", "block"])),
+  /** Launches with `SUPABASE_EXPERIMENTAL_STACK=1`. */
+  stack: Schema.optionalKey(Schema.Boolean),
+  /** Container runtime the workload exercises; stack workloads pass it to `stack start` themselves. */
+  runtime: Schema.optionalKey(Schema.Literals(["docker", "native"])),
+  /** Directory under the manifest's `fixtures/` copied into the project's `supabase/` directory after `init`. */
+  fixture: Schema.optionalKey(Schema.NonEmptyString),
+  /** Directory under `fixtures/` copied into `supabase/` after setup, so the launch finds changes setup has not applied. */
+  fixtureAfterSetup: Schema.optionalKey(Schema.NonEmptyString),
+  runs: Schema.optionalKey(Schema.Finite),
+  warmup: Schema.optionalKey(Schema.Finite),
+  /** Traced launches per build; defaults to one per measured run. */
+  traceRuns: Schema.optionalKey(Schema.Finite),
+  timeoutSeconds: Schema.optionalKey(Schema.Finite),
+  /** Expected seconds for one pass of the workload over both builds, used to pack shards. */
+  estimatedSeconds: Schema.optionalKey(Schema.Finite),
 });
 export type Workload = typeof Workload.Type;
 
@@ -162,10 +185,44 @@ export function validateWorkloads(
   const problems: Array<string> = [];
   const seen = new Set<string>();
   for (const workload of workloads) {
+    const name = `workload "${workload.id}"`;
     if (seen.has(workload.id)) problems.push(`duplicate workload id "${workload.id}"`);
     seen.add(workload.id);
     if (workload.scenario !== undefined && context.apiUrl === undefined) {
-      problems.push(`workload "${workload.id}" names a scenario and needs --api-url`);
+      problems.push(`${name} names a scenario and needs --api-url`);
+    }
+    for (const field of ["runs", "warmup", "traceRuns", "timeoutSeconds"] as const) {
+      const value = workload[field];
+      const minimum = field === "warmup" || field === "traceRuns" ? 0 : 1;
+      if (value !== undefined && (!Number.isInteger(value) || value < minimum)) {
+        problems.push(`${name} has an invalid ${field}`);
+      }
+    }
+    if (workload.fixtureAfterSetup !== undefined && workload.setupScope === "block") {
+      problems.push(
+        `${name} stages fixtureAfterSetup, which a block-scoped workload applies only once`,
+      );
+    }
+    if (workload.estimatedSeconds !== undefined && !(workload.estimatedSeconds > 0)) {
+      problems.push(`${name} has an invalid estimatedSeconds`);
+    }
+    if (workload.stack === true && workload.runtime === undefined) {
+      problems.push(`${name} is a stack workload and needs a runtime`);
+    }
+    if (workload.stack === true && (workload.teardown?.length ?? 0) === 0) {
+      problems.push(`${name} is a stack workload and needs a teardown that destroys its stack`);
+    }
+    if (workload.stack !== true && workload.runtime === "native") {
+      problems.push(`${name} uses the native runtime, which only stack workloads support`);
+    }
+    for (const command of [workload.args, ...(workload.setup ?? [])]) {
+      if (command[0] !== "stack" || command[1] !== "start" || workload.runtime === undefined) {
+        continue;
+      }
+      const at = command.indexOf("--runtime");
+      if (at === -1 || command[at + 1] !== workload.runtime) {
+        problems.push(`${name} runs stack start without --runtime ${workload.runtime}`);
+      }
     }
   }
   return problems;
@@ -242,6 +299,14 @@ export type RunSample = typeof RunSample.Type;
 const WorkloadReport = Schema.Struct({
   id: Schema.String,
   args: Schema.Array(Schema.String),
+  /** Container runtime the workload exercised, when it declares one. */
+  runtime: Schema.optionalKey(Schema.Literals(["docker", "native"])),
+  /** Whether the workload ran against the stack backend. */
+  stack: Schema.optionalKey(Schema.Boolean),
+  /** Traced launches expected per build; absent means one per measured run. */
+  traceRuns: Schema.optionalKey(Schema.Finite),
+  /** Wall seconds across both builds, including setup, teardown and traced launches. */
+  elapsedSeconds: Schema.optionalKey(Schema.Finite),
   base: Schema.Array(RunSample),
   branch: Schema.Array(RunSample),
 });
@@ -312,7 +377,9 @@ export interface BuildAnalysis {
   readonly tracedExitCodes: ReadonlyArray<number>;
   readonly spans: Record<string, SpanAggregate> | undefined;
   readonly api: ApiSummary | undefined;
-  /** Measured runs without a usable trace when tracing was requested. */
+  /** Median container CLI calls per run by verb, summed over `ContainerCli.spawn` and `ContainerCli.run`. */
+  readonly containers: Record<string, number> | undefined;
+  /** Traced runs expected but without a usable trace when tracing was requested. */
   readonly traceMissingRuns: number;
   readonly skippedTraceLines: number;
 }
@@ -339,8 +406,28 @@ function summarizeApi(samples: ReadonlyArray<RunSample>): ApiSummary | undefined
   };
 }
 
-function summarizeBuild(samples: ReadonlyArray<RunSample>, traced: boolean): BuildAnalysis {
+const CONTAINER_SPAN = /^ContainerCli\.(?:spawn|run)(?: \((.+)\))?$/u;
+
+/** Median per-run container CLI call counts keyed by verb; empty when no container call ran. */
+export function containerCounts(spans: Record<string, SpanAggregate>): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const [name, aggregate] of Object.entries(spans)) {
+    const match = CONTAINER_SPAN.exec(name);
+    if (match === null) continue;
+    const verb = match[1] ?? "(unlabelled)";
+    counts[verb] = (counts[verb] ?? 0) + aggregate.medianCount;
+  }
+  return counts;
+}
+
+function summarizeBuild(
+  samples: ReadonlyArray<RunSample>,
+  traced: boolean,
+  expectedTraces: number,
+  countContainers: boolean,
+): BuildAnalysis {
   const withTrace = samples.flatMap((sample) => (sample.trace === undefined ? [] : [sample.trace]));
+  const spans = traced ? aggregateSpanRuns(withTrace.map((trace) => trace.spans)) : undefined;
   return {
     timing: summarizeTimings(samples.map((sample) => sample.wallMs)),
     samples: samples.length,
@@ -348,9 +435,13 @@ function summarizeBuild(samples: ReadonlyArray<RunSample>, traced: boolean): Bui
     tracedExitCodes: samples.flatMap((sample) =>
       sample.tracedExitCode === undefined ? [] : [sample.tracedExitCode],
     ),
-    spans: traced ? aggregateSpanRuns(withTrace.map((trace) => trace.spans)) : undefined,
+    spans,
     api: summarizeApi(samples),
-    traceMissingRuns: traced ? samples.length - withTrace.length : 0,
+    containers:
+      spans === undefined || !countContainers || withTrace.length === 0
+        ? undefined
+        : containerCounts(spans),
+    traceMissingRuns: traced ? Math.max(0, expectedTraces - withTrace.length) : 0,
     skippedTraceLines: withTrace.reduce((sum, trace) => sum + trace.skippedLines, 0),
   };
 }
@@ -361,9 +452,17 @@ export interface EndpointChange {
   readonly branch: number;
 }
 
+export interface ContainerChange {
+  readonly verb: string;
+  readonly base: number;
+  readonly branch: number;
+}
+
 export interface WorkloadAnalysis {
   readonly id: string;
   readonly args: ReadonlyArray<string>;
+  readonly runtime: "docker" | "native" | undefined;
+  readonly stack: boolean;
   readonly base: BuildAnalysis;
   readonly branch: BuildAnalysis;
   readonly deltaMs: number;
@@ -374,6 +473,8 @@ export interface WorkloadAnalysis {
   /** Top phase deltas; empty unless the verdict is "slower" or "faster". */
   readonly phaseRows: ReadonlyArray<SpanComparison>;
   readonly endpointChanges: ReadonlyArray<EndpointChange>;
+  /** Container verbs whose per-run call count differs between builds. */
+  readonly containerChanges: ReadonlyArray<ContainerChange>;
 }
 
 /** Whether every launch of the workload exited 0 and every API call got a non-error response. */
@@ -402,10 +503,46 @@ function endpointChanges(
     .filter((change) => change.base !== change.branch);
 }
 
+function containerChanges(
+  base: BuildAnalysis,
+  branch: BuildAnalysis,
+): ReadonlyArray<ContainerChange> {
+  if (base.containers === undefined || branch.containers === undefined) return [];
+  const verbs = new Set([...Object.keys(base.containers), ...Object.keys(branch.containers)]);
+  return [...verbs]
+    .sort()
+    .map((verb) => ({
+      verb,
+      base: base.containers?.[verb] ?? 0,
+      branch: branch.containers?.[verb] ?? 0,
+    }))
+    .filter((change) => change.base !== change.branch);
+}
+
+/** Total container CLI calls per run, or undefined when container calls were not traced. */
+export function totalContainerCalls(build: BuildAnalysis): number | undefined {
+  return build.containers === undefined
+    ? undefined
+    : Object.values(build.containers).reduce((sum, count) => sum + count, 0);
+}
+
 /** Derives medians, comparisons and the timing verdict for one workload from its raw samples. */
 export function analyzeWorkload(workload: WorkloadReport, traced: boolean): WorkloadAnalysis {
-  const base = summarizeBuild(workload.base, traced);
-  const branch = summarizeBuild(workload.branch, traced);
+  const expectedTraces = (samples: number) => Math.min(workload.traceRuns ?? samples, samples);
+  // Stack backend container work runs in a detached owner process, so its spans never reach the CLI's trace.
+  const countContainers = workload.stack !== true;
+  const base = summarizeBuild(
+    workload.base,
+    traced,
+    expectedTraces(workload.base.length),
+    countContainers,
+  );
+  const branch = summarizeBuild(
+    workload.branch,
+    traced,
+    expectedTraces(workload.branch.length),
+    countContainers,
+  );
   const delta = deltaOf(base.timing.median, branch.timing.median);
   const differ = exitCodesDiffer(base.exitCodes, branch.exitCodes);
   const verdict = timingVerdict(base.timing, branch.timing, {
@@ -419,6 +556,8 @@ export function analyzeWorkload(workload: WorkloadReport, traced: boolean): Work
   return {
     id: workload.id,
     args: workload.args,
+    runtime: workload.runtime,
+    stack: workload.stack ?? false,
     base,
     branch,
     deltaMs: delta.ms,
@@ -429,12 +568,16 @@ export function analyzeWorkload(workload: WorkloadReport, traced: boolean): Work
     phaseRows:
       verdict === "slower" || verdict === "faster" ? (spans ?? []).slice(0, PHASE_ROWS) : [],
     endpointChanges: endpointChanges(base, branch),
+    containerChanges: containerChanges(base, branch),
   };
 }
 
 export type FlagKind =
   | "new-api-calls"
   | "api-calls-dropped"
+  | "new-container-calls"
+  | "container-calls-dropped"
+  | "container-calls-changed"
   | "external-calls"
   | "non-deterministic"
   | "request-log-mismatch"
@@ -465,6 +608,23 @@ export function collectFlags(analysis: WorkloadAnalysis): ReadonlyArray<Flag> {
   }
   if (baseCalls !== undefined && baseCalls > 0 && branchCalls === 0) {
     add("api-calls-dropped", `base makes ${baseCalls} API calls, branch makes 0`);
+  }
+  const baseContainers = totalContainerCalls(analysis.base);
+  const branchContainers = totalContainerCalls(analysis.branch);
+  if (baseContainers !== undefined && branchContainers !== undefined) {
+    if (baseContainers === 0 && branchContainers > 0) {
+      add("new-container-calls", `base makes 0 container calls, branch makes ${branchContainers}`);
+    } else if (baseContainers > 0 && branchContainers === 0) {
+      add(
+        "container-calls-dropped",
+        `base makes ${baseContainers} container calls, branch makes 0`,
+      );
+    } else if (analysis.containerChanges.length > 0) {
+      add(
+        "container-calls-changed",
+        `container calls changed from ${baseContainers} to ${branchContainers}`,
+      );
+    }
   }
   if (Math.min(analysis.base.samples, analysis.branch.samples) < VERDICT_MIN_SAMPLES) {
     add(

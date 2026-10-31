@@ -19,8 +19,22 @@ const entry = (n: number, overrides: Partial<RunEntry> = {}): RunEntry => ({
 
 describe("headlineOf", () => {
   test("reads the title of the rendered report", () => {
+    expect(
+      headlineOf(
+        "<!-- cli-bench:pr -->\n\n## CLI benchmark (Lightweight Commands): 2 things to check\n\nbody",
+      ),
+    ).toBe("2 things to check");
+  });
+
+  test("reads the title of a lightweight report under the previous heading", () => {
     expect(headlineOf("<!-- cli-bench:pr -->\n\n## CLI benchmark: 2 things to check\n\nbody")).toBe(
       "2 things to check",
+    );
+  });
+
+  test("reads the title of the integration-heavy report", () => {
+    expect(headlineOf("## CLI benchmark (Integration Heavy Commands): 1 thing to check")).toBe(
+      "1 thing to check",
     );
   });
 
@@ -90,6 +104,13 @@ describe("renderHistory and decodeHistory", () => {
       "- `0000002` · 2026-10-28 09:05 UTC · 1 thing to check · [run](https://github.com/o/r/actions/runs/2)",
     );
     expect(rendered).not.toContain("0000003` ·");
+  });
+
+  test("lists every run, the newest included, while a run is in progress", () => {
+    const rendered = renderHistory([entry(3), entry(2)], (t) => t, true);
+
+    expect(rendered).toContain("`0000003` ·");
+    expect(rendered).toContain("`0000002` ·");
   });
 
   test("shows no list for a first run", () => {

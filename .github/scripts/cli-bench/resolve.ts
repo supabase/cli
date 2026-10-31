@@ -1,15 +1,16 @@
 /**
  * CLI benchmark resolver for `pull_request` runs: decides whether the benchmark job runs.
  *
- * The first run on a pull request benchmarks and comments. Later pushes skip while the comment
- * exists and reports a result; a re-run (`run_attempt` above 1), a missing comment, a failed first
- * run, or a fork pull request, which never has a comment, benchmarks. Needs read access only.
+ * The first run on a pull request benchmarks and comments. Later pushes skip while the
+ * lightweight comment exists and reports a result; a re-run (`run_attempt` above 1), a missing
+ * comment, a failed first run, or a fork pull request, which never has a comment, benchmarks.
+ * Needs read access only.
  * Run in CI as: `bun .github/scripts/cli-bench/resolve.ts`.
  */
 import { appendFileSync } from "node:fs";
 
 import { listIssueComments, requireEnv, type IssueComment } from "./github.ts";
-import { FAILURE_TITLE, findBenchComment } from "./post-comment.ts";
+import { commentFailed, findComment } from "./post-comment.ts";
 
 export interface ResolveInput {
   runAttempt: number;
@@ -29,8 +30,8 @@ export const SKIP_REASON =
 /** Skips only a first attempt on a pull request whose benchmark comment reports a result. */
 export function resolveBench(input: ResolveInput): ResolveResult {
   if (input.isFork || input.runAttempt > 1) return { shouldRun: true };
-  const existing = findBenchComment(input.comments);
-  if (existing === undefined || existing.body.includes(FAILURE_TITLE)) return { shouldRun: true };
+  const existing = findComment("lightweight", input.comments);
+  if (existing === undefined || commentFailed(existing.body)) return { shouldRun: true };
   return { shouldRun: false, skipReason: SKIP_REASON };
 }
 
