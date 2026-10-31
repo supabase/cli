@@ -1,8 +1,9 @@
 /**
  * Renders a `bench-cli.ts --out` report as Markdown: the answer first, then a timing table, API
- * calls, binary size, and collapsed details. Run as `bun scripts/bench-summary.ts --report <file>`
- * with optional `--branch-build|--base-build|--replay ok|failed` step outcomes, `--head-sha`,
- * `--base-ref`, `--merge-base`, and `--comment-out <file>` for the pull request
+ * calls, container operations (integration-heavy section), binary size, and collapsed details. Run
+ * as `bun scripts/bench-summary.ts --report <file>` with optional `--section
+ * lightweight|integration-heavy`, `--branch-build|--base-build|--replay ok|failed` step outcomes,
+ * `--head-sha`, `--base-ref`, `--merge-base`, and `--comment-out <file>` for the pull request
  * comment variant; the job summary goes to `GITHUB_STEP_SUMMARY` when set, otherwise to stdout.
  */
 import process from "node:process";
@@ -14,18 +15,29 @@ import {
   collectFlags,
   decodeBenchReport,
   VERDICT_MIN_PCT,
+  totalContainerCalls,
   type BenchReport,
   type Flag,
   type WorkloadAnalysis,
 } from "./bench-report.ts";
 
 const USAGE =
-  "usage: bun scripts/bench-summary.ts --report <file> [--branch-build ok|failed] [--base-build ok|failed] [--replay ok|failed] [--head-sha <sha>] [--base-ref <ref>] [--merge-base <sha>] [--comment-out <file>]";
+  "usage: bun scripts/bench-summary.ts --report <file> [--section lightweight|integration-heavy] [--note <text>] [--branch-build ok|failed] [--base-build ok|failed] [--replay ok|failed] [--head-sha <sha>] [--base-ref <ref>] [--merge-base <sha>] [--comment-out <file>]";
 
 type Outcome = "ok" | "failed";
 
+/** The benchmark a report covers; each has its own pull request comment. */
+export type Section = "lightweight" | "integration-heavy";
+
+export const SECTION_NAMES: Record<Section, string> = {
+  lightweight: "Lightweight Commands",
+  "integration-heavy": "Integration Heavy Commands",
+};
+
 export interface SummaryOptions {
   readonly report: string | undefined;
+  readonly section: Section;
+  readonly note: string | undefined;
   readonly branchBuild: Outcome;
   readonly baseBuild: Outcome;
   readonly replay: Outcome;
@@ -43,6 +55,8 @@ export function parseSummaryArgs(argv: ReadonlyArray<string>): SummaryOptions {
     args: [...argv],
     options: {
       report: { type: "string" },
+      section: { type: "string", default: "lightweight" },
+      note: { type: "string" },
       "branch-build": { type: "string", default: "ok" },
       "base-build": { type: "string", default: "ok" },
       replay: { type: "string", default: "ok" },
@@ -57,8 +71,13 @@ export function parseSummaryArgs(argv: ReadonlyArray<string>): SummaryOptions {
       throw new Error(`--${flag} must be "ok" or "failed"`);
     }
   }
+  if (values.section !== "lightweight" && values.section !== "integration-heavy") {
+    throw new Error('--section must be "lightweight" or "integration-heavy"');
+  }
   const options: SummaryOptions = {
     report: values.report,
+    section: values.section,
+    note: values.note,
     branchBuild: values["branch-build"] === "failed" ? "failed" : "ok",
     baseBuild: values["base-build"] === "failed" ? "failed" : "ok",
     replay: values.replay === "failed" ? "failed" : "ok",
@@ -121,7 +140,7 @@ function table(header: ReadonlyArray<string>, rows: ReadonlyArray<ReadonlyArray<
 const when = (build: Flag["build"]) => (build === "base" ? "before" : "after");
 
 /** One plain-words sentence for a flag. */
-function describeFlag(flag: Flag, analysis: WorkloadAnalysis): string {
+function describeFlag(flag: Flag, analysis: WorkloadAnalysis, integration: boolean): string {
   const name = command(analysis);
   const at = when(flag.build);
   switch (flag.kind) {
@@ -137,6 +156,12 @@ function describeFlag(flag: Flag, analysis: WorkloadAnalysis): string {
     }
     case "api-calls-dropped":
       return `${name} no longer calls the Management API. It made ${callCount(analysis.base.api?.medianCalls)} before and now makes none.`;
+    case "new-container-calls":
+      return `${name} now runs container commands. It ran none before and now runs ${totalContainerCalls(analysis.branch) ?? "some"}.`;
+    case "container-calls-dropped":
+      return `${name} no longer runs container commands. It ran ${totalContainerCalls(analysis.base) ?? "some"} before and now runs none.`;
+    case "container-calls-changed":
+      return `${name} runs a different number of container commands: ${totalContainerCalls(analysis.base) ?? "some"} before, ${totalContainerCalls(analysis.branch) ?? "some"} now.`;
     case "external-calls":
       return `${name} made calls to hosts other than the local test server ${at}, so its timing may be skewed.`;
     case "non-deterministic":
@@ -144,6 +169,9 @@ function describeFlag(flag: Flag, analysis: WorkloadAnalysis): string {
     case "request-log-mismatch":
       return `The API calls counted for ${name} ${at} do not match what the local test server saw, so the counts may be wrong.`;
     case "error-status":
+      if (integration) {
+        return `${name} called the Management API ${at} and got an error response from the local test server, which has no recorded scenario for these commands; they are expected to make no API calls.`;
+      }
       return `${name} got error responses from the local test server ${at}, so it did not follow the recorded scenario.`;
     case "trace-incomplete":
       return `Some runs of ${name} ${at} produced no usable trace, so call counts and phase timings may be incomplete.`;
@@ -174,16 +202,83 @@ function changeText(analysis: WorkloadAnalysis): string {
   }
 }
 
+/** How the workload runs: its container runtime, and `stack` when it uses the stack backend. */
+function runtimeLabel(analysis: WorkloadAnalysis): string {
+  const runtime = analysis.runtime ?? "docker";
+  return analysis.stack ? `stack, ${runtime}` : runtime;
+}
+
+const hasRuntimes = (analyses: ReadonlyArray<WorkloadAnalysis>) =>
+  analyses.some((analysis) => analysis.runtime !== undefined || analysis.stack);
+
 function timingTable(analyses: ReadonlyArray<WorkloadAnalysis>): string {
+  const withRuntime = hasRuntimes(analyses);
   return table(
-    ["Command", "Before", "After", "Change"],
+    ["Command", ...(withRuntime ? ["Runtime"] : []), "Before", "After", "Change"],
     analyses.map((analysis) => [
       command(analysis),
+      ...(withRuntime ? [runtimeLabel(analysis)] : []),
       ms(analysis.base.timing.median),
       ms(analysis.branch.timing.median),
       changeText(analysis),
     ]),
   );
+}
+
+/** Commands whose container verbs are traced, with the change in each. */
+function containerOverview(analyses: ReadonlyArray<WorkloadAnalysis>): {
+  readonly line: string;
+} {
+  const measured = analyses.filter(
+    (analysis) =>
+      totalContainerCalls(analysis.base) !== undefined &&
+      totalContainerCalls(analysis.branch) !== undefined,
+  );
+  if (measured.length === 0) return { line: "Container operations were not counted." };
+  const changed = measured.filter((analysis) => analysis.containerChanges.length > 0);
+  if (changed.length === 0) {
+    const any = measured.some(
+      (analysis) =>
+        (totalContainerCalls(analysis.base) ?? 0) > 0 ||
+        (totalContainerCalls(analysis.branch) ?? 0) > 0,
+    );
+    return {
+      line: any
+        ? `Container operations: unchanged for ${measured.length === 1 ? "the command" : `all ${measured.length} commands`}.`
+        : "Container operations: none recorded.",
+    };
+  }
+  const lines = changed.map((analysis) => {
+    const verbs = analysis.containerChanges
+      .map((change) => `${code(change.verb)} ${change.base} -> ${change.branch}`)
+      .join(", ");
+    return `- ${command(analysis)} (${runtimeLabel(analysis)}): ${verbs}`;
+  });
+  return {
+    line: [
+      `Container operations changed for ${changed.length} ${plural(changed.length, "command", "commands")}:`,
+      ...lines,
+    ].join("\n"),
+  };
+}
+
+function containerDetailTable(analyses: ReadonlyArray<WorkloadAnalysis>): string {
+  const rows = analyses.flatMap((analysis) => {
+    const { base, branch } = analysis;
+    if (base.containers === undefined || branch.containers === undefined) return [];
+    const verbs = new Set([...Object.keys(base.containers), ...Object.keys(branch.containers)]);
+    return [...verbs]
+      .sort()
+      .map((verb) => [
+        command(analysis),
+        runtimeLabel(analysis),
+        code(verb),
+        String(base.containers?.[verb] ?? 0),
+        String(branch.containers?.[verb] ?? 0),
+      ]);
+  });
+  if (rows.length === 0) return "No container operations were recorded.";
+  return table(["Command", "Runtime", "Operation", "Before", "After"], rows);
 }
 
 interface ApiOverview {
@@ -192,7 +287,7 @@ interface ApiOverview {
   readonly changedIds: ReadonlyArray<string>;
 }
 
-function apiOverview(analyses: ReadonlyArray<WorkloadAnalysis>): ApiOverview {
+function apiOverview(analyses: ReadonlyArray<WorkloadAnalysis>, expectNone: boolean): ApiOverview {
   const measured = analyses.filter(
     (analysis) => analysis.base.api !== undefined && analysis.branch.api !== undefined,
   );
@@ -205,6 +300,18 @@ function apiOverview(analyses: ReadonlyArray<WorkloadAnalysis>): ApiOverview {
   const missing = analyses.length - measured.length;
   const suffix = missing === 0 ? "" : ` (not measured for ${missing})`;
   if (changed.length === 0) {
+    const idle =
+      expectNone &&
+      measured.every(
+        (analysis) =>
+          analysis.base.api?.medianCalls === 0 && analysis.branch.api?.medianCalls === 0,
+      );
+    if (idle) {
+      return {
+        line: `API calls: none, before or after, for ${measured.length === 1 ? "the command" : `all ${measured.length} commands`}${suffix}.`,
+        changedIds: [],
+      };
+    }
     return {
       line: `API calls: unchanged for ${measured.length === 1 ? "the command" : `all ${measured.length} commands`}${suffix}.`,
       changedIds: [],
@@ -285,17 +392,27 @@ function phaseDetail(analyses: ReadonlyArray<WorkloadAnalysis>): string {
   return table(["Command", "Span", "Change", "Before -> after"], rows);
 }
 
-export const BENCH_MARKER = "<!-- cli-bench:pr -->";
-
 export interface RenderContext {
-  /** `comment` adds the marker and the re-run footer; `summary` is the job summary. */
-  readonly target: "summary" | "comment";
+  /** A warning shown above the results, such as shards that did not finish. */
+  readonly note?: string | undefined;
+  readonly section?: Section;
   readonly headSha?: string | undefined;
   readonly baseRef?: string | undefined;
   readonly mergeBase?: string | undefined;
 }
 
 const short = (sha: string) => sha.slice(0, 7);
+
+/** "10 runs each", or the range when per-workload run counts differ. */
+function runsText(report: BenchReport): string {
+  const counts = report.workloads.flatMap((workload) => [
+    workload.base.length,
+    workload.branch.length,
+  ]);
+  const low = counts.length === 0 ? report.runs : Math.min(...counts);
+  const high = counts.length === 0 ? report.runs : Math.max(...counts);
+  return low === high ? `${low} ${plural(low, "run", "runs")} each` : `${low}-${high} runs each`;
+}
 
 function contextLine(report: BenchReport | undefined, context: RenderContext): string {
   const parts: Array<string> = [];
@@ -310,7 +427,7 @@ function contextLine(report: BenchReport | undefined, context: RenderContext): s
           }`;
     parts.push(`Commit ${code(short(context.headSha))}${against}`);
   }
-  if (report !== undefined) parts.push(`${report.runs} ${plural(report.runs, "run", "runs")} each`);
+  if (report !== undefined) parts.push(runsText(report));
   parts.push("report only, never blocks merging");
   return parts.join(" · ");
 }
@@ -321,32 +438,30 @@ function frame(
   context: RenderContext,
   report?: BenchReport,
 ): string {
-  const footer =
-    context.target === "comment" ? ["Comment `/bench` to run it again on the latest commit."] : [];
-  return (
-    [
-      ...(context.target === "comment" ? [BENCH_MARKER] : []),
-      `## CLI benchmark: ${title}`,
-      contextLine(report, context),
-      ...body,
-      ...footer,
-    ].join("\n\n") + "\n"
-  );
+  const section = context.section ?? "lightweight";
+  const heading = `## CLI benchmark (${SECTION_NAMES[section]}): ${title}`;
+  const note = context.note === undefined || context.note === "" ? [] : [`⚠️ ${context.note}`];
+  return [heading, contextLine(report, context), ...note, ...body].join("\n\n") + "\n";
 }
 
 /** The Markdown report, or `notice` in plain words when there is no report to compare. */
 export function renderSummary(
   report: BenchReport | undefined,
   notice: string,
-  context: RenderContext = { target: "summary" },
+  context: RenderContext = {},
 ): string {
   if (report === undefined) return frame("could not run", [notice], context);
   const analyses = report.workloads.map((workload) => analyzeWorkload(workload, report.trace));
+  const integration = (context.section ?? "lightweight") === "integration-heavy";
+  // A local stack's own readiness and health traffic always leaves the test server's host.
   const flags = analyses.flatMap((analysis) =>
-    collectFlags(analysis).map((flag) => ({ flag, analysis })),
+    collectFlags(analysis)
+      .filter((flag) => !(integration && flag.kind === "external-calls"))
+      .map((flag) => ({ flag, analysis })),
   );
   if (analyses.length === 0) return frame("no commands were benchmarked", [], context, report);
-  const api = apiOverview(analyses);
+  const api = apiOverview(analyses, integration);
+  const containers = integration ? containerOverview(analyses) : undefined;
   const moved = analyses
     .filter((analysis) => analysis.verdict === "slower" || analysis.verdict === "faster")
     .map((analysis) => analysis.id);
@@ -357,16 +472,20 @@ export function renderSummary(
   return frame(
     title,
     [
-      ...flags.map(({ flag, analysis }) => `⚠️ ${describeFlag(flag, analysis)}`),
+      ...flags.map(({ flag, analysis }) => `⚠️ ${describeFlag(flag, analysis, integration)}`),
       timingTable(analyses),
       api.line,
+      ...(containers === undefined ? [] : [containers.line]),
       sizeLine(report),
       [
-        "<details><summary>Details: timing ranges, API calls per command, slowest phases</summary>",
+        `<details><summary>Details: timing ranges, API calls per command, ${integration ? "container operations, " : ""}slowest phases</summary>`,
         "#### Timing ranges",
         rangeTable(analyses),
         "#### API calls per command",
         apiDetailTable(analyses),
+        ...(integration
+          ? ["#### Container operations per command", containerDetailTable(analyses)]
+          : []),
         "#### Slowest phases",
         phaseDetail(analyses),
         "</details>",
@@ -425,11 +544,13 @@ const main = Effect.gen(function* () {
       ? yield* loadReport(fs, options.report)
       : { report: undefined, notice: outcomeNotice ?? NO_REPORT };
   const context = {
+    section: options.section,
+    note: options.note,
     headSha: options.headSha,
     baseRef: options.baseRef,
     mergeBase: options.mergeBase,
   };
-  const markdown = renderSummary(loaded.report, loaded.notice, { target: "summary", ...context });
+  const markdown = renderSummary(loaded.report, loaded.notice, context);
   const summaryFile = yield* Config.option(Config.String("GITHUB_STEP_SUMMARY"));
   if (Option.isSome(summaryFile) && summaryFile.value !== "") {
     yield* fs.writeFileString(summaryFile.value, markdown, { flag: "a" });
@@ -438,10 +559,7 @@ const main = Effect.gen(function* () {
   }
 
   if (options.commentOut !== undefined) {
-    yield* fs.writeFileString(
-      options.commentOut,
-      renderSummary(loaded.report, loaded.notice, { target: "comment", ...context }),
-    );
+    yield* fs.writeFileString(options.commentOut, markdown);
   }
 });
 

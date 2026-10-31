@@ -1,0 +1,584 @@
+name: CLI benchmark (full)
+run-name: >-
+  ${{ github.event_name == 'schedule' && 'CLI benchmark full (scheduled)' ||
+  format('CLI benchmark full ({0}): {1}', inputs.workloads || 'all', github.ref_name) }}
+
+# Report-only comparison of a CLI build with a base build for the workloads that need a running
+# local stack or database. Starts only from the `/bench full` pull request command, the Actions UI
+# (for any branch), or the weekly schedule; it never runs on a push. The base is the merge base
+# with `develop` by default, a release tag when given, and the latest stable release on the
+# schedule. Workloads are packed into shards, one runner at a time per workload, and each shard
+# compares base and branch on its own machine. The run never blocks a pull request and is not a
+# required check.
+# See apps/cli/docs/tracing-monitoring.md.
+on:
+  push:
+    branches:
+      - ci/cli-bench-full-test
+  workflow_dispatch:
+    inputs:
+      workloads:
+        description: Which workloads to measure
+        type: choice
+        options:
+          - all
+          - lightweight
+          - integration-heavy
+        default: all
+      runtime:
+        description: Container runtime for the integration-heavy workloads
+        type: choice
+        options:
+          - both
+          - docker
+          - native
+        default: both
+      base:
+        description: merge-base, or a release tag such as v3.0.0 to compare against
+        type: string
+        default: merge-base
+  schedule:
+    - cron: "0 3 * * 0"
+
+permissions: {}
+
+# A second run for a branch waits for the first instead of cancelling it, which also takes turns
+# between the writers of the integration-heavy comment; a run still waiting when a newer one
+# queues never started, so it had written nothing.
+concurrency:
+  group: cli-bench-full-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  # Decides what this run measures and against which base, splits the workloads into shards, and
+  # marks the pull request's integration-heavy comment as running.
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      base_kind: ${{ steps.plan.outputs.base_kind }}
+      base_tag: ${{ steps.plan.outputs.base_tag }}
+      pr_number: ${{ steps.plan.outputs.pr_number }}
+      run_lightweight: ${{ steps.plan.outputs.run_lightweight }}
+      run_integration: ${{ steps.plan.outputs.run_integration }}
+      has_shards: ${{ steps.plan.outputs.has_shards }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: ".bun-version"
+          no-cache: true
+      - name: Plan
+        id: plan
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_WORKLOADS: ${{ inputs.workloads || 'all' }}
+          INPUT_RUNTIME: ${{ inputs.runtime || 'both' }}
+          INPUT_BASE: ${{ inputs.base || 'merge-base' }}
+        run: bun .github/scripts/cli-bench/full-plan.ts
+      - name: Mark the integration-heavy comment as running
+        if: steps.plan.outputs.pr_number != '' && steps.plan.outputs.run_integration == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.plan.outputs.pr_number }}
+          MODE: running
+          KIND: integration-heavy
+          HEAD_SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
+        run: bun .github/scripts/cli-bench/post-comment.ts
+
+  # Builds the branch binary, and the base binary from the merge base or the release asset, once
+  # for every shard.
+  build:
+    name: Build binaries
+    needs: plan
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      branch_build: ${{ steps.outcomes.outputs.branch_build }}
+      base_build: ${{ steps.outcomes.outputs.base_build }}
+      merge_base: ${{ steps.base_build.outputs.merge_base }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+      - name: Prepare benchmark directory
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/bench"
+          echo "BENCH_DIR=$RUNNER_TEMP/bench" >> "$GITHUB_ENV"
+
+      - name: Build branch binary
+        id: branch_build
+        continue-on-error: true
+        shell: bash
+        run: |
+          pnpm --filter supabase run build:binary
+          mkdir -p "$BENCH_DIR/branch"
+          cp apps/cli/dist/supabase "$BENCH_DIR/branch/supabase"
+
+      - name: Build or download base binary
+        id: base_build
+        continue-on-error: true
+        if: steps.branch_build.outcome == 'success'
+        env:
+          HUSKY: "0"
+          BASE_KIND: ${{ needs.plan.outputs.base_kind }}
+          BASE_TAG: ${{ needs.plan.outputs.base_tag }}
+          RELEASE_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          mkdir -p "$BENCH_DIR/base"
+          if [ "$BASE_KIND" = release ]; then
+            echo "Base release: $BASE_TAG"
+            GH_TOKEN="$RELEASE_TOKEN" gh release download "$BASE_TAG" --repo "$GITHUB_REPOSITORY" \
+              --pattern supabase_linux_amd64.tar.gz --dir "$RUNNER_TEMP/release"
+            tar -xzf "$RUNNER_TEMP/release/supabase_linux_amd64.tar.gz" -C "$BENCH_DIR/base" supabase
+            chmod +x "$BENCH_DIR/base/supabase"
+            exit 0
+          fi
+          merge_base="$(git merge-base HEAD origin/develop)"
+          echo "Merge base: $merge_base"
+          echo "merge_base=$merge_base" >> "$GITHUB_OUTPUT"
+          git worktree add "$RUNNER_TEMP/base-src" "$merge_base"
+          cd "$RUNNER_TEMP/base-src"
+          # The setup action writes this file only when the Dependency Firewall token is available.
+          if [ -f "$RUNNER_TEMP/dependency-firewall.npmrc" ]; then
+            export NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/dependency-firewall.npmrc"
+          fi
+          pnpm install --frozen-lockfile
+          pnpm --filter supabase run build:binary
+          cp apps/cli/dist/supabase "$BENCH_DIR/base/supabase"
+
+      - name: Record build outcomes
+        id: outcomes
+        if: always()
+        env:
+          BRANCH_OUTCOME: ${{ steps.branch_build.outcome }}
+          BASE_OUTCOME: ${{ steps.base_build.outcome }}
+        shell: bash
+        run: |
+          echo "branch_build=$([ "$BRANCH_OUTCOME" = success ] && echo ok || echo failed)" >> "$GITHUB_OUTPUT"
+          echo "base_build=$([ "$BASE_OUTCOME" = success ] && echo ok || echo failed)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload binaries
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cli-bench-full-binaries
+          path: |
+            ${{ runner.temp }}/bench/base
+            ${{ runner.temp }}/bench/branch
+          retention-days: 1
+          if-no-files-found: ignore
+
+  # The pull request workloads against the replay server, for dispatches that ask for them (the
+  # `pull_request` run covers them otherwise).
+  lightweight:
+    name: Lightweight commands
+    needs:
+      - plan
+      - build
+    if: always() && needs.plan.result == 'success' && needs.plan.outputs.run_lightweight == 'true'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+      - name: Download binaries
+        id: binaries
+        if: needs.build.outputs.branch_build == 'ok' && needs.build.outputs.base_build == 'ok'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cli-bench-full-binaries
+          path: ${{ runner.temp }}/bench
+
+      - name: Start replay server
+        id: replay
+        continue-on-error: true
+        if: steps.binaries.outcome == 'success'
+        shell: bash
+        run: |
+          echo "BENCH_DIR=$RUNNER_TEMP/bench" >> "$GITHUB_ENV"
+          chmod +x "$RUNNER_TEMP/bench/base/supabase" "$RUNNER_TEMP/bench/branch/supabase"
+          bun apps/cli-e2e/scripts/replay-serve.ts > "$RUNNER_TEMP/bench/replay.log" 2>&1 &
+          echo "REPLAY_PID=$!" >> "$GITHUB_ENV"
+          for _ in $(seq 1 60); do
+            url="$(grep -o 'http://[^"]*' "$RUNNER_TEMP/bench/replay.log" | head -n 1 || true)"
+            if [ -n "$url" ]; then
+              echo "REPLAY_URL=$url" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 0.5
+          done
+          echo "replay server did not report a URL" >&2
+          cat "$RUNNER_TEMP/bench/replay.log" >&2
+          exit 1
+
+      - name: Run benchmark
+        id: bench
+        continue-on-error: true
+        if: steps.replay.outcome == 'success'
+        shell: bash
+        run: |
+          bun apps/cli/scripts/bench-cli.ts \
+            --base "$BENCH_DIR/base/supabase" \
+            --branch "$BENCH_DIR/branch/supabase" \
+            --workloads apps/cli/bench/workloads.pr.json \
+            --api-url "$REPLAY_URL" \
+            --trace \
+            --out "$RUNNER_TEMP/bench/report.json" | tee "$RUNNER_TEMP/bench/report.txt"
+
+      - name: Stop replay server
+        if: always() && env.REPLAY_PID != ''
+        shell: bash
+        run: kill "$REPLAY_PID" || true
+
+      - name: Write job summary
+        if: always()
+        env:
+          BRANCH_BUILD: ${{ needs.build.outputs.branch_build == 'ok' && 'ok' || 'failed' }}
+          BASE_BUILD: ${{ needs.build.outputs.base_build == 'ok' && 'ok' || 'failed' }}
+          REPLAY: ${{ steps.replay.outcome == 'success' && 'ok' || 'failed' }}
+          MERGE_BASE: ${{ needs.build.outputs.merge_base }}
+          BASE_REF: ${{ needs.plan.outputs.base_kind == 'release' && needs.plan.outputs.base_tag || 'develop' }}
+          HEAD_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/bench"
+          bun apps/cli/scripts/bench-summary.ts \
+            --section lightweight \
+            --report "$RUNNER_TEMP/bench/report.json" \
+            --branch-build "$BRANCH_BUILD" \
+            --base-build "$BASE_BUILD" \
+            --replay "$REPLAY" \
+            --head-sha "$HEAD_SHA" \
+            --base-ref "$BASE_REF" \
+            --merge-base "$MERGE_BASE" \
+            --comment-out "$RUNNER_TEMP/bench/comment.md"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cli-bench-full-report-lightweight
+          path: |
+            ${{ runner.temp }}/bench/report.json
+            ${{ runner.temp }}/bench/report.txt
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Upload comment
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cli-bench-full-comment-lightweight
+          path: ${{ runner.temp }}/bench/comment.md
+          retention-days: 1
+          if-no-files-found: ignore
+
+  # One runner per shard and runtime. Base and branch alternate on the same machine; no other
+  # workload shares it.
+  shard:
+    name: Shard (${{ matrix.runtime }} ${{ matrix.shard }}/${{ matrix.shards }})
+    needs:
+      - plan
+      - build
+    if: >-
+      needs.plan.outputs.has_shards == 'true' &&
+      needs.build.outputs.branch_build == 'ok' && needs.build.outputs.base_build == 'ok'
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The image and artifact disks are read-only here: this job never commits them.
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          sticky-disks: "true"
+          docker-images: ${{ matrix.runtime == 'docker' }}
+          native-artifacts: ${{ matrix.runtime == 'native' }}
+
+      - name: Download binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cli-bench-full-binaries
+          path: ${{ runner.temp }}/bench
+
+      # A shard that cannot start the replay server fails, and the report job names it as a shard
+      # that did not finish.
+      - name: Start replay server
+        shell: bash
+        run: |
+          bench="$RUNNER_TEMP/bench"
+          chmod +x "$bench/base/supabase" "$bench/branch/supabase"
+          bun apps/cli-e2e/scripts/replay-serve.ts > "$bench/replay.log" 2>&1 &
+          echo "REPLAY_PID=$!" >> "$GITHUB_ENV"
+          for _ in $(seq 1 60); do
+            url="$(grep -o 'http://[^"]*' "$bench/replay.log" | head -n 1 || true)"
+            if [ -n "$url" ]; then
+              echo "REPLAY_URL=$url" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 0.5
+          done
+          echo "replay server did not report a URL" >&2
+          cat "$bench/replay.log" >&2
+          exit 1
+
+      - name: Run benchmark
+        env:
+          RUNTIME: ${{ matrix.runtime }}
+          SHARD: ${{ matrix.shard }}
+          WORKLOADS: ${{ matrix.workloads }}
+        shell: bash
+        run: |
+          bench="$RUNNER_TEMP/bench"
+          cache_args=()
+          if [ "$RUNTIME" = native ]; then
+            cache="${XDG_CACHE_HOME:-$HOME/.cache}/supabase-stack-artifacts"
+            mkdir -p "$cache"
+            cache_args=(--artifact-cache "$cache")
+          fi
+          bun apps/cli/scripts/bench-cli.ts \
+            --base "$bench/base/supabase" \
+            --branch "$bench/branch/supabase" \
+            --workloads apps/cli/bench/workloads.full.json \
+            --runtime "$RUNTIME" \
+            --only "$WORKLOADS" \
+            --api-url "$REPLAY_URL" \
+            "${cache_args[@]}" \
+            --trace \
+            --out "$bench/report-$RUNTIME-$SHARD.json" | tee "$bench/report-$RUNTIME-$SHARD.txt"
+
+      - name: Stop replay server
+        if: always() && env.REPLAY_PID != ''
+        shell: bash
+        run: kill "$REPLAY_PID" || true
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cli-bench-full-report-${{ matrix.runtime }}-${{ matrix.shard }}
+          path: |
+            ${{ runner.temp }}/bench/report-${{ matrix.runtime }}-${{ matrix.shard }}.json
+            ${{ runner.temp }}/bench/report-${{ matrix.runtime }}-${{ matrix.shard }}.txt
+          retention-days: 14
+          if-no-files-found: ignore
+
+      # Releases /var/lib/docker so the image disk unmounts cleanly.
+      - name: Stop Docker
+        if: always() && matrix.runtime == 'docker'
+        run: sudo systemctl stop docker.socket docker.service
+
+  # Combines the shard reports, writes the job summary and the comment.
+  report:
+    name: Report
+    needs:
+      - plan
+      - build
+      - shard
+    if: always() && needs.plan.result == 'success' && needs.plan.outputs.run_integration == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+      - name: Download shard reports
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: cli-bench-full-report-*-*
+          path: ${{ runner.temp }}/reports
+
+      - name: Merge shard reports
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/bench"
+          mapfile -t files < <(find "$RUNNER_TEMP/reports" -name 'report-*.json' 2>/dev/null | sort)
+          if [ "${#files[@]}" -gt 0 ]; then
+            bun apps/cli/scripts/bench-merge.ts \
+              --workloads apps/cli/bench/workloads.full.json \
+              --out "$RUNNER_TEMP/bench/report.json" "${files[@]}"
+          fi
+
+      - name: Write job summary
+        env:
+          BRANCH_BUILD: ${{ needs.build.outputs.branch_build == 'ok' && 'ok' || 'failed' }}
+          BASE_BUILD: ${{ needs.build.outputs.base_build == 'ok' && 'ok' || 'failed' }}
+          SHARDS: ${{ needs.shard.result }}
+          MERGE_BASE: ${{ needs.build.outputs.merge_base }}
+          BASE_REF: ${{ needs.plan.outputs.base_kind == 'release' && needs.plan.outputs.base_tag || 'develop' }}
+          HEAD_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          note=""
+          if [ "$SHARDS" = failure ] || [ "$SHARDS" = cancelled ]; then
+            note="Some shards did not finish (for example, the local test server failed to start), so their commands are missing."
+          fi
+          bun apps/cli/scripts/bench-summary.ts \
+            --section integration-heavy \
+            --report "$RUNNER_TEMP/bench/report.json" \
+            --note "$note" \
+            --branch-build "$BRANCH_BUILD" \
+            --base-build "$BASE_BUILD" \
+            --head-sha "$HEAD_SHA" \
+            --base-ref "$BASE_REF" \
+            --merge-base "$MERGE_BASE" \
+            --comment-out "$RUNNER_TEMP/bench/comment.md"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cli-bench-full-merged-report
+          path: ${{ runner.temp }}/bench/report.json
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Upload comment
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cli-bench-full-comment-integration-heavy
+          path: ${{ runner.temp }}/bench/comment.md
+          retention-days: 1
+          if-no-files-found: ignore
+
+  # The only jobs that write to the pull request. They run no benchmarked code and read the
+  # rendered markdown as data; a dispatch uses this file from the dispatched branch, which only
+  # people with write access can push or dispatch.
+  comment-lightweight:
+    name: Post lightweight comment
+    needs:
+      - plan
+      - lightweight
+    if: always() && needs.plan.outputs.pr_number != '' && needs.plan.outputs.run_lightweight == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    # Shares its turn with the lightweight benchmark workflow, the other writer of this comment.
+    concurrency:
+      group: cli-bench-comment-lightweight-${{ needs.plan.outputs.pr_number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: ".bun-version"
+          no-cache: true
+      - name: Download comment
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cli-bench-full-comment-lightweight
+          path: ${{ runner.temp }}/bench-comment
+      - name: Post comment
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.plan.outputs.pr_number }}
+          MODE: upsert
+          KIND: lightweight
+          MISSING_BODY: failure
+          HEAD_SHA: ${{ github.sha }}
+          BODY_FILE: ${{ runner.temp }}/bench-comment/comment.md
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
+        run: bun .github/scripts/cli-bench/post-comment.ts
+
+  comment:
+    name: Post integration-heavy comment
+    needs:
+      - plan
+      - report
+    if: always() && needs.plan.outputs.pr_number != '' && needs.plan.outputs.run_integration == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: ".bun-version"
+          no-cache: true
+      - name: Download comment
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cli-bench-full-comment-integration-heavy
+          path: ${{ runner.temp }}/bench-comment
+      - name: Post comment
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.plan.outputs.pr_number }}
+          MODE: upsert
+          KIND: integration-heavy
+          MISSING_BODY: failure
+          HEAD_SHA: ${{ github.sha }}
+          BODY_FILE: ${{ runner.temp }}/bench-comment/comment.md
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
+        run: bun .github/scripts/cli-bench/post-comment.ts
