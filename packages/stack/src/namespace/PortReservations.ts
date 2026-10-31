@@ -1,11 +1,20 @@
 import { userInfo } from "node:os";
-import type { DatabaseSync } from "node:sqlite";
 import { NodeServices } from "@effect/platform-node";
-import { Context, Effect, FileSystem, Layer, Path, Predicate, Scope, Stream } from "effect";
+import {
+  Context,
+  Effect,
+  FileSystem,
+  Layer,
+  Path,
+  Predicate,
+  Schedule,
+  Scope,
+  Stream,
+} from "effect";
 import { ChildProcess } from "effect/process";
 import { namespaceError, type NamespaceError } from "./Capabilities.ts";
 import { restrictDirectoryToOwner } from "../runtime/postgres-user.ts";
-import { errcode, openDatabase } from "./drivers/Sqlite.ts";
+import { errcode, isBusy, openDatabase } from "./drivers/Sqlite.ts";
 import { lstatPath } from "./drivers/FileSystem.ts";
 
 /** Identifies the stack that owns a port reservation. */
@@ -87,15 +96,39 @@ const isHolderRow = (value: unknown): value is HolderRow =>
   Predicate.hasProperty(value, "stack_id") &&
   typeof value.stack_id === "string";
 
-const connectionFor = (file: string): Effect.Effect<DatabaseSync, NamespaceError, Scope.Scope> =>
-  openDatabase(file, (connection) => {
-    // Short and bounded: real contention between two of this user's processes is brief, and
-    // a blocking wait here is simpler than an async retry loop for a database this small. Set
-    // before the schema statement, so even first-time table creation waits out a racing peer
-    // instead of surfacing a spurious busy error.
-    connection.exec("PRAGMA busy_timeout = 2000");
-    connection.exec(schema);
+const connectionFor = Effect.fn("PortReservations.connectionFor")(function* (file: string) {
+  // Short and bounded: real contention between two of this user's processes is brief, and
+  // a blocking wait here is simpler than an async retry loop for a database this small. Set
+  // before the schema statement, so even first-time table creation waits out a racing peer
+  // instead of surfacing a spurious busy error.
+  const connection = yield* openDatabase(file, (connection) =>
+    connection.exec("PRAGMA busy_timeout = 2000"),
+  );
+  // WAL lets reads and opens proceed while a peer commits; under the rollback journal a peer
+  // that commits back to back can lock new readers out past the busy timeout. SQLite skips the
+  // busy timeout while a peer switches the file into WAL, so that one statement waits here.
+  let attempts = 0;
+  yield* Effect.try({
+    try: () => {
+      attempts++;
+      connection.exec("PRAGMA journal_mode = WAL");
+    },
+    catch: (cause) => namespaceError("open", cause),
+  }).pipe(
+    Effect.retry({
+      schedule: Schedule.spaced("10 millis").pipe(Schedule.upTo({ duration: "2 seconds" })),
+      while: isBusy,
+    }),
+    Effect.ensuring(
+      Effect.suspend(() => Effect.annotateCurrentSpan("sqlite.journal_mode.attempts", attempts)),
+    ),
+  );
+  yield* Effect.try({
+    try: () => connection.exec(schema),
+    catch: (cause) => namespaceError("open", cause),
   });
+  return connection;
+});
 
 /**
  * Confirms `directory` (created 0700 if missing) is a real directory this uid owns, with the
@@ -200,18 +233,11 @@ const resolvedHome: Effect.Effect<string, NamespaceError> = Effect.runSync(
   Effect.cached(resolvePasswdHome().pipe(Effect.provide(NodeServices.layer))),
 );
 
-/**
- * One SQLite database per OS user at `<passwd home>/.supabase/ports.sqlite`, the only authority on
- * which stack owns a public port across every state root on this machine.
- */
-const make = Effect.fn("PortReservations.make")(function* (): Effect.fn.Return<
-  Interface,
-  NamespaceError,
-  FileSystem.FileSystem | Path.Path | Scope.Scope
-> {
+const make = Effect.fn("PortReservations.make")(function* (
+  directory: string,
+): Effect.fn.Return<Interface, NamespaceError, FileSystem.FileSystem | Path.Path | Scope.Scope> {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const directory = path.join(yield* resolvedHome, ".supabase");
   yield* securePrivateDirectory(fs, directory);
   const connection = yield* connectionFor(path.join(directory, "ports.sqlite"));
 
@@ -358,4 +384,18 @@ const make = Effect.fn("PortReservations.make")(function* (): Effect.fn.Return<
   return { find, reserve, reclaim, release, releaseStack };
 });
 
-export const layer = Layer.effect(Service, make().pipe(Effect.map(Service.of)));
+/**
+ * One SQLite database per OS user at `<passwd home>/.supabase/ports.sqlite`, the only authority on
+ * which stack owns a public port across every state root on this machine.
+ */
+export const layer = Layer.effect(
+  Service,
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    return Service.of(yield* make(path.join(yield* resolvedHome, ".supabase")));
+  }),
+);
+
+/** Opens the registry in `directory` instead of the account's home, for isolated tests. */
+export const layerAt = (directory: string) =>
+  Layer.effect(Service, make(directory).pipe(Effect.map(Service.of)));
