@@ -1,5 +1,5 @@
 import { Effect, Option, Path, Ref, Stdio } from "effect";
-import { deployFunctions } from "../../../shared/functions/deploy.ts";
+import { DeployApiMaxRetries, deployFunctions } from "../../../shared/functions/deploy.ts";
 import { resolveEdgeRuntimeVersionPin } from "../../../shared/functions/functions.shared.ts";
 import { aqua, bold, yellow } from "../../../command-internal/colors.ts";
 import { functionsLocalConfigLoader } from "../../../command-internal/functions-local-config.ts";
@@ -46,6 +46,7 @@ export const functionsDeploy = Effect.fn("functions.deploy")(function* (
     // Written to stderr, matching `yellow`'s default TTY gate.
     styleWarning: (text) => yellow(text),
   }).pipe(
+    Effect.provideService(DeployApiMaxRetries, cliSettings.apiMaxRetries),
     Effect.ensuring(
       Ref.get(resolvedProjectRef).pipe(
         Effect.flatMap(

@@ -58,10 +58,11 @@
 <!-- List every env var the command reads, directly or via a service.
      Required?: "yes" / "no (falls back to …)" -->
 
-| Variable                | Purpose                                              | Required?                                               |
-| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_PROFILE`      | built-in profile name or YAML file path              | no (falls back to `~/.supabase/profile` -> `supabase`)  |
+| Variable                   | Purpose                                                            | Required?                                               |
+| -------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN`    | auth token (bypasses credential file/keyring lookup)               | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_PROFILE`         | built-in profile name or YAML file path                            | no (falls back to `~/.supabase/profile` -> `supabase`)  |
+| `SUPABASE_API_MAX_RETRIES` | Management API client retries (`0` = none); excludes command loops | no (falls back to 5)                                    |
 
 ## Exit Codes
 

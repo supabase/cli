@@ -1,5 +1,15 @@
 import { findCliProjectRoot } from "@supabase/config/effect";
-import { Config, ConfigProvider, Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
+import {
+  Config,
+  ConfigProvider,
+  Data,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Redacted,
+} from "effect";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { lastExplicitLongFlagValue } from "../shared/cli/flag-groups.ts";
 import { CLI_VERSION } from "../shared/cli/version.ts";
@@ -14,6 +24,20 @@ import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { CliEnvNames } from "./cli-config-keys.ts";
 import { CommandSettings } from "./command-settings.service.ts";
 import { resolveSupabaseHomeValue } from "../shared/config/supabase-home.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../shared/telemetry/error-actionability.ts";
+
+/** A `SUPABASE_API_MAX_RETRIES` that is not a non-negative integer, rejected before any API request. */
+export class ApiMaxRetriesError extends Data.TaggedError("ApiMaxRetriesError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
 
 function unknownMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -162,6 +186,26 @@ export const commandSettingsLayer = Layer.unwrap(
           path,
         );
 
+        /* Empty means unset, like the other SUPABASE_* settings; anything else must be plain
+           digits, rejected here before a command reaches the network. */
+        const rawApiMaxRetries = yield* read(
+          Config.option(Config.String("SUPABASE_API_MAX_RETRIES")),
+        );
+        const apiMaxRetries = yield* Option.match(
+          Option.filter(rawApiMaxRetries, (value) => value.length > 0),
+          {
+            onNone: () => Effect.succeed(Option.none<number>()),
+            onSome: (value) =>
+              /^\d+$/.test(value) && Number.isSafeInteger(Number(value))
+                ? Effect.succeed(Option.some(Number(value)))
+                : Effect.fail(
+                    new ApiMaxRetriesError({
+                      message: `invalid SUPABASE_API_MAX_RETRIES "${value}": expected a non-negative integer`,
+                    }),
+                  ),
+          },
+        );
+
         const userAgent = `SupabaseCLI/${CLI_VERSION}`;
 
         yield* Effect.annotateCurrentSpan({
@@ -184,6 +228,7 @@ export const commandSettingsLayer = Layer.unwrap(
           explicitWorkdir,
           workdirEnvValue,
           userAgent,
+          apiMaxRetries,
         });
       }).pipe(Effect.withSpan("CommandSettings.load")),
     );

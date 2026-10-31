@@ -141,6 +141,7 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
               projectRef: validLinkedRef.value,
               accessToken: accessToken.value,
               userAgent: cliSettings.userAgent,
+              maxRetries: Option.getOrUndefined(cliSettings.apiMaxRetries),
             })
           : {};
       const result = yield* stackServiceVersions(cliSettings.workdir, remote);
@@ -210,6 +211,7 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
           projectRef: validLinkedRef.value,
           accessToken: accessToken.value,
           userAgent: cliSettings.userAgent,
+          maxRetries: Option.getOrUndefined(cliSettings.apiMaxRetries),
         });
         rows = mergeRemoteServiceVersions(remote, localImageOptions);
       }

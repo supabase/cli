@@ -19,7 +19,7 @@ import { useTempWorkdir } from "../../tests/helpers/command-mocks.ts";
 import { mockRuntimeInfo } from "../../tests/helpers/mocks.ts";
 import { debugLoggerLayer } from "../command-internal/debug-logger.layer.ts";
 import { ProfileLoadError } from "../command-internal/profile-load.ts";
-import { commandSettingsLayer } from "./command-settings.layer.ts";
+import { ApiMaxRetriesError, commandSettingsLayer } from "./command-settings.layer.ts";
 import { CommandSettings } from "./command-settings.service.ts";
 
 const path = Effect.runSync(Effect.provide(Path.Path, BunPath.layer));
@@ -534,6 +534,40 @@ describe("commandSettingsLayer", () => {
         makeLayer({ env: { SUPABASE_ACCESS_TOKEN: "sbp_test" }, cwd: tempRoot.current }),
       ),
     ),
+  );
+
+  it.effect("captures SUPABASE_API_MAX_RETRIES, treating an empty value as unset", () =>
+    Effect.gen(function* () {
+      const read = (value: string | undefined) =>
+        Effect.service(CommandSettings).pipe(
+          Effect.provide(
+            makeLayer({ env: { SUPABASE_API_MAX_RETRIES: value }, cwd: tempRoot.current }),
+          ),
+          Effect.map((config) => config.apiMaxRetries),
+        );
+      expect(yield* read("0")).toEqual(Option.some(0));
+      expect(yield* read("3")).toEqual(Option.some(3));
+      expect(yield* read("")).toEqual(Option.none());
+      expect(yield* read(undefined)).toEqual(Option.none());
+    }),
+  );
+
+  it.effect("rejects a SUPABASE_API_MAX_RETRIES that is not a non-negative integer", () =>
+    Effect.gen(function* () {
+      for (const value of ["-1", "1.5", "1e2", " 3", "abc"]) {
+        const exit = yield* configExit({
+          env: { SUPABASE_API_MAX_RETRIES: value },
+          cwd: tempRoot.current,
+        });
+        const error = Exit.isFailure(exit)
+          ? exit.cause.reasons.find(Cause.isFailReason)?.error
+          : undefined;
+        expect(error).toBeInstanceOf(ApiMaxRetriesError);
+        expect(error).toMatchObject({
+          message: `invalid SUPABASE_API_MAX_RETRIES "${value}": expected a non-negative integer`,
+        });
+      }
+    }),
   );
 
   it.effect("captures SUPABASE_PROJECT_ID env", () =>
