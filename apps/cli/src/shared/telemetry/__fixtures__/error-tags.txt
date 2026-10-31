@@ -232,6 +232,7 @@ FeedbackInvalidTokenError
 FeedbackMessageTooLongError
 FeedbackNotFoundError
 FileWatcherError
+FunctionDeployDockerNotRunningError
 FunctionDownloadNotFoundError
 FunctionImportNotDirectoryError
 FunctionNotFoundError

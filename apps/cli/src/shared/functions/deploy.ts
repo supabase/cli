@@ -47,6 +47,7 @@ import {
 import { slimImagesEnabled } from "../services/slim-images.ts";
 import {
   ConflictingFunctionDeployFlagsError,
+  FunctionDeployDockerNotRunningError,
   FunctionDeployError,
   FunctionImportMapSyntaxError,
   FunctionImportNotDirectoryError,
@@ -2472,9 +2473,9 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
   const styleIdentifier = dependencies.styleIdentifier ?? ((text: string) => text);
   const styleEmphasis = dependencies.styleEmphasis ?? ((text: string) => text);
   const commandPath = ["functions", "deploy"] as const;
-  // Presence-based (true for `--use-api=false`, not just bare `--use-api`) — used only for
-  // the mutual-exclusivity check below. Behavior branches (bundler routing, --jobs guard) key
-  // off the resolved `flags.useApi` value instead.
+  // Presence-based (true for `--use-api=false`, not just bare `--use-api`) — used for the
+  // mutual-exclusivity check below and to refuse the Docker-down API fallback. Bundler routing
+  // and the --jobs guard key off the resolved `flags.useApi` value instead.
   const explicitUseApi = hasExplicitLongFlag(dependencies.rawArgs, commandPath, "use-api");
   const explicitUseDocker = hasExplicitLongFlag(dependencies.rawArgs, commandPath, "use-docker");
   const explicitLegacyBundle = hasExplicitLongFlag(
@@ -2607,6 +2608,13 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
   const nothingToDeployMessage = useLocalBundler
     ? yield* Effect.gen(function* () {
         if (!(yield* isDockerRunning())) {
+          /* --use-api=false, --use-docker or a true --legacy-bundle refuses the API fallback. */
+          if (explicitUseApi || explicitUseDocker || (explicitLegacyBundle && flags.legacyBundle)) {
+            return yield* new FunctionDeployDockerNotRunningError({
+              message:
+                "Docker is not running. Start Docker to bundle Functions locally, or deploy with --use-api.",
+            });
+          }
           yield* output.raw(`${styleWarning("WARNING:")} Docker is not running\n`, "stderr");
           return yield* deployWithApi;
         }

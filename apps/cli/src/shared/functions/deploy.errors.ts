@@ -43,6 +43,16 @@ export class FunctionImportNotDirectoryError extends Data.TaggedError(
   }
 }
 
+export class FunctionDeployDockerNotRunningError extends Data.TaggedError(
+  "FunctionDeployDockerNotRunningError",
+)<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dockerNotRunning;
+  }
+}
+
 export class FunctionDeployError extends Data.Error<{
   readonly message: string;
   readonly suggestion?: string;

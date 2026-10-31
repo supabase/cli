@@ -115,7 +115,7 @@ The `--output`/`-o` flag does not change deploy output.
   directory, forward slashes). Imports outside the workdir but inside
   the nearest git root still upload, with `../`-relative names. The nearest git
   root is the containment boundary for uploaded imports.
-- Bundles locally with Docker by default (`--use-docker` defaults to true and is hidden); `--use-api` selects server-side bundling, and a stopped Docker daemon falls back to it after a `WARNING: Docker is not running`.
+- Bundles locally with Docker by default (`--use-docker` defaults to true and is hidden); `--use-api` selects server-side bundling, and a stopped Docker daemon falls back to it after a `WARNING: Docker is not running`, while an explicit `--use-api=false`, `--use-docker`, or `--legacy-bundle` fails before deploying instead.
 - Local Docker bundling mounts existing local values declared under an import map's `scopes` read-only, including targets outside the nearest Git root; each such out-of-root mount prints a `WARN` naming the host path. The mounted target itself is bound as declared; imports reached from inside an out-of-root target are not additionally bound. API source uploads retain their existing source-root restrictions.
 - `--use-api`, `--use-docker`, and `--legacy-bundle` are mutually exclusive deploy modes.
 - Prints the target banner before anything else.
