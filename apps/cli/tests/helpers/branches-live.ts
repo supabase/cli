@@ -1,6 +1,6 @@
 import { Data, Duration, Effect, Schedule, Schema } from "effect";
 
-import type { LiveProject } from "./live.ts";
+import { isPlatformDatabaseRestart, type LiveProject } from "./live.ts";
 
 type BranchCliOptions = { readonly exitTimeoutMs?: number };
 type BranchCliResult = {
@@ -140,12 +140,10 @@ function branchRefFromCreate(
 }
 
 // The platform rejects `branches create` with a 400 when the database it configures restarts mid-create.
-const PLATFORM_DATABASE_RESTART = /\b57P01\b|the database system is shutting down/u;
-
-function isPlatformDatabaseRestart(error: unknown): boolean {
+function isRejectedByDatabaseRestart(error: unknown): boolean {
   return (
     error instanceof BranchCommandFailed &&
-    PLATFORM_DATABASE_RESTART.test(`${error.stdout ?? ""}\n${error.stderr}`)
+    isPlatformDatabaseRestart(`${error.stdout ?? ""}\n${error.stderr}`)
   );
 }
 
@@ -170,7 +168,7 @@ export function runLiveBranchCreateEffect<E>(
   );
   return create.pipe(
     Effect.catch((rejected) =>
-      isPlatformDatabaseRestart(rejected)
+      isRejectedByDatabaseRestart(rejected)
         ? clearRejected.pipe(
             Effect.mapError(
               (cleanup) =>
