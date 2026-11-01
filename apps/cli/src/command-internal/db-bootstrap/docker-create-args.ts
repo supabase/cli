@@ -23,6 +23,8 @@ interface StartHealthcheckSpec {
   readonly retries?: number;
   /** Emitted as `--health-start-period <n>s`; omitted when unset. */
   readonly startPeriodSeconds?: number;
+  /* Emitted as `--health-start-interval <n>s`; see {@link applyHealthStartInterval}. */
+  readonly startIntervalSeconds?: number;
 }
 
 /** One `-p <hostPort>:<containerPort>[/<protocol>]` entry. */
@@ -203,6 +205,12 @@ function buildHealthcheckArgs(healthcheck: StartHealthcheckSpec): ReadonlyArray<
   if (healthcheck.startPeriodSeconds !== undefined) {
     args.push("--health-start-period", formatDockerDurationSeconds(healthcheck.startPeriodSeconds));
   }
+  if (healthcheck.startIntervalSeconds !== undefined) {
+    args.push(
+      "--health-start-interval",
+      formatDockerDurationSeconds(healthcheck.startIntervalSeconds),
+    );
+  }
   return args;
 }
 
@@ -286,5 +294,28 @@ export function applyBitbucketStartContainerFilter(
     ...spec,
     binds: spec.binds.filter((bind) => isBindMountSource(bindMountSpecSource(bind))),
     securityOpt: [],
+  };
+}
+
+/* Docker returns to `--health-interval` after the first pass or the end of the start period. */
+const HEALTH_START_INTERVAL_SECONDS = 1;
+/* The start interval only runs inside a start period, whose failures do not count. One steady
+   interval keeps `unhealthy` where it was, or one interval later if a slow probe straddles it. */
+const HEALTH_START_PERIOD_SECONDS = 10;
+
+/* Runs a container's first health checks right after it starts instead of a full interval later.
+   `supported` comes from `dockerSupportsHealthStartInterval`; without it the spec is unchanged. */
+export function applyHealthStartInterval(
+  spec: StartContainerSpec,
+  supported: boolean,
+): StartContainerSpec {
+  if (!supported || spec.healthcheck === undefined) return spec;
+  return {
+    ...spec,
+    healthcheck: {
+      ...spec.healthcheck,
+      startPeriodSeconds: spec.healthcheck.startPeriodSeconds ?? HEALTH_START_PERIOD_SECONDS,
+      startIntervalSeconds: HEALTH_START_INTERVAL_SECONDS,
+    },
   };
 }

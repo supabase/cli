@@ -26,7 +26,7 @@ import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { EventStackStarted } from "../../shared/telemetry/event-catalog.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
-import { resolveStudioApiUrl } from "../../command-internal/api-url.ts";
+import { resolveApiExternalUrl, resolveStudioApiUrl } from "../../command-internal/api-url.ts";
 import { isBitbucketPipeline } from "../../command-internal/bitbucket-pipeline.ts";
 import { aqua, yellow } from "../../command-internal/colors.ts";
 import {
@@ -38,7 +38,10 @@ import {
   resolveApiTlsPath,
   resolveEmailTemplateContentPath,
 } from "../../command-internal/config-validate.ts";
-import { isContainerNotFoundMessage } from "../../command-internal/container-cli.ts";
+import {
+  dockerSupportsHealthStartInterval,
+  isContainerNotFoundMessage,
+} from "../../command-internal/container-cli.ts";
 import { checkDbToml } from "../../command-internal/db-config.toml-read.ts";
 import { resolveEdgeRuntimeImage } from "../../command-internal/edge-runtime-image.ts";
 import {
@@ -796,6 +799,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     const startOpts: ContainerOpts = {
       projectId,
       isBitbucketPipeline: inBitbucketPipeline,
+      healthStartInterval: yield* dockerSupportsHealthStartInterval(spawner),
       workdir: cliSettings.workdir,
       extraHosts,
     };
@@ -1390,7 +1394,17 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           execFallbacks.set(
             spec.containerName,
             entry.gatewayReachable === true
-              ? { kind: "gateway-reachable", gateway }
+              ? {
+                  kind: "gateway-reachable",
+                  gateway,
+                  localGateway: {
+                    ...gateway,
+                    apiExternalUrl: resolveApiExternalUrl(
+                      { port: values.apiPort, tls: { enabled: apiTlsEnabled } },
+                      context.hostname,
+                    ),
+                  },
+                }
               : entry.gatewayReadyPath !== undefined && gates.kong
                 ? { kind: "gateway", gateway, path: entry.gatewayReadyPath }
                 : { kind: "running" },

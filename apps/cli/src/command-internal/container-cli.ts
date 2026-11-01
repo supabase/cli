@@ -307,6 +307,22 @@ function isDockerApiVersionAtLeast(version: string, minVersion: string): boolean
  * fall back to Podman, whose `volume prune` has no `--all` flag to gate.
  */
 export const dockerSupportsVolumePruneAllFlag = (spawner: Spawner) =>
+  dockerApiVersionsSatisfy(spawner, (version) => isDockerApiVersionAtLeast(version, "1.42"));
+
+/**
+ * `docker create --health-start-interval` needs API >= 1.44 on both ends and is a hard failure
+ * below that. The Podman CLI rejects the flag, and a `docker` shim for it prints Podman's own
+ * `6.x` here, so a major other than 1 is not Docker's API. The real `docker` client on a Podman
+ * socket reports 1.44 and passes: Podman keeps the start period and drops the start interval.
+ */
+export const dockerSupportsHealthStartInterval = (spawner: Spawner) =>
+  dockerApiVersionsSatisfy(
+    spawner,
+    (version) => version.startsWith("1.") && isDockerApiVersionAtLeast(version, "1.44"),
+  );
+
+/* Reads the Docker client and daemon API versions; `false` on any failure to read a pair. */
+const dockerApiVersionsSatisfy = (spawner: Spawner, supported: (version: string) => boolean) =>
   Effect.scoped(
     Effect.gen(function* () {
       const child = yield* spawner.spawn(
@@ -326,9 +342,6 @@ export const dockerSupportsVolumePruneAllFlag = (spawner: Spawner) =>
       );
       if (exitCode !== 0) return false;
       const versions = stdout.trim().split(/\s+/);
-      return (
-        versions.length === 2 &&
-        versions.every((version) => isDockerApiVersionAtLeast(version, "1.42"))
-      );
+      return versions.length === 2 && versions.every(supported);
     }),
   ).pipe(Effect.orElseSucceed(() => false));

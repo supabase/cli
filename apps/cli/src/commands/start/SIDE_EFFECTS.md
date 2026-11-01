@@ -97,7 +97,8 @@ reports `<container> container is not ready: <connect error>`, after the contain
 start` runs the same wait, including with `--from-backup`.
 
 Every other health-checked container is gated on Docker's health status (`healthy`), polled once
-per second within the 30s service timeout. A container with no Docker healthcheck passes once
+per second within the 30s service timeout; Kong can also pass earlier on an HTTP response from its
+local port (see below). A container with no Docker healthcheck passes once
 it is running. PostgREST and Edge Runtime keep their HTTP HEAD probes through Kong. The wait also
 stops after `(30 + 1) * (1 + 10)` seconds of wall-clock time, so a gateway that accepts
 connections and never answers cannot outlast the retry budget; it then fails like an exhausted
@@ -109,6 +110,25 @@ health-checked service was started, `start` waits up to 15s for Docker's first h
 the Postgres container (polling `docker container inspect` every 1s until the status leaves
 `starting`, the container stops running, or Docker cannot launch its health check), so a
 following `supabase status` or `supabase start` does not see `starting`. It never fails the run.
+
+Before creating any container, `start` runs `docker version --format
+'{{.Client.APIVersion}} {{.Server.APIVersion}}'` once. When both are Docker API versions >= 1.44,
+every container whose spec sets a Docker healthcheck also gets `--health-start-interval 1s` and,
+unless its service sets its own, `--health-start-period 10s`. The first check then runs about 1s
+after the container starts instead of one 10s interval later, and the interval returns to 10s
+after the first pass. Failures inside the period do not count, so a failing service reaches
+`unhealthy` about 30s after it starts, or one interval later if a slow probe straddles the end of
+the period; the wait's budget and error do not change. Below API 1.44, when `docker version` fails,
+or with the Podman CLI or a `docker` shim for it, none of these flags are passed. The real `docker`
+client on a Podman socket reports 1.44 and gets them: Podman keeps the start period and drops the
+start interval, so there is no speedup there.
+
+Kong's spec sets no healthcheck, so no health flags reach it on any engine and its image's
+`HEALTHCHECK` keeps its own 10s interval. While Docker reports Kong `starting`, the wait also sends
+`GET /` to Kong's own published `api.port` on the local host, never `api.external_url`, and any
+HTTP response counts as up. A failed request leaves it waiting for Docker's `healthy`, and a Kong
+that never serves keeps reporting `starting`. `docker ps` can show Kong `starting` for up to 10s
+after `start` returns.
 
 When a container is running but Docker could not launch its health check, it is judged from the
 host instead of failing. This applies only when the container's last recorded probe has exit

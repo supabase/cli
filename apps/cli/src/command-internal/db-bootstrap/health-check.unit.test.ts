@@ -1256,6 +1256,7 @@ describe("waitForHealthyServices where Docker cannot exec health checks", () => 
   const STUDIO = "supabase_studio_proj";
   const STORAGE = "supabase_storage_proj";
   const GATEWAY_URL = "http://127.0.0.1:54321";
+  const LOCAL_GATEWAY_URL = "http://127.0.0.1:54322";
   const STORAGE_STATUS_PATH = "/storage/v1/status";
 
   const orderlyUnhealthy = inspectedState({
@@ -1289,6 +1290,7 @@ describe("waitForHealthyServices where Docker cannot exec health checks", () => 
         {
           kind: "gateway-reachable",
           gateway: { apiExternalUrl: GATEWAY_URL, secretKey: "sb_secret_local" },
+          localGateway: { apiExternalUrl: LOCAL_GATEWAY_URL, secretKey: "sb_secret_local" },
         },
       ],
     ]);
@@ -1465,6 +1467,81 @@ describe("waitForHealthyServices where Docker cannot exec health checks", () => 
       }),
     );
   }
+
+  it.effect("accepts Kong answering the gateway while Docker still reports it starting", () =>
+    Effect.gen(function* () {
+      const mock = mockHealthSpawner(() => inspectedState({ health: "starting", probes: [] }));
+      const gateway = recordingGateway({ "/": 404 });
+
+      const result = yield* settled(
+        mock,
+        [KONG],
+        { execFallbacks: reachableFallback(KONG) },
+        gateway.layer,
+      );
+
+      expect(result).toEqual({ execUnavailable: [], readinessAssumed: [] });
+      expect(gateway.requests).toEqual([
+        {
+          method: "GET",
+          url: `${LOCAL_GATEWAY_URL}/`,
+          headers: expect.objectContaining({ apikey: "sb_secret_local" }),
+        },
+      ]);
+    }),
+  );
+
+  it.effect("keeps reporting Kong as starting while the gateway does not answer", () =>
+    Effect.gen(function* () {
+      const mock = mockHealthSpawner(() => inspectedState({ health: "starting", probes: [] }));
+      const unreachable = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.fail(
+            new HttpClientError.HttpClientError({
+              reason: new HttpClientError.TransportError({ request }),
+            }),
+          ),
+        ),
+      );
+
+      const error = yield* timeoutFailure(
+        mock,
+        [KONG],
+        { execFallbacks: reachableFallback(KONG) },
+        unreachable,
+      );
+
+      expect(error.unhealthy).toEqual([
+        { containerId: KONG, reason: "container is not ready: starting" },
+      ]);
+    }),
+  );
+
+  it.effect.each([
+    { name: "a stopped Kong", state: inspectedState({ running: false, status: "exited" }) },
+    {
+      name: "an unhealthy Kong",
+      state: inspectedState({
+        health: "unhealthy",
+        probes: [{ exitCode: 1, output: "kong is not running" }],
+      }),
+    },
+  ])("does not ask the gateway about $name", ({ state }) =>
+    Effect.gen(function* () {
+      const mock = mockHealthSpawner(() => state);
+      const gateway = recordingGateway();
+
+      yield* timeoutFailure(
+        mock,
+        [KONG],
+        { execFallbacks: reachableFallback(KONG) },
+        gateway.layer,
+      );
+
+      expect(gateway.requests).toEqual([]);
+    }),
+  );
 
   it.effect("accepts the gateway's 404 as proof that an exec-failed Kong is up", () =>
     Effect.gen(function* () {

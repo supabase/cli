@@ -6,6 +6,7 @@ import {
   containerCliExitCode,
   containerRuntimeNotFoundMessage,
   describeContainerCliFailure,
+  dockerSupportsHealthStartInterval,
   dockerSupportsVolumePruneAllFlag,
   isContainerNotFoundMessage,
   spawnContainerCli,
@@ -227,6 +228,50 @@ describe("container CLI process spans", () => {
       expect(podman?.status._tag === "Ended" && Exit.isFailure(podman.status.exit)).toBe(true);
     }),
   );
+});
+
+describe("dockerSupportsHealthStartInterval", () => {
+  it.live.each([
+    { name: "both ends at the 1.44 minimum", client: "1.44", server: "1.44" },
+    { name: "a new client against a newer daemon", client: "1.47", server: "1.56" },
+    { name: "a three-part API version", client: "1.44.0", server: "1.44.0" },
+  ])("returns true for $name", ({ client, server }) => {
+    const mock = mockSpawner({ apiVersions: { client, server } });
+    return dockerSupportsHealthStartInterval(mock.spawner).pipe(
+      Effect.map((supported) => {
+        expect(supported).toBe(true);
+      }),
+    );
+  });
+
+  it.live.each([
+    {
+      name: "a client below API 1.44",
+      options: { apiVersions: { client: "1.43", server: "1.56" } },
+    },
+    {
+      name: "a daemon below API 1.44",
+      options: { apiVersions: { client: "1.56", server: "1.43" } },
+    },
+    {
+      name: "a docker shim printing Podman's own version",
+      options: { apiVersions: { client: "6.1.3", server: "6.1.3" } },
+    },
+    {
+      name: "a shim whose major starts with a 1",
+      options: { apiVersions: { client: "10.1.0", server: "10.1.0" } },
+    },
+    { name: "one version instead of a pair", options: { stdout: "1.56" } },
+    { name: "the version command exiting non-zero", options: { exitCode: 1, stdout: "1.56 1.56" } },
+    { name: "docker not being installed", options: { dockerMissing: true } },
+  ])("returns false for $name", ({ options }) => {
+    const mock = mockSpawner(options);
+    return dockerSupportsHealthStartInterval(mock.spawner).pipe(
+      Effect.map((supported) => {
+        expect(supported).toBe(false);
+      }),
+    );
+  });
 });
 
 describe("dockerSupportsVolumePruneAllFlag", () => {

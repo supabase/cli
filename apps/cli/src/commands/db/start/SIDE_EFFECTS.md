@@ -81,7 +81,11 @@ composition reuses too — see that command's `SIDE_EFFECTS.md`):
 9. Wait up to 15s for Docker's first health verdict, so `supabase db start && supabase status`
    does not see `starting`: poll `docker container inspect` every 1s until the health status
    leaves `starting`, the container stops running, or Docker cannot launch its health check. Never
-   fails the command, whatever the outcome, and is not covered by the rollback below.
+   fails the command, whatever the outcome, and is not covered by the rollback below. When the
+   `docker version` probe reports API >= 1.44 on both ends, `docker create` also gets
+   `--health-start-period 10s --health-start-interval 1s`, so this ends about 1s after start
+   instead of 10s. Older engines and the Podman CLI get neither flag; the `docker` client on a
+   Podman socket gets both, Podman drops the interval, and there is no speedup.
 
 Any failure from step 1 onward prints `Stopping containers...` to stderr and rolls back via
 `rollbackDatabaseStart`, which only touches what this command creates: the db container
@@ -135,6 +139,7 @@ only spawns on fallback.
 | `docker volume inspect supabase_db_<project>`                                                      | when not already running — the pre-create fresh-volume probe                                                                                               |
 | `docker image inspect` / `docker pull` (registry-fallback resolve)                                 | when not already running — resolves the Postgres image                                                                                                     |
 | `docker volume create --label ...`                                                                 | when not already running, unless a `--from-backup` restore onto an existing volume (fails first)                                                           |
+| `docker version --format ...`                                                                      | when not already running, once: API >= 1.44 on both ends adds the health start flags (see step 9)                                                          |
 | `docker create` + optional `docker cp - <id>:/` + `docker start`                                   | when not already running — `cp` streams one in-memory tar archive containing the pgsodium root key at its exact path when the selected entrypoint needs it |
 | `docker cp <id>:/var/lib/postgresql/data/PG_VERSION -`                                             | when the volume already existed, between `docker create` and `docker start` — the data-directory probe; its stdout is discarded                            |
 | `docker container inspect` (repeated)                                                              | readiness polling every 500ms up to `db.health_timeout`, then health-settle polling every 1s for up to 15s                                                 |
