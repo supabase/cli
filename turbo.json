@@ -15,8 +15,7 @@
       "cache": false
     },
     "lint:fix": {
-      "cache": false,
-      "dependsOn": ["knip:fix"]
+      "cache": false
     },
     "lint:actions:check": {
       "cache": false
@@ -25,8 +24,7 @@
       "cache": false
     },
     "fmt:fix": {
-      "cache": false,
-      "dependsOn": ["lint:fix"]
+      "cache": false
     },
     "knip:check": {
       "cache": false
