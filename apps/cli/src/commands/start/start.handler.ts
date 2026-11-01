@@ -1397,13 +1397,10 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
               ? {
                   kind: "gateway-reachable",
                   gateway,
-                  localGateway: {
-                    ...gateway,
-                    apiExternalUrl: resolveApiExternalUrl(
-                      { port: values.apiPort, tls: { enabled: apiTlsEnabled } },
-                      context.hostname,
-                    ),
-                  },
+                  localApiUrl: resolveApiExternalUrl(
+                    { port: values.apiPort, tls: { enabled: apiTlsEnabled } },
+                    context.hostname,
+                  ),
                 }
               : entry.gatewayReadyPath !== undefined && gates.kong
                 ? { kind: "gateway", gateway, path: entry.gatewayReadyPath }

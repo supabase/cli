@@ -126,9 +126,9 @@ start interval, so there is no speedup there.
 Kong's spec sets no healthcheck, so no health flags reach it on any engine and its image's
 `HEALTHCHECK` keeps its own 10s interval. While Docker reports Kong `starting`, the wait also sends
 `GET /` to Kong's own published `api.port` on the local host, never `api.external_url`, and any
-HTTP response counts as up. A failed request leaves it waiting for Docker's `healthy`, and a Kong
-that never serves keeps reporting `starting`. `docker ps` can show Kong `starting` for up to 10s
-after `start` returns.
+HTTP response counts as up. The request carries no credentials. A failed request leaves it waiting
+for Docker's `healthy`, and a Kong that never serves keeps reporting `starting`. `docker ps` can
+show Kong `starting` for up to 10s after `start` returns.
 
 When a container is running but Docker could not launch its health check, it is judged from the
 host instead of failing. This applies only when the container's last recorded probe has exit

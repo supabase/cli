@@ -113,8 +113,9 @@ export type ExecFallbackProbe =
   | {
       readonly kind: "gateway-reachable";
       readonly gateway: HealthCheckGateway;
-      /* Kong's own published port, for the `starting` probe: `gateway` follows `api.external_url`. */
-      readonly localGateway: HealthCheckGateway;
+      /* Kong's own published port, for the `starting` probe: `gateway` follows `api.external_url`.
+         A bare URL: a project `.env` can set this host, and any HTTP response counts. */
+      readonly localApiUrl: string;
     };
 
 export interface WaitForHealthyServicesOptions {
@@ -231,7 +232,7 @@ function checkContainerReady(
       }
       /* Kong's image checks every 10s and takes no start flags; a served request is proof enough. */
       if (state.health === "starting" && fallback?.kind === "gateway-reachable") {
-        return checkHttpReady(fallback.localGateway, "/", "GET", true).pipe(
+        return checkHttpReady({ apiExternalUrl: fallback.localApiUrl }, "/", "GET", true).pipe(
           Effect.mapError(() => formatNotReadyReason(state)),
         );
       }
@@ -240,9 +241,12 @@ function checkContainerReady(
   );
 }
 
-/** An HTTP request through the local Kong gateway, expecting exactly 200 unless `anyStatus`. */
+/**
+ * An HTTP request through the local Kong gateway, expecting exactly 200 unless `anyStatus`. It
+ * carries Kong's auth headers only when the gateway has a `secretKey`.
+ */
 function checkHttpReady(
-  gateway: HealthCheckGateway,
+  gateway: { readonly apiExternalUrl: string; readonly secretKey?: string },
   path: string,
   method: "HEAD" | "GET" = "HEAD",
   anyStatus = false,
@@ -250,9 +254,10 @@ function checkHttpReady(
   return Effect.gen(function* () {
     const httpClient = yield* HttpClient.HttpClient;
     const url = `${gateway.apiExternalUrl}${path}`;
+    const headers = gateway.secretKey === undefined ? {} : kongAuthHeaders(gateway.secretKey);
     const request = (
       method === "GET" ? HttpClientRequest.get(url) : HttpClientRequest.head(url)
-    ).pipe(HttpClientRequest.setHeaders(kongAuthHeaders(gateway.secretKey)));
+    ).pipe(HttpClientRequest.setHeaders(headers));
     const status = yield* Effect.gen(function* () {
       const response = yield* httpClient.execute(request);
       if (method === "GET") {

@@ -1289,8 +1289,8 @@ describe("waitForHealthyServices where Docker cannot exec health checks", () => 
         containerId,
         {
           kind: "gateway-reachable",
-          gateway: { apiExternalUrl: GATEWAY_URL, secretKey: "sb_secret_local" },
-          localGateway: { apiExternalUrl: LOCAL_GATEWAY_URL, secretKey: "sb_secret_local" },
+          gateway: { apiExternalUrl: GATEWAY_URL, secretKey: "ey.jwt.key" },
+          localApiUrl: LOCAL_GATEWAY_URL,
         },
       ],
     ]);
@@ -1485,9 +1485,10 @@ describe("waitForHealthyServices where Docker cannot exec health checks", () => 
         {
           method: "GET",
           url: `${LOCAL_GATEWAY_URL}/`,
-          headers: expect.objectContaining({ apikey: "sb_secret_local" }),
+          headers: expect.not.objectContaining({ apikey: expect.anything() }),
         },
       ]);
+      expect(gateway.requests[0]?.headers).not.toHaveProperty("authorization");
     }),
   );
 
@@ -1560,7 +1561,10 @@ describe("waitForHealthyServices where Docker cannot exec health checks", () => 
         {
           method: "GET",
           url: `${GATEWAY_URL}/`,
-          headers: expect.objectContaining({ apikey: "sb_secret_local" }),
+          headers: expect.objectContaining({
+            apikey: "ey.jwt.key",
+            authorization: "Bearer ey.jwt.key",
+          }),
         },
       ]);
     }),
