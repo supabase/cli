@@ -25,8 +25,6 @@ Target: hosted, consent default No — see [Command target](../../../../docs/com
 | `GET`  | `/v1/projects/{parent}/branches`               | Bearer token | none                           | `[{id, name, project_ref, is_default}]` — only for `--remote=<branch>` (or the deprecated `--project-ref=<branch>`), and for a bare `--remote` followed by a word that could name a branch; `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project |
 | `GET`  | `/v1/branches/{id}`                            | Bearer token | none                           | `{ref, status, …}` — only for `--remote=<branch UUID>` when no project is linked                                                                                                                                                                         |
 | `POST` | `/v1/projects/{ref}/vanity-subdomain/activate` | Bearer token | `{ vanity_subdomain: string }` | `{ custom_domain: string }`                                                                                                                                                                                                                              |
-| `GET`  | `/v1/projects/{ref}`                           | Bearer token | none                           | `{organization_slug}` — upgrade-gate side-call on a 4xx with no plan-gate error in the body                                                                                                                                                              |
-| `GET`  | `/v1/organizations/{slug}/entitlements`        | Bearer token | none                           | `{entitlements[].feature.key, .hasAccess}` (key `vanity_subdomain`) — upgrade-gate side-call on a 4xx with no plan-gate error in the body                                                                                                                |
 | `GET`  | `/v1/projects/{ref}`                           | Bearer token | none                           | `{ref, name, organization_id, organization_slug}` — `linkedProjectCache` fill, best-effort, skipped when `.temp/linked-project.json` exists, `.temp/project-ref` names another ref, or no token is available                                             |
 
 ## Environment Variables
@@ -57,7 +55,7 @@ Target: hosted, consent default No — see [Command target](../../../../docs/com
 | Event                   | When                                                                                           | Notable properties / groups                |
 | ----------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------ |
 | `cli_command_executed`  | post-run, success or failure (via wrapper); not fired when the `--experimental` gate is closed | `exit_code`, `duration_ms`, `flags`        |
-| `cli_upgrade_suggested` | gated 4xx responses only                                                                       | `feature_key=vanity_subdomain`, `org_slug` |
+| `cli_upgrade_suggested` | 4xx whose body is the `entitlement_required` envelope                                          | `feature_key=vanity_subdomain`, `org_slug` |
 
 ## Output
 
@@ -88,7 +86,7 @@ One `result` event with the full response object.
   open), even when the API call fails, but only on a cache miss with a token when
   `GET /v1/projects/{ref}` succeeds and `.temp/project-ref` does not name another ref. A closed
   gate writes nothing.
-- On gated 4xx responses this command prints an upgrade suggestion and fires `cli_upgrade_suggested`.
+- On a 4xx whose body is the `entitlement_required` envelope this command prints an upgrade suggestion and fires `cli_upgrade_suggested`.
 - `--desired-subdomain` is required, but only enforced in the handler (after gate → login → ref
   resolution) rather than at parse time, using the fixed wording
   `required flag(s) "desired-subdomain" not set`. The gate/login/ref errors win over the missing
