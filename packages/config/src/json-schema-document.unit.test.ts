@@ -1,5 +1,4 @@
-import type { ErrorObject, ValidateFunction } from "ajv";
-import Ajv2020 from "ajv/dist/2020";
+import Ajv, { type ErrorObject, type ValidateFunction } from "ajv";
 import { Result, Schema, SchemaIssue } from "effect";
 import { describe, expect, test } from "vitest";
 import { CliConfigSchema, toCliConfigJsonSchema } from "./base.ts";
@@ -25,7 +24,7 @@ const isNode = (value: unknown): value is Node =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 const DATA_KEYWORDS = new Set(["default", "examples", "enum", "const"]);
-const SCHEMA_MAP_KEYWORDS = new Set(["properties", "patternProperties", "$defs"]);
+const SCHEMA_MAP_KEYWORDS = new Set(["properties", "patternProperties", "definitions"]);
 
 type Path = ReadonlyArray<string | number>;
 
@@ -77,11 +76,7 @@ const patternOf = (node: Node): string => {
   return node.pattern;
 };
 
-// $schema is dropped so the tests do not depend on which draft the header names.
-const compile = (document: Node): ValidateFunction => {
-  const schema = Object.fromEntries(Object.entries(document).filter(([key]) => key !== "$schema"));
-  return new Ajv2020({ strict: false }).compile(schema);
-};
+const compile = (document: Node): ValidateFunction => new Ajv({ strict: false }).compile(document);
 
 const errorsFor = (validate: ValidateFunction, value: unknown): ReadonlyArray<ErrorObject> =>
   validate(value) ? [] : [...(validate.errors ?? [])];
@@ -167,7 +162,7 @@ const loaderAcceptsAt = (
     env,
     CliConfigSchema,
     {
-      goViperCompat: true,
+      cliCompat: true,
     },
   );
   const result = decodeCli(resolved);
@@ -217,6 +212,42 @@ describe("published JSON Schema documents", () => {
     expect(at(project, "properties", "compute")).not.toHaveProperty("additionalProperties");
   });
 
+  test("migration checks publish a closed object with patterned exclusions", () => {
+    const checks = at(
+      toCliConfigJsonSchema(),
+      "properties",
+      "db",
+      "properties",
+      "migrations",
+      "properties",
+      "checks",
+    );
+    const rules = [
+      "rls_disabled_in_public",
+      "rls_enabled_no_policy",
+      "policy_exists_rls_disabled",
+      "security_definer_view",
+      "rls_policy_always_true",
+      "sensitive_columns_exposed",
+      "auth_users_exposed",
+      "function_search_path_mutable",
+      "rls_references_user_metadata",
+    ];
+    expect(checks).not.toHaveProperty("allOf");
+    expect(checks).toHaveProperty("additionalProperties", false);
+    expect(Object.keys(at(checks, "properties")).sort()).toEqual([...rules, "exclude"].sort());
+    const exclude = at(checks, "properties", "exclude");
+    expect(Object.keys(at(exclude, "properties")).sort()).toEqual([...rules].sort());
+    for (const rule of rules) {
+      expect(at(checks, "properties", rule)).toMatchObject({
+        anyOf: expect.arrayContaining([{ type: "string", enum: ["error", "warn", "off"] }]),
+      });
+      const list = at(exclude, "properties", rule, "anyOf", 0);
+      expect(list).toMatchObject({ type: "array" });
+      expect(at(list, "items").pattern).toEqual(expect.any(String));
+    }
+  });
+
   test("empty bucket tables render as object or array", () => {
     const project = toProjectConfigJsonSchema();
     const buckets = at(
@@ -243,6 +274,20 @@ describe("published JSON Schema documents", () => {
     expect(JSON.stringify(toProjectConfigJsonSchema())).not.toContain('"x-secret"');
   });
 
+  test.each(["email", "sms"])(
+    "describes project config auth.%s.enable_signup like the CLI enabled alias, not as deprecated",
+    (section) => {
+      const cli = at(toCliConfigJsonSchema(), "properties", "auth", "properties", section);
+      const project = at(toProjectConfigJsonSchema(), "properties", "auth", "properties", section);
+
+      const enabledDescription = at(cli, "properties", "enabled").description;
+      expect(enabledDescription).toBeTypeOf("string");
+      expect(enabledDescription).not.toContain("Deprecated");
+      expect(at(project, "properties", "enable_signup").description).toBe(enabledDescription);
+      expect(at(cli, "properties", "enable_signup").description).toContain("Deprecated");
+    },
+  );
+
   test("custom annotations other than x-secret are not published", () => {
     const deferredSecret = toPublishedJsonSchemaDocument(
       Schema.Struct({ token: env({ secret: true }) }),
@@ -261,11 +306,17 @@ describe("env() references in the published CLI JSON Schema", () => {
   const baseline = {
     project_id: "demo",
     api: { port: 54321, max_rows: 1000 },
-    auth: { enable_signup: true },
+    auth: { enable_signup: true, email: { enabled: false }, sms: { enabled: true } },
     db: { settings: { max_connections: 100 } },
     compute: { web: { instances: 2 } },
     storage: { file_size_limit: "50MiB" },
-    remotes: { staging: { api: { max_rows: 500 }, compute: { web: { instances: 4 } } } },
+    remotes: {
+      staging: {
+        api: { max_rows: 500 },
+        auth: { email: { enabled: true } },
+        compute: { web: { instances: 4 } },
+      },
+    },
   };
 
   describe("validation", () => {
@@ -277,6 +328,8 @@ describe("env() references in the published CLI JSON Schema", () => {
       ["api.max_rows", { api: { max_rows: "env(MAX_ROWS)" } }],
       ["api.port", { api: { port: "env(API_PORT)" } }],
       ["auth.enable_signup", { auth: { enable_signup: "env(ENABLE_SIGNUP)" } }],
+      ["auth.email.enabled", { auth: { email: { enabled: "env(EMAIL_ENABLED)" } } }],
+      ["auth.sms.enabled", { auth: { sms: { enabled: "env(SMS_ENABLED)" } } }],
       ["db.settings.max_connections", { db: { settings: { max_connections: "env(MAX_CONN)" } } }],
       ["compute.<name>.instances", { compute: { web: { instances: "env(WEB_INSTANCES)" } } }],
       ["storage.file_size_limit", { storage: { file_size_limit: "env(FILE_SIZE_LIMIT)" } }],
@@ -292,6 +345,10 @@ describe("env() references in the published CLI JSON Schema", () => {
         { remotes: { staging: { auth: { enable_signup: "env(SIGNUP)" } } } },
       ],
       [
+        "remotes.<name>.auth.email.enabled",
+        { remotes: { staging: { auth: { email: { enabled: "env(EMAIL)" } } } } },
+      ],
+      [
         "remotes.<name>.compute.<name>.instances",
         { remotes: { staging: { compute: { web: { instances: "env(WEB)" } } } } },
       ],
@@ -302,6 +359,11 @@ describe("env() references in the published CLI JSON Schema", () => {
     test.each([
       ["a numeric string in a number field", { api: { max_rows: "1000" } }, "/api/max_rows"],
       ["a word in a boolean field", { auth: { enable_signup: "yes" } }, "/auth/enable_signup"],
+      [
+        "a word in a provider enabled field",
+        { auth: { sms: { enabled: "yes" } } },
+        "/auth/sms/enabled",
+      ],
       ["an unclosed env() reference", { api: { port: "env(PORT" } }, "/api/port"],
       [
         "an env() reference with leading whitespace",
@@ -633,11 +695,21 @@ describe("toPublishedJsonSchemaDocument acceptEnvReferences", () => {
     const Port = Schema.Finite.annotate({ identifier: "Port" });
     const Flag = Schema.Boolean.annotate({ identifier: "Flag" });
     const document = publish(Schema.Struct({ a: Port, b: Port, c: Flag }), true);
-    expect(at(document, "$defs", "Port").anyOf).toEqual([{ type: "number" }, envBranch]);
-    expect(at(document, "$defs", "Flag").anyOf).toEqual([{ type: "boolean" }, envBranch]);
+    expect(at(document, "definitions", "Port").anyOf).toEqual([{ type: "number" }, envBranch]);
+    expect(at(document, "definitions", "Flag").anyOf).toEqual([{ type: "boolean" }, envBranch]);
     const validate = compile(document);
     expect(errorsFor(validate, { a: "env(A)", b: 2, c: "env(C)" })).toEqual([]);
     expect(failingPaths(validate, { a: "x", b: 2, c: true })).toContain("/a");
+  });
+
+  test("renders shared definitions under draft-07 `definitions` with matching refs", () => {
+    const Port = Schema.Finite.annotate({ identifier: "Port" });
+    const document = publish(Schema.Struct({ a: Port, b: Port }), true);
+    expect(document.$schema).toBe("http://json-schema.org/draft-07/schema#");
+    expect(document).not.toHaveProperty("$defs");
+    expect(Object.keys(at(document, "definitions"))).toEqual(["Port"]);
+    expect(at(document, "properties", "a")).toEqual({ $ref: "#/definitions/Port" });
+    expect(JSON.stringify(document)).not.toContain("#/$defs/");
   });
 
   test("the project config schema carries no env-reference branch", () => {

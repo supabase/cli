@@ -1,26 +1,25 @@
-import { Layer } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
-import { projectRefPicker } from "../../../config/remote-target.layer.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
+import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
-import { FUNCTIONS_PROJECT_REF_SAFE_FLAGS } from "../../../shared/functions/functions.shared.ts";
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { functionsDeploy } from "./deploy.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   functionNames: Argument.String("Function name").pipe(
     Argument.withDescription("Names of Functions to deploy. Deploys all if omitted."),
     Argument.variadic(),
   ),
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
   noVerifyJwt: Flag.Boolean("no-verify-jwt").pipe(
     Flag.withDescription("Disable JWT verification for the Function."),
     Flag.withDefault(false),
@@ -74,7 +73,7 @@ export const functionsDeployCommand = Command.make("deploy", config).pipe(
       description: "Deploy a single function to the linked project",
     },
     {
-      command: "supabase functions deploy --project-ref abcdefghijklmnopqrst",
+      command: "supabase functions deploy --remote=abcdefghijklmnopqrst",
       description: "Deploy all local functions to a specific project",
     },
   ]),
@@ -147,15 +146,19 @@ export const functionsDeployCommand = Command.make("deploy", config).pipe(
       },
       projectRefPicker,
       linkedProjectCache,
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>
     functionsDeploy(flags).pipe(
-      withCommandTelemetry({ flags, safeFlags: FUNCTIONS_PROJECT_REF_SAFE_FLAGS }),
+      withCommandTelemetry({
+        flags,
+      }),
       withJsonErrorHandling,
     ),
   ),
-  // `stdinLayer`: the `--prune` confirmation reads piped stdin via `promptYesNo`
-  // on a non-TTY stdin.
-  Command.provide(Layer.mergeAll(managementApiRuntimeLayer(["functions", "deploy"]), stdinLayer)),
+  Command.provide(managementApiRuntimeLayer(["functions", "deploy"])),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

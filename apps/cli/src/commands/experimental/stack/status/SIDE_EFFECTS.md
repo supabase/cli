@@ -81,7 +81,8 @@ required saved database JWT secret.
 
 `--override-name` renames an exported variable, accepting repeated flags or a
 comma-separated list of `EXPORTED_VARIABLE=VALID_ENV_NAME` entries. It requires
-`--env` and rejects an unknown source variable, duplicate source, invalid target,
+`--env` and rejects an unknown source variable (the removed `INBUCKET_URL` names
+`MAILPIT_URL` as its replacement), duplicate source, invalid target,
 malformed entry, or destination collision. Dotenv values that cannot be quoted
 without shell expansion fail with a pointer to `--output-format json`.
 

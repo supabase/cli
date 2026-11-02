@@ -5,7 +5,7 @@ import { httpClientLayer } from "../../auth/http-debug.layer.ts";
 import { commandPlatformApiFactoryFromApiLayer } from "../../auth/command-platform-api-factory.layer.ts";
 import { commandPlatformApiLayer } from "../../auth/command-platform-api.layer.ts";
 import { commandSettingsLayer } from "../../config/command-settings.layer.ts";
-import { remoteTargetLayer } from "../../config/remote-target.layer.ts";
+import { projectRefLayer } from "../../config/project-ref.layer.ts";
 import { dbConnectionLayer } from "../../command-internal/db-connection.sql-pg.layer.ts";
 import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
 import { identityStitchLayer } from "../../command-internal/identity-stitch.ts";
@@ -45,7 +45,7 @@ export const bootstrapRuntimeLayer = Layer.mergeAll(
   httpClient,
   credentials,
   cliSettings,
-  remoteTargetLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliSettings)),
+  projectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliSettings)),
   linkedProjectCacheLayer.pipe(
     Layer.provide(credentials),
     Layer.provide(cliSettings),

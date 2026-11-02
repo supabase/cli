@@ -1,11 +1,12 @@
 import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { RemoteTarget } from "../../../config/remote-target.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import {
   VanitySubdomainsDeleteNetworkError,
@@ -26,14 +27,18 @@ export const vanitySubdomainsDelete = Effect.fn("vanity-subdomains.delete")(func
   const output = yield* Output;
   const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* RemoteTarget;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
-    const { ref } = yield* resolver.resolve(flags.projectRef);
+    const ref = yield* resolveProjectTarget(flags);
 
     yield* Effect.gen(function* () {
+      yield* requireHostedMutationConsent({
+        action: "Delete the vanity subdomain",
+        details: ["Routing reverts to the project ref hostname."],
+      });
+
       const deleting =
         output.format === "text" ? yield* output.task("Deleting vanity subdomain...") : undefined;
       yield* api.v1.deactivateVanitySubdomainConfig({ ref }).pipe(
@@ -45,9 +50,12 @@ export const vanitySubdomainsDelete = Effect.fn("vanity-subdomains.delete")(func
       // `--output` is ignored entirely (stderr-only success). We still read
       // the legacy flag so that an explicit --output suppresses the TS json/stream-json
       // success event, keeping stdout empty either way.
-      const goOutput = Option.getOrUndefined(outputFlag);
+      const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
-      if (goOutput === undefined && (output.format === "json" || output.format === "stream-json")) {
+      if (
+        outputFlagFormat === undefined &&
+        (output.format === "json" || output.format === "stream-json")
+      ) {
         yield* output.success("Deleted vanity subdomain successfully.");
         return;
       }

@@ -2,22 +2,18 @@ import { Cause, Effect, Exit, FileSystem, Option, Path, Ref } from "effect";
 
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { pathHasUncommittedChanges } from "../../command-internal/git-status.ts";
-import { mapHttpError } from "../../command-internal/http-errors.ts";
 import { MigrationsReadError } from "../../command-internal/migration.errors.ts";
-import { unsupportedOutputFlagMessage } from "../../command-internal/go-output-flag.ts";
+import { unsupportedOutputFlagMessage } from "../../command-internal/output-formats.ts";
 import { validateWorkdirIsDirectory } from "../../command-internal/workdir-validation.ts";
 import { MachineErrorContext } from "../../shared/output/machine-error-context.service.ts";
 import { resolveYes, OutputFlag } from "../../command-internal/global-flags.ts";
-import { promptYesNo } from "../../command-internal/prompt-yes-no.ts";
+import { requireHostedMutationConsent } from "../../command-internal/hosted-consent/hosted-consent.ts";
+import { withAnnouncedTarget } from "../../shared/output/command-target.service.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
 import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
-import {
-  configTargetErrorsFor,
-  resolveConfigTarget,
-} from "../../command-internal/project-target.ts";
-import { unexpectedStatusMessage } from "../../command-internal/http-errors.ts";
+import { resolveProjectTarget } from "../../command-internal/target/resolve-project-target.ts";
 import {
   configPullPayload,
   openConfigPullSource,
@@ -53,32 +49,11 @@ import {
 } from "./pull.format.ts";
 import type { PullAggregate, PullStepContext, PullStepResult } from "./pull.types.ts";
 import {
-  PullBranchNotFoundError,
-  PullBranchNotLinkedError,
-  PullBranchNotReadyError,
-  PullBranchResolveNetworkError,
-  PullBranchResolveStatusError,
   PullOutputFlagUnsupportedError,
-  PullParentRefInvalidError,
   PullUncommittedChangesError,
   PullWorkdirError,
 } from "./pull.errors.ts";
 import type { PullFlags } from "./pull.command.ts";
-
-/** Wires `pull`'s own tagged error classes into `resolveConfigTarget`. */
-const pullTargetErrors = configTargetErrorsFor({
-  notLinked: PullBranchNotLinkedError,
-  parentRefInvalid: PullParentRefInvalidError,
-  branchNotFound: PullBranchNotFoundError,
-  branchNotReady: PullBranchNotReadyError,
-});
-
-const mapBranchResolveError = mapHttpError({
-  networkError: PullBranchResolveNetworkError,
-  statusError: PullBranchResolveStatusError,
-  networkMessage: (cause) => `failed to resolve branch: ${cause}`,
-  statusMessage: unexpectedStatusMessage,
-});
 
 /** The union of every typed error the four step runners (`pull.steps.ts`) can fail with — keeps
  *  `firstFailureCause` typed instead of erasing the error channel to `unknown`. */
@@ -95,14 +70,22 @@ const configPullPayloadFor = (runPlan: ConfigPullRunPlan, outcome: ConfigPullOut
   configPullPayload(runPlan.changeSet, runPlan.scope, runPlan.plan, runPlan.context, outcome);
 
 /**
- * Emits the aggregate for every non-failure disposition (dry run, declined, or fully
- * succeeded). The mixed-failure disposition is inlined separately instead, since machine mode
- * there feeds the payload into `MachineErrorContext` ahead of a re-failed cause.
+ * Emits the aggregate for every non-failure disposition (dry run or fully succeeded). The
+ * mixed-failure disposition is inlined separately instead, since machine mode there feeds the
+ * payload into `MachineErrorContext` ahead of a re-failed cause.
  */
-const pullEmit = (output: typeof Output.Service, aggregate: PullAggregate) =>
-  output.format === "text"
-    ? output.raw(renderPullSummary(aggregate))
-    : output.success(pullSummaryMessage(aggregate), pullPayload(aggregate));
+const pullEmit = Effect.fnUntraced(function* (
+  output: typeof Output.Service,
+  aggregate: PullAggregate,
+) {
+  if (output.format === "text") {
+    return yield* output.raw(renderPullSummary(aggregate));
+  }
+  return yield* output.success(
+    pullSummaryMessage(aggregate),
+    yield* withAnnouncedTarget(pullPayload(aggregate)),
+  );
+});
 
 /**
  * Runs `effect`, capturing a typed failure into a failed `Exit` instead of letting it
@@ -184,7 +167,7 @@ function pullWithRetryHint(
  */
 export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const yes = yield* resolveYes;
   const cliSettings = yield* CommandSettings;
   const fs = yield* FileSystem.FileSystem;
@@ -193,7 +176,6 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
   const telemetryState = yield* TelemetryState;
   const machineErrorContext = yield* MachineErrorContext;
 
-  const requested = Option.filter(flags.projectRef, (value) => value.length > 0);
   const remoteLabel = Option.getOrUndefined(
     Option.filter(flags.remoteLabel, (value) => value.length > 0),
   );
@@ -202,7 +184,7 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
 
   yield* Effect.gen(function* () {
     // Rejects `-o`/`--output` outright; `pull` only supports `--output-format`.
-    if (Option.isSome(goOutputFlag)) {
+    if (Option.isSome(outputFlag)) {
       return yield* new PullOutputFlagUnsupportedError({
         message: unsupportedOutputFlagMessage("pull"),
       });
@@ -216,9 +198,9 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
 
     // Resolves the pull target exactly once; every sub-step below targets `ref` directly
     // instead of re-resolving (ADR 0024).
-    const { ref, branch, runPlan, source } = yield* Effect.gen(function* () {
+    const { ref, branch, linked, runPlan, source } = yield* Effect.gen(function* () {
       const pullSource = yield* openConfigPullSource();
-      const target = yield* resolveConfigTarget(requested, pullTargetErrors, mapBranchResolveError);
+      const target = yield* resolveProjectTarget(flags, { detail: true });
       yield* Ref.set(resolvedRef, Option.some(target.ref));
 
       // `planConfigPullRun` does everything up through the schema-validation gate: no git
@@ -228,7 +210,13 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
         remoteLabel,
         source: pullSource,
       });
-      return { ref: target.ref, branch: target.branch, runPlan: plan, source: pullSource };
+      return {
+        ref: target.ref,
+        branch: target.branch,
+        linked: target,
+        runPlan: plan,
+        source: pullSource,
+      };
     }).pipe(Effect.withSpan("pull.resolveTarget"));
 
     // Retry hints below use the planned remote destination's label, not the raw `remoteLabel`
@@ -367,40 +355,22 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
       }
     }
 
-    const confirmed = yield* promptYesNo(output, yes, "Proceed with pull?", dirty ? false : true);
-    if (!confirmed) {
-      const results: ReadonlyArray<PullStepResult> = [
-        pullConfigStepResult(
-          {
-            dryRun: false,
-            hasWork: runPlan.hasWork,
-            confirmed: false,
-            configFilePath: runPlan.context.configPath,
-          },
-          configPullPayloadFor(runPlan, { dryRun: false, declined: true }),
-        ),
-        pullMigrationHistoryStepResult({
-          kind: "skipped",
-          reason: shouldFetchMigrationHistory ? "declined" : "not_needed",
-        }),
-        pullDbStepResult({ kind: "planned" }),
-        pullFunctionsStepResult({ kind: "planned" }),
-      ];
-      const aggregate = pullAggregate({
-        ref,
-        branch,
-        dryRun: false,
-        confirmed: false,
-        dirtyPaths,
-        results,
-      });
-      yield* pullEmit(output, aggregate);
-      return;
-    }
+    const preapproved = yield* requireHostedMutationConsent({
+      action: "Pull project state and update the remote migration history table",
+      details: [
+        "Write a migration file for the remote schema to supabase/migrations.",
+        "Record it as applied in the remote migration history.",
+      ],
+    }).pipe(Effect.map(Option.some));
 
     // Each step is failure-isolated: one failing doesn't stop the rest from running and being
     // reported.
-    const stepContext: PullStepContext = { ref, assumeYes: true };
+    const stepContext: PullStepContext = {
+      ref,
+      assumeYes: true,
+      target: linked,
+      preapproved,
+    };
     const { results, firstFailureCause } = yield* Effect.gen(function* () {
       let firstFailureCause: Cause.Cause<PullStepFailureCause> | undefined;
       const results: Array<PullStepResult> = [];
@@ -410,7 +380,7 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
         results.push(
           pullConfigStepResult(
             // `pullConfigStep` returns the plan's absolute `configFilePath`; overridden here to
-            // the workdir-relative path, matching the dry-run/declined branches above.
+            // the workdir-relative path, matching the dry-run branch above.
             { ...configCapture.value, configFilePath: runPlan.context.configPath },
             configPullPayloadFor(runPlan, { dryRun: false, declined: false }),
           ),
@@ -507,7 +477,7 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
     if (output.format === "text") {
       yield* output.raw(renderPullSummary(aggregate));
     } else {
-      yield* machineErrorContext.set(pullPayload(aggregate));
+      yield* machineErrorContext.set(yield* withAnnouncedTarget(pullPayload(aggregate)));
     }
     return yield* Effect.failCause(firstFailureCause);
   }).pipe(

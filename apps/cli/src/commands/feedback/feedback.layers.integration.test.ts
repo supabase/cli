@@ -3,7 +3,7 @@ import { Effect } from "effect";
 
 import { feedbackClientLayer } from "../../shared/feedback/feedback-client.layer.ts";
 import { FeedbackClient } from "../../shared/feedback/feedback-client.service.ts";
-import type { DebugLoggerShape } from "../../command-internal/debug-logger.service.ts";
+import type { DebugLoggerShape } from "../../shared/output/debug-logger.service.ts";
 import { feedbackFetch } from "./feedback.layers.ts";
 
 // The environment only needs a url/key shape — no request leaves the test.

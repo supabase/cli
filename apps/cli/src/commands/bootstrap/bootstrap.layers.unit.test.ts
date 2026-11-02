@@ -26,6 +26,7 @@ import {
   useTempWorkdir,
 } from "../../../tests/helpers/command-mocks.ts";
 
+import { CliConfigFlagInputs, makeCliConfigFlagInputs } from "../../config/cli-config-flags.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import {
   DebugFlag,
@@ -37,11 +38,12 @@ import {
 } from "../../command-internal/global-flags.ts";
 
 import { CommandPlatformApiFactory } from "../../auth/command-platform-api-factory.service.ts";
+import { ProjectRefResolver } from "../../config/project-ref.service.ts";
 import { IdentityStitch } from "../../command-internal/identity-stitch.ts";
 import { TemplateService } from "./bootstrap.templates.ts";
 
 import { bootstrapRuntimeLayer } from "./bootstrap.layers.ts";
-import { stubRemoteTarget } from "../../../tests/helpers/remote-target.ts";
+import { commandTargetLayer } from "../../shared/output/command-target.layer.ts";
 
 const tempRoot = useTempWorkdir("supabase-bootstrap-layers-");
 
@@ -59,22 +61,23 @@ function ambientStubs() {
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(NetworkIdFlag, Option.none()),
     Layer.succeed(CliArgs, { args: [] }),
+    Layer.succeed(CliConfigFlagInputs, makeCliConfigFlagInputs()),
   );
 
   // These stubs exist only so the Effect type system sees CommandPlatformApi,
-  // CommandPlatformApiFactory, and RemoteTarget as satisfiable in the outer context; the
+  // CommandPlatformApiFactory, and ProjectRefResolver as satisfiable in the outer context; the
   // runtime layer's own provisions take precedence at runtime.
   const heavyServiceStubs = Layer.mergeAll(
     mockCommandPlatformApiService().layer,
     Layer.succeed(CommandPlatformApiFactory, {
       make: Effect.die("platform-api-factory not needed for layer-exposure test"),
     }),
-    stubRemoteTarget({
+    Layer.succeed(ProjectRefResolver, {
       resolve: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       resolveForLink: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
+      resolveRef: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       resolveOptional: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
-      load: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
-      prompt: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
+      promptProjectRef: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
     }),
     Layer.succeed(TemplateService, {
       listSamples: Effect.die("template-service not needed for layer-exposure test"),
@@ -97,6 +100,7 @@ function ambientStubs() {
     analytics.layer,
     mockTelemetryRuntime(),
     out.layer,
+    commandTargetLayer.pipe(Layer.provide(out.layer)),
     flagLayers,
     mockCommandSettings({ workdir: "/tmp/bootstrap-layers-test" }),
     mockCommandCredentialsLayer,

@@ -56,6 +56,28 @@ describe("diffProjectConfig classification", () => {
     expect(result.counts.update).toBe(1);
   });
 
+  test.each([
+    { section: "email", key: "enabled", local: false, attribute: "external_email_enabled" },
+    { section: "email", key: "enable_signup", local: false, attribute: "external_email_enabled" },
+    { section: "sms", key: "enabled", local: true, attribute: "external_phone_enabled" },
+    { section: "sms", key: "enable_signup", local: true, attribute: "external_phone_enabled" },
+  ])(
+    "a declared auth.$section.$key = $local differing from the remote is a declared update",
+    ({ section, key, local, attribute }) => {
+      const result = diffWith(
+        { auth: { [section]: { [key]: local } } },
+        { auth: { [attribute]: !local } },
+      );
+
+      expect(changeAt(result.changes, ["auth", section, "enable_signup"])).toMatchObject({
+        class: "update",
+        local,
+        remote: !local,
+        declared: true,
+      });
+    },
+  );
+
   test("declared value equal to remote is not a difference", () => {
     const result = diffWith({ api: { max_rows: 500 } }, { api: { max_rows: 500 } });
     expect(result.changes).toEqual([]);

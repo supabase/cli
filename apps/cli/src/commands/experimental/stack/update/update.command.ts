@@ -5,6 +5,9 @@ import { withPermissions } from "../../../../command-internal/command-permission
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { stackUpdate } from "./update.handler.ts";
+import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
+import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 
 const config = {
   services: Argument.String("service").pipe(
@@ -58,4 +61,11 @@ export const stackUpdateCommand = Command.make("update", config).pipe(
   Command.withHandler((flags) =>
     stackUpdate(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
+  withTargetPolicy({
+    group: "local-only",
+    consent: "none",
+    consentExemptReason: "updates only the local stack lock",
+  }),
 );

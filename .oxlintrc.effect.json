@@ -9,6 +9,7 @@
     "!packages/api/**",
     "!packages/config/**",
     "!packages/stack/**",
+    "!apps/cli-e2e/**",
     "!apps/cli/**",
     "!apps/docs/**",
     "!packages/cli-test-helpers/**",
@@ -18,7 +19,6 @@
     "apps/cli/src/shared/cli/bin.ts",
     "apps/cli/src/shared/compute/stacks/**",
     "apps/cli/src/shared/feedback/database.types.ts",
-    "apps/cli/src/command-internal/db-bootstrap/local-db-running.integration.test.ts",
     "apps/cli/src/command-internal/db-bootstrap/local-db-running.ts",
     "packages/api/src/generated/contracts.ts"
   ]

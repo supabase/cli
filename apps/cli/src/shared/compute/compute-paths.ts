@@ -1,4 +1,4 @@
-import { LEGACY_PROJECT_STATE_DIRNAME } from "../../command-internal/legacy-project-state.paths.ts";
+import { LEGACY_PROJECT_STATE_DIRNAME } from "../config/legacy-project-state.paths.ts";
 import { Effect, FileSystem, Option, Path } from "effect";
 import { InvalidComputeSourceError } from "./compute.errors.ts";
 

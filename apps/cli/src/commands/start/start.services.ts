@@ -22,6 +22,10 @@ export interface StartServiceMeta {
    * Logflare; Studio waits on pg-meta). Not a full dependency graph, just a sequencing hint.
    */
   readonly dependsOn?: ReadonlyArray<string>;
+  /** The Kong route used to verify readiness when Docker cannot exec the health check. */
+  readonly gatewayReadyPath?: string;
+  /** The service is the gateway itself: any HTTP response from it proves it is up. */
+  readonly gatewayReachable?: true;
 }
 
 export interface StartServiceEntry extends ServiceCatalogEntry, StartServiceMeta {}
@@ -32,7 +36,14 @@ export interface StartServiceEntry extends ServiceCatalogEntry, StartServiceMeta
  */
 const START_SERVICE_META_BY_SERVICE: ReadonlyMap<string, StartServiceMeta> = new Map([
   ["postgres", { imageConfigField: "db.image", enabledGate: "always" }],
-  ["logflare", { imageConfigField: "analytics.image", enabledGate: "analytics.enabled" }],
+  [
+    "logflare",
+    {
+      imageConfigField: "analytics.image",
+      enabledGate: "analytics.enabled",
+      gatewayReadyPath: "/analytics/v1/health",
+    },
+  ],
   [
     "vector",
     {
@@ -41,12 +52,26 @@ const START_SERVICE_META_BY_SERVICE: ReadonlyMap<string, StartServiceMeta> = new
       dependsOn: ["logflare"],
     },
   ],
-  ["kong", { imageConfigField: "api.kong_image", enabledGate: "none" }],
-  ["gotrue", { imageConfigField: "auth.image", enabledGate: "auth.enabled" }],
+  ["kong", { imageConfigField: "api.kong_image", enabledGate: "none", gatewayReachable: true }],
+  [
+    "gotrue",
+    {
+      imageConfigField: "auth.image",
+      enabledGate: "auth.enabled",
+      gatewayReadyPath: "/auth/v1/health",
+    },
+  ],
   ["mailpit", { imageConfigField: "local_smtp.image", enabledGate: "local_smtp.enabled" }],
   ["realtime", { imageConfigField: "realtime.image", enabledGate: "realtime.enabled" }],
   ["postgrest", { imageConfigField: "api.image", enabledGate: "api.enabled" }],
-  ["storage", { imageConfigField: "storage.image", enabledGate: "storage.enabled" }],
+  [
+    "storage",
+    {
+      imageConfigField: "storage.image",
+      enabledGate: "storage.enabled",
+      gatewayReadyPath: "/storage/v1/status",
+    },
+  ],
   [
     "imgproxy",
     {
@@ -56,7 +81,14 @@ const START_SERVICE_META_BY_SERVICE: ReadonlyMap<string, StartServiceMeta> = new
     },
   ],
   ["edgeRuntime", { imageConfigField: "edge_runtime.image", enabledGate: "edge_runtime.enabled" }],
-  ["pgMeta", { imageConfigField: "studio.pgmeta_image", enabledGate: "studio.enabled" }],
+  [
+    "pgMeta",
+    {
+      imageConfigField: "studio.pgmeta_image",
+      enabledGate: "studio.enabled",
+      gatewayReadyPath: "/pg/health",
+    },
+  ],
   [
     "studio",
     {
@@ -84,5 +116,7 @@ export const START_SERVICES: ReadonlyArray<StartServiceEntry> = SERVICE_CATALOG.
     imageConfigField: meta?.imageConfigField ?? "",
     enabledGate: meta?.enabledGate ?? "",
     dependsOn: meta?.dependsOn,
+    gatewayReadyPath: meta?.gatewayReadyPath,
+    gatewayReachable: meta?.gatewayReachable,
   };
 });

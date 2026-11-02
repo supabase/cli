@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { JsonSchema, Schema } from "effect";
 import { ENV_PATTERN } from "./lib/env.ts";
 
 type Node = Record<string, unknown>;
@@ -9,11 +9,12 @@ const DATA_KEYWORDS = new Set(["default", "examples", "enum", "const"]);
 const SCHEMA_MAP_KEYWORDS = new Set(["properties", "patternProperties"]);
 
 /**
- * Renders a published JSON Schema document, carrying the `x-secret` marker through and keeping
- * pattern-keyed records open: the generator writes a boolean `additionalProperties` on them
+ * Renders a published draft-07 JSON Schema document, carrying the `x-secret` marker through and
+ * keeping pattern-keyed records open: the generator writes a boolean `additionalProperties` on them
  * (effect 4.0) with no per-schema setting, while the published documents never carried one there.
  * With `acceptEnvReferences`, number, integer, boolean, string-enum and string-list leaves also
- * accept the `env(VAR)` references the loader resolves.
+ * accept the `env(VAR)` references the loader resolves. A bare object whose only constraint is
+ * one object schema in `allOf` is replaced by that schema, so editors read its properties directly.
  */
 export function toPublishedJsonSchemaDocument(
   schema: Schema.Constraint,
@@ -28,11 +29,16 @@ export function toPublishedJsonSchemaDocument(
   });
   const root = openPatternKeyedRecords(document.schema);
   const definitions = openPatternKeyedRecords(document.definitions);
+  const published = JsonSchema.toDocumentDraft07({
+    dialect: "draft-2020-12",
+    schema: options.acceptEnvReferences ? acceptEnvReferences(root) : root,
+    definitions: options.acceptEnvReferences ? mapSchemas(definitions) : definitions,
+  });
   return {
-    $schema: "https://json-schema.org/draft/2020-12/schema",
-    ...(options.acceptEnvReferences ? acceptEnvReferences(root) : root),
-    ...(Object.keys(definitions).length > 0
-      ? { $defs: options.acceptEnvReferences ? mapSchemas(definitions) : definitions }
+    $schema: JsonSchema.META_SCHEMA_URI_DRAFT_07,
+    ...published.schema,
+    ...(Object.keys(published.definitions).length > 0
+      ? { definitions: published.definitions }
       : {}),
   };
 }
@@ -45,7 +51,25 @@ function openPatternKeyedRecords<T>(node: T): T {
   if (isRecordLike(out) && typeof out["additionalProperties"] === "boolean") {
     delete out["additionalProperties"];
   }
-  return out as T;
+  return (singleObjectAllOf(out) ?? out) as T;
+}
+
+function singleObjectAllOf(node: Record<string, unknown>): Record<string, unknown> | undefined {
+  const allOf = node["allOf"];
+  if (Object.keys(node).length !== 2 || node["type"] !== "object") return undefined;
+  if (!Array.isArray(allOf) || allOf.length !== 1) return undefined;
+  const [member]: ReadonlyArray<unknown> = allOf;
+  return isObjectSchema(member) ? member : undefined;
+}
+
+function isObjectSchema(value: unknown): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    "type" in value &&
+    value.type === "object"
+  );
 }
 
 function isRecordLike(node: Record<string, unknown>): boolean {
@@ -67,11 +91,11 @@ function acceptEnvReferences<T>(node: T): T {
   return out as T;
 }
 
-function mapSchemas(schemas: unknown): unknown {
+function mapSchemas<T>(schemas: T): T {
   if (!isNode(schemas)) return schemas;
   return Object.fromEntries(
     Object.entries(schemas).map(([name, schema]) => [name, acceptEnvReferences(schema)]),
-  );
+  ) as T;
 }
 
 function acceptEnvReferencesInUnion(members: ReadonlyArray<unknown>): Array<unknown> {
@@ -104,8 +128,13 @@ function isEnvReferenceBranch(node: unknown): boolean {
 function isEnvReferenceTarget(node: unknown): node is Node {
   if (!isNode(node) || typeof node["type"] !== "string") return false;
   if (COERCED_TYPES.has(node["type"])) return true;
-  if (node["type"] === "string") return !isFreeFormString(node);
+  if (node["type"] === "string") return !isFreeFormString(node) && !isEmptyLiteral(node);
   return node["type"] === "array" && isFreeFormString(node["items"]);
+}
+
+function isEmptyLiteral(node: Node): boolean {
+  const values = node["enum"];
+  return Array.isArray(values) && values.length === 1 && values[0] === "";
 }
 
 function isFreeFormString(node: unknown): boolean {

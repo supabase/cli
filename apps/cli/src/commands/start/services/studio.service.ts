@@ -66,7 +66,7 @@ export interface BuildStudioEnvInput {
   readonly apiExtraSearchPath: ReadonlyArray<string>;
   /** `config.api.max_rows` — `PGRST_DB_MAX_ROWS`. */
   readonly apiMaxRows: number;
-  /** `envOverrideBool`-resolved `analytics.enabled` — `NEXT_PUBLIC_ENABLE_LOGS`. */
+  /** The effective `analytics.enabled` — `NEXT_PUBLIC_ENABLE_LOGS`. */
   readonly analyticsEnabled: boolean;
   /** `config.analytics.backend`, post-`SUPABASE_ANALYTICS_BACKEND`-override — `NEXT_ANALYTICS_BACKEND_PROVIDER`. */
   readonly analyticsBackend: "postgres" | "bigquery";

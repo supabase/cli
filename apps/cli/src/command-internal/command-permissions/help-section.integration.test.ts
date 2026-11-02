@@ -5,6 +5,7 @@ import { CliOutput, Command } from "effect/cli";
 import { emptyEnv, fakeConsole, mockOutput } from "../../../tests/helpers/mocks.ts";
 import { projectsCommand } from "../../commands/projects/projects.command.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
+import { commandTargetLayer } from "../../shared/output/command-target.layer.ts";
 import { jsonCliOutputFormatter } from "../../shared/output/json-formatter.ts";
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
 import {
@@ -61,7 +62,7 @@ const layerFor = (
     Layer.succeed(WorkdirFlag, Option.none()),
     Layer.succeed(YesFlag, false),
     Layer.succeed(DnsResolverFlag, "native"),
-    mockOutput({ format: "text" }).layer,
+    commandTargetLayer.pipe(Layer.provideMerge(mockOutput({ format: "text" }).layer)),
   );
 
 const helpFor = (
@@ -91,8 +92,10 @@ describe("token permissions in command help", () => {
           "      api_gateway_keys_read + api_gateway_keys_secret_read",
           "    Required without --reveal:",
           "      api_gateway_keys_read",
-          "    May be required (without --project-ref):",
+          "    May be required:",
           "      projects_read",
+          "      branching_development_read for a preview branch",
+          "        or branching_production_read for the main branch",
           "    Optional (command still runs without these):",
           "      project_admin_read",
         ].join("\n"),
@@ -129,10 +132,17 @@ describe("token permissions in command help", () => {
                 rows: [{ anyOf: [["api_gateway_keys_read"]] }],
               },
               {
-                heading: "May be required (without --project-ref)",
+                heading: "May be required",
                 need: "maybe",
-                when: [{ all: [{ flag: "project-ref", values: ["unset", "empty"] }] }],
-                rows: [{ anyOf: [["projects_read"]] }],
+                rows: [
+                  { anyOf: [["projects_read"]] },
+                  {
+                    cases: [
+                      { allOf: ["branching_development_read"], for: "a preview branch" },
+                      { allOf: ["branching_production_read"], for: "the main branch" },
+                    ],
+                  },
+                ],
               },
               {
                 heading: "Optional (command still runs without these)",

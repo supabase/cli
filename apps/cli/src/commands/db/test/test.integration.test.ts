@@ -1,7 +1,7 @@
 /**
  * `db test` is a hidden alias that reuses `test db`'s flag config and handler verbatim (see
  * `test.command.ts`). The core pgTAP behavior is already covered by
- * `../../../shared/test-db.integration.test.ts`, so this file only covers alias-specific
+ * `../../../command-internal/test-db.integration.test.ts`, so this file only covers alias-specific
  * behavior: end-to-end delegation, telemetry recording `"db test"` (not `"test db"`) as the
  * invoked path, and the non-text `onRunFailure` branch.
  */
@@ -32,6 +32,7 @@ import {
   sequentialExecBatch,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { NO_TARGET } from "../../../../tests/helpers/db-target-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   asRecordedRequests,
@@ -41,7 +42,10 @@ import {
   stubManagementApi,
   type StubbedRequest,
 } from "../../../../tests/helpers/permission-real-layers.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { commandTargetLayer } from "../../../shared/output/command-target.layer.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
 import {
@@ -60,7 +64,13 @@ import {
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { CurrentAnalyticsContext } from "../../../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../../../shared/telemetry/analytics.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
+import type {
+  DbConnectionInput,
+  ResolvedDbConnection,
+} from "../../../command-internal/db-config.types.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import {
   DbConnection,
   type DbSession,
@@ -74,7 +84,7 @@ import {
   runTestDbCommand,
   type TestDbFlags,
 } from "../../../command-internal/test-db.command-handler.ts";
-import { GoProxy } from "../../../command-internal/go-proxy.service.ts";
+import { testDb } from "../../../command-internal/test-db.handler.ts";
 import { dbCommand } from "../db.command.ts";
 import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
 
@@ -104,12 +114,31 @@ function mockContextualAnalytics() {
   return { layer, captured };
 }
 
-function mockResolver() {
+function mockResolver(conn: PgConnInput = LOCAL_CONN) {
   return Layer.succeed(DbConfigResolver, {
-    resolve: () => Effect.succeed({ conn: LOCAL_CONN, isLocal: true }),
+    resolveConnection: (input: DbConnectionInput) =>
+      Effect.succeed({
+        conn,
+        isLocal: input.target.kind === "local",
+        ref: input.target.kind === "linked" ? Option.some(input.target.ref) : Option.none(),
+        target: input.target,
+      } satisfies ResolvedDbConnection),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 }
+
+const projectRefLayer = Layer.succeed(ProjectRefResolver, {
+  resolve: () => Effect.die("resolve is not used by this test"),
+  resolveForLink: () => Effect.die("resolveForLink is not used by this test"),
+  resolveRef: (flagValue: Option.Option<string>) =>
+    Effect.succeed({
+      ref: Option.getOrElse(flagValue, () => REF),
+      source: "flag" as const,
+      matchesLinkedRef: false,
+    }),
+  resolveOptional: () => Effect.die("resolveOptional is not used by this test"),
+  promptProjectRef: () => Effect.die("promptProjectRef is not used by this test"),
+});
 
 function mockDbConnection() {
   const execCalls: string[] = [];
@@ -179,11 +208,11 @@ interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   exitCode?: number;
   stdout?: ReadonlyArray<string>;
-  /** The command-line arguments the handler reads its database target from. */
-  args?: ReadonlyArray<string>;
   /** Runs the real `DbConfigResolver` against the temp `workdir`; the test serves its Management API calls. */
   realDbConfig?: boolean;
   workdir?: string;
+  /** `--yes`; on by default so hosted runs reach pg_prove. */
+  yes?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -196,8 +225,10 @@ function setup(opts: SetupOpts = {}) {
   const args = ["db", "test"];
   const workdir = opts.workdir ?? "/work/project";
   const layer = Layer.mergeAll(
+    cliConfigValuesTestLayer,
     unusedStackServices,
     out.layer,
+    commandTargetLayer.pipe(Layer.provide(out.layer)),
     processControl.layer,
     analytics.layer,
     telemetry.layer,
@@ -218,7 +249,12 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(DebugFlag, false),
     Layer.succeed(NetworkIdFlag, Option.none()),
     Layer.succeed(DnsResolverFlag, "native"),
-    Layer.succeed(CliArgs, { args: opts.args ?? [] }),
+    Layer.succeed(CliArgs, { args: [] }),
+    projectRefLayer,
+    Layer.succeed(TargetPolicy, { group: "selectable", consent: "no" }),
+    Layer.succeed(YesFlag, opts.yes ?? true),
+    Layer.succeed(OutputFlag, Option.none()),
+    mockTty(),
     Stdio.layerTest({ args: Effect.succeed(args) }),
     commandRuntimeLayer(["db", "test"]).pipe(Layer.provide(BunServices.layer)),
     BunServices.layer,
@@ -226,12 +262,10 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, analytics, processControl, connection, docker };
 }
 
-const flags = (): TestDbFlags => ({
+const flags = (over: Partial<TestDbFlags> = {}): TestDbFlags => ({
   paths: [],
-  dbUrl: Option.none(),
-  linked: false,
-  local: true,
-  projectRef: Option.none(),
+  ...NO_TARGET,
+  ...over,
 });
 
 describe("db test (alias) integration", () => {
@@ -249,21 +283,12 @@ describe("db test (alias) integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("mints a login role through the real DB config resolver for --linked", () => {
-    const { layer, docker } = setup({
-      args: ["db", "test", "--linked", "--project-ref", REF],
-      realDbConfig: true,
-      workdir: tempRoot.current,
-    });
+  it.effect("mints a login role through the real DB config resolver for --remote=<ref>", () => {
+    const { layer, docker } = setup({ realDbConfig: true, workdir: tempRoot.current });
     const requests: Array<StubbedRequest> = [];
     return Effect.gen(function* () {
       yield* stubManagementApi(requests, serveLinkedDatabase(REF));
-      yield* runTestDbCommand({
-        ...flags(),
-        linked: true,
-        local: false,
-        projectRef: Option.some(REF),
-      });
+      yield* runTestDbCommand(flags({ remote: Option.some({ _tag: "Ref", ref: REF } as const) }));
       expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
         `GET /v1/projects/${REF}/config/database/pooler`,
         `POST /v1/projects/${REF}/cli/login-role`,
@@ -271,7 +296,7 @@ describe("db test (alias) integration", () => {
       expect(docker.lastOpts?.cmd[0]).toBe("pg_prove");
       assertPermissionDrift({
         command: "db test",
-        activeFlags: { linked: true, "project-ref": REF },
+        activeFlags: { remote: REF },
         requests: asRecordedRequests(requests),
         exact: true,
       });
@@ -298,53 +323,30 @@ describe("db test (alias) integration", () => {
     );
   });
 
-  it.effect("makes no Management API request for --local through the real resolver", () => {
-    const { layer, docker } = setup({
-      args: ["db", "test", "--local"],
-      realDbConfig: true,
-      workdir: tempRoot.current,
-    });
-    const requests: Array<StubbedRequest> = [];
-    return Effect.gen(function* () {
-      yield* stubManagementApi(requests, () => undefined);
-      yield* runTestDbCommand(flags());
-      expect(docker.lastOpts?.cmd[0]).toBe("pg_prove");
-      expect(requests).toEqual([]);
-      assertPermissionDrift({
-        command: "db test",
-        activeFlags: { local: true },
-        requests: [],
-        exact: true,
-      });
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(layer),
-      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
-    );
-  });
-
   it.effect(
     "dispatches through the real `dbTestCommand` and records `db test`, not `test db`, as the telemetry command",
     () => {
-      // `--local --linked` fail inside `testDb` (mutual exclusivity) before any DB/docker IO,
+      // `--remote --local` fail inside `testDb` (mutual exclusivity) before any DB/docker IO,
       // so this can dispatch through the real command tree without a real Postgres or Docker.
-      const args = ["db", "test", "--local", "--linked"];
+      const args = ["db", "test", "--remote", "--local"];
       const analytics = mockContextualAnalytics();
+      const out = mockOutput({ format: "text" });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         unusedStackServices,
         BunServices.layer,
         mockRuntimeInfo(),
         mockTty(),
         mockProcessControl().layer,
-        mockOutput({ format: "text" }).layer,
+        out.layer,
+        commandTargetLayer.pipe(Layer.provide(out.layer)),
         mockTelemetryRuntime(),
         analytics.layer,
         CliOutput.layer(textCliOutputFormatter()),
         Stdio.layerTest({ args: Effect.succeed(args) }),
         Layer.succeed(CliArgs, { args }),
         // `dbCommand` is the whole `db` subtree, so its R includes every sibling subcommand's
-        // global-flag/Go-delegation requirements too, even though this test only dispatches
-        // `db test`.
+        // global-flag requirements too, even though this test only dispatches `db test`.
         Layer.succeed(AgentFlag, "auto"),
         Layer.succeed(CreateTicketFlag, false),
         Layer.succeed(DebugFlag, false),
@@ -355,10 +357,6 @@ describe("db test (alias) integration", () => {
         Layer.succeed(ProfileFlag, "supabase"),
         Layer.succeed(WorkdirFlag, Option.none()),
         Layer.succeed(YesFlag, false),
-        Layer.succeed(GoProxy, {
-          exec: () => Effect.die("GoProxy not needed for `db test` dispatch"),
-          execCapture: () => Effect.die("GoProxy not needed for `db test` dispatch"),
-        }),
         Layer.succeed(EdgeRuntimeScript, {
           run: () => Effect.die("EdgeRuntimeScript not needed for `db test` dispatch"),
         }),
@@ -392,7 +390,7 @@ describe("db test (alias) integration", () => {
   });
 
   it.effect(
-    "in json mode, a pg_prove failure writes to stderr and sets exit 1 without failing (Go's stdout-safety)",
+    "in json mode, a pg_prove failure writes to stderr and sets exit 1 without failing",
     () => {
       const { layer, out, processControl } = setup({ format: "json", exitCode: 1 });
       return Effect.gen(function* () {
@@ -432,4 +430,33 @@ describe("db test (alias) integration", () => {
       expect(out.stdoutText).toBe("Files=0, Tests=0,  0 wallclock secs\nResult: NOTESTS\n");
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedConsent("db test", {
+  invoke: () => {
+    const connection = mockDbConnection();
+    return {
+      run: testDb(flags({ remote: Option.some({ _tag: "Ref", ref: REF } as const) })).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            mockResolver({ ...LOCAL_CONN, host: `db.${REF}.supabase.co` }),
+            connection.layer,
+            mockDockerRun().layer,
+            Layer.succeed(BundledPostgresClient, {
+              run: () => Effect.die("bundled postgres client unused"),
+            }),
+            unusedStackServices,
+            cliConfigValuesTestLayer,
+            mockTelemetryStateTracked().layer,
+            runtimeInfoLayer,
+            Layer.succeed(DebugFlag, false),
+            Layer.succeed(NetworkIdFlag, Option.none()),
+            Layer.succeed(DnsResolverFlag, "native"),
+          ),
+        ),
+        Effect.scoped,
+      ),
+      mutations: () => connection.execCalls.length,
+    };
+  },
 });

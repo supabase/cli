@@ -27,7 +27,7 @@ export const loginCryptoLayer = Layer.sync(LoginCrypto, () =>
         const host = hostname();
         if (user && host) return `cli_${user}@${host}_${ts}`;
       } catch {
-        /* fall through to the fallback name (Go's generateTokenNameWithFallback) */
+        /* fall through to the fallback name */
       }
       return `cli_${ts}`;
     }),
@@ -35,7 +35,7 @@ export const loginCryptoLayer = Layer.sync(LoginCrypto, () =>
       Effect.try({
         try: () => {
           const sharedSecret = ecdh.computeSecret(Buffer.from(payload.publicKey, "hex"));
-          // Go's `aesgcm.Open` expects the 16-byte GCM tag appended to the
+          // The payload carries the 16-byte GCM tag appended to the
           // ciphertext; Node wants it supplied separately via `setAuthTag`.
           const ciphertextHex = payload.ciphertext.slice(0, -32);
           const authTagHex = payload.ciphertext.slice(-32);

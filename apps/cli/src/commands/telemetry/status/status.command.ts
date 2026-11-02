@@ -4,6 +4,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { telemetryStatus } from "./status.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 
 const config = {};
@@ -17,4 +18,5 @@ export const telemetryStatusCommand = Command.make("status", config).pipe(
     telemetryStatus(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(commandRuntimeLayer(["telemetry", "status"])),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

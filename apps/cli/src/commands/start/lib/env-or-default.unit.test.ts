@@ -3,7 +3,7 @@ import { describe, expect, test } from "vitest";
 import { envOrDefault } from "./env-or-default.ts";
 
 describe("envOrDefault", () => {
-  test('falls back to the default when unset anywhere (Go\'s "envOrDefault", start.go:1466-1471)', () => {
+  test("falls back to the default when unset anywhere", () => {
     expect(envOrDefault("ENV_OR_DEFAULT_UNSET_KEY", "default", undefined)).toBe("default");
   });
 

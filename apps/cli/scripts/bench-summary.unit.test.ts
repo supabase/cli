@@ -1,0 +1,435 @@
+import { describe, expect, it } from "vitest";
+import type { BenchReport, RunSample } from "./bench-report.ts";
+import { parseSummaryArgs, renderSummary, summaryNotice } from "./bench-summary.ts";
+
+const run = (wallMs: number, calls: number, endpoints: Record<string, number>): RunSample => ({
+  wallMs,
+  exitCode: 0,
+  tracedExitCode: 0,
+  trace: {
+    skippedLines: 0,
+    spans: { "cli.run": { totalMs: wallMs / 2, count: 1 } },
+    api: { apiCalls: calls, externalCalls: 0, errorStatuses: 0, endpoints, requestLogCount: calls },
+  },
+});
+
+const runs = (n: number, make: (i: number) => RunSample) =>
+  Array.from({ length: n }, (_, i) => make(i));
+
+const report = (workloads: BenchReport["workloads"]): BenchReport => ({
+  base: "/base/supabase",
+  branch: "/branch/supabase",
+  baseSizeBytes: 1000,
+  branchSizeBytes: 1500,
+  runs: 5,
+  warmup: 1,
+  trace: true,
+  apiUrl: "http://127.0.0.1:1",
+  workloads,
+});
+
+const steady = (id: string, args: ReadonlyArray<string>) => ({
+  id,
+  args,
+  base: runs(5, (i) => run(30 + i, 0, {})),
+  branch: runs(5, (i) => run(30 + i, 0, {})),
+});
+
+const migrationNew = {
+  id: "migration-new",
+  args: ["migration", "new", "bench"],
+  base: runs(5, (i) => run(50 + i, 0, {})),
+  branch: runs(5, (i) => run(120 + i, 1, { "GET /v1/projects/abc": 1 })),
+};
+
+describe("renderSummary", () => {
+  it("leads with no changes found and shows each command with its workload id", () => {
+    const sized = {
+      ...report([steady("version", ["--version"])]),
+      baseSizeBytes: 140269744,
+      branchSizeBytes: 140269744,
+    };
+    const markdown = renderSummary(sized, "unused", {
+      headSha: "abcdef1234567890",
+      baseRef: "develop",
+      mergeBase: "1234567890abcdef",
+    });
+
+    expect(markdown).toContain("## CLI benchmark (Lightweight Commands): no changes found");
+    expect(markdown).toContain(
+      "Commit `abcdef1` against `develop` at `1234567` · 5 runs each · report only, never blocks merging",
+    );
+    expect(markdown).toContain(
+      "| `supabase --version` | `version` | 32 ms | 32 ms | no real change |",
+    );
+    expect(markdown).toContain("API calls: unchanged for the command.");
+    expect(markdown).toContain("Binary size: 133.8 MB, unchanged.");
+    expect(markdown).not.toContain("⚠️");
+  });
+
+  it("tells workload variants of one command apart in every table", () => {
+    const markdown = renderSummary(
+      report([
+        { ...migrationNew, id: "migration-new-cold" },
+        { ...migrationNew, id: "migration-new-warm" },
+      ]),
+      "unused",
+    );
+
+    for (const id of ["migration-new-cold", "migration-new-warm"]) {
+      const rows = markdown.split("\n").filter((line) => line.includes(`\`${id}\``));
+      expect(
+        rows.filter((line) => line.startsWith("| `supabase migration new bench` |")),
+      ).toHaveLength(4);
+    }
+    expect(markdown).toContain(
+      "| Command | Workload | Before range | After range | Change | Verdict |",
+    );
+    expect(markdown).toContain("| Command | Workload | Before | After | Endpoint changes |");
+    expect(markdown).toContain("| Command | Workload | Span | Change | Before -> after |");
+  });
+
+  it("shows a binary size change in MB, or KB when it is small", () => {
+    const grown = {
+      ...report([steady("version", ["--version"])]),
+      baseSizeBytes: 140269744,
+      branchSizeBytes: 140269744 + 3 * 1048576,
+    };
+    const nudged = { ...grown, branchSizeBytes: 140269744 + 2048 };
+
+    expect(renderSummary(grown, "unused")).toContain(
+      "Binary size: 136.8 MB, up 3.0 MB from 133.8 MB.",
+    );
+    expect(renderSummary(nudged, "unused")).toContain("up 2.0 KB from 133.8 MB");
+  });
+
+  it("explains a new API call in plain words and counts each command once", () => {
+    const markdown = renderSummary(report([migrationNew]), "unused");
+
+    expect(markdown).toContain("## CLI benchmark (Lightweight Commands): 1 thing to check");
+    expect(markdown).toContain(
+      "⚠️ `supabase migration new bench` now calls the Management API. It made no calls before and now makes 1 (`GET /v1/projects/abc`).",
+    );
+    expect(markdown).toContain("slower by 70 ms (+135%)");
+  });
+
+  it("keeps command text from the benchmarked build inside code spans", () => {
+    const markdown = renderSummary(report([steady("x", ["a`@someone`", "b|c"])]), "unused");
+
+    expect(markdown).toContain("`supabase a'@someone' b\\|c`");
+  });
+
+  it("says nothing was benchmarked instead of a clean pass when there are no commands", () => {
+    const markdown = renderSummary(report([]), "unused");
+
+    expect(markdown).toContain(
+      "## CLI benchmark (Lightweight Commands): no commands were benchmarked",
+    );
+    expect(markdown).not.toContain("no changes found");
+  });
+
+  it("warns which build's teardown failed for a workload", () => {
+    const markdown = renderSummary(
+      report([
+        {
+          ...steady("db-diff-warm", ["db", "diff"]),
+          teardownFailures: [{ build: "branch", command: "stack stop", exitCode: 3 }],
+        },
+      ]),
+      "unused",
+    );
+
+    expect(markdown).toContain(
+      "⚠️ Teardown of `db-diff-warm` failed on the branch build (`stack stop` exited 3), so later results for this workload may be affected.",
+    );
+    expect(markdown).toContain("1 thing to check");
+  });
+
+  it("describes a dropped API call with a singular count", () => {
+    const dropped = {
+      id: "list",
+      args: ["projects", "list"],
+      base: runs(5, (i) => run(30 + i, 1, { "GET /v1/projects": 1 })),
+      branch: runs(5, (i) => run(30 + i, 0, {})),
+    };
+
+    const markdown = renderSummary(report([dropped]), "unused");
+
+    expect(markdown).toContain(
+      "⚠️ `supabase projects list` no longer calls the Management API. It made 1 call before and now makes none.",
+    );
+  });
+
+  it("names the failed step and stays a notice when there is no report", () => {
+    const markdown = renderSummary(undefined, "The build of this commit failed.", {});
+
+    expect(markdown).toContain("## CLI benchmark (Lightweight Commands): could not run");
+    expect(markdown).toContain("The build of this commit failed.");
+    expect(markdown).not.toContain("/bench");
+  });
+
+  it.each([
+    {
+      section: "lightweight",
+      heading: "## CLI benchmark (Lightweight Commands): no changes found",
+    },
+    {
+      section: "integration-heavy",
+      heading: "## CLI benchmark (Integration Heavy Commands): no changes found",
+    },
+  ] as const)(
+    "titles a $section report with its name and leaves the markers and re-run note to the poster",
+    ({ section, heading }) => {
+      const input = report([steady("version", ["--version"])]);
+
+      const comment = renderSummary(input, "unused", { section });
+
+      expect(comment.startsWith(`${heading}\n`)).toBe(true);
+      expect(comment).not.toContain("<!--");
+      expect(comment).not.toContain("/bench");
+    },
+  );
+
+  it("shows a note above the results", () => {
+    const markdown = renderSummary(report([steady("version", ["--version"])]), "unused", {
+      note: "Some shards did not finish.",
+    });
+
+    expect(markdown).toContain("⚠️ Some shards did not finish.");
+  });
+
+  it("says the range when per-command run counts differ", () => {
+    const fewer = { ...steady("x", ["start"]), base: runs(3, (i) => run(30 + i, 0, {})) };
+
+    const markdown = renderSummary(report([steady("version", ["--version"]), fewer]), "unused");
+
+    expect(markdown).toContain("3-5 runs each");
+  });
+
+  it("does not claim a missing timing verdict when commands were not comparable", () => {
+    const failing = (wallMs: number): RunSample => ({ ...run(wallMs, 0, {}), exitCode: 1 });
+
+    const markdown = renderSummary(
+      report([
+        {
+          id: "broken",
+          args: ["x"],
+          base: runs(5, (i) => run(30 + i, 0, {})),
+          branch: runs(5, (i) => failing(30 + i)),
+        },
+      ]),
+      "unused",
+    );
+
+    expect(markdown).toContain("No phase deltas are available; some commands were not comparable.");
+    expect(markdown).toContain("not compared");
+  });
+
+  it("says API calls were not counted when no call data exists", () => {
+    const noTrace = (wallMs: number): RunSample => ({ wallMs, exitCode: 0 });
+    const markdown = renderSummary(
+      {
+        ...report([
+          {
+            id: "a",
+            args: ["x"],
+            base: runs(5, (i) => noTrace(30 + i)),
+            branch: runs(5, (i) => noTrace(30 + i)),
+          },
+        ]),
+        trace: false,
+      },
+      "unused",
+    );
+
+    expect(markdown).toContain("API calls were not counted.");
+  });
+});
+
+describe("summaryNotice", () => {
+  const ok = { branchBuild: "ok", baseBuild: "ok", replay: "ok" } as const;
+
+  it("is undefined when every step succeeded", () => {
+    expect(summaryNotice(ok)).toBeUndefined();
+  });
+
+  it.each([
+    { failed: { branchBuild: "failed" }, expected: "build of this commit failed" },
+    { failed: { baseBuild: "failed" }, expected: "build of the base branch failed" },
+    { failed: { replay: "failed" }, expected: "test server failed to start" },
+  ] as const)("names the failed step: $expected", ({ failed, expected }) => {
+    expect(summaryNotice({ ...ok, ...failed })).toContain(expected);
+  });
+
+  it("reports the earliest failed step when later ones were skipped", () => {
+    expect(
+      summaryNotice({ branchBuild: "failed", baseBuild: "failed", replay: "failed" }),
+    ).toContain("build of this commit failed");
+  });
+});
+
+describe("parseSummaryArgs", () => {
+  it("rejects an unknown step outcome", () => {
+    expect(() => parseSummaryArgs(["--report", "r.json", "--replay", "maybe"])).toThrow("--replay");
+  });
+
+  it("needs a report unless a step failed", () => {
+    expect(() => parseSummaryArgs([])).toThrow();
+    expect(parseSummaryArgs(["--replay", "failed"])).toMatchObject({
+      report: undefined,
+      branchBuild: "ok",
+      baseBuild: "ok",
+      replay: "failed",
+    });
+    expect(
+      parseSummaryArgs(["--report", "r.json", "--head-sha", "abc", "--comment-out", "c.md"]),
+    ).toMatchObject({ report: "r.json", replay: "ok", headSha: "abc", commentOut: "c.md" });
+  });
+});
+
+describe("renderSummary for integration-heavy commands", () => {
+  const withContainers = (counts: Record<string, number>): RunSample => ({
+    wallMs: 1000,
+    exitCode: 0,
+    tracedExitCode: 0,
+    trace: {
+      skippedLines: 0,
+      spans: Object.fromEntries(
+        Object.entries(counts).map(([verb, count]) => [
+          `ContainerCli.spawn (${verb})`,
+          { totalMs: 5 * count, count },
+        ]),
+      ),
+    },
+  });
+  const heavy = (
+    id: string,
+    base: Record<string, number>,
+    branch: Record<string, number>,
+    extra: Partial<BenchReport["workloads"][number]> = {},
+  ) => ({
+    id,
+    args: ["status"],
+    runtime: "docker" as const,
+    base: runs(5, () => withContainers(base)),
+    branch: runs(5, () => withContainers(branch)),
+    ...extra,
+  });
+  const render = (workloads: BenchReport["workloads"]) =>
+    renderSummary(report(workloads), "unused", { section: "integration-heavy" });
+
+  it("shows unchanged container operations with the runtime column", () => {
+    const markdown = render([
+      heavy("status", { "container inspect": 3 }, { "container inspect": 3 }),
+    ]);
+
+    expect(markdown).toContain("## CLI benchmark (Integration Heavy Commands): no changes found");
+    expect(markdown).toContain("| Command | Workload | Runtime | Before | After | Change |");
+    expect(markdown).toContain("| `supabase status` | `status` | docker |");
+    expect(markdown).toContain("Container operations: unchanged for the command.");
+  });
+
+  it("flags an extra container call per verb and counts the command once", () => {
+    const markdown = render([
+      heavy("status", { "container inspect": 3 }, { "container inspect": 4 }),
+    ]);
+
+    expect(markdown).toContain("## CLI benchmark (Integration Heavy Commands): 1 thing to check");
+    expect(markdown).toContain(
+      "⚠️ `supabase status` runs a different number of container commands: 3 before, 4 now.",
+    );
+    expect(markdown).toContain("Container operations changed for 1 command:");
+    expect(markdown).toContain("`container inspect` 3 -> 4");
+    expect(markdown).toContain(
+      "| `supabase status` | `status` | docker | `container inspect` | 3 | 4 |",
+    );
+  });
+
+  it("flags container commands that appear where there were none", () => {
+    const markdown = render([heavy("status", {}, { ps: 2 })]);
+
+    expect(markdown).toContain(
+      "⚠️ `supabase status` now runs container commands. It ran none before and now runs 2.",
+    );
+  });
+
+  it("does not count container operations for stack workloads, whose container work runs outside the trace", () => {
+    const markdown = render([
+      heavy("stack-status", { ps: 1 }, { ps: 2 }, { stack: true, runtime: "native" }),
+    ]);
+
+    expect(markdown).toContain("Container operations were not counted.");
+    expect(markdown).toContain("| `supabase status` | `stack-status` | stack, native |");
+    expect(markdown).not.toContain("container commands");
+  });
+
+  const counted = (calls: number, extra: Partial<RunSample> = {}, external = 0): RunSample => ({
+    ...run(30, calls, calls === 0 ? {} : { "GET /v1/projects": calls }),
+    ...extra,
+    trace: {
+      skippedLines: 0,
+      spans: { "cli.run": { totalMs: 15, count: 1 } },
+      api: {
+        apiCalls: calls,
+        externalCalls: external,
+        errorStatuses: 0,
+        endpoints: calls === 0 ? {} : { "GET /v1/projects": calls },
+        requestLogCount: calls,
+      },
+    },
+  });
+  const withApi = (id: string, base: RunSample, branch: RunSample) => ({
+    id,
+    args: ["status"],
+    stack: true,
+    runtime: "native" as const,
+    base: runs(5, () => base),
+    branch: runs(5, () => branch),
+  });
+
+  it("reports a command that made no API calls as counted, not as not counted", () => {
+    const markdown = render([withApi("status", counted(0), counted(0))]);
+
+    expect(markdown).toContain("API calls: none, before or after, for the command.");
+    expect(markdown).not.toContain("API calls were not counted.");
+    expect(markdown).toContain("| `supabase status` | `status` | 0 | 0 |");
+  });
+
+  it("says API calls were not counted when no launch was traced against the test server", () => {
+    const untraced = { wallMs: 30, exitCode: 0 };
+    const markdown = render([withApi("status", untraced, untraced)]);
+
+    expect(markdown).toContain("API calls were not counted.");
+  });
+
+  it("flags a Management API call that first appears on the branch", () => {
+    const markdown = render([withApi("status", counted(0), counted(1))]);
+
+    expect(markdown).toContain("now calls the Management API");
+    expect(markdown).toContain("## CLI benchmark (Integration Heavy Commands): 1 thing to check");
+  });
+
+  it("does not flag a local stack's calls to other hosts", () => {
+    const markdown = render([withApi("status", counted(0, {}, 12), counted(0, {}, 12))]);
+
+    expect(markdown).toContain("no changes found");
+    expect(markdown).not.toContain("hosts other than");
+  });
+
+  it("flags an error response from the empty test server in plain words", () => {
+    const failing = counted(1);
+    const errored: RunSample = {
+      ...failing,
+      trace: { ...failing.trace!, api: { ...failing.trace!.api!, errorStatuses: 1 } },
+    };
+    const markdown = render([withApi("status", counted(0), errored)]);
+
+    expect(markdown).toContain("expected to make no API calls");
+  });
+
+  it("leaves container operations out of the lightweight section", () => {
+    const markdown = renderSummary(report([heavy("status", { ps: 1 }, { ps: 1 })]), "unused", {});
+
+    expect(markdown).not.toContain("Container operations");
+  });
+});

@@ -6,12 +6,16 @@ import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.serv
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeEnv, encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
-import { encodeGoToml, encodeGoYaml } from "../../../command-internal/go-struct-output.encoders.ts";
+import { encodeEnv, encodeSortedJson } from "../../../command-internal/output.encoders.ts";
+import {
+  encodeStructToml,
+  encodeStructYaml,
+} from "../../../command-internal/struct-output.encoders.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
-import { RemoteTarget } from "../../../config/remote-target.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { gateMapError } from "../../../command-internal/upgrade-suggest.ts";
-import { GO_BRANCH_RESPONSE } from "../branches.go-payload.ts";
+import { BRANCH_RESPONSE_SHAPE } from "../branches.response-shape.ts";
 import {
   BranchesUpdateNetworkError,
   BranchesUpdateUnexpectedStatusError,
@@ -32,20 +36,34 @@ const mapUpdateError = mapHttpError({
 
 export const branchesUpdate = Effect.fn("branches.update")(function* (flags: BranchesUpdateFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
   // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
   // holds the branch's own ref, which the platform 403s on for every branches-management endpoint.
-  const remoteTarget = yield* RemoteTarget;
-  const { ref } = yield* remoteTarget.resolveParentScoped(flags.projectRef);
+  const ref = yield* resolveProjectTarget(
+    { remote: flags.remote, projectRef: flags.projectRef },
+    { parent: true },
+  );
   yield* Effect.annotateCurrentSpan("project.ref", ref);
 
   yield* Effect.gen(function* () {
     const branchInput = yield* promptBranchId(flags.branchId, ref);
     const branchRef = yield* resolveBranchProjectRef(branchInput, ref);
+
+    yield* requireHostedMutationConsent({
+      action: `Update preview branch ${branchInput}`,
+      details: [
+        `Branch project ref: ${branchRef}`,
+        ...(Option.isSome(flags.name) ? [`Rename to: ${flags.name.value}`] : []),
+        ...(Option.isSome(flags.gitBranch) ? [`Git branch: ${flags.gitBranch.value}`] : []),
+        ...(Option.isSome(flags.persistent) ? [`Persistent: ${flags.persistent.value}`] : []),
+        ...(Option.isSome(flags.status) ? [`Status: ${flags.status.value}`] : []),
+        ...(Option.isSome(flags.notifyUrl) ? [`Notify URL: ${flags.notifyUrl.value}`] : []),
+      ],
+    });
 
     const patching =
       output.format === "text" ? yield* output.task("Updating branch...") : undefined;
@@ -84,25 +102,25 @@ export const branchesUpdate = Effect.fn("branches.update")(function* (flags: Bra
       );
     yield* patching?.clear ?? Effect.void;
 
-    const goFmt = Option.getOrUndefined(goOutputFlag);
+    const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
     // The confirmation message goes to stderr; the payload always goes to stdout.
-    if (goFmt === "json") {
+    if (outputFlagFormat === "json") {
       yield* output.raw("Updated preview branch:\n", "stderr");
-      yield* output.raw(encodeGoJson(updated));
+      yield* output.raw(encodeSortedJson(updated));
       return;
     }
-    if (goFmt === "yaml") {
+    if (outputFlagFormat === "yaml") {
       yield* output.raw("Updated preview branch:\n", "stderr");
-      yield* output.raw(encodeGoYaml(updated, GO_BRANCH_RESPONSE));
+      yield* output.raw(encodeStructYaml(updated, BRANCH_RESPONSE_SHAPE));
       return;
     }
-    if (goFmt === "toml") {
+    if (outputFlagFormat === "toml") {
       yield* output.raw("Updated preview branch:\n", "stderr");
-      yield* output.raw(encodeGoToml(updated, GO_BRANCH_RESPONSE));
+      yield* output.raw(encodeStructToml(updated, BRANCH_RESPONSE_SHAPE));
       return;
     }
-    if (goFmt === "env") {
+    if (outputFlagFormat === "env") {
       yield* output.raw("Updated preview branch:\n", "stderr");
       yield* output.raw(encodeEnv(updated) + "\n");
       return;

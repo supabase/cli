@@ -1,6 +1,7 @@
 import type { ConfigChange } from "@supabase/config";
 import { projectConfigApiBlockKeys } from "@supabase/config/internal";
 
+import type { CliConfigKeyOrigin } from "../../config/cli-config-key.ts";
 import { BRANCH_UUID_PATTERN } from "../../command-internal/ref-patterns.ts";
 import { sanitizeInlineName } from "../../command-internal/http-errors.ts";
 
@@ -101,6 +102,55 @@ export function configPlural(count: number, singular: string, pluralForm: string
   return `${count} ${count === 1 ? singular : pluralForm}`;
 }
 
+/** The environment variable that supplied a declared value in place of the config file's. */
+export interface ConfigEnvOrigin {
+  readonly tier: "shell" | "projectEnv";
+  readonly envName: string;
+  /** The `.env*` file, relative to the project root; absent for the shell. */
+  readonly file?: string;
+}
+
+export type ConfigEnvOriginLookup = (path: ReadonlyArray<string>) => ConfigEnvOrigin | undefined;
+
+/** Looks up the env origin of a change path, so a value an env variable overrode is marked as such. */
+export function configEnvOriginLookup(
+  origins: ReadonlyMap<string, CliConfigKeyOrigin>,
+  relativeFile: (file: string) => string,
+): ConfigEnvOriginLookup {
+  return (path) => {
+    const origin = origins.get(path.join("."));
+    if (origin === undefined || (origin.tier !== "shell" && origin.tier !== "projectEnv")) {
+      return undefined;
+    }
+    return {
+      tier: origin.tier,
+      envName: origin.envName,
+      ...(origin.file === undefined ? {} : { file: relativeFile(origin.file) }),
+    };
+  };
+}
+
+/** `VAR` or `VAR in supabase/.env.local`, the tail of a row's `(from ...)` note. */
+function configEnvOriginPhrase(origin: ConfigEnvOrigin): string {
+  const name = sanitizeInlineName(origin.envName);
+  return origin.file === undefined ? name : `${name} in ${sanitizeInlineName(origin.file)}`;
+}
+
+/** `VAR` or `VAR, supabase/.env.local`, a path's entry in the push summary line. */
+export function configEnvOriginList(origin: ConfigEnvOrigin): string {
+  const name = sanitizeInlineName(origin.envName);
+  return origin.file === undefined ? name : `${name}, ${sanitizeInlineName(origin.file)}`;
+}
+
+/** The JSON `origin` of an env-sourced value. */
+export function configEnvOriginPayload(origin: ConfigEnvOrigin): Record<string, unknown> {
+  return {
+    source: origin.tier === "shell" ? "shell" : "project_env",
+    env_variable: origin.envName,
+    ...(origin.file === undefined ? {} : { file: origin.file }),
+  };
+}
+
 function nullableValueEntry(key: string, value: unknown): Record<string, unknown> {
   return { [key]: value === undefined ? null : value };
 }
@@ -109,7 +159,11 @@ function nullableValueEntry(key: string, value: unknown): Record<string, unknown
  * The base machine-payload entry for one `ConfigChange`, shared by `config diff`'s payload
  * and `config pull`'s (which layers `written`/`skipped_reason` on top).
  */
-export function configChangePayloadEntry(change: ConfigChange): Record<string, unknown> {
+export function configChangePayloadEntry(
+  change: ConfigChange,
+  originFor?: ConfigEnvOriginLookup,
+): Record<string, unknown> {
+  const origin = originFor?.(change.path);
   return {
     path: change.path,
     class: change.class,
@@ -117,6 +171,7 @@ export function configChangePayloadEntry(change: ConfigChange): Record<string, u
     ...nullableValueEntry("local", change.local),
     ...nullableValueEntry("remote", change.remote),
     ...(change.envVariables === undefined ? {} : { env_variables: change.envVariables }),
+    ...(origin === undefined ? {} : { origin: configEnvOriginPayload(origin) }),
   };
 }
 
@@ -135,13 +190,19 @@ function renderLocalChangeValue(change: ConfigChange): string {
  * line — including after the last — so callers can append directly without checking for a
  * trailing newline. Shared by `config diff`'s text body and `config push`'s update blocks.
  */
-export function configRenderChangeLines(changes: ReadonlyArray<ConfigChange>): string {
+export function configRenderChangeLines(
+  changes: ReadonlyArray<ConfigChange>,
+  originFor?: ConfigEnvOriginLookup,
+): string {
   return changes
     .map((change) => {
+      const origin = originFor?.(change.path);
       const env =
-        change.envVariables === undefined
-          ? ""
-          : ` (from env ${sanitizeInlineName(change.envVariables.join(", "))})`;
+        origin !== undefined
+          ? ` (from ${configEnvOriginPhrase(origin)})`
+          : change.envVariables === undefined
+            ? ""
+            : ` (from env ${sanitizeInlineName(change.envVariables.join(", "))})`;
       const block = [
         `${configRenderPath(change.path)} [${CONFIG_CLASS_LABELS[change.class]}]`,
         `  local:  ${renderLocalChangeValue(change)}${env}`,
@@ -150,6 +211,37 @@ export function configRenderChangeLines(changes: ReadonlyArray<ConfigChange>): s
       return `${block}\n\n`;
     })
     .join("");
+}
+
+const PROVIDER_DISABLE_WARNINGS: ReadonlyArray<{
+  readonly path: ReadonlyArray<string>;
+  readonly warning: string;
+}> = [
+  {
+    path: ["auth", "email", "enable_signup"],
+    warning:
+      "Warning: auth.email.enabled = false turns off the email provider, so existing users can no longer sign in with email (password, magic link or OTP). To block new signups only, set auth.enable_signup = false and keep auth.email.enabled = true.",
+  },
+  {
+    path: ["auth", "sms", "enable_signup"],
+    warning:
+      "Warning: auth.sms.enabled = false turns off the phone provider, so existing users can no longer sign in with a phone number (password or SMS OTP). To block new signups only, set auth.enable_signup = false and keep auth.sms.enabled = true.",
+  },
+];
+
+/** Warnings for declared changes that turn an enabled email or phone provider off. */
+export function configProviderDisableWarnings(
+  changes: ReadonlyArray<ConfigChange>,
+): ReadonlyArray<string> {
+  return changes.flatMap((change) =>
+    change.declared && change.local === false && change.remote === true
+      ? PROVIDER_DISABLE_WARNINGS.filter(
+          ({ path }) =>
+            path.length === change.path.length &&
+            path.every((segment, index) => segment === change.path[index]),
+        ).map(({ warning }) => warning)
+      : [],
+  );
 }
 
 export function configMaskedCaveat(masked: ReadonlyArray<ReadonlyArray<string>>): string {

@@ -439,9 +439,18 @@ importers:
 
   apps/cli-e2e:
     dependencies:
+      '@effect/platform-bun':
+        specifier: 'catalog:'
+        version: 4.0.2(effect@4.0.2)
+      '@effect/platform-node':
+        specifier: 'catalog:'
+        version: 4.0.2(effect@4.0.2)(redis@6.2.1)
       '@supabase/cli-test-helpers':
         specifier: workspace:*
         version: link:../../packages/cli-test-helpers
+      effect:
+        specifier: 'catalog:'
+        version: 4.0.2
     devDependencies:
       '@tsconfig/bun':
         specifier: 'catalog:'
@@ -455,8 +464,6 @@ importers:
       vitest:
         specifier: 'catalog:'
         version: 5.0.0(@types/node@26.4.1)(@vitest/coverage-v8@5.0.0)(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))
-
-  apps/cli-go: {}
 
   apps/docs:
     dependencies:

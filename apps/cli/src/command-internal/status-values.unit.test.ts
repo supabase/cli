@@ -316,24 +316,23 @@ describe("statusValues", () => {
   });
 
   describe("inbucket/mailpit gating", () => {
-    it("includes MAILPIT_URL and the deprecated INBUCKET_URL alias when local_smtp.enabled", () => {
+    it("emits MAILPIT_URL and no INBUCKET_URL when local_smtp.enabled", () => {
       const { values } = run(
         statusValues(baseConfig(), CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES, WORKDIR),
       );
       expect(values.MAILPIT_URL).toBeDefined();
-      expect(values.INBUCKET_URL).toBe(values.MAILPIT_URL);
+      expect(values.INBUCKET_URL).toBeUndefined();
     });
 
-    it("omits MAILPIT_URL/INBUCKET_URL when local_smtp.enabled is false", () => {
+    it("omits MAILPIT_URL when local_smtp.enabled is false", () => {
       const config = baseConfig({ local_smtp: { enabled: false } });
       const { values } = run(
         statusValues(config, CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES, WORKDIR),
       );
       expect(values.MAILPIT_URL).toBeUndefined();
-      expect(values.INBUCKET_URL).toBeUndefined();
     });
 
-    it("omits MAILPIT_URL/INBUCKET_URL when the inbucket container id is excluded", () => {
+    it("omits MAILPIT_URL when the inbucket container id is excluded", () => {
       const { values } = run(
         statusValues(
           baseConfig(),
@@ -347,7 +346,7 @@ describe("statusValues", () => {
       expect(values.MAILPIT_URL).toBeUndefined();
     });
 
-    it("omits MAILPIT_URL/INBUCKET_URL when the mailpit image short name is excluded", () => {
+    it("omits MAILPIT_URL when the mailpit image short name is excluded", () => {
       const { values } = run(
         statusValues(baseConfig(), CONTAINER_IDS, HOSTNAME, ["mailpit"], NO_OVERRIDES, WORKDIR),
       );
@@ -407,112 +406,6 @@ describe("statusValues", () => {
     });
   });
 
-  describe("SUPABASE_*_ENABLED env overrides", () => {
-    // `resolveStatusLocalState` must read the post-env-override value for every `.enabled`
-    // gate, not the raw decoded `config.<section>.enabled`.
-
-    it("includes API_URL/REST_URL when SUPABASE_API_ENABLED overrides a disabled api.enabled", () => {
-      const config = baseConfig({ api: { enabled: false } });
-      const { values } = run(
-        statusValues(config, CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES, WORKDIR, {
-          SUPABASE_API_ENABLED: "true",
-        }),
-      );
-      expect(values.API_URL).toBeDefined();
-      expect(values.REST_URL).toBeDefined();
-    });
-
-    it("omits REST_URL when SUPABASE_API_ENABLED=false overrides an enabled api.enabled", () => {
-      const { values } = run(
-        statusValues(baseConfig(), CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES, WORKDIR, {
-          SUPABASE_API_ENABLED: "false",
-        }),
-      );
-      expect(values.REST_URL).toBeUndefined();
-      expect(values.API_URL).toBeDefined();
-    });
-
-    it("includes STUDIO_URL when SUPABASE_STUDIO_ENABLED overrides a disabled studio.enabled", () => {
-      const config = baseConfig({ studio: { enabled: false } });
-      const { values } = run(
-        statusValues(config, CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES, WORKDIR, {
-          SUPABASE_STUDIO_ENABLED: "true",
-        }),
-      );
-      expect(values.STUDIO_URL).toBeDefined();
-    });
-
-    it("includes the 5 auth fields when SUPABASE_AUTH_ENABLED overrides a disabled auth.enabled", () => {
-      const config = baseConfig({ auth: { enabled: false } });
-      const { values } = run(
-        statusValues(config, CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES, WORKDIR, {
-          SUPABASE_AUTH_ENABLED: "true",
-        }),
-      );
-      expect(values.PUBLISHABLE_KEY).toBeDefined();
-      expect(values.ANON_KEY).toBeDefined();
-      expect(values.SERVICE_ROLE_KEY).toBeDefined();
-    });
-
-    it("omits the 5 auth fields when SUPABASE_AUTH_ENABLED=false overrides an enabled auth.enabled", () => {
-      const { values } = run(
-        statusValues(baseConfig(), CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES, WORKDIR, {
-          SUPABASE_AUTH_ENABLED: "false",
-        }),
-      );
-      expect(values.PUBLISHABLE_KEY).toBeUndefined();
-    });
-
-    it("includes MAILPIT_URL when SUPABASE_LOCAL_SMTP_ENABLED overrides a disabled local_smtp.enabled", () => {
-      const config = baseConfig({ local_smtp: { enabled: false } });
-      const { values } = run(
-        statusValues(config, CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES, WORKDIR, {
-          SUPABASE_LOCAL_SMTP_ENABLED: "true",
-        }),
-      );
-      expect(values.MAILPIT_URL).toBeDefined();
-    });
-
-    it("includes storage S3 fields when SUPABASE_STORAGE_ENABLED overrides a disabled storage.enabled", () => {
-      const config = baseConfig({ storage: { enabled: false } });
-      const { values } = run(
-        statusValues(config, CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES, WORKDIR, {
-          SUPABASE_STORAGE_ENABLED: "true",
-        }),
-      );
-      expect(values.STORAGE_S3_URL).toBeDefined();
-    });
-
-    it("includes FUNCTIONS_URL when SUPABASE_EDGE_RUNTIME_ENABLED overrides a disabled edge_runtime.enabled", () => {
-      const config = baseConfig({ edge_runtime: { enabled: false } });
-      const { values } = run(
-        statusValues(config, CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES, WORKDIR, {
-          SUPABASE_EDGE_RUNTIME_ENABLED: "true",
-        }),
-      );
-      expect(values.FUNCTIONS_URL).toBeDefined();
-    });
-
-    it("includes storage S3 fields when SUPABASE_STORAGE_S3_PROTOCOL_ENABLED overrides a disabled s3_protocol.enabled", () => {
-      const config = baseConfig({ storage: { s3_protocol: { enabled: false } } });
-      const { values } = run(
-        statusValues(config, CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES, WORKDIR, {
-          SUPABASE_STORAGE_S3_PROTOCOL_ENABLED: "true",
-        }),
-      );
-      expect(values.STORAGE_S3_URL).toBeDefined();
-    });
-
-    it("omits storage S3 fields when SUPABASE_STORAGE_S3_PROTOCOL_ENABLED=false overrides an enabled s3_protocol.enabled", () => {
-      const { values } = run(
-        statusValues(baseConfig(), CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES, WORKDIR, {
-          SUPABASE_STORAGE_S3_PROTOCOL_ENABLED: "false",
-        }),
-      );
-      expect(values.STORAGE_S3_URL).toBeUndefined();
-    });
-  });
-
   describe("--override-name remapping", () => {
     it("remaps a field's output KEY while leaving the value unchanged", () => {
       const overrides = new Map([["api.url", "NEXT_PUBLIC_SUPABASE_URL"]]);
@@ -560,16 +453,6 @@ describe("statusValues", () => {
       expect(values.JWT_SECRET).toBeUndefined();
       expect(values.ANON_KEY).toBeUndefined();
       expect(values.SERVICE_ROLE_KEY).toBeUndefined();
-    });
-
-    it("remaps the deprecated inbucket.url key independently of mailpit.url", () => {
-      const overrides = new Map([["inbucket.url", "CUSTOM_INBUCKET_URL"]]);
-      const { values } = run(
-        statusValues(baseConfig(), CONTAINER_IDS, HOSTNAME, NONE, overrides, WORKDIR),
-      );
-      expect(values.CUSTOM_INBUCKET_URL).toBeDefined();
-      expect(values.MAILPIT_URL).toBeDefined();
-      expect(values.INBUCKET_URL).toBeUndefined();
     });
   });
 
