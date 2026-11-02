@@ -101,6 +101,8 @@ const apiAttributes = Schema.Struct({
   max_rows: Schema.optionalKey(ApiNumber),
   db_pool_acquisition_timeout: Schema.optionalKey(Schema.Unknown),
   db_pool: Schema.optionalKey(Schema.Unknown),
+  db_pool_max_lifetime: Schema.optionalKey(Schema.Unknown),
+  db_pool_max_idletime: Schema.optionalKey(Schema.Unknown),
 });
 
 // No `realtime.*` field is mapped; keys stay declared as `Schema.Unknown` (rather than dropping
