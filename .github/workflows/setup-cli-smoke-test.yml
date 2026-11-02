@@ -23,7 +23,35 @@ permissions:
   contents: read
 
 jobs:
+  # npm lists a new version minutes after publish returns, and setup-cli resolves versions through npm.
+  wait-for-npm:
+    name: wait for npm to list the version
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Wait for npm to list the version
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${VERSION#v}"
+          deadline=$((SECONDS + 1800))
+          while true; do
+            if body="$(curl -fsS --max-time 30 -H 'Accept: application/vnd.npm.install-v1+json' https://registry.npmjs.org/supabase)" \
+              && jq -e --arg version "${expected}" '.versions | has($version)' <<<"${body}" >/dev/null; then
+              echo "npm lists supabase@${expected}"
+              exit 0
+            fi
+            if [ "${SECONDS}" -ge "${deadline}" ]; then
+              echo "::error::npm did not list supabase@${expected} within 30 minutes"
+              exit 1
+            fi
+            sleep 10
+          done
+
   setup-cli-smoke-test:
+    needs: wait-for-npm
     name: setup-cli ${{ matrix.major-version }} (${{ matrix.runner }})
     strategy:
       fail-fast: false
@@ -78,6 +106,7 @@ jobs:
   # musl-vs-glibc + archive layout regressions from supabase/setup-cli#427 only reproduce inside
   # a real Alpine container.
   setup-cli-smoke-test-alpine:
+    needs: wait-for-npm
     name: setup-cli ${{ matrix.major-version }} (alpine)
     strategy:
       fail-fast: false
