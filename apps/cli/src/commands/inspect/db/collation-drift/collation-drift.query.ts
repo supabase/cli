@@ -1,115 +1,73 @@
 import type { InspectReportSpec } from "../inspect-report.ts";
 import type { Report, ReportSeverity } from "../../../../output/report.types.ts";
 
-// Detects btree drift for the database default collation (PG15+) and named ICU collations.
+// Detects btree drift for the database default collation (PG15+) and named collations.
 // Other access methods are out of scope; amcheck verifies only btree.
-const SQL = `WITH db_row AS MATERIALIZED (
-  -- MATERIALIZED pins evaluation order: pg_database_collation_actual_version()
-  -- is only called for a database that actually records a version (a C/POSIX
-  -- database records none).
-  SELECT oid, datcollversion
-  FROM pg_database
-  WHERE datname = current_database()
-    AND datcollversion IS NOT NULL
-),
-db_drift AS MATERIALIZED (
-  SELECT
-    datcollversion AS stored_version,
-    pg_database_collation_actual_version(oid) AS current_version
-  FROM db_row
-),
-default_collation AS (
-  SELECT oid
-  FROM pg_collation
-  WHERE collname = 'default'
-    AND collnamespace = 'pg_catalog'::regnamespace
-),
-libc_affected AS (
-  SELECT
-    FORMAT('%I.%I', n.nspname, i.relname) AS name,
-    FORMAT('%I.%I', n.nspname, t.relname) AS table_name,
-    STRING_AGG(a.attname, ', ' ORDER BY k.ord) AS columns,
-    'default'::text AS collation_name,
-    d.stored_version,
-    d.current_version,
+const SQL = `WITH key_collations AS (
+  SELECT DISTINCT
+    ix.indexrelid,
+    ix.indrelid,
+    k.colloid,
     ix.indisprimary AS is_primary,
-    ix.indisunique AS is_unique,
-    pg_relation_size(i.oid) AS size_bytes
+    ix.indisunique AS is_unique
   FROM pg_index ix
-  JOIN pg_class i ON i.oid = ix.indexrelid
-  JOIN pg_class t ON t.oid = ix.indrelid
-  JOIN pg_namespace n ON n.oid = t.relnamespace
-  JOIN pg_am am ON am.oid = i.relam
   -- indkey holds 0 for expression columns, which have no pg_attribute row.
-  JOIN LATERAL unnest(ix.indkey, ix.indcollation) WITH ORDINALITY AS k(attnum, colloid, ord)
-    ON k.attnum <> 0
-  JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
-  CROSS JOIN db_drift d
-  WHERE am.amname = 'btree'
-    AND k.colloid = (SELECT oid FROM default_collation)
-    AND d.stored_version IS DISTINCT FROM d.current_version
-    AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
-    AND t.relkind IN ('r', 'p', 'm')
-  GROUP BY n.nspname, t.relname, i.relname, i.oid,
-           d.stored_version, d.current_version,
-           ix.indisprimary, ix.indisunique
+  JOIN LATERAL unnest(ix.indkey, ix.indcollation) AS k(attnum, colloid) ON k.attnum <> 0
+  WHERE k.colloid <> 0
 ),
-icu_affected AS (
+drifted AS (
   SELECT
-    FORMAT('%I.%I', n.nspname, i.relname) AS name,
-    FORMAT('%I.%I', n.nspname, t.relname) AS table_name,
-    STRING_AGG(a.attname, ', ' ORDER BY k.ord) AS columns,
-    -- Schema-qualified: the generated ALTER COLLATION must target the right
-    -- object regardless of search_path.
-    FORMAT('%I.%I', cn.nspname, c.collname) AS collation_name,
-    c.collversion AS stored_version,
-    pg_collation_actual_version(c.oid) AS current_version,
-    ix.indisprimary AS is_primary,
-    ix.indisunique AS is_unique,
-    pg_relation_size(i.oid) AS size_bytes
-  FROM pg_index ix
-  JOIN pg_class i ON i.oid = ix.indexrelid
-  JOIN pg_class t ON t.oid = ix.indrelid
-  JOIN pg_namespace n ON n.oid = t.relnamespace
-  JOIN pg_am am ON am.oid = i.relam
-  JOIN LATERAL unnest(ix.indkey, ix.indcollation) WITH ORDINALITY AS k(attnum, colloid, ord)
-    ON k.attnum <> 0
-  JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
-  JOIN pg_collation c ON c.oid = k.colloid
+    kc.*,
+    CASE WHEN kc.colloid = 'pg_catalog.default'::regcollation
+      -- to_jsonb keeps the query valid before PG15, where the column does not exist.
+      THEN (SELECT to_jsonb(d) ->> 'datcollversion' FROM pg_database d WHERE d.datname = current_database())
+      ELSE c.collversion
+    END AS stored_version,
+    pg_collation_actual_version(kc.colloid) AS current_version,
+    CASE WHEN kc.colloid = 'pg_catalog.default'::regcollation
+      THEN 'default'
+      -- Schema-qualified: the generated ALTER COLLATION must not depend on search_path.
+      ELSE FORMAT('%I.%I', cn.nspname, c.collname)
+    END AS collation_name
+  FROM key_collations kc
+  JOIN pg_collation c ON c.oid = kc.colloid
   JOIN pg_namespace cn ON cn.oid = c.collnamespace
-  WHERE am.amname = 'btree'
-    AND c.collprovider = 'i'
-    AND c.collversion IS NOT NULL
-    AND c.collversion IS DISTINCT FROM pg_collation_actual_version(c.oid)
-    AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
-    AND t.relkind IN ('r', 'p', 'm')
-  GROUP BY n.nspname, t.relname, i.relname, i.oid,
-           cn.nspname, c.collname, c.collversion, c.oid,
-           ix.indisprimary, ix.indisunique
-),
-all_affected AS (
-  SELECT * FROM libc_affected
-  UNION ALL
-  SELECT * FROM icu_affected
 )
 SELECT
   current_database() AS database,
-  name,
-  table_name AS "table",
-  columns,
-  collation_name AS collation,
-  stored_version,
-  current_version,
+  FORMAT('%I.%I', n.nspname, i.relname) AS name,
+  FORMAT('%I.%I', n.nspname, t.relname) AS "table",
+  (
+    SELECT STRING_AGG(a.attname, ', ' ORDER BY k.ord)
+    FROM pg_index ix
+    JOIN LATERAL unnest(ix.indkey, ix.indcollation) WITH ORDINALITY AS k(attnum, colloid, ord) ON true
+    JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = k.attnum
+    WHERE ix.indexrelid = dr.indexrelid AND k.colloid = dr.colloid
+  ) AS columns,
+  dr.collation_name AS collation,
+  dr.stored_version,
+  dr.current_version,
   CASE
-    WHEN is_primary THEN 'PRIMARY KEY'
-    WHEN is_unique THEN 'UNIQUE'
+    WHEN dr.is_primary THEN 'PRIMARY KEY'
+    WHEN dr.is_unique THEN 'UNIQUE'
     ELSE ''
   END AS key_type,
-  pg_size_pretty(size_bytes) AS size
-FROM all_affected
+  pg_size_pretty(pg_relation_size(i.oid)) AS size
+FROM drifted dr
+JOIN pg_class i ON i.oid = dr.indexrelid
+JOIN pg_class t ON t.oid = dr.indrelid
+JOIN pg_namespace n ON n.oid = t.relnamespace
+JOIN pg_am am ON am.oid = i.relam
+WHERE am.amname = 'btree'
+  -- Partitioned indexes ('I') hold no data; each partition's index is listed instead.
+  AND i.relkind = 'i'
+  AND t.relkind IN ('r', 'm')
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+  AND dr.stored_version IS NOT NULL
+  AND dr.stored_version IS DISTINCT FROM dr.current_version
 -- Constraint-backing indexes first: a wrong sort order there can let
 -- duplicate rows past a unique check, not merely return wrong results.
-ORDER BY is_primary DESC, is_unique DESC, size_bytes DESC`;
+ORDER BY dr.is_primary DESC, dr.is_unique DESC, pg_relation_size(i.oid) DESC, name`;
 
 interface DriftRow {
   readonly database: string;
@@ -192,7 +150,9 @@ export function buildCollationDriftReport(rawRows: ReadonlyArray<Record<string, 
   }
 
   const rows = rawRows.map(toDriftRow);
-  const keyRows = rows.filter((r) => r.key_type !== "");
+  // An index with key columns on several drifted collations has one row per collation.
+  const indexes = [...new Map(rows.map((r) => [r.name, r])).values()];
+  const keyRows = indexes.filter((r) => r.key_type !== "");
   const severity: ReportSeverity = keyRows.length > 0 ? "critical" : "warn";
 
   const libcDrift = rows.find((r) => r.collation === "default");
@@ -200,7 +160,7 @@ export function buildCollationDriftReport(rawRows: ReadonlyArray<Record<string, 
 
   const environment: Array<{ key: string; value: string }> = [
     { key: "Database", value: rows[0]?.database ?? "" },
-    { key: "Affected indexes", value: String(rows.length) },
+    { key: "Affected indexes", value: String(indexes.length) },
   ];
   if (keyRows.length > 0) {
     environment.push({
@@ -215,7 +175,7 @@ export function buildCollationDriftReport(rawRows: ReadonlyArray<Record<string, 
     });
   }
   if (namedCollations.length > 0) {
-    environment.push({ key: "Drifted ICU collations", value: namedCollations.join(", ") });
+    environment.push({ key: "Drifted collations", value: namedCollations.join(", ") });
   }
 
   return {
@@ -260,12 +220,12 @@ export function buildCollationDriftReport(rawRows: ReadonlyArray<Record<string, 
           {
             title: "Confirm which indexes are actually mis-ordered",
             body: "amcheck raises an error for a mis-ordered index and returns silently for a healthy one. Check keys and unique indexes first.",
-            sql: ["CREATE EXTENSION IF NOT EXISTS amcheck;", ...amcheckStatements(rows)],
+            sql: ["CREATE EXTENSION IF NOT EXISTS amcheck;", ...amcheckStatements(indexes)],
           },
           {
             title: "Rebuild the affected indexes",
             body: "Rebuild anything that failed step 1 — or all of them, which is safe if you would rather not check individually. CONCURRENTLY keeps the application online during the rebuild.",
-            sql: reindexStatements(rows),
+            sql: reindexStatements(indexes),
           },
           {
             title: "Record the new collation version — only after every rebuild has finished",

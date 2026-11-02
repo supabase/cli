@@ -77,6 +77,25 @@ describe("buildCollationDriftReport", () => {
     ]);
   });
 
+  it("lists an index once in the workflow when several of its collations drifted", () => {
+    const multi = [
+      { ...libcRow, name: "public.m_ab", key_type: "", columns: "a" },
+      { ...icuRow, name: "public.m_ab", columns: "b" },
+    ];
+    const report = buildCollationDriftReport(multi);
+    const [, rebuild, refresh] = stepsBlock(report).steps;
+
+    expect(report.blocks[0]).toMatchObject({
+      kind: "keyValue",
+      entries: expect.arrayContaining([{ key: "Affected indexes", value: "1" }]),
+    });
+    expect(rebuild?.sql).toEqual(["REINDEX INDEX CONCURRENTLY public.m_ab;"]);
+    expect(refresh?.sql).toEqual([
+      'ALTER DATABASE "postgres" REFRESH COLLATION VERSION;',
+      "ALTER COLLATION public.test_stale_icu REFRESH VERSION;",
+    ]);
+  });
+
   it("degrades null cells instead of throwing", () => {
     const report = buildCollationDriftReport([{ ...libcRow, current_version: null }]);
     const table = report.blocks.find((b) => b.kind === "table") as ReportTableBlock;
