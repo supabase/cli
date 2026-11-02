@@ -1,12 +1,13 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Data, Effect, Exit, Fiber, FileSystem, Layer, Path, Ref, Stream } from "effect";
+import { Data, Effect, Exit, FileSystem, Layer, Path, Ref, Stream } from "effect";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { engineTarget, testEngine } from "../../tests/engine-target.ts";
 import { httpHost } from "../../tests/helpers/endpoint.ts";
 import { selection } from "../../tests/pins.ts";
+import { failOnStall } from "../../tests/stall-guard.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-mail",
@@ -61,28 +62,19 @@ const sendTestEmail = (
 
 class MailStallError extends Data.TaggedError("MailStallError")<{ readonly message: string }> {}
 
-/** Fails a stalled launch within the test timeout without waiting for its scope's teardown. */
-const guardLaunch =
-  (duration: `${number} seconds`, phase: Ref.Ref<string>, logs: Ref.Ref<string>) =>
-  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    Effect.flatMap(Effect.forkDetach(effect), (fiber) =>
-      Fiber.join(fiber).pipe(
-        Effect.onInterrupt(() => Effect.forkDetach(Fiber.interrupt(fiber))),
-        Effect.timeoutOrElse({
-          duration,
-          orElse: () =>
-            Effect.all([Ref.get(phase), Ref.get(logs)]).pipe(
-              Effect.flatMap(([stalled, output]) =>
-                Effect.fail(
-                  new MailStallError({
-                    message: `Mailpit ${stalled} did not finish within ${duration}; output:\n${output || "(none)"}`,
-                  }),
-                ),
-              ),
-            ),
-        }),
+const mailStall = (duration: `${number} seconds`, phase: Ref.Ref<string>, logs: Ref.Ref<string>) =>
+  failOnStall(
+    duration,
+    Effect.all([Ref.get(phase), Ref.get(logs)]).pipe(
+      Effect.flatMap(([stalled, output]) =>
+        Effect.fail(
+          new MailStallError({
+            message: `Mailpit ${stalled} did not finish within ${duration}; output:\n${output || "(none)"}`,
+          }),
+        ),
       ),
-    );
+    ),
+  );
 
 describe("service catalog", () => {
   it.live("launches the real Mailpit recipe and serves its HTTP endpoint", () =>
@@ -123,7 +115,7 @@ describe("service catalog", () => {
           yield* instance.stop;
           yield* Ref.set(phase, "scope teardown");
         }),
-      ).pipe(guardLaunch("25 seconds", phase, logs));
+      ).pipe(mailStall("25 seconds", phase, logs));
     }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
   );
 

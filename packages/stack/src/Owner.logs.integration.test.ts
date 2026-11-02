@@ -26,6 +26,7 @@ import * as LogStore from "./host/LogStore.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 import type { SavedStack } from "./StackNamespace.ts";
 import { selection } from "../tests/pins.ts";
+import { failOnStall } from "../tests/stall-guard.ts";
 
 const services = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
 
@@ -108,39 +109,31 @@ type NativeMailPhase = {
 };
 
 /** Fails a stalled native Mailpit step within the test timeout, naming the step and its persisted output. */
-const guardNativeMail =
-  (phase: Ref.Ref<NativeMailPhase>) =>
-  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    Effect.flatMap(Effect.forkDetach(effect), (fiber) =>
-      Fiber.join(fiber).pipe(
-        Effect.onInterrupt(() => Effect.forkDetach(Fiber.interrupt(fiber))),
-        Effect.timeoutOrElse({
-          duration: "25 seconds",
-          orElse: () =>
-            Effect.gen(function* () {
-              const { step, id, history } = yield* Ref.get(phase);
-              const output =
-                id === undefined || history === undefined
-                  ? []
-                  : yield* history(id).pipe(
-                      Stream.filter(isOutput),
-                      Stream.runCollect,
-                      Effect.timeoutOrElse({
-                        duration: "2 seconds",
-                        orElse: () => Effect.succeed([]),
-                      }),
-                      Effect.orElseSucceed(() => []),
-                    );
-              const text = Array.from(output, (record) => record.text ?? "")
-                .join("")
-                .slice(-2_000);
-              return yield* new NativeMailStallError({
-                message: `native Mailpit ${step}${id === undefined ? "" : ` (${id})`} did not finish within 25 seconds; output:\n${text || "(none)"}`,
-              });
-            }),
-        }),
-      ),
-    );
+const guardNativeMail = (phase: Ref.Ref<NativeMailPhase>) =>
+  failOnStall(
+    "25 seconds",
+    Effect.gen(function* () {
+      const { step, id, history } = yield* Ref.get(phase);
+      const output =
+        id === undefined || history === undefined
+          ? []
+          : yield* history(id).pipe(
+              Stream.filter(isOutput),
+              Stream.runCollect,
+              Effect.timeoutOrElse({
+                duration: "2 seconds",
+                orElse: () => Effect.succeed([]),
+              }),
+              Effect.orElseSucceed(() => []),
+            );
+      const text = Array.from(output, (record) => record.text ?? "")
+        .join("")
+        .slice(-2_000);
+      return yield* new NativeMailStallError({
+        message: `native Mailpit ${step}${id === undefined ? "" : ` (${id})`} did not finish within 25 seconds; output:\n${text || "(none)"}`,
+      });
+    }),
+  );
 
 /** Follows from the oldest record until `count` launch markers are persisted. */
 const awaitLaunches = (records: Stream.Stream<LogRecord, StackError>, count: number) =>
