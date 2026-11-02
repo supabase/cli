@@ -310,7 +310,11 @@ export function sanitizeOpenApiSchema(
   // Binary bodies are rewritten to `BinaryInput` by matching the bare format annotation, so
   // extra annotations such as `description` would leave them typed as plain strings.
   if (sanitized.type === "string" && sanitized.format === "binary") {
-    return { type: "string", format: "binary" };
+    return {
+      type: "string",
+      format: "binary",
+      ...(sanitized.nullable === true ? { nullable: true } : {}),
+    };
   }
 
   if (
