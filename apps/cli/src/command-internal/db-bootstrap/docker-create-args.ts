@@ -23,7 +23,7 @@ interface StartHealthcheckSpec {
   readonly retries?: number;
   /** Emitted as `--health-start-period <n>s`; omitted when unset. */
   readonly startPeriodSeconds?: number;
-  /* Emitted as `--health-start-interval <n>s`; see {@link applyHealthStartInterval}. */
+  /** Emitted as `--health-start-interval <n>s`; see {@link applyHealthStartInterval}. */
   readonly startIntervalSeconds?: number;
 }
 
