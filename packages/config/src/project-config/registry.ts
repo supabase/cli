@@ -107,7 +107,8 @@ const apiSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
     },
     normalizeDocument: normalizeDocumentMaxRows,
   },
-  // Unmapped (no config counterpart): api.db_pool, api.db_pool_acquisition_timeout.
+  // Unmapped (no config counterpart): api.db_pool, api.db_pool_acquisition_timeout,
+  // api.db_pool_max_lifetime, api.db_pool_max_idletime.
 ];
 
 /** Settings fields whose remote value is a signed int, clamped to uint. */
