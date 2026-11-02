@@ -169,3 +169,7 @@ A `worker_guest_logs` message is bytes the tenant's own code printed. Control an
 escape sequences are stripped before it reaches a terminal, so a compute cannot
 reposition the cursor or forge CLI output; interior newlines and indentation are
 preserved so a stack trace survives intact.
+
+## Deprecation
+
+The command prints a warning on stderr before reading logs. It names `supabase logs tail --remote --service compute --resource <name> --no-follow` as the replacement and v5 as the removal version. Existing flags, history defaults, follow defaults, and output remain unchanged.

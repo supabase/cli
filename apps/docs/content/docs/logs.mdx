@@ -1,0 +1,67 @@
+---
+title: Logs
+description: Query hosted logs and follow hosted or retained local logs
+---
+
+Use `supabase logs` to query hosted logs, follow log lines, and discover the filters each target supports.
+
+```sh
+supabase logs sources --remote
+supabase logs tail --remote --service postgres --level error
+supabase logs tail --local --service postgres --no-follow
+```
+
+`tail` and `sources` default to the local stack. `--remote` selects the linked project. Use `--remote=<ref>` for another project or `--remote=<branch>` for a branch of the linked project. `query` defaults to the linked hosted project.
+
+## Query hosted logs
+
+Pass SQL through one argument, a file, or stdin:
+
+```sh
+supabase logs query "select id, event_message, log_attributes from logs limit 20" --remote
+supabase logs query --file errors.sql --since 30m -o json
+cat errors.sql | supabase logs query --remote -o csv
+```
+
+The query uses ClickHouse SQL over the hosted `logs` table. It does not query Postgres. Select `log_attributes` to keep available correlation IDs and user attributes in the output. For example, `where source = 'postgres_logs'` limits rows to Postgres.
+
+Use `-o table` or `-o pretty` for a table, `-o json` for a JSON array, or `-o csv` for CSV. With no `-o`, `--output-format json` returns a structured result and `--output-format stream-json` returns a result event.
+
+The default range is the last hour. Use `--since 30m` or UTC timestamps with `--from` and `--to`. The range must be at most 24 hours. Do not combine `--since` with `--from` or `--to`.
+
+Queries use the Management API GET endpoint. Server query limits, retention, and project access still apply. A long SQL file may exceed the server URL limit. The CLI reports the HTTP error and does not split or rewrite the query. Local SQL queries are unsupported.
+
+## Follow logs
+
+```sh
+supabase logs tail --remote --service auth --search "invalid token"
+supabase logs tail --remote --service functions --resource <function-id> -o json
+supabase logs tail --remote --tail 0
+supabase logs tail --local --stack feature-a --since start
+```
+
+Tails print the latest 100 lines from the last hour, then follow new lines. `--tail 0` skips history. `--no-follow` prints history and exits. Repeat `--service` or `--level` to select several values. `--search` matches a case-insensitive literal substring in hosted messages. Percent and underscore characters have no wildcard meaning.
+
+Use `-o json` for one JSON object per line. Tail JSON retains IDs, raw attributes, timestamps, and source fields. Local records retain instance IDs, launch markers, loss markers, and resume positions. Tail `--output-format json` and `stream-json` also emit JSON Lines. An explicit `-o` takes precedence.
+
+Hosted follow polls every 10 seconds. Polls overlap to catch late arrivals and deduplicate by ID. Arrivals more than two minutes late can fall outside the overlap. A poll that reaches 1000 rows stops with a truncation error. A dense overlap that exceeds the deduplication budget also stops. Narrow the service or search filter, or use `logs query` for a bounded read. A full history page reports that older rows may exist. Rate-limited and transient server failures retry for up to one minute.
+
+Severity comes from service fields, such as Postgres error severity or HTTP status. Unknown severity stays unknown. `--level` requires services with a supported severity mapping. `logs sources --remote --service <service>` lists the supported filters.
+
+## Retained local logs
+
+Local logs require the experimental stack backend. They never start a stack or a service. `--service postgres` selects the local `database` service. Other service selectors include the names listed by `logs sources --local`, instance IDs, and `gateway` when the stack exposes the shared API listener.
+
+Use `--stack <name>` or `--stack-id <id-or-prefix>` to select an existing stack. `--resource` selects an instance ID and cannot be combined with `--service`. Retained history is readable while the stack is stopped with `--no-follow`. Following requires a running stack. `--since start` reads from each selected service's latest launch.
+
+Local `--level`, `--search`, and `--kind` filters are unsupported in this draft. The CLI rejects them before reading logs. Local source discovery lists existing instances and gateway support; it does not promise that retained rows exist.
+
+## Compute logs and legacy commands
+
+Compute log sources require the experimental Compute feature. Use `--service compute --resource <name>`. `--kind app`, `requests`, and `builds` select the stream. App output has no reliable severity; `--level` requires the request or build kind.
+
+```sh
+supabase logs tail --remote --service compute --resource api --kind requests
+```
+
+`supabase compute logs` and `supabase stack logs` keep their existing defaults, flags, and output. They print a deprecation warning on stderr and are scheduled for removal in v5. To preserve their exit-after-history behavior, add `--no-follow` to `logs tail`.

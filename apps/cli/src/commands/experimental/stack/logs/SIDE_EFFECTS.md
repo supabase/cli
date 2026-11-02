@@ -79,3 +79,7 @@ leaves the owner and services running. History reads and completed follows exit
 Standard command telemetry is retained, with `-f` reported as `follow`; log
 contents are not custom telemetry properties. Telemetry flushes on every exit to
 `<SUPABASE_HOME or ~/.supabase>/telemetry.json`.
+
+## Deprecation
+
+The command prints a warning on stderr before reading logs. It names `supabase logs tail --local --no-follow` as the replacement and v5 as the removal version. Existing flags, history defaults, follow defaults, and output remain unchanged.
