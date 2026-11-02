@@ -127,23 +127,23 @@ const definitions: Readonly<Record<ArtifactKind, ArtifactDefinition>> = {
   database: definition(
     "postgres",
     {
-      upstreamVersion: "17.11.0.016",
+      upstreamVersion: "17.11.0.017",
       revision: 0,
       image:
-        "ghcr.io/supabase/cli/postgres:17.11.0.016-r0@sha256:4a8d3f297b52ea72836cf95fcdeb56aff88d2d2efa19b6557bce3d8e98bae02c",
-      upstreamImage: "supabase/postgres:17.11.0.016",
+        "ghcr.io/supabase/cli/postgres:17.11.0.017-r0@sha256:2ae0e78c6e87fb9cf0cd8ba6795a597198e45bd2ac6e6f63a4b0ece024a008ef",
+      upstreamImage: "supabase/postgres:17.11.0.017",
       natives: {
         "darwin-arm64": {
-          archive: "5033846ff2dc56a992e9bf929d62d132bd2819656e040d4a359632121a9722e7",
-          manifest: "0afd146d48203665fb2c8fdfad1e79caba053b9b6d722070bb07ee980f7326fe",
+          archive: "543c9b10cee5efda3aa4819970f8760ea0cc52ad7a326e24ed52add97d665886",
+          manifest: "e058218a46629e2087c68baf5600722e51f694e1acff1062050110c94547a1ff",
         },
         "linux-amd64": {
-          archive: "29b3bdcbabeb187055018da72dda6875947d113287c365aea5f7cf93fbfac7b0",
-          manifest: "2cb7d1526df26aaedc7158f7582a7d3c5e2ba75fd32864332f5c8fe21ff8a1ae",
+          archive: "ae6aa7604938c8b94d87769cff801a81ddd4dbf7b92dca1cfe31baa2de6af46c",
+          manifest: "8cc9731ff5011e630c142843c863e012dc726024dcb87d7e8e1d34931c2418fa",
         },
         "linux-arm64": {
-          archive: "ca9f3927b0d14519b720b674e4a706d318981ceea4b8fffadf6c4c46b689a2ec",
-          manifest: "dfba4a861d9b95299dc40d69e48ae64e66d8894b50a962b64baebaabeb8e0f55",
+          archive: "72e80f471e39d214cffeb5d3b695f09542af3fdd4b1b0b4b01e7135c0857a37a",
+          manifest: "27930c8c06808195d7520d179c62d06cf0c57f4788c5419298694288d13c9ece",
         },
       },
     },
