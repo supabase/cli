@@ -101,39 +101,45 @@ class NativeMailStallError extends Data.TaggedError("NativeMailStallError")<{
   readonly message: string;
 }> {}
 
+type NativeMailPhase = {
+  readonly step: string;
+  readonly id?: string;
+  readonly history?: (id: string) => Stream.Stream<LogRecord, StackError>;
+};
+
 /** Fails a stalled native Mailpit step within the test timeout, naming the step and its persisted output. */
 const guardNativeMail =
-  (
-    history: (id: string) => Stream.Stream<LogRecord, StackError>,
-    phase: Ref.Ref<{ readonly step: string; readonly id?: string }>,
-  ) =>
+  (phase: Ref.Ref<NativeMailPhase>) =>
   <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    effect.pipe(
-      Effect.timeoutOrElse({
-        duration: "25 seconds",
-        orElse: () =>
-          Effect.gen(function* () {
-            const { step, id } = yield* Ref.get(phase);
-            const output =
-              id === undefined
-                ? []
-                : yield* history(id).pipe(
-                    Stream.filter(isOutput),
-                    Stream.runCollect,
-                    Effect.timeoutOrElse({
-                      duration: "2 seconds",
-                      orElse: () => Effect.succeed([]),
-                    }),
-                    Effect.orElseSucceed(() => []),
-                  );
-            const text = Array.from(output, (record) => record.text ?? "")
-              .join("")
-              .slice(-2_000);
-            return yield* new NativeMailStallError({
-              message: `native Mailpit ${step}${id === undefined ? "" : ` (${id})`} did not finish within 25 seconds; output:\n${text || "(none)"}`,
-            });
-          }),
-      }),
+    Effect.flatMap(Effect.forkDetach(effect), (fiber) =>
+      Fiber.join(fiber).pipe(
+        Effect.onInterrupt(() => Effect.forkDetach(Fiber.interrupt(fiber))),
+        Effect.timeoutOrElse({
+          duration: "25 seconds",
+          orElse: () =>
+            Effect.gen(function* () {
+              const { step, id, history } = yield* Ref.get(phase);
+              const output =
+                id === undefined || history === undefined
+                  ? []
+                  : yield* history(id).pipe(
+                      Stream.filter(isOutput),
+                      Stream.runCollect,
+                      Effect.timeoutOrElse({
+                        duration: "2 seconds",
+                        orElse: () => Effect.succeed([]),
+                      }),
+                      Effect.orElseSucceed(() => []),
+                    );
+              const text = Array.from(output, (record) => record.text ?? "")
+                .join("")
+                .slice(-2_000);
+              return yield* new NativeMailStallError({
+                message: `native Mailpit ${step}${id === undefined ? "" : ` (${id})`} did not finish within 25 seconds; output:\n${text || "(none)"}`,
+              });
+            }),
+        }),
+      ),
     );
 
 /** Follows from the oldest record until `count` launch markers are persisted. */
@@ -147,50 +153,56 @@ const awaitLaunches = (records: Stream.Stream<LogRecord, StackError>, count: num
 
 describe("owner persisted logs", () => {
   it.live("persists native output, serves history and follow, and deletes it on destroy", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const owner = yield* openOwner("owner-logs-native-", "native");
-        const phase = yield* Ref.make<{ readonly step: string; readonly id?: string }>({
-          step: "create",
-        });
-        const { mail, followed, history } = yield* Effect.gen(function* () {
+    Effect.gen(function* () {
+      const phase = yield* Ref.make<NativeMailPhase>({ step: "owner start" });
+      const enter = (step: string, id?: string) =>
+        Ref.update(phase, (current) => ({ ...current, step, id }));
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const owner = yield* openOwner("owner-logs-native-", "native");
+          yield* Effect.addFinalizer(() => enter("owner teardown"));
+          yield* Ref.set(phase, {
+            step: "create",
+            history: (id) => owner.rpc.readLogs({ id, follow: false }),
+          });
           const mail = yield* owner.rpc.createService({
             service: "mail",
             pin: selection.mail,
             config: {},
             endpoints: { http: { port: "auto" } },
           });
-          yield* Ref.set(phase, { step: "artifact preparation and start", id: mail.id });
+          yield* enter("artifact preparation and start", mail.id);
           yield* owner.rpc.startService({ id: mail.id });
-          yield* Ref.set(phase, { step: "readiness", id: mail.id });
+          yield* enter("readiness", mail.id);
           yield* owner.rpc.readyService({ id: mail.id });
-          yield* Ref.set(phase, { step: "first followed output", id: mail.id });
+          yield* enter("first followed output", mail.id);
           const [followed] = yield* firstOutput(owner.rpc.readLogs({ id: mail.id, follow: true }));
-          yield* Ref.set(phase, { step: "history read", id: mail.id });
+          yield* enter("history read", mail.id);
           const history = Array.from(
             yield* owner.rpc.readLogs({ id: mail.id, follow: false }).pipe(Stream.runCollect),
           );
-          return { mail, followed, history };
-        }).pipe(guardNativeMail((id) => owner.rpc.readLogs({ id, follow: false }), phase));
 
-        expect(history[0]).toMatchObject({ kind: "launch", launchId: 1 });
-        expect(history).toContainEqual(followed);
-        const directory = path.join(owner.logsRoot, "mail", mail.id);
-        expect(yield* fs.exists(directory)).toBe(true);
-        const offline = yield* LogStore.streamStackLogs({ root: owner.logsRoot }).pipe(
-          Stream.filter(({ instanceId }) => instanceId === mail.id),
-          Stream.runCollect,
-        );
-        expect(offline.slice(0, history.length).map(({ position }) => position)).toEqual(
-          history.map(({ position }) => position),
-        );
+          expect(history[0]).toMatchObject({ kind: "launch", launchId: 1 });
+          expect(history).toContainEqual(followed);
+          const directory = path.join(owner.logsRoot, "mail", mail.id);
+          expect(yield* fs.exists(directory)).toBe(true);
+          yield* enter("offline history read", mail.id);
+          const offline = yield* LogStore.streamStackLogs({ root: owner.logsRoot }).pipe(
+            Stream.filter(({ instanceId }) => instanceId === mail.id),
+            Stream.runCollect,
+          );
+          expect(offline.slice(0, history.length).map(({ position }) => position)).toEqual(
+            history.map(({ position }) => position),
+          );
 
-        yield* owner.rpc.destroyService({ id: mail.id });
-        expect(yield* fs.exists(directory)).toBe(false);
-      }),
-    ).pipe(Effect.provide(services)),
+          yield* enter("destroy", mail.id);
+          yield* owner.rpc.destroyService({ id: mail.id });
+          expect(yield* fs.exists(directory)).toBe(false);
+        }),
+      ).pipe(guardNativeMail(phase));
+    }).pipe(Effect.provide(services)),
   );
 
   it.live("streams history through the public API after the owner stops", () =>
