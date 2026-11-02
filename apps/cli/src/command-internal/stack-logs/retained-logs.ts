@@ -1,3 +1,4 @@
+import { outputFormatsForCommand } from "../output-formats.ts";
 import { Clock, Effect, Option, Path, Stream } from "effect";
 import {
   gatewayLog,
@@ -119,7 +120,7 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (
     if (
       options.unified &&
       Option.isSome(outputFlag) &&
-      !["json", "pretty", "table"].includes(outputFlag.value)
+      !outputFormatsForCommand(["logs", "tail"]).includes(outputFlag.value)
     )
       return yield* new StackCommandLogsError({
         reason: "flags",

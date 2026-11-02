@@ -1,3 +1,4 @@
+import { outputFormatsForCommand } from "../../command-internal/output-formats.ts";
 import { Clock, DateTime, Effect, FileSystem, Option, Path, Schedule, Schema } from "effect";
 import { Output } from "../../shared/output/output.service.ts";
 import { OutputFlag } from "../../command-internal/global-flags.ts";
@@ -33,10 +34,10 @@ const formatValue = (value: unknown) =>
       ? stripControlSequences(value)
       : JSON.stringify(value);
 
-const validateQueryOutput = Effect.fnUntraced(function* () {
+const validateQueryOutput = Effect.fnUntraced(function* (leaf: "query" | "sources") {
   const flag = yield* OutputFlag;
   const format = Option.getOrUndefined(flag);
-  if (format !== undefined && !["pretty", "table", "csv", "json"].includes(format))
+  if (format !== undefined && !outputFormatsForCommand(["logs", leaf]).includes(format))
     return yield* new LogsInputError({
       message: "Logs support -o table, -o pretty, -o json, and -o csv.",
     });
@@ -63,7 +64,7 @@ const emitRows = Effect.fnUntraced(function* (rows: ReadonlyArray<Schema.JsonObj
 export const logsQuery = Effect.fn("logs.query")(function* (flags: LogsQueryFlags) {
   const telemetry = yield* TelemetryState;
   return yield* Effect.gen(function* () {
-    yield* validateQueryOutput();
+    yield* validateQueryOutput("query");
     if (flags.local)
       return yield* new LogsInputError({
         message:
@@ -198,7 +199,7 @@ const hostedTail = Effect.fn("logs.tail.remote")(function* (
     const started = yield* Clock.currentTimeMillis;
     const window = yield* logsWindow({ since: flags.since }, started);
     const format = yield* OutputFlag;
-    if (Option.isSome(format) && !["json", "pretty", "table"].includes(format.value))
+    if (Option.isSome(format) && !outputFormatsForCommand(["logs", "tail"]).includes(format.value))
       return yield* new LogsInputError({
         message: "Log tails support -o json (JSON Lines) or -o pretty.",
       });
@@ -339,7 +340,7 @@ export const logsSources = Effect.fn("logs.sources")(function* (
 ) {
   const telemetry = yield* TelemetryState;
   return yield* Effect.gen(function* () {
-    yield* validateQueryOutput();
+    yield* validateQueryOutput("sources");
     const target = yield* resolveTarget(flags, { localIsSupported: true });
     if (target.kind === "linked") {
       if (Option.isSome(flags.stack) || Option.isSome(flags.stackId))
