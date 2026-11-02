@@ -29,16 +29,7 @@ export interface InspectReportSpec {
   readonly report: (rows: ReadonlyArray<Record<string, unknown>>, cfg: ResolvedDbConfig) => Report;
 }
 
-/**
- * Runs a report-producing subcommand.
- *
- * The connection-selection half (flag exclusivity keyed off raw argv, the
- * `--project-ref` guard, the stderr connect line) intentionally mirrors
- * `runInspectQuery` line for line. The two are kept separate for now so
- * this change cannot affect the 25 shipped table commands; unifying them by
- * extracting the shared prologue is the follow-up once the report path has
- * proven itself (design doc, Phase 2).
- */
+/** Connection selection mirrors `runInspectQuery`; keep the two in sync. */
 const runInspectReport = Effect.fnUntraced(function* (
   spec: InspectReportSpec,
   flags: InspectConnectionFlags,
@@ -90,17 +81,13 @@ const runInspectReport = Effect.fnUntraced(function* (
     return;
   }
 
-  // json / stream-json — the raw driver rows keep the pre-report payload shape
-  // for scripts, and the document rides alongside them. This is the
-  // compatibility answer from the design doc: no existing `{ rows }` consumer
-  // breaks when a command moves to the report path.
+  // `rows` keeps the payload shape of the table-based inspect commands.
   yield* output.success(`inspect db ${spec.name}`, { rows, report });
 });
 
 /**
- * Builds an `inspect db <name>` handler from a report spec. Trace-span and
- * telemetry-flush behavior matches `makeInspectDbHandler` — callers must
- * NOT add a second `Effect.ensuring(flush)` at the command level.
+ * Builds an `inspect db <name>` handler from a report spec. It flushes
+ * telemetry itself, like `makeInspectDbHandler`.
  */
 export function makeInspectDbReportHandler(spec: InspectReportSpec, traceName: string) {
   return Effect.fn(traceName)(function* (flags: InspectConnectionFlags) {

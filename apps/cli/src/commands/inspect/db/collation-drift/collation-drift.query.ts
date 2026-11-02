@@ -1,29 +1,9 @@
 import type { InspectReportSpec } from "../inspect-report.ts";
 import type { Report, ReportSeverity } from "../../../../output/report.types.ts";
 
-const SQL = `-- Indexes whose sort order may no longer match the current collation library.
---
--- Two independent sources of drift, unioned:
---
---   libc — the database default collation. Postgres records the glibc version
---          the database was created with (pg_database.datcollversion) and can
---          report the version the OS provides now.
---
---   ICU  — an explicitly named ICU collation, e.g.
---            CREATE INDEX ON t (title COLLATE "en-US-x-icu");
---          Each named collation carries its own recorded version
---          (pg_collation.collversion), compared against the live ICU library.
---
--- Each index key column has exactly one effective collation
--- (pg_index.indcollation), so an index appears in at most one branch. When nothing has drifted both branches are
--- empty and the report renders its healthy state.
---
--- Only btree indexes are considered — a scope choice, not a claim of
--- immunity: btree is the direct-ordering case, by far the most common, and
--- the only access method amcheck can verify. Other AMs can be affected in
--- narrower cases (BRIN minmax bounds, GIN entry trees over text[], hash under
--- nondeterministic ICU collations) and are out of scope; see the docs.
-WITH db_row AS MATERIALIZED (
+// Detects btree drift for the database default collation (PG15+) and named ICU collations.
+// Other access methods are out of scope; amcheck verifies only btree.
+const SQL = `WITH db_row AS MATERIALIZED (
   -- MATERIALIZED pins evaluation order: pg_database_collation_actual_version()
   -- is only called for a database that actually records a version (a C/POSIX
   -- database records none).
@@ -131,10 +111,6 @@ FROM all_affected
 -- duplicate rows past a unique check, not merely return wrong results.
 ORDER BY is_primary DESC, is_unique DESC, size_bytes DESC`;
 
-// ---------------------------------------------------------------------------
-// Pure report construction — exported for unit tests.
-// ---------------------------------------------------------------------------
-
 interface DriftRow {
   readonly database: string;
   readonly name: string;
@@ -163,12 +139,12 @@ function toDriftRow(row: Record<string, unknown>): DriftRow {
 }
 
 /** Double-quotes an identifier, escaping embedded quotes. */
-export function quoteIdent(value: string): string {
+function quoteIdent(value: string): string {
   return `"${value.replaceAll('"', '""')}"`;
 }
 
 /** Single-quotes a value as a SQL string literal, escaping embedded quotes. */
-export function quoteLiteral(value: string): string {
+function quoteLiteral(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
 }
 
@@ -190,8 +166,7 @@ export function refreshStatements(rows: ReadonlyArray<DriftRow>): string[] {
     const database = rows[0]?.database ?? "postgres";
     out.push(`ALTER DATABASE ${quoteIdent(database)} REFRESH COLLATION VERSION;`);
   }
-  // Distinct named collations, first-seen order. Already schema-qualified and
-  // quoted where needed by the SQL's FORMAT('%I.%I', ...).
+  // Already quoted by the SQL's FORMAT('%I.%I', ...).
   const seen = new Set<string>();
   for (const r of rows) {
     if (r.collation === "default" || seen.has(r.collation)) continue;

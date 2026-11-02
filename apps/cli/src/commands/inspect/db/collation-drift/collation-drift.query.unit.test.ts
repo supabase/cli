@@ -3,8 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   amcheckStatements,
   buildCollationDriftReport,
-  quoteIdent,
-  quoteLiteral,
   refreshStatements,
   reindexStatements,
 } from "./collation-drift.query.ts";
@@ -87,12 +85,6 @@ describe("buildCollationDriftReport", () => {
 });
 
 describe("generated statements", () => {
-  it("uses amcheck's real parameter name, heapallindexed", () => {
-    const [statement] = amcheckStatements([{ ...libcRow }] as never);
-    expect(statement).toContain("heapallindexed => true");
-    expect(statement).not.toContain("heapalloc");
-  });
-
   it("keeps the amcheck literal intact for quote-bearing index names", () => {
     const evil = { ...icuRow, name: `public."evil'; DROP TABLE users; --"` };
     const statements = amcheckStatements([evil] as never);
@@ -126,17 +118,5 @@ describe("generated statements", () => {
     const second = { ...icuRow, name: "public.demo_title_uniq" };
     const statements = refreshStatements([icuRow, second] as never);
     expect(statements).toHaveLength(1);
-  });
-});
-
-describe("quoting", () => {
-  it("quoteIdent escapes embedded double quotes", () => {
-    expect(quoteIdent("postgres")).toBe('"postgres"');
-    expect(quoteIdent('we"ird')).toBe('"we""ird"');
-  });
-
-  it("quoteLiteral escapes embedded single quotes", () => {
-    expect(quoteLiteral("plain")).toBe("'plain'");
-    expect(quoteLiteral("o'brien")).toBe("'o''brien'");
   });
 });

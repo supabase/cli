@@ -1,12 +1,4 @@
-/**
- * The report document model for `inspect` command output.
- *
- * A command produces a `Report` — a structured document — and per-format
- * renderers turn it into terminal text or a JSON payload. The document is the
- * single source of truth, so text and JSON mode finally describe the same
- * thing, severities included.
- *
- */
+/** Structured `inspect` output, rendered as text or emitted as JSON. */
 
 export type ReportSeverity = "info" | "ok" | "warn" | "critical";
 
@@ -16,7 +8,6 @@ interface ReportKeyValueBlock {
   readonly entries: ReadonlyArray<{ readonly key: string; readonly value: string }>;
 }
 
-/** A table; the one block type the pre-report commands could express. */
 export interface ReportTableBlock {
   readonly kind: "table";
   readonly columns: ReadonlyArray<{ readonly title: string }>;
@@ -33,13 +24,6 @@ interface ReportCalloutBlock {
   readonly text: string;
 }
 
-/** Copy-pasteable SQL, rendered indented under a title. */
-interface ReportSqlBlock {
-  readonly kind: "sql";
-  readonly title: string;
-  readonly statements: ReadonlyArray<string>;
-}
-
 /** An ordered remediation workflow; each step may carry its own SQL. */
 export interface ReportStepsBlock {
   readonly kind: "steps";
@@ -54,7 +38,6 @@ export type ReportBlock =
   | ReportKeyValueBlock
   | ReportTableBlock
   | ReportCalloutBlock
-  | ReportSqlBlock
   | ReportStepsBlock;
 
 export interface Report {

@@ -1,17 +1,7 @@
 import { renderGlamourTable } from "./glamour-table.ts";
 import type { Report, ReportBlock, ReportSeverity, ReportStepsBlock } from "./report.types.ts";
 
-/**
- * Renders a `Report` for the terminal.
- *
- * Table blocks reuse `renderGlamourTable`, so a report containing only a table
- * renders byte-identically to the pre-report output — which is what makes the
- * adapter migration of the existing commands a no-op in text mode.
- *
- * No ANSI color: severity is carried by a symbol prefix, matching the plain
- * glamour AsciiStyle output the inspect commands already produce and keeping
- * piped/CI output clean.
- */
+/** Renders a `Report` as plain terminal text; severity is a symbol prefix, not ANSI color. */
 export function renderReportText(report: Report): string {
   const parts = report.blocks.map(renderBlock);
   return "\n" + parts.join("\n") + "\n";
@@ -54,9 +44,6 @@ function renderBlock(block: ReportBlock): string {
           )
           .join("\n") + "\n"
       );
-
-    case "sql":
-      return [`  ${block.title}`, ...block.statements.map((s) => `    ${s}`)].join("\n") + "\n";
 
     case "steps":
       return renderSteps(block);
