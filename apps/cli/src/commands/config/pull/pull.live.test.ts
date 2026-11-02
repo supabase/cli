@@ -19,11 +19,10 @@ test("pulls remote config into a fresh project, leaving nothing to write on a se
       const args = [
         "config",
         "pull",
-        "--project-ref",
-        project.ref,
         "--yes",
         "--output-format",
         "json",
+        `--remote=${project.ref}`,
       ];
       const first = yield* cliEffect(args);
       requireLiveSuccess(first, "config pull");

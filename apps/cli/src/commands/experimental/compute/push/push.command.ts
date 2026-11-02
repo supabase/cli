@@ -6,14 +6,19 @@ import {
   withCondition,
   withContext,
 } from "../../../../command-internal/command-permissions/model.ts";
-import { projectRefPicker } from "../../../../config/remote-target.layer.ts";
+import { projectRefPicker } from "../../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../../telemetry/linked-project-cache.layer.ts";
 import { computeRead } from "../../../../shared/compute/compute-api.ts";
+import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { COMPUTE_EXPOSURES } from "../../../../shared/compute/compute-runtimes.ts";
 import { managementApiRuntimeLayer } from "../../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { computePush } from "./push.handler.ts";
+import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
+import { branchResolution } from "../../../../command-internal/target/branch-resolution.ts";
+import { projectTargetFlags } from "../../../../command-internal/target/target-flags.ts";
 
 const config = {
   names: Argument.String("name").pipe(
@@ -53,10 +58,7 @@ const config = {
     ),
     Flag.withDefault(false),
   ),
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
 } as const;
 
 export type ComputePushFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -104,10 +106,14 @@ export const computePushCommand = Command.make("push", config).pipe(
       ),
       projectRefPicker,
       linkedProjectCache,
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>
     computePush(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),
   Command.provide(managementApiRuntimeLayer(["compute", "push"])),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

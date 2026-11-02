@@ -17,42 +17,45 @@ import {
 // Only `auth` and one OrioleDB postgres build are pinned, so every other alias falls through to
 // its upstream image. `vi.mock` factories are hoisted above top-level statements, so the fixture
 // is inlined.
-vi.mock("@supabase/stack/internal/artifacts", () => {
-  const digest = "d348483ad1141c54bfb4eaae801f5385fe1c2970fc106f95f531b5247092d52c";
-  const nativePin = { archive: digest, manifest: digest };
-  return {
-    catalogPins: () => [
-      {
-        service: "auth",
-        sourceService: "auth",
-        pin: {
-          upstreamVersion: "v2.197.0",
-          revision: 0,
-          image: `ghcr.io/supabase/cli/auth:v2.197.0-r0@sha256:${digest}`,
-          natives: {
-            "darwin-arm64": nativePin,
-            "linux-amd64": nativePin,
-            "linux-arm64": nativePin,
+vi.mock("@supabase/stack/internal/artifacts", (importOriginal) =>
+  importOriginal<typeof import("@supabase/stack/internal/artifacts")>().then((actual) => {
+    const digest = "d348483ad1141c54bfb4eaae801f5385fe1c2970fc106f95f531b5247092d52c";
+    const nativePin = { archive: digest, manifest: digest };
+    return {
+      ...actual,
+      catalogPins: () => [
+        {
+          service: "auth",
+          sourceService: "auth",
+          pin: {
+            upstreamVersion: "v2.197.0",
+            revision: 0,
+            image: `ghcr.io/supabase/cli/auth:v2.197.0-r0@sha256:${digest}`,
+            natives: {
+              "darwin-arm64": nativePin,
+              "linux-amd64": nativePin,
+              "linux-arm64": nativePin,
+            },
           },
         },
-      },
-      {
-        service: "database",
-        sourceService: "postgres",
-        pin: {
-          upstreamVersion: "17.11.0.002-orioledb",
-          revision: 0,
-          image: `ghcr.io/supabase/cli/postgres:17.11.0.002-orioledb-r0@sha256:${digest}`,
-          natives: {
-            "darwin-arm64": nativePin,
-            "linux-amd64": nativePin,
-            "linux-arm64": nativePin,
+        {
+          service: "database",
+          sourceService: "postgres",
+          pin: {
+            upstreamVersion: "17.11.0.002-orioledb",
+            revision: 0,
+            image: `ghcr.io/supabase/cli/postgres:17.11.0.002-orioledb-r0@sha256:${digest}`,
+            natives: {
+              "darwin-arm64": nativePin,
+              "linux-amd64": nativePin,
+              "linux-arm64": nativePin,
+            },
           },
         },
-      },
-    ],
-  };
-});
+      ],
+    };
+  }),
+);
 
 const AUTH_FIXTURE_PIN_IMAGE =
   "ghcr.io/supabase/cli/auth:v2.197.0-r0@sha256:d348483ad1141c54bfb4eaae801f5385fe1c2970fc106f95f531b5247092d52c";
@@ -262,7 +265,9 @@ describe("usesSlimImageRuntime", () => {
 
   it("is true only when the flag is on and the ref is slim", () => {
     expect(usesSlimImageRuntime("ghcr.io/supabase/cli/auth:v2.196.0", true)).toBe(true);
+    expect(usesSlimImageRuntime("public.ecr.aws/supabase/cli/auth:v2.196.0", true)).toBe(true);
     expect(usesSlimImageRuntime("supabase/gotrue:v2.196.0", true)).toBe(false);
+    expect(usesSlimImageRuntime("public.ecr.aws/supabase/gotrue:v2.196.0", true)).toBe(false);
   });
 });
 

@@ -165,11 +165,7 @@ export const connectionEnv = (
   if (connections.database !== undefined) values.DB_URL = connections.database;
   if (connections.studio !== undefined) values.STUDIO_URL = connections.studio;
   if (connections.mcp !== undefined) values.MCP_URL = connections.mcp;
-  if (connections.mailpit !== undefined) {
-    values.MAILPIT_URL = connections.mailpit;
-    // Deprecated alias of `MAILPIT_URL`, kept for parity with legacy `status --env`.
-    values.INBUCKET_URL = connections.mailpit;
-  }
+  if (connections.mailpit !== undefined) values.MAILPIT_URL = connections.mailpit;
   if (credentials !== undefined) {
     values.PUBLISHABLE_KEY = credentials.publishableKey;
     values.SECRET_KEY = credentials.secretKey;

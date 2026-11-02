@@ -53,6 +53,22 @@ describe("pullPayload", () => {
     });
   });
 
+  it("names the branch it was given next to the project ref", () => {
+    const aggregate: PullAggregate = {
+      ref: PROJECT_REF,
+      branch: "staging",
+      dryRun: true,
+      confirmed: false,
+      dirtyPaths: [],
+      results: [],
+    };
+
+    expect(pullPayload(aggregate)["target"]).toEqual({
+      project_ref: PROJECT_REF,
+      branch: "staging",
+    });
+  });
+
   it("shapes a fully-succeeded aggregate: every step changed, branch present, wrote:true", () => {
     const results: ReadonlyArray<PullStepResult> = [
       {
@@ -120,48 +136,6 @@ describe("pullPayload", () => {
         },
       },
       counts: { changed: 4, unchanged: 0, skipped: 0, planned: 0, failed: 0 },
-    });
-  });
-
-  it("shapes a declined aggregate: config/db/functions planned, migration_history skipped(declined), wrote:false", () => {
-    const results: ReadonlyArray<PullStepResult> = [
-      { step: "config", status: "planned", written: [], detail: { schema_version: 1 } },
-      {
-        step: "migration_history",
-        status: "skipped",
-        written: [],
-        detail: { files: [] },
-        reason: "declined",
-      },
-      { step: "db", status: "planned", written: [], detail: {} },
-      { step: "functions", status: "planned", written: [], detail: {} },
-    ];
-    const aggregate: PullAggregate = {
-      ref: PROJECT_REF,
-      branch: undefined,
-      dryRun: false,
-      confirmed: false,
-      dirtyPaths: ["supabase/config.toml"],
-      results,
-    };
-
-    const payload = pullPayload(aggregate);
-    expect(payload["wrote"]).toBe(false);
-    expect(payload["confirmed"]).toBe(false);
-    expect(payload["dry_run"]).toBe(false);
-    expect(payload["dirty_paths"]).toEqual(["supabase/config.toml"]);
-    expect(payload["steps"]).toHaveProperty("migration_history", {
-      status: "skipped",
-      written: [],
-      detail: { files: [] },
-      reason: "declined",
-    });
-    expect(payload["counts"]).toEqual({
-      changed: 0,
-      unchanged: 0,
-      skipped: 1,
-      planned: 3,
-      failed: 0,
     });
   });
 
@@ -284,27 +258,6 @@ describe("pullPayload", () => {
 });
 
 describe("pullSummaryMessage", () => {
-  it("reads 'declined' and lists the actual counts when the confirmation was declined outside a dry run", () => {
-    const results: ReadonlyArray<PullStepResult> = [
-      { step: "config", status: "planned", written: [], detail: {} },
-      { step: "migration_history", status: "skipped", written: [], detail: {}, reason: "declined" },
-      { step: "db", status: "planned", written: [], detail: {} },
-      { step: "functions", status: "planned", written: [], detail: {} },
-    ];
-    const aggregate: PullAggregate = {
-      ref: PROJECT_REF,
-      branch: undefined,
-      dryRun: false,
-      confirmed: false,
-      dirtyPaths: [],
-      results,
-    };
-    const message = pullSummaryMessage(aggregate);
-    expect(message).toBe(
-      "Pull declined: nothing was changed (0 changed, 0 unchanged, 1 skipped, 3 planned, 0 failed).",
-    );
-  });
-
   it("reads 'preview (dry run)' and lists the actual counts for --dry-run", () => {
     const results: ReadonlyArray<PullStepResult> = [
       { step: "config", status: "planned", written: [], detail: {} },

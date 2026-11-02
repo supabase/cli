@@ -24,7 +24,8 @@ S3 protocol/vector controls are forwarded to their services. Storage receives th
 keys and region, and uses the gateway's `/storage/v1` prefix to verify S3 signatures and to build
 resumable upload URLs. `analytics.vector_port` and `SUPABASE_ANALYTICS_VECTOR_PORT` are accepted
 and ignored: the stack runs no Vector service.
-Encrypted JWT secrets are decrypted before shared credentials are derived. `db.health_timeout`
+Encrypted JWT secrets are decrypted before shared credentials are derived, and encrypted
+`[edge_runtime.secrets]` values are decrypted before they reach the Functions service. `db.health_timeout`
 controls database readiness; package JWT and PostgreSQL root-key defaults apply when omitted, and
 the effective root key is supplied through a stack-owned key file.
 Studio receives the database connection, the Functions management directory/URL, and Analytics
@@ -120,7 +121,9 @@ artifact preparation.
 When Functions is selected, the CLI reads and validates `supabase/functions/.env`, ignoring reserved
 `SUPABASE_*` entries. `edge_runtime.secrets` overrides that file, while `functions.<name>.env`
 provides per-function values from project environment references. Per-function enabled/JWT policies,
-entrypoints, import maps and static files are forwarded to the worker bootstrap. Configured paths
+entrypoints, import maps and static files are forwarded to the worker bootstrap. Without a
+configured `import_map`, a function uses its own `deno.json` or `deno.jsonc`; a per-function
+`import_map.json` is not read. Configured paths
 are relative to `supabase/` and must remain within the project; Docker mounts that project read-only.
 The inspector port is retained as an endpoint intent and does not enable debugging by itself.
 Running start calls do not refresh Functions from changed project files; stop the stack and start
@@ -133,7 +136,7 @@ When the project has a `supabase/config.toml`, the versions a new or stopped sta
 twelve services it records the specifier requested under `[local.services]` (`<service>.version`,
 else `default.version`, else `linked`), how it resolved, and the exact pin: the release revision,
 each target's archive and manifest digests, and the image digest. Its
-[JSON Schema](https://supabase.com/docs/cli/supabase-lock/v1.schema.json) is published with the
+[JSON Schema](https://supabase.com/schemas/supabase-lock/v1.json) is published with the
 docs. A project without `supabase/config.toml` runs the versions bundled with the CLI and has no
 lock, unless `--frozen` is set, which fails the start.
 

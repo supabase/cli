@@ -17,8 +17,7 @@ describe("supabase functions list (live)", () => {
           const { exitCode, stdout, stderr } = yield* cliEffect([
             "functions",
             "list",
-            "--project-ref",
-            project.ref,
+            `--remote=${project.ref}`,
           ]);
           expect(exitCode, stderr).toBe(0);
           expect(stdout, stderr).toMatch(/ID\s+\|\s+NAME\s+\|\s+SLUG\s+\|\s+STATUS/);

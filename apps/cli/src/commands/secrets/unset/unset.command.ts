@@ -1,25 +1,33 @@
 import type * as CliCommand from "effect/cli/Command";
 import { Argument, Command, Flag } from "effect/cli";
 
-import { Layer } from "effect";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
-import { projectRefPicker } from "../../../config/remote-target.layer.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
+import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { secretsUnset } from "./unset.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
   names: Argument.String("NAME").pipe(
     Argument.withDescription("Secret names to unset."),
     Argument.variadic(),
+  ),
+  all: Flag.Boolean("all").pipe(
+    Flag.withDescription(
+      "Unset every secret except SUPABASE_ ones. Required when no names are given.",
+    ),
+    Flag.withDefault(false),
+  ),
+  dryRun: Flag.Boolean("dry-run").pipe(
+    Flag.withDescription("Print the secrets that would be unset without unsetting them."),
+    Flag.withDefault(false),
   ),
 } as const;
 
@@ -37,6 +45,14 @@ export const secretsUnsetCommand = Command.make("unset", config).pipe(
       command: "supabase secrets unset MY_SECRET OTHER_SECRET",
       description: "Unset multiple secrets",
     },
+    {
+      command: "supabase secrets unset --all",
+      description: "Unset every custom secret after confirming",
+    },
+    {
+      command: "supabase secrets unset --all --dry-run",
+      description: "Preview which secrets --all would unset",
+    },
   ]),
   withPermissions(
     compose(
@@ -45,18 +61,23 @@ export const secretsUnsetCommand = Command.make("unset", config).pipe(
           {
             operationId: "v1-list-all-secrets",
             kind: "required",
-            context: "no secret names are given as arguments",
+            when: [{ flag: "all", is: true }],
           },
-          { operationId: "v1-bulk-delete-secrets", kind: "required" },
+          {
+            operationId: "v1-bulk-delete-secrets",
+            kind: "required",
+            when: [{ flag: "dry-run", is: false }],
+          },
         ],
       },
       projectRefPicker,
       linkedProjectCache,
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>
     secretsUnset(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
-  // `stdinLayer`: the confirmation prompt reads piped stdin via `promptYesNo` on a non-TTY stdin.
-  Command.provide(Layer.mergeAll(managementApiRuntimeLayer(["secrets", "unset"]), stdinLayer)),
+  Command.provide(managementApiRuntimeLayer(["secrets", "unset"])),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

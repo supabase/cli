@@ -8,12 +8,22 @@ import { Console, Effect, FileSystem, Schema, Stdio } from "effect";
 const KeyValues = Schema.Array(
   Schema.Struct({
     key: Schema.String,
-    value: Schema.Struct({ stringValue: Schema.optional(Schema.String) }),
+    value: Schema.Struct({
+      stringValue: Schema.optional(Schema.String),
+      // OTLP/JSON encodes 64-bit integers as strings; this exporter writes numbers.
+      intValue: Schema.optional(Schema.Union([Schema.Finite, Schema.String])),
+    }),
   }),
 );
 
 const stringAttribute = (attributes: typeof KeyValues.Type | undefined, key: string) =>
   attributes?.find((attribute) => attribute.key === key)?.value.stringValue;
+
+const intAttribute = (attributes: typeof KeyValues.Type | undefined, key: string) => {
+  const value = attributes?.find((attribute) => attribute.key === key)?.value.intValue;
+  const number = value === undefined ? Number.NaN : Number(value);
+  return Number.isInteger(number) ? number : undefined;
+};
 
 /** Labels container CLI spans with their verb so `pull` and `run` report separately. */
 export function reportSpanName(name: string, subcommand: string | undefined): string {
@@ -27,7 +37,8 @@ const OtlpSpan = Schema.Struct({
   name: Schema.String,
   startTimeUnixNano: Schema.String,
   endTimeUnixNano: Schema.String,
-  status: Schema.Struct({ code: Schema.Number }),
+  /* Any JSON number, including `1e309` (parses to `Infinity`), which `Schema.Finite` rejects. */
+  status: Schema.Struct({ code: Schema.declare((u): u is number => typeof u === "number") }),
   attributes: Schema.optional(KeyValues),
   events: Schema.optional(
     Schema.Array(Schema.Struct({ name: Schema.String, attributes: KeyValues })),
@@ -44,6 +55,17 @@ const TraceBatch = Schema.fromJsonString(
   }),
 );
 
+const ReportJson = Schema.fromJsonString(Schema.Unknown, { space: 2 });
+
+/** Attributes of an HTTP client span; `path` has no query string. */
+export interface HttpSpanAttributes {
+  readonly method: string;
+  readonly path: string | undefined;
+  readonly address: string | undefined;
+  readonly port: number | undefined;
+  readonly status: number | undefined;
+}
+
 export interface ReportSpan {
   readonly traceId: string;
   readonly spanId: string;
@@ -53,6 +75,8 @@ export interface ReportSpan {
   readonly endMs: number;
   readonly failed: boolean;
   readonly errorType: string | undefined;
+  /** Present only on HTTP client spans. */
+  readonly http?: HttpSpanAttributes;
 }
 
 export interface TraceReport {
@@ -71,6 +95,19 @@ export interface TraceReport {
 }
 
 const STATUS_ERROR = 2;
+
+function httpAttributes(attributes: typeof KeyValues.Type | undefined) {
+  const method = stringAttribute(attributes, "http.request.method");
+  if (method === undefined) return undefined;
+  return {
+    method,
+    path: stringAttribute(attributes, "url.path")?.split("?")[0],
+    address: stringAttribute(attributes, "server.address"),
+    port: intAttribute(attributes, "server.port"),
+    status: intAttribute(attributes, "http.response.status_code"),
+  } satisfies HttpSpanAttributes;
+}
+
 const nanosToMs = (value: string) => Number(BigInt(value) / 1_000n) / 1_000;
 const round = (value: number) => Math.round(value * 100) / 100;
 
@@ -180,7 +217,7 @@ export const readSpans = Effect.fnUntraced(function* (file: string) {
   let skippedLines = 0;
   for (const line of text.split("\n")) {
     if (line.trim().length === 0) continue;
-    const decoded = yield* Schema.decodeUnknownEffect(TraceBatch)(line).pipe(Effect.option);
+    const decoded = yield* Schema.decodeEffect(TraceBatch)(line).pipe(Effect.option);
     if (decoded._tag === "None") {
       skippedLines += 1;
       continue;
@@ -189,6 +226,7 @@ export const readSpans = Effect.fnUntraced(function* (file: string) {
     for (const resource of batch.resourceSpans) {
       for (const scope of resource.scopeSpans) {
         for (const span of scope.spans) {
+          const http = httpAttributes(span.attributes);
           spans.push({
             traceId: span.traceId,
             spanId: span.spanId,
@@ -201,6 +239,7 @@ export const readSpans = Effect.fnUntraced(function* (file: string) {
               span.events?.find((event) => event.name === "exception")?.attributes,
               "exception.type",
             ),
+            ...(http === undefined ? {} : { http }),
           });
         }
       }
@@ -302,7 +341,11 @@ const main = Effect.gen(function* () {
   const header = `trace: ${trace.traceId}${trace.traceCount > 1 ? ` (latest of ${trace.traceCount}; choose one with --trace-id)` : ""}`;
   yield* Console.log(
     options.json
-      ? JSON.stringify({ traceId: trace.traceId, traceCount: trace.traceCount, ...report }, null, 2)
+      ? yield* Schema.encodeEffect(ReportJson)({
+          traceId: trace.traceId,
+          traceCount: trace.traceCount,
+          ...report,
+        })
       : `${header}\n${formatReport(report)}`,
   );
 });

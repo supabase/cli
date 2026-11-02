@@ -1,11 +1,25 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Option, Path, Predicate } from "effect";
 
-import { setupStorage, STORAGE_TEST_JWT_SECRET } from "../../../../tests/helpers/storage.ts";
+import {
+  BARE_REMOTE,
+  NO_TARGET,
+  branchLookupsOf,
+  describeDbTargetSelection,
+  storageTargetOf,
+} from "../../../../tests/helpers/db-target-selection.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import {
+  setupStorage,
+  STORAGE_TEST_JWT_SECRET,
+  storageConsentApi,
+  storageConsentServices,
+  storageTestBranch,
+} from "../../../../tests/helpers/storage.ts";
 import { VALID_REF, useTempWorkdir, withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { StackStorageCapabilityError } from "../../../command-internal/stack-storage.ts";
-import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
+import { generateLocalJwt } from "../../../command-internal/local-jwt.ts";
 import { StorageUnsupportedOperationError } from "../storage.errors.ts";
 import { storageCp } from "./cp.handler.ts";
 import type { StorageCpFlags } from "./cp.command.ts";
@@ -24,7 +38,7 @@ function cpFlags(opts: {
   cacheControl?: string;
   contentType?: string;
   jobs?: number;
-  local?: boolean;
+  remote?: boolean;
 }): StorageCpFlags {
   return {
     src: opts.src,
@@ -33,9 +47,7 @@ function cpFlags(opts: {
     cacheControl: opts.cacheControl === undefined ? Option.none() : Option.some(opts.cacheControl),
     contentType: opts.contentType === undefined ? Option.none() : Option.some(opts.contentType),
     jobs: opts.jobs === undefined ? Option.none() : Option.some(opts.jobs),
-    linked: true,
-    local: opts.local ?? true,
-    projectRef: Option.none(),
+    ...(opts.remote === true ? BARE_REMOTE : NO_TARGET),
   };
 }
 
@@ -517,6 +529,7 @@ describe("storage cp", () => {
   it.effect("targets the linked project's Storage host and flushes telemetry on upload", () => {
     const { layer, requests, telemetry, linkedCache } = setupStorage(tmp.current, {
       // No `--local`, so the linked path resolves the ref + service-role key.
+      yes: true,
       routes: [{ method: "POST", match: OBJECT("private/readme.md"), body: {} }],
     });
     return Effect.gen(function* () {
@@ -527,7 +540,7 @@ describe("storage cp", () => {
         cpFlags({
           src: path.join(tmp.current, "readme.md"),
           dst: "ss:///private/readme.md",
-          local: false,
+          remote: true,
         }),
       ).pipe(Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
@@ -538,54 +551,50 @@ describe("storage cp", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("uploads to the project given via --project-ref, overriding VALID_REF", () => {
-    // The fake's own fallback stays at its default (VALID_REF); the flag must win and drive
-    // the gateway host.
-    const FLAG_REF = "flagflagflagflagflag";
-    const { layer, requests, linkedCache } = setupStorage(tmp.current, {
-      routes: [{ method: "POST", match: OBJECT("private/readme.md"), body: {} }],
+  it.effect("downloads from the linked project without asking for consent", () => {
+    const { layer, out } = setupStorage(tmp.current, {
+      format: "json",
+      routes: [{ method: "GET", match: OBJECT("private/readme.md"), rawBody: "downloaded-bytes" }],
     });
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      yield* fs.writeFileString(path.join(tmp.current, "readme.md"), "hello world");
-      const exit = yield* storageCp({
-        ...cpFlags({ src: path.join(tmp.current, "readme.md"), dst: "ss:///private/readme.md" }),
-        local: false,
-        projectRef: Option.some(FLAG_REF),
-      }).pipe(Effect.exit);
+      const dst = path.join(tmp.current, "out.md");
+      const exit = yield* storageCp(
+        cpFlags({ src: "ss:///private/readme.md", dst, remote: true }),
+      ).pipe(Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-      expect(requests.some((r) => r.url.startsWith(`https://${FLAG_REF}.supabase.co`))).toBe(true);
-      expect(requests.some((r) => r.url.includes(VALID_REF))).toBe(false);
-      expect(linkedCache.cached).toBe(true);
-      expect(linkedCache.cachedRef).toBe(FLAG_REF);
+      expect(yield* fs.readFileString(dst)).toBe("downloaded-bytes");
+      expect(out.promptConfirmCalls).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("rejects --project-ref combined with --local", () => {
-    const FLAG_REF = "flagflagflagflagflag";
-    const { layer, requests, linkedCache } = setupStorage(tmp.current, {
-      toml: 'project_id = "test"\n',
-      local: true,
-    });
-    return Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      yield* fs.writeFileString(path.join(tmp.current, "readme.md"), "hello world");
-      const exit = yield* storageCp({
-        ...cpFlags({ src: path.join(tmp.current, "readme.md"), dst: "ss:///private/readme.md" }),
-        local: true,
-        projectRef: Option.some(FLAG_REF),
-      }).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain(
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
-        );
-      }
-      expect(requests).toHaveLength(0);
-      expect(linkedCache.cached).toBe(false);
-    }).pipe(Effect.provide(layer));
+  describeDbTargetSelection("storage cp", {
+    dbUrl: false,
+    operands: ["ss:///private/readme.md", "out.md"],
+    workdir: () => tmp.current,
+    attempt: ({ workdir, args, target }) => {
+      const ctx = setupStorage(workdir, {
+        toml: 'project_id = "test"\n[api]\nport = 65432\n',
+        branches: [storageTestBranch("feature-x")],
+        cliArgs: args,
+        commandPath: ["storage", "cp"],
+        routes: [
+          { method: "GET", match: OBJECT("private/readme.md"), rawBody: "downloaded-bytes" },
+        ],
+      });
+      return {
+        layer: ctx.layer,
+        out: ctx.out,
+        run: storageCp({
+          ...cpFlags({ src: "ss:///private/readme.md", dst: `${workdir}/out.md` }),
+          ...target,
+        }),
+        target: () => storageTargetOf(ctx.requests),
+        cachedRef: () => ctx.linkedCache.cachedRef,
+        branchLookups: () => branchLookupsOf(ctx.managementCalls),
+      };
+    },
   });
 
   it.effect("propagates a non-200 from the gateway on upload", () => {
@@ -703,7 +712,7 @@ describe("storage cp", () => {
             cpFlags({
               src: path.join(tmp.current, "readme.md"),
               dst: "ss:///private/readme.md",
-              local: false,
+              remote: true,
               jobs: 1,
             }),
           );
@@ -716,7 +725,7 @@ describe("storage cp", () => {
           expect(yield* fs.exists(path.join(tmp.current, CACHE_FILE))).toBe(true);
           assertPermissionDrift({
             command: "storage cp",
-            activeFlags: { local: false, jobs: "1" },
+            activeFlags: { remote: true, jobs: "1" },
             requests: managementRequests,
           });
         }).pipe(Effect.provide(layer));
@@ -746,7 +755,7 @@ describe("stack backend", () => {
       expect(requests).toHaveLength(1);
       expect(requests[0]?.url.startsWith("http://127.0.0.1:59999")).toBe(true);
       expect(requests[0]?.headers["apikey"]).toBe(
-        generateGoJwt(STORAGE_TEST_JWT_SECRET, "service_role"),
+        generateLocalJwt(STORAGE_TEST_JWT_SECRET, "service_role"),
       );
     }).pipe(Effect.provide(layer));
   });
@@ -814,4 +823,25 @@ describe("stack backend", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+});
+
+describeHostedConsent("storage cp", {
+  api: storageConsentApi,
+  setup: (workdir) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(`${workdir}/readme.md`, "hello world");
+    }),
+  invoke: ({ workdir }) => {
+    const storage = storageConsentServices(workdir, [
+      { method: "POST", match: OBJECT("private/readme.md"), body: {} },
+    ]);
+    return {
+      run: storageCp({
+        ...cpFlags({ src: `${workdir}/readme.md`, dst: "ss:///private/readme.md" }),
+        remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
+      }).pipe(Effect.provide(storage.layer)),
+      mutations: storage.writes,
+    };
+  },
 });

@@ -7,9 +7,11 @@ import {
   configMaskedCaveat,
   configNotReturnedCaveat,
   configPlural,
+  configProviderDisableWarnings,
   configRenderChangeLines,
   configTargetPhrase,
   configUnmanagedCaveat,
+  type ConfigEnvOriginLookup,
 } from "../config.format.ts";
 
 /**
@@ -20,7 +22,7 @@ import {
 export interface ConfigDiffContext {
   /** The resolved comparison target's project ref. */
   readonly projectRef: string;
-  /** The branch name or UUID `--project-ref` carried, when it named one. */
+  /** The branch name or UUID `--remote` carried, when it named one. */
   readonly branch: string | undefined;
   /** Matched `[remotes.<name>]` block, when the local operand was merged. */
   readonly appliedRemote: string | undefined;
@@ -77,8 +79,12 @@ export function configDiffSummaryMessage(
  * Human-readable diff body for text mode. Per-change blocks come from `configRenderChangeLines`
  * (shared with `config push`); this only adds the trailing counts/notes lines.
  */
-export function renderConfigDiffText(changeSet: ConfigChangeSet, scope: ConfigApiScope): string {
-  const changeLines = configRenderChangeLines(changeSet.changes);
+export function renderConfigDiffText(
+  changeSet: ConfigChangeSet,
+  scope: ConfigApiScope,
+  originFor?: ConfigEnvOriginLookup,
+): string {
+  const changeLines = configRenderChangeLines(changeSet.changes, originFor);
 
   const lines: Array<string> = [];
   const { update, remote_only, local_only, total } = changeSet.counts;
@@ -98,6 +104,7 @@ export function renderConfigDiffText(changeSet: ConfigChangeSet, scope: ConfigAp
   if (changeSet.unmanaged.length > 0) {
     lines.push(`Note: ${configUnmanagedCaveat(changeSet.unmanaged)}`);
   }
+  lines.push(...configProviderDisableWarnings(changeSet.changes));
   return `${changeLines}${lines.join("\n")}\n`;
 }
 
@@ -110,6 +117,7 @@ export function configDiffPayload(
   changeSet: ConfigChangeSet,
   scope: ConfigApiScope,
   context: ConfigDiffContext,
+  originFor?: ConfigEnvOriginLookup,
 ): Record<string, unknown> {
   return {
     schema_version: CONFIG_DIFF_PAYLOAD_VERSION,
@@ -122,7 +130,7 @@ export function configDiffPayload(
         context.appliedRemote === undefined ? "base" : `remotes.${context.appliedRemote}`,
     },
     scope: { present: scope.present, missing: scope.missing },
-    changes: changeSet.changes.map(configChangePayloadEntry),
+    changes: changeSet.changes.map((change) => configChangePayloadEntry(change, originFor)),
     masked: changeSet.masked,
     unmanaged: changeSet.unmanaged,
     counts: changeSet.counts,

@@ -138,9 +138,19 @@ function validateSmsProviderSwitch(value: SmsProviderSwitchInput) {
 }
 
 export const sms = Schema.Struct({
+  enabled: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      default: defaultEnableSignup,
+      description:
+        "Allow/disallow the phone provider. When false, users can't sign up or sign in with a phone number (password or SMS OTP); set `auth.enable_signup = false` to block new signups only.",
+      tags,
+      links: [links.auth],
+    }),
+  ),
   enable_signup: Schema.Boolean.annotate({
     default: defaultEnableSignup,
-    description: "Allow/disallow new user signups via SMS to your project.",
+    description:
+      "Deprecated: use `auth.sms.enabled` instead. Allow/disallow the phone provider; when false, users can't sign up or sign in with a phone number.",
     tags,
     links: [links.auth],
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEnableSignup))),

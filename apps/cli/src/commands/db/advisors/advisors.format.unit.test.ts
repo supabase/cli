@@ -24,7 +24,7 @@ const lint = (over: Partial<AdvisorLint>): AdvisorLint => ({
   cacheKey: over.cacheKey ?? "",
 });
 
-describe("ADVISORS_LEVEL_ENUM (Go toEnum, exact case-insensitive)", () => {
+describe("ADVISORS_LEVEL_ENUM", () => {
   it("maps info/warn/error in both cases", () => {
     expect(ADVISORS_LEVEL_ENUM.toEnum("info")).toBe(0);
     expect(ADVISORS_LEVEL_ENUM.toEnum("INFO")).toBe(0);
@@ -46,7 +46,7 @@ describe("matchesAdvisorType", () => {
   });
 });
 
-describe("filterAdvisorLints (maps Go TestFilterLints)", () => {
+describe("filterAdvisorLints", () => {
   const lints: ReadonlyArray<AdvisorLint> = [
     lint({ name: "rls_disabled", level: "ERROR", categories: ["SECURITY"] }),
     lint({ name: "unindexed_fk", level: "INFO", categories: ["PERFORMANCE"] }),
@@ -143,7 +143,7 @@ describe("apiLintsToAdvisorLints", () => {
   });
 });
 
-describe("encodeAdvisorLints (Go outputAndCheck byte parity)", () => {
+describe("encodeAdvisorLints", () => {
   it("emits struct-order keys, jsonb metadata, cache_key last, trailing newline", () => {
     const lints: ReadonlyArray<AdvisorLint> = [
       lint({
@@ -192,7 +192,7 @@ describe("encodeAdvisorLints (Go outputAndCheck byte parity)", () => {
     expect(out).toContain('"cache_key": ""');
   });
 
-  it("emits categories:null (key present, null value) when categories is null — Go nil []string parity", () => {
+  it("emits categories:null (key present, null value) when categories is null", () => {
     const lintWithNullCategories: AdvisorLint = {
       name: "n",
       title: "",

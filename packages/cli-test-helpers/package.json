@@ -12,6 +12,10 @@
     "test:unit:run": "bun --bun vitest run --project unit --coverage.reportsDirectory=coverage/unit",
     "types:check": "tsc --noEmit"
   },
+  "dependencies": {
+    "@effect/platform-bun": "catalog:",
+    "effect": "catalog:"
+  },
   "devDependencies": {
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",

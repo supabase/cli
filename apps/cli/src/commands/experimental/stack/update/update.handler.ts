@@ -3,10 +3,9 @@ import { artifactServiceKinds, type ServiceKind } from "@supabase/stack/internal
 import { Effect, Option, Ref, Schema } from "effect";
 import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api-factory.service.ts";
 import { probeLinkedTarget } from "../../../../command-internal/hosted-versions.ts";
-import { readProjectLink } from "../../../../command-internal/project-link.ts";
+import { readProjectLink } from "../../../../shared/config/project-link.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
-import { loadLocalProjectContext } from "../../../../command-internal/local-project-context.ts";
-import { loadStackConfig, StackConfigError } from "../../../../command-internal/stack-config.ts";
+import { loadStackConfig } from "../../../../command-internal/stack-config.ts";
 import {
   LOCK_FILE,
   LockResolutionError,
@@ -95,20 +94,13 @@ export const stackUpdate = Effect.fn("experimental.stack.update")(function* (
       ),
     );
     const update = updatedLock({ services, probe, output });
-    yield* Effect.gen(function* () {
-      const context = yield* loadLocalProjectContext(
-        settings.workdir,
-        (message) => new StackConfigError({ message }),
-      );
-      return yield* loadStackConfig(settings.workdir, {
-        context,
-        publishesLock: true,
-        selection: (request) =>
-          update(request).pipe(
-            Effect.tap((result) => Ref.set(updated, result)),
-            Effect.as(defaultArtifactSelection()),
-          ),
-      });
+    yield* loadStackConfig(settings.workdir, {
+      publishesLock: true,
+      selection: (request) =>
+        update(request).pipe(
+          Effect.tap((result) => Ref.set(updated, result)),
+          Effect.as(defaultArtifactSelection()),
+        ),
     }).pipe(
       Effect.mapError((error) =>
         error instanceof StackCommandUpdateError

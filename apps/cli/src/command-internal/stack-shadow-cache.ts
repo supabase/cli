@@ -7,7 +7,7 @@ import {
   type ShadowCacheKeyInputs,
 } from "./db-bootstrap/shadow-cache.ts";
 import { resolveSetupWebhooksEnabled, type SetupDatabaseOptions } from "./db-bootstrap/db-setup.ts";
-import { viperEnvBoolWithProjectFallback } from "./viper-env.ts";
+import { supabaseEnvBoolWithProjectFallback } from "./supabase-env.ts";
 
 const encodeKeyParts = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema.String)));
 
@@ -38,9 +38,13 @@ export const stackShadowCacheEntry = Effect.fn("StackShadowCache.entry")(functio
 ) {
   if (
     bypassCache ||
-    !(yield* viperEnvBoolWithProjectFallback(SHADOW_CACHE_ENV, input.setup.projectEnvValues ?? {}, {
-      whenUnset: true,
-    }))
+    !(yield* supabaseEnvBoolWithProjectFallback(
+      SHADOW_CACHE_ENV,
+      input.setup.projectEnvValues ?? {},
+      {
+        whenUnset: true,
+      },
+    ))
   )
     return undefined;
   const rolesSql = yield* readRoles(input);

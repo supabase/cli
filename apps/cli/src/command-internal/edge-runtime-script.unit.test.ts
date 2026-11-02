@@ -16,7 +16,7 @@ describe("buildEdgeRuntimeStartCmd", () => {
     ]);
   });
 
-  it("drops --port when allocation failed (Go preserves prior behaviour)", () => {
+  it("drops --port when allocation failed", () => {
     expect(buildEdgeRuntimeStartCmd({ port: Option.none(), debug: false })).toEqual([
       "edge-runtime",
       "start",

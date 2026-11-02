@@ -6,6 +6,7 @@
 // Bun's `--compile` traces that dynamic import inside pg-delta's dist and
 // still embeds the libpg-query WASM asset it ultimately depends on.
 import { analyzeForShadow } from "@supabase/pg-delta/sql-order";
+import { Console, Effect } from "effect";
 
 const embeddedParser = Bun.embeddedFiles.find((file) => file.type === "application/wasm");
 
@@ -28,4 +29,4 @@ if (result.files.length !== 1) {
   throw new Error("analyzeForShadow did not reorder the expected statement");
 }
 
-console.log("libpg-query.wasm loaded");
+Effect.runSync(Console.log("libpg-query.wasm loaded"));

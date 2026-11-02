@@ -41,7 +41,7 @@ import {
 } from "effect";
 import { FetchHttpClient } from "effect/http";
 
-import { ensureGitignore, readProjectLink } from "./project-link.ts";
+import { ensureGitignore, readProjectLink } from "../shared/config/project-link.ts";
 import { stackArtifactSelection } from "./stack-artifact-selection.ts";
 import { StackConfigError } from "./stack-config.ts";
 import { warnDataConflicts } from "./stack-data-conflicts.ts";

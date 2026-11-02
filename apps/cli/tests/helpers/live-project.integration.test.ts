@@ -1,10 +1,12 @@
+import { BunFileSystem, BunPath } from "@effect/platform-bun";
 import { makeApiClient } from "@supabase/api/effect";
-import { Effect, Layer } from "effect";
+import { Cause, Effect, Exit, Layer } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { cliConfigProviderLayer } from "../../src/shared/config/cli-config-provider.layer.ts";
 import { provisionLiveEnvironment } from "./live-project.ts";
 
 const ref = "abcdefghijklmnopqrst";
@@ -65,7 +67,7 @@ describe("live project provisioning", () => {
       body: "sentinel-secret",
       headers: {},
     },
-  ])("redacts $name while cleaning up", async ({ status, body, headers }) => {
+  ])("redacts $name while cleaning up", ({ status, body, headers }) => {
     vi.stubEnv("SUPABASE_LIVE_API_URL", "https://api.supabase.green");
     vi.stubEnv("SUPABASE_ACCESS_TOKEN", "test-token");
     vi.stubEnv("SUPABASE_LIVE_ORG_ID", "org-slug");
@@ -74,66 +76,65 @@ describe("live project provisioning", () => {
 
     const requests: string[] = [];
     const ownedProjects = new Set<string>();
-    const client = await Effect.runPromise(
-      makeApiClient({ baseUrl: "https://api.supabase.green", accessToken: "test-token" }).pipe(
+    const platformApi = Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) => {
+        const url = new URL(request.url);
+        requests.push(`${request.method} ${url.pathname}`);
+        if (request.method === "GET" && url.pathname === "/v1/organizations") {
+          return Effect.succeed(
+            jsonResponse(request, 200, [{ id: "org-id", slug: "org-slug", name: "Test" }]),
+          );
+        }
+        if (request.method === "POST" && url.pathname === "/v1/projects") {
+          ownedProjects.add(ref);
+          return Effect.succeed(jsonResponse(request, 201, { ...project, database: undefined }));
+        }
+        if (request.method === "GET" && url.pathname === `/v1/projects/${ref}`) {
+          return Effect.succeed(jsonResponse(request, 200, project));
+        }
+        if (request.method === "GET" && url.pathname === `/v1/projects/${ref}/api-keys`) {
+          return Effect.succeed(jsonResponse(request, status, body, headers));
+        }
+        if (request.method === "DELETE" && url.pathname === `/v1/projects/${ref}`) {
+          ownedProjects.delete(ref);
+          return Effect.succeed(jsonResponse(request, 200, { id: 1, ref, name: "live-test" }));
+        }
+        return Effect.die(`unexpected request ${request.method} ${url.pathname}`);
+      }),
+    );
+
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* makeApiClient({
+          baseUrl: "https://api.supabase.green",
+          accessToken: "test-token",
+        });
+
+        const exit = yield* Effect.exit(provisionLiveEnvironment(client));
+        const failure = Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
+        if (status === 403) {
+          expect(String(failure)).toMatch(
+            /project API keys failed: GET \/v1\/projects\/abcdefghijklmnopqrst\/api-keys returned HTTP 403.*x-request-id=req-live-403.*response body omitted/,
+          );
+        } else {
+          expect(String(failure)).toContain(
+            "project API keys failed: management API response schema validation failed",
+          );
+        }
+        expect(requests.filter((request) => request.includes("/api-keys"))).toHaveLength(1);
+        expect(requests).toContain("DELETE /v1/projects/abcdefghijklmnopqrst");
+        expect(ownedProjects).toEqual(new Set());
+        const message = String(failure);
+        expect(message).not.toContain("test-token");
+        expect(message).not.toContain("secret-value");
+        expect(message).not.toContain("authorization denied");
+        expect(message).not.toContain("sentinel-secret");
+      }).pipe(
         Effect.provide(
-          Layer.succeed(
-            HttpClient.HttpClient,
-            HttpClient.make((request) => {
-              const url = new URL(request.url);
-              requests.push(`${request.method} ${url.pathname}`);
-              if (request.method === "GET" && url.pathname === "/v1/organizations") {
-                return Effect.succeed(
-                  jsonResponse(request, 200, [{ id: "org-id", slug: "org-slug", name: "Test" }]),
-                );
-              }
-              if (request.method === "POST" && url.pathname === "/v1/projects") {
-                ownedProjects.add(ref);
-                return Effect.succeed(
-                  jsonResponse(request, 201, { ...project, database: undefined }),
-                );
-              }
-              if (request.method === "GET" && url.pathname === `/v1/projects/${ref}`) {
-                return Effect.succeed(jsonResponse(request, 200, project));
-              }
-              if (request.method === "GET" && url.pathname === `/v1/projects/${ref}/api-keys`) {
-                return Effect.succeed(jsonResponse(request, status, body, headers));
-              }
-              if (request.method === "DELETE" && url.pathname === `/v1/projects/${ref}`) {
-                ownedProjects.delete(ref);
-                return Effect.succeed(
-                  jsonResponse(request, 200, { id: 1, ref, name: "live-test" }),
-                );
-              }
-              return Effect.die(`unexpected request ${request.method} ${url.pathname}`);
-            }),
-          ),
+          Layer.mergeAll(platformApi, BunFileSystem.layer, BunPath.layer, cliConfigProviderLayer),
         ),
       ),
     );
-
-    let failure: unknown;
-    try {
-      await Effect.runPromise(provisionLiveEnvironment(client));
-    } catch (error) {
-      failure = error;
-    }
-    if (status === 403) {
-      expect(String(failure)).toMatch(
-        /project API keys failed: GET \/v1\/projects\/abcdefghijklmnopqrst\/api-keys returned HTTP 403.*x-request-id=req-live-403.*response body omitted/,
-      );
-    } else {
-      expect(String(failure)).toContain(
-        "project API keys failed: management API response schema validation failed",
-      );
-    }
-    expect(requests.filter((request) => request.includes("/api-keys"))).toHaveLength(1);
-    expect(requests).toContain("DELETE /v1/projects/abcdefghijklmnopqrst");
-    expect(ownedProjects).toEqual(new Set());
-    const message = String(failure);
-    expect(message).not.toContain("test-token");
-    expect(message).not.toContain("secret-value");
-    expect(message).not.toContain("authorization denied");
-    expect(message).not.toContain("sentinel-secret");
   });
 });

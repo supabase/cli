@@ -60,6 +60,7 @@ function authInput(overrides: Partial<AuthEncoderInput> = {}): AuthEncoderInput 
     secrets: [],
     emailContent: EMPTY_EMAIL_CONTENT,
     remoteAuthAttributes: {},
+    config: getDefaultCliConfig(),
     now: DateTime.makeUnsafe("2030-01-01T00:00:00.000Z"),
     ...overrides,
   };
@@ -504,6 +505,13 @@ describe("encodeAuthBody", () => {
     expect(result.body).toEqual({ mailer_autoconfirm: false });
   });
 
+  it("inverts sms.enable_confirmations into sms_autoconfirm", () => {
+    const result = encodeAuthBody(
+      authInput({ changes: [change(["auth", "sms", "enable_confirmations"], true)] }),
+    );
+    expect(result.body).toEqual({ sms_autoconfirm: false });
+  });
+
   it("maps password_requirements through the character-class table", () => {
     const result = encodeAuthBody(
       authInput({ changes: [change(["auth", "password_requirements"], "letters_digits")] }),
@@ -935,6 +943,45 @@ describe("encodeAuthBody", () => {
           path: ["auth", "hook", "send_email", "enabled"],
           reason: "one or more of this group's required fields could not be resolved",
         },
+      ]);
+    });
+  });
+
+  describe("oauth server enabled + authorization path pair", () => {
+    it("a path-only change against a project that doesn't report enabled sends the local flag and discloses it", () => {
+      const result = encodeAuthBody(
+        authInput({
+          changes: [change(["auth", "oauth_server", "authorization_url_path"], "/new/consent")],
+          remote: { auth: { oauth_server: { authorization_url_path: "/oauth/consent" } } },
+          local: {
+            auth: { oauth_server: { enabled: true, authorization_url_path: "/new/consent" } },
+          },
+        }),
+      );
+      expect(result.body).toEqual({
+        oauth_server_enabled: true,
+        oauth_server_authorization_path: "/new/consent",
+      });
+      expect(result.forced).toEqual([{ path: ["auth", "oauth_server", "enabled"], value: true }]);
+    });
+
+    it("a disable on a project with no stored path sends the config's path and discloses it", () => {
+      const result = encodeAuthBody(
+        authInput({
+          changes: [change(["auth", "oauth_server", "enabled"], false, true)],
+          remote: { auth: { oauth_server: { enabled: true } } },
+          remoteAuthAttributes: {
+            oauth_server_enabled: true,
+            oauth_server_authorization_path: null,
+          },
+        }),
+      );
+      expect(result.body).toEqual({
+        oauth_server_enabled: false,
+        oauth_server_authorization_path: "/oauth/consent",
+      });
+      expect(result.forced).toEqual([
+        { path: ["auth", "oauth_server", "authorization_url_path"], value: "/oauth/consent" },
       ]);
     });
   });

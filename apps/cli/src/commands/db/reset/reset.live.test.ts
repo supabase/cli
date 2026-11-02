@@ -26,13 +26,13 @@ test("resets the remote database with local migrations", ({
       );
 
       const target = Effect.gen(function* () {
-        const result = yield* cliEffect(["db", "reset", "--db-url", project.dbUrl, "--yes"]);
+        const result = yield* cliEffect(["db", "reset", "--yes", `--remote=${project.dbUrl}`]);
         expect(result.exitCode, result.stderr).toBe(0);
         expect(`${result.stdout}${result.stderr}`).toContain("Resetting remote database");
       });
 
       const resetCleanup = Effect.gen(function* () {
-        const reset = yield* cliEffect(["db", "reset", "--db-url", project.dbUrl, "--yes"]);
+        const reset = yield* cliEffect(["db", "reset", "--yes", `--remote=${project.dbUrl}`]);
         requireLiveSuccess(reset, "db reset cleanup");
       });
 

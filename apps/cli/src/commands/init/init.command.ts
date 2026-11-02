@@ -8,6 +8,7 @@ import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.
 import { stdinLayer } from "../../shared/runtime/stdin.layer.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { init } from "./init.handler.ts";
+import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
 
 const config = {
   interactive: Flag.Boolean("interactive").pipe(
@@ -67,4 +68,5 @@ export const initCommand = Command.make("init", config).pipe(
   Command.provide(
     Layer.mergeAll(commandRuntimeLayer(["init"]), stdinLayer, cliConfigProviderLayer),
   ),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

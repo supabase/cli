@@ -10,9 +10,7 @@ import {
   conditionText,
   joinAnd,
   joinOr,
-  onlyLinked,
   simplify,
-  TARGET_VARIABLE,
   termOf,
   withoutVariables,
 } from "./permission-conditions.ts";
@@ -23,7 +21,7 @@ import type {
   ConditionData,
   Term,
 } from "./permission-conditions.ts";
-import { CommandFlagsAnnotation, flagCatalogFor } from "./permission-flags.ts";
+import { flagCatalogFor } from "./permission-flags.ts";
 import type { FlagCatalog } from "./permission-flags.ts";
 import { permissionSchemes } from "./permission-schemes.ts";
 import type { Alternatives, PermissionScheme, Requirement } from "./permission-schemes.ts";
@@ -214,11 +212,6 @@ function schemeSection(
   };
 }
 
-function notNeededWithOtherTargets(catalog: FlagCatalog): string {
-  const flags = ["local", "db-url"].filter((name) => catalog.get(name)?.hidden === false);
-  return flags.length === 0 ? "" : `Not needed with ${joinOr(flags.map((flag) => `--${flag}`))}.`;
-}
-
 /**
  * What help shows for a command's declared permissions, or `undefined` when the command calls no
  * API operation. Each registered scheme is resolved on its own.
@@ -229,7 +222,7 @@ export function resolvePermissionSection(
   schemes: ReadonlyArray<PermissionScheme> = permissionSchemes,
 ): PermissionSection | undefined {
   if (permissions.status === "unmapped") return { status: "unmapped" };
-  const context = conditionContext(permissions.operations, catalog, permissions.dbTargetDefault);
+  const context = conditionContext(permissions.operations, catalog);
   const reachable = permissions.operations.flatMap((entry): ReadonlyArray<ReachableEntry> => {
     const reduced = termOf(entry.when, context);
     return reduced === undefined
@@ -238,30 +231,21 @@ export function resolvePermissionSection(
   });
   if (reachable.length === 0) return undefined;
 
-  const { dbTargetDefault } = permissions;
-  const liftTarget = dbTargetDefault === "linked" && onlyLinked(reachable.map(({ term }) => term));
-  const withoutLifted = liftTarget
-    ? reachable.map((item) => ({ ...item, term: withoutVariables(item.term, [TARGET_VARIABLE]) }))
-    : reachable;
   const common = commonConditions(
-    withoutLifted.map(({ term }) => term),
+    reachable.map(({ term }) => term),
     context,
   );
-  const terms = withoutLifted.map((item) => ({
+  const terms = reachable.map((item) => ({
     ...item,
     term: withoutVariables(item.term, common.variables),
   }));
   const note = [
-    ...(liftTarget ? [notNeededWithOtherTargets(catalog)] : []),
     ...(common.positive.length > 0 ? [`Only needed with ${joinAnd(common.positive)}.`] : []),
     ...(common.negative.length > 0 ? [`Not needed with ${joinOr(common.negative)}.`] : []),
   ]
     .filter((sentence) => sentence !== "")
     .join(" ");
-  const when: ReadonlyArray<ConditionData> = [
-    ...(liftTarget ? [{ target: ["linked"] }] : []),
-    ...common.conditions,
-  ];
+  const when: ReadonlyArray<ConditionData> = common.conditions;
   return {
     status: "mapped",
     ...(note === "" ? {} : { note }),
@@ -320,15 +304,4 @@ export function permissionSectionForHelp(doc: HelpDoc.HelpDoc): PermissionSectio
     Context.getOption(doc.annotations, CommandPermissionsAnnotation),
     (declared) => Option.fromNullishOr(resolvePermissionSection(declared, flagCatalogFor(doc))),
   ).pipe(Option.getOrUndefined);
-}
-
-/** The help document without the annotations that hold a command's raw permission declaration. */
-export function withoutPermissionAnnotations(doc: HelpDoc.HelpDoc): HelpDoc.HelpDoc {
-  return {
-    ...doc,
-    annotations: Context.omit(
-      CommandPermissionsAnnotation,
-      CommandFlagsAnnotation,
-    )(doc.annotations),
-  };
 }

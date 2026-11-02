@@ -108,7 +108,8 @@ export const auth = Schema.Struct({
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEnableManualLinking))),
   enable_signup: Schema.Boolean.annotate({
     default: defaultEnableSignup,
-    description: "Allow/disallow new user signups to your project.",
+    description:
+      "Allow/disallow new user signups to your project. Existing users can still sign in.",
     tags,
     links: [links.auth],
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEnableSignup))),

@@ -4,9 +4,11 @@ import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
+import { announceTarget } from "../shared/output/command-target.service.ts";
 import { kongAuthHeaders } from "./kong-auth.ts";
 import { StorageGatewayNetworkError, StorageGatewayStatusError } from "./storage-gateway.errors.ts";
-import { goPathSplit } from "./storage-url.ts";
+import { splitDirAndFile } from "./storage-url.ts";
+import { renderLocalTarget } from "./target/target-identity.ts";
 
 /**
  * Client for the Supabase Storage service gateway (Kong). See
@@ -148,6 +150,15 @@ function localGatewayHint(port: string): string {
     `Check the port with \`lsof -nP -iTCP:${port} -sTCP:LISTEN\`, then stop the conflicting process or set a different \`api.port\` in supabase/config.toml.`
   );
 }
+
+/** Announces the local Storage API endpoint as the run's target. */
+export const announceLocalStorageTarget = (baseUrl: string) => {
+  const { hostname, port, protocol } = new URL(baseUrl);
+  const defaultPort = protocol === "https:" ? 443 : 80;
+  return announceTarget(
+    renderLocalTarget(hostname.replace(/^\[|\]$/g, ""), port === "" ? defaultPort : Number(port)),
+  );
+};
 
 /**
  * Whether a transport failure is a plain connection-refused. The
@@ -420,7 +431,7 @@ export const makeStorageGateway = Effect.fnUntraced(function* (opts: {
         Effect.flatMap((body) => decodeFieldResponse(body, "message")),
       ),
     listObjects: (bucket, prefix, page) => {
-      const [dir, name] = goPathSplit(prefix);
+      const [dir, name] = splitDirAndFile(prefix);
       const query: Record<string, unknown> = { prefix: dir };
       if (name.length > 0) query["search"] = name;
       query["limit"] = PAGE_LIMIT;

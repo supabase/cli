@@ -1,7 +1,7 @@
 /**
  * Slim-image runtime contracts that still differ from docker.io. Spec builders
  * switch on {@link usesSlimImageRuntime} so flag-off stays byte-identical even
- * if a caller passes a ghcr-shaped override.
+ * if a caller passes a slim-shaped override.
  *
  * Slim auth, storage, Vector, and the Elixir images (realtime, analytics,
  * pooler) ship BusyBox wget — not GNU wget and not curl. BusyBox documents
