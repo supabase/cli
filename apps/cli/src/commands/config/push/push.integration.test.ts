@@ -139,6 +139,8 @@ const POSTGREST_WRITE_RESPONSE = {
   max_rows: 0,
   db_pool: null,
   db_pool_acquisition_timeout: null,
+  db_pool_max_lifetime: null,
+  db_pool_max_idletime: null,
 };
 
 /**
