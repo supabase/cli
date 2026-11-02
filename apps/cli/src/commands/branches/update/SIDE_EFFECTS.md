@@ -45,10 +45,11 @@ Same auth fallback chain as every Management-API command. Project-ref discovery 
 
 ## Telemetry Events Fired
 
-| Event                   | When                                                 | Notable properties                                |
-| ----------------------- | ---------------------------------------------------- | ------------------------------------------------- |
-| `cli_command_executed`  | post-run, success or failure (via wrapper)           | `exit_code`, `duration_ms`, `flags`               |
-| `cli_upgrade_suggested` | on 4xx with `branching_persistent` entitlement gated | `{feature_key: "branching_persistent", org_slug}` |
+| Event                   | When                                                                                                              | Notable properties                                                        |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `cli_command_executed`  | post-run, success or failure (via wrapper)                                                                        | `exit_code`, `duration_ms`, `flags`                                       |
+| `cli_upgrade_suggested` | post-run (via wrapper), before `cli_command_executed`, on a 4xx whose body is the `entitlement_required` envelope | `feature_key` (from the envelope), `org_slug` (parsed from `upgrade_url`) |
+| `cli_upgrade_suggested` | mid-run, on a 4xx without the envelope when the entitlements lookup finds `branching_persistent` gated            | `{feature_key: "branching_persistent", org_slug}`                         |
 
 ## Output
 
