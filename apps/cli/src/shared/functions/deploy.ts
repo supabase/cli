@@ -2608,7 +2608,6 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
   const nothingToDeployMessage = useLocalBundler
     ? yield* Effect.gen(function* () {
         if (!(yield* isDockerRunning())) {
-          /* --use-api=false, --use-docker or a true --legacy-bundle refuses the API fallback. */
           if (explicitUseApi || explicitUseDocker || (explicitLegacyBundle && flags.legacyBundle)) {
             return yield* new FunctionDeployDockerNotRunningError({
               message:

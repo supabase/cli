@@ -2278,8 +2278,6 @@ describe("functions deploy", () => {
     ])(
       "fails without deploying when %s is passed and Docker is not running",
       ([flag, parsedFlags]) => {
-        // `useDocker` forces the API path only when `useApi` resolves to true, so
-        // `--use-api=false` alone leaves `useDocker`'s own default (true) in effect.
         const out = mockOutput({ format: "text" });
         const child = mockChildProcessSpawner({ exitCode: 1 });
         const api = mockCommandPlatformApi({
