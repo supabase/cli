@@ -51,9 +51,9 @@ describe("REPORT_QUERIES", () => {
       "replication_slots",
       "role_stats",
       "table_stats",
+      "toast_sizes",
       "traffic_profile",
       "unused_indexes",
-      "toast_sizes",
       "vacuum_stats",
     ]);
   });

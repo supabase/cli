@@ -16,7 +16,7 @@ validating those CSVs.
 | `<workdir>/supabase/.temp/project-ref`         | plain text | a remote project: resolves the ref (bare `--remote` with no `SUPABASE_PROJECT_ID`) and tells whether it is the linked project; with no selector, only to word the linked-checkout hint |
 | `<workdir>/supabase/.temp/linked-project.json` | JSON       | to name the project in the `Target:` banner and the linked-checkout hint, and as the parent project for `--remote=<branch>`                                                            |
 | `~/.supabase/access-token`                     | plain text | when `SUPABASE_ACCESS_TOKEN` unset and the target is a remote project (or a branch is looked up)                                                                                       |
-| `<output-dir>/<YYYY-MM-DD>/<name>.csv` ×14     | CSV        | read back in-memory for rule evaluation                                                                                                                                                |
+| `<output-dir>/<YYYY-MM-DD>/<name>.csv` ×15     | CSV        | read back in-memory for rule evaluation                                                                                                                                                |
 | `PGSSL*` PEM, `pg_service.conf`                | PEM, libpq | remote project, when set; see `db push`                                                                                                                                                |
 
 A **missing** `config.toml` is fine (defaults apply); a
@@ -30,13 +30,13 @@ or an unknown rule key aborts the command before connecting. Rules and `env(VAR)
 | Path                                       | Mode | When                                                            |
 | ------------------------------------------ | ---- | --------------------------------------------------------------- |
 | `<output-dir>/<YYYY-MM-DD>/` (directory)   | 0755 | always — created recursively                                    |
-| `<output-dir>/<YYYY-MM-DD>/<name>.csv` ×14 | 0644 | always — one CSV per inspect query (server-side `COPY ... CSV`) |
+| `<output-dir>/<YYYY-MM-DD>/<name>.csv` ×15 | 0644 | always — one CSV per inspect query (server-side `COPY ... CSV`) |
 | `~/.supabase/telemetry.json`               | —    | always (telemetry flush)                                        |
 
-The 14 CSV basenames (underscored, matching the SQL filenames — **not** the
+The 15 CSV basenames (underscored, matching the SQL filenames — **not** the
 `inspect db` command names): `bloat`, `blocking`, `calls`, `db_stats`,
 `index_stats`, `locks`, `long_running_queries`, `outliers`, `replication_slots`,
-`role_stats`, `table_stats`, `traffic_profile`, `unused_indexes`, `vacuum_stats`.
+`role_stats`, `table_stats`, `toast_sizes`, `traffic_profile`, `unused_indexes`, `vacuum_stats`.
 
 The date folder is **local-time** `YYYY-MM-DD`. A relative `--output-dir` resolves
 against the process CWD, not `--workdir`; an absolute path is used as-is.

@@ -61,9 +61,9 @@ export const REPORT_QUERIES: ReadonlyArray<ReportQuery> = [
   { fileName: "replication_slots", sql: replicationSlotsSpec.sql },
   { fileName: "role_stats", sql: roleStatsSpec.sql },
   { fileName: "table_stats", sql: tableStatsSpec.sql },
+  { fileName: "toast_sizes", sql: toastSizesSpec.sql },
   { fileName: "traffic_profile", sql: trafficProfileSpec.sql },
   { fileName: "unused_indexes", sql: UNUSED_INDEXES_REPORT_SQL },
-  { fileName: "toast_sizes", sql: toastSizesSpec.sql },
   { fileName: "vacuum_stats", sql: vacuumStatsSpec.sql },
 ];
 
