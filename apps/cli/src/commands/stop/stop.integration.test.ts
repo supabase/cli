@@ -188,6 +188,7 @@ function defaultRoute(
       return {
         stdout: [
           format
+            .replaceAll("{{.Client.DefaultAPIVersion}}", dockerClientApiVersion)
             .replaceAll("{{.Client.APIVersion}}", dockerClientApiVersion)
             .replaceAll("{{.Server.APIVersion}}", dockerServerApiVersion),
         ],

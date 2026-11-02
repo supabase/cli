@@ -311,9 +311,10 @@ export const dockerSupportsVolumePruneAllFlag = (spawner: Spawner) =>
 
 /**
  * `docker create --health-start-interval` needs API >= 1.44 on both ends and is a hard failure
- * below that. The Podman CLI rejects the flag, and a `docker` shim for it prints Podman's own
- * `6.x` here, so a major other than 1 is not Docker's API. The real `docker` client on a Podman
- * socket reports 1.44 and passes: Podman keeps the start period and drops the start interval.
+ * below that. The Podman CLI rejects the flag, and a `docker` shim for it fails this format or
+ * prints Podman's own `6.x`, so a major other than 1 is not Docker's API. The real `docker` client
+ * on a Podman socket reporting 1.44 passes: Podman keeps the start period and drops the start
+ * interval.
  */
 export const dockerSupportsHealthStartInterval = (spawner: Spawner) =>
   dockerApiVersionsSatisfy(
@@ -321,20 +322,20 @@ export const dockerSupportsHealthStartInterval = (spawner: Spawner) =>
     (version) => version.startsWith("1.") && isDockerApiVersionAtLeast(version, "1.44"),
   );
 
-/* Reads the Docker client and daemon API versions; `false` on any failure to read a pair. */
+/* Reads the client's own and effective API versions and the daemon's, `false` on any failure.
+   `DOCKER_API_VERSION` can lift the effective one past what the client binary supports. */
 const dockerApiVersionsSatisfy = (spawner: Spawner, supported: (version: string) => boolean) =>
   Effect.scoped(
     Effect.gen(function* () {
-      const child = yield* spawner.spawn(
-        ChildProcess.make(
-          "docker",
-          ["version", "--format", "{{.Client.APIVersion}} {{.Server.APIVersion}}"],
-          {
-            stdin: "ignore",
-            stdout: "pipe",
-            stderr: "ignore",
-          },
-        ),
+      const child = yield* spawnRuntime(
+        spawner,
+        "docker",
+        [
+          "version",
+          "--format",
+          "{{.Client.DefaultAPIVersion}} {{.Client.APIVersion}} {{.Server.APIVersion}}",
+        ],
+        { stdin: "ignore", stdout: "pipe", stderr: "ignore" },
       );
       const [exitCode, stdout] = yield* Effect.all(
         [child.exitCode.pipe(Effect.map(Number)), collectText(child.stdout)],
@@ -342,6 +343,6 @@ const dockerApiVersionsSatisfy = (spawner: Spawner, supported: (version: string)
       );
       if (exitCode !== 0) return false;
       const versions = stdout.trim().split(/\s+/);
-      return versions.length === 2 && versions.every(supported);
+      return versions.length === 3 && versions.every(supported);
     }),
   ).pipe(Effect.orElseSucceed(() => false));

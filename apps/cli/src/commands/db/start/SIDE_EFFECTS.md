@@ -83,9 +83,9 @@ composition reuses too — see that command's `SIDE_EFFECTS.md`):
    leaves `starting`, the container stops running, or Docker cannot launch its health check. Never
    fails the command, whatever the outcome, and is not covered by the rollback below. When the
    `docker version` probe reports API >= 1.44 on both ends, `docker create` also gets
-   `--health-start-period 10s --health-start-interval 1s`, so this ends about 1s after start
-   instead of 10s. Older engines and the Podman CLI get neither flag; the `docker` client on a
-   Podman socket gets both, Podman drops the interval, and there is no speedup.
+   `--health-start-period 10s --health-start-interval 1s`, so the first check runs about 1s after
+   start instead of 10s. Older engines and the Podman CLI get neither flag; the `docker` client on a
+   Podman socket reporting API >= 1.44 gets both, Podman drops the interval, and there is no speedup.
 
 Any failure from step 1 onward prints `Stopping containers...` to stderr and rolls back via
 `rollbackDatabaseStart`, which only touches what this command creates: the db container

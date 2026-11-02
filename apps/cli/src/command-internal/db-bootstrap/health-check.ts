@@ -105,18 +105,11 @@ export interface HealthCheckPostgrestGateway extends HealthCheckGateway {
 /**
  * How to judge a container whose Docker health check cannot run: accept it as `running`, probe
  * its route through the gateway, or (for the gateway itself) accept any HTTP response from it.
- * The gateway also gets that last probe while Docker still reports it `starting`.
  */
 export type ExecFallbackProbe =
   | { readonly kind: "running" }
   | { readonly kind: "gateway"; readonly gateway: HealthCheckGateway; readonly path: string }
-  | {
-      readonly kind: "gateway-reachable";
-      readonly gateway: HealthCheckGateway;
-      /* Kong's own published port, for the `starting` probe: `gateway` follows `api.external_url`.
-         A bare URL: a project `.env` can set this host, and any HTTP response counts. */
-      readonly localApiUrl: string;
-    };
+  | { readonly kind: "gateway-reachable"; readonly gateway: HealthCheckGateway };
 
 export interface WaitForHealthyServicesOptions {
   readonly timeoutSeconds?: number;
@@ -125,7 +118,7 @@ export interface WaitForHealthyServicesOptions {
   readonly edgeRuntime?: HealthCheckPostgrestGateway;
   /** Each watched container's already-resolved image, keyed by container name. */
   readonly images?: ReadonlyMap<string, string>;
-  /** Per-container fallback for when Docker cannot run, or has yet to pass, a health check. */
+  /** Per-container fallback used only when Docker cannot run that container's health check. */
   readonly execFallbacks?: ReadonlyMap<string, ExecFallbackProbe>;
 }
 
@@ -230,23 +223,14 @@ function checkContainerReady(
           );
         }
       }
-      /* Kong's image checks every 10s and takes no start flags; a served request is proof enough. */
-      if (state.health === "starting" && fallback?.kind === "gateway-reachable") {
-        return checkHttpReady({ apiExternalUrl: fallback.localApiUrl }, "/", "GET", true).pipe(
-          Effect.mapError(() => formatNotReadyReason(state)),
-        );
-      }
       return Effect.fail(formatNotReadyReason(state));
     }),
   );
 }
 
-/**
- * An HTTP request through the local Kong gateway, expecting exactly 200 unless `anyStatus`. It
- * carries Kong's auth headers only when the gateway has a `secretKey`.
- */
+/** An HTTP request through the local Kong gateway, expecting exactly 200 unless `anyStatus`. */
 function checkHttpReady(
-  gateway: { readonly apiExternalUrl: string; readonly secretKey?: string },
+  gateway: HealthCheckGateway,
   path: string,
   method: "HEAD" | "GET" = "HEAD",
   anyStatus = false,
@@ -254,10 +238,9 @@ function checkHttpReady(
   return Effect.gen(function* () {
     const httpClient = yield* HttpClient.HttpClient;
     const url = `${gateway.apiExternalUrl}${path}`;
-    const headers = gateway.secretKey === undefined ? {} : kongAuthHeaders(gateway.secretKey);
     const request = (
       method === "GET" ? HttpClientRequest.get(url) : HttpClientRequest.head(url)
-    ).pipe(HttpClientRequest.setHeaders(headers));
+    ).pipe(HttpClientRequest.setHeaders(kongAuthHeaders(gateway.secretKey)));
     const status = yield* Effect.gen(function* () {
       const response = yield* httpClient.execute(request);
       if (method === "GET") {

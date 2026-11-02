@@ -1760,73 +1760,29 @@ describe("start integration", () => {
         );
       };
 
-      /* A Podman socket answers 1.44 too and rejects start flags on a create with no check. */
       it.effect("emits the health-start flags on a supported engine, asking Docker once", () =>
         Effect.gen(function* () {
           const { layer, child } = yield* setup({
-            route: withVersionAnswer({ stdout: ["1.44 1.44"] }),
+            route: withVersionAnswer({ stdout: ["1.44 1.44 1.44"] }),
           });
 
           yield* start(flags()).pipe(Effect.provide(layer));
 
           expect(child.spawned.filter((s) => s.args[0] === "version")).toHaveLength(1);
-          for (const service of ["db", "auth", "realtime", "storage", "studio"]) {
+          for (const service of ["db", "auth", "realtime", "storage", "studio", "kong"]) {
             expect(healthFlagsFor(child.spawned, service)).toMatchObject({
               "--health-interval": "10s",
               "--health-start-period": "10s",
               "--health-start-interval": "1s",
             });
           }
-          expect(healthFlagsFor(child.spawned, "kong")).toEqual({});
           expect(healthFlagsFor(child.spawned, "rest")).toEqual({});
         }).pipe(Effect.provide(BunServices.layer)),
       );
 
-      const LOCAL_API = "http://127.0.0.1:54321/";
-      const TUNNEL_API = "https://tunnel.example.com";
-      const neverHealthyKong = () =>
-        defaultRoute({ neverHealthy: new Set(["supabase_kong_demo"]) });
       it.effect.each([
-        { name: "a starting Kong", external: "", kongRoute: neverHealthyKong, probed: LOCAL_API },
-        {
-          name: "a starting Kong behind api.external_url",
-          external: TUNNEL_API,
-          kongRoute: neverHealthyKong,
-          probed: LOCAL_API,
-        },
-        {
-          name: "an exec-failed Kong",
-          external: "",
-          kongRoute: execBrokenHostRoute,
-          probed: LOCAL_API,
-        },
-        {
-          name: "an exec-failed Kong behind api.external_url",
-          external: TUNNEL_API,
-          kongRoute: execBrokenHostRoute,
-          probed: `${TUNNEL_API}/`,
-        },
-      ])("probes $probed for $name", ({ external, kongRoute, probed }) =>
-        Effect.gen(function* () {
-          const http = mockStorageBucketHttpClient();
-          const { layer } = yield* setup({
-            configContents: `project_id = "demo"\n[api]\nexternal_url = "${external}"\n`,
-            route: kongRoute(),
-            httpClientLayer: http.layer,
-          });
-
-          yield* start(flags()).pipe(Effect.provide(layer));
-
-          const gatewayProbes = http.requests.filter(
-            ({ method, url }) => method === "GET" && new URL(url).pathname === "/",
-          );
-          expect(gatewayProbes.map(({ url }) => url)).toEqual([probed]);
-        }).pipe(Effect.provide(BunServices.layer)),
-      );
-
-      it.effect.each([
-        { name: "an engine below API 1.44", answer: { stdout: ["1.43 1.43"] } },
-        { name: "a docker shim for Podman", answer: { stdout: ["6.1.3 6.1.3"] } },
+        { name: "an engine below API 1.44", answer: { stdout: ["1.43 1.43 1.43"] } },
+        { name: "a docker shim for Podman", answer: { stdout: ["6.1.3 6.1.3 6.1.3"] } },
         { name: "a failing docker version", answer: { exitCode: 1 } },
       ])("passes none of the start flags on $name", ({ answer }) =>
         Effect.gen(function* () {
@@ -1839,7 +1795,6 @@ describe("start integration", () => {
           for (const create of creates) {
             expect(create.args).not.toContain("--health-start-interval");
           }
-          expect(healthFlagsFor(child.spawned, "kong")).toEqual({});
           expect(healthFlagsFor(child.spawned, "auth")).not.toHaveProperty("--health-start-period");
         }).pipe(Effect.provide(BunServices.layer)),
       );

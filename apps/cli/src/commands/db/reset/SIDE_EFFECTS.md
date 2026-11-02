@@ -117,9 +117,9 @@ Docker's first health verdict on the database container (polling `docker contain
 1s until the status leaves `starting`, the container stops running, or Docker cannot launch its
 health check), so a following `supabase status` does not see `starting`. That wait never fails the
 reset. When `docker version` reports API >= 1.44 on both ends, `docker create` also gets
-`--health-start-period 10s --health-start-interval 1s`, so PG15 ends that wait about 1s after start
+`--health-start-period 10s --health-start-interval 1s`, so its first check runs about 1s after start
 instead of 10s. Older engines and the Podman CLI get neither flag; the `docker` client on a Podman
-socket gets both, Podman drops the interval, and there is no speedup.
+socket reporting API >= 1.44 gets both, Podman drops the interval, and there is no speedup.
 
 No subprocess delegation on either target — the remote path's
 `--experimental` schema-files apply is fully native.

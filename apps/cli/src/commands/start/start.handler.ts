@@ -26,7 +26,7 @@ import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { EventStackStarted } from "../../shared/telemetry/event-catalog.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
-import { resolveApiExternalUrl, resolveStudioApiUrl } from "../../command-internal/api-url.ts";
+import { resolveStudioApiUrl } from "../../command-internal/api-url.ts";
 import { isBitbucketPipeline } from "../../command-internal/bitbucket-pipeline.ts";
 import { aqua, yellow } from "../../command-internal/colors.ts";
 import {
@@ -1394,14 +1394,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           execFallbacks.set(
             spec.containerName,
             entry.gatewayReachable === true
-              ? {
-                  kind: "gateway-reachable",
-                  gateway,
-                  localApiUrl: resolveApiExternalUrl(
-                    { port: values.apiPort, tls: { enabled: apiTlsEnabled } },
-                    context.hostname,
-                  ),
-                }
+              ? { kind: "gateway-reachable", gateway }
               : entry.gatewayReadyPath !== undefined && gates.kong
                 ? { kind: "gateway", gateway, path: entry.gatewayReadyPath }
                 : { kind: "running" },

@@ -267,6 +267,13 @@ export function buildKongContainerSpec(
       { containerPort: "8443" },
       { containerPort: String(KONG_NGINX_TEMPLATE_SERVER_PORT) },
     ],
+    /* The image's own check, spelled out so the health start flags can apply to it. */
+    healthcheck: {
+      test: ["CMD-SHELL", "kong health"],
+      intervalSeconds: 10,
+      timeoutSeconds: 10,
+      retries: 10,
+    },
     restartPolicy: "unless-stopped",
     networkId: input.networkId,
     networkAliases: KONG_NETWORK_ALIASES,
