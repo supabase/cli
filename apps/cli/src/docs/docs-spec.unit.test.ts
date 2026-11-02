@@ -5,11 +5,13 @@ import { Command, Flag } from "effect/cli";
 import type { PlatformError } from "effect/PlatformError";
 
 import { ExperimentalFlag } from "../command-internal/global-flags.ts";
+import { hostedRemoteFlag, remoteFlag } from "../../tests/helpers/remote-flag-fixture.ts";
 
 import { rootCommand } from "../cli/root.ts";
 import { DocsExamplesError, readDocsContent, type DocsContent } from "./docs-spec.content.ts";
 import {
   buildDocsSpec,
+  docsFlagDoc,
   docsOverlayPath,
   docsStripOverlayHeading,
   stringifyDocsSpec,
@@ -82,6 +84,21 @@ describe("docsStripOverlayHeading", () => {
   it("keeps content that does not start with a heading", () => {
     expect(docsStripOverlayHeading("Creates a resource.\nMore.\n")).toBe(
       "Creates a resource.\nMore.\n",
+    );
+  });
+});
+
+describe("docsFlagDoc", () => {
+  it("renders --remote with the value hint its declaration carries", () => {
+    const doc = docsFlagDoc(["supabase", "db", "push"], remoteFlag);
+
+    expect(doc?.name).toBe("--remote[=<ref|branch|url>]");
+    expect(doc?.id).toBe("remote");
+  });
+
+  it("renders the narrower hint of a hosted command's --remote", () => {
+    expect(docsFlagDoc(["supabase", "functions", "deploy"], hostedRemoteFlag)?.name).toBe(
+      "--remote[=<ref|branch>]",
     );
   });
 });
@@ -161,7 +178,7 @@ describe("buildDocsSpec", () => {
     }
   });
 
-  it("excludes Go-deprecated commands from the spec and from subcommand lists", () => {
+  it("excludes deprecated commands from the spec and from subcommand lists", () => {
     const { byId } = builtSpec();
     for (const excluded of DOCS_EXCLUDED) {
       expect(byId.has(excluded)).toBe(false);
@@ -193,10 +210,7 @@ describe("buildDocsSpec", () => {
     expect(link).toBeDefined();
     expect(link?.tags).toEqual(["local-dev"]);
     expect(link?.usage).toBe("supabase link [ref-or-branch] [flags]");
-    expect(link?.flags.map((flag) => flag.id)).toEqual(["password", "project-ref", "skip-pooler"]);
-    expect(link?.flags.find((flag) => flag.id === "password")?.name).toBe(
-      "-p, --password <string>",
-    );
+    expect(link?.flags.map((flag) => flag.id)).toEqual(["project-ref", "skip-pooler"]);
     expect(link?.description).toBe(
       docsStripOverlayHeading(content.overlays.get("supabase/link.md") ?? ""),
     );
@@ -309,7 +323,7 @@ describe("buildDocsSpec", () => {
 });
 
 describe("review fixes stay fixed", () => {
-  it("excludes the deprecated --include-raw-output from every domains page", () => {
+  it("does not publish the removed --include-raw-output on any domains page", () => {
     const { spec, byId } = builtSpec();
     for (const command of spec.commands) {
       expect(
@@ -317,7 +331,7 @@ describe("review fixes stay fixed", () => {
         `${command.id} publishes include-raw-output`,
       ).toBe(false);
     }
-    expect(byId.get("supabase-domains-get")?.flags.map((flag) => flag.id)).toContain("project-ref");
+    expect(byId.get("supabase-domains-get")?.flags.map((flag) => flag.id)).toContain("remote");
   });
 
   it("renders required variadic usage from the override table", () => {

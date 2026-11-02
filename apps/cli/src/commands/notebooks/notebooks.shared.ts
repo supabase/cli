@@ -2,9 +2,11 @@ import type { ApiClient } from "@supabase/api/effect";
 import { V2GetNotebookInput, V2UpdateNotebookInput } from "@supabase/api/effect";
 import { Effect, Exit, FileSystem, Option, Path, Schema, Stream } from "effect";
 import { block } from "../../command-internal/command-permissions/model.ts";
+import { canPrompt } from "../../command-internal/hosted-consent/hosted-consent.prompt.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { notebooksMachineOutputRequested } from "./notebooks.output.ts";
 import { sanitizeInlineName, mapHttpError } from "../../command-internal/http-errors.ts";
+import { fsErrorCause } from "../../command-internal/config-validate.ts";
 import {
   canonicalPathForContainment,
   isPathContainedInRoot,
@@ -54,13 +56,6 @@ export const notebooksDir = Effect.fnUntraced(function* (workdir: string) {
 });
 
 const notebookFileExtension = ".json";
-
-/**
- * `--project-ref` is a project identifier, not user content, so its value is
- * logged verbatim — the same call `functions download` / `functions deploy` make
- * for the same flag.
- */
-export const notebooksProjectRefSafeFlags = ["project-ref"] as const;
 
 /** Page size for the list walk — the API's maximum, so the walk is one call in practice. */
 const NOTEBOOK_PAGE_SIZE = 100;
@@ -130,18 +125,20 @@ const notebookFilePath = Effect.fnUntraced(function* (workdir: string, name: str
  * (`resolveEmailTemplateContentPath`).
  */
 const ensureNotebookPathContained = Effect.fnUntraced(function* (workdir: string, path: string) {
-  const contained = yield* Effect.try({
-    try: () =>
-      isPathContainedInRoot(
-        canonicalPathForContainment(workdir),
-        canonicalPathForContainment(path),
-      ),
-    catch: (cause) =>
-      new NotebookFileError({
+  const pathService = yield* Path.Path;
+  const contained = yield* Effect.all([
+    canonicalPathForContainment(workdir),
+    canonicalPathForContainment(path),
+  ]).pipe(
+    Effect.map(([root, candidate]) => isPathContainedInRoot(pathService, root, candidate)),
+    Effect.mapError((error) => {
+      const cause = fsErrorCause(error);
+      return new NotebookFileError({
         detail: `Cannot resolve ${path}: ${cause instanceof Error ? cause.message : String(cause)}`,
         suggestion: "Check the notebooks path is a readable directory.",
-      }),
-  });
+      });
+    }),
+  );
   if (!contained) {
     // Echoes the declared path rather than what it resolves to, so a hostile checkout cannot
     // use the error to probe where its symlink lands.
@@ -568,7 +565,7 @@ export type NotebooksReconcileChoice = "keep" | "delete" | "copy";
  * says which, so the command asks instead of picking.
  *
  * `keep` is the answer whenever there is nobody to ask — a non-TTY, a machine
- * output format, or a cancelled prompt. The other answers mutate local or remote
+ * output format, an agent run, or a cancelled prompt. The other answers mutate local or remote
  * state, so the unattended run reports the divergence and leaves both sides alone rather
  * than resolving it in a direction nobody chose.
  */
@@ -577,15 +574,13 @@ export const promptNotebooksReconcile = Effect.fnUntraced(function* (options: {
   readonly names: ReadonlyArray<string>;
   readonly deleteLabel: string;
   readonly copyLabel: string;
-  /** `-o json|yaml|toml|env` — stdout belongs to the payload, so do not prompt. */
-  readonly machineOutput: boolean;
 }) {
   const output = yield* Output;
 
   const listing = `${options.summary}\n${options.names.map((name) => ` • ${sanitizeInlineName(name)}`).join("\n")}\n`;
   yield* output.raw(listing, "stderr");
 
-  if (output.format !== "text" || !output.interactive || options.machineOutput) {
+  if (!(yield* canPrompt)) {
     yield* output.raw("Left alone — rerun interactively to resolve.\n", "stderr");
     return "keep";
   }

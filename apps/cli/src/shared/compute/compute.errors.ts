@@ -279,37 +279,6 @@ export class ComputeApiUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-/** The user answered the `delete` confirmation with something other than the name. */
-export class ComputeDeleteNotConfirmedError extends Data.TaggedError(
-  "ComputeDeleteNotConfirmedError",
-)<{
-  readonly detail: string;
-  readonly suggestion: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.cancelled;
-  }
-}
-
-/**
- * `delete` could not ask for confirmation and was not told to skip it.
- *
- * There is nowhere to read a typed answer from without an interactive terminal,
- * and the alternative to refusing is deleting on the strength of the command
- * line alone — so a redirected stdout or a CI runner has to pass `--yes`
- * (or `SUPABASE_YES`) to say that out loud.
- */
-export class ComputeDeleteConfirmationRequiredError extends Data.TaggedError(
-  "ComputeDeleteConfirmationRequiredError",
-)<{
-  readonly detail: string;
-  readonly suggestion: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
 /**
  * The logs query itself failed. The analytics endpoint can answer HTTP 200 with a populated
  * `error` field, so this isn't reachable from a status code alone; it also covers the server's

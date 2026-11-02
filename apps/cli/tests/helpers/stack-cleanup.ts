@@ -27,6 +27,6 @@ export const destroyTestStacks = (
       const combined = failures
         .slice(1)
         .reduce((cause, exit) => Cause.combine(cause, exit.cause), first.cause);
-      yield* Effect.failCause(combined);
+      return yield* Effect.failCause(combined);
     }
   }).pipe(Effect.orDie);

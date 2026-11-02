@@ -1,7 +1,7 @@
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { NodeServices } from "@effect/platform-node";
+import { Effect, FileSystem, Path, Schema } from "effect";
 import { describe, expect, test } from "vitest";
 
 import * as effectModule from "./effect.ts";
@@ -26,32 +26,45 @@ describe("@supabase/api entrypoints", () => {
     expect(effectModule.DEFAULT_SUPABASE_API_URL).toBe("https://api.supabase.com");
   });
 
-  test("does not generate separate promise or standalone operation artifacts", () => {
-    const srcDir = dirname(fileURLToPath(import.meta.url));
-    expect(existsSync(join(srcDir, "generated/promise-client.ts"))).toBe(false);
-    expect(existsSync(join(srcDir, "generated/effect-operations.ts"))).toBe(false);
-  });
+  test("does not generate separate promise or standalone operation artifacts", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const srcDir = path.dirname(fileURLToPath(import.meta.url));
+        expect(yield* fs.exists(path.join(srcDir, "generated/promise-client.ts"))).toBe(false);
+        expect(yield* fs.exists(path.join(srcDir, "generated/effect-operations.ts"))).toBe(false);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ));
 
-  test("ships the OpenAPI spec as a json subpath artifact", () => {
-    const srcDir = dirname(fileURLToPath(import.meta.url));
-    const packageJson = JSON.parse(readFileSync(join(srcDir, "../package.json"), "utf8")) as {
-      readonly exports: Record<string, string | Record<string, string>>;
-    };
-    const openApiDocument = JSON.parse(
-      readFileSync(join(srcDir, "generated/openapi.json"), "utf8"),
-    ) as { readonly openapi: string };
+  test("ships the OpenAPI spec as a json subpath artifact", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
+        const srcDir = path.dirname(fileURLToPath(import.meta.url));
+        const packageJson = yield* Schema.decodeEffect(
+          Schema.fromJsonString(
+            Schema.Struct({ exports: Schema.Record(Schema.String, Schema.Unknown) }),
+          ),
+        )(decoder.decode(yield* fs.readFile(path.join(srcDir, "../package.json"))));
+        const openApiDocument = yield* Schema.decodeEffect(
+          Schema.fromJsonString(Schema.Struct({ openapi: Schema.Unknown })),
+        )(decoder.decode(yield* fs.readFile(path.join(srcDir, "generated/openapi.json"))));
 
-    expect(packageJson.exports["."]).toEqual({
-      bun: "./src/bun.ts",
-      default: "./src/node.ts",
-    });
-    expect(packageJson.exports["./effect"]).toBe("./src/effect.ts");
-    expect(packageJson.exports["./permissions"]).toBe("./src/generated/permissions.ts");
-    expect(packageJson.exports["./openapi.json"]).toBe("./src/generated/openapi.json");
-    expect(packageJson.exports["./bun"]).toBeUndefined();
-    expect(packageJson.exports["./node"]).toBeUndefined();
-    expect(openApiDocument.openapi).toBe("3.0.0");
-  });
+        expect(packageJson.exports["."]).toEqual({
+          bun: "./src/bun.ts",
+          default: "./src/node.ts",
+        });
+        expect(packageJson.exports["./effect"]).toBe("./src/effect.ts");
+        expect(packageJson.exports["./permissions"]).toBe("./src/generated/permissions.ts");
+        expect(packageJson.exports["./openapi.json"]).toBe("./src/generated/openapi.json");
+        expect(packageJson.exports["./bun"]).toBeUndefined();
+        expect(packageJson.exports["./node"]).toBeUndefined();
+        expect(openApiDocument.openapi).toBe("3.0.0");
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ));
 
   test("exports a stable raw OpenAPI operation id map", () => {
     expect(Object.keys(effectModule.openApiOperationIdMap)).toHaveLength(

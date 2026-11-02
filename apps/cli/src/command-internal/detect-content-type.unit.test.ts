@@ -10,8 +10,6 @@ function bytes(s: string): Uint8Array {
 }
 
 describe("detectContentType", () => {
-  // Expected values were produced by running Go's `http.DetectContentType` over these same
-  // byte inputs.
   const corpus: ReadonlyArray<readonly [string, string, string]> = [
     ["png", "\x89PNG\x0D\x0A\x1A\x0A\x00\x00", "image/png"],
     ["pdf", "%PDF-1.4\n...", "application/pdf"],
@@ -37,7 +35,7 @@ describe("detectContentType", () => {
   ];
 
   for (const [name, input, expected] of corpus) {
-    it(`matches Go http.DetectContentType for ${name}`, () => {
+    it(`detects the expected content type for ${name}`, () => {
       expect(detectContentType(bytes(input))).toBe(expected);
     });
   }

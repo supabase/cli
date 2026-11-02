@@ -16,7 +16,7 @@ describe("supabase __complete", () => {
         );
         expect(exitCode).toBe(0);
         const lines = stdout.trim().split("\n");
-        expect(lines[0]).toBe("list\tList local and remote migrations");
+        expect(lines[0]).toBe("list\tList local files and the target database's migration history");
         expect(lines.at(-1)).toBe(":4");
       }),
     E2E_TIMEOUT_MS,
@@ -115,7 +115,9 @@ describe("supabase __complete", () => {
             );
             expect(completionFailure.exitCode).toBe(1);
             expect(completionFailure.stdout).toBe("");
-            expect(completionFailure.stderr).toContain("must be 0 or 1");
+            expect(completionFailure.stderr).toContain(
+              'Invalid SUPABASE_EXPERIMENTAL_STACK="invalid" (sets experimental.stack): expected true or false.',
+            );
 
             const invalidEnv = yield* runSupabaseEffect(["start", "--output-format=json"], {
               cwd: project.dir,

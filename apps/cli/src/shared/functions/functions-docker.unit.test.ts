@@ -317,7 +317,7 @@ describe("resolveDockerNetworkMode", () => {
     expect(
       resolveDockerNetworkMode({
         explicit: "explicit-network",
-        envOverride: "env-network",
+        envNetworkId: "env-network",
         projectId: "my-project",
       }),
     ).toBe("explicit-network");
@@ -327,7 +327,7 @@ describe("resolveDockerNetworkMode", () => {
     expect(
       resolveDockerNetworkMode({
         explicit: undefined,
-        envOverride: "env-network",
+        envNetworkId: "env-network",
         projectId: "my-project",
       }),
     ).toBe("env-network");
@@ -337,7 +337,7 @@ describe("resolveDockerNetworkMode", () => {
     expect(
       resolveDockerNetworkMode({
         explicit: "",
-        envOverride: "env-network",
+        envNetworkId: "env-network",
         projectId: "my-project",
       }),
     ).toBe(localDockerId("network", "my-project"));
@@ -347,7 +347,7 @@ describe("resolveDockerNetworkMode", () => {
     expect(
       resolveDockerNetworkMode({
         explicit: undefined,
-        envOverride: "",
+        envNetworkId: "",
         projectId: "my-project",
       }),
     ).toBe(localDockerId("network", "my-project"));
@@ -356,7 +356,7 @@ describe("resolveDockerNetworkMode", () => {
   it("generates supabase_network_<sanitized-project-id> when both are unset", () => {
     const result = resolveDockerNetworkMode({
       explicit: undefined,
-      envOverride: undefined,
+      envNetworkId: undefined,
       projectId: "my-project",
     });
 

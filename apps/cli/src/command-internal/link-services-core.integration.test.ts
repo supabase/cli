@@ -1,4 +1,4 @@
-import { legacyProjectStateLayer } from "./legacy-project-state.layer.ts";
+import { legacyProjectStateLayer } from "../shared/config/legacy-project-state.layer.ts";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer } from "effect";

@@ -1,4 +1,4 @@
-import { legacyProjectStatePaths } from "./legacy-project-state.paths.ts";
+import { legacyProjectStatePaths } from "../shared/config/legacy-project-state.paths.ts";
 import { usesStackState } from "./stack-backend.ts";
 import { Effect, type FileSystem, Option, type Path } from "effect";
 import { DENO1_EDGE_RUNTIME_VERSION } from "../shared/functions/functions.shared.ts";

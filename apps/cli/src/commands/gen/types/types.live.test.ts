@@ -9,10 +9,9 @@ test("generates TypeScript types from the remote schema", ({ cliEffect, project,
       const result = yield* cliEffect([
         "gen",
         "types",
-        "--db-url",
-        project.dbUrl,
         "--lang",
         "typescript",
+        `--remote=${project.dbUrl}`,
       ]);
       expect(result.exitCode, result.stderr).toBe(0);
       expect(result.stdout).toMatch(/export type (Database|Json)/);

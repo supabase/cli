@@ -6,6 +6,7 @@ import {
   PROJECT_CONFIG_PARSE_ERROR_SUGGESTION,
   ProjectConfigParseError,
 } from "../errors.ts";
+import { PROVIDER_SIGNUP_ALIASES } from "../lib/provider-signup.ts";
 import { isSecretPath } from "../lib/secret-paths.ts";
 import {
   deepFreeze,
@@ -311,6 +312,7 @@ export function fromConfigDocument(input: unknown): unknown {
       setOwnProperty(result, key, copied);
     }
   }
+  foldProviderSignupAliases(config, result);
   applyDocumentNormalizations(result);
   applySmsProviderPrecedence(result);
   applyDisabledSentinels(result);
@@ -318,6 +320,23 @@ export function fromConfigDocument(input: unknown): unknown {
     applyRawPresenceMask(result, document);
   }
   return result;
+}
+
+/**
+ * Writes the operand's `auth.{email,sms}.enabled` into `output`'s canonical `enable_signup`,
+ * overriding a value the operand also carries there. A decoded or sparse operand that skipped the
+ * file loader's own fold would otherwise lose the switch, since `enabled` is document-only.
+ */
+function foldProviderSignupAliases(
+  config: Record<string, unknown>,
+  output: Record<string, unknown>,
+): void {
+  for (const { path, preferred, legacy } of PROVIDER_SIGNUP_ALIASES) {
+    const value = readPath(config, [...path, preferred]);
+    if (value !== undefined) {
+      writePath(output, [...path, legacy], value);
+    }
+  }
 }
 
 /**

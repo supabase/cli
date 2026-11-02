@@ -213,7 +213,7 @@ describe("migration new", () => {
   });
 
   it.effect(
-    "fails the command when piped stdin errors mid-copy (Go: failed to copy from stdin)",
+    "fails the command when piped stdin errors mid-copy (failed to copy from stdin)",
     () => {
       // The Created line is already scheduled by the time the copy fails, so it still
       // prints to stdout before the error propagates to stderr.

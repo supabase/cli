@@ -26,13 +26,13 @@ test("pushes a local migration to the remote database", ({
       );
 
       const target = Effect.gen(function* () {
-        const result = yield* cliEffect(["db", "push", "--db-url", project.dbUrl, "--yes"]);
+        const result = yield* cliEffect(["db", "push", "--yes", `--remote=${project.dbUrl}`]);
         expect(result.exitCode, result.stderr).toBe(0);
         expect(result.stdout).toContain("Finished supabase db push");
       });
 
       const reset = Effect.gen(function* () {
-        const result = yield* cliEffect(["db", "reset", "--db-url", project.dbUrl, "--yes"]);
+        const result = yield* cliEffect(["db", "reset", "--yes", `--remote=${project.dbUrl}`]);
         requireLiveSuccess(result, "db reset cleanup after db push");
       });
 

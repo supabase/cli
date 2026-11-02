@@ -1,4 +1,3 @@
-import { Option } from "effect";
 import type * as CliCommand from "effect/cli/Command";
 import { Command, Flag } from "effect/cli";
 
@@ -9,24 +8,22 @@ import {
   dbConfigLinked,
   dbConfigPoolerFallbackLinked,
 } from "../../command-internal/db-config.layer.ts";
-import { configTarget } from "../../command-internal/project-target.ts";
-import { PROJECT_REF_PATTERN } from "../../config/remote-target.service.ts";
+import { projectRefPicker } from "../../config/project-ref.layer.ts";
+import { branchResolution } from "../../command-internal/target/branch-resolution.ts";
 import { functionsDownload } from "../../shared/functions/download.ts";
 import { linkedProjectCache } from "../../telemetry/linked-project-cache.layer.ts";
+import { withCliConfigFlags } from "../../config/cli-config-flags.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { GLOBAL_OUTPUT_FORMATS } from "../../command-internal/global-flags.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { pull } from "./pull.handler.ts";
 import { pullRuntimeLayer } from "./pull.layers.ts";
+import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
+import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
+import { projectTargetFlags } from "../../command-internal/target/target-flags.ts";
 
 const config = {
-  // Accepts either a project ref or a branch name of the linked project — no separate `--target`.
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription(
-      "Project ref of the Supabase project, or the name (or UUID) of one of its branches. Values that are exactly 20 lowercase letters are always treated as project refs.",
-    ),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
   remoteLabel: Flag.String("remote-label").pipe(
     Flag.withDescription(
       "Name of the [remotes.*] block the config step writes into, overriding the block it would otherwise reuse or create.",
@@ -61,15 +58,9 @@ export type PullFlags = CliCommand.Command.Config.Infer<typeof config>;
 // uses below, instead of re-implementing the `safeFlags`/telemetry wrapper inline.
 export const pullHandler = (flags: PullFlags) =>
   pull(flags).pipe(
-    // `--project-ref` accepts branch names, so its value is only safe to log verbatim when it's
-    // actually ref-shaped — a user-created branch name must never reach PostHog.
     // `--remote-label` is a free-form, user-chosen string and is never safe to log verbatim.
     withCommandTelemetry({
       flags,
-      safeFlags:
-        Option.isSome(flags.projectRef) && PROJECT_REF_PATTERN.test(flags.projectRef.value)
-          ? ["project-ref"]
-          : [],
       // The handler rejects every `-o`/`--output` value with a message pointing at
       // `--output-format`, so the full global choice set is declared "allowed" here.
       outputFormats: GLOBAL_OUTPUT_FORMATS,
@@ -79,7 +70,7 @@ export const pullHandler = (flags: PullFlags) =>
 
 export const pullCommand = Command.make("pull", config).pipe(
   Command.withDescription(
-    "Refreshes local project state from a linked Supabase project or branch in one step: pulls config into supabase/config.toml, optionally fetches the remote migration history table, pulls the database schema into supabase/migrations (also updating that database's migration history), and downloads every Edge Function's source. Prompts for confirmation before writing on an interactive TTY, unless --yes is set; --output-format json|stream-json skips the prompt entirely and takes its default answer, while a non-interactive text run still prints the prompt to stderr and reads one line from piped stdin (y/yes/n/no honored, empty takes the default, anything else declines) — use --dry-run to preview first.",
+    "Refreshes local project state from a linked Supabase project or branch in one step: pulls config into supabase/config.toml, optionally fetches the remote migration history table, pulls the database schema into supabase/migrations (also updating that database's migration history), and downloads every Edge Function's source. Asks for confirmation (default No) before writing, because the database step records the migration in the remote migration history table: an interactive terminal is prompted, and --output-format json|stream-json or a non-interactive run needs --yes (or SUPABASE_YES in the shell environment) — use --dry-run to preview first.",
   ),
   Command.withShortDescription("Pull remote project state into the local checkout"),
   Command.withExamples([
@@ -88,7 +79,7 @@ export const pullCommand = Command.make("pull", config).pipe(
       description: "Pull config, schema, and functions from the linked project",
     },
     {
-      command: "supabase pull --project-ref staging",
+      command: "supabase pull --remote=staging",
       description: "Pull from the 'staging' branch of the linked project",
     },
     {
@@ -98,7 +89,8 @@ export const pullCommand = Command.make("pull", config).pipe(
   ]),
   withPermissions(
     compose(
-      configTarget,
+      branchResolution,
+      projectRefPicker,
       configPullRun,
       linkedProjectCache,
       {
@@ -108,7 +100,7 @@ export const pullCommand = Command.make("pull", config).pipe(
             kind: "required",
             when: [stepsRun],
             context:
-              "the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url; the database steps get the resolved ref, so this needs no --project-ref",
+              "the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url; the database steps get the resolved ref, so this needs no --remote",
           },
         ],
         noApiEffectFlags: ["remote-label", "force", "with-migration-history"],
@@ -120,4 +112,7 @@ export const pullCommand = Command.make("pull", config).pipe(
   ),
   Command.withHandler(pullHandler),
   Command.provide(pullRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

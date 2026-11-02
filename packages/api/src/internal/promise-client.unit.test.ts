@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { Effect, Layer, ManagedRuntime, Option } from "effect";
+import { Effect, Layer, ManagedRuntime, Option, Schema } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -51,15 +51,10 @@ function formDataTextValue(formData: FormData, key: string): string {
   return value;
 }
 
-async function formDataFileTexts(formData: FormData, key: string): Promise<Array<string>> {
+function formDataFileTexts(formData: FormData, key: string): Effect.Effect<Array<string>> {
   const values = formData.getAll(key);
-  return Promise.all(
-    values.map(async (value) => {
-      if (typeof value === "string") {
-        return value;
-      }
-      return value.text();
-    }),
+  return Effect.forEach(values, (value) =>
+    typeof value === "string" ? Effect.succeed(value) : Effect.promise(() => value.text()),
   );
 }
 
@@ -78,7 +73,7 @@ const config = {
 } as const;
 
 describe("makePromiseClient", () => {
-  test("preserves only the versioned facade namespace", async () => {
+  test("preserves only the versioned facade namespace", () => {
     const seenRequests: Array<{ method: string; url: string }> = [];
     const runtime = ManagedRuntime.make(
       httpClientLayer((request) => {
@@ -146,50 +141,54 @@ describe("makePromiseClient", () => {
       }),
     );
 
-    try {
-      const effectClient = await runtime.runPromise(makeApiClient(config));
-      const client = makePromiseClient(runtime, effectClient);
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const effectClient = yield* Effect.promise(() => runtime.runPromise(makeApiClient(config)));
+        const client = makePromiseClient(runtime, effectClient);
 
-      expect("createAProject" in client).toBe(false);
-      expect("getProject" in client).toBe(false);
-      expect("listAllProjects" in client).toBe(false);
-      expect(typeof client.v1.createAProject).toBe("function");
-      expect(typeof client.v1.getProject).toBe("function");
-      expect(typeof client.v1.listAllProjects).toBe("function");
+        expect("createAProject" in client).toBe(false);
+        expect("getProject" in client).toBe(false);
+        expect("listAllProjects" in client).toBe(false);
+        expect(typeof client.v1.createAProject).toBe("function");
+        expect(typeof client.v1.getProject).toBe("function");
+        expect(typeof client.v1.listAllProjects).toBe("function");
 
-      const created = await client.v1.createAProject({
-        db_pass: "hunter2",
-        name: "project-name",
-        organization_slug: "my-org",
-      });
-      const project = await client.v1.getProject({
-        ref: "abcdefghijklmnopqrst",
-      });
-      const projects = await client.v1.listAllProjects();
+        const created = yield* Effect.promise(() =>
+          client.v1.createAProject({
+            db_pass: "hunter2",
+            name: "project-name",
+            organization_slug: "my-org",
+          }),
+        );
+        const project = yield* Effect.promise(() =>
+          client.v1.getProject({
+            ref: "abcdefghijklmnopqrst",
+          }),
+        );
+        const projects = yield* Effect.promise(() => client.v1.listAllProjects());
 
-      expect(created.ref).toBe("abcdefghijklmnopqrst");
-      expect(project.database.host).toBe("db.supabase.internal");
-      expect(projects).toHaveLength(1);
-      expect(seenRequests).toEqual([
-        {
-          method: "POST",
-          url: "https://api.supabase.com/v1/projects",
-        },
-        {
-          method: "GET",
-          url: "https://api.supabase.com/v1/projects/abcdefghijklmnopqrst",
-        },
-        {
-          method: "GET",
-          url: "https://api.supabase.com/v1/projects",
-        },
-      ]);
-    } finally {
-      await runtime.dispose();
-    }
+        expect(created.ref).toBe("abcdefghijklmnopqrst");
+        expect(project.database.host).toBe("db.supabase.internal");
+        expect(projects).toHaveLength(1);
+        expect(seenRequests).toEqual([
+          {
+            method: "POST",
+            url: "https://api.supabase.com/v1/projects",
+          },
+          {
+            method: "GET",
+            url: "https://api.supabase.com/v1/projects/abcdefghijklmnopqrst",
+          },
+          {
+            method: "GET",
+            url: "https://api.supabase.com/v1/projects",
+          },
+        ]);
+      }).pipe(Effect.ensuring(Effect.promise(() => runtime.dispose()))),
+    );
   });
 
-  test("serializes generated multipart methods through the promise facade", async () => {
+  test("serializes generated multipart methods through the promise facade", () => {
     let seenRequest: HttpClientRequest.HttpClientRequest | undefined;
 
     const runtime = ManagedRuntime.make(
@@ -212,59 +211,65 @@ describe("makePromiseClient", () => {
       }),
     );
 
-    try {
-      const effectClient = await runtime.runPromise(makeApiClient(config));
-      const client = makePromiseClient(runtime, effectClient);
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const effectClient = yield* Effect.promise(() => runtime.runPromise(makeApiClient(config)));
+        const client = makePromiseClient(runtime, effectClient);
 
-      const metadata = {
-        entrypoint_path: "functions/demo/index.ts",
-        import_map_path: "functions/demo/deno.json",
-        verify_jwt: true,
-        name: "demo",
-      } as const;
+        const metadata = {
+          entrypoint_path: "functions/demo/index.ts",
+          import_map_path: "functions/demo/deno.json",
+          verify_jwt: true,
+          name: "demo",
+        } as const;
 
-      const result = await client.v1.deployAFunction({
-        ref: "abcdefghijklmnopqrst",
-        slug: "demo",
-        bundleOnly: true,
-        body: {
-          metadata,
-          file: [new Uint8Array([1, 2, 3]), new Blob(["deno.json"])],
-        },
-      });
+        const result = yield* Effect.promise(() =>
+          client.v1.deployAFunction({
+            ref: "abcdefghijklmnopqrst",
+            slug: "demo",
+            bundleOnly: true,
+            body: {
+              metadata,
+              file: [new Uint8Array([1, 2, 3]), new Blob(["deno.json"])],
+            },
+          }),
+        );
 
-      expect(result.slug).toBe("demo");
-      expect(new URL(seenRequest!.url).pathname).toBe(
-        "/v1/projects/abcdefghijklmnopqrst/functions/deploy",
-      );
-      expect(requestUrlParam(seenRequest!, "slug")).toBe("demo");
-      expect(requestUrlParam(seenRequest!, "bundleOnly")).toBe("true");
+        expect(result.slug).toBe("demo");
+        expect(new URL(seenRequest!.url).pathname).toBe(
+          "/v1/projects/abcdefghijklmnopqrst/functions/deploy",
+        );
+        expect(requestUrlParam(seenRequest!, "slug")).toBe("demo");
+        expect(requestUrlParam(seenRequest!, "bundleOnly")).toBe("true");
 
-      const formData = requestFormData(seenRequest!);
-      expect(JSON.parse(formDataTextValue(formData, "metadata"))).toEqual(metadata);
-      expect(await formDataFileTexts(formData, "file")).toEqual([
-        "\u0001\u0002\u0003",
-        "deno.json",
-      ]);
-    } finally {
-      await runtime.dispose();
-    }
+        const formData = requestFormData(seenRequest!);
+        expect(
+          yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+            formDataTextValue(formData, "metadata"),
+          ),
+        ).toEqual(metadata);
+        expect(yield* formDataFileTexts(formData, "file")).toEqual([
+          "\u0001\u0002\u0003",
+          "deno.json",
+        ]);
+      }).pipe(Effect.ensuring(Effect.promise(() => runtime.dispose()))),
+    );
   });
 
-  test("disposes the runtime and rejects subsequent operations", async () => {
+  test("disposes the runtime and rejects subsequent operations", () => {
     const runtime = ManagedRuntime.make(
       httpClientLayer((request) => Effect.succeed(jsonResponse(request, 200, []))),
     );
 
-    try {
-      const effectClient = await runtime.runPromise(makeApiClient(config));
-      const client = makePromiseClient(runtime, effectClient);
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const effectClient = yield* Effect.promise(() => runtime.runPromise(makeApiClient(config)));
+        const client = makePromiseClient(runtime, effectClient);
 
-      await client.dispose();
+        yield* Effect.promise(() => client.dispose());
 
-      await expect(client.v1.listAllProjects()).rejects.toThrow();
-    } finally {
-      await runtime.dispose();
-    }
+        yield* Effect.promise(() => expect(client.v1.listAllProjects()).rejects.toThrow());
+      }).pipe(Effect.ensuring(Effect.promise(() => runtime.dispose()))),
+    );
   });
 });

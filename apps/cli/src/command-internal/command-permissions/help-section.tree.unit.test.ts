@@ -1,7 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { Context, Effect, Exit, Option } from "effect";
 import type { Command } from "effect/cli";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
 
 import { commandTreeFor } from "../../../tests/helpers/command-flags.ts";
 import type { PermissionVariant } from "../../../tests/helpers/permission-registry.ts";
@@ -69,39 +69,41 @@ describe("permission help section across the command tree", () => {
         );
       };
 
-      it("gives a flag a default only when parsing no arguments yields that value", async () => {
-        for (const [path, node] of leaves) {
-          const declared = Option.getOrUndefined(readPermissions(node.command));
-          if (declared?.status !== "mapped") continue;
-          const params = paramsFor(path);
-          // Help rebuilds a parent group's flags without defaults, so only these carry one.
-          const known = new Map(
-            [...rootFlags, ...permissionFlagsOf(ownParams(node.command))].map((flag) => [
-              flag.name,
-              flag,
-            ]),
-          );
-          const tested = new Set(
-            declared.operations.flatMap((entry) =>
-              (entry.when ?? []).flatMap((condition) =>
-                condition.oneOf === undefined ? [] : [condition.flag],
-              ),
-            ),
-          );
-          for (const flag of tested) {
-            const param = params.get(flag);
-            if (flag === undefined || param === undefined) continue;
-            const exit = await Effect.runPromiseExit(
-              param.parse({ flags: {}, arguments: [] }).pipe(Effect.provide(BunServices.layer)),
+      it.effect("gives a flag a default only when parsing no arguments yields that value", () =>
+        Effect.gen(function* () {
+          for (const [path, node] of leaves) {
+            const declared = Option.getOrUndefined(readPermissions(node.command));
+            if (declared?.status !== "mapped") continue;
+            const params = paramsFor(path);
+            // Help rebuilds a parent group's flags without defaults, so only these carry one.
+            const known = new Map(
+              [...rootFlags, ...permissionFlagsOf(ownParams(node.command))].map((flag) => [
+                flag.name,
+                flag,
+              ]),
             );
-            const parsed = Exit.isSuccess(exit) ? exit.value[1] : undefined;
-            expect(
-              known.get(flag)?.default,
-              `"${path}" --${flag} default differs from parsing no arguments`,
-            ).toBe(typeof parsed === "string" ? parsed : undefined);
+            const tested = new Set(
+              declared.operations.flatMap((entry) =>
+                (entry.when ?? []).flatMap((condition) =>
+                  condition.oneOf === undefined ? [] : [condition.flag],
+                ),
+              ),
+            );
+            for (const flag of tested) {
+              const param = params.get(flag);
+              if (flag === undefined || param === undefined) continue;
+              const exit = yield* param
+                .parse({ flags: {}, arguments: [] })
+                .pipe(Effect.provide(BunServices.layer), Effect.exit);
+              const parsed = Exit.isSuccess(exit) ? exit.value[1] : undefined;
+              expect(
+                known.get(flag)?.default,
+                `"${path}" --${flag} default differs from parsing no arguments`,
+              ).toBe(typeof parsed === "string" ? parsed : undefined);
+            }
           }
-        }
-      });
+        }),
+      );
 
       it("never tests the presence of a text flag that has a default", () => {
         for (const [path, node] of leaves) {
@@ -120,28 +122,30 @@ describe("permission help section across the command tree", () => {
         }
       });
 
-      it("never turns on by default a switch a condition tests", async () => {
-        for (const [path, node] of leaves) {
-          const declared = Option.getOrUndefined(readPermissions(node.command));
-          if (declared?.status !== "mapped") continue;
-          const params = paramsFor(path);
-          const tested = new Set(
-            declared.operations.flatMap((entry) =>
-              (entry.when ?? []).flatMap((condition) =>
-                condition.is === undefined ? [] : [condition.flag],
+      it.effect("never turns on by default a switch a condition tests", () =>
+        Effect.gen(function* () {
+          for (const [path, node] of leaves) {
+            const declared = Option.getOrUndefined(readPermissions(node.command));
+            if (declared?.status !== "mapped") continue;
+            const params = paramsFor(path);
+            const tested = new Set(
+              declared.operations.flatMap((entry) =>
+                (entry.when ?? []).flatMap((condition) =>
+                  condition.is === undefined ? [] : [condition.flag],
+                ),
               ),
-            ),
-          );
-          for (const flag of tested) {
-            const param = params.get(flag);
-            if (param === undefined || catalogFor(path).get(flag)?.hidden !== false) continue;
-            const [, value] = await Effect.runPromise(
-              param.parse({ flags: {}, arguments: [] }).pipe(Effect.provide(BunServices.layer)),
             );
-            expect(value, `"${path}" --${flag} defaults to on`).not.toBe(true);
+            for (const flag of tested) {
+              const param = params.get(flag);
+              if (param === undefined || catalogFor(path).get(flag)?.hidden !== false) continue;
+              const [, value] = yield* param
+                .parse({ flags: {}, arguments: [] })
+                .pipe(Effect.provide(BunServices.layer));
+              expect(value, `"${path}" --${flag} defaults to on`).not.toBe(true);
+            }
           }
-        }
-      });
+        }),
+      );
 
       it("records every flag a command accepts when it declares its permissions", () => {
         for (const [path, node] of leaves) {

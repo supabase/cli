@@ -2,12 +2,12 @@ import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
-import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
 import { commandFeedbackClientLayer, feedbackCliConfigLayer } from "../feedback.layers.ts";
 import { FEEDBACK_OUTPUT_FORMATS } from "../feedback-output.ts";
 import { feedbackDelete } from "./delete.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 
 const config = {
@@ -49,9 +49,9 @@ export const feedbackDeleteCommand = Command.make("delete", config).pipe(
   Command.withHandler(feedbackDeleteHandler),
   Command.provide(commandRuntimeLayer(["feedback", "delete"])),
   Command.provide(telemetryStateLayer),
-  Command.provide(stdinLayer),
   // `Layer.provide` does not share to siblings: the handler and the feedback
   // client each get their own cli-config provision (CLI Agent Guide invariant 5).
   Command.provide(commandFeedbackClientLayer),
   Command.provide(feedbackCliConfigLayer),
+  withTargetPolicy({ group: "account", consent: "no" }),
 );

@@ -7,7 +7,7 @@ import { CommandCredentials } from "../../auth/command-credentials.service.ts";
 import { commandSettingsLayer } from "../../config/command-settings.layer.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
-import { DebugLogger } from "../../command-internal/debug-logger.service.ts";
+import { DebugLogger } from "../../shared/output/debug-logger.service.ts";
 import { IdentityStitch, identityStitchLayer } from "../../command-internal/identity-stitch.ts";
 import { httpClientLayer } from "../../auth/http-debug.layer.ts";
 import { linkedProjectCacheLayer } from "../../telemetry/linked-project-cache.layer.ts";
