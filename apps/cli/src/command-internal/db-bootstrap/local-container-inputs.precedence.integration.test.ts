@@ -196,10 +196,10 @@ describe("local container inputs precedence goldens", () => {
             projectEnvValues: configEnvOnly(setup.projectEnvValues ?? {}),
           },
         };
-        const goldenText = yield* goldenJson(golden, {
-          [workdir]: "<WORKDIR>",
-          [DEFAULT_POSTGRES_IMAGE]: "<DEFAULT_POSTGRES_IMAGE>",
-        });
+        const goldenText = (yield* goldenJson(golden, { [workdir]: "<WORKDIR>" })).replaceAll(
+          `"${DEFAULT_POSTGRES_IMAGE}"`,
+          `"<DEFAULT_POSTGRES_IMAGE>"`,
+        );
         yield* Effect.promise(() =>
           ctx.expect(goldenText).toMatchFileSnapshot(`${GOLDEN_DIR}/${fixture.golden}.json`),
         );
