@@ -50,14 +50,17 @@ const hintLinkedAlternative = Effect.fnUntraced(function* () {
  * Resolves the target a `selectable` command acts on: `--remote` (or a deprecated alias) picks a
  * linked project, a branch or a database URL, and no selector means the local stack.
  */
-export const resolveTarget = Effect.fn("Target.resolve")(function* (flags: TargetFlagValues) {
+export const resolveTarget = Effect.fn("Target.resolve")(function* (
+  flags: TargetFlagValues,
+  options: { readonly localIsSupported?: boolean } = {},
+) {
   const policy = yield* TargetPolicy;
   if (policy.group !== "selectable") {
     return yield* Effect.die(
       new Error(`resolveTarget needs a selectable command, not "${policy.group}"`),
     );
   }
-  const { selection } = yield* selectTarget(flags);
+  const { selection } = yield* selectTarget(flags, options);
 
   const finish = Effect.fnUntraced(function* (target: ResolvedTarget, selectedBy: SelectedBy) {
     yield* Effect.annotateCurrentSpan({

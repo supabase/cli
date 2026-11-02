@@ -6,10 +6,11 @@ import { REMOTE_FLAG_NAME } from "./remote-vocabulary.ts";
 import type { ResolvedTarget } from "./resolve-target.ts";
 import { remoteFlagText } from "./target-deprecation.ts";
 
-type TargetSubject = "database" | "Storage API";
+type TargetSubject = "database" | "Storage API" | "log source";
 
 interface TargetFlagOptions {
   readonly subject: TargetSubject;
+  readonly visibleLocal?: boolean;
 }
 
 interface SelectableRemoteFlagVariant {
@@ -110,13 +111,16 @@ const remoteFlag = (variant: RemoteFlagVariant): Flag.Flag<Option.Option<RemoteV
     typeName: valueHintOf(variant),
   }).pipe(Flag.withDescription(remoteDescription(variant)), Flag.optional);
 
-const localFlag = () =>
+const localFlag = (visible = false) =>
   Flag.Boolean("local").pipe(
     Flag.withDescription(
       "Deprecated, removed in v4: local is the default, so --local is not needed.",
     ),
     Flag.withDefault(false),
-    Flag.withHidden,
+    (flag) =>
+      visible
+        ? flag.pipe(Flag.withDescription("Read retained local stack logs."))
+        : flag.pipe(Flag.withHidden),
   );
 
 const linkedFlag = () =>
@@ -183,7 +187,7 @@ export function targetFlags(
 export function targetFlags(options: TargetFlagOptions & { readonly dbUrl: boolean }) {
   const base = {
     remote: remoteFlag({ kind: "selectable", subject: options.subject, dbUrl: options.dbUrl }),
-    local: localFlag(),
+    local: localFlag(options.visibleLocal),
     linked: linkedFlag(),
     projectRef: projectRefFlag(),
   };

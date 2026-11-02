@@ -63,7 +63,7 @@ const warnTargetDeprecations = Effect.fnUntraced(function* (
  */
 export const selectTarget = Effect.fnUntraced(function* (
   flags: TargetFlagValues,
-  options: { readonly valueHint?: string } = {},
+  options: { readonly valueHint?: string; readonly localIsSupported?: boolean } = {},
 ) {
   const runtime = yield* Effect.serviceOption(CommandRuntime);
   const commandName = Option.isSome(runtime)
@@ -75,7 +75,9 @@ export const selectTarget = Effect.fnUntraced(function* (
     parseTargetSelector(flags, { remoteConflict, ...options }),
     { onFailure: Effect.fail, onSuccess: Effect.succeed },
   );
-  yield* warnTargetDeprecations(deprecations);
+  yield* warnTargetDeprecations(
+    options.localIsSupported ? deprecations.filter((item) => item.kind !== "local") : deprecations,
+  );
   return { selection, commandName };
 });
 
