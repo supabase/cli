@@ -328,8 +328,7 @@ export function removeLiveMigration(
 
 const PLATFORM_DATABASE_RESTART = /\b57P01\b|the database system is shutting down/u;
 
-/** Whether CLI output shows the platform terminated the remote database backend for a restart. */
-export function isPlatformDatabaseRestart(output: string): boolean {
+function isPlatformDatabaseRestart(output: string): boolean {
   return PLATFORM_DATABASE_RESTART.test(output);
 }
 

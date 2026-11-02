@@ -1,6 +1,6 @@
 import { Data, Duration, Effect, Schedule, Schema } from "effect";
 
-import { isPlatformDatabaseRestart, type LiveProject } from "./live.ts";
+import type { LiveProject } from "./live.ts";
 
 type BranchCliOptions = { readonly exitTimeoutMs?: number };
 type BranchCliResult = {
@@ -139,15 +139,19 @@ function branchRefFromCreate(
   );
 }
 
-// The platform rejects `branches create` with a 400 when the database it configures restarts mid-create.
-function isRejectedByDatabaseRestart(error: unknown): boolean {
+// The platform rejects `branches create` with a 400 when the database it configures restarts, or its
+// TLS connection drops while setting the database password, mid-create.
+const PLATFORM_TRANSIENT_CREATE_REJECTION =
+  /\b57P01\b|the database system is shutting down|Failed to update password: Client network socket disconnected before secure TLS connection was established/u;
+
+function isPlatformTransientCreateRejection(error: unknown): boolean {
   return (
     error instanceof BranchCommandFailed &&
-    isPlatformDatabaseRestart(`${error.stdout ?? ""}\n${error.stderr}`)
+    PLATFORM_TRANSIENT_CREATE_REJECTION.test(`${error.stdout ?? ""}\n${error.stderr}`)
   );
 }
 
-/** Runs `branches create`, re-issuing it once when the platform restarted the database mid-create. */
+/** Runs `branches create`, re-issuing it once when the platform rejected it with a transient mid-create failure. */
 export function runLiveBranchCreateEffect<E>(
   cli: BranchCli<E>,
   project: LiveProject,
@@ -168,7 +172,7 @@ export function runLiveBranchCreateEffect<E>(
   );
   return create.pipe(
     Effect.catch((rejected) =>
-      isRejectedByDatabaseRestart(rejected)
+      isPlatformTransientCreateRejection(rejected)
         ? clearRejected.pipe(
             Effect.mapError(
               (cleanup) =>
