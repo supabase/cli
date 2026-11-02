@@ -182,7 +182,15 @@ test(
 
         const toggle = Effect.gen(function* () {
           const updated = yield* cliEffect(
-            ["ssl-enforcement", "update", enforcementFlag(!posture), ...flags, "-o", "json"],
+            [
+              "ssl-enforcement",
+              "update",
+              "--yes",
+              enforcementFlag(!posture),
+              ...flags,
+              "-o",
+              "json",
+            ],
             { exitTimeoutMs: RESTORE_EXIT_TIMEOUT_MS },
           );
           expect(updated.exitCode, updated.stderr).toBe(0);
@@ -210,7 +218,7 @@ test(
 
         const restore = Effect.gen(function* () {
           const restored = yield* cliEffect(
-            ["ssl-enforcement", "update", enforcementFlag(posture), ...flags],
+            ["ssl-enforcement", "update", "--yes", enforcementFlag(posture), ...flags],
             { exitTimeoutMs: RESTORE_EXIT_TIMEOUT_MS },
           );
           yield* requireSuccess(restored, "ssl-enforcement update restore of the captured posture");

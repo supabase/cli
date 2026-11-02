@@ -4,7 +4,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { normalizeCause } from "../../../shared/output/normalize-error.ts";
 import { ssoAddDomainsFlag } from "./add.command.ts";
 
-describe("sso add --domains flag (pflag StringSlice parity)", () => {
+describe("sso add --domains flag", () => {
   it.effect("splits a comma-separated value into multiple domains", () =>
     Effect.gen(function* () {
       const [, domains] = yield* ssoAddDomainsFlag
@@ -44,7 +44,7 @@ describe("sso add --domains flag (pflag StringSlice parity)", () => {
     }),
   );
 
-  it.effect("keeps only the first CSV record of a multiline value (pflag reads ONE record)", () =>
+  it.effect("keeps only the first CSV record of a multiline value (only ONE record is read)", () =>
     Effect.gen(function* () {
       const [, domains] = yield* ssoAddDomainsFlag
         .parse({
@@ -57,7 +57,7 @@ describe("sso add --domains flag (pflag StringSlice parity)", () => {
     }),
   );
 
-  it.effect("rejects malformed CSV (unterminated quote) with pflag's exact diagnostic", () =>
+  it.effect("rejects malformed CSV (unterminated quote) with the exact diagnostic", () =>
     Effect.gen(function* () {
       const exit = yield* ssoAddDomainsFlag
         .parse({
@@ -75,7 +75,7 @@ describe("sso add --domains flag (pflag StringSlice parity)", () => {
     }),
   );
 
-  it.effect("rejects a blank-only value with pflag's EOF diagnostic", () =>
+  it.effect("rejects a blank-only value with the EOF diagnostic", () =>
     Effect.gen(function* () {
       const exit = yield* ssoAddDomainsFlag
         .parse({

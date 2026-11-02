@@ -12,7 +12,9 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   projectResponse,
@@ -38,18 +40,18 @@ const HOSTNAME_RESPONSE: typeof V1GetHostnameConfigOutput.Type = {
   },
 };
 
-type GoOutput = "env" | "pretty" | "json" | "toml" | "yaml";
+type OutputFlagValue = "env" | "pretty" | "json" | "toml" | "yaml";
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: GoOutput;
+  readonly outputFlag?: OutputFlagValue;
   readonly status?: number;
   readonly network?: "fail";
   readonly response?: unknown;
 }
 
-/** Just enough of the Go JSON envelope to reach the fields under assertion. */
-const GoJsonResult = Schema.Struct({
+/** Just enough of the JSON envelope to reach the fields under assertion. */
+const JsonResult = Schema.Struct({
   data: Schema.Struct({
     result: Schema.Struct({
       ownership_verification: Schema.Unknown,
@@ -59,7 +61,7 @@ const GoJsonResult = Schema.Struct({
   }),
 });
 
-const GoJsonEnvelope = Schema.Record(Schema.String, Schema.Unknown);
+const JsonEnvelope = Schema.Record(Schema.String, Schema.Unknown);
 
 const tempRoot = useTempWorkdir("supabase-domains-get-int-");
 
@@ -82,14 +84,16 @@ function setup(opts: SetupOpts = {}) {
     analytics,
     telemetry: telemetry.layer,
     linkedProjectCache: linkedProjectCache.layer,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api, analytics, telemetry, linkedProjectCache };
 }
 
-const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: Option.none<boolean>() };
-
-const DeprecationJsonObject = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
+const baseFlags = {
+  remote: Option.none(),
+  projectRef: Option.none<string>(),
+  includeRawOutput: Option.none<boolean>(),
+};
 
 describe("domains get integration", () => {
   it.effect("prints the hostname status to stderr in text mode", () => {
@@ -124,18 +128,18 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("emits indented Go JSON to stdout with no status on stderr for -o json", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+  it.effect("emits indented JSON to stdout with no status on stderr for -o json", () => {
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
       expect(out.stdoutText.startsWith("{")).toBe(true);
       expect(out.stdoutText).toContain('"custom_hostname": "shop.acme.dev"');
       // Structured -o output: human status is suppressed entirely — see emit.
-      expect(out.stderrText).toBe("");
+      expect(out.stderrText).toBe(unverifiedTargetBanner());
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("backfills Go zero values in JSON output when the API omits nested fields", () => {
+  it.effect("backfills zero values in JSON output when the API omits nested fields", () => {
     const {
       ownership_verification: _ownershipVerification,
       custom_origin_server: _customOriginServer,
@@ -151,12 +155,10 @@ describe("domains get integration", () => {
         },
       },
     };
-    const { layer, out } = setup({ goOutput: "json", response });
+    const { layer, out } = setup({ outputFlag: "json", response });
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
-      const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(GoJsonResult))(
-        out.stdoutText,
-      );
+      const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(JsonResult))(out.stdoutText);
       expect(parsed.data.result.ownership_verification).toEqual({ type: "", name: "", value: "" });
       expect(parsed.data.result.custom_origin_server).toBe("");
       expect(parsed.data.result.ssl.status).toBe("");
@@ -180,13 +182,14 @@ describe("domains get integration", () => {
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
       expect(out.stderrText).toBe(
-        "Custom hostname setup is being initialized; please request re-verification in a few seconds.\n",
+        unverifiedTargetBanner() +
+          "Custom hostname setup is being initialized; please request re-verification in a few seconds.\n",
       );
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("backfills Go zero values in JSON output when the API omits envelope fields", () => {
+  it.effect("backfills zero values in JSON output when the API omits envelope fields", () => {
     const {
       status: _status,
       custom_hostname: _customHostname,
@@ -207,10 +210,10 @@ describe("domains get integration", () => {
         },
       },
     };
-    const { layer, out } = setup({ goOutput: "json", response });
+    const { layer, out } = setup({ outputFlag: "json", response });
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
-      const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(GoJsonEnvelope))(
+      const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(JsonEnvelope))(
         out.stdoutText,
       );
       expect(parsed.status).toBe("");
@@ -246,7 +249,8 @@ describe("domains get integration", () => {
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
       expect(out.stderrText).toBe(
-        "Custom hostname setup is being initialized; please request re-verification in a few seconds.\n",
+        unverifiedTargetBanner() +
+          "Custom hostname setup is being initialized; please request re-verification in a few seconds.\n",
       );
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
@@ -282,7 +286,8 @@ describe("domains get integration", () => {
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
       expect(out.stderrText).toBe(
-        "Custom hostname verification in-progress; please configure the appropriate DNS entries and request re-verification.\n" +
+        unverifiedTargetBanner() +
+          "Custom hostname verification in-progress; please configure the appropriate DNS entries and request re-verification.\n" +
           "Required outstanding validation records:\n" +
           "\t_acme-challenge.sbstg4.thewheatfield.org TXT -> i6XyXv3kU4SRX9YcCE8h4LExoHE6y_poV1-5R1cjpk4\n",
       );
@@ -309,7 +314,8 @@ describe("domains get integration", () => {
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
       expect(out.stderrText).toBe(
-        "Custom hostname verification in-progress; please configure the appropriate DNS entries and request re-verification.\n" +
+        unverifiedTargetBanner() +
+          "Custom hostname verification in-progress; please configure the appropriate DNS entries and request re-verification.\n" +
           "Required outstanding validation records:\n",
       );
       expect(out.stderrText).not.toContain("undefined");
@@ -317,25 +323,25 @@ describe("domains get integration", () => {
   });
 
   it.effect("emits YAML to stdout for -o yaml", () => {
-    const { layer, out } = setup({ goOutput: "yaml" });
+    const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
-      // yaml.v3 lowercases the whole field name.
+      // YAML output lowercases the whole field name.
       expect(out.stdoutText).toContain("customhostname: shop.acme.dev");
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("emits TOML to stdout for -o toml", () => {
-    const { layer, out } = setup({ goOutput: "toml" });
+    const { layer, out } = setup({ outputFlag: "toml" });
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
-      // BurntSushi emits PascalCase field names.
+      // TOML output uses PascalCase field names.
       expect(out.stdoutText).toContain('CustomHostname = "shop.acme.dev"');
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("emits KEY=VALUE lines for -o env", () => {
-    const { layer, out } = setup({ goOutput: "env" });
+    const { layer, out } = setup({ outputFlag: "env" });
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
       expect(out.stdoutText).toContain('CUSTOM_HOSTNAME="shop.acme.dev"');
@@ -343,61 +349,13 @@ describe("domains get integration", () => {
   });
 
   it.effect("treats -o pretty as text mode (status to stderr only)", () => {
-    const { layer, out } = setup({ goOutput: "pretty" });
+    const { layer, out } = setup({ outputFlag: "pretty" });
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
       expect(out.stderrText).toContain("Custom hostname configuration not started.");
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
-
-  it.effect(
-    "warns on stderr and keeps stdout JSON parseable when --include-raw-output is set",
-    () => {
-      const { layer, out } = setup();
-      return Effect.gen(function* () {
-        yield* domainsGet({ projectRef: Option.none(), includeRawOutput: Option.some(true) });
-        expect(out.stderrText).toBe(
-          "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n",
-        );
-        const parsed = yield* Schema.decodeEffect(DeprecationJsonObject)(out.stdoutText);
-        expect(parsed.custom_hostname).toBe("shop.acme.dev");
-        expect(out.stdoutText).toContain('"custom_hostname": "shop.acme.dev"');
-      }).pipe(Effect.provide(layer));
-    },
-  );
-
-  it.effect("warns but does not force JSON when --include-raw-output=false", () => {
-    const { layer, out } = setup();
-    return Effect.gen(function* () {
-      yield* domainsGet({ projectRef: Option.none(), includeRawOutput: Option.some(false) });
-      expect(
-        out.stderrText.startsWith(
-          "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n",
-        ),
-      ).toBe(true);
-      expect(out.stdoutText).toBe("");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("does not warn when --include-raw-output is not set", () => {
-    const { layer, out } = setup();
-    return Effect.gen(function* () {
-      yield* domainsGet(baseFlags);
-      expect(out.stderrText).not.toContain("deprecated");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect(
-    "forces Go JSON even when -o is explicitly pretty and --include-raw-output is set",
-    () => {
-      const { layer, out } = setup({ goOutput: "pretty" });
-      return Effect.gen(function* () {
-        yield* domainsGet({ projectRef: Option.none(), includeRawOutput: Option.some(true) });
-        expect(out.stdoutText.startsWith("{")).toBe(true);
-      }).pipe(Effect.provide(layer));
-    },
-  );
 
   it.effect("fails with DomainsUnexpectedStatusError on HTTP 503", () => {
     const { layer, telemetry, linkedProjectCache } = setup({ status: 503 });
@@ -531,4 +489,9 @@ describe("domains get integration", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+});
+
+describeHostedTargetSelection("domains get", {
+  respond: (request) => Effect.succeed(jsonResponse(request, 200, HOSTNAME_RESPONSE)),
+  run: (flags) => domainsGet({ ...baseFlags, ...flags }),
 });

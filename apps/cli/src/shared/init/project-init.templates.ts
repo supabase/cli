@@ -16,7 +16,7 @@ port = 54321
 schemas = ["public", "graphql_public"]
 # Extra schemas to add to the search_path of every request.
 extra_search_path = ["public", "extensions"]
-# The maximum number of rows returns from a view, table, or stored procedure. Limits payload size
+# The maximum number of rows returned from a view, table, or stored procedure. Limits payload size
 # for accidental or malicious requests.
 max_rows = 1000
 # Controls whether new tables, views, sequences and functions created in the \`public\` schema by
@@ -176,7 +176,7 @@ enable_refresh_token_rotation = true
 # Allows refresh tokens to be reused after expiry, up to the specified interval in seconds.
 # Requires enable_refresh_token_rotation = true.
 refresh_token_reuse_interval = 10
-# Allow/disallow new user signups to your project.
+# Allow/disallow new user signups to your project. Existing users can still sign in.
 enable_signup = true
 # Allow/disallow anonymous sign-ins to your project.
 enable_anonymous_sign_ins = false
@@ -221,8 +221,9 @@ web3 = 30
 # secret = ""
 
 [auth.email]
-# Allow/disallow new user signups via email to your project.
-enable_signup = true
+# Allow/disallow the email provider. When false, users can't sign up or sign in with email.
+# To block new signups only, set enable_signup = false under [auth] instead.
+enabled = true
 # If enabled, a user will be required to confirm any email change on both the old, and new email
 # addresses. If disabled, only the new email is required to confirm.
 double_confirm_changes = true
@@ -259,8 +260,9 @@ otp_expiry = 3600
 # content_path = "./supabase/templates/password_changed_notification.html"
 
 [auth.sms]
-# Allow/disallow new user signups via SMS to your project.
-enable_signup = false
+# Allow/disallow the phone provider. When false, users can't sign up or sign in with SMS.
+# To block new signups only, set enable_signup = false under [auth] instead.
+enabled = false
 # If enabled, users need to confirm their phone number before signing in.
 enable_confirmations = false
 # Template for sending OTP to users
@@ -323,7 +325,7 @@ max_frequency = "5s"
 
 # Use an external OAuth provider. The full list of providers are: \`apple\`, \`azure\`, \`bitbucket\`,
 # \`discord\`, \`facebook\`, \`github\`, \`gitlab\`, \`google\`, \`keycloak\`, \`linkedin_oidc\`, \`notion\`, \`twitch\`,
-# \`twitter\`, \`x\`, \`slack\`, \`spotify\`, \`workos\`, \`zoom\`.
+# \`twitter\`, \`x\`, \`slack_oidc\`, \`spotify\`, \`workos\`, \`zoom\`.
 [auth.external.apple]
 enabled = false
 client_id = ""
@@ -339,10 +341,14 @@ skip_nonce_check = false
 # If enabled, it will allow the user to successfully authenticate when the provider does not return an email address.
 email_optional = false
 
-# Allow Solana wallet holders to sign in to your project via the Sign in with Solana (SIWS, EIP-4361) standard.
+# Allow Solana wallet holders to sign in to your project via the Sign in with Solana (SIWS) standard.
 # You can configure "web3" rate limit in the [auth.rate_limit] section and set up [auth.captcha] if self-hosting.
 [auth.web3.solana]
 enabled = false
+
+# Allow Ethereum wallet holders to sign in to your project via the Sign in with Ethereum (SIWE, EIP-4361) standard.
+# [auth.web3.ethereum]
+# enabled = true
 
 # Use Firebase Auth as a third-party provider alongside Supabase Auth.
 [auth.third_party.firebase]
@@ -407,7 +413,7 @@ s3_access_key = "env(S3_ACCESS_KEY)"
 # Configures AWS_SECRET_ACCESS_KEY for S3 bucket
 s3_secret_key = "env(S3_SECRET_KEY)"
 
-# pg-delta is the schema diff engine for db diff / db pull / db remote commit.
+# pg-delta is the schema diff engine for db diff / db pull.
 # Set enabled = false to fall back to the legacy migra engine.
 [experimental.pgdelta]
 enabled = true

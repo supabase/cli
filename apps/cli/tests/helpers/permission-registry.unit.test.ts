@@ -93,30 +93,73 @@ describe("applicableOperations", () => {
         when: [{ dbTarget: ["local", "db-url"] }],
       },
     ] as const;
-    const applied = (
-      activeFlags: Parameters<typeof applicableOperations>[1],
-      dbTargetDefault?: "local" | "linked",
-    ) =>
-      applicableOperations(
-        { ...mapped(entries), ...(dbTargetDefault === undefined ? {} : { dbTargetDefault }) },
-        activeFlags,
-      ).map((e) => e.operationId);
+    const applied = (activeFlags: Parameters<typeof applicableOperations>[1]) =>
+      applicableOperations(mapped(entries), activeFlags).map((e) => e.operationId);
 
     it("takes --db-url over --local over --linked", () => {
       expect(applied({ linked: true, local: true, "db-url": true })).toEqual([
         "v1-get-pooler-config",
       ]);
       expect(applied({ linked: true, local: true })).toEqual(["v1-get-pooler-config"]);
-      expect(applied({ linked: true }, "local")).toEqual(["v1-run-a-query"]);
+      expect(applied({ linked: true })).toEqual(["v1-run-a-query"]);
     });
 
-    it("falls back to the declared default when no target flag is given", () => {
-      expect(applied({}, "linked")).toEqual(["v1-run-a-query"]);
-      expect(applied({}, "local")).toEqual(["v1-get-pooler-config"]);
+    it("reads a run with no target flag as the local stack", () => {
+      expect(applied({})).toEqual(["v1-get-pooler-config"]);
+    });
+  });
+
+  describe("selector shape", () => {
+    const REF = "abcdefghijklmnopqrst";
+    const permissions = mapped([
+      { operationId: "v1-list-all-branches", kind: "required", when: [{ selector: ["branch"] }] },
+      {
+        operationId: "v1-get-pooler-config",
+        kind: "required",
+        when: [{ selector: ["ref", "branch", "url"] }],
+      },
+      {
+        operationId: "v1-list-all-projects",
+        kind: "required",
+        when: [{ selector: ["none", "bare"] }],
+      },
+      { operationId: "v1-get-a-branch-config", kind: "required", when: [{ selector: ["uuid"] }] },
+    ]);
+    const applied = (activeFlags: Parameters<typeof applicableOperations>[1]) =>
+      applicableOperations(permissions, activeFlags).map((e) => e.operationId);
+
+    it("reads a branch UUID as its own shape, apart from a branch name", () => {
+      expect(applied({ remote: "6f0b5d2e-3c1a-4f7e-9a58-2b1d4c7e8f90" })).toEqual([
+        "v1-get-a-branch-config",
+      ]);
     });
 
-    it("rejects a run with no target flag and no default", () => {
-      expect(() => applied({})).toThrow(/sets no default/);
+    it("reads a --remote value by what it names", () => {
+      expect(applied({ remote: true })).toEqual(["v1-list-all-projects"]);
+      expect(applied({ remote: "yes" })).toEqual(["v1-list-all-projects"]);
+      expect(applied({ remote: REF })).toEqual(["v1-get-pooler-config"]);
+      expect(applied({ remote: "feature-x" })).toEqual([
+        "v1-list-all-branches",
+        "v1-get-pooler-config",
+      ]);
+      expect(applied({ remote: "postgresql://postgres@localhost:5432/postgres" })).toEqual([
+        "v1-get-pooler-config",
+      ]);
+    });
+
+    it("folds the deprecated aliases into the same shapes", () => {
+      expect(applied({ "project-ref": REF })).toEqual(applied({ remote: REF }));
+      expect(applied({ "project-id": "feature-x" })).toEqual(applied({ remote: "feature-x" }));
+      expect(applied({ "project-ref": "true" })).toEqual(applied({ remote: "feature-x" }));
+      expect(applied({ linked: true })).toEqual(applied({ remote: true }));
+      expect(applied({ "db-url": "postgresql://postgres@localhost:5432/postgres" })).toEqual(
+        applied({ remote: "postgresql://postgres@localhost:5432/postgres" }),
+      );
+    });
+
+    it("reads no selector, and --local, as none", () => {
+      expect(applied({})).toEqual(["v1-list-all-projects"]);
+      expect(applied({ local: true })).toEqual(["v1-list-all-projects"]);
     });
   });
 

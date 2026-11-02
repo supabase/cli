@@ -3,8 +3,7 @@ import type { PreparedRelease } from "@supabase/stack/internal/artifacts";
 import { Effect, Path, Ref, Schema } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
-import { loadLocalProjectContext } from "../../../../command-internal/local-project-context.ts";
-import { loadStackConfig, StackConfigError } from "../../../../command-internal/stack-config.ts";
+import { loadStackConfig } from "../../../../command-internal/stack-config.ts";
 import {
   LockResolutionError,
   lockedResolution,
@@ -86,24 +85,17 @@ export const stackInstall = Effect.fn("experimental.stack.install")(function* (
     const picked = yield* Ref.make<StackRuntime | undefined>(undefined);
     const resolved = yield* Ref.make<LockedResolution | undefined>(undefined);
     const resolve = lockedResolution({ frozen: flags.frozen, output });
-    const config = yield* Effect.gen(function* () {
-      const context = yield* loadLocalProjectContext(
-        settings.workdir,
-        (message) => new StackConfigError({ message }),
-      );
-      return yield* loadStackConfig(settings.workdir, {
-        context,
-        frozen: flags.frozen,
-        publishesLock: true,
-        // The runtime is checked after the config validates and before the lock is touched.
-        selection: (request) =>
-          pickRuntime.pipe(
-            Effect.tap((runtime) => Ref.set(picked, runtime)),
-            Effect.andThen(resolve(request)),
-            Effect.tap((resolution) => Ref.set(resolved, resolution)),
-            Effect.map((resolution) => resolution.selection),
-          ),
-      });
+    const config = yield* loadStackConfig(settings.workdir, {
+      frozen: flags.frozen,
+      publishesLock: true,
+      // The runtime is checked after the config validates and before the lock is touched.
+      selection: (request) =>
+        pickRuntime.pipe(
+          Effect.tap((runtime) => Ref.set(picked, runtime)),
+          Effect.andThen(resolve(request)),
+          Effect.tap((resolution) => Ref.set(resolved, resolution)),
+          Effect.map((resolution) => resolution.selection),
+        ),
     }).pipe(
       Effect.mapError((error) =>
         error instanceof StackCommandInstallError

@@ -1,7 +1,7 @@
 import { Crypto, Effect, Path } from "effect";
 
 import { CommandSettings } from "../config/command-settings.service.ts";
-import { legacyProjectStatePaths } from "./legacy-project-state.paths.ts";
+import { legacyProjectStatePaths } from "../shared/config/legacy-project-state.paths.ts";
 import { usesStackState } from "./stack-backend.ts";
 
 /** Host scratch for bundler output and downloads: `$SUPABASE_HOME/tmp` in stack state, else `supabase/.temp`. */

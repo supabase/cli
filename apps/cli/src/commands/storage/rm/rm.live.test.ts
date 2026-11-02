@@ -27,7 +27,14 @@ test("removes an uploaded object", ({ cli, cliEffect, project, workspace }) =>
           env: { SUPABASE_DB_PASSWORD: project.dbPassword },
         });
         requireLiveSuccess(linked, "link setup for storage rm");
-        const uploaded = yield* cliEffect(["storage", "cp", local, remote, ...storageLiveFlags]);
+        const uploaded = yield* cliEffect([
+          "storage",
+          "cp",
+          local,
+          remote,
+          "--yes",
+          ...storageLiveFlags,
+        ]);
         requireLiveSuccess(uploaded, "storage cp setup for storage rm");
 
         const result = yield* cliEffect(["storage", "rm", remote, "--yes", ...storageLiveFlags]);

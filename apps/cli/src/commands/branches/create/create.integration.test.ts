@@ -11,6 +11,8 @@ import {
   mockTty,
 } from "../../../../tests/helpers/mocks.ts";
 import { GLOBAL_FLAGS, YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import {
   VALID_REF,
   buildTestRuntime,
@@ -19,6 +21,7 @@ import {
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
+  type MockCommandPlatformApiOpts,
   useTempWorkdir,
   withConfigEnv,
 } from "../../../../tests/helpers/command-mocks.ts";
@@ -28,6 +31,7 @@ import { branchesCreateCommand, type BranchesCreateFlags } from "./create.comman
 import { branchesCreate } from "./create.handler.ts";
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
+import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 
 type CreatedBranch = typeof V1CreateABranchOutput.Type;
 
@@ -62,61 +66,38 @@ function projectResponse() {
   };
 }
 
-function entitlementResponse(opts: { readonly featureKey: string; readonly hasAccess: boolean }) {
-  return {
-    entitlements: [
-      {
-        feature: { key: opts.featureKey, type: "boolean" as const },
-        hasAccess: opts.hasAccess,
-        type: "boolean" as const,
-        config: { enabled: !opts.hasAccess },
-      },
-    ],
-  };
-}
-
 const tempRoot = useTempWorkdir("supabase-branches-create-int-");
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  readonly outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   readonly response?: unknown;
   readonly status?: number;
   readonly network?: "fail";
-  readonly gated?: boolean;
-  readonly featureKey?: string;
-  /** Resolved `--yes`/`SUPABASE_YES` for the git-branch auto-name confirm. */
   readonly yes?: boolean;
   readonly stdinIsTty?: boolean;
-  /** Piped stdin lines consumed by the non-TTY confirm read. */
-  readonly stdinInput?: string;
   readonly promptConfirmResponses?: ReadonlyArray<boolean>;
 }
 
-function buildApiLayer(opts: SetupOpts) {
+const hostedCreatePolicy = Layer.succeed(TargetPolicy, { group: "hosted", consent: "yes" });
+
+function apiOptions(opts: SetupOpts): MockCommandPlatformApiOpts {
   const status = opts.status ?? 201;
   const body = opts.response ?? CREATED;
-  const featureKey = opts.featureKey ?? "branching_limit";
-  return mockCommandPlatformApi({
+  return {
     network: opts.network,
     handler: (request) =>
       Effect.sync(() => {
         if (request.method === "POST" && request.url.includes("/branches")) {
           return jsonResponse(request, status, body);
         }
-        if (request.method === "GET" && request.url.endsWith(`/v1/projects/${VALID_REF}`)) {
-          return jsonResponse(request, 200, projectResponse());
-        }
-        if (request.method === "GET" && request.url.includes("/entitlements")) {
-          return jsonResponse(
-            request,
-            200,
-            entitlementResponse({ featureKey, hasAccess: !(opts.gated ?? false) }),
-          );
-        }
         return jsonResponse(request, 200, null);
       }),
-  });
+  };
+}
+
+function buildApiLayer(opts: SetupOpts) {
+  return mockCommandPlatformApi(apiOptions(opts));
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -134,10 +115,11 @@ function setup(opts: SetupOpts = {}) {
       cliSettings,
       analytics,
       tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
-      stdin: mockStdin(opts.stdinIsTty ?? false, opts.stdinInput),
-      goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+      stdin: mockStdin(opts.stdinIsTty ?? false),
+      outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
     }),
-    Layer.succeed(YesFlag, opts.yes ?? false),
+    Layer.succeed(YesFlag, opts.yes ?? true),
+    hostedCreatePolicy,
   );
   return { layer, out, api, analytics };
 }
@@ -158,13 +140,15 @@ function setupTracked(opts: SetupOpts = {}) {
       telemetry: telemetry.layer,
       linkedProjectCache: cache.layer,
     }),
-    Layer.succeed(YesFlag, opts.yes ?? false),
+    Layer.succeed(YesFlag, opts.yes ?? true),
+    hostedCreatePolicy,
   );
   return { layer, out, api, telemetry, cache, analytics };
 }
 
 const baseFlags: BranchesCreateFlags = {
   name: Option.none(),
+  remote: Option.none(),
   projectRef: Option.none(),
   region: Option.none(),
   size: Option.none(),
@@ -226,7 +210,8 @@ describe("branches create integration", () => {
             cliSettings,
           }),
         }),
-        Layer.succeed(YesFlag, false),
+        Layer.succeed(YesFlag, true),
+        hostedCreatePolicy,
       );
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -320,71 +305,36 @@ describe("branches create integration", () => {
   const withGitBranch = <A, E, R>(effect: Effect.Effect<A, E, R>, branch = "feat-y") =>
     withConfigEnv({ GITHUB_HEAD_REF: branch }, effect);
 
-  it.effect("--yes auto-confirms the git-branch name with the [Y/n] y echo", () => {
-    const { layer, out, api } = setup({ yes: true, stdinIsTty: true });
-    return withGitBranch(
-      Effect.gen(function* () {
-        yield* branchesCreate(baseFlags);
-        expect(out.stderrText).toContain("Do you want to create a branch named ");
-        expect(out.stderrText).toContain("? [Y/n] y\n");
-        expect(api.requests[0]?.body).toMatchObject({
-          branch_name: "feat-y",
-          git_branch: "feat-y",
-        });
-      }).pipe(Effect.provide(layer)),
-    );
-  });
-
-  it.effect("SUPABASE_YES=1 auto-confirms the git-branch name like --yes", () => {
-    const { layer, out, api } = setup({ stdinIsTty: true });
-    return withGitBranch(
-      withConfigEnv(
-        { SUPABASE_YES: "1" },
+  it.effect(
+    "--yes names the branch after the current git branch and echoes the confirmation",
+    () => {
+      const { layer, out, api } = setup({ yes: true });
+      return withGitBranch(
         Effect.gen(function* () {
           yield* branchesCreate(baseFlags);
-          expect(out.stderrText).toContain("? [Y/n] y\n");
-          expect(api.requests[0]?.body).toMatchObject({ branch_name: "feat-y" });
+          expect(out.stderrText).toContain("Confirmed by --yes: Create preview branch feat-y on ");
+          expect(api.requests[0]?.body).toMatchObject({
+            branch_name: "feat-y",
+            git_branch: "feat-y",
+          });
         }).pipe(Effect.provide(layer)),
-      ),
-    );
-  });
+      );
+    },
+  );
 
-  it.effect("non-TTY with piped `n` declines the git-branch name like Go", () => {
-    const { layer, out, api } = setup({ stdinIsTty: false, stdinInput: "n\n" });
-    return withGitBranch(
-      Effect.gen(function* () {
-        const exit = yield* Effect.exit(branchesCreate(baseFlags));
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          expect(Cause.pretty(exit.cause)).toContain("BranchesCreateCancelledError");
-        }
-        expect(out.stderrText).toContain("? [Y/n] n\n");
-        expect(api.requests).toHaveLength(0);
-      }).pipe(Effect.provide(layer)),
-    );
-  });
-
-  it.effect("non-TTY with empty stdin takes the Yes default and creates the branch", () => {
-    const { layer, out, api } = setup({ stdinIsTty: false });
+  it.effect("asks once on a TTY and says the name came from the git branch", () => {
+    const { layer, out, api } = setup({
+      yes: false,
+      stdinIsTty: true,
+      promptConfirmResponses: [true],
+    });
     return withGitBranch(
       Effect.gen(function* () {
         yield* branchesCreate(baseFlags);
-        expect(out.stderrText).toContain("? [Y/n] \n");
+        expect(out.promptConfirmCalls).toHaveLength(1);
+        expect(out.promptConfirmCalls[0]?.message).toContain("Create preview branch feat-y");
+        expect(out.stderrText).toContain("Branch name taken from the current git branch");
         expect(api.requests[0]?.body).toMatchObject({ branch_name: "feat-y" });
-      }).pipe(Effect.provide(layer)),
-    );
-  });
-
-  it.effect("TTY decline of the git-branch name cancels without creating", () => {
-    const { layer, api } = setup({ stdinIsTty: true, promptConfirmResponses: [false] });
-    return withGitBranch(
-      Effect.gen(function* () {
-        const exit = yield* Effect.exit(branchesCreate(baseFlags));
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          expect(Cause.pretty(exit.cause)).toContain("BranchesCreateCancelledError");
-        }
-        expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer)),
     );
   });
@@ -399,8 +349,8 @@ describe("branches create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("emits Go-byte-exact indented JSON for --output json", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+  it.effect("emits byte-exact indented JSON for --output json", () => {
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* branchesCreate({ ...baseFlags, name: Option.some("feat-x") });
       expect(out.stdoutText).toContain("Created preview branch:");
@@ -438,22 +388,24 @@ describe("branches create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("fires cli_upgrade_suggested with feature_key=branching_limit on 402 gated", () => {
-    const { layer, analytics, api } = setup({ status: 402, gated: true });
+  it.effect("makes one request and suggests no upgrade on a 4xx without the envelope", () => {
+    const { layer, out, analytics, api } = setup({
+      status: 400,
+      response: { message: "Invalid branch name" },
+    });
     return Effect.gen(function* () {
-      yield* Effect.exit(branchesCreate({ ...baseFlags, name: Option.some("feat-x") }));
+      const exit = yield* Effect.exit(
+        branchesCreate({ ...baseFlags, name: Option.some("feat-x") }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(classifyCliCauseActionability(exit.cause).error_category).not.toBe("plan_limit");
+      }
       expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         `POST https://api.supabase.com/v1/projects/${VALID_REF}/branches`,
-        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
-        `GET https://api.supabase.com/v1/organizations/${ORG_SLUG}/entitlements`,
       ]);
-      assertPermissionDrift({ command: "branches create", requests: api.requests });
-      expect(analytics.captured).toEqual([
-        {
-          event: "cli_upgrade_suggested",
-          properties: { feature_key: "branching_limit", org_slug: ORG_SLUG },
-        },
-      ]);
+      expect(out.stderrText).not.toContain("Upgrade your plan:");
+      expect(analytics.captured).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 
@@ -487,7 +439,33 @@ describe("branches create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("does NOT fire upgrade suggested on 500 (Go skips 5xx)", () => {
+  it.effect("carries the envelope's entitlement on the JSON-mode failure", () => {
+    const upgradeUrl = "https://supabase.com/dashboard/org/env-org/billing";
+    const { layer, out } = setup({
+      format: "json",
+      status: 402,
+      response: {
+        message: "Branching is supported only on the Pro plan or above",
+        error: {
+          code: "entitlement_required",
+          feature: "branching_limit",
+          upgrade_url: upgradeUrl,
+        },
+      },
+    });
+    return Effect.gen(function* () {
+      yield* branchesCreate({ ...baseFlags, name: Option.some("feat-x") }).pipe(
+        withJsonErrorHandling,
+      );
+      expect(out.failures).toHaveLength(1);
+      expect(out.failures[0]).toMatchObject({
+        code: "BranchesCreateUnexpectedStatusError",
+        entitlement: { feature: "branching_limit", upgrade_url: upgradeUrl },
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("does NOT fire upgrade suggested on 500", () => {
     const { layer, analytics } = setup({ status: 500 });
     return Effect.gen(function* () {
       yield* Effect.exit(branchesCreate({ ...baseFlags, name: Option.some("feat-x") }));
@@ -505,7 +483,17 @@ describe("branches create integration", () => {
   });
 
   it.effect("writes linked-project cache + telemetry on the upgrade-suggest failure path", () => {
-    const { layer, telemetry, cache } = setupTracked({ status: 402, gated: true });
+    const { layer, telemetry, cache } = setupTracked({
+      status: 402,
+      response: {
+        message: "Branching is supported only on the Pro plan or above",
+        error: {
+          code: "entitlement_required",
+          feature: "branching_limit",
+          upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
+        },
+      },
+    });
     return Effect.gen(function* () {
       yield* Effect.exit(branchesCreate({ ...baseFlags, name: Option.some("feat-x") }));
       expect(telemetry.flushed).toBe(true);
@@ -513,7 +501,7 @@ describe("branches create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("rejects --size nano at flag-parse time, matching Go's 18-value enum", () => {
+  it.effect("rejects --size nano at flag-parse time", () => {
     const root = Command.make("supabase").pipe(
       Command.withSubcommands([branchesCreateCommand]),
       Command.withGlobalFlags(GLOBAL_FLAGS),
@@ -545,3 +533,8 @@ function rejectsInvalidSizeChoice(error: unknown): boolean {
     )
   );
 }
+
+describeHostedConsent("branches create", {
+  api: apiOptions({}),
+  invoke: () => ({ run: branchesCreate({ ...baseFlags, name: Option.some("feat-x") }) }),
+});

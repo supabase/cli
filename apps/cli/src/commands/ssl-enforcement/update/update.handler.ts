@@ -1,14 +1,18 @@
 import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { RemoteTarget } from "../../../config/remote-target.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeEnv, encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
-import { encodeGoToml, encodeGoYaml } from "../../../command-internal/go-struct-output.encoders.ts";
-import { GO_SSL_ENFORCEMENT_RESPONSE } from "../ssl-enforcement.go-payload.ts";
+import { encodeEnv, encodeSortedJson } from "../../../command-internal/output.encoders.ts";
+import {
+  encodeStructToml,
+  encodeStructYaml,
+} from "../../../command-internal/struct-output.encoders.ts";
+import { SSL_ENFORCEMENT_RESPONSE_SHAPE } from "../ssl-enforcement.response-shape.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import {
   SslEnforcementMutuallyExclusiveFlagsError,
@@ -31,9 +35,8 @@ export const sslEnforcementUpdate = Effect.fn("ssl-enforcement.update")(function
   flags: SslEnforcementUpdateFlags,
 ) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* RemoteTarget;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
@@ -48,9 +51,15 @@ export const sslEnforcementUpdate = Effect.fn("ssl-enforcement.update")(function
       return yield* new SslEnforcementNoEnableDisableFlagError();
     }
 
-    const { ref } = yield* resolver.resolve(flags.projectRef);
+    const ref = yield* resolveProjectTarget(flags);
 
     yield* Effect.gen(function* () {
+      yield* requireHostedMutationConsent({
+        action: flags.enableDbSslEnforcement
+          ? "Enable SSL enforcement for database connections"
+          : "Disable SSL enforcement for database connections",
+      });
+
       const updating =
         output.format === "text"
           ? yield* output.task("Updating SSL enforcement config...")
@@ -68,21 +77,21 @@ export const sslEnforcementUpdate = Effect.fn("ssl-enforcement.update")(function
         );
       yield* updating?.clear ?? Effect.void;
 
-      const goFmt = Option.getOrUndefined(goOutputFlag);
+      const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
-      if (goFmt === "json") {
-        yield* output.raw(encodeGoJson(response));
+      if (outputFlagFormat === "json") {
+        yield* output.raw(encodeSortedJson(response));
         return;
       }
-      if (goFmt === "yaml") {
-        yield* output.raw(encodeGoYaml(response, GO_SSL_ENFORCEMENT_RESPONSE));
+      if (outputFlagFormat === "yaml") {
+        yield* output.raw(encodeStructYaml(response, SSL_ENFORCEMENT_RESPONSE_SHAPE));
         return;
       }
-      if (goFmt === "toml") {
-        yield* output.raw(encodeGoToml(response, GO_SSL_ENFORCEMENT_RESPONSE));
+      if (outputFlagFormat === "toml") {
+        yield* output.raw(encodeStructToml(response, SSL_ENFORCEMENT_RESPONSE_SHAPE));
         return;
       }
-      if (goFmt === "env") {
+      if (outputFlagFormat === "env") {
         yield* output.raw(encodeEnv(response) + "\n");
         return;
       }

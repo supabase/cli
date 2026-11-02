@@ -1,5 +1,6 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { BunFileSystem, BunPath } from "@effect/platform-bun";
+import { Effect, FileSystem, Layer, Path, Schema } from "effect";
+import type { PlatformError } from "effect/PlatformError";
 import { tmpdir, platform as osPlatform } from "node:os";
 import { randomUUID } from "node:crypto";
 
@@ -34,19 +35,58 @@ export interface CLIHarness {
 /** A temporary directory that is removed when disposed. */
 export interface TempDir {
   readonly path: string;
-  [Symbol.dispose](): void;
+  [Symbol.asyncDispose](): Promise<void>;
+}
+
+class MissingCliBuildError extends Schema.TaggedError<MissingCliBuildError>()(
+  "MissingCliBuildError",
+  { message: Schema.String },
+) {}
+
+class SubprocessError extends Schema.TaggedError<SubprocessError>()("SubprocessError", {
+  cause: Schema.Defect(),
+}) {}
+
+/* Rejects with each failure's underlying cause when it has one, and a plain Error for the build check, instead of the tagged Effect error. */
+function runHarness<A>(
+  effect: Effect.Effect<
+    A,
+    MissingCliBuildError | SubprocessError | PlatformError,
+    FileSystem.FileSystem | Path.Path
+  >,
+): Promise<A> {
+  return Effect.runPromise(
+    effect.pipe(
+      Effect.catchTags({
+        MissingCliBuildError: (error) => Effect.die(new Error(error.message)),
+        SubprocessError: (error) => Effect.die(error.cause),
+        PlatformError: (error) => Effect.die(error.cause ?? error),
+      }),
+      Effect.provide(Layer.mergeAll(BunFileSystem.layer, BunPath.layer)),
+    ),
+  );
 }
 
 /** Create a unique temporary directory under os.tmpdir() for use as a CLI
  *  working directory. Dispose it after the test to clean up. */
-export function makeTempDir(prefix = "cli-e2e-"): TempDir {
-  const path = mkdtempSync(join(tmpdir(), prefix));
-  return {
-    path,
-    [Symbol.dispose]() {
-      rmSync(path, { recursive: true, force: true });
-    },
-  };
+export function makeTempDir(prefix = "cli-e2e-"): Promise<TempDir> {
+  return runHarness(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { basename, dirname, join } = yield* Path.Path;
+      /* Prefixes tmpdir's own name, so every prefix, empty included, maps to mkdtemp(join(tmpdir(), prefix)). */
+      const path = yield* fs.makeTempDirectory({
+        directory: dirname(tmpdir()),
+        prefix: join(basename(tmpdir()), prefix),
+      });
+      return {
+        path,
+        [Symbol.asyncDispose]() {
+          return runHarness(fs.remove(path, { recursive: true, force: true }));
+        },
+      };
+    }),
+  );
 }
 
 // Resolve the monorepo root from this file's location:
@@ -54,8 +94,6 @@ export function makeTempDir(prefix = "cli-e2e-"): TempDir {
 const WORKSPACE_ROOT = new URL("../../../", import.meta.url).pathname.replace(/\/$/, "");
 
 const BINARY_EXT = osPlatform() === "win32" ? ".exe" : "";
-const TS_CLI_SHIM = join(WORKSPACE_ROOT, "apps/cli/dist/supabase.js");
-const TS_CLI_BINARY = join(WORKSPACE_ROOT, `apps/cli/dist/supabase${BINARY_EXT}`);
 
 // E2E subprocesses should only enter agent output mode when a test explicitly
 // opts in via `opts.env`. Keep this list aligned with @vercel/detect-agent env
@@ -92,14 +130,26 @@ export function createSubprocessBaseEnv(
   return env;
 }
 
-function assertTsCliBuilt(binaryPath: string): void {
-  if (!existsSync(TS_CLI_SHIM) || !existsSync(binaryPath)) {
-    throw new Error(
-      `Missing CLI build artifacts. Run \`pnpm --filter supabase build\` before running e2e tests.\n` +
-        `  expected shim:   ${TS_CLI_SHIM}\n` +
-        `  expected binary: ${binaryPath}`,
-    );
-  }
+/* Treats any access failure, not only ENOENT, as missing. */
+function exists(fs: FileSystem.FileSystem, path: string): Effect.Effect<boolean> {
+  return fs.exists(path).pipe(Effect.orElseSucceed(() => false));
+}
+
+function assertTsCliBuilt(
+  fs: FileSystem.FileSystem,
+  shimPath: string,
+  binaryPath: string,
+): Effect.Effect<void, MissingCliBuildError> {
+  return Effect.gen(function* () {
+    if (!(yield* exists(fs, shimPath)) || !(yield* exists(fs, binaryPath))) {
+      return yield* new MissingCliBuildError({
+        message:
+          `Missing CLI build artifacts. Run \`pnpm --filter supabase build\` before running e2e tests.\n` +
+          `  expected shim:   ${shimPath}\n` +
+          `  expected binary: ${binaryPath}`,
+      });
+    }
+  });
 }
 
 interface BuiltCommand {
@@ -107,22 +157,30 @@ interface BuiltCommand {
   binaryOverride?: string;
 }
 
-function buildCommand(): BuiltCommand {
-  assertTsCliBuilt(TS_CLI_BINARY);
-  return { cmd: ["node", TS_CLI_SHIM], binaryOverride: TS_CLI_BINARY };
+function readText(stream: ReadableStream<Uint8Array>): Effect.Effect<string, SubprocessError> {
+  return Effect.tryPromise({
+    try: () => new Response(stream).text(),
+    catch: (cause) => new SubprocessError({ cause }),
+  });
 }
 
 export function createHarness(options: HarnessOptions): CLIHarness {
   return { options };
 }
 
-export async function exec(
+const execEffect = Effect.fnUntraced(function* (
   harness: CLIHarness,
   args: string[],
   opts?: { env?: Record<string, string> },
-): Promise<CLIResult> {
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  /* Builds the whole invocation before the first asynchronous step, in call order, so the caller
+     can mutate its inputs once exec returns. */
   const start = performance.now();
-  const built = buildCommand();
+  const tsCliShim = path.join(WORKSPACE_ROOT, "apps/cli/dist/supabase.js");
+  const tsCliBinary = path.join(WORKSPACE_ROOT, `apps/cli/dist/supabase${BINARY_EXT}`);
+  const built: BuiltCommand = { cmd: ["node", tsCliShim], binaryOverride: tsCliBinary };
 
   const env: Record<string, string> = {
     ...createSubprocessBaseEnv(),
@@ -143,40 +201,54 @@ export async function exec(
 
   // The CLI resolves its API base URL through the profile system, not
   // SUPABASE_API_URL: `CommandSettings` accepts a built-in profile name or a YAML
-  // file path, and the still-proxied Go binary reads the same file via
-  // SUPABASE_PROFILE. Write a temp profile file pointing at the replay server so
-  // both paths reach it.
-  const profilePath = join(tmpdir(), `cli-e2e-profile-${randomUUID()}.yaml`);
+  // file path. Write a temp profile file pointing at the replay server.
+  const profilePath = path.join(tmpdir(), `cli-e2e-profile-${randomUUID()}.yaml`);
   const url = harness.options.apiUrl;
-  writeFileSync(
-    profilePath,
-    [
-      `name: test`,
-      `api_url: "${url}"`,
-      `dashboard_url: "${url}"`,
-      `project_host: ${harness.options.projectHost ?? "localhost"}`,
-    ].join("\n"),
-  );
+  const profile = [
+    `name: test`,
+    `api_url: "${url}"`,
+    `dashboard_url: "${url}"`,
+    `project_host: ${harness.options.projectHost ?? "localhost"}`,
+  ].join("\n");
+  const command = [...built.cmd, ...args];
+  // Default to os.tmpdir() so subprocess file writes never land in the repo
+  const cwd = harness.options.cwd ?? tmpdir();
+
+  yield* assertTsCliBuilt(fs, tsCliShim, tsCliBinary);
+  yield* fs.writeFileString(profilePath, profile);
   env["SUPABASE_PROFILE"] = profilePath;
 
-  const proc = Bun.spawn([...built.cmd, ...args], {
-    env,
-    // Default to os.tmpdir() so subprocess file writes never land in the repo
-    cwd: harness.options.cwd ?? tmpdir(),
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: "ignore",
+  const proc = yield* Effect.try({
+    try: () =>
+      Bun.spawn(command, {
+        env,
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      }),
+    catch: (cause) => new SubprocessError({ cause }),
   });
 
-  const [stdout, stderr] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ]);
+  const [stdout, stderr] = yield* Effect.all([readText(proc.stdout), readText(proc.stderr)], {
+    concurrency: "unbounded",
+  });
 
-  const exitCode = await proc.exited;
+  const exitCode = yield* Effect.tryPromise({
+    try: () => proc.exited,
+    catch: (cause) => new SubprocessError({ cause }),
+  });
   const durationMs = performance.now() - start;
 
-  if (profilePath) rmSync(profilePath, { force: true });
+  if (profilePath) yield* fs.remove(profilePath, { force: true });
 
   return { stdout, stderr, exitCode, durationMs };
+});
+
+export function exec(
+  harness: CLIHarness,
+  args: string[],
+  opts?: { env?: Record<string, string> },
+): Promise<CLIResult> {
+  return runHarness(execEffect(harness, args, opts));
 }

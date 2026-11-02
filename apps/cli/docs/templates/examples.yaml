@@ -22,19 +22,19 @@ supabase-login:
 supabase-link:
   - id: basic-usage
     name: Basic usage
-    code: supabase link --project-ref ********************
+    code: supabase link ********************
     response: |
       Enter your database password (or leave blank to skip): ********
       Finished supabase link.
   - id: without-password
     name: Link without database password
-    code: supabase link --project-ref ******************** <<< ""
+    code: supabase link ******************** <<< ""
     response: |
       Enter your database password (or leave blank to skip):
       Finished supabase link.
   - id: using-alternate-dns
     name: Link using DNS-over-HTTPS resolver
-    code: supabase link --project-ref ******************** --dns-resolver https
+    code: supabase link ******************** --dns-resolver https
     response: |
       Enter your database password (or leave blank to skip):
       Finished supabase link.
@@ -83,7 +83,7 @@ supabase-status:
            GraphQL URL: http://127.0.0.1:54321/graphql/v1
                 DB URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
             Studio URL: http://127.0.0.1:54323
-          Inbucket URL: http://127.0.0.1:54324
+           Mailpit URL: http://127.0.0.1:54324
             JWT secret: super-secret-jwt-token-with-at-least-32-characters-long
               anon key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0
       service_role key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU
@@ -95,7 +95,6 @@ supabase-status:
       API_URL="http://127.0.0.1:54321"
       DB_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres"
       GRAPHQL_URL="http://127.0.0.1:54321/graphql/v1"
-      INBUCKET_URL="http://127.0.0.1:54324"
       JWT_SECRET="super-secret-jwt-token-with-at-least-32-characters-long"
       SERVICE_ROLE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU"
       STUDIO_URL="http://127.0.0.1:54323"
@@ -112,7 +111,7 @@ supabase-status:
 supabase-migration-list:
   - id: basic-usage
     name: Basic usage
-    code: supabase migration list
+    code: supabase migration list --remote
     response: |2
             LOCAL      │     REMOTE     │     TIME (UTC)
       ─────────────────┼────────────────┼──────────────────────
@@ -121,7 +120,7 @@ supabase-migration-list:
         20230222032233 │                │ 2023-02-22 03:22:33
   - id: with-db-url
     name: Connect to self-hosted database
-    code: supabase migration list --db-url 'postgres://postgres[:percent_encoded_password]@127.0.0.1[:port]/postgres'
+    code: supabase migration list --remote='postgres://postgres[:percent_encoded_password]@db.example.com[:port]/postgres'
     response: |2
             LOCAL      │     REMOTE     │     TIME (UTC)
       ─────────────────┼────────────────┼──────────────────────
@@ -141,20 +140,24 @@ supabase-migration-new:
 supabase-migration-repair:
   - id: basic-usage
     name: Mark a migration as reverted
-    code: supabase migration repair 20230103054303 --status reverted
+    code: supabase migration repair 20230103054303 --status reverted --yes --remote
     response: |
-      Repaired migration history: 20230103054303 => reverted
+      Target: project My Project (abcdefghijklmnopqrst) · production
+      Confirmed by --yes: Mark 1 migration as reverted on project My Project (abcdefghijklmnopqrst) · production
+      Repaired migration history: [20230103054303] => reverted
   - id: mark-applied
     name: Mark a migration as applied
-    code: supabase migration repair 20230222032233 --status applied
+    code: supabase migration repair 20230222032233 --status applied --yes --remote
     response: |
-      Repaired migration history: 20230222032233 => applied
+      Target: project My Project (abcdefghijklmnopqrst) · production
+      Confirmed by --yes: Mark 1 migration as applied on project My Project (abcdefghijklmnopqrst) · production
+      Repaired migration history: [20230222032233] => applied
 supabase-db-diff:
   - id: basic-usage
     name: Basic usage
     code: supabase db diff -f my_table
     response: |
-      Connecting to local database...
+      Target: local stack (127.0.0.1:54322)
       Creating shadow database...
       Applying migration 20230425064254_remote_commit.sql...
       Diffing schemas: auth,extensions,public,storage
@@ -163,9 +166,9 @@ supabase-db-diff:
       No schema changes found
   - id: linked-project
     name: Against linked project
-    code: supabase db diff -f my_table --linked
+    code: supabase db diff -f my_table --remote
     response: |
-      Connecting to local database...
+      Target: project My Project (abcdefghijklmnopqrst) · production
       Creating shadow database...
       Diffing schemas: auth,extensions,public,storage
       Finished supabase db diff on branch main.
@@ -176,7 +179,7 @@ supabase-db-diff:
     name: For a specific schema
     code: supabase db diff -f my_table --schema auth
     response: |
-      Connecting to local database...
+      Target: local stack (127.0.0.1:54322)
       Creating shadow database...
       Diffing schemas: auth
       Finished supabase db diff on branch main.
@@ -187,18 +190,28 @@ supabase-db-dump:
     name: Basic usage
     code: supabase db dump -f supabase/schema.sql
     response: |
+      Target: local stack (127.0.0.1:54322)
+      Dumping schemas from local database...
+      Dumped schema to supabase/schema.sql.
+  - id: linked-project
+    name: Dump the linked project
+    code: supabase db dump -f supabase/schema.sql --remote
+    response: |
+      Target: project My Project (abcdefghijklmnopqrst) · production
       Dumping schemas from remote database...
       Dumped schema to supabase/schema.sql.
   - id: role-only
     name: Role only
-    code: supabase db dump -f supabase/roles.sql --role-only
+    code: supabase db dump -f supabase/roles.sql --role-only --remote
     response: |
+      Target: project My Project (abcdefghijklmnopqrst) · production
       Dumping roles from remote database...
       Dumped schema to supabase/roles.sql.
   - id: data-only
     name: Data only
-    code: supabase db dump -f supabase/seed.sql --data-only
+    code: supabase db dump -f supabase/seed.sql --data-only --remote
     response: |
+      Target: project My Project (abcdefghijklmnopqrst) · production
       Dumping data from remote database...
       Dumped schema to supabase/seed.sql.
 supabase-db-lint:
@@ -229,18 +242,19 @@ supabase-db-lint:
 supabase-db-pull:
   - id: basic-usage
     name: Basic usage
-    code: supabase db pull
+    code: supabase db pull --remote
     response: |
-      Connecting to remote database...
+      Target: project My Project (abcdefghijklmnopqrst) · production
+      ◇  Update the remote migration history table on project My Project (abcdefghijklmnopqrst) · production?
+      │  Yes
       Schema written to supabase/migrations/20240414044403_remote_schema.sql
-      Update remote migration history table? [Y/n]
       Repaired migration history: [20240414044403] => applied
       Finished supabase db pull.
   - id: local-studio
     name: Local studio
-    code: supabase db pull --local
+    code: supabase db pull
     response: |
-      Connecting to local database...
+      Target: local stack (127.0.0.1:54322)
       Creating shadow database...
       Seeding globals from roles.sql...
       Applying migration 20240414044403_remote_schema.sql...
@@ -249,9 +263,9 @@ supabase-db-pull:
       The remote database is already in sync with your local migrations — nothing to pull.
   - id: custom-schemas
     name: Custom schemas
-    code: supabase db pull --schema public,extensions
+    code: supabase db pull --schema public,extensions --remote
     response: |
-      Connecting to remote database...
+      Target: project My Project (abcdefghijklmnopqrst) · production
       Creating shadow database...
       Seeding globals from roles.sql...
       Applying migration 20240414044403_remote_schema.sql...
@@ -261,18 +275,18 @@ supabase-db-pull:
 supabase-db-push:
   - id: basic-usage
     name: Basic usage
-    code: supabase db push
+    code: supabase db push --remote
     response: |
       Linked project is up to date.
   - id: self-hosted
     name: Self hosted
-    code: supabase db push --db-url "postgres://user:pass@127.0.0.1:5432/postgres"
+    code: supabase db push --remote="postgres://user:pass@db.example.com:5432/postgres"
     response: |
       Pushing migration 20230410135622_create_employees_table.sql...
       Finished supabase db push.
   - id: dry-run
     name: Dry run
-    code: supabase db push --dry-run
+    code: supabase db push --dry-run --remote
     response: |
       DRY RUN: migrations will *not* be pushed to the database.
       Would push migration 20230410135622_create_employees_table.sql...
@@ -301,7 +315,7 @@ supabase-db-schema-declarative-sync:
       Enter a name for this migration (press Enter to keep 'declarative_sync'): add_updated_at
       Created new migration at supabase/migrations/20260317194051_add_updated_at.sql
       Apply this migration to local database? [Y/n]
-      Connecting to local database...
+      Target: local stack (127.0.0.1:54322)
       Applying migration 20260317194051_add_updated_at.sql...
       Migration applied successfully.
   - id: generate-first
@@ -331,15 +345,15 @@ supabase-sso-show:
     name: Show information
     code: |-
       supabase sso show 6df4d73f-bf21-405f-a084-b11adf19fea5 \
-        --project-ref abcdefghijklmnopqrst
+        --remote=abcdefghijklmnopqrst
     response: |-
       Information about the identity provider in pretty output.
   - id: metadata-output
     name: Get raw SAML 2.0 Metadata XML
     code: |-
       supabase sso show 6df4d73f-bf21-405f-a084-b11adf19fea5 \
-        --project-ref abcdefghijklmnopqrst \
-        --metadata
+        --metadata \
+        --remote=abcdefghijklmnopqrst
     response: |-
       Raw SAML 2.0 XML assigned to this identity provider. This is the
       version used in the authentication project, and if using a SAML 2.0
@@ -350,24 +364,24 @@ supabase-sso-update:
     name: Replace domains
     code: |-
       supabase sso update 6df4d73f-bf21-405f-a084-b11adf19fea5 \
-        --project-ref abcdefghijklmnopqrst \
-        --domains new-company.com,new-company.net
+        --domains new-company.com,new-company.net \
+        --remote=abcdefghijklmnopqrst
     response: |-
       Information about the updated provider.
   - id: add-domains
     name: Add an additional domain
     code: |-
       supabase sso update 6df4d73f-bf21-405f-a084-b11adf19fea5 \
-        --project-ref abcdefghijklmnopqrst \
-        --add-domains company.net
+        --add-domains company.net \
+        --remote=abcdefghijklmnopqrst
     response: |-
       Information about the updated provider.
   - id: remove-domains
     name: Remove a domain
     code: |-
       supabase sso update 6df4d73f-bf21-405f-a084-b11adf19fea5 \
-        --project-ref abcdefghijklmnopqrst \
-        --remove-domains company.org
+        --remove-domains company.org \
+        --remote=abcdefghijklmnopqrst
     response: |-
       Information about the updated provider.
 supabase-sso-remove:
@@ -375,7 +389,7 @@ supabase-sso-remove:
     name: Remove a provider
     code: |-
       supabase sso remove 6df4d73f-bf21-405f-a084-b11adf19fea5 \
-        --project-ref abcdefghijklmnopqrst
+        --remote=abcdefghijklmnopqrst
     response: |-
       Information about the removed identity provider. It's a good idea to
       save this in case you need it later on.
@@ -384,10 +398,10 @@ supabase-sso-add:
     name: Add with Metadata URL
     code: |-
       supabase sso add \
-        --project-ref abcdefgijklmnopqrst \
         --type saml \
         --metadata-url 'https://...' \
-        --domains company.com
+        --domains company.com \
+        --remote=abcdefghijklmnopqrst
     response: |-
       Information about the added identity provider. You can use
       company.com as the domain name on the frontend side to initiate a SSO
@@ -396,10 +410,10 @@ supabase-sso-add:
     name: Add with Metadata File
     code: |-
       supabase sso add \
-        --project-ref abcdefgijklmnopqrst \
         --type saml \
         --metadata-file /path/to/metadata/file.xml \
-        --domains company.com
+        --domains company.com \
+        --remote=abcdefghijklmnopqrst
     response: |-
       Information about the added identity provider. You can use
       company.com as the domain name on the frontend side to initiate a SSO
@@ -407,5 +421,5 @@ supabase-sso-add:
 supabase-sso-info:
   - id: basic-usage
     name: Show project information
-    code: supabase sso info --project-ref abcdefghijklmnopqrst
+    code: supabase sso info --remote=abcdefghijklmnopqrst
     response: Information about your project's SAML 2.0 configuration.

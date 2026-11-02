@@ -20,7 +20,7 @@ test("reports schema issues from the remote database", ({ cliEffect, project }) 
           ),
         );
 
-        const result = yield* cliEffect(["db", "lint", "--db-url", project.dbUrl]);
+        const result = yield* cliEffect(["db", "lint", `--remote=${project.dbUrl}`]);
         expect(result.exitCode, result.stderr).toBe(0);
         expect(result.stdout, result.stderr).not.toBe("");
         const results = yield* Schema.decodeEffect(

@@ -2,6 +2,7 @@ import type { Effect } from "effect";
 import { Context } from "effect";
 
 import type { NonInteractiveError } from "./errors.ts";
+import type { PlanGateEntitlement } from "./normalize-error.ts";
 import type { OutputFormat, StreamEvent } from "./types.ts";
 
 export interface OutputTask {
@@ -90,6 +91,7 @@ interface OutputShape {
     readonly message: string;
     readonly detail?: string;
     readonly suggestion?: string;
+    readonly entitlement?: PlanGateEntitlement;
   }) => Effect.Effect<void>;
   /**
    * Writes a raw chunk to stdout or stderr without framing.

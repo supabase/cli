@@ -193,6 +193,62 @@ describe("assertDriftAgainst", () => {
     ).toThrow(/"v1-run-a-query", which is declared for this command but whose `when` condition/);
   });
 
+  describe("selector conditions", () => {
+    const branchLookup = declared({
+      status: "mapped",
+      operations: [
+        { operationId: "v1-list-all-secrets", kind: "required" },
+        {
+          operationId: "v1-list-all-branches",
+          kind: "required",
+          when: [{ selector: ["branch"] }],
+        },
+      ],
+      noApiEffectFlags: [],
+    });
+    const listBranches = { method: "GET", url: `${API}/v1/projects/${REF}/branches` };
+
+    it("accepts the branch listing only when a selector flag names a branch", () => {
+      const check = (activeFlags: Record<string, string | boolean>) =>
+        assertDriftAgainst(branchLookup, {
+          command: "secrets list",
+          activeFlags,
+          requests: [listSecrets, listBranches],
+        });
+      expect(() => check({ remote: "feature-x" })).not.toThrow();
+      expect(() => check({ "project-ref": "feature-x" })).not.toThrow();
+      expect(() => check({ remote: REF })).toThrow(/"v1-list-all-branches", which is declared/);
+      expect(() => check({})).toThrow(/"v1-list-all-branches", which is declared/);
+    });
+
+    it("classifies every flag that can carry the selector", () => {
+      const carriers = { remote: true, linked: true, "db-url": true, local: true };
+      for (const [flag, value] of Object.entries({
+        ...carriers,
+        "project-ref": REF,
+        "project-id": REF,
+      })) {
+        expect(() =>
+          assertDriftAgainst(branchLookup, {
+            command: "secrets list",
+            activeFlags: { [flag]: value },
+            requests: [],
+          }),
+        ).not.toThrow();
+      }
+    });
+
+    it("rejects --project-ref given as a boolean, since its value picks the entries that apply", () => {
+      expect(() =>
+        assertDriftAgainst(branchLookup, {
+          command: "secrets list",
+          activeFlags: { "project-ref": true },
+          requests: [],
+        }),
+      ).toThrow(/pass the value/);
+    });
+  });
+
   describe("request qualifiers", () => {
     const apiKeys = `${API}/v1/projects/${REF}/api-keys`;
     const withReveal = declared({

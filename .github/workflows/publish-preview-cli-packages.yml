@@ -82,7 +82,7 @@ jobs:
       - name: Prepare package files
         run: |
           set -euo pipefail
-          pnpm exec bun apps/cli/scripts/sync-versions.ts --version "${PREVIEW_VERSION}"
+          bun apps/cli/scripts/sync-versions.ts --version "${PREVIEW_VERSION}"
           pnpm --dir apps/cli build:shim
           find packages -path '*/bin/supabase*' -type f -exec chmod +x {} +
 

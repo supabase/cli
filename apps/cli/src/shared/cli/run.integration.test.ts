@@ -1,12 +1,26 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Console, Effect, Exit, Layer } from "effect";
+import { Console, Effect, Exit, Layer, Stdio } from "effect";
 import { Argument, CliOutput, Command, Flag } from "effect/cli";
 import { branchesCommand } from "../../commands/branches/branches.command.ts";
 import { GLOBAL_FLAGS, OutputFormatFlag } from "../../command-internal/global-flags.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
-import { emptyEnv, fakeConsole, mockOutput } from "../../../tests/helpers/mocks.ts";
+import { useTempWorkdir, withEnvVar } from "../../../tests/helpers/command-mocks.ts";
+import { emptyEnv, fakeConsole, mockAnalytics, mockOutput } from "../../../tests/helpers/mocks.ts";
+import { targetFlags } from "../../command-internal/target/target-flags.ts";
+import { CliProjectHome } from "../config/cli-project-home.service.ts";
+import { commandTargetLayer } from "../output/command-target.layer.ts";
 import { CliArgs } from "./cli-args.service.ts";
-import { exitCodeForFailure, withoutParseErrorHelpDump } from "./run.ts";
+import {
+  cliProgramFor,
+  exitCodeForFailure,
+  prepareCliArgs,
+  withoutParseErrorHelpDump,
+} from "./run.ts";
+
+const textOutputLayer = () => {
+  const out = mockOutput({ format: "text" });
+  return Layer.mergeAll(out.layer, commandTargetLayer.pipe(Layer.provide(out.layer)));
+};
 
 const testBranchesCommand = branchesCommand.pipe(
   Command.withGlobalFlags([OutputFormatFlag, ...GLOBAL_FLAGS]),
@@ -23,7 +37,7 @@ describe("group command exit codes (CLI-1906)", () => {
     Layer.mergeAll(
       CliOutput.layer(textCliOutputFormatter()),
       Layer.succeed(CliArgs, { args }),
-      mockOutput({ format: "text" }).layer,
+      textOutputLayer(),
       emptyEnv(),
     );
 
@@ -82,7 +96,7 @@ describe("withoutParseErrorHelpDump (CLI-1901)", () => {
       CliOutput.layer(textCliOutputFormatter()),
       Layer.succeed(CliArgs, { args }),
       Layer.succeed(Console.Console, console),
-      mockOutput({ format: "text" }).layer,
+      textOutputLayer(),
       emptyEnv(),
     );
 
@@ -249,7 +263,7 @@ describe("nested command parsing", () => {
           Layer.mergeAll(
             CliOutput.layer(textCliOutputFormatter()),
             Layer.succeed(CliArgs, { args }),
-            mockOutput({ format: "text" }).layer,
+            textOutputLayer(),
             emptyEnv(),
           ),
         ),
@@ -258,6 +272,56 @@ describe("nested command parsing", () => {
 
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(receivedPaths).toEqual(["-foo.sql", "--literal"]);
+    }),
+  );
+});
+
+describe("argv rewrite reaches handlers", () => {
+  const tempHome = useTempWorkdir("supabase-run-argv-");
+
+  it.live("a handler reads the rewritten argv from Stdio.args, as it does from CliArgs", () =>
+    Effect.gen(function* () {
+      const REF = "abcdefghijklmnopqrst";
+      let seenByHandler: ReadonlyArray<string> = [];
+      const types = Command.make("types", targetFlags({ subject: "database", dbUrl: true }), () =>
+        Effect.gen(function* () {
+          seenByHandler = yield* (yield* Stdio.Stdio).args;
+        }),
+      );
+      const gen = Command.make("gen").pipe(Command.withSubcommands([types]));
+      const root = Command.make("supabase").pipe(Command.withSubcommands([gen]));
+      const cliArgs = prepareCliArgs(root, ["gen", "types", "--remote", REF]);
+
+      const projectHomeDir = `${tempHome.current}/.supabase`;
+      const projectHome = Layer.succeed(
+        CliProjectHome,
+        CliProjectHome.of({
+          projectRoot: tempHome.current,
+          supabaseDir: `${tempHome.current}/supabase`,
+          projectHomeDir,
+          projectLinkPath: `${projectHomeDir}/project.json`,
+          projectLocalVersionsPath: `${projectHomeDir}/local-versions.json`,
+          ensureCliProjectHomeDir: Effect.void,
+        }),
+      );
+
+      yield* withEnvVar(
+        "SUPABASE_HOME",
+        tempHome.current,
+        cliProgramFor(
+          root,
+          cliArgs,
+          {
+            beforeParse: Effect.void,
+            agentDefaultOutputFormat: "text",
+            analyticsLayer: mockAnalytics().layer,
+          },
+          "text",
+        ),
+      ).pipe(Effect.provide(projectHome));
+
+      expect(cliArgs.args).toEqual(["gen", "types", `--remote=${REF}`]);
+      expect(seenByHandler).toEqual(cliArgs.args);
     }),
   );
 });

@@ -7,7 +7,7 @@ import {
   pgDeltaNextTempPath,
   savePgDeltaNextDebugArtifacts,
 } from "./pgdelta-next-artifacts.ts";
-import { legacyProjectStatePaths } from "../../../command-internal/legacy-project-state.paths.ts";
+import { legacyProjectStatePaths } from "../../../shared/config/legacy-project-state.paths.ts";
 
 const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
 

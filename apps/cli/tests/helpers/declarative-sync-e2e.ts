@@ -164,7 +164,7 @@ export const convergeInitialSchema = (projectDir: string) =>
     );
     requireCliSuccess(sync, "initial declarative sync");
     const reset = yield* runSupabaseEffect(
-      ["db", "reset", "--local", "--no-seed"],
+      ["db", "reset", "--no-seed"],
       scenarioCommandOptions(projectDir),
     );
     requireCliSuccess(reset, "db reset setup");

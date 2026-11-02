@@ -25,7 +25,7 @@ User-authored configuration and migrations live in the repository:
     functions/
 ```
 
-The CLI discovers the active project from the nearest ancestor containing `supabase/config.toml`
+The CLI discovers the active project from the nearest ancestor containing `supabase/config.toml` or `supabase/config.json`
 (or the legacy config filename where supported), then passes that canonical project root to the
 managed stack identity. A stack ID is derived from the canonical project root, the current Git
 branch context (or `ordinary-workspace` outside Git), and the stack name. This identity is local

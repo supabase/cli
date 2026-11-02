@@ -1,8 +1,7 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
+import { Effect, FileSystem, Path } from "effect";
+import type { PlatformError } from "effect/PlatformError";
 import { macIdentifierFor } from "../../scripts/macos-signing.ts";
-import { runCli } from "./release-shell.ts";
+import { jsonQuote, type ReleaseStepError, runCliEffect } from "./release-shell.ts";
 
 export type SignatureCheckResult = {
   readonly passed: boolean;
@@ -18,28 +17,34 @@ export type SignatureCheckResult = {
  * (Phase 2), it additionally checks the hardened-runtime flag and that Gatekeeper accepts a
  * quarantined copy, which validates the online notarization ticket.
  */
-export async function verifyMacSignature(binPath: string): Promise<SignatureCheckResult> {
+export const verifyMacSignature = Effect.fn("MacosSignature.verifyMacSignature")(function* (
+  binPath: string,
+): Effect.fn.Return<
+  SignatureCheckResult,
+  ReleaseStepError | PlatformError,
+  FileSystem.FileSystem | Path.Path
+> {
+  const path = yield* Path.Path;
   const binary = path.basename(binPath);
   const expectedId = macIdentifierFor(binary);
   if (!expectedId) {
     return { passed: false, detail: `no expected identifier configured for ${binary}` };
   }
 
-  const verify = await runCli("codesign", ["--verify", "--strict", "--verbose=2", binPath]);
+  const verify = yield* runCliEffect("codesign", ["--verify", "--strict", "--verbose=2", binPath]);
   if (verify.exitCode !== 0) {
     return {
       passed: false,
-      detail: `codesign --verify --strict failed: exit=${verify.exitCode}, stderr=${JSON.stringify(verify.stderr)}`,
+      detail: `codesign --verify --strict failed: exit=${verify.exitCode}, stderr=${yield* jsonQuote(verify.stderr)}`,
     };
   }
 
   // codesign writes the signature display to stderr.
-  const display = await runCli("codesign", ["-dvv", binPath]);
+  const display = yield* runCliEffect("codesign", ["-dvv", binPath]);
   const info = [display.stdout, display.stderr].filter(Boolean).join("\n");
 
   // Match the whole identifier value (codesign prints `Identifier=<id>` on its
-  // own line) so the SFE's `com.supabase.cli` can't satisfy the sidecar's
-  // `com.supabase.cli-go` by substring.
+  // own line) rather than substring-matching within the surrounding signature output.
   const actualId = info.match(/^Identifier=(.+)$/m)?.[1]?.trim();
   if (actualId !== expectedId) {
     return { passed: false, detail: `expected Identifier=${expectedId}, got:\n${info}` };
@@ -63,8 +68,8 @@ export async function verifyMacSignature(binPath: string): Promise<SignatureChec
       detail: `Developer ID signature missing hardened runtime flag:\n${info}`,
     };
   }
-  return verifyGatekeeperAcceptsQuarantined(binPath, expectedId);
-}
+  return yield* verifyGatekeeperAcceptsQuarantined(binPath, expectedId);
+});
 
 /**
  * Copy the binary, mark it quarantined (as a fresh download would be), and ask
@@ -72,27 +77,42 @@ export async function verifyMacSignature(binPath: string): Promise<SignatureChec
  * un-notarized one is rejected. Bare Mach-O binaries cannot be stapled, so this
  * exercises the online ticket lookup.
  */
-async function verifyGatekeeperAcceptsQuarantined(
+const verifyGatekeeperAcceptsQuarantined = Effect.fnUntraced(function* (
   binPath: string,
   expectedId: string,
-): Promise<SignatureCheckResult> {
-  const dir = await mkdtemp(path.join(tmpdir(), "supabase-gatekeeper-"));
-  const copy = path.join(dir, path.basename(binPath));
-  try {
-    await runCli("cp", [binPath, copy]);
-    await runCli("xattr", ["-w", "com.apple.quarantine", "0081;00000000;smoke;", copy]);
-    const assess = await runCli("spctl", ["--assess", "--type", "execute", "--verbose=2", copy]);
-    if (assess.exitCode !== 0) {
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const assessCopy = (dir: string) =>
+    Effect.gen(function* () {
+      const copy = path.join(dir, path.basename(binPath));
+      yield* runCliEffect("cp", [binPath, copy]);
+      yield* runCliEffect("xattr", ["-w", "com.apple.quarantine", "0081;00000000;smoke;", copy]);
+      const assess = yield* runCliEffect("spctl", [
+        "--assess",
+        "--type",
+        "execute",
+        "--verbose=2",
+        copy,
+      ]);
+      if (assess.exitCode !== 0) {
+        return {
+          passed: false,
+          detail: `spctl rejected quarantined binary: exit=${assess.exitCode}, stderr=${yield* jsonQuote(assess.stderr)}`,
+        };
+      }
       return {
-        passed: false,
-        detail: `spctl rejected quarantined binary: exit=${assess.exitCode}, stderr=${JSON.stringify(assess.stderr)}`,
+        passed: true,
+        detail: `Developer ID + notarized signature ok (Identifier=${expectedId})`,
       };
-    }
-    return {
-      passed: true,
-      detail: `Developer ID + notarized signature ok (Identifier=${expectedId})`,
-    };
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-}
+    });
+  /* `try { assess } finally { remove }`: a failed removal replaces the assessment's outcome. */
+  return yield* Effect.uninterruptibleMask((restore) =>
+    Effect.gen(function* () {
+      const dir = yield* fs.makeTempDirectory({ prefix: "supabase-gatekeeper-" });
+      const outcome = yield* Effect.exit(restore(assessCopy(dir)));
+      yield* fs.remove(dir, { recursive: true, force: true });
+      return yield* outcome;
+    }),
+  );
+});

@@ -18,6 +18,7 @@ import { HttpClient, HttpClientRequest } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { FunctionsBootstrapOwner } from "../functions/FunctionsBootstrap.ts";
 import { ContainerError, type ContainerRuntime } from "../runtime/Container.ts";
+import { makeFakeNpmRegistry } from "../../tests/fake-npm-registry.ts";
 import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import * as Functions from "./Functions.ts";
@@ -595,6 +596,103 @@ for (const runtime of ["native", testEngine] as const) {
     { timeout: 120_000 },
   );
 }
+
+it.live(
+  "reuses a cached npm dependency when several function workers boot at once",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const client = yield* HttpClient.HttpClient;
+        const probe = "cache-probe-1.0.0";
+        const registry = yield* makeFakeNpmRegistry({
+          name: "cache-probe",
+          version: "1.0.0",
+          source: `export const probe = "${probe}";`,
+        });
+        const temporaryRoot = `${process.cwd()}/tmp`;
+        yield* fs.makeDirectory(temporaryRoot, { recursive: true });
+        const root = yield* fs.makeTempDirectoryScoped({
+          directory: temporaryRoot,
+          prefix: "functions-npm-cache-",
+        });
+        const stackRoot = yield* fs.makeTempDirectoryScoped({
+          directory: temporaryRoot,
+          prefix: "functions-npm-cache-stack-",
+        });
+        const functionNames = ["alpha", "beta"];
+        const functionsRoot = `${root}/supabase/functions`;
+        for (const name of functionNames) {
+          yield* fs.makeDirectory(`${functionsRoot}/${name}`, { recursive: true });
+          yield* fs.writeFileString(
+            `${functionsRoot}/${name}/index.ts`,
+            'import { probe } from "npm:cache-probe@1.0.0"; Deno.serve(() => new Response(probe));',
+          );
+        }
+        const recipe = yield* makeServiceRecipe(
+          {
+            service: "functions",
+            pin: selection.functions,
+            config: {
+              functionsRoot,
+              verifyJwt: false,
+              env: { NPM_CONFIG_REGISTRY: registry.url },
+            },
+          },
+          {
+            ...options(stackRoot),
+            stackId: "d".repeat(64),
+            instanceId: "npm-cache",
+            cacheRoot: testArtifactCacheRoot,
+          },
+        );
+        const logs = yield* Ref.make("");
+        yield* Stream.fromSubscription(yield* recipe.logs).pipe(
+          Stream.runForEach(({ bytes }) =>
+            Ref.update(logs, (text) => text + new TextDecoder().decode(bytes)),
+          ),
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        const instance = yield* makeStandaloneService(recipe.definition, {
+          id: "npm-cache",
+          config: recipe.creation,
+        });
+        yield* Effect.gen(function* () {
+          yield* instance.start;
+          yield* instance.ready;
+          const endpoint = yield* recipe.endpoint("http");
+          const base = `http://${httpHost(endpoint)}:${endpoint.port}`;
+          const call = (name: string) =>
+            client
+              .get(`${base}/${name}`)
+              .pipe(
+                Effect.flatMap((response) =>
+                  response.text.pipe(Effect.map((body) => ({ status: response.status, body }))),
+                ),
+              );
+
+          expect(yield* call("alpha")).toEqual({ status: 200, body: probe });
+          expect(yield* registry.tarballFetches).toBe(1);
+
+          const burst = Array.from({ length: 4 }, () => functionNames).flat();
+          const responses = yield* Effect.forEach(burst, call, { concurrency: "unbounded" });
+
+          expect({ responses, tarballFetches: yield* registry.tarballFetches }).toEqual({
+            responses: burst.map(() => ({ status: 200, body: probe })),
+            tarballFetches: 1,
+          });
+          yield* instance.stop;
+        }).pipe(
+          Effect.tapCause(() =>
+            Ref.get(logs).pipe(
+              Effect.flatMap((text) => Effect.logError(`Functions native logs:\n${text}`)),
+            ),
+          ),
+        );
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  { timeout: 120_000 },
+);
 
 it.effect("passes POSIX project paths to a docker Functions container from a Windows host", () =>
   Effect.scoped(
