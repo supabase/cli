@@ -12,11 +12,7 @@ import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer
 import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
 
 export const inspectDbToastSizesCommand = Command.make("toast-sizes", INSPECT_DB_FLAGS).pipe(
-  Command.withDescription(
-    "Displays TOAST table sizes and dead chunk counts for every user table that has overflow storage. " +
-      "Autovacuum runs on TOAST relations independently, so dead chunks can accumulate even when the " +
-      "main heap looks healthy.",
-  ),
+  Command.withDescription("Show TOAST table sizes and dead chunk counts for user tables."),
   Command.withShortDescription("Show TOAST table sizes and dead chunk counts"),
   withPermissions(INSPECT_DB_PERMISSIONS),
   Command.withHandler(inspectDbCommandHandler(inspectDbToastSizes)),

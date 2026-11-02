@@ -29,8 +29,12 @@ WHERE main.relkind = 'r'
   AND main.reltoastrelid <> 0
   AND pg_total_relation_size(main.reltoastrelid) > 0
   AND NOT n.nspname LIKE ANY($1)
-ORDER BY pg_total_relation_size(main.reltoastrelid) DESC`;
+ORDER BY pg_total_relation_size(main.reltoastrelid) DESC, name`;
 
+/**
+ * `inspect db toast-sizes` — per-table TOAST footprint (including its index) and TOAST dead-chunk
+ * stats; Total Size also counts the parent's indexes, so it exceeds Heap + TOAST.
+ */
 export const toastSizesSpec: InspectQuerySpec = {
   name: "toast-sizes",
   sql: SQL,
