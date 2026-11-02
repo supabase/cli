@@ -2,20 +2,21 @@ import type {
   V1PatchNetworkRestrictionsOutput,
   V1UpdateNetworkRestrictionsOutput,
 } from "@supabase/api/effect";
-import { Effect, Option } from "effect";
+import { Effect, Option, Result } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
   encodeEnv,
-  encodeGoJson,
+  encodeSortedJson,
   encodeToml,
   encodeYaml,
-} from "../../../command-internal/go-output.encoders.ts";
+} from "../../../command-internal/output.encoders.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import { partitionPatchedCidrs, validateAndPartitionCidrs } from "../network-restrictions.cidr.ts";
 import {
@@ -41,28 +42,34 @@ export const networkRestrictionsUpdate = Effect.fn("network-restrictions.update"
   flags: NetworkRestrictionsUpdateFlags,
 ) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
-    // Go validates every input before any I/O (`update.go:20-33`). Run the same
-    // pass first so a malformed CIDR short-circuits without resolving the ref
-    // or writing the linked-project cache.
+    // Validate every input before any I/O, so a malformed CIDR short-circuits without
+    // resolving the ref or writing the linked-project cache.
     const validation = validateAndPartitionCidrs(flags.dbAllowCidr, flags.bypassCidrChecks);
-    if (!validation.ok) {
-      if (validation.kind === "invalid") {
-        return yield* new NetworkRestrictionsInvalidCidrError({ input: validation.input });
+    if (Result.isFailure(validation)) {
+      const { kind, input } = validation.failure;
+      if (kind === "invalid") {
+        return yield* new NetworkRestrictionsInvalidCidrError({ input });
       }
-      return yield* new NetworkRestrictionsPrivateIpError({ input: validation.input });
+      return yield* new NetworkRestrictionsPrivateIpError({ input });
     }
-    const { v4, v6 } = validation;
+    const { v4, v6 } = validation.success;
 
-    const ref = yield* resolver.resolve(flags.projectRef);
+    const ref = yield* resolveProjectTarget(flags);
 
     yield* Effect.gen(function* () {
+      yield* requireHostedMutationConsent({
+        action: flags.append
+          ? "Append to the network restrictions"
+          : "Replace the network restrictions",
+        details: [`IPv4: ${v4.join(", ") || "(none)"}`, `IPv6: ${v6.join(", ") || "(none)"}`],
+      });
+
       const updating =
         output.format === "text"
           ? yield* output.task("Updating network restrictions...")
@@ -75,6 +82,12 @@ export const networkRestrictionsUpdate = Effect.fn("network-restrictions.update"
         | typeof V1UpdateNetworkRestrictionsOutput.Type
         | typeof V1PatchNetworkRestrictionsOutput.Type;
 
+      yield* Effect.annotateCurrentSpan({
+        "network_restrictions.strategy": flags.append ? "append" : "replace",
+        "network_restrictions.cidr_v4_count": v4.length,
+        "network_restrictions.cidr_v6_count": v6.length,
+      });
+
       if (flags.append) {
         const response = yield* api.v1
           .patchNetworkRestrictions({
@@ -85,10 +98,9 @@ export const networkRestrictionsUpdate = Effect.fn("network-restrictions.update"
             Effect.tapError(() => updating?.fail() ?? Effect.void),
             Effect.catch(mapUpdateError),
           );
-        yield* updating?.clear() ?? Effect.void;
-        // PATCH uses `&localSlice` in Go, which always renders as `&[]` / `&[...]`
-        // even when no items match a given type. Partition returns concrete arrays
-        // to match that always-non-nil semantic.
+        yield* updating?.clear ?? Effect.void;
+        // The PATCH response always renders as `&[]`/`&[...]`, never `<nil>`; partition
+        // returns concrete arrays to match, even when a type has no items.
         const partitioned = partitionPatchedCidrs(response.config.dbAllowedCidrs);
         v4Out = partitioned.v4;
         v6Out = partitioned.v6;
@@ -105,30 +117,29 @@ export const networkRestrictionsUpdate = Effect.fn("network-restrictions.update"
             Effect.tapError(() => updating?.fail() ?? Effect.void),
             Effect.catch(mapUpdateError),
           );
-        yield* updating?.clear() ?? Effect.void;
-        // POST `/apply` prints the response field directly; if the API omits
-        // either array it renders as `<nil>` (matches `*[]string(nil)`).
+        yield* updating?.clear ?? Effect.void;
+        // POST /apply prints the response field directly; an omitted array renders as `<nil>`.
         v4Out = response.config.dbAllowedCidrs;
         v6Out = response.config.dbAllowedCidrsV6;
         applied = response.status === "applied";
         envelope = response;
       }
 
-      const goFmt = Option.getOrUndefined(goOutputFlag);
+      const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
-      if (goFmt === "json") {
-        yield* output.raw(encodeGoJson(envelope));
+      if (outputFlagFormat === "json") {
+        yield* output.raw(encodeSortedJson(envelope));
         return;
       }
-      if (goFmt === "yaml") {
+      if (outputFlagFormat === "yaml") {
         yield* output.raw(encodeYaml(envelope));
         return;
       }
-      if (goFmt === "toml") {
+      if (outputFlagFormat === "toml") {
         yield* output.raw(encodeToml(envelope) + "\n");
         return;
       }
-      if (goFmt === "env") {
+      if (outputFlagFormat === "env") {
         yield* output.raw(encodeEnv(envelope) + "\n");
         return;
       }

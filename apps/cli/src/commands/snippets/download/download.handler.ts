@@ -1,13 +1,12 @@
-import { Effect, Option } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import { operationDefinitions } from "@supabase/api/effect";
+import { Effect, Predicate, Result, Schema } from "effect";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
-import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { resolveAccessToken } from "../../../command-internal/resolve-token.ts";
-import { sanitizeErrorBody } from "../../../command-internal/http-errors.ts";
-import { goQuote } from "../../../command-internal/go-quote.ts";
+import { mapHttpError } from "../../../command-internal/http-errors.ts";
+import { quoteBytes } from "../../../command-internal/byte-quote.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import {
@@ -23,10 +22,7 @@ function canonicalFromHex(hex32: string): string {
   return `${hex32.slice(0, 8)}-${hex32.slice(8, 12)}-${hex32.slice(12, 16)}-${hex32.slice(16, 20)}-${hex32.slice(20)}`;
 }
 
-/**
- * Reads `[start, end)` of `s` as lowercase hex, or `undefined` on the first
- * non-hex byte — the byte-wise equivalent of google/uuid's `xtob` loop.
- */
+/** Reads `[start, end)` of `s` as lowercase hex, or `undefined` on the first non-hex byte. */
 function readHexRange(s: Uint8Array, start: number, end: number): string | undefined {
   let out = "";
   for (let i = start; i < end; i++) {
@@ -43,11 +39,9 @@ function readHexRange(s: Uint8Array, start: number, end: number): string | undef
 }
 
 /**
- * `strings.EqualFold(s[:9], "urn:uuid:")` equivalent. ASCII-only folding over
- * the raw bytes is exact here: no non-ASCII rune case-folds to any rune of
- * `"urn:uuid:"` (Unicode's only ASCII-target simple folds are `ſ`→`s` and
- * `K`→`k`, neither of which appears), and multibyte runes can never
- * byte-match an ASCII target.
+ * Case-insensitive match against "urn:uuid:" over raw bytes. ASCII-only
+ * folding is exact here: no non-ASCII character case-folds to any character of
+ * "urn:uuid:", and multibyte characters can never byte-match an ASCII target.
  */
 function isUrnUuidPrefix(bytes: Uint8Array): boolean {
   const expected = "urn:uuid:";
@@ -60,31 +54,13 @@ function isUrnUuidPrefix(bytes: Uint8Array): boolean {
 }
 
 /**
- * Faithful port of `uuid.Parse` (google/uuid v1.6.0, `uuid.go:68-117`), used
- * to validate the snippet id before it reaches the Management API. Accepts
- * the same 4 forms — hyphenated (36), `urn:uuid:`-prefixed (45), braced
- * `{…}` (38, where only the middle 36 bytes are examined — the trailing byte
- * is never validated, mirroring `s = s[1:]`), and raw 32-hex — and returns
- * the CANONICAL lowercase hyphenated form (the parsed `uuid.UUID`'s
- * `String()` is always lowercase — never the raw arg). Error strings
- * reproduce `uuid.Parse`'s three branches verbatim; the caller wraps them
- * like `fmt.Errorf("invalid snippet ID: %w", err)`.
- *
- * Everything operates on the argument's UTF-8 BYTES: `uuid.Parse`'s `switch
- * len(s)` counts bytes where a JS string's `length` counts UTF-16 code
- * units, so a non-ASCII argument like `é<canonical-uuid>}` (JS length 38, 39
- * bytes) must take the default branch and report `invalid UUID length: 39`
- * — not slip into the braced branch and issue a request (verified against
- * go1.26 + google/uuid v1.6.0).
- *
- * This pre-check is load-bearing for error-message parity: the generated
- * `V1GetASnippetInput` schema already pattern-checks UUIDs, so without it a
- * non-UUID input would surface as a `SchemaError` with a `failed to download
- * snippet:` prefix instead of `invalid snippet ID:`.
+ * Validates a snippet id before it reaches the Management API, accepting the
+ * 4 forms handled below and always returning the canonical lowercase
+ * hyphenated form. Operates on UTF-8 bytes, not UTF-16 code units, so
+ * non-ASCII input is measured by byte length — this pre-check is load-bearing,
+ * since the generated schema would otherwise report a generic `SchemaError`.
  */
-export function parseSnippetUuid(
-  input: string,
-): { readonly canonical: string } | { readonly error: string } {
+export function parseSnippetUuid(input: string): Result.Result<string, string> {
   let s = new TextEncoder().encode(input);
   switch (s.length) {
     // xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
@@ -93,7 +69,7 @@ export function parseSnippetUuid(
     // urn:uuid:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
     case 45: {
       if (!isUrnUuidPrefix(s)) {
-        return { error: `invalid urn prefix: ${goQuote(s.subarray(0, 9))}` };
+        return Result.fail(`invalid urn prefix: ${quoteBytes(s.subarray(0, 9))}`);
       }
       s = s.subarray(9);
       break;
@@ -105,15 +81,15 @@ export function parseSnippetUuid(
     // xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
     case 32: {
       const hex = readHexRange(s, 0, 32);
-      if (hex === undefined) return { error: "invalid UUID format" };
-      return { canonical: canonicalFromHex(hex) };
+      if (hex === undefined) return Result.fail("invalid UUID format");
+      return Result.succeed(canonicalFromHex(hex));
     }
     default:
-      return { error: `invalid UUID length: ${s.length}` };
+      return Result.fail(`invalid UUID length: ${s.length}`);
   }
   // s is now at least 36 bytes and must be xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.
   if (s[8] !== DASH_BYTE || s[13] !== DASH_BYTE || s[18] !== DASH_BYTE || s[23] !== DASH_BYTE) {
-    return { error: "invalid UUID format" };
+    return Result.fail("invalid UUID format");
   }
   const segments = [
     readHexRange(s, 0, 8),
@@ -123,97 +99,71 @@ export function parseSnippetUuid(
     readHexRange(s, 24, 36),
   ];
   if (segments.some((segment) => segment === undefined)) {
-    return { error: "invalid UUID format" };
+    return Result.fail("invalid UUID format");
   }
-  return { canonical: canonicalFromHex(segments.join("")) };
+  return Result.succeed(canonicalFromHex(segments.join("")));
 }
 
-// Tolerant body parse — see `list.handler.ts` for the rationale. The real
-// `/v1/snippets/{id}` payload omits `description`, which the generated
-// `V1GetASnippetOutput` schema declares as `Union[String, Null]` (required).
-// Routing through the typed client surfaces `SchemaError: Missing key …` on
-// every non-test response. Same workaround as `linked-project-cache.layer.ts`.
-function asRecord(obj: unknown): Record<string, unknown> {
-  return typeof obj === "object" && obj !== null ? (obj as Record<string, unknown>) : {};
-}
+const asRecord = (value: unknown): Record<string, unknown> =>
+  Predicate.isObjectOrArray(value) ? { ...value } : {};
 
-function readSql(body: unknown): string {
-  const content = asRecord(asRecord(body)["content"]);
-  const sql = content["sql"];
-  return typeof sql === "string" ? sql : "";
-}
+const decodeSnippet = Schema.decodeUnknownEffect(operationDefinitions.v1GetASnippet.outputSchema);
+
+const mapDownloadError = mapHttpError({
+  networkError: SnippetsDownloadNetworkError,
+  statusError: SnippetsDownloadUnexpectedStatusError,
+  networkMessage: (cause) => `failed to download snippet: ${cause}`,
+  statusMessage: (status, body) => `unexpected download snippet status ${status}: ${body}`,
+});
 
 export const snippetsDownload = Effect.fn("snippets.download")(function* (
   flags: SnippetsDownloadFlags,
 ) {
   const output = yield* Output;
-  const httpClient = yield* HttpClient.HttpClient;
-  const cliSettings = yield* CommandSettings;
-  const resolver = yield* ProjectRefResolver;
+  const api = yield* CommandPlatformApi;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
-    const ref = yield* resolver.resolve(flags.projectRef);
+    const ref = yield* resolveProjectTarget(flags);
 
     yield* Effect.gen(function* () {
-      const parsed = parseSnippetUuid(flags.snippetId);
-      if ("error" in parsed) {
-        return yield* new SnippetsInvalidIdError({
-          message: `invalid snippet ID: ${parsed.error}`,
-        });
-      }
-
-      const tokenOpt = yield* resolveAccessToken;
-      const authHeader: (
-        req: HttpClientRequest.HttpClientRequest,
-      ) => HttpClientRequest.HttpClientRequest = Option.isSome(tokenOpt)
-        ? HttpClientRequest.bearerToken(tokenOpt.value)
-        : (req) => req;
-      const request = HttpClientRequest.get(
-        `${cliSettings.apiUrl}/v1/snippets/${parsed.canonical}`,
-      ).pipe(authHeader, HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent));
+      const snippetId = yield* Effect.fromResult(parseSnippetUuid(flags.snippetId)).pipe(
+        Effect.mapError(
+          (error) => new SnippetsInvalidIdError({ message: `invalid snippet ID: ${error}` }),
+        ),
+      );
 
       const fetching =
         output.format === "text" ? yield* output.task("Downloading snippet...") : undefined;
-      const response = yield* httpClient.execute(request).pipe(
-        Effect.tapError(() => fetching?.fail() ?? Effect.void),
-        Effect.catch(
-          (cause) =>
-            new SnippetsDownloadNetworkError({
-              message: `failed to download snippet: ${cause.reason.description ?? cause.reason._tag}`,
-            }),
-        ),
-      );
-
-      if (response.status !== 200) {
-        yield* fetching?.fail() ?? Effect.void;
-        const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-        const body = sanitizeErrorBody(rawBody);
-        return yield* new SnippetsDownloadUnexpectedStatusError({
-          status: response.status,
-          body,
-          message: `unexpected download snippet status ${response.status}: ${body}`,
-        });
-      }
-
+      // `executeRaw` keeps the response body intact so JSON output emits it as the API returned
+      // it; the typed schema decodes a copy for the SQL.
+      const response = yield* api
+        .executeRaw(operationDefinitions.v1GetASnippet, { id: snippetId })
+        .pipe(
+          Effect.flatMap(HttpClientResponse.filterStatusOk),
+          Effect.catch(mapDownloadError),
+          Effect.tapError(() => fetching?.fail() ?? Effect.void),
+        );
       const rawBody = yield* response.json.pipe(
-        Effect.catch(
+        Effect.mapError(
           (cause) =>
             new SnippetsDownloadNetworkError({
               message: `failed to download snippet: ${String(cause)}`,
-              // 200-response body decode failure — an API-response problem, not
-              // a transport/network failure.
               decode: true,
             }),
         ),
+        Effect.tapError(() => fetching?.fail() ?? Effect.void),
       );
-      yield* fetching?.clear() ?? Effect.void;
+      const snippet = yield* decodeSnippet(rawBody).pipe(
+        Effect.catch(mapDownloadError),
+        Effect.tapError(() => fetching?.fail() ?? Effect.void),
+      );
+      yield* fetching?.clear ?? Effect.void;
 
-      // TS-only structured output. Expose the full payload so scripted callers
-      // and agents can read snippet identity (`id`, `name`, `owner`, …)
-      // alongside `content.sql`, matching the SIDE_EFFECTS.md contract and the
-      // shape `snippets list --output-format json` uses for its response.
+      // Exposes the full payload (id, name, owner, ... alongside content.sql)
+      // for scripted callers — see SIDE_EFFECTS.md; matches the shape
+      // `snippets list --output-format json` uses.
       if (output.format === "json" || output.format === "stream-json") {
         yield* output.success("", asRecord(rawBody));
         return;
@@ -221,7 +171,8 @@ export const snippetsDownload = Effect.fn("snippets.download")(function* (
 
       // `-o`/`--output` is ignored entirely; this always prints the raw SQL —
       // no branching on `OutputFlag`.
-      yield* output.raw(readSql(rawBody) + "\n");
+      const sql = snippet.content?.sql ?? "";
+      yield* output.raw(sql + "\n");
     }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

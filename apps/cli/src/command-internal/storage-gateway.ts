@@ -1,24 +1,23 @@
-import { Effect, FileSystem, Stream } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { Effect, FileSystem, Schema, Stream } from "effect";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
+import { announceTarget } from "../shared/output/command-target.service.ts";
 import { kongAuthHeaders } from "./kong-auth.ts";
 import { StorageGatewayNetworkError, StorageGatewayStatusError } from "./storage-gateway.errors.ts";
-import { goPathSplit } from "./storage-url.ts";
+import { splitDirAndFile } from "./storage-url.ts";
+import { renderLocalTarget } from "./target/target-identity.ts";
 
 /**
- * Native TypeScript client for the Supabase Storage **service gateway** (Kong),
- * mirroring `pkg/storage/{buckets,objects,vector,api}.go` and the
- * `fetcher.NewServiceGateway` auth headers — see {@link kongAuthHeaders}
- * for the exact `apikey`/`Authorization` header shape.
+ * Client for the Supabase Storage service gateway (Kong). See
+ * {@link kongAuthHeaders} for the auth header shape.
  *
- * Shared by `seed buckets` (bucket/object/vector upsert against the local stack)
- * and `storage ls/cp/mv/rm` (object list/download/move/delete + bucket delete).
+ * Shared by `seed buckets` (bucket/object/vector upsert) and `storage
+ * ls/cp/mv/rm` (object list/download/move/delete + bucket delete).
  */
 
-/** `pkg/storage/api.go`. */
 export const PAGE_LIMIT = 100;
 export const DELETE_OBJECTS_LIMIT = 1000;
 
@@ -27,25 +26,20 @@ interface BucketSummary {
   readonly id: string;
 }
 
-/** A `/storage/v1/object/list/{bucket}` entry: a directory when `Id == nil`. */
+/** A `/storage/v1/object/list/{bucket}` entry: a directory when `id` is absent. */
 interface StorageObject {
   readonly name: string;
   readonly isDir: boolean;
 }
 
 export interface UpsertBucketProps {
-  /**
-   * Tri-state to match `Public *bool` with `json:"public,omitempty"`:
-   * `undefined` when `public` is absent from the bucket's TOML (field omitted),
-   * otherwise the explicit value.
-   */
+  /** `undefined` when `public` is absent from the bucket's TOML config; otherwise the explicit value. */
   readonly public: boolean | undefined;
-  /** Byte count; omitted from the request body when 0 (Go `omitempty`). */
+  /** Byte count; omitted from the request body when 0. */
   readonly fileSizeLimit: number;
   readonly allowedMimeTypes: ReadonlyArray<string>;
 }
 
-/** Upload headers, mirroring `FileOptions`. */
 interface UploadObjectOptions {
   readonly contentType: string;
   readonly cacheControl: string;
@@ -53,7 +47,7 @@ interface UploadObjectOptions {
 }
 
 export interface StorageGateway {
-  readonly listBuckets: () => Effect.Effect<
+  readonly listBuckets: Effect.Effect<
     ReadonlyArray<BucketSummary>,
     StorageGatewayNetworkError | StorageGatewayStatusError
   >;
@@ -97,7 +91,7 @@ export interface StorageGateway {
     ReadonlyArray<{ readonly name: string }>,
     StorageGatewayNetworkError | StorageGatewayStatusError
   >;
-  readonly listVectorBuckets: () => Effect.Effect<
+  readonly listVectorBuckets: Effect.Effect<
     ReadonlyArray<string>,
     StorageGatewayNetworkError | StorageGatewayStatusError
   >;
@@ -107,7 +101,7 @@ export interface StorageGateway {
   readonly deleteVectorBucket: (
     name: string,
   ) => Effect.Effect<void, StorageGatewayNetworkError | StorageGatewayStatusError>;
-  readonly listAnalyticsBuckets: () => Effect.Effect<
+  readonly listAnalyticsBuckets: Effect.Effect<
     ReadonlyArray<string>,
     StorageGatewayNetworkError | StorageGatewayStatusError
   >;
@@ -120,12 +114,9 @@ export interface StorageGateway {
 }
 
 /**
- * Strict JSON decode mirroring `fetcher.ParseJSON[T]`
- * (`pkg/fetcher/http.go` — `json.NewDecoder(r).Decode(&data)`): a body whose
- * shape doesn't match the typed target aborts. Only missing fields, `null`
- * (decoded as the zero value), empty arrays, and extra keys are tolerated; a
- * non-matching top-level type, a non-null non-object element, or a
- * present-but-wrong-typed string field fail.
+ * Decode errors from below share this permissive-but-strict policy: missing
+ * fields, `null`, empty arrays, and extra keys are tolerated; a non-matching
+ * top-level type or a wrong-typed field fails the decode.
  */
 function failParse(detail: string): StorageGatewayNetworkError {
   return new StorageGatewayNetworkError({
@@ -135,9 +126,9 @@ function failParse(detail: string): StorageGatewayNetworkError {
 }
 
 /**
- * Port for `localGatewayHint`: the
- * port-conflict hint fires only for a loopback host with a port, reporting THAT
- * URL's port (not `api.port`, which can differ when `api.external_url` is set).
+ * Returns the port for `localGatewayHint`'s port-conflict message: only for a
+ * loopback host, and using the resolved URL's port rather than `api.port`
+ * (which can differ when `api.external_url` is set).
  */
 function localGatewayHintPort(baseUrl: string): string | undefined {
   try {
@@ -152,7 +143,6 @@ function localGatewayHintPort(baseUrl: string): string | undefined {
   return undefined;
 }
 
-/** Byte-identical to `localGatewayHint` message. */
 function localGatewayHint(port: string): string {
   return (
     "The local Supabase API gateway did not return a valid HTTP response. " +
@@ -161,11 +151,19 @@ function localGatewayHint(port: string): string {
   );
 }
 
+/** Announces the local Storage API endpoint as the run's target. */
+export const announceLocalStorageTarget = (baseUrl: string) => {
+  const { hostname, port, protocol } = new URL(baseUrl);
+  const defaultPort = protocol === "https:" ? 443 : 80;
+  return announceTarget(
+    renderLocalTarget(hostname.replace(/^\[|\]$/g, ""), port === "" ? defaultPort : Number(port)),
+  );
+};
+
 /**
- * Whether a transport failure is a plain connection-refused. Go's
- * `localGatewayHint` fires only for malformed-response / timeout — NOT
- * `ECONNREFUSED` — so the port-conflict hint is suppressed for refused
- * connections.
+ * Whether a transport failure is a plain connection-refused. The
+ * port-conflict hint is suppressed for these, since a refused connection
+ * means nothing is listening, not a malformed response.
  */
 function isConnectionRefused(error: HttpClientError.TransportError): boolean {
   const detail =
@@ -173,13 +171,12 @@ function isConnectionRefused(error: HttpClientError.TransportError): boolean {
   return /econnrefused|connection ?refused|unable to connect/.test(detail);
 }
 
-const parseJsonBody = (body: string): Effect.Effect<unknown, StorageGatewayNetworkError> =>
-  Effect.try({
-    try: () => JSON.parse(body) as unknown,
-    catch: (cause) => failParse(String(cause)),
-  });
+const decodeJsonBody = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
-/** A JSON object → itself; `null` → `{}` (Go zero-value struct); other → `null`. */
+const parseJsonBody = (body: string): Effect.Effect<unknown, StorageGatewayNetworkError> =>
+  decodeJsonBody(body).pipe(Effect.mapError((error) => failParse(error.message)));
+
+/** A JSON object → itself; `null` → `{}`; anything else → `null`. */
 function asObject(entry: unknown): Record<string, unknown> | null {
   if (entry === null) return {};
   return typeof entry === "object" && !Array.isArray(entry)
@@ -187,7 +184,7 @@ function asObject(entry: unknown): Record<string, unknown> | null {
     : null;
 }
 
-/** Go-struct string field: absent/`null` → ""; wrong type → `null` (decode failure). */
+/** A string field: absent or `null` decodes as `""`; a wrong type fails the decode (returns `null`). */
 function decodeStringField(obj: Record<string, unknown>, key: string): string | null {
   const value = obj[key];
   if (value === undefined || value === null) return "";
@@ -201,7 +198,7 @@ const decodeBucketSummaries = (
     const parsed = yield* parseJsonBody(body);
     if (parsed === null) return [];
     if (!Array.isArray(parsed)) {
-      return yield* Effect.fail(failParse("expected an array of buckets"));
+      return yield* failParse("expected an array of buckets");
     }
     const result: Array<BucketSummary> = [];
     for (const entry of parsed) {
@@ -209,7 +206,7 @@ const decodeBucketSummaries = (
       const name = obj === null ? null : decodeStringField(obj, "name");
       const id = obj === null ? null : decodeStringField(obj, "id");
       if (name === null || id === null) {
-        return yield* Effect.fail(failParse("invalid bucket entry"));
+        return yield* failParse("invalid bucket entry");
       }
       result.push({ name, id });
     }
@@ -217,10 +214,8 @@ const decodeBucketSummaries = (
   });
 
 /**
- * Decode `[]ObjectResponse`: `Id` is a `*string`,
- * so an absent or `null` id marks a directory (`o.Id == nil`);
- * a present id (any non-null) marks a file. A
- * non-string non-null id fails the decode, matching `*string` unmarshal.
+ * Decodes a storage object list entry: an absent or `null` `id` marks a
+ * directory; any other non-string value fails the decode.
  */
 const decodeStorageObjects = (
   body: string,
@@ -229,21 +224,21 @@ const decodeStorageObjects = (
     const parsed = yield* parseJsonBody(body);
     if (parsed === null) return [];
     if (!Array.isArray(parsed)) {
-      return yield* Effect.fail(failParse("expected an array of objects"));
+      return yield* failParse("expected an array of objects");
     }
     const result: Array<StorageObject> = [];
     for (const entry of parsed) {
       const obj = asObject(entry);
       if (obj === null) {
-        return yield* Effect.fail(failParse("invalid object entry"));
+        return yield* failParse("invalid object entry");
       }
       const name = decodeStringField(obj, "name");
       if (name === null) {
-        return yield* Effect.fail(failParse("invalid object entry"));
+        return yield* failParse("invalid object entry");
       }
       const idValue = obj["id"];
       if (idValue !== undefined && idValue !== null && typeof idValue !== "string") {
-        return yield* Effect.fail(failParse("invalid object entry"));
+        return yield* failParse("invalid object entry");
       }
       result.push({ name, isDir: idValue === undefined || idValue === null });
     }
@@ -257,19 +252,19 @@ const decodeVectorBucketNames = (
     const parsed = yield* parseJsonBody(body);
     const root = asObject(parsed);
     if (root === null) {
-      return yield* Effect.fail(failParse("expected a vector bucket list object"));
+      return yield* failParse("expected a vector bucket list object");
     }
     const list = root["vectorBuckets"];
     if (list === undefined || list === null) return [];
     if (!Array.isArray(list)) {
-      return yield* Effect.fail(failParse("vectorBuckets must be an array"));
+      return yield* failParse("vectorBuckets must be an array");
     }
     const names: Array<string> = [];
     for (const entry of list) {
       const obj = asObject(entry);
       const name = obj === null ? null : decodeStringField(obj, "vectorBucketName");
       if (name === null) {
-        return yield* Effect.fail(failParse("invalid vector bucket entry"));
+        return yield* failParse("invalid vector bucket entry");
       }
       names.push(name);
     }
@@ -277,10 +272,9 @@ const decodeVectorBucketNames = (
   });
 
 /**
- * Validate a `{<field>}` success body and return the field's value. Go's
- * mutations decode the 200 body via `fetcher.ParseJSON` into `{name}`/`{message}`
- * and fail on a non-JSON/empty body. `null` is tolerated (Go's zero value); a
- * non-object top-level or a wrong-typed field fails.
+ * Validates a `{<field>}` success body and returns the field's value. `null`
+ * decodes as an empty result; a non-object top-level or a wrong-typed field
+ * fails.
  */
 const decodeFieldResponse = (
   body: string,
@@ -292,7 +286,7 @@ const decodeFieldResponse = (
     const obj = asObject(parsed);
     const value = obj === null ? null : decodeStringField(obj, field);
     if (value === null) {
-      return yield* Effect.fail(failParse(`invalid ${field} response`));
+      return yield* failParse(`invalid ${field} response`);
     }
     return value;
   });
@@ -304,14 +298,14 @@ const decodeDeleteObjects = (
     const parsed = yield* parseJsonBody(body);
     if (parsed === null) return [];
     if (!Array.isArray(parsed)) {
-      return yield* Effect.fail(failParse("expected an array of deleted objects"));
+      return yield* failParse("expected an array of deleted objects");
     }
     const result: Array<{ name: string }> = [];
     for (const entry of parsed) {
       const obj = asObject(entry);
       const name = obj === null ? null : decodeStringField(obj, "name");
       if (name === null) {
-        return yield* Effect.fail(failParse("invalid deleted object entry"));
+        return yield* failParse("invalid deleted object entry");
       }
       result.push({ name });
     }
@@ -325,14 +319,14 @@ const decodeAnalyticsBucketNames = (
     const parsed = yield* parseJsonBody(body);
     if (parsed === null) return [];
     if (!Array.isArray(parsed)) {
-      return yield* Effect.fail(failParse("expected an array of analytics buckets"));
+      return yield* failParse("expected an array of analytics buckets");
     }
     const names: Array<string> = [];
     for (const entry of parsed) {
       const obj = asObject(entry);
       const name = obj === null ? null : decodeStringField(obj, "name");
       if (name === null) {
-        return yield* Effect.fail(failParse("invalid analytics bucket entry"));
+        return yield* failParse("invalid analytics bucket entry");
       }
       names.push(name);
     }
@@ -340,9 +334,9 @@ const decodeAnalyticsBucketNames = (
   });
 
 /**
- * Build the create/update bucket body with `omitempty` semantics:
- * `public` (a `*bool`) is omitted when absent
- * from the TOML, `file_size_limit` when 0, `allowed_mime_types` when empty.
+ * Builds the create/update bucket request body: `public` is omitted when
+ * absent from the TOML config, `file_size_limit` when 0, and
+ * `allowed_mime_types` when empty.
  */
 export function bucketBody(props: UpsertBucketProps): Record<string, unknown> {
   const body: Record<string, unknown> = {};
@@ -391,9 +385,7 @@ export const makeStorageGateway = Effect.fnUntraced(function* (opts: {
       HttpClientRequest.setHeaders(kongAuthHeaders(opts.apiKey)),
     );
 
-  // Sends a request and returns the response body text, reproducing Go's
-  // fetcher error shapes (`pkg/fetcher/http.go`). Go's service gateway installs
-  // `WithExpectedStatus(http.StatusOK)`, so only exactly 200 is a success.
+  // Sends a request and returns the response body text; only exactly 200 counts as success.
   const send = Effect.fnUntraced(function* (req: HttpClientRequest.HttpClientRequest) {
     const { status, body } = yield* Effect.gen(function* () {
       const response = yield* httpClient.execute(req);
@@ -401,13 +393,11 @@ export const makeStorageGateway = Effect.fnUntraced(function* (opts: {
       return { status: response.status, body: text };
     }).pipe(Effect.mapError(networkError));
     if (status !== 200) {
-      return yield* Effect.fail(
-        new StorageGatewayStatusError({
-          status,
-          body,
-          message: `Error status ${status}: ${body}`,
-        }),
-      );
+      return yield* new StorageGatewayStatusError({
+        status,
+        body,
+        message: `Error status ${status}: ${body}`,
+      });
     }
     return body;
   });
@@ -415,10 +405,9 @@ export const makeStorageGateway = Effect.fnUntraced(function* (opts: {
   const url = (path: string) => `${opts.baseUrl}${path}`;
 
   const gateway: StorageGateway = {
-    listBuckets: () =>
-      send(withAuth(HttpClientRequest.get(url("/storage/v1/bucket")))).pipe(
-        Effect.flatMap(decodeBucketSummaries),
-      ),
+    listBuckets: send(withAuth(HttpClientRequest.get(url("/storage/v1/bucket")))).pipe(
+      Effect.flatMap(decodeBucketSummaries),
+    ),
     createBucket: (name, props) =>
       send(
         withAuth(HttpClientRequest.post(url("/storage/v1/bucket"))).pipe(
@@ -442,7 +431,7 @@ export const makeStorageGateway = Effect.fnUntraced(function* (opts: {
         Effect.flatMap((body) => decodeFieldResponse(body, "message")),
       ),
     listObjects: (bucket, prefix, page) => {
-      const [dir, name] = goPathSplit(prefix);
+      const [dir, name] = splitDirAndFile(prefix);
       const query: Record<string, unknown> = { prefix: dir };
       if (name.length > 0) query["search"] = name;
       query["limit"] = PAGE_LIMIT;
@@ -493,10 +482,9 @@ export const makeStorageGateway = Effect.fnUntraced(function* (opts: {
       if (options.overwrite) {
         req = req.pipe(HttpClientRequest.setHeader("x-upsert", "true"));
       }
-      // `bodyFile` stats the file for Content-Length and streams it via
-      // FileSystem rather than buffering — the analogue of Go's open-and-stream
-      // upload. The captured FileSystem is supplied here so the gateway's public
-      // Effect type stays free of a service requirement.
+      // `bodyFile` streams the file without buffering. FileSystem is provided
+      // here (not via the Effect type) so the gateway's public Effect stays
+      // free of a service requirement.
       const withBody =
         options.contentType.length > 0
           ? HttpClientRequest.bodyFile(req, absPath, { contentType: options.contentType })
@@ -529,12 +517,11 @@ export const makeStorageGateway = Effect.fnUntraced(function* (opts: {
           HttpClientRequest.bodyJsonUnsafe({ prefixes }),
         ),
       ).pipe(Effect.flatMap(decodeDeleteObjects)),
-    listVectorBuckets: () =>
-      send(
-        withAuth(HttpClientRequest.post(url("/storage/v1/vector/ListVectorBuckets"))).pipe(
-          HttpClientRequest.bodyJsonUnsafe({}),
-        ),
-      ).pipe(Effect.flatMap(decodeVectorBucketNames)),
+    listVectorBuckets: send(
+      withAuth(HttpClientRequest.post(url("/storage/v1/vector/ListVectorBuckets"))).pipe(
+        HttpClientRequest.bodyJsonUnsafe({}),
+      ),
+    ).pipe(Effect.flatMap(decodeVectorBucketNames)),
     createVectorBucket: (name) =>
       send(
         withAuth(HttpClientRequest.post(url("/storage/v1/vector/CreateVectorBucket"))).pipe(
@@ -547,10 +534,9 @@ export const makeStorageGateway = Effect.fnUntraced(function* (opts: {
           HttpClientRequest.bodyJsonUnsafe({ vectorBucketName: name }),
         ),
       ).pipe(Effect.asVoid),
-    listAnalyticsBuckets: () =>
-      send(withAuth(HttpClientRequest.get(url("/storage/v1/iceberg/bucket")))).pipe(
-        Effect.flatMap(decodeAnalyticsBucketNames),
-      ),
+    listAnalyticsBuckets: send(
+      withAuth(HttpClientRequest.get(url("/storage/v1/iceberg/bucket"))),
+    ).pipe(Effect.flatMap(decodeAnalyticsBucketNames)),
     createAnalyticsBucket: (name) =>
       send(
         withAuth(HttpClientRequest.post(url("/storage/v1/iceberg/bucket"))).pipe(

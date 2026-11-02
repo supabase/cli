@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import type { PgConnInput } from "./db-connection.service.ts";
@@ -16,7 +14,6 @@ import {
   toDumpEnv,
   type DumpOptions,
 } from "./pg-dump.env.ts";
-import { dumpDataScript, dumpRoleScript, dumpSchemaScript } from "./pg-dump.scripts.ts";
 
 const CONN: PgConnInput = {
   host: "db.example.supabase.co",
@@ -33,13 +30,6 @@ const baseOpt: DumpOptions = {
   columnInsert: true,
 };
 
-// Resolve the Go `.sh` sources relative to this file so the byte-equality
-// assertion fails loudly if the embedded copies drift from upstream.
-const goScriptsDir = fileURLToPath(
-  new URL("../../../cli-go/pkg/migration/scripts/", import.meta.url),
-);
-const readGoScript = (name: string) => readFileSync(`${goScriptsDir}${name}`, "utf8");
-
 describe("toDumpEnv", () => {
   it("maps the connection to PG* env vars (port stringified)", () => {
     expect(toDumpEnv(CONN)).toEqual({
@@ -49,6 +39,48 @@ describe("toDumpEnv", () => {
       PGPASSWORD: 'p"a"ss',
       PGDATABASE: "postgres",
     });
+  });
+
+  it("forwards a remote sslmode=disable without any PEM path", () => {
+    const env = toDumpEnv(
+      {
+        ...CONN,
+        sslmode: "disable",
+        sslcert: "/certs/client.crt",
+        sslkey: "/certs/client.key",
+        connectTimeoutSeconds: 3,
+      },
+      true,
+    );
+    expect(env["PGSSLMODE"]).toBe("disable");
+    expect(env["PGCONNECT_TIMEOUT"]).toBe("3");
+    expect(env["PGSSLCERT"]).toBeUndefined();
+    expect(env["PGSSLKEY"]).toBeUndefined();
+  });
+
+  it("pins verify-full for libpq's system root cert", () => {
+    for (const sslmode of [undefined, "require", "verify-ca"])
+      expect(toDumpEnv({ ...CONN, sslmode, sslrootcert: "system" }, true)).toMatchObject({
+        PGSSLMODE: "verify-full",
+        PGSSLROOTCERT: "system",
+      });
+  });
+
+  it("keeps the root cert and an encrypted key out of a remote dump", () => {
+    const env = toDumpEnv(
+      {
+        ...CONN,
+        sslmode: "prefer",
+        sslrootcert: "/certs/root.crt",
+        sslcert: "/certs/client.crt",
+        sslkey: "/certs/client.key",
+        sslpassword: "secret",
+      },
+      true,
+    );
+    expect(env["PGSSLROOTCERT"]).toBeUndefined();
+    expect(env["PGSSLCERT"]).toBeUndefined();
+    expect(env["PGSSLKEY"]).toBeUndefined();
   });
 });
 
@@ -144,13 +176,5 @@ describe("expandScript", () => {
   it("expands an embedded schema reference inside a sed pattern", () => {
     const out = expandScript('"(${EXCLUDED_SCHEMAS:-})"', { EXCLUDED_SCHEMAS: "auth" });
     expect(out).toBe('"(auth)"');
-  });
-});
-
-describe("embedded dump scripts", () => {
-  it("match the Go sources byte-for-byte", () => {
-    expect(dumpSchemaScript).toBe(readGoScript("dump_schema.sh"));
-    expect(dumpDataScript).toBe(readGoScript("dump_data.sh"));
-    expect(dumpRoleScript).toBe(readGoScript("dump_role.sh"));
   });
 });

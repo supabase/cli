@@ -25,10 +25,11 @@ User-authored configuration and migrations live in the repository:
     functions/
 ```
 
-The CLI discovers the active project from the nearest ancestor containing `supabase/config.toml`
+The CLI discovers the active project from the nearest ancestor containing `supabase/config.toml` or `supabase/config.json`
 (or the legacy config filename where supported), then passes that canonical project root to the
-managed stack identity. Managed `workspaceId` is local repository/folder lineage and is unrelated
-to the remote Supabase project ID in `config.toml` or link state.
+managed stack identity. A stack ID is derived from the canonical project root, the current Git
+branch context (or `ordinary-workspace` outside Git), and the stack name. This identity is local
+runtime state and is unrelated to the remote Supabase project ID in `config.toml` or link state.
 
 ### Checkout-local caches
 
@@ -42,38 +43,38 @@ Gitignored checkout metadata lives beside the project:
 
 `project.json` is the linked remote version cache. `local-versions.json` contains optional
 checkout-local service-version overrides. Neither file records whether a local stack is running.
-For ordinary non-Git folders, `.supabase/identity.json` stores the managed workspace identity. Git
-checkouts keep checkout identity in Git metadata instead and do not use that marker.
+Stack identity does not write repository or Git markers.
 
-### Global managed runtime
+### Global local stack runtime
 
 Managed stack documents and runtime artifacts are shared through the global CLI home:
 
 ```text
 <SUPABASE_HOME>/
   access-token
+  cli-latest
   telemetry.json
-  traces/
   bin/
-  managed/
-    stacks/
-      <stack-id>/
-        stack.json
-        data/
-        logs/
-        runtime/
+  stacks/
+    <stack-id>/
+      state.json
+      data/
+        <instance-id>/
+      uploads/
+  tmp/
+  artifacts/
 ```
 
-`stack.json` is the single durable managed record. It contains stack identity, including the
-canonical local-project key relative to the enclosing Git checkout, and sticky port intents
-and assignments, lifecycle, runtime control endpoint, and launch metadata (mode, versions,
-exclusions, and update-notification fingerprint). Runtime-only service ports are allocated for the
-supervisor run and are not persisted as sticky intents. The deterministic loopback control endpoint
-and ownership protocol are the liveness authority; a stale document is reclaimed by a subsequent
-managed lifecycle operation.
+`state.json` is the single durable stack record. It contains the canonical project root, branch
+context, and stack name that make up stack identity, together with sticky port intents and
+assignments, the runtime selection, the service definitions, and the composition needed to resume
+the stack. Runtime-only observations and active owner state are kept in memory. Service data lives
+under the stack's `data/<instance-id>/` directories, while downloaded native artifacts are shared
+under `artifacts/`. Storage objects live in the stack's `uploads/` directory, which `stack destroy` removes, and scratch output of
+database and Functions commands (pgdelta debug bundles, Functions bundling) lives in `tmp/`.
+Stack mode reads and writes nothing under `supabase/.temp`.
 
-There is no project-local `stacks/<name>` directory, `state.json`, daemon socket file, or second
-StateManager metadata format.
+There is no project-local `stacks/<name>` directory or second state format.
 
 ## Service-version inputs
 
@@ -82,20 +83,26 @@ The candidate baseline is computed from linked versions in `.supabase/project.js
 
 1. `supabase start --service-version service=version` for one invocation;
 2. checkout-local values in `.supabase/local-versions.json`;
-3. the managed document's `launch.versions` baseline;
+3. the capability version pins in the managed document's materialized definition;
 4. catalog defaults for values not supplied by the preceding sources.
 
-`supabase stack update` refreshes the linked cache when possible and updates `launch` through the
-managed lifecycle (directly when stopped, or through the owner control route when running). It does
-not write a second project-level pinned-version file.
+The materialized definition is recorded by `supabase start` through the managed lifecycle; there is
+no separate command that rewrites it, and no second project-level pinned-version file is written.
 
 ## Port intents
 
 Raw `supabase/config.toml` values and their origins are loaded before defaults are applied. Explicit
 sticky values are persisted as `exact` intents in each managed document. Omitted values remain
-`automatic`; sibling worktrees have independent stack identities and allocations, while live exact
-port conflicts are rejected by the manager. Runtime-only service ports are selected by the managed
-supervisor and are not written to the document.
+`automatic`; sibling worktrees and branches have independent stack identities and allocations.
+Automatic allocation avoids ports saved by any stack, so stopped stacks keep their URLs. A port
+intent is stable: it does not migrate on its own, but starting a stopped stack whose configuration
+moved an endpoint to a different exact port, or to and from automatic, re-plans that endpoint and
+claims the new one instead of failing; a line in the command's output names the endpoint and its
+old and new port. A taken exact port fails that start with the usual conflict and the saved intent
+stays as configured. An exact
+port is rejected only when a listener already answers on it or the port cannot be bound; another
+stack's saved claim alone never blocks it, and a conflict names the stack that saved the port. Runtime-only service ports are
+selected by the managed supervisor and are not written to the document.
 
 ## Command behavior
 
@@ -105,14 +112,33 @@ supervisor and are not written to the document.
   report only a live owner as running.
 - `supabase stop` asks the owner to stop, waits for `stopped` and control release, and keeps the
   document by default. `--no-backup` removes it after deterministic cleanup.
-- `supabase stack list` enumerates healthy managed documents and checks control ownership for live
-  status; `--project-dir` scopes the result to one checkout.
+- `supabase stack list` enumerates the global persisted managed-stack inventory, including stopped
+  and unconfigured stacks, and includes corrupt or unsupported registry entries with their IDs and
+  error reasons. Missing state remnants are ignored during enumeration. It reads registry state
+  without contacting live owners and has no checkout-scoping option; use
+  [`supabase stack status`](./stack-commands.md) to inspect live owner state. See [local stack
+  commands](./stack-commands.md).
 
 ## Auth, telemetry, and binaries
 
 Auth, telemetry, traces, and downloaded binaries remain machine-global under `SUPABASE_HOME`.
 Legacy installer artifacts may coexist under that root, but they are not part of managed stack
 coordination.
+
+In stack mode the post-run linked-project fill writes `<SUPABASE_HOME>/project-cache/<ref>.json`
+atomically after the first successful `GET /v1/projects/{ref}`. It is only a marker that the
+project's analytics groups were identified once per ref on this machine; nothing else reads it.
+Legacy mode keeps `supabase/.temp/linked-project.json`, which `RemoteTarget.parent` also reads.
+
+## Release check cache
+
+After a successful command, the upgrade notice compares the running version with the latest
+GitHub release. The release tag is cached for ten hours in `supabase/.temp/cli-latest` when the
+project directory has a real `supabase/` directory and uses legacy project state, and in
+`<SUPABASE_HOME>/cli-latest` otherwise, including every stack-mode project. `--version` and `--help` check only the current directory, so from a project
+subdirectory they use `<SUPABASE_HOME>/cli-latest`. A failed fetch writes an empty file, which
+suppresses the notice and further fetches until it expires. The cache is skipped when the file,
+`supabase/.temp`, or `SUPABASE_HOME` is a symlink. `SUPABASE_NO_UPDATE_NOTIFIER=1` disables the check.
 
 ## Related docs
 

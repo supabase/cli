@@ -1,12 +1,10 @@
 /**
- * Registry-derived name lists for `config push`'s auth encoder — hoisted out
- * of push.encoders.ts (B5) so their exact contents are pinned by one unit
- * test rather than re-derived silently wherever they're used.
+ * Registry-derived name lists for `config push`'s auth encoder, pinned by one unit test rather
+ * than re-derived silently wherever they're used.
  *
- * Every list below is computed from `projectConfigMappingRows`
- * (`@supabase/config/internal`), never hand-copied, so a registry change
- * that adds/removes a provider, hook, template, or notification is reflected
- * here automatically.
+ * Every list is computed from `projectConfigMappingRows` (`@supabase/config/internal`), never
+ * hand-copied, so a registry change that adds/removes a provider, hook, template, or
+ * notification is reflected here automatically.
  */
 
 import { projectConfigMappingRows } from "@supabase/config/internal";
@@ -58,13 +56,10 @@ export const PROVIDERS_WITH_EMAIL_OPTIONAL: ReadonlyArray<string> = EXTERNAL_PRO
 );
 
 /**
- * The SMS provider names. Derived from every `["auth","sms",name,"enabled"]`
- * row whose `apiPath` is `["auth","sms_provider"]` — i.e. rows that select
- * the active provider, rather than report a per-provider credential. This
- * list's iteration order happens to match today's registry declaration
- * order; that order is pinned by this module's own unit test, not guaranteed
- * by the registry itself, so do not depend on it meaning "precedence" beyond
- * what the test asserts.
+ * The SMS provider names, derived from every `["auth","sms",name,"enabled"]` row whose `apiPath`
+ * is `["auth","sms_provider"]` (rows that select the active provider, not report a per-provider
+ * credential). This list's iteration order is pinned by this module's own unit test, not
+ * guaranteed by the registry itself — do not depend on it meaning "precedence".
  */
 export const SMS_PROVIDER_NAMES: ReadonlyArray<string> = (() => {
   const names: Array<string> = [];

@@ -2,13 +2,11 @@ import { styleText } from "node:util";
 
 import type { SupabaseApiError } from "@supabase/api/effect";
 import { Effect, Option, type Redacted } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClientError from "effect/http/HttpClientError";
+import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 
+import { CommandPlatformApi } from "../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
-import { resolveAccessToken } from "./resolve-token.ts";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
 import {
   EventUpgradeSuggested,
@@ -16,34 +14,25 @@ import {
   PropOrgSlug,
 } from "../shared/telemetry/event-catalog.ts";
 import { Output } from "../shared/output/output.service.ts";
+import { parsePlanGateEnvelope } from "./http-errors.ts";
 import { billingUrl } from "./profile.ts";
+import { block } from "./command-permissions/model.ts";
 
-function readString(obj: unknown, key: string): string {
-  if (typeof obj === "object" && obj !== null && key in obj) {
-    const value = (obj as Record<string, unknown>)[key];
-    return typeof value === "string" ? value : "";
-  }
-  return "";
-}
-
-interface PlanGateEnvelope {
-  readonly feature: string;
-  readonly upgradeUrl: string;
-}
-
-// Hand-validated: the packages/api codegen emits no non-2xx schemas.
-function parsePlanGateEnvelope(body: unknown): PlanGateEnvelope | undefined {
-  if (typeof body !== "object" || body === null) return undefined;
-  const error = (body as { readonly error?: unknown }).error;
-  if (typeof error !== "object" || error === null) return undefined;
-  const code = readString(error, "code");
-  const feature = readString(error, "feature");
-  const upgradeUrl = readString(error, "upgrade_url");
-  if (code !== "entitlement_required" || feature === "" || upgradeUrl === "") {
-    return undefined;
-  }
-  return { feature, upgradeUrl };
-}
+/** `suggestUpgrade`'s entitlement lookup. */
+export const upgradeSuggestion = block("upgrade-suggest", [
+  {
+    operationId: "v1-get-project",
+    kind: "best-effort",
+    context:
+      "after a 4xx response that carries no plan-gate error, at a call site that names a feature",
+  },
+  {
+    operationId: "v1-get-organization-entitlements",
+    kind: "best-effort",
+    context:
+      "after a 4xx response that carries no plan-gate error, at a call site that names a feature",
+  },
+]);
 
 function orgSlugFromUpgradeUrl(upgradeUrl: string): string {
   const match = /\/org\/([^/]+)/.exec(upgradeUrl);
@@ -72,15 +61,12 @@ export const gateMapError =
     });
 
 /**
- * Ports `plan_gate.go:SuggestUpgradeOnError`. Never fails the caller.
+ * Suggests an upgrade when a request fails with a plan-gate error. Never
+ * fails the caller.
  *
- * The fallback bypasses the typed API client: its strict response schemas
- * reject the cli-e2e replay fixtures' placeholder refs (same workaround as
- * `linked-project-cache.layer.ts`).
- * Returns whether the feature was confirmed plan-gated so callers can carry
- * that typed result into their error classification.
+ * Returns whether the feature was confirmed plan-gated.
  */
-export const suggestUpgrade = Effect.fnUntraced(function* (opts: {
+export const suggestUpgrade = Effect.fn("UpgradeSuggest.check")(function* (opts: {
   readonly projectRef: string;
   /**
    * Entitlements-fallback key. Omit for envelope-only sites: the domains
@@ -91,29 +77,21 @@ export const suggestUpgrade = Effect.fnUntraced(function* (opts: {
   readonly statusCode: number;
   readonly response?: HttpClientResponse.HttpClientResponse;
   /**
-   * Overrides the API base URL of the fallback project + entitlement GETs.
-   * `SuggestUpgradeOnError` calls `GetSupabase()`, which targets the
-   * process-wide `CurrentProfile` — commands that reconcile a pflag-effective
-   * profile differing from the config layer's (sso add/update, PR #5974
-   * round 7) pass that profile's URL so the gate requests hit the same host
-   * as their main calls. Defaults to `CommandSettings.apiUrl`.
+   * Overrides the API base URL of the fallback project + entitlement GETs,
+   * for commands that reconcile a profile differing from the config layer's
+   * (sso add/update), so the gate requests hit the same host as their main
+   * calls. Defaults to `CommandSettings.apiUrl`.
    */
   readonly apiUrl?: string;
   /**
    * Overrides the bearer token of the fallback GETs, complementing `apiUrl`:
-   * Go resolves credentials for the process-wide reconciled `CurrentProfile`,
-   * so callers that pass a reconciled `apiUrl` must
-   * pass the reconciled profile's token too — otherwise the stale profile's
-   * bearer token would be sent to the reconciled host (review r3684524241).
-   * `Some` uses that token, `None` sends unauthenticated (the reconciled
-   * profile has no token — matching Go, which fails its token lookup and
-   * never attaches the stale one), `undefined` resolves from the service.
+   * a caller passing a reconciled `apiUrl` must also pass that profile's
+   * token, or the stale profile's token would reach the reconciled host.
+   * `Some` uses that token, `None` skips the fallback (the client cannot send
+   * an unauthenticated request), `undefined` uses the client's own token.
    */
   readonly accessToken?: Option.Option<Redacted.Redacted<string>>;
-  /**
-   * Set false where the Go twin fires no `TrackUpgradeSuggested` (vanity
-   * check-availability), keeping telemetry 1:1.
-   */
+  /** Set false for call sites that must not fire `EventUpgradeSuggested` (vanity check-availability). */
   readonly trackAnalytics?: boolean;
 }) {
   if (opts.statusCode < 400 || opts.statusCode >= 500) {
@@ -123,7 +101,7 @@ export const suggestUpgrade = Effect.fnUntraced(function* (opts: {
   const output = yield* Output;
   const analytics = yield* Analytics;
   const cliSettings = yield* CommandSettings;
-  const httpClient = yield* HttpClient.HttpClient;
+  yield* Effect.annotateCurrentSpan("upgrade.gated", false);
 
   let gate:
     | { readonly billingUrl: string; readonly feature: string; readonly orgSlug: string }
@@ -134,9 +112,9 @@ export const suggestUpgrade = Effect.fnUntraced(function* (opts: {
     const envelope = Option.isSome(body) ? parsePlanGateEnvelope(body.value) : undefined;
     if (envelope !== undefined) {
       gate = {
-        billingUrl: envelope.upgradeUrl,
+        billingUrl: envelope.upgrade_url,
         feature: envelope.feature,
-        orgSlug: orgSlugFromUpgradeUrl(envelope.upgradeUrl),
+        orgSlug: orgSlugFromUpgradeUrl(envelope.upgrade_url),
       };
     }
   }
@@ -146,56 +124,36 @@ export const suggestUpgrade = Effect.fnUntraced(function* (opts: {
       return false;
     }
 
-    const tokenOpt = opts.accessToken ?? (yield* resolveAccessToken);
-    const authHeader: (
-      req: HttpClientRequest.HttpClientRequest,
-    ) => HttpClientRequest.HttpClientRequest = Option.isSome(tokenOpt)
-      ? HttpClientRequest.bearerToken(tokenOpt.value)
-      : (req) => req;
+    if (opts.accessToken !== undefined && Option.isNone(opts.accessToken)) {
+      return false;
+    }
 
-    const apiUrl = opts.apiUrl ?? cliSettings.apiUrl;
-    const projectReq = HttpClientRequest.get(`${apiUrl}/v1/projects/${opts.projectRef}`).pipe(
-      authHeader,
-      HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
-    );
-    const projectResp = yield* httpClient.execute(projectReq).pipe(Effect.option);
-    if (projectResp._tag === "None" || projectResp.value.status !== 200) {
+    const api = yield* CommandPlatformApi;
+    const requestOptions = {
+      baseUrl: opts.apiUrl,
+      accessToken: opts.accessToken === undefined ? undefined : opts.accessToken.value,
+    };
+    const project = yield* api.v1
+      .getProject({ ref: opts.projectRef }, requestOptions)
+      .pipe(Effect.option);
+    if (Option.isNone(project)) {
       return false;
     }
-    const projectBody = yield* projectResp.value.json.pipe(Effect.option);
-    if (projectBody._tag === "None") {
-      return false;
-    }
-    const orgSlug = readString(projectBody.value, "organization_slug");
+    const orgSlug = project.value.organization_slug;
     if (orgSlug.length === 0) {
       return false;
     }
 
-    const entReq = HttpClientRequest.get(`${apiUrl}/v1/organizations/${orgSlug}/entitlements`).pipe(
-      authHeader,
-      HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
-    );
-    const entResp = yield* httpClient.execute(entReq).pipe(Effect.option);
-    if (entResp._tag === "None" || entResp.value.status !== 200) {
-      return false;
-    }
-    const entBody = yield* entResp.value.json.pipe(Effect.option);
-    if (entBody._tag === "None") {
-      return false;
-    }
-    const entitlements = (entBody.value as { entitlements?: unknown }).entitlements;
-    if (!Array.isArray(entitlements)) {
+    const entitlements = yield* api.v1
+      .getOrganizationEntitlements({ slug: orgSlug }, requestOptions)
+      .pipe(Effect.option);
+    if (Option.isNone(entitlements)) {
       return false;
     }
 
-    const gated = entitlements.some((entry: unknown) => {
-      if (typeof entry !== "object" || entry === null) return false;
-      const feature = (entry as { feature?: unknown }).feature;
-      if (typeof feature !== "object" || feature === null) return false;
-      const key = (feature as { key?: unknown }).key;
-      const hasAccess = (entry as { hasAccess?: unknown }).hasAccess;
-      return key === opts.featureKey && hasAccess === false;
-    });
+    const gated = entitlements.value.entitlements.some(
+      (entry) => entry.feature.key === opts.featureKey && entry.hasAccess === false,
+    );
     if (!gated) {
       return false;
     }
@@ -207,6 +165,7 @@ export const suggestUpgrade = Effect.fnUntraced(function* (opts: {
     };
   }
 
+  yield* Effect.annotateCurrentSpan("upgrade.gated", true);
   const suggestion = `Your organization does not have access to this feature. Upgrade your plan: ${styleText("bold", gate.billingUrl)}`;
 
   if (output.format === "text") {

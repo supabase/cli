@@ -22,10 +22,7 @@ on:
         type: string
         default: "security,pinned,do-not-close,keep-open,do not merge"
 
-permissions:
-  contents: read
-  issues: write
-  pull-requests: write
+permissions: {}
 
 concurrency:
   group: close-stale-issues-and-prs
@@ -35,6 +32,10 @@ jobs:
   close-stale:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
     steps:
       - name: Close stale issues and PRs
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0

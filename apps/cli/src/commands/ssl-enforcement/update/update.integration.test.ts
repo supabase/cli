@@ -1,23 +1,30 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
+import { BunServices } from "@effect/platform-bun";
 import { type V1GetSslEnforcementConfigOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
-
-import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
+import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
   buildTestRuntime,
+  jsonResponse,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { sslEnforcementUpdate } from "./update.handler.ts";
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const SSL_ENFORCED: typeof V1GetSslEnforcementConfigOutput.Type = {
   currentConfig: { database: true },
@@ -34,9 +41,14 @@ const SSL_DESIRED_BUT_NOT_APPLIED: typeof V1GetSslEnforcementConfigOutput.Type =
   appliedSuccessfully: false,
 };
 
+const consentApproved = Layer.mergeAll(
+  Layer.succeed(YesFlag, true),
+  Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+);
+
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   response?: typeof V1GetSslEnforcementConfigOutput.Type;
   status?: number;
   network?: "fail";
@@ -51,12 +63,15 @@ function setup(opts: SetupOpts = {}) {
     network: opts.network,
   });
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
-  const layer = buildTestRuntime({
-    out,
-    api,
-    cliSettings,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
-  });
+  const layer = Layer.mergeAll(
+    buildTestRuntime({
+      out,
+      api,
+      cliSettings,
+      outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
+    }),
+    consentApproved,
+  );
   return { layer, out, api };
 }
 
@@ -69,24 +84,26 @@ function setupTracked(opts: SetupOpts = {}) {
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
   const telemetry = mockTelemetryStateTracked();
   const cache = mockLinkedProjectCacheTracked();
-  const layer = buildTestRuntime({
-    out,
-    api,
-    cliSettings,
-    telemetry: telemetry.layer,
-    linkedProjectCache: cache.layer,
-  });
+  const layer = Layer.mergeAll(
+    buildTestRuntime({
+      out,
+      api,
+      cliSettings,
+      telemetry: telemetry.layer,
+      linkedProjectCache: cache.layer,
+    }),
+    consentApproved,
+  );
   return { layer, out, api, telemetry, cache };
 }
 
 describe("ssl-enforcement update integration", () => {
-  // Flag validation
-
-  it.live("fails with SslEnforcementNoEnableDisableFlagError when neither flag is set", () => {
+  it.effect("fails with SslEnforcementNoEnableDisableFlagError when neither flag is set", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         sslEnforcementUpdate({
+          remote: Option.none(),
           projectRef: Option.none(),
           enableDbSslEnforcement: false,
           disableDbSslEnforcement: false,
@@ -94,18 +111,19 @@ describe("ssl-enforcement update integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("SslEnforcementNoEnableDisableFlagError");
-        expect(errorJson).toContain("enable/disable not specified");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("SslEnforcementNoEnableDisableFlagError");
+        expect(causeText).toContain("enable/disable not specified");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with SslEnforcementMutuallyExclusiveFlagsError when both flags are set", () => {
+  it.effect("fails with SslEnforcementMutuallyExclusiveFlagsError when both flags are set", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         sslEnforcementUpdate({
+          remote: Option.none(),
           projectRef: Option.none(),
           enableDbSslEnforcement: true,
           disableDbSslEnforcement: true,
@@ -113,34 +131,48 @@ describe("ssl-enforcement update integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("SslEnforcementMutuallyExclusiveFlagsError");
-        expect(errorJson).toContain(
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("SslEnforcementMutuallyExclusiveFlagsError");
+        expect(causeText).toContain(
           "if any flags in the group [enable-db-ssl-enforcement disable-db-ssl-enforcement] are set",
         );
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("does not call the API when flag validation fails", () => {
+  it.effect("does not call the API when flag validation fails", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* Effect.exit(
         sslEnforcementUpdate({
+          remote: Option.none(),
           projectRef: Option.none(),
           enableDbSslEnforcement: false,
           disableDbSslEnforcement: false,
         }),
       );
       expect(api.requests).toHaveLength(0);
+      expect(() =>
+        assertPermissionDrift({
+          command: "ssl-enforcement update",
+          activeFlags: { "enable-db-ssl-enforcement": false, "disable-db-ssl-enforcement": false },
+          requests: [
+            {
+              method: "PUT",
+              url: `https://api.supabase.com/v1/projects/${VALID_REF}/ssl-enforcement`,
+            },
+          ],
+        }),
+      ).toThrow(/condition doesn't hold/);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes telemetry but NOT linked-project cache when validation fails", () => {
+  it.effect("writes telemetry but NOT linked-project cache when validation fails", () => {
     const { layer, telemetry, cache } = setupTracked();
     return Effect.gen(function* () {
       yield* Effect.exit(
         sslEnforcementUpdate({
+          remote: Option.none(),
           projectRef: Option.none(),
           enableDbSslEnforcement: false,
           disableDbSslEnforcement: false,
@@ -151,12 +183,11 @@ describe("ssl-enforcement update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // Request body
-
-  it.live("sends requestedConfig.database = true when --enable-db-ssl-enforcement is set", () => {
+  it.effect("sends requestedConfig.database = true when --enable-db-ssl-enforcement is set", () => {
     const { layer, api } = setup({ response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementUpdate({
+        remote: Option.none(),
         projectRef: Option.none(),
         enableDbSslEnforcement: true,
         disableDbSslEnforcement: false,
@@ -165,42 +196,123 @@ describe("ssl-enforcement update integration", () => {
       expect(api.requests[0]?.body).toMatchObject({
         requestedConfig: { database: true },
       });
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("sends requestedConfig.database = false when --disable-db-ssl-enforcement is set", () => {
-    const { layer, api } = setup({ response: SSL_NOT_ENFORCED });
-    return Effect.gen(function* () {
-      yield* sslEnforcementUpdate({
-        projectRef: Option.none(),
-        enableDbSslEnforcement: false,
-        disableDbSslEnforcement: true,
-      });
-      expect(api.requests).toHaveLength(1);
-      expect(api.requests[0]?.body).toMatchObject({
-        requestedConfig: { database: false },
+      assertPermissionDrift({
+        command: "ssl-enforcement update",
+        activeFlags: { "enable-db-ssl-enforcement": true, "disable-db-ssl-enforcement": false },
+        requests: api.requests,
+        exact: true,
       });
     }).pipe(Effect.provide(layer));
   });
 
-  // Text output modes (mirroring get scenarios with enable flag)
-
-  it.live('prints "SSL is being enforced." when database=true and appliedSuccessfully=true', () => {
-    const { layer, out } = setup({ response: SSL_ENFORCED });
+  it.effect("lists projects for the picker and fills the real linked-project cache", () => {
+    const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+    const api = mockCommandPlatformApi({
+      handler: (request) => {
+        const path = new URL(request.url).pathname;
+        if (path === "/v1/projects") {
+          return Effect.succeed(jsonResponse(request, 200, [projectResponse(VALID_REF)]));
+        }
+        if (path === `/v1/projects/${VALID_REF}`) {
+          return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
+        }
+        if (path === `/v1/projects/${VALID_REF}/ssl-enforcement`) {
+          return Effect.succeed(jsonResponse(request, 200, SSL_ENFORCED));
+        }
+        return Effect.succeed(jsonResponse(request, 404, { message: "unexpected request" }));
+      },
+    });
+    const cliSettings = mockCommandSettings({
+      workdir: tempRoot.current,
+      projectId: Option.none(),
+    });
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true }),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      }),
+      consentApproved,
+    );
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
       yield* sslEnforcementUpdate({
+        remote: Option.none(),
         projectRef: Option.none(),
         enableDbSslEnforcement: true,
         disableDbSslEnforcement: false,
       });
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        "GET https://api.supabase.com/v1/projects",
+        `PUT https://api.supabase.com/v1/projects/${VALID_REF}/ssl-enforcement`,
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+      ]);
+      expect(api.requests[1]?.body).toMatchObject({ requestedConfig: { database: true } });
       expect(out.stdoutText).toBe("SSL is being enforced.\n");
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({
+        command: "ssl-enforcement update",
+        activeFlags: { "enable-db-ssl-enforcement": true, "disable-db-ssl-enforcement": false },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live('prints "SSL is *NOT* being enforced." when database=false', () => {
+  it.effect(
+    "sends requestedConfig.database = false when --disable-db-ssl-enforcement is set",
+    () => {
+      const { layer, api } = setup({ response: SSL_NOT_ENFORCED });
+      return Effect.gen(function* () {
+        yield* sslEnforcementUpdate({
+          remote: Option.none(),
+          projectRef: Option.none(),
+          enableDbSslEnforcement: false,
+          disableDbSslEnforcement: true,
+        });
+        expect(api.requests).toHaveLength(1);
+        expect(api.requests[0]?.body).toMatchObject({
+          requestedConfig: { database: false },
+        });
+        assertPermissionDrift({
+          command: "ssl-enforcement update",
+          activeFlags: { "enable-db-ssl-enforcement": false, "disable-db-ssl-enforcement": true },
+          requests: api.requests,
+          exact: true,
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    'prints "SSL is being enforced." when database=true and appliedSuccessfully=true',
+    () => {
+      const { layer, out } = setup({ response: SSL_ENFORCED });
+      return Effect.gen(function* () {
+        yield* sslEnforcementUpdate({
+          remote: Option.none(),
+          projectRef: Option.none(),
+          enableDbSslEnforcement: true,
+          disableDbSslEnforcement: false,
+        });
+        expect(out.stdoutText).toBe("SSL is being enforced.\n");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect('prints "SSL is *NOT* being enforced." when database=false', () => {
     const { layer, out } = setup({ response: SSL_NOT_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementUpdate({
+        remote: Option.none(),
         projectRef: Option.none(),
         enableDbSslEnforcement: false,
         disableDbSslEnforcement: true,
@@ -209,12 +321,13 @@ describe("ssl-enforcement update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     'prints "SSL is *NOT* being enforced." when database=true but appliedSuccessfully=false',
     () => {
       const { layer, out } = setup({ response: SSL_DESIRED_BUT_NOT_APPLIED });
       return Effect.gen(function* () {
         yield* sslEnforcementUpdate({
+          remote: Option.none(),
           projectRef: Option.none(),
           enableDbSslEnforcement: true,
           disableDbSslEnforcement: false,
@@ -224,12 +337,11 @@ describe("ssl-enforcement update integration", () => {
     },
   );
 
-  // Go output encoders
-
-  it.live("emits Go-compatible env output for --output env (exact bytes)", () => {
-    const { layer, out } = setup({ goOutput: "env", response: SSL_ENFORCED });
+  it.effect("emits env output for --output env (exact bytes)", () => {
+    const { layer, out } = setup({ outputFlag: "env", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementUpdate({
+        remote: Option.none(),
         projectRef: Option.none(),
         enableDbSslEnforcement: true,
         disableDbSslEnforcement: false,
@@ -238,10 +350,11 @@ describe("ssl-enforcement update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-compatible indented JSON for --output json (exact bytes)", () => {
-    const { layer, out } = setup({ goOutput: "json", response: SSL_ENFORCED });
+  it.effect("emits indented JSON for --output json (exact bytes)", () => {
+    const { layer, out } = setup({ outputFlag: "json", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementUpdate({
+        remote: Option.none(),
         projectRef: Option.none(),
         enableDbSslEnforcement: true,
         disableDbSslEnforcement: false,
@@ -258,10 +371,11 @@ describe("ssl-enforcement update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits YAML for --output yaml", () => {
-    const { layer, out } = setup({ goOutput: "yaml", response: SSL_ENFORCED });
+  it.effect("emits YAML for --output yaml", () => {
+    const { layer, out } = setup({ outputFlag: "yaml", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementUpdate({
+        remote: Option.none(),
         projectRef: Option.none(),
         enableDbSslEnforcement: true,
         disableDbSslEnforcement: false,
@@ -271,10 +385,11 @@ describe("ssl-enforcement update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits TOML for --output toml", () => {
-    const { layer, out } = setup({ goOutput: "toml", response: SSL_ENFORCED });
+  it.effect("emits TOML for --output toml", () => {
+    const { layer, out } = setup({ outputFlag: "toml", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementUpdate({
+        remote: Option.none(),
         projectRef: Option.none(),
         enableDbSslEnforcement: true,
         disableDbSslEnforcement: false,
@@ -284,10 +399,11 @@ describe("ssl-enforcement update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("treats --output pretty as identical to text mode", () => {
-    const { layer, out } = setup({ goOutput: "pretty", response: SSL_ENFORCED });
+  it.effect("treats --output pretty as identical to text mode", () => {
+    const { layer, out } = setup({ outputFlag: "pretty", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementUpdate({
+        remote: Option.none(),
         projectRef: Option.none(),
         enableDbSslEnforcement: true,
         disableDbSslEnforcement: false,
@@ -296,12 +412,11 @@ describe("ssl-enforcement update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // TS output-format modes
-
-  it.live("emits a JSON success event when --output-format=json", () => {
+  it.effect("emits a JSON success event when --output-format=json", () => {
     const { layer, out } = setup({ format: "json", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementUpdate({
+        remote: Option.none(),
         projectRef: Option.none(),
         enableDbSslEnforcement: true,
         disableDbSslEnforcement: false,
@@ -315,10 +430,11 @@ describe("ssl-enforcement update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a result event for --output-format=stream-json", () => {
+  it.effect("emits a result event for --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementUpdate({
+        remote: Option.none(),
         projectRef: Option.none(),
         enableDbSslEnforcement: true,
         disableDbSslEnforcement: false,
@@ -329,10 +445,11 @@ describe("ssl-enforcement update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output (Go) wins over --output-format (TS) when both provided", () => {
-    const { layer, out } = setup({ format: "json", goOutput: "yaml", response: SSL_ENFORCED });
+  it.effect("--output wins over --output-format when both provided", () => {
+    const { layer, out } = setup({ format: "json", outputFlag: "yaml", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementUpdate({
+        remote: Option.none(),
         projectRef: Option.none(),
         enableDbSslEnforcement: true,
         disableDbSslEnforcement: false,
@@ -342,12 +459,11 @@ describe("ssl-enforcement update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // Project ref resolution
-
-  it.live("passes the resolved project ref into the updateSslEnforcementConfig URL", () => {
+  it.effect("passes the resolved project ref into the updateSslEnforcementConfig URL", () => {
     const { layer, api } = setup({ response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementUpdate({
+        remote: Option.none(),
         projectRef: Option.none(),
         enableDbSslEnforcement: true,
         disableDbSslEnforcement: false,
@@ -357,12 +473,13 @@ describe("ssl-enforcement update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("uses --project-ref flag value over CommandSettings.projectId", () => {
+  it.effect("uses the --remote=<ref> value over CommandSettings.projectId", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, api } = setup({ response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementUpdate({
-        projectRef: Option.some(flagRef),
+        remote: Option.some({ _tag: "Ref", ref: flagRef }),
+        projectRef: Option.none(),
         enableDbSslEnforcement: true,
         disableDbSslEnforcement: false,
       });
@@ -370,46 +487,55 @@ describe("ssl-enforcement update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reads supabase/.temp/project-ref when env and flag are unset", () => {
-    const localTempRoot = mkdtempSync(join(tmpdir(), "supabase-ssl-update-int-fileref-"));
-    const fileRef = "filerefabcdefghijklm";
-    mkdirSync(join(localTempRoot, "supabase", ".temp"), { recursive: true });
-    writeFileSync(join(localTempRoot, "supabase", ".temp", "project-ref"), fileRef);
+  it.effect("reads supabase/.temp/project-ref when env and flag are unset", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const localTempRoot = yield* fs.makeTempDirectoryScoped({
+        prefix: "supabase-ssl-update-int-fileref-",
+      });
+      const path = yield* Path.Path;
+      const fileRef = "filerefabcdefghijklm";
+      yield* fs.makeDirectory(path.join(localTempRoot, "supabase", ".temp"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(localTempRoot, "supabase", ".temp", "project-ref"),
+        fileRef,
+      );
 
-    const out = mockOutput({ format: "text" });
-    const api = mockCommandPlatformApi({ response: { status: 200, body: SSL_ENFORCED } });
-    const cliSettings = mockCommandSettings({
-      workdir: localTempRoot,
-      projectId: Option.none(),
-    });
-    const layer = buildTestRuntime({ out, api, cliSettings });
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi({ response: { status: 200, body: SSL_ENFORCED } });
+      const cliSettings = mockCommandSettings({
+        workdir: localTempRoot,
+        projectId: Option.none(),
+      });
+      const layer = Layer.mergeAll(buildTestRuntime({ out, api, cliSettings }), consentApproved);
 
-    return Effect.gen(function* () {
       yield* sslEnforcementUpdate({
+        remote: Option.none(),
         projectRef: Option.none(),
         enableDbSslEnforcement: true,
         disableDbSslEnforcement: false,
-      });
+      }).pipe(Effect.provide(layer));
       expect(api.requests[0]?.url).toContain(`/v1/projects/${fileRef}/`);
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(Effect.sync(() => rmSync(localTempRoot, { recursive: true, force: true }))),
-    );
-  });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 
-  it.live("fails with ProjectRefNotLinkedError when no ref source matches off-TTY", () => {
-    const localTempRoot = mkdtempSync(join(tmpdir(), "supabase-ssl-update-int-no-ref-"));
-    const out = mockOutput({ format: "text" });
-    const api = mockCommandPlatformApi({ response: { status: 200, body: SSL_ENFORCED } });
-    const cliSettings = mockCommandSettings({
-      workdir: localTempRoot,
-      projectId: Option.none(),
-    });
-    const layer = buildTestRuntime({ out, api, cliSettings });
+  it.effect("fails with ProjectRefNotLinkedError when no ref source matches off-TTY", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const localTempRoot = yield* fs.makeTempDirectoryScoped({
+        prefix: "supabase-ssl-update-int-no-ref-",
+      });
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi({ response: { status: 200, body: SSL_ENFORCED } });
+      const cliSettings = mockCommandSettings({
+        workdir: localTempRoot,
+        projectId: Option.none(),
+      });
+      const layer = Layer.mergeAll(buildTestRuntime({ out, api, cliSettings }), consentApproved);
 
-    return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         sslEnforcementUpdate({
+          remote: Option.none(),
           projectRef: Option.none(),
           enableDbSslEnforcement: true,
           disableDbSslEnforcement: false,
@@ -417,79 +543,63 @@ describe("ssl-enforcement update integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("ProjectRefNotLinkedError");
+        expect(Cause.pretty(exit.cause)).toContain("ProjectRefNotLinkedError");
       }
-    }).pipe(
-      Effect.ensuring(Effect.sync(() => rmSync(localTempRoot, { recursive: true, force: true }))),
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("fails with InvalidProjectRefError when the resolved ref is malformed", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi({ response: { status: 200, body: SSL_ENFORCED } });
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings: mockCommandSettings({
+          workdir: tempRoot.current,
+          projectId: Option.some("BADREF"),
+        }),
+      }),
+      consentApproved,
     );
-  });
-
-  it.live("fails with InvalidProjectRefError when the resolved ref is malformed", () => {
-    const { layer } = setup({ response: SSL_ENFORCED });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        sslEnforcementUpdate({
-          projectRef: Option.some("BADREF"),
-          enableDbSslEnforcement: true,
-          disableDbSslEnforcement: false,
-        }),
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("InvalidProjectRefError");
-      }
-    }).pipe(Effect.provide(layer));
-  });
-
-  // Error cases
-
-  it.live("fails with SslEnforcementUpdateUnexpectedStatusError on HTTP 503", () => {
-    const { layer } = setup({ status: 503, response: SSL_ENFORCED });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        sslEnforcementUpdate({
-          projectRef: Option.none(),
-          enableDbSslEnforcement: true,
-          disableDbSslEnforcement: false,
-        }),
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("SslEnforcementUpdateUnexpectedStatusError");
-        expect(errorJson).toContain("unexpected update SSL status 503");
-      }
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("fails with SslEnforcementUpdateNetworkError on transport failure", () => {
-    const { layer } = setup({ network: "fail" });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        sslEnforcementUpdate({
-          projectRef: Option.none(),
-          enableDbSslEnforcement: true,
-          disableDbSslEnforcement: false,
-        }),
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("SslEnforcementUpdateNetworkError");
-        expect(errorJson).toContain("failed to update ssl enforcement");
-      }
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
-    const { layer, out } = setup({ format: "json", status: 503, response: SSL_ENFORCED });
-    return Effect.gen(function* () {
-      yield* sslEnforcementUpdate({
+      const error = yield* sslEnforcementUpdate({
+        remote: Option.none(),
         projectRef: Option.none(),
         enableDbSslEnforcement: true,
         disableDbSslEnforcement: false,
-      }).pipe(withJsonErrorHandling);
-      expect(out.messages.some((m) => m.type === "fail")).toBe(true);
+      }).pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "InvalidProjectRefError" });
+      expect(api.requests).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
+
+  describeHostedTargetSelection("ssl-enforcement update", {
+    operands: ["--enable-db-ssl-enforcement"],
+    activeFlags: { "enable-db-ssl-enforcement": true, "disable-db-ssl-enforcement": false },
+    respond: (request) => Effect.succeed(jsonResponse(request, 200, SSL_ENFORCED)),
+    run: (flags) =>
+      sslEnforcementUpdate({
+        ...flags,
+        enableDbSslEnforcement: true,
+        disableDbSslEnforcement: false,
+      }),
+  });
+});
+
+describeHostedConsent("ssl-enforcement update", {
+  api: {
+    response: {
+      status: 200,
+      body: { currentConfig: { database: true }, appliedSuccessfully: true },
+    },
+  },
+  invoke: () => ({
+    run: sslEnforcementUpdate({
+      remote: Option.some({ _tag: "Ref", ref: VALID_REF }),
+      projectRef: Option.none(),
+      enableDbSslEnforcement: true,
+      disableDbSslEnforcement: false,
+    }),
+  }),
 });

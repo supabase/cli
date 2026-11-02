@@ -1,4 +1,5 @@
-import { Effect, Exit, FileSystem, Option, Path } from "effect";
+import { LegacyProjectState } from "../../shared/config/legacy-project-state.service.ts";
+import { Effect, FileSystem, Option, Path } from "effect";
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { CommandCredentials } from "../../auth/command-credentials.service.ts";
 import {
@@ -7,21 +8,25 @@ import {
 } from "../../config/project-ref.service.ts";
 import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
+import { failOnInvalidConfigValue } from "../../command-internal/config-value-passthrough.ts";
 import { readDbToml } from "../../command-internal/db-config.toml-read.ts";
 import { resolveDbImage } from "../../command-internal/db-image.ts";
 import { resolveEdgeRuntimeImage } from "../../command-internal/edge-runtime-image.ts";
 import { readServiceVersionOverrides } from "../../command-internal/service-version-overrides.ts";
+import { currentProjectStateMode } from "../../shared/config/project-state-mode.ts";
+import { readLinkSnapshot } from "../../shared/config/link-snapshot.ts";
+import { currentStackBackend } from "../../command-internal/stack-backend.ts";
 import { OutputFlag } from "../../command-internal/global-flags.ts";
 import { Output } from "../../shared/output/output.service.ts";
-import { encodeGoJson } from "../../command-internal/go-output.encoders.ts";
+import { encodeSortedJson } from "../../command-internal/output.encoders.ts";
 import {
-  encodeGoToml,
-  encodeGoYaml,
-  goSlice,
-  goString,
-  goStruct,
-  goTomlListWrapper,
-} from "../../command-internal/go-struct-output.encoders.ts";
+  encodeStructToml,
+  encodeStructYaml,
+  shapeSlice,
+  shapeString,
+  shapeStruct,
+  shapeTomlListWrapper,
+} from "../../command-internal/struct-output.encoders.ts";
 import {
   fetchLinkedServiceVersions,
   formatServicesWarning,
@@ -30,65 +35,70 @@ import {
   mergeRemoteServiceVersions,
   renderServicesTable,
   renderServicesWarning,
+  type ServiceVersionRow,
 } from "../../shared/services/services.shared.ts";
+import { slimImagesEnabled } from "../../shared/services/slim-images.ts";
 import type { ServicesFlags } from "./services.command.ts";
 import { ServicesEnvNotSupportedError } from "./services.errors.ts";
+import { stackServiceVersions } from "./services-local-stack.ts";
 
 /**
- * Type shape for the hand-written `imageVersion` struct — declaration order
- * is Name, Local, Remote (not alphabetical), and `Remote` is always emitted
- * even when empty (CLI-1975).
+ * Struct shape for `imageVersion`: field order is name, local, remote (not
+ * alphabetical), and `remote` is always emitted even when empty.
  */
-const GO_IMAGE_VERSION = goStruct([
-  ["name", goString],
-  ["local", goString],
-  ["remote", goString],
+const IMAGE_VERSION_SHAPE = shapeStruct([
+  ["name", shapeString],
+  ["local", shapeString],
+  ["remote", shapeString],
 ]);
 
-const GO_SERVICES_LIST = goSlice(GO_IMAGE_VERSION);
+const SERVICES_LIST_SHAPE = shapeSlice(IMAGE_VERSION_SHAPE);
 
-const GO_SERVICES_TOML_WRAPPER = goTomlListWrapper("services", GO_IMAGE_VERSION);
+const SERVICES_TOML_WRAPPER_SHAPE = shapeTomlListWrapper("services", IMAGE_VERSION_SHAPE);
 
 export const services = Effect.fn("services")(function* (_flags: ServicesFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const cliSettings = yield* CommandSettings;
   const credentials = yield* CommandCredentials;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const legacyState = yield* LegacyProjectState;
 
-  const projectRefPath = path.join(cliSettings.workdir, "supabase", ".temp", "project-ref");
   const linkedProjectRef = yield* Effect.gen(function* () {
     if (Option.isSome(cliSettings.projectId)) {
       return cliSettings.projectId;
     }
 
-    const exists = yield* fs.exists(projectRefPath).pipe(Effect.orElseSucceed(() => false));
+    if ((yield* currentProjectStateMode) === "stack") {
+      return yield* readLinkSnapshot(fs, path, cliSettings.workdir).pipe(
+        Effect.map((snapshot) => snapshot.ref),
+        Effect.catch((cause) =>
+          output
+            .raw(`failed to load project ref: ${cause.message}\n`, "stderr")
+            .pipe(Effect.as(Option.none<string>())),
+        ),
+      );
+    }
+
+    const exists = yield* legacyState
+      .exists(cliSettings.workdir, "projectRef")
+      .pipe(Effect.orElseSucceed(() => false));
     if (!exists) {
       return Option.none<string>();
     }
 
-    // Warns on a ref-file READ error (as opposed to the file simply
-    // not existing) and keeps going as unlinked (`fmt.Fprintln(os.Stderr, err)`
-    // with `LoadProjectRef`'s `failed to load project ref: %w`,
-    // `project_ref.go:71-72`). A NotFound between the exists() check above and
-    // this read (TOCTOU) maps to the `os.ErrNotExist` → `ErrNotLinked` branch:
-    // silent, no warning. The warning's error suffix is Effect's description,
-    // not the reference implementation's `*PathError` text — the prefix is
-    // the compatibility-bearing part.
-    const content = yield* fs
-      .readFileString(projectRefPath)
-      .pipe(
-        Effect.catch((cause) =>
-          cause._tag === "PlatformError" && cause.reason._tag === "NotFound"
-            ? Effect.succeed("")
-            : output
-                .raw(`failed to load project ref: ${String(cause)}\n`, "stderr")
-                .pipe(Effect.as("")),
-        ),
-      );
+    // Warns on a ref-file read error, but treats a NotFound race between the
+    // exists() check and this read as simply unlinked (silent, no warning).
+    // Only the "failed to load project ref: " prefix is compatibility-bearing.
+    const content = yield* legacyState.read(cliSettings.workdir, "projectRef").pipe(
+      Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed("")),
+      Effect.catch((cause) =>
+        output.raw(`failed to load project ref: ${String(cause)}\n`, "stderr").pipe(Effect.as("")),
+      ),
+    );
     const trimmed = content.trim();
     return trimmed.length === 0 ? Option.none<string>() : Option.some(trimmed);
   });
@@ -102,116 +112,151 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
   });
 
   yield* Effect.gen(function* () {
-    const accessTokenExit = yield* credentials.getAccessToken.pipe(Effect.exit);
-    const accessToken = Exit.isSuccess(accessTokenExit) ? accessTokenExit.value : Option.none();
+    const accessToken = yield* credentials.getAccessToken.pipe(
+      Effect.catchTag("InvalidAccessTokenError", () => Effect.succeed(Option.none())),
+    );
 
     const validLinkedRef = Option.filter(linkedProjectRef, (ref) => PROJECT_REF_PATTERN.test(ref));
+    const backend = yield* currentStackBackend;
+    yield* Effect.annotateCurrentSpan({
+      "stack.backend": backend.kind,
+      "project.linked": Option.isSome(validLinkedRef),
+    });
     if (Option.isSome(linkedProjectRef) && Option.isNone(validLinkedRef)) {
-      // `flags.LoadProjectRef` (project_ref.go:54-76) validates the ref but
-      // the reference `Run` only warns on the error and keeps going, still
-      // calling `listRemoteImages` with the malformed ref (services.go:61-62).
-      // TS matches the warning but deliberately skips the remote call instead of
-      // reproducing it: the ref is embedded unescaped into the tenant gateway
-      // hostname in `fetchLinkedServiceVersions`, so proceeding would let a
-      // malformed ref redirect the service-role key to an attacker-controlled host.
-      // Emitted before the config-load warning below to match the order these
-      // are printed in (services.go:18-24).
+      // A malformed linked ref still warns, but the remote call is skipped:
+      // `fetchLinkedServiceVersions` embeds the ref unescaped into the tenant
+      // gateway hostname, so proceeding could redirect the service-role key to
+      // an attacker-controlled host. Emitted before the config-load warning to
+      // preserve output order.
       yield* output.raw(`${INVALID_PROJECT_REF_MESSAGE}\n`, "stderr");
     }
 
-    const tomlValues = yield* readDbToml(
-      fs,
-      path,
-      cliSettings.workdir,
-      Option.getOrUndefined(linkedProjectRef),
-    ).pipe(
-      Effect.catch((error) =>
-        output.raw(`${formatConfigLoadError(error)}\n`, "stderr").pipe(Effect.as(null)),
-      ),
+    let rows: ReadonlyArray<ServiceVersionRow>;
+    if (backend.kind === "stack") {
+      const remote =
+        Option.isSome(validLinkedRef) && Option.isSome(accessToken)
+          ? yield* fetchLinkedServiceVersions({
+              apiUrl: cliSettings.apiUrl,
+              projectHost: cliSettings.projectHost,
+              projectRef: validLinkedRef.value,
+              accessToken: accessToken.value,
+              userAgent: cliSettings.userAgent,
+            })
+          : {};
+      const result = yield* stackServiceVersions(cliSettings.workdir, remote);
+      if (result.configError !== undefined) {
+        yield* output.raw(
+          `${result.configError}; using default stack catalog versions\n`,
+          "stderr",
+        );
+      }
+      rows = result.rows;
+    } else {
+      yield* failOnInvalidConfigValue(cliSettings.workdir, linkedProjectRef);
+      const tomlValues = yield* readDbToml(
+        fs,
+        path,
+        cliSettings.workdir,
+        Option.getOrUndefined(linkedProjectRef),
+      ).pipe(
+        Effect.withSpan("services.readConfig"),
+        Effect.catchTag("DbConfigLoadError", (error) =>
+          output.raw(`${error.message}\n`, "stderr").pipe(Effect.as(null)),
+        ),
+      );
+      const serviceVersions =
+        tomlValues === null
+          ? {}
+          : yield* readServiceVersionOverrides(
+              fs,
+              path,
+              cliSettings.workdir,
+              tomlValues.majorVersion,
+            );
+      const postgresImage =
+        tomlValues === null
+          ? undefined
+          : (yield* resolveDbImage(
+              fs,
+              path,
+              cliSettings.workdir,
+              tomlValues.majorVersion,
+              Option.getOrUndefined(tomlValues.orioledbVersion),
+            )).image;
+      const edgeRuntimeImage =
+        tomlValues === null
+          ? undefined
+          : yield* resolveEdgeRuntimeImage(fs, path, cliSettings.workdir, tomlValues.denoVersion);
+      const imageOverrides: LocalServiceImageOverrides = {};
+      if (postgresImage !== undefined) {
+        imageOverrides.postgres = postgresImage;
+      }
+      if (edgeRuntimeImage !== undefined) {
+        imageOverrides["edge-runtime"] = edgeRuntimeImage;
+      }
+      const localImageOptions = {
+        slim: yield* slimImagesEnabled,
+        imageOverrides,
+        normalizeVersionTags: false,
+        serviceVersions,
+        slimCurrentPinOnly: true,
+      };
+
+      rows = listLocalServiceVersions(localImageOptions);
+      if (Option.isSome(validLinkedRef) && Option.isSome(accessToken)) {
+        const remote = yield* fetchLinkedServiceVersions({
+          apiUrl: cliSettings.apiUrl,
+          projectHost: cliSettings.projectHost,
+          projectRef: validLinkedRef.value,
+          accessToken: accessToken.value,
+          userAgent: cliSettings.userAgent,
+        });
+        rows = mergeRemoteServiceVersions(remote, localImageOptions);
+      }
+    }
+
+    yield* Effect.annotateCurrentSpan({ "service.count": rows.length });
+
+    const warning = renderServicesWarning(
+      rows,
+      backend.kind === "stack"
+        ? {
+            heading: "The stack service versions differ from your linked project:",
+            recommendation:
+              "Run supabase link to update services set to linked (the default) in supabase/supabase.lock; services pinned in [local.services] keep their version.",
+          }
+        : {},
     );
-    const serviceVersions =
-      tomlValues === null
-        ? {}
-        : yield* readServiceVersionOverrides(
-            fs,
-            path,
-            cliSettings.workdir,
-            tomlValues.majorVersion,
-          );
-    const postgresImage =
-      tomlValues === null
-        ? undefined
-        : (yield* resolveDbImage(
-            fs,
-            path,
-            cliSettings.workdir,
-            tomlValues.majorVersion,
-            Option.getOrUndefined(tomlValues.orioledbVersion),
-          )).image;
-    const edgeRuntimeImage =
-      tomlValues === null
-        ? undefined
-        : yield* resolveEdgeRuntimeImage(fs, path, cliSettings.workdir, tomlValues.denoVersion);
-    const imageOverrides: LocalServiceImageOverrides = {};
-    if (postgresImage !== undefined) {
-      imageOverrides.postgres = postgresImage;
-    }
-    if (edgeRuntimeImage !== undefined) {
-      imageOverrides["edge-runtime"] = edgeRuntimeImage;
-    }
-    const localImageOptions = {
-      imageOverrides,
-      normalizeVersionTags: false,
-      serviceVersions,
-      slimCurrentPinOnly: true,
-    };
-
-    let rows = listLocalServiceVersions(localImageOptions);
-    if (Option.isSome(validLinkedRef) && Option.isSome(accessToken)) {
-      const remote = yield* fetchLinkedServiceVersions({
-        apiUrl: cliSettings.apiUrl,
-        projectHost: cliSettings.projectHost,
-        projectRef: validLinkedRef.value,
-        accessToken: accessToken.value,
-        userAgent: cliSettings.userAgent,
-      });
-      rows = mergeRemoteServiceVersions(remote, localImageOptions);
-    }
-
-    const warning = renderServicesWarning(rows);
     if (warning !== undefined) {
       yield* output.raw(formatServicesWarning(warning, output.format === "text"), "stderr");
     }
 
-    const goOutput = Option.getOrUndefined(goOutputFlag);
+    const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
-    if (goOutput === "env") {
-      return yield* Effect.fail(
-        new ServicesEnvNotSupportedError({
-          message: "--output env flag is not supported",
-        }),
-      );
+    if (outputFlagFormat === "env") {
+      return yield* new ServicesEnvNotSupportedError({
+        message: "--output env flag is not supported",
+      });
     }
 
-    if (goOutput === "json") {
-      yield* output.raw(encodeGoJson(rows));
+    if (outputFlagFormat === "json") {
+      yield* output.raw(encodeSortedJson(rows));
       return;
     }
 
-    if (goOutput === "yaml") {
-      yield* output.raw(encodeGoYaml(rows, GO_SERVICES_LIST));
+    if (outputFlagFormat === "yaml") {
+      yield* output.raw(encodeStructYaml(rows, SERVICES_LIST_SHAPE));
       return;
     }
 
-    if (goOutput === "toml") {
-      yield* output.raw(encodeGoToml({ services: rows }, GO_SERVICES_TOML_WRAPPER));
+    if (outputFlagFormat === "toml") {
+      yield* output.raw(encodeStructToml({ services: rows }, SERVICES_TOML_WRAPPER_SHAPE));
       return;
     }
 
-    // goOutput is undefined or "pretty" — defer to the TS --output-format flag for
-    // machine output, otherwise render the `--output pretty` table. Guarding the
-    // table behind this (rather than treating "pretty" as force-table) keeps
-    // `--output pretty --output-format json` emitting JSON, per CLI-1546.
+    // outputFlagFormat is undefined or "pretty" — defer to --output-format for machine
+    // output, otherwise render the `--output pretty` table. This keeps
+    // `--output pretty --output-format json` emitting JSON.
     if (output.format === "json" || output.format === "stream-json") {
       yield* output.success("", { services: rows });
       return;
@@ -220,7 +265,3 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
     yield* output.raw(renderServicesTable(rows));
   }).pipe(Effect.ensuring(cacheLinkedProject), Effect.ensuring(telemetryState.flush));
 });
-
-function formatConfigLoadError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}

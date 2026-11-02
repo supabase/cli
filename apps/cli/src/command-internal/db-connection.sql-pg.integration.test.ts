@@ -1,23 +1,18 @@
 /**
- * Connection-failure behavior of the real `@effect/sql-pg` driver layer against
- * real sockets: the `DbConnectError` message must carry the established
- * `failed to connect to postgres: failed to connect to
- * `host=… user=… database=…`: <cause>` structure (pgconn's own connect-error
- * wrapping), and the connect suggestion must classify real
- * node-postgres error shapes, not libpq wording.
+ * Connection-failure behavior of the real `@effect/sql-pg` driver layer against real sockets:
+ * the `DbConnectError` message must carry the established
+ * `failed to connect to postgres: failed to connect to `host=… user=… database=…`: <cause>`
+ * structure, and the connect suggestion must classify real node-postgres error shapes.
  */
 import * as net from "node:net";
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Duration, Effect } from "effect";
+import { Deferred, Duration, Effect, FileSystem, Layer, Path } from "effect";
 
 import { SUGGEST_ENV_VAR, SUGGEST_LOCAL_STACK } from "./connect-errors.ts";
 import type { DbConnectError, DbExecError } from "./db-connection.errors.ts";
 import { type DbSession, type PgConnInput, DbConnection } from "./db-connection.service.ts";
-import {
-  acquirePgPool,
-  dbConnectionSqlPgLayer,
-  PgBatchQuery,
-} from "./db-connection.sql-pg.layer.ts";
+import { acquirePgPool, dbConnectionLayer, PgBatchQuery } from "./db-connection.sql-pg.layer.ts";
 
 const SUGGESTION_CONTEXT = {
   dashboardUrl: "https://supabase.com/dashboard",
@@ -25,9 +20,8 @@ const SUGGESTION_CONTEXT = {
   debug: false,
 } as const;
 
-// A distinctive sentinel so a regression that leaks the password into the
-// rendered message or suggestion fails the assertions below (pgconn embeds only
-// host/user/database — never the password).
+// A distinctive sentinel so a regression that leaks the password into the rendered message or
+// suggestion fails the assertions below.
 const SENTINEL_PASSWORD = "s3cr3t-pw-do-not-leak";
 
 /**
@@ -58,15 +52,24 @@ const connectFailure = (
         Effect.mapError(() => new Error("expected the connection to fail")),
         Effect.orDie,
       );
-  }).pipe(Effect.provide(dbConnectionSqlPgLayer));
+  }).pipe(Effect.provide(dbConnectionLayer.pipe(Layer.provide(BunServices.layer))));
 
 /** A TCP port that is guaranteed closed: bind an ephemeral port, then release it. */
-const acquireClosedPort = (): Promise<number> =>
-  new Promise((resolve, reject) => {
+const acquireClosedPort = (): Effect.Effect<number> =>
+  Effect.callback<number>((resume) => {
     const server = net.createServer();
+    const onError = (error: Error) => resume(Effect.die(error));
+    server.once("error", onError);
     server.listen(0, "127.0.0.1", () => {
+      server.removeListener("error", onError);
       const address = server.address() as net.AddressInfo;
-      server.close((error) => (error === undefined ? resolve(address.port) : reject(error)));
+      server.close((error) =>
+        resume(error === undefined ? Effect.succeed(address.port) : Effect.die(error)),
+      );
+    });
+    return Effect.sync(() => {
+      server.removeListener("error", onError);
+      if (server.listening) server.close();
     });
   });
 
@@ -91,8 +94,8 @@ const errorResponse = (fields: Record<string, string>): Buffer => {
  */
 const fakePostgresServer = (
   onStartup: (socket: net.Socket) => void,
-): Promise<{ readonly port: number; readonly close: () => void }> =>
-  new Promise((resolve) => {
+): Effect.Effect<{ readonly port: number; readonly close: () => void }> =>
+  Effect.callback((resume) => {
     const server = net.createServer((socket) => {
       let sawStartup = false;
       socket.on("data", (data: Buffer) => {
@@ -108,9 +111,16 @@ const fakePostgresServer = (
       });
       socket.on("error", () => {});
     });
+    const onError = (error: Error) => resume(Effect.die(error));
+    server.once("error", onError);
     server.listen(0, "127.0.0.1", () => {
+      server.removeListener("error", onError);
       const address = server.address() as net.AddressInfo;
-      resolve({ port: address.port, close: () => server.close() });
+      resume(Effect.succeed({ port: address.port, close: () => server.close() }));
+    });
+    return Effect.sync(() => {
+      server.removeListener("error", onError);
+      if (server.listening) server.close();
     });
   });
 
@@ -131,6 +141,70 @@ const PARSE_COMPLETE = wireMessage("1", Buffer.alloc(0));
 const BIND_COMPLETE = wireMessage("2", Buffer.alloc(0));
 const NO_DATA = wireMessage("n", Buffer.alloc(0));
 const EMPTY_QUERY = wireMessage("I", Buffer.alloc(0));
+
+/**
+ * A fake Postgres server that completes an auth-less startup handshake, answers every
+ * simple-protocol query with `SELECT 1`'s result (satisfying `acquireProbedPool`'s own probe),
+ * and records whether the client sent an SSLRequest first — so a test can prove whether TLS was
+ * attempted independent of how the attempt is resolved.
+ */
+const fakeStartupServer = (): Effect.Effect<{
+  readonly port: number;
+  readonly close: () => void;
+  readonly sawSslRequest: () => boolean;
+}> =>
+  Effect.callback((resume) => {
+    let sawSslRequest = false;
+    const server = net.createServer((socket) => {
+      let sawStartup = false;
+      let pending = Buffer.alloc(0);
+      socket.on("data", (data: Buffer) => {
+        pending = Buffer.concat([pending, data]);
+        for (;;) {
+          if (!sawStartup) {
+            if (pending.length < 8) return;
+            const length = pending.readInt32BE(0);
+            if (pending.length < length) return;
+            if (pending.readInt32BE(4) === 80877103) {
+              sawSslRequest = true;
+              socket.write("N");
+            } else {
+              sawStartup = true;
+              socket.write(Buffer.concat([AUTHENTICATION_OK, READY_FOR_QUERY]));
+            }
+            pending = pending.subarray(length);
+            continue;
+          }
+          if (pending.length < 5) return;
+          const length = pending.readInt32BE(1);
+          if (pending.length < length + 1) return;
+          const type = String.fromCharCode(pending[0] ?? 0);
+          pending = pending.subarray(length + 1);
+          if (type === "Q") {
+            socket.write(Buffer.concat([commandComplete("SELECT 1"), READY_FOR_QUERY]));
+          }
+        }
+      });
+      socket.on("error", () => {});
+    });
+    const onError = (error: Error) => resume(Effect.die(error));
+    server.once("error", onError);
+    server.listen(0, "127.0.0.1", () => {
+      server.removeListener("error", onError);
+      const address = server.address() as net.AddressInfo;
+      resume(
+        Effect.succeed({
+          port: address.port,
+          close: () => server.close(),
+          sawSslRequest: () => sawSslRequest,
+        }),
+      );
+    });
+    return Effect.sync(() => {
+      server.removeListener("error", onError);
+      if (server.listening) server.close();
+    });
+  });
 
 const readCString = (body: Buffer, offset: number): readonly [string, number] => {
   const end = body.indexOf(0, offset);
@@ -176,13 +250,13 @@ const fakeBatchServer = (
     /** Drop the connection on the first Sync, so a batch dies mid-flight. */
     readonly destroyOnFirstSync?: boolean;
   } = {},
-): Promise<{
+): Effect.Effect<{
   readonly port: number;
   readonly close: () => void;
   readonly state: FakeBatchServerState;
   readonly sockets: ReadonlyArray<net.Socket>;
 }> =>
-  new Promise((resolve) => {
+  Effect.callback((resume) => {
     const state: FakeBatchServerState = {
       frameTypes: [],
       statements: [],
@@ -292,23 +366,29 @@ const fakeBatchServer = (
       });
       socket.on("error", () => {});
     });
+    const onError = (error: Error) => resume(Effect.die(error));
+    server.once("error", onError);
     server.listen(0, "127.0.0.1", () => {
+      server.removeListener("error", onError);
       const address = server.address() as net.AddressInfo;
-      resolve({ port: address.port, close: () => server.close(), state, sockets });
+      resume(Effect.succeed({ port: address.port, close: () => server.close(), state, sockets }));
+    });
+    return Effect.sync(() => {
+      server.removeListener("error", onError);
+      if (server.listening) server.close();
     });
   });
 
 /**
- * A fake Postgres server that completes the startup handshake (no auth) and
- * answers every simple-protocol query ('Q') via `onQuery`, so tests can drive
- * the REAL driver stack — node-postgres wire parsing → `DatabaseError` →
- * `@effect/sql-pg`'s `SqlError` wrapping → `toExecError` — through real
- * server-side statement failures.
+ * A fake Postgres server that completes the startup handshake (no auth) and answers every
+ * simple-protocol query ('Q') via `onQuery`, so tests can drive the real driver stack — node-
+ * postgres wire parsing, `DatabaseError`, `@effect/sql-pg`'s `SqlError` wrapping, `toExecError`
+ * — through real server-side statement failures.
  */
 const fakeQueryServer = (
   onQuery: (sql: string) => Buffer,
-): Promise<{ readonly port: number; readonly close: () => void }> =>
-  new Promise((resolve) => {
+): Effect.Effect<{ readonly port: number; readonly close: () => void }> =>
+  Effect.callback((resume) => {
     const server = net.createServer((socket) => {
       let sawStartup = false;
       let pending = Buffer.alloc(0);
@@ -346,18 +426,25 @@ const fakeQueryServer = (
       });
       socket.on("error", () => {});
     });
+    const onError = (error: Error) => resume(Effect.die(error));
+    server.once("error", onError);
     server.listen(0, "127.0.0.1", () => {
+      server.removeListener("error", onError);
       const address = server.address() as net.AddressInfo;
-      resolve({ port: address.port, close: () => server.close() });
+      resume(Effect.succeed({ port: address.port, close: () => server.close() }));
+    });
+    return Effect.sync(() => {
+      server.removeListener("error", onError);
+      if (server.listening) server.close();
     });
   });
 
-describe("dbConnectionSqlPgLayer connect failures", () => {
+describe("dbConnectionLayer connect failures", () => {
   it.live(
     "surfaces host, user, database, and the driver cause when a remote (--linked) connection is refused",
     () =>
       Effect.gen(function* () {
-        const port = yield* Effect.promise(acquireClosedPort);
+        const port = yield* acquireClosedPort();
         const error = yield* connectFailure({ port }, false);
         expect(error._tag).toBe("DbConnectError");
         expect(error.message).toBe(
@@ -374,57 +461,47 @@ describe("dbConnectionSqlPgLayer connect failures", () => {
 
   it.live("surfaces the local-stack hint when a local connection is refused", () =>
     Effect.gen(function* () {
-      const port = yield* Effect.promise(acquireClosedPort);
+      const port = yield* acquireClosedPort();
       const error = yield* connectFailure({ port });
       expect(error.suggestion).toBe(SUGGEST_LOCAL_STACK);
       expect(error.retryable).toBe(true);
     }),
   );
 
-  it.live(
-    "reproduces pgconn's server-error rendering for an auth failure and suggests SUPABASE_DB_PASSWORD",
-    () =>
-      Effect.gen(function* () {
-        const server = yield* Effect.promise(() =>
-          fakePostgresServer((socket) => {
-            socket.write(
-              errorResponse({
-                S: "FATAL",
-                V: "FATAL",
-                C: "28P01",
-                M: 'password authentication failed for user "postgres"',
-                F: "auth.c",
-                L: "326",
-                R: "auth_failed",
-              }),
-            );
-            socket.end();
+  it.live("renders the server error for an auth failure and suggests SUPABASE_DB_PASSWORD", () =>
+    Effect.gen(function* () {
+      const server = yield* fakePostgresServer((socket) => {
+        socket.write(
+          errorResponse({
+            S: "FATAL",
+            V: "FATAL",
+            C: "28P01",
+            M: 'password authentication failed for user "postgres"',
+            F: "auth.c",
+            L: "326",
+            R: "auth_failed",
           }),
         );
-        const error = yield* connectFailure({ port: server.port }).pipe(
-          Effect.ensuring(Effect.sync(server.close)),
-        );
-        expect(error.message).toBe(
-          "failed to connect to postgres: failed to connect to `host=127.0.0.1 user=postgres database=postgres`: " +
-            'server error (FATAL: password authentication failed for user "postgres" (SQLSTATE 28P01))',
-        );
-        expect(error.suggestion).toBe(SUGGEST_ENV_VAR);
-        expect(error.message).not.toContain(SENTINEL_PASSWORD);
-        expect(error.retryable).toBeUndefined();
-      }),
+        socket.end();
+      });
+      const error = yield* connectFailure({ port: server.port }).pipe(
+        Effect.ensuring(Effect.sync(server.close)),
+      );
+      expect(error.message).toBe(
+        "failed to connect to postgres: failed to connect to `host=127.0.0.1 user=postgres database=postgres`: " +
+          'server error (FATAL: password authentication failed for user "postgres" (SQLSTATE 28P01))',
+      );
+      expect(error.suggestion).toBe(SUGGEST_ENV_VAR);
+      expect(error.message).not.toContain(SENTINEL_PASSWORD);
+      expect(error.retryable).toBeUndefined();
+    }),
   );
 
   it.live(
     "keeps the CLI-1942 session-pooler EOF shape unclassified while surfacing the cause",
     () =>
       Effect.gen(function* () {
-        // The session pooler dropping the connection (CLI-1942) surfaces as
-        // node-postgres' `Connection terminated unexpectedly`. Go has no
-        // suggestion branch for the equivalent `unexpected EOF`, so no
-        // suggestion may fire — the generic --debug fallback applies.
-        const server = yield* Effect.promise(() =>
-          fakePostgresServer((socket) => socket.destroy()),
-        );
+        const server = yield* fakePostgresServer((socket) => socket.destroy());
         const error = yield* connectFailure({
           port: server.port,
           user: "postgres.abcdefghijklmnopqrst",
@@ -435,49 +512,41 @@ describe("dbConnectionSqlPgLayer connect failures", () => {
             "Connection terminated unexpectedly",
         );
         expect(error.suggestion).toBeUndefined();
-        // An unexpected EOF is not a dial-level failure — never marked retryable.
         expect(error.retryable).toBeUndefined();
       }),
   );
 });
 
-describe("dbConnectionSqlPgLayer exec failures", () => {
+describe("dbConnectionLayer exec failures", () => {
   it.live(
-    "maps a real wire ErrorResponse to pgconn's PgError rendering with detail and position",
+    "maps a real wire ErrorResponse to the server-error rendering with detail and position",
     () =>
-      // Tripwire for the server-error extraction: drives the REAL driver stack
-      // (node-postgres wire parsing → `DatabaseError` → `@effect/sql-pg`'s
-      // `SqlError` cause chain → `toExecError`), so a dependency bump that
-      // changes the error wrapping fails here instead of silently degrading
-      // migration-apply failures back to the opaque driver text.
+      // Tripwire for the server-error extraction: drives the real driver stack (node-postgres
+      // wire parsing → `DatabaseError` → `@effect/sql-pg`'s `SqlError` cause chain →
+      // `toExecError`), so a dependency bump that changes the error wrapping fails here instead
+      // of degrading migration-apply failures to the opaque driver text.
       Effect.gen(function* () {
         const failing = "CREATE TABLE test (path ltree NOT NULL)";
-        const server = yield* Effect.promise(() =>
-          fakeQueryServer((sql) =>
-            sql === failing
-              ? Buffer.concat([
-                  // `S` (localized) and `V` (unlocalized) are deliberately distinct:
-                  // Go renders pgconn's `PgError.Severity`, populated from the wire
-                  // `S` field (pgproto3 `error_response.go` maps 'S'→Severity,
-                  // 'V'→SeverityUnlocalized), so a localized server prints e.g.
-                  // `FEHLER: …`. pg-protocol likewise assigns `severity = fields.S`
-                  // (`parser.js` parseErrorMessage); asserting `FEHLER` below fails
-                  // the tripwire if a dependency bump ever renders `V` instead.
-                  errorResponse({
-                    S: "FEHLER",
-                    V: "ERROR",
-                    C: "42704",
-                    M: 'type "ltree" does not exist',
-                    D: "Detail from the server.",
-                    P: "25",
-                    F: "parse_type.c",
-                    L: "270",
-                    R: "typenameType",
-                  }),
-                  READY_FOR_QUERY,
-                ])
-              : Buffer.concat([commandComplete("SELECT 1"), READY_FOR_QUERY]),
-          ),
+        const server = yield* fakeQueryServer((sql) =>
+          sql === failing
+            ? Buffer.concat([
+                // `S` and `V` differ here since pg-protocol assigns `severity` from the wire
+                // `S` field; asserting `FEHLER` below pins that against a dependency bump that
+                // might render `V` instead.
+                errorResponse({
+                  S: "FEHLER",
+                  V: "ERROR",
+                  C: "42704",
+                  M: 'type "ltree" does not exist',
+                  D: "Detail from the server.",
+                  P: "25",
+                  F: "parse_type.c",
+                  L: "270",
+                  R: "typenameType",
+                }),
+                READY_FOR_QUERY,
+              ])
+            : Buffer.concat([commandComplete("SELECT 1"), READY_FOR_QUERY]),
         );
         const error: DbConnectError | DbExecError = yield* Effect.gen(function* () {
           const conn = yield* DbConnection;
@@ -499,7 +568,10 @@ describe("dbConnectionSqlPgLayer exec failures", () => {
               Effect.mapError(() => new Error("expected the statement to fail")),
               Effect.orDie,
             );
-        }).pipe(Effect.provide(dbConnectionSqlPgLayer), Effect.ensuring(Effect.sync(server.close)));
+        }).pipe(
+          Effect.provide(dbConnectionLayer.pipe(Layer.provide(BunServices.layer))),
+          Effect.ensuring(Effect.sync(server.close)),
+        );
         expect(error._tag).toBe("DbExecError");
         expect(error.message).toBe('FEHLER: type "ltree" does not exist (SQLSTATE 42704)');
         if (error._tag === "DbExecError") {
@@ -511,7 +583,7 @@ describe("dbConnectionSqlPgLayer exec failures", () => {
   );
 });
 
-describe("dbConnectionSqlPgLayer extended batches", () => {
+describe("dbConnectionLayer extended batches", () => {
   /**
    * Narrow a batch failure to its statement-execution error. `execBatch` also fails
    * with `DbConnectError` when it cannot check a connection out of the pool,
@@ -522,9 +594,9 @@ describe("dbConnectionSqlPgLayer extended batches", () => {
     throw new Error(`expected a batch exec failure, got ${error._tag}`);
   };
 
-  const runWithBatchServer = <A>(
-    server: Awaited<ReturnType<typeof fakeBatchServer>>,
-    use: (session: DbSession) => Effect.Effect<A, unknown>,
+  const runWithBatchServer = <A, E>(
+    server: Effect.Success<ReturnType<typeof fakeBatchServer>>,
+    use: (session: DbSession) => Effect.Effect<A, E>,
   ) =>
     Effect.gen(function* () {
       const conn = yield* DbConnection;
@@ -543,13 +615,13 @@ describe("dbConnectionSqlPgLayer extended batches", () => {
       return yield* use(session);
     }).pipe(
       Effect.scoped,
-      Effect.provide(dbConnectionSqlPgLayer),
+      Effect.provide(dbConnectionLayer.pipe(Layer.provide(BunServices.layer))),
       Effect.ensuring(Effect.sync(server.close)),
     );
 
   it.live("sends every statement and parameter set before one Sync", () =>
     Effect.gen(function* () {
-      const server = yield* Effect.promise(() => fakeBatchServer({ emptyAt: 1 }));
+      const server = yield* fakeBatchServer({ emptyAt: 1 });
       const values = ["plain", 'quote"', "slash\\", "comma,", "{brace}", "line\nbreak", "NULL", ""];
       yield* runWithBatchServer(server, (session) =>
         session.execBatch([
@@ -596,7 +668,7 @@ describe("dbConnectionSqlPgLayer extended batches", () => {
 
   it.live("maps a later parse failure to its statement and keeps its local position", () =>
     Effect.gen(function* () {
-      const server = yield* Effect.promise(() => fakeBatchServer({ emptyAt: 1, failAt: 2 }));
+      const server = yield* fakeBatchServer({ emptyAt: 1, failAt: 2 });
       yield* runWithBatchServer(server, (session) =>
         Effect.gen(function* () {
           const error = asBatchExecError(
@@ -617,7 +689,7 @@ describe("dbConnectionSqlPgLayer extended batches", () => {
 
   it.live("maps a position-less runtime failure from completed commands", () =>
     Effect.gen(function* () {
-      const server = yield* Effect.promise(() => fakeBatchServer({ failExecuteAt: 1 }));
+      const server = yield* fakeBatchServer({ failExecuteAt: 1 });
       yield* runWithBatchServer(server, (session) =>
         session
           .execBatch([{ sql: "SELECT 1" }, { sql: "INSERT duplicate" }, { sql: "SELECT 3" }])
@@ -639,7 +711,7 @@ describe("dbConnectionSqlPgLayer extended batches", () => {
 
   it.live("reports a deferred Sync failure after every completed statement", () =>
     Effect.gen(function* () {
-      const server = yield* Effect.promise(() => fakeBatchServer({ failOnSync: true }));
+      const server = yield* fakeBatchServer({ failOnSync: true });
       yield* runWithBatchServer(server, (session) =>
         session.execBatch([{ sql: "SELECT 1" }, { sql: "SELECT 2" }]).pipe(
           Effect.flip,
@@ -656,10 +728,8 @@ describe("dbConnectionSqlPgLayer extended batches", () => {
   );
 
   it.live("fails a batch whose connection drops after it was written, then recovers", () =>
-    // A socket dropped after the batch was written must fail that batch and must not leave
-    // the client to be handed to the next one.
     Effect.gen(function* () {
-      const server = yield* Effect.promise(() => fakeBatchServer({ destroyOnFirstSync: true }));
+      const server = yield* fakeBatchServer({ destroyOnFirstSync: true });
       yield* runWithBatchServer(server, (session) =>
         Effect.gen(function* () {
           const error = yield* session.execBatch([{ sql: "SELECT 1" }, { sql: "SELECT 2" }]).pipe(
@@ -678,27 +748,25 @@ describe("dbConnectionSqlPgLayer extended batches", () => {
   );
 
   it.live("survives an idle raw-client socket death and redials for the next query", () =>
-    // node-postgres emits `error` on an idle client; with no listener that terminates the
-    // process, so a database dying between two `queryRaw` calls must not take the CLI with it,
-    // and must not leave the corpse cached for the calls after it.
+    // node-postgres emits `error` on an idle client with no listener, which would otherwise
+    // crash the process; the dead client must not be left cached for later `queryRaw` calls.
     Effect.gen(function* () {
-      const server = yield* Effect.promise(() => fakeBatchServer());
+      const server = yield* fakeBatchServer();
       yield* runWithBatchServer(server, (session) =>
         Effect.gen(function* () {
           yield* session.queryRaw("SELECT 1");
-          // `queryRaw` runs on its own client, opened after the pool's, so it is the
-          // newest connection the server has accepted.
+          // `queryRaw` opens its own client after the pool's, so it's the newest connection
+          // the server has accepted.
           const rawSocket = server.sockets.at(-1);
           const openedBeforeRedial = server.sockets.length;
 
-          const closed = new Promise<void>((resolve) => {
-            rawSocket?.on("close", () => resolve());
-          });
+          const closed = yield* Deferred.make<void>();
+          rawSocket?.on("close", () => Deferred.doneUnsafe(closed, Effect.void));
           yield* Effect.sync(() => rawSocket?.destroy());
-          yield* Effect.promise(() => closed);
+          yield* Deferred.await(closed);
 
-          // Whether the client has already noticed the death decides if this call redials or
-          // fails on the corpse, and that ordering is not ours to control, so accept either.
+          // The client's death-detection timing is racy, so accept either a redial or a
+          // failure here.
           yield* session.queryRaw("SELECT 1").pipe(
             Effect.exit,
             Effect.timeoutOrElse({
@@ -715,13 +783,12 @@ describe("dbConnectionSqlPgLayer extended batches", () => {
   );
 
   it.live("refuses to write a batch onto a real pooled client whose socket is already gone", () =>
-    // The unit test drives `submit` through a hand-built connection; this pins the same
-    // refusal against a real node-postgres client, so a driver change that stops making the
-    // socket unwritable would be caught rather than mocked over. Destroying the socket and
-    // submitting in one synchronous block keeps the window deterministic: `writable` flips
-    // immediately, while pg only marks the client unqueryable on the next tick's close.
+    // Pins the same refusal from the unit test's hand-built connection against a real
+    // node-postgres client. Destroying the socket and submitting in the same synchronous block
+    // keeps the window deterministic, since `writable` flips immediately but pg only marks the
+    // client unqueryable on the next tick's close.
     Effect.gen(function* () {
-      const server = yield* Effect.promise(() => fakeBatchServer());
+      const server = yield* fakeBatchServer();
       yield* Effect.gen(function* () {
         const pool = yield* acquirePgPool(
           {
@@ -746,17 +813,19 @@ describe("dbConnectionSqlPgLayer extended batches", () => {
         expect(batch.outcome).toBe("unsent");
         expect(server.state.frameTypes).toEqual([]);
         client.release(new Error("done"));
-      }).pipe(Effect.scoped, Effect.ensuring(Effect.sync(server.close)));
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(BunServices.layer),
+        Effect.ensuring(Effect.sync(server.close)),
+      );
     }),
   );
 
   it.live("classifies a failed batch-connection acquisition as a connect error", () =>
-    // A batch checks its own connection out of the pool, so a refused checkout is a
-    // CONNECTION failure — not statement 0 failing. Misclassifying it as an exec error
-    // would drop the connect suggestion and make the migration-apply formatter blame
-    // the migration's first statement for the database being unreachable.
+    // A refused checkout is a connection failure, not statement 0 failing; misclassifying it
+    // would blame the migration's first statement for the database being unreachable.
     Effect.gen(function* () {
-      const server = yield* Effect.promise(() => fakeBatchServer({ stall: true }));
+      const server = yield* fakeBatchServer({ stall: true });
       const error = yield* runWithBatchServer(server, (session) =>
         Effect.gen(function* () {
           // Interrupting a batch discards its pooled connection, so the next batch has
@@ -783,8 +852,8 @@ describe("dbConnectionSqlPgLayer extended batches", () => {
 describe("acquirePgPool", () => {
   it.live("returns the winning raw pool and ends it when the caller scope closes", () =>
     Effect.gen(function* () {
-      const server = yield* Effect.promise(() =>
-        fakeQueryServer(() => Buffer.concat([commandComplete("SELECT 1"), READY_FOR_QUERY])),
+      const server = yield* fakeQueryServer(() =>
+        Buffer.concat([commandComplete("SELECT 1"), READY_FOR_QUERY]),
       );
       yield* Effect.gen(function* () {
         let acquired: import("pg").Pool | undefined;
@@ -805,11 +874,192 @@ describe("acquirePgPool", () => {
           expect(pool.ending).toBe(false);
           expect(pool.ended).toBe(false);
           yield* Effect.tryPromise(() => pool.query("select 1"));
-        }).pipe(Effect.scoped);
+        }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
 
         expect(acquired?.ending).toBe(true);
         expect(acquired?.ended).toBe(true);
       }).pipe(Effect.ensuring(Effect.sync(server.close)));
+    }),
+  );
+});
+
+describe("a local target's explicit TLS request (CLI-2366: honor --db-url's own sslmode/sslrootcert)", () => {
+  it.live("attempts TLS instead of forcing plaintext when a local target's DSN sets sslmode", () =>
+    Effect.gen(function* () {
+      const server = yield* fakeStartupServer();
+      const error = yield* connectFailure({ port: server.port, sslmode: "require" }).pipe(
+        Effect.ensuring(Effect.sync(server.close)),
+      );
+      expect(server.sawSslRequest()).toBe(true);
+      expect(error.message).toContain("tls error (The server does not support SSL connections)");
+      expect(error.suggestion).toBe(
+        "This server does not accept TLS. Set `sslmode=disable` on the connection string to connect in plaintext.",
+      );
+    }),
+  );
+
+  it.live("stays plaintext for a local target when sslmode=disable is set explicitly", () =>
+    Effect.gen(function* () {
+      const server = yield* fakeStartupServer();
+      yield* Effect.gen(function* () {
+        const pool = yield* acquirePgPool(
+          {
+            host: "127.0.0.1",
+            port: server.port,
+            user: "postgres",
+            password: "postgres",
+            database: "postgres",
+            sslmode: "disable",
+          },
+          { isLocal: true, dnsResolver: "native" },
+        );
+        yield* Effect.tryPromise(() => pool.query("select 1"));
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(BunServices.layer),
+        Effect.ensuring(Effect.sync(server.close)),
+      );
+      expect(server.sawSslRequest()).toBe(false);
+    }),
+  );
+
+  it.live(
+    "stays plaintext for a local target with sslmode=prefer (CLI-2366 regression guard: " +
+      "libpq's TLS-then-plaintext fallback is not implemented by sslConfigsFor)",
+    () =>
+      Effect.gen(function* () {
+        const server = yield* fakeStartupServer();
+        yield* Effect.gen(function* () {
+          const pool = yield* acquirePgPool(
+            {
+              host: "127.0.0.1",
+              port: server.port,
+              user: "postgres",
+              password: "postgres",
+              database: "postgres",
+              sslmode: "prefer",
+            },
+            { isLocal: true, dnsResolver: "native" },
+          );
+          yield* Effect.tryPromise(() => pool.query("select 1"));
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(BunServices.layer),
+          Effect.ensuring(Effect.sync(server.close)),
+        );
+        expect(server.sawSslRequest()).toBe(false);
+      }),
+  );
+
+  it.live(
+    "connects plaintext for a local target with sslmode=allow, whose first fallback attempt " +
+      "is already plaintext",
+    () =>
+      Effect.gen(function* () {
+        const server = yield* fakeStartupServer();
+        yield* Effect.gen(function* () {
+          const pool = yield* acquirePgPool(
+            {
+              host: "127.0.0.1",
+              port: server.port,
+              user: "postgres",
+              password: "postgres",
+              database: "postgres",
+              sslmode: "allow",
+            },
+            { isLocal: true, dnsResolver: "native" },
+          );
+          yield* Effect.tryPromise(() => pool.query("select 1"));
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(BunServices.layer),
+          Effect.ensuring(Effect.sync(server.close)),
+        );
+        expect(server.sawSslRequest()).toBe(false);
+      }),
+  );
+
+  it.live(
+    "stays plaintext for a local target with no sslmode/sslrootcert set (the default must not regress)",
+    () =>
+      Effect.gen(function* () {
+        const server = yield* fakeStartupServer();
+        yield* Effect.gen(function* () {
+          const pool = yield* acquirePgPool(
+            {
+              host: "127.0.0.1",
+              port: server.port,
+              user: "postgres",
+              password: "postgres",
+              database: "postgres",
+            },
+            { isLocal: true, dnsResolver: "native" },
+          );
+          yield* Effect.tryPromise(() => pool.query("select 1"));
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(BunServices.layer),
+          Effect.ensuring(Effect.sync(server.close)),
+        );
+        expect(server.sawSslRequest()).toBe(false);
+      }),
+  );
+
+  it.live(
+    "loads sslrootcert for a local target when the DSN explicitly set it, instead of silently ignoring it",
+    () =>
+      Effect.gen(function* () {
+        const missingPath = "/tmp/cli-2366-missing-sslrootcert.pem";
+        const error = yield* connectFailure({
+          port: 54322,
+          sslrootcert: missingPath,
+          sslmode: "verify-full",
+        });
+        expect(error.message).toBe(
+          `failed to read sslrootcert ${missingPath}: Error: ENOENT: no such file or directory, open '${missingPath}'`,
+        );
+      }),
+  );
+
+  it.live("keeps a remote target's sslrootcert loading unchanged", () =>
+    Effect.gen(function* () {
+      const missingPath = "/tmp/cli-2366-missing-sslrootcert-remote.pem";
+      const error = yield* connectFailure({ port: 5432, sslrootcert: missingPath }, false);
+      expect(error.message).toBe(
+        `failed to read sslrootcert ${missingPath}: Error: ENOENT: no such file or directory, open '${missingPath}'`,
+      );
+    }),
+  );
+
+  it.live("skips missing CA and client-cert files when sslmode=disable on a remote target", () =>
+    Effect.gen(function* () {
+      const server = yield* fakeStartupServer();
+      yield* Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        /* Uncreated children of a fresh temp dir, so the cert files are guaranteed absent. */
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "cli-missing-tls-files-" });
+        const pool = yield* acquirePgPool(
+          {
+            host: "127.0.0.1",
+            port: server.port,
+            user: "postgres",
+            password: SENTINEL_PASSWORD,
+            database: "postgres",
+            sslmode: "disable",
+            sslrootcert: path.join(dir, "ca.pem"),
+            sslcert: path.join(dir, "client.crt"),
+            sslkey: path.join(dir, "client.key"),
+          },
+          { isLocal: false, dnsResolver: "native" },
+        );
+        yield* Effect.tryPromise(() => pool.query("select 1"));
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(BunServices.layer),
+        Effect.ensuring(Effect.sync(server.close)),
+      );
+      expect(server.sawSslRequest()).toBe(false);
     }),
   );
 });

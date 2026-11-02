@@ -1,0 +1,231 @@
+import { gzipSync } from "node:zlib";
+import { Data, Effect, FileSystem, Option, Path } from "effect";
+import type { PlatformError } from "effect/PlatformError";
+import { ComputeSourceEscapingLinkError } from "./compute.errors.ts";
+import { type ComputeExcludeMatcher, NO_COMPUTE_EXCLUSIONS } from "./compute-exclude.ts";
+import { createTar, type TarEntry } from "./tar.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../telemetry/error-actionability.ts";
+
+export class ComputeArchiveCompressionError extends Data.TaggedError(
+  "ComputeArchiveCompressionError",
+)<{
+  readonly detail: string;
+  readonly cause: unknown;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.internalPanic;
+  }
+}
+
+/**
+ * Packages a compute's source directory into the `.tar.gz` build context the Compute API's
+ * upload slot expects. Nothing is excluded unless the project asks: for a `dockerfile` compute
+ * the archive is the build context the user's own `Dockerfile` expects, and a catalog runtime's
+ * build reads the same tree, so what belongs in it is the project's call rather than this
+ * packager's. `[compute.<name>] exclude` is where that call is recorded. Packaged size is
+ * reported back so growth is visible before the upload rather than after.
+ */
+
+interface PackagedCompute {
+  readonly archive: Uint8Array;
+  readonly fileCount: number;
+  /**
+   * Paths the exclude patterns kept out, counted where the walk turned back rather than by
+   * what sat underneath — an excluded directory is one path, however much it held.
+   */
+  readonly excludedCount: number;
+}
+
+/**
+ * Where a symlink points, relative to the packaged tree, or `undefined` when it points
+ * outside it. A link is stored rather than followed, so the target has to be packaged too for
+ * the link to mean anything on the other end. Targets are rewritten relative to the link's
+ * own directory, since an absolute one is a path on this machine that wouldn't resolve
+ * anywhere else.
+ */
+function confinedLinkTarget(input: {
+  readonly path: Path.Path;
+  readonly root: string;
+  readonly linkDir: string;
+  readonly target: string;
+}): string | undefined {
+  const resolved = input.path.resolve(input.linkDir, input.target);
+  const fromRoot = input.path.relative(input.root, resolved);
+  if (fromRoot.startsWith("..") || input.path.isAbsolute(fromRoot)) {
+    return undefined;
+  }
+  return input.path.isAbsolute(input.target)
+    ? input.path.relative(input.linkDir, resolved)
+    : input.target;
+}
+
+/**
+ * Seconds since the epoch, as a USTAR octal field can hold them. A filesystem timestamp
+ * isn't always a sane one: a pre-1970 mtime is negative (a botched `touch` or some archive
+ * extractors produce them), and a corrupt one decodes to an `Invalid Date` with `NaN`. Neither
+ * is worth failing a deploy over, so both collapse to the epoch instead of reaching
+ * `writeOctal`'s range check.
+ */
+function tarMtime(modified: Option.Option<Date>): number {
+  if (Option.isNone(modified)) {
+    return 0;
+  }
+  const seconds = Math.floor(modified.value.getTime() / 1000);
+  return Number.isSafeInteger(seconds) && seconds > 0 ? seconds : 0;
+}
+
+/** What one directory contributed: its tar entries, and how many paths `exclude` turned back. */
+interface CollectedEntries {
+  readonly entries: Array<TarEntry>;
+  readonly excludedCount: number;
+}
+
+/**
+ * Every entry under `root`, as tar entries, minus whatever `exclude` matches. Filesystem
+ * errors propagate rather than being skipped: an entry missing from the archive means
+ * deploying an application with a hole in it, reported as a success — an unreadable directory,
+ * an unopenable file, or an entry that vanishes mid-walk are all that case.
+ */
+const collectEntries = (
+  path: Path.Path,
+  root: string,
+  relativeDir: string,
+  exclude: ComputeExcludeMatcher,
+): Effect.Effect<
+  CollectedEntries,
+  PlatformError | ComputeSourceEscapingLinkError,
+  FileSystem.FileSystem
+> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const absoluteDir = relativeDir === "" ? root : path.join(root, relativeDir);
+
+    const names = yield* fs.readDirectory(absoluteDir);
+    const entries: Array<TarEntry> = [];
+    let excludedCount = 0;
+
+    for (const name of [...names].sort()) {
+      const relativePath = relativeDir === "" ? name : `${relativeDir}/${name}`;
+      const absolutePath = path.join(root, relativePath);
+
+      // `readLink` succeeds only for symlinks, standing in for the `lstat` this FileSystem
+      // service doesn't expose. Storing the link rather than following it keeps a
+      // pnpm-installed `node_modules` from being inlined file by file, keeps a broken link
+      // from vanishing, and stops a link pointing at an ancestor from being walked into.
+      const linkTarget = yield* fs.readLink(absolutePath).pipe(Effect.option);
+      if (Option.isSome(linkTarget)) {
+        // Excluded before the confinement check below, not after: a hoisted `node_modules`
+        // link is the usual reason that check fails, so excluding it has to be the answer
+        // rather than something the failure pre-empts. A link is not itself a directory, so
+        // a `dir/` pattern passes over one, matching how `.gitignore` reads the same file.
+        if (exclude.excludes(relativePath, false)) {
+          excludedCount++;
+          continue;
+        }
+        const confined = confinedLinkTarget({
+          path,
+          root,
+          linkDir: absoluteDir,
+          target: linkTarget.value,
+        });
+        if (confined === undefined) {
+          return yield* new ComputeSourceEscapingLinkError({
+            detail: `${relativePath} links to ${linkTarget.value}, which is outside the compute source and cannot be packaged with it.`,
+            suggestion:
+              "Add it to the compute's `exclude` patterns, or point `source` at a directory that contains everything the build needs.",
+          });
+        }
+        entries.push({
+          path: relativePath,
+          contents: new Uint8Array(0),
+          mode: 0o777,
+          mtime: 0,
+          linkTarget: confined,
+        });
+        continue;
+      }
+
+      const info = yield* fs.stat(absolutePath);
+
+      if (exclude.excludes(relativePath, info.type === "Directory")) {
+        excludedCount++;
+        continue;
+      }
+
+      const mtime = tarMtime(info.mtime);
+
+      if (info.type === "Directory") {
+        entries.push({ path: `${relativePath}/`, contents: new Uint8Array(0), mode: 0o755, mtime });
+        const nested = yield* collectEntries(path, root, relativePath, exclude);
+        entries.push(...nested.entries);
+        excludedCount += nested.excludedCount;
+        continue;
+      }
+
+      if (info.type !== "File") {
+        // Sockets, FIFOs and devices have nothing meaningful to send.
+        continue;
+      }
+
+      const contents = yield* fs.readFile(absolutePath);
+      // The executable bit is the only permission that changes what the image does;
+      // everything else is normalized so the same tree packages identically on every
+      // machine. `mode` is a plain number here, unlike the `Option`-wrapped `mtime` above.
+      const executable = (info.mode & 0o111) !== 0;
+      entries.push({
+        path: relativePath,
+        contents: new Uint8Array(contents),
+        mode: executable ? 0o755 : 0o644,
+        mtime,
+      });
+    }
+
+    return { entries, excludedCount } satisfies CollectedEntries;
+  });
+
+export const packageComputeDirectory = Effect.fn("Compute.package")(function* (
+  dir: string,
+  exclude: ComputeExcludeMatcher = NO_COMPUTE_EXCLUSIONS,
+) {
+  const path = yield* Path.Path;
+  const collected = yield* collectEntries(path, dir, "", exclude);
+
+  const tar = yield* createTar(collected.entries);
+  const archive = yield* Effect.try({
+    try: () => gzipSync(tar),
+    catch: (cause) =>
+      new ComputeArchiveCompressionError({
+        detail: "The compute source archive could not be compressed.",
+        cause,
+      }),
+  });
+
+  const fileCount = collected.entries.filter((entry) => !entry.path.endsWith("/")).length;
+  yield* Effect.annotateCurrentSpan({
+    "file.count": fileCount,
+    "file.excluded_count": collected.excludedCount,
+    "archive.bytes": archive.byteLength,
+  });
+
+  return {
+    archive: new Uint8Array(archive),
+    fileCount,
+    excludedCount: collected.excludedCount,
+  } satisfies PackagedCompute;
+});
+
+/** `10 KiB` / `1.4 MiB` — the packaged size, as `push` reports it. */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  const kib = bytes / 1024;
+  if (kib < 1024) {
+    return `${Math.ceil(kib)} KiB`;
+  }
+  return `${(kib / 1024).toFixed(1)} MiB`;
+}

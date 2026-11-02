@@ -1,22 +1,23 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import { describe, expect, it } from "@effect/vitest";
 import type { V1ListAllBranchesOutput } from "@supabase/api/effect";
-import { Effect, Exit, Layer, Option, Stdio } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequestModule from "effect/unstable/http/HttpClientRequest";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Predicate, Schema } from "effect";
+import * as HttpClient from "effect/http/HttpClient";
+import type * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientRequestModule from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
-import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import {
   mockAnalytics,
   mockContextualAnalytics,
   mockOutput,
+  mockTty,
 } from "../../../tests/helpers/mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-values-layer.ts";
 import {
   VALID_REF,
   buildTestRuntime,
+  jsonResponse,
+  mockCommandPlatformApi,
   statusCodeFailure,
   transportFailure,
   mockCommandSettings,
@@ -24,9 +25,10 @@ import {
   mockCommandPlatformApiService,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../tests/helpers/permission-drift.ts";
 import { link } from "./link.handler.ts";
-import { linkHandler } from "./link.command.ts";
 import type { LinkFlags } from "./link.command.ts";
 
 const HEALTHY_PROJECT = {
@@ -75,7 +77,7 @@ const POOLER_PRIMARY = [
 type LinkBranches = typeof V1ListAllBranchesOutput.Type;
 type LinkBranch = LinkBranches[number];
 
-// The currently-linked PARENT project's ref (env / cache / temp-file candidate).
+// The currently-linked parent project's ref (env / cache / temp-file candidate).
 const PARENT_REF = VALID_REF;
 // Distinct 20-lowercase-letter refs used to disambiguate which parent
 // candidate (env / linked-project.json cache / project-ref file) won.
@@ -105,9 +107,8 @@ const LINK_BRANCH_OTHER: LinkBranch = {
   project_ref: OTHER_BRANCH_PROJECT_REF,
 };
 
-// A DEFAULT branch's `project_ref` IS the parent's own ref (PR #6168 review) —
-// `getProject(ref)` therefore returns 200 for it, routing telemetry into the
-// normal 200 arm rather than the 404 `else if (branchResolution)` arm.
+// A default branch's `project_ref` is the parent's own ref, so `getProject(ref)` returns 200
+// for it, routing telemetry into the normal 200 arm rather than the 404 branch arm.
 const LINK_BRANCH_DEFAULT: LinkBranch = {
   ...LINK_BRANCH,
   id: "77777777-8888-4999-8aaa-bbbbbbbbbbbb",
@@ -134,8 +135,7 @@ const LINK_BRANCH_STAGING: LinkBranch = {
   name: "staging",
 };
 
-// `status: CREATING_PROJECT` with an empty `project_ref` — the branch exists
-// but hasn't finished provisioning yet.
+// `status: CREATING_PROJECT` with an empty `project_ref`: not finished provisioning yet.
 const LINK_BRANCH_NOT_READY: LinkBranch = {
   ...LINK_BRANCH,
   id: "66666666-7777-4888-8999-aaaaaaaaaaaa",
@@ -151,13 +151,9 @@ function manyBranches(count: number): LinkBranches {
   }));
 }
 
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
-
 interface V1StubResult {
   readonly ok?: unknown;
-  readonly fail?: unknown;
+  readonly fail?: HttpClientError.HttpClientError;
 }
 
 interface SetupOpts {
@@ -188,22 +184,28 @@ function tenantHttpLayer(opts: SetupOpts): Layer.Layer<HttpClient.HttpClient> {
     HttpClient.make((request) =>
       Effect.gen(function* () {
         if (opts.tenant === "fail") {
-          return yield* Effect.fail(transportFailure(request));
+          return yield* transportFailure(request);
         }
         const url = request.url;
         if (url.includes("/rest/v1/")) {
+          const body = yield* restInfoJson({
+            info: { version: opts.restVersion ?? "11.1.0" },
+          }).pipe(Effect.orDie);
           return HttpClientResponse.fromWeb(
             request,
-            new Response(JSON.stringify({ info: { version: opts.restVersion ?? "11.1.0" } }), {
+            new Response(body, {
               status: 200,
               headers: { "content-type": "application/json" },
             }),
           );
         }
         if (url.includes("/auth/v1/health")) {
+          const body = yield* gotrueHealthJson({ version: opts.gotrueVersion ?? "v2.74.2" }).pipe(
+            Effect.orDie,
+          );
           return HttpClientResponse.fromWeb(
             request,
-            new Response(JSON.stringify({ version: opts.gotrueVersion ?? "v2.74.2" }), {
+            new Response(body, {
               status: 200,
               headers: { "content-type": "application/json" },
             }),
@@ -239,14 +241,17 @@ function setup(opts: SetupOpts = {}) {
     workdir: tempRoot.current,
     projectId: opts.projectId ?? Option.none(),
   });
-  const layer = buildTestRuntime({
-    out,
-    api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer(opts) },
-    cliSettings,
-    analytics,
-    telemetry: telemetry.layer,
-    linkedProjectCache: linkedCache.layer,
-  });
+  const layer = Layer.merge(
+    buildTestRuntime({
+      out,
+      api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer(opts) },
+      cliSettings,
+      analytics,
+      telemetry: telemetry.layer,
+      linkedProjectCache: linkedCache.layer,
+    }),
+    cliConfigValuesTestLayer,
+  );
   return { layer, out, analytics, telemetry, linkedCache, apiMock, workdir: tempRoot.current };
 }
 
@@ -255,81 +260,114 @@ const flags = (overrides: Partial<LinkFlags> = {}): LinkFlags => ({
   projectRef: Option.some(VALID_REF),
   password: Option.none(),
   skipPooler: false,
+  frozen: false,
   ...overrides,
 });
 
-function tempFile(workdir: string, name: string): string {
-  return join(workdir, "supabase", ".temp", name);
-}
+const tempDir = Effect.fnUntraced(function* (workdir: string) {
+  const path = yield* Path.Path;
+  return path.join(workdir, "supabase", ".temp");
+});
 
-function readTemp(workdir: string, name: string): string {
-  return readFileSync(tempFile(workdir, name), "utf8");
-}
+const readTemp = Effect.fnUntraced(function* (workdir: string, name: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  return yield* fs.readFileString(path.join(yield* tempDir(workdir), name));
+});
 
-function existsTemp(workdir: string, name: string): boolean {
-  return existsSync(tempFile(workdir, name));
-}
+const existsTemp = Effect.fnUntraced(function* (workdir: string, name: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  return yield* fs
+    .exists(path.join(yield* tempDir(workdir), name))
+    .pipe(Effect.orElseSucceed(() => false));
+});
 
-function writeTempContent(workdir: string, name: string, content: string): void {
-  mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
-  writeFileSync(tempFile(workdir, name), content);
-}
+const writeTempContent = Effect.fnUntraced(function* (
+  workdir: string,
+  name: string,
+  content: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const directory = yield* tempDir(workdir);
+  yield* fs.makeDirectory(directory, { recursive: true });
+  yield* fs.writeFileString(path.join(directory, name), content);
+});
 
-// Seeds `<workdir>/supabase/.temp/project-ref` — the 3rd-priority parent
-// candidate for a branch-name lookup, and also the file `resolver.resolveForLink`
-// falls back to for a plain ref link.
-function writeLinkedParentRef(workdir: string, ref: string): void {
+// Seeds the 3rd-priority parent candidate for a branch-name lookup, and the file
+// `resolver.resolveForLink` falls back to for a plain ref link.
+const writeLinkedParentRef = (workdir: string, ref: string) =>
   writeTempContent(workdir, "project-ref", ref);
-}
 
-// Seeds `<workdir>/supabase/.temp/linked-project.json` — the 2nd-priority parent
-// candidate. Real content shape mirrors what `link`'s own success path writes.
-function writeLinkedProjectCacheFile(workdir: string, content: string): void {
+// Seeds the 2nd-priority parent candidate, in the shape `link`'s own success path writes.
+const writeLinkedProjectCacheFile = (workdir: string, content: string) =>
   writeTempContent(workdir, "linked-project.json", content);
-}
 
 function linkedProjectCacheJson(ref: string): string {
-  return JSON.stringify({
-    ref,
-    name: "Parent Project",
-    organization_id: "org_123",
-    organization_slug: "acme",
-  });
+  return `{"ref":"${ref}","name":"Parent Project","organization_id":"org_123","organization_slug":"acme"}`;
 }
+
+const decodeLinkedProjectCache = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      ref: Schema.String,
+      name: Schema.String,
+      organization_id: Schema.String,
+      organization_slug: Schema.String,
+    }),
+  ),
+  { onExcessProperty: "error" },
+);
+
+const jsonText = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+const restInfoJson = Schema.encodeEffect(
+  Schema.fromJsonString(Schema.Struct({ info: Schema.Struct({ version: Schema.String }) })),
+);
+
+const gotrueHealthJson = Schema.encodeEffect(
+  Schema.fromJsonString(Schema.Struct({ version: Schema.String })),
+);
 
 function transportFailureForMock() {
   return transportFailure(HttpClientRequestModule.get("https://api.supabase.com/mock"));
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 describe("link integration", () => {
   describe("plain project-ref linking", () => {
-    it.live("links a project, writing the project-ref and version files", () => {
+    it.effect("links a project, writing the project-ref and version files", () => {
       const { layer, out, workdir } = setup();
       return Effect.gen(function* () {
         yield* link(flags());
-        expect(readTemp(workdir, "project-ref")).toBe(VALID_REF);
-        expect(readTemp(workdir, "postgres-version")).toBe("15.1.0.117");
-        expect(readTemp(workdir, "storage-migration")).toBe("2026-01-01-000000");
-        expect(readTemp(workdir, "rest-version")).toBe("v11.1.0");
-        expect(readTemp(workdir, "gotrue-version")).toBe("v2.74.2");
-        expect(readTemp(workdir, "storage-version")).toBe("v1.28.0");
-        // [YOUR-PASSWORD] stripped + transaction-mode port rewritten to 5432.
-        expect(readTemp(workdir, "pooler-url")).toBe(
+        expect(yield* readTemp(workdir, "project-ref")).toBe(VALID_REF);
+        expect(yield* readTemp(workdir, "postgres-version")).toBe("15.1.0.117");
+        expect(yield* readTemp(workdir, "storage-migration")).toBe("2026-01-01-000000");
+        expect(yield* readTemp(workdir, "rest-version")).toBe("v11.1.0");
+        expect(yield* readTemp(workdir, "gotrue-version")).toBe("v2.74.2");
+        expect(yield* readTemp(workdir, "storage-version")).toBe("v1.28.0");
+        expect(yield* readTemp(workdir, "pooler-url")).toBe(
           "postgresql://postgres.ref@pooler.example.co:5432/postgres",
         );
         expect(out.stdoutText).toContain("Finished supabase link.");
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("writes linked-project.json with ref/name/org metadata", () => {
+    it.effect("skips the storage migration file when the API has no migration version", () => {
+      const { layer, workdir } = setup({ storageConfig: { ok: { migrationVersion: null } } });
+      return Effect.gen(function* () {
+        yield* link(flags());
+        expect(yield* existsTemp(workdir, "storage-migration")).toBe(false);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("writes linked-project.json with ref/name/org metadata", () => {
       const { layer, workdir } = setup();
       return Effect.gen(function* () {
         yield* link(flags());
-        const linked = JSON.parse(readTemp(workdir, "linked-project.json"));
+        const linked = yield* decodeLinkedProjectCache(
+          yield* readTemp(workdir, "linked-project.json"),
+        );
         expect(linked).toEqual({
           ref: VALID_REF,
           name: "My Project",
@@ -339,7 +377,7 @@ describe("link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("emits cli_project_linked + org/project groupIdentify keyed by org id", () => {
+    it.effect("emits cli_project_linked + org/project groupIdentify keyed by org id", () => {
       const { layer, analytics } = setup();
       return Effect.gen(function* () {
         yield* link(flags());
@@ -356,44 +394,42 @@ describe("link integration", () => {
             properties: { name: "My Project", organization_slug: "acme" },
           },
         ]);
-        // A plain (non-branch) ref link never carries the CLI-2167 branch-link
-        // telemetry extension.
         const capture = analytics.captured.find((c) => c.event === "cli_project_linked");
         expect(capture?.properties).not.toHaveProperty("linked_via");
         expect(capture?.properties).not.toHaveProperty("parent_project_ref");
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("resolves the ref from SUPABASE_PROJECT_ID when no flag is given", () => {
+    it.effect("resolves the ref from SUPABASE_PROJECT_ID when no flag is given", () => {
       const { layer, workdir } = setup({ projectId: Option.some(VALID_REF) });
       return Effect.gen(function* () {
         yield* link(flags({ projectRef: Option.none() }));
-        expect(readTemp(workdir, "project-ref")).toBe(VALID_REF);
+        expect(yield* readTemp(workdir, "project-ref")).toBe(VALID_REF);
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("positional valid ref beats SUPABASE_PROJECT_ID as the link target", () => {
+    it.effect("positional valid ref beats SUPABASE_PROJECT_ID as the link target", () => {
       const { layer, workdir } = setup({ projectId: Option.some(VALID_REF) });
       return Effect.gen(function* () {
         yield* link(flags({ refOrBranch: Option.some(POSITIONAL_REF), projectRef: Option.none() }));
-        expect(readTemp(workdir, "project-ref")).toBe(POSITIONAL_REF);
+        expect(yield* readTemp(workdir, "project-ref")).toBe(POSITIONAL_REF);
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("fails in non-TTY with no --project-ref and no PROJECT_ID", () => {
+    it.effect("fails in non-TTY with no --project-ref and no PROJECT_ID", () => {
       const { layer } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(link(flags({ projectRef: Option.none() })));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
-          expect(json).toContain("ProjectRefRequiredError");
-          expect(json).toContain(`required flag(s) \\"project-ref\\" not set`);
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("ProjectRefRequiredError");
+          expect(causeText).toContain(`required flag(s) "project-ref" not set`);
         }
       }).pipe(Effect.provide(layer));
     });
 
-    it.live(
+    it.effect(
       "fails with InvalidProjectRefError for a malformed ref from SUPABASE_PROJECT_ID (env stays strict)",
       () => {
         const { layer } = setup({ projectId: Option.some("BADREF") });
@@ -401,51 +437,46 @@ describe("link integration", () => {
           const exit = yield* Effect.exit(link(flags({ projectRef: Option.none() })));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("InvalidProjectRefError");
+            expect(Cause.pretty(exit.cause)).toContain("InvalidProjectRefError");
           }
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.live("tolerates a 404 project (branch linking): writes project-ref, skips telemetry", () => {
-      const { layer, workdir, analytics } = setup({
-        project: { fail: statusCodeFailure(404) },
-      });
-      return Effect.gen(function* () {
-        yield* link(flags());
-        expect(readTemp(workdir, "project-ref")).toBe(VALID_REF);
-        // No postgres-version / linked-project.json and no telemetry for a 404.
-        expect(existsSync(tempFile(workdir, "postgres-version"))).toBe(false);
-        expect(existsSync(tempFile(workdir, "linked-project.json"))).toBe(false);
-        // This is a plain ref link that happens to 404 (assumed to be a branch),
-        // with NO name/UUID resolution — `branchResolution` never fired, so the
-        // CLI-2167 branch-link telemetry extension doesn't fire either. Emits
-        // nothing at all for `cli_project_linked`, unlike the resolved-branch
-        // case (see "branch-name resolution: telemetry" below).
-        expect(analytics.captured.map((c) => c.event)).not.toContain("cli_project_linked");
-        expect(analytics.groupIdentified).toHaveLength(0);
-      }).pipe(Effect.provide(layer));
-    });
+    it.effect(
+      "tolerates a 404 project (branch linking): writes project-ref, skips telemetry",
+      () => {
+        const { layer, workdir, analytics } = setup({
+          project: { fail: statusCodeFailure(404) },
+        });
+        return Effect.gen(function* () {
+          yield* link(flags());
+          expect(yield* readTemp(workdir, "project-ref")).toBe(VALID_REF);
+          expect(yield* existsTemp(workdir, "postgres-version")).toBe(false);
+          expect(yield* existsTemp(workdir, "linked-project.json")).toBe(false);
+          expect(analytics.captured.map((c) => c.event)).not.toContain("cli_project_linked");
+          expect(analytics.groupIdentified).toHaveLength(0);
+        }).pipe(Effect.provide(layer));
+      },
+    );
 
-    it.live("fails with project-paused error + dashboard suggestion when INACTIVE", () => {
+    it.effect("fails with project-paused error + dashboard suggestion when INACTIVE", () => {
       const { layer } = setup({
         project: { ok: { ...HEALTHY_PROJECT, status: "INACTIVE" } },
       });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(link(flags()));
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
-          expect(json).toContain("ProjectPausedError");
-          expect(json).toContain("project is paused");
-          expect(json).toContain(
+        const error = yield* Effect.flip(link(flags()));
+        expect(Predicate.isTagged(error, "ProjectPausedError")).toBe(true);
+        expect(error).toMatchObject({
+          message: expect.stringContaining("project is paused"),
+          suggestion: expect.stringContaining(
             `An admin must unpause it from the Supabase dashboard at https://supabase.com/dashboard/project/${VALID_REF}`,
-          );
-        }
+          ),
+        });
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("warns to stderr when status is not ACTIVE_HEALTHY but still links", () => {
+    it.effect("warns to stderr when status is not ACTIVE_HEALTHY but still links", () => {
       const { layer, out, workdir } = setup({
         project: { ok: { ...HEALTHY_PROJECT, status: "COMING_UP" } },
       });
@@ -454,51 +485,52 @@ describe("link integration", () => {
         expect(out.stderrText).toContain(
           "WARNING: Project status is COMING_UP instead of Active Healthy. Some operations might fail.",
         );
-        expect(readTemp(workdir, "project-ref")).toBe(VALID_REF);
+        expect(yield* readTemp(workdir, "project-ref")).toBe(VALID_REF);
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("fails with LinkProjectStatusError on an unexpected status", () => {
+    it.effect("fails with LinkProjectStatusError on an unexpected status", () => {
       const { layer } = setup({ project: { fail: statusCodeFailure(500) } });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(link(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
-          expect(json).toContain("LinkProjectStatusError");
-          expect(json).toContain("Unexpected error retrieving remote project status");
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("LinkProjectStatusError");
+          expect(causeText).toContain("Unexpected error retrieving remote project status");
         }
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("fails with auth error when api-keys returns non-200", () => {
+    it.effect("fails with auth error when api-keys returns non-200", () => {
       const { layer } = setup({ apiKeys: { fail: statusCodeFailure(401) } });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(link(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
-          expect(json).toContain("LinkAuthTokenError");
-          expect(json).toContain("Authorization failed for the access token and project ref pair");
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("LinkAuthTokenError");
+          expect(causeText).toContain(
+            "Authorization failed for the access token and project ref pair",
+          );
         }
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("fails with missing-key error when api-keys are empty", () => {
+    it.effect("fails with missing-key error when api-keys are empty", () => {
       const { layer } = setup({ apiKeys: { ok: [] } });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(link(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
-          expect(json).toContain("LinkMissingKeyError");
-          expect(json).toContain("Anon key not found.");
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("LinkMissingKeyError");
+          expect(causeText).toContain("Anon key not found.");
         }
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("resolves keys by legacy name when no type field is present", () => {
-      // Untyped keys exercise the `name`-based fallback in extractServiceKeys.
+    it.effect("resolves keys by legacy name when no type field is present", () => {
       const { layer, out, workdir } = setup({
         apiKeys: {
           ok: [
@@ -509,14 +541,12 @@ describe("link integration", () => {
       });
       return Effect.gen(function* () {
         yield* link(flags());
-        expect(readTemp(workdir, "project-ref")).toBe(VALID_REF);
+        expect(yield* readTemp(workdir, "project-ref")).toBe(VALID_REF);
         expect(out.stdoutText).toContain("Finished supabase link.");
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("fails with missing-key error when the only secret key is not service_role", () => {
-      // A `secret` key whose JWT role is not `service_role` is skipped, leaving no
-      // usable key — exercises the secret-branch `continue` + missing-key path.
+    it.effect("fails with missing-key error when the only secret key is not service_role", () => {
       const { layer } = setup({
         apiKeys: {
           ok: [
@@ -533,12 +563,12 @@ describe("link integration", () => {
         const exit = yield* Effect.exit(link(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LinkMissingKeyError");
+          expect(Cause.pretty(exit.cause)).toContain("LinkMissingKeyError");
         }
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("ignores best-effort service errors without failing the link", () => {
+    it.effect("ignores best-effort service errors without failing the link", () => {
       const { layer, out, workdir } = setup({
         storageConfig: { fail: statusCodeFailure(500) },
         poolerConfig: { fail: statusCodeFailure(503) },
@@ -546,29 +576,26 @@ describe("link integration", () => {
       });
       return Effect.gen(function* () {
         yield* link(flags());
-        // Link still succeeds and writes the project-ref.
-        expect(readTemp(workdir, "project-ref")).toBe(VALID_REF);
+        expect(yield* readTemp(workdir, "project-ref")).toBe(VALID_REF);
         expect(out.stdoutText).toContain("Finished supabase link.");
-        // The best-effort files are absent because their services errored.
-        expect(existsSync(tempFile(workdir, "storage-migration"))).toBe(false);
-        expect(existsSync(tempFile(workdir, "rest-version"))).toBe(false);
+        expect(yield* existsTemp(workdir, "storage-migration")).toBe(false);
+        expect(yield* existsTemp(workdir, "rest-version")).toBe(false);
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("removes pooler-url and skips the pooler fetch when --skip-pooler is set", () => {
+    it.effect("removes pooler-url and skips the pooler fetch when --skip-pooler is set", () => {
       const { layer, workdir, apiMock } = setup();
-      writeTempContent(workdir, "pooler-url", "stale-pooler-url");
       return Effect.gen(function* () {
+        yield* writeTempContent(workdir, "pooler-url", "stale-pooler-url");
         yield* link(flags({ skipPooler: true }));
-        expect(existsSync(tempFile(workdir, "pooler-url"))).toBe(false);
+        expect(yield* existsTemp(workdir, "pooler-url")).toBe(false);
         expect(apiMock.requests.map((r) => r.method)).not.toContain("getPoolerConfig");
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("fails when writing the project-ref file errors", () => {
-      // Make `<workdir>/supabase` a file so creating supabase/.temp fails for every
-      // temp write. The project status carries no version, so the first mandatory
-      // write to hit the broken path is project-ref (mirrors Go's read-only FS test).
+    it.effect("fails when writing the project-ref file errors", () => {
+      // Makes `<workdir>/supabase` a file so every temp write fails; with no version in the
+      // project status, project-ref is the first mandatory write to hit the broken path.
       const out = mockOutput({ format: "text" });
       const apiMock = mockCommandPlatformApiService({
         v1: {
@@ -586,20 +613,25 @@ describe("link integration", () => {
         workdir: tempRoot.current,
         projectId: Option.none(),
       });
-      const layer = buildTestRuntime({
-        out,
-        api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer({ tenant: "fail" }) },
-        cliSettings,
-      });
-      writeFileSync(join(tempRoot.current, "supabase"), "not-a-dir");
+      const layer = Layer.merge(
+        buildTestRuntime({
+          out,
+          api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer({ tenant: "fail" }) },
+          cliSettings,
+        }),
+        cliConfigValuesTestLayer,
+      );
       return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.writeFileString(path.join(tempRoot.current, "supabase"), "not-a-dir");
         const exit = yield* Effect.exit(link(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(existsSync(tempFile(tempRoot.current, "project-ref"))).toBe(false);
+        expect(yield* existsTemp(tempRoot.current, "project-ref")).toBe(false);
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("flushes telemetry and runs the linked-project cache via ensuring", () => {
+    it.effect("flushes telemetry and runs the linked-project cache via ensuring", () => {
       const { layer, telemetry, linkedCache } = setup();
       return Effect.gen(function* () {
         yield* link(flags());
@@ -608,7 +640,7 @@ describe("link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("json output: emits a structured success and suppresses the Finished line", () => {
+    it.effect("json output: emits a structured success and suppresses the Finished line", () => {
       const { layer, out, workdir } = setup({ format: "json" });
       return Effect.gen(function* () {
         yield* link(flags());
@@ -616,11 +648,11 @@ describe("link integration", () => {
         expect(success?.data).toMatchObject({ project_ref: VALID_REF });
         expect(success?.data).not.toHaveProperty("branch");
         expect(out.stdoutText).not.toContain("Finished supabase link.");
-        expect(readTemp(workdir, "project-ref")).toBe(VALID_REF);
+        expect(yield* readTemp(workdir, "project-ref")).toBe(VALID_REF);
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("stream-json output: emits a structured success", () => {
+    it.effect("stream-json output: emits a structured success", () => {
       const { layer, out } = setup({ format: "stream-json" });
       return Effect.gen(function* () {
         yield* link(flags());
@@ -631,7 +663,7 @@ describe("link integration", () => {
   });
 
   describe("ref-or-branch argument conflicts", () => {
-    it.live(
+    it.effect(
       "fails with LinkRefArgConflictError when both the positional and --project-ref are set",
       () => {
         const { layer, telemetry, linkedCache } = setup();
@@ -639,22 +671,19 @@ describe("link integration", () => {
           const exit = yield* Effect.exit(link(flags({ refOrBranch: Option.some(VALID_REF) })));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const json = JSON.stringify(exit.cause);
-            expect(json).toContain("LinkRefArgConflictError");
-            expect(json).toContain(
+            const causeText = Cause.pretty(exit.cause);
+            expect(causeText).toContain("LinkRefArgConflictError");
+            expect(causeText).toContain(
               "Cannot use both the [ref-or-branch] argument and the --project-ref flag.",
             );
           }
-          // PR #6168 review: this check now sits INSIDE the `Effect.ensuring`
-          // wrapper too — previously the earliest possible failure in the
-          // handler, exiting before telemetry's finalizer was ever reached.
           expect(telemetry.flushed).toBe(true);
           expect(linkedCache.cached).toBe(false);
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.live(
+    it.effect(
       "treats an empty-string positional as absent, falling through to the no-value behavior",
       () => {
         const { layer } = setup();
@@ -664,15 +693,15 @@ describe("link integration", () => {
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const json = JSON.stringify(exit.cause);
-            expect(json).toContain("ProjectRefRequiredError");
-            expect(json).toContain(`required flag(s) \\"project-ref\\" not set`);
+            const causeText = Cause.pretty(exit.cause);
+            expect(causeText).toContain("ProjectRefRequiredError");
+            expect(causeText).toContain(`required flag(s) "project-ref" not set`);
           }
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.live(
+    it.effect(
       "treats an empty-string --project-ref as absent, falling through to the no-value behavior",
       () => {
         const { layer } = setup();
@@ -680,32 +709,32 @@ describe("link integration", () => {
           const exit = yield* Effect.exit(link(flags({ projectRef: Option.some("") })));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const json = JSON.stringify(exit.cause);
-            expect(json).toContain("ProjectRefRequiredError");
-            expect(json).toContain(`required flag(s) \\"project-ref\\" not set`);
+            const causeText = Cause.pretty(exit.cause);
+            expect(causeText).toContain("ProjectRefRequiredError");
+            expect(causeText).toContain(`required flag(s) "project-ref" not set`);
           }
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.live(
+    it.effect(
       "an empty-string positional alongside a real --project-ref links normally (no conflict)",
       () => {
         const { layer, workdir } = setup();
         return Effect.gen(function* () {
           yield* link(flags({ refOrBranch: Option.some(""), projectRef: Option.some(VALID_REF) }));
-          expect(readTemp(workdir, "project-ref")).toBe(VALID_REF);
+          expect(yield* readTemp(workdir, "project-ref")).toBe(VALID_REF);
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.live(
+    it.effect(
       "links directly from a positional ref argument without calling the branches endpoint",
       () => {
         const { layer, workdir, apiMock } = setup();
         return Effect.gen(function* () {
           yield* link(flags({ refOrBranch: Option.some(VALID_REF), projectRef: Option.none() }));
-          expect(readTemp(workdir, "project-ref")).toBe(VALID_REF);
+          expect(yield* readTemp(workdir, "project-ref")).toBe(VALID_REF);
           expect(apiMock.requests.map((r) => r.method)).not.toContain("listAllBranches");
         }).pipe(Effect.provide(layer));
       },
@@ -713,34 +742,33 @@ describe("link integration", () => {
   });
 
   describe("branch-name resolution: parent chain", () => {
-    it.live(
+    it.effect(
       "THE HEADLINE REGRESSION: relinking a different branch resolves via the cached real parent, not the previously-linked branch ref",
       () => {
-        // Simulate the state left behind by a PRIOR `supabase link feature-branch`:
-        // project-ref holds the branch's own ref, but linked-project.json still
-        // holds the real parent (untouched, since branch links 404 on getProject).
+        // Simulates the state left behind by a prior `supabase link feature-branch`:
+        // project-ref holds the branch's own ref, but linked-project.json still holds the
+        // real parent.
         const { layer, workdir, apiMock } = setup({
           branches: { ok: [LINK_BRANCH, LINK_BRANCH_OTHER] },
           project: { fail: statusCodeFailure(404) },
         });
-        writeLinkedParentRef(workdir, BRANCH_PROJECT_REF);
-        writeLinkedProjectCacheFile(workdir, linkedProjectCacheJson(PARENT_REF));
         return Effect.gen(function* () {
+          yield* writeLinkedParentRef(workdir, BRANCH_PROJECT_REF);
+          yield* writeLinkedProjectCacheFile(workdir, linkedProjectCacheJson(PARENT_REF));
           yield* link(
             flags({ refOrBranch: Option.some("other-branch"), projectRef: Option.none() }),
           );
           const branchCall = apiMock.requests.find((r) => r.method === "listAllBranches");
-          // The dealbreaker bug: this must be the PARENT ref, never BRANCH_PROJECT_REF.
           expect(branchCall?.input).toMatchObject({ ref: PARENT_REF });
-          expect(readTemp(workdir, "project-ref")).toBe(OTHER_BRANCH_PROJECT_REF);
-          // The 404 branch-link path leaves the cache untouched — the invariant a
-          // THIRD relink still depends on.
-          expect(readTemp(workdir, "linked-project.json")).toBe(linkedProjectCacheJson(PARENT_REF));
+          expect(yield* readTemp(workdir, "project-ref")).toBe(OTHER_BRANCH_PROJECT_REF);
+          expect(yield* readTemp(workdir, "linked-project.json")).toBe(
+            linkedProjectCacheJson(PARENT_REF),
+          );
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.live(
+    it.effect(
       "SUPABASE_PROJECT_ID wins over both the cache file and the project-ref file when ref-shaped",
       () => {
         const { layer, apiMock } = setup({
@@ -748,63 +776,60 @@ describe("link integration", () => {
           projectId: Option.some(PARENT_REF),
         });
         const workdir = tempRoot.current;
-        writeLinkedProjectCacheFile(workdir, linkedProjectCacheJson(CACHE_ONLY_REF));
-        writeLinkedParentRef(workdir, FILE_ONLY_REF);
         return Effect.gen(function* () {
+          yield* writeLinkedProjectCacheFile(workdir, linkedProjectCacheJson(CACHE_ONLY_REF));
+          yield* writeLinkedParentRef(workdir, FILE_ONLY_REF);
           yield* link(
             flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
           );
           const branchCall = apiMock.requests.find((r) => r.method === "listAllBranches");
           expect(branchCall?.input).toMatchObject({ ref: PARENT_REF });
-          expect(readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
+          expect(yield* readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.live(
+    it.effect(
       "a garbage SUPABASE_PROJECT_ID hard-fails the branch lookup with LinkParentRefInvalidError, never falling through to the cache (PR #6168 review)",
       () => {
-        // Superseded behavior: first-VALID-wins used to skip a malformed env
-        // in favor of the cache. The first PRESENT candidate now decides —
-        // an explicit-but-typo'd override must not silently resolve a
-        // different parent.
+        // The first present candidate decides, even if invalid — a typo'd override must not
+        // silently fall through to the cache.
         const { layer, apiMock, workdir } = setup({
           branches: { ok: [LINK_BRANCH] },
           projectId: Option.some("not-a-valid-ref"),
         });
-        writeLinkedProjectCacheFile(workdir, linkedProjectCacheJson(CACHE_ONLY_REF));
-        writeLinkedParentRef(workdir, FILE_ONLY_REF);
         return Effect.gen(function* () {
+          yield* writeLinkedProjectCacheFile(workdir, linkedProjectCacheJson(CACHE_ONLY_REF));
+          yield* writeLinkedParentRef(workdir, FILE_ONLY_REF);
           const exit = yield* Effect.exit(
             link(flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() })),
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LinkParentRefInvalidError");
+            expect(Cause.pretty(exit.cause)).toContain("LinkParentRefInvalidError");
           }
           expect(apiMock.requests.find((r) => r.method === "listAllBranches")).toBeUndefined();
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.live(
+    it.effect(
       "degrades to the project-ref file when the linked-project.json cache is unreadable or has no usable ref",
       () => {
         const { layer, apiMock, workdir } = setup({ branches: { ok: [LINK_BRANCH] } });
         const corruptCacheContents = [
           "not json at all {",
           "null",
-          JSON.stringify({ notRef: "x" }),
-          JSON.stringify({ ref: 12345 }),
-          JSON.stringify({ ref: "" }),
+          `{"notRef":"x"}`,
+          `{"ref":12345}`,
+          `{"ref":""}`,
         ];
         return Effect.gen(function* () {
           for (const content of corruptCacheContents) {
-            // Re-seed on every iteration: a successful link overwrites project-ref
-            // with the resolved branch ref, so the prior iteration's own write
-            // would otherwise clobber this fixture before the next check runs.
-            writeLinkedParentRef(workdir, FILE_ONLY_REF);
-            writeLinkedProjectCacheFile(workdir, content);
+            // Re-seeds every iteration: a successful link overwrites project-ref with the
+            // resolved branch ref, clobbering this fixture for the next iteration.
+            yield* writeLinkedParentRef(workdir, FILE_ONLY_REF);
+            yield* writeLinkedProjectCacheFile(workdir, content);
             yield* link(
               flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
             );
@@ -817,89 +842,94 @@ describe("link integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "fails with LinkParentRefInvalidError when a parent candidate exists but none is ref-shaped",
       () => {
         const { layer, workdir, apiMock } = setup();
-        writeLinkedParentRef(workdir, "not-a-real-ref!!");
+        return Effect.gen(function* () {
+          yield* writeLinkedParentRef(workdir, "not-a-real-ref!!");
+          const exit = yield* Effect.exit(
+            link(flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() })),
+          );
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const causeText = Cause.pretty(exit.cause);
+            expect(causeText).toContain("LinkParentRefInvalidError");
+            expect(causeText).toContain(
+              `Cannot resolve branch "feature-branch": the linked project ref is invalid`,
+            );
+            expect(causeText).toContain(
+              "Relink the parent project first: supabase link --project-ref",
+            );
+          }
+          expect(apiMock.requests).toHaveLength(0);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.effect(
+      "fails with LinkBranchNotLinkedError when no parent candidate exists anywhere",
+      () => {
+        const { layer, apiMock } = setup();
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(
             link(flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() })),
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const json = JSON.stringify(exit.cause);
-            expect(json).toContain("LinkParentRefInvalidError");
-            expect(json).toContain(
-              `Cannot resolve branch \\"feature-branch\\": the linked project ref is invalid`,
+            const causeText = Cause.pretty(exit.cause);
+            expect(causeText).toContain("LinkBranchNotLinkedError");
+            expect(causeText).toContain(`Cannot resolve "feature-branch": it is not a project ref`);
+            expect(causeText).toContain(
+              "If it is a branch name, link the parent project first: supabase link --project-ref",
             );
-            expect(json).toContain("Relink the parent project first: supabase link --project-ref");
           }
-          // The invalid parent is rejected before any API call is attempted.
           expect(apiMock.requests).toHaveLength(0);
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.live("fails with LinkBranchNotLinkedError when no parent candidate exists anywhere", () => {
-      const { layer, apiMock } = setup();
-      return Effect.gen(function* () {
-        const exit = yield* Effect.exit(
-          link(flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() })),
-        );
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
-          expect(json).toContain("LinkBranchNotLinkedError");
-          expect(json).toContain(`Cannot resolve \\"feature-branch\\": it is not a project ref`);
-          expect(json).toContain(
-            "If it is a branch name, link the parent project first: supabase link --project-ref",
-          );
-        }
-        expect(apiMock.requests).toHaveLength(0);
-      }).pipe(Effect.provide(layer));
-    });
-
-    it.live(
+    it.effect(
       "cache alone (linked-project.json with no project-ref file) is never proof of a link: fails with LinkBranchNotLinkedError, no API call (PR #6168 review)",
       () => {
         const { layer, apiMock, workdir } = setup();
-        // Simulates a FAILED prior `link --project-ref <parent>`: `getProject`
-        // returned 200 (so `linked-project.json` got written via the failure
-        // arm's `Effect.ensuring`) but a later step failed before `project-ref`
-        // itself was ever written. That stale cache entry must never be trusted
-        // as parent-resolution evidence for a NEW branch lookup.
-        writeLinkedProjectCacheFile(workdir, linkedProjectCacheJson(PARENT_REF));
+        // Simulates a failed prior `link --project-ref <parent>`: `getProject` returned 200
+        // (so `linked-project.json` got written) but a later step failed before `project-ref`
+        // itself was written. That stale cache entry must never be trusted as parent-resolution
+        // evidence for a new branch lookup.
         return Effect.gen(function* () {
+          yield* writeLinkedProjectCacheFile(workdir, linkedProjectCacheJson(PARENT_REF));
           const exit = yield* Effect.exit(
             link(flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() })),
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const json = JSON.stringify(exit.cause);
-            expect(json).toContain("LinkBranchNotLinkedError");
-            expect(json).toContain(`Cannot resolve \\"feature-branch\\": it is not a project ref`);
+            const causeText = Cause.pretty(exit.cause);
+            expect(causeText).toContain("LinkBranchNotLinkedError");
+            expect(causeText).toContain(`Cannot resolve "feature-branch": it is not a project ref`);
           }
           expect(apiMock.requests).toHaveLength(0);
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.live(
+    it.effect(
       "treats an unreadable project-ref path (e.g. a directory) as no candidate rather than failing",
       () => {
         const { layer, workdir, apiMock } = setup();
-        // A directory at the project-ref path makes `fs.readFileString` fail with
-        // a real (non-not-exist) read error, exercising the defensive fallback
-        // distinct from the plain "file missing" case.
-        mkdirSync(tempFile(workdir, "project-ref"), { recursive: true });
         return Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          // A directory (not a missing file) makes `fs.readFileString` fail with a real read error.
+          yield* fs.makeDirectory(path.join(yield* tempDir(workdir), "project-ref"), {
+            recursive: true,
+          });
           const exit = yield* Effect.exit(
             link(flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() })),
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LinkBranchNotLinkedError");
+            expect(Cause.pretty(exit.cause)).toContain("LinkBranchNotLinkedError");
           }
           expect(apiMock.requests).toHaveLength(0);
         }).pipe(Effect.provide(layer));
@@ -908,57 +938,53 @@ describe("link integration", () => {
   });
 
   describe("branch-name resolution: 404-path cache write/invalidation (PR #6168 review)", () => {
-    it.live(
+    it.effect(
       "name-resolved branch link with no cache file (P1 fix): persists {ref: parentRef}, and a follow-up branch resolution proves the parent chain survives",
       () => {
         const { layer, workdir, apiMock } = setup({
           branches: { ok: [LINK_BRANCH, LINK_BRANCH_OTHER] },
           project: { fail: statusCodeFailure(404) },
         });
-        writeLinkedParentRef(workdir, PARENT_REF);
         return Effect.gen(function* () {
+          yield* writeLinkedParentRef(workdir, PARENT_REF);
           yield* link(
             flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
           );
-          expect(readTemp(workdir, "linked-project.json")).toBe(
-            JSON.stringify({ ref: PARENT_REF }),
-          );
+          expect(yield* readTemp(workdir, "linked-project.json")).toBe(`{"ref":"${PARENT_REF}"}`);
 
-          // Follow-up: a second branch-name link must still resolve via the
-          // parent this write just persisted — proving it's real parent-chain
-          // evidence, not a dead write. `project-ref` was overwritten to the
-          // first branch's own ref by the first call, so this also proves the
-          // cache (not the file) is what a second resolution actually used.
+          // A second branch-name link must resolve via the parent this write just persisted.
+          // project-ref was overwritten by the first call, so this also proves the cache (not
+          // the file) is what a second resolution uses.
           yield* link(
             flags({ refOrBranch: Option.some("other-branch"), projectRef: Option.none() }),
           );
           const branchCalls = apiMock.requests.filter((r) => r.method === "listAllBranches");
           expect(branchCalls.at(-1)?.input).toMatchObject({ ref: PARENT_REF });
-          expect(readTemp(workdir, "project-ref")).toBe(OTHER_BRANCH_PROJECT_REF);
+          expect(yield* readTemp(workdir, "project-ref")).toBe(OTHER_BRANCH_PROJECT_REF);
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.live(
+    it.effect(
       "name-resolved branch link whose cache already agrees with the parent: cache left byte-identical (richer record not clobbered by the ref-only write)",
       () => {
         const { layer, workdir } = setup({
           branches: { ok: [LINK_BRANCH] },
           project: { fail: statusCodeFailure(404) },
         });
-        writeLinkedParentRef(workdir, PARENT_REF);
         const richCache = linkedProjectCacheJson(PARENT_REF);
-        writeLinkedProjectCacheFile(workdir, richCache);
         return Effect.gen(function* () {
+          yield* writeLinkedParentRef(workdir, PARENT_REF);
+          yield* writeLinkedProjectCacheFile(workdir, richCache);
           yield* link(
             flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
           );
-          expect(readTemp(workdir, "linked-project.json")).toBe(richCache);
+          expect(yield* readTemp(workdir, "linked-project.json")).toBe(richCache);
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.live(
+    it.effect(
       "raw ref-shaped 404 link whose ref IS among the stale cache's branches: keeps the cache, link still succeeds",
       () => {
         const { layer, workdir, apiMock } = setup({
@@ -966,108 +992,104 @@ describe("link integration", () => {
           branches: { ok: [LINK_BRANCH] },
         });
         const cacheContent = linkedProjectCacheJson(CACHE_ONLY_REF);
-        writeLinkedProjectCacheFile(workdir, cacheContent);
         return Effect.gen(function* () {
+          yield* writeLinkedProjectCacheFile(workdir, cacheContent);
           yield* link(flags({ projectRef: Option.some(BRANCH_PROJECT_REF) }));
-          expect(readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
-          expect(readTemp(workdir, "linked-project.json")).toBe(cacheContent);
+          expect(yield* readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
+          expect(yield* readTemp(workdir, "linked-project.json")).toBe(cacheContent);
           const branchCall = apiMock.requests.find((r) => r.method === "listAllBranches");
           expect(branchCall?.input).toMatchObject({ ref: CACHE_ONLY_REF });
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.live(
+    it.effect(
       "raw ref-shaped 404 link whose ref is NOT among the stale cache's branches: deletes the cache, link still succeeds",
       () => {
         const { layer, workdir } = setup({
           project: { fail: statusCodeFailure(404) },
           branches: { ok: [LINK_BRANCH_OTHER] },
         });
-        writeLinkedProjectCacheFile(workdir, linkedProjectCacheJson(CACHE_ONLY_REF));
         return Effect.gen(function* () {
+          yield* writeLinkedProjectCacheFile(workdir, linkedProjectCacheJson(CACHE_ONLY_REF));
           yield* link(flags({ projectRef: Option.some(BRANCH_PROJECT_REF) }));
-          expect(readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
-          expect(existsSync(tempFile(workdir, "linked-project.json"))).toBe(false);
+          expect(yield* readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
+          expect(yield* existsTemp(workdir, "linked-project.json")).toBe(false);
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.live(
+    it.effect(
       "raw ref-shaped 404 link where the correlation lookup itself fails: DELETES the unverified cache, link still succeeds (fail-safe, PR #6168 review)",
       () => {
-        // Superseded behavior: an unverifiable divergent cache used to be
-        // kept. Fail-safe wins — a wrong parent claim silently misdirects
-        // parent-scoped mutations, while deletion just downgrades later
-        // branches commands to a loud, recoverable not-linked error.
         const { layer, workdir } = setup({
           project: { fail: statusCodeFailure(404) },
           branches: { fail: statusCodeFailure(500) },
         });
         const cacheContent = linkedProjectCacheJson(CACHE_ONLY_REF);
-        writeLinkedProjectCacheFile(workdir, cacheContent);
         return Effect.gen(function* () {
+          yield* writeLinkedProjectCacheFile(workdir, cacheContent);
           yield* link(flags({ projectRef: Option.some(BRANCH_PROJECT_REF) }));
-          expect(readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
-          expect(existsTemp(workdir, "linked-project.json")).toBe(false);
+          expect(yield* readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
+          expect(yield* existsTemp(workdir, "linked-project.json")).toBe(false);
         }).pipe(Effect.provide(layer));
       },
     );
   });
 
   describe("branch-name resolution: matching and safety", () => {
-    it.live(
+    it.effect(
       "resolves a positional branch name via the parent linked in the project-ref temp file",
       () => {
         const { layer, workdir, apiMock } = setup({ branches: { ok: [LINK_BRANCH] } });
-        writeLinkedParentRef(workdir, PARENT_REF);
         return Effect.gen(function* () {
+          yield* writeLinkedParentRef(workdir, PARENT_REF);
           yield* link(
             flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
           );
-          expect(readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
+          expect(yield* readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
           const branchRequest = apiMock.requests.find((r) => r.method === "listAllBranches");
           expect(branchRequest?.input).toMatchObject({ ref: PARENT_REF });
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.live(
+    it.effect(
       "resolves a branch name passed via --project-ref using the same linked-parent lookup",
       () => {
         const { layer, workdir } = setup({ branches: { ok: [LINK_BRANCH] } });
-        writeLinkedParentRef(workdir, PARENT_REF);
         return Effect.gen(function* () {
+          yield* writeLinkedParentRef(workdir, PARENT_REF);
           yield* link(flags({ projectRef: Option.some("feature-branch") }));
-          expect(readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
+          expect(yield* readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.live("resolves a branch by its UUID", () => {
+    it.effect("resolves a branch by its UUID", () => {
       const { layer, workdir } = setup({ branches: { ok: [LINK_BRANCH] } });
-      writeLinkedParentRef(workdir, PARENT_REF);
       return Effect.gen(function* () {
+        yield* writeLinkedParentRef(workdir, PARENT_REF);
         yield* link(flags({ refOrBranch: Option.some(LINK_BRANCH.id), projectRef: Option.none() }));
-        expect(readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
+        expect(yield* readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("resolves a branch by an UPPERCASE-hex UUID spelling (PR #6168 review)", () => {
+    it.effect("resolves a branch by an UPPERCASE-hex UUID spelling (PR #6168 review)", () => {
       const { layer, workdir } = setup({ branches: { ok: [LINK_BRANCH] } });
-      writeLinkedParentRef(workdir, PARENT_REF);
       return Effect.gen(function* () {
+        yield* writeLinkedParentRef(workdir, PARENT_REF);
         yield* link(
           flags({
             refOrBranch: Option.some(LINK_BRANCH.id.toUpperCase()),
             projectRef: Option.none(),
           }),
         );
-        expect(readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
+        expect(yield* readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
       }).pipe(Effect.provide(layer));
     });
 
-    it.live(
+    it.effect(
       "fails with LinkBranchNotReadyError and never falls through to link the parent, even with SUPABASE_PROJECT_ID set",
       () => {
         const { layer, workdir, apiMock } = setup({
@@ -1080,14 +1102,13 @@ describe("link integration", () => {
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const json = JSON.stringify(exit.cause);
-            expect(json).toContain("LinkBranchNotReadyError");
-            expect(json).toContain(
-              `Branch \\"feature-branch\\" has no project ref yet (status: CREATING_PROJECT)`,
+            const causeText = Cause.pretty(exit.cause);
+            expect(causeText).toContain("LinkBranchNotReadyError");
+            expect(causeText).toContain(
+              `Branch "feature-branch" has no project ref yet (status: CREATING_PROJECT)`,
             );
           }
-          // No project-ref written, and no attempt to link the parent (env) ref instead.
-          expect(existsSync(tempFile(workdir, "project-ref"))).toBe(false);
+          expect(yield* existsTemp(workdir, "project-ref")).toBe(false);
           expect(apiMock.requests).toEqual([
             { method: "listAllBranches", input: { ref: PARENT_REF } },
           ]);
@@ -1095,144 +1116,138 @@ describe("link integration", () => {
       },
     );
 
-    it.live("a failed branch lookup leaves an existing project-ref file untouched", () => {
+    it.effect("a failed branch lookup leaves an existing project-ref file untouched", () => {
       const { layer, workdir } = setup({ branches: { ok: [LINK_BRANCH] } });
-      // The project-ref file doubles as both "the existing link" and the parent
-      // candidate for this lookup — a realistic prior-link state.
-      writeLinkedParentRef(workdir, PARENT_REF);
+      // The project-ref file doubles as the existing link and the parent candidate here.
       return Effect.gen(function* () {
+        yield* writeLinkedParentRef(workdir, PARENT_REF);
         const exit = yield* Effect.exit(
           link(flags({ refOrBranch: Option.some("does-not-exist"), projectRef: Option.none() })),
         );
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(readTemp(workdir, "project-ref")).toBe(PARENT_REF);
+        expect(yield* readTemp(workdir, "project-ref")).toBe(PARENT_REF);
       }).pipe(Effect.provide(layer));
     });
   });
 
   describe("branch-name resolution: message variants", () => {
-    it.live("caps the available-branches list at 20 names with a remainder count", () => {
+    it.effect("caps the available-branches list at 20 names with a remainder count", () => {
       const { layer, workdir } = setup({ branches: { ok: manyBranches(25) } });
-      writeLinkedParentRef(workdir, PARENT_REF);
       return Effect.gen(function* () {
+        yield* writeLinkedParentRef(workdir, PARENT_REF);
         const exit = yield* Effect.exit(
           link(flags({ refOrBranch: Option.some("does-not-exist"), projectRef: Option.none() })),
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
-          expect(json).toContain("LinkBranchNotFoundError");
-          expect(json).toContain("branch-00");
-          expect(json).toContain("branch-19");
-          expect(json).not.toContain("branch-20");
-          expect(json).toContain("… (5 more — run supabase branches list)");
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("LinkBranchNotFoundError");
+          expect(causeText).toContain("branch-00");
+          expect(causeText).toContain("branch-19");
+          expect(causeText).not.toContain("branch-20");
+          expect(causeText).toContain("… (5 more — run supabase branches list)");
         }
       }).pipe(Effect.provide(layer));
     });
 
-    it.live('suggests a case-insensitive near-miss ("Did you mean")', () => {
+    it.effect('suggests a case-insensitive near-miss ("Did you mean")', () => {
       const { layer, workdir } = setup({
         branches: { ok: [LINK_BRANCH, LINK_BRANCH_STAGING] },
       });
-      writeLinkedParentRef(workdir, PARENT_REF);
       return Effect.gen(function* () {
+        yield* writeLinkedParentRef(workdir, PARENT_REF);
         const exit = yield* Effect.exit(
           link(flags({ refOrBranch: Option.some("Staging"), projectRef: Option.none() })),
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
-          expect(json).toContain(`Did you mean \\"staging\\"?`);
-          // "Staging" has an uppercase letter, so no ref-typo hint.
-          expect(json).not.toContain("If you meant a project ref");
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain(`Did you mean "staging"?`);
+          expect(causeText).not.toContain("If you meant a project ref");
         }
       }).pipe(Effect.provide(layer));
     });
 
-    it.live(
+    it.effect(
       "includes a ref-typo hint for an all-lowercase value not found in an empty branch list",
       () => {
         const { layer, workdir } = setup({ branches: { ok: [] } });
-        writeLinkedParentRef(workdir, PARENT_REF);
         return Effect.gen(function* () {
+          yield* writeLinkedParentRef(workdir, PARENT_REF);
           const exit = yield* Effect.exit(
             link(flags({ refOrBranch: Option.some("missingbranch"), projectRef: Option.none() })),
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const json = JSON.stringify(exit.cause);
-            expect(json).toContain("LinkBranchNotFoundError");
-            expect(json).toContain(
-              `Branch \\"missingbranch\\" not found: project ${PARENT_REF} has no branches.`,
+            const causeText = Cause.pretty(exit.cause);
+            expect(causeText).toContain("LinkBranchNotFoundError");
+            expect(causeText).toContain(
+              `Branch "missingbranch" not found: project ${PARENT_REF} has no branches.`,
             );
-            expect(json).toContain(
-              `If you meant a project ref: refs are exactly 20 lowercase letters (\\"missingbranch\\" has 13).`,
+            expect(causeText).toContain(
+              `If you meant a project ref: refs are exactly 20 lowercase letters ("missingbranch" has 13).`,
             );
           }
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.live("omits the ref-typo hint when the value is not purely lowercase letters", () => {
+    it.effect("omits the ref-typo hint when the value is not purely lowercase letters", () => {
       const { layer, workdir } = setup({ branches: { ok: [LINK_BRANCH] } });
-      writeLinkedParentRef(workdir, PARENT_REF);
       return Effect.gen(function* () {
+        yield* writeLinkedParentRef(workdir, PARENT_REF);
         const exit = yield* Effect.exit(
           link(flags({ refOrBranch: Option.some("my-branch"), projectRef: Option.none() })),
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
-          expect(json).toContain("LinkBranchNotFoundError");
-          expect(json).toContain(`Branch \\"my-branch\\" not found for project ${PARENT_REF}.`);
-          expect(json).not.toContain("If you meant a project ref");
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("LinkBranchNotFoundError");
+          expect(causeText).toContain(`Branch "my-branch" not found for project ${PARENT_REF}.`);
+          expect(causeText).not.toContain("If you meant a project ref");
         }
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("lists sorted available branch names when the branch is not found", () => {
+    it.effect("lists sorted available branch names when the branch is not found", () => {
       const { layer, workdir, telemetry, linkedCache } = setup({
         branches: { ok: [LINK_BRANCH_ZETA, LINK_BRANCH_ALPHA] },
       });
-      writeLinkedParentRef(workdir, PARENT_REF);
       return Effect.gen(function* () {
+        yield* writeLinkedParentRef(workdir, PARENT_REF);
         const exit = yield* Effect.exit(
           link(flags({ refOrBranch: Option.some("missing-branch"), projectRef: Option.none() })),
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
-          expect(json).toContain("LinkBranchNotFoundError");
-          expect(json).toContain(
-            `Branch \\"missing-branch\\" not found for project ${PARENT_REF}. Available branches: alpha, zeta`,
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("LinkBranchNotFoundError");
+          expect(causeText).toContain(
+            `Branch "missing-branch" not found for project ${PARENT_REF}. Available branches: alpha, zeta`,
           );
         }
-        // PR #6168 review: a branch-name resolution failure now sits INSIDE the
-        // `Effect.ensuring` wrapper, so telemetry still flushes even though the
-        // link itself never reached ref resolution — previously this failure
-        // exited before the wrapper was ever reached, and telemetry silently
-        // never flushed. `ref` itself never resolved, so the linked-project
-        // cache fill correctly stays a no-op.
         expect(telemetry.flushed).toBe(true);
         expect(linkedCache.cached).toBe(false);
       }).pipe(Effect.provide(layer));
     });
 
-    it.live(
+    it.effect(
       "surfaces a dedicated message when listing branches 404s (parent may itself be a branch)",
       () => {
         const { layer, workdir } = setup({ branches: { fail: statusCodeFailure(404) } });
-        writeLinkedParentRef(workdir, PARENT_REF);
         return Effect.gen(function* () {
+          yield* writeLinkedParentRef(workdir, PARENT_REF);
           const exit = yield* Effect.exit(
             link(flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() })),
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const json = JSON.stringify(exit.cause);
-            expect(json).toContain("LinkBranchListStatusError");
-            expect(json).toContain(`Cannot list branches for project ${PARENT_REF} (HTTP 404)`);
-            expect(json).toContain(
+            const causeText = Cause.pretty(exit.cause);
+            expect(causeText).toContain("LinkBranchListStatusError");
+            expect(causeText).toContain(
+              `Cannot list branches for project ${PARENT_REF} (HTTP 404)`,
+            );
+            expect(causeText).toContain(
               `If ${PARENT_REF} is itself a preview branch, link its parent project first: supabase link --project-ref`,
             );
           }
@@ -1240,39 +1255,39 @@ describe("link integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "fails with LinkBranchListStatusError when listing branches returns a non-200, non-404 status",
       () => {
         const { layer, workdir } = setup({ branches: { fail: statusCodeFailure(500) } });
-        writeLinkedParentRef(workdir, PARENT_REF);
         return Effect.gen(function* () {
+          yield* writeLinkedParentRef(workdir, PARENT_REF);
           const exit = yield* Effect.exit(
             link(flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() })),
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const json = JSON.stringify(exit.cause);
-            expect(json).toContain("LinkBranchListStatusError");
-            expect(json).toContain("unexpected list branches status 500");
+            const causeText = Cause.pretty(exit.cause);
+            expect(causeText).toContain("LinkBranchListStatusError");
+            expect(causeText).toContain("unexpected list branches status 500");
           }
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.live(
+    it.effect(
       "fails with LinkBranchListNetworkError when listing branches fails at the transport layer",
       () => {
         const { layer, workdir } = setup({ branches: { fail: transportFailureForMock() } });
-        writeLinkedParentRef(workdir, PARENT_REF);
         return Effect.gen(function* () {
+          yield* writeLinkedParentRef(workdir, PARENT_REF);
           const exit = yield* Effect.exit(
             link(flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() })),
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const json = JSON.stringify(exit.cause);
-            expect(json).toContain("LinkBranchListNetworkError");
-            expect(json).toContain("failed to list branches:");
+            const causeText = Cause.pretty(exit.cause);
+            expect(causeText).toContain("LinkBranchListNetworkError");
+            expect(causeText).toContain("failed to list branches:");
           }
         }).pipe(Effect.provide(layer));
       },
@@ -1280,12 +1295,12 @@ describe("link integration", () => {
   });
 
   describe("branch-name resolution: output contract", () => {
-    it.live(
+    it.effect(
       "text mode: shows the Resolving branch... spinner, writes the resolved line to stderr, and keeps stdout to the Finished line",
       () => {
         const { layer, out, workdir } = setup({ branches: { ok: [LINK_BRANCH] } });
-        writeLinkedParentRef(workdir, PARENT_REF);
         return Effect.gen(function* () {
+          yield* writeLinkedParentRef(workdir, PARENT_REF);
           yield* link(
             flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
           );
@@ -1294,26 +1309,27 @@ describe("link integration", () => {
             message: "Resolving branch...",
           });
           expect(out.stderrText).toBe(
-            `Resolved branch "feature-branch" of project ${PARENT_REF} to project ref ${BRANCH_PROJECT_REF}.\n`,
+            `Resolved branch "feature-branch" of project ${PARENT_REF} to project ref ${BRANCH_PROJECT_REF}.\n` +
+              unverifiedTargetBanner(BRANCH_PROJECT_REF),
           );
           expect(out.stdoutText).toBe("Finished supabase link.\n");
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.live(
+    it.effect(
       "json mode: emits branch + parent_project_ref in the success payload with zero progress events",
       () => {
         const { layer, out, workdir } = setup({
           format: "json",
           branches: { ok: [LINK_BRANCH] },
         });
-        writeLinkedParentRef(workdir, PARENT_REF);
         return Effect.gen(function* () {
+          yield* writeLinkedParentRef(workdir, PARENT_REF);
           yield* link(
             flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
           );
-          expect(readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
+          expect(yield* readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
           const success = out.messages.find((m) => m.type === "success");
           expect(success?.data).toMatchObject({
             project_ref: BRANCH_PROJECT_REF,
@@ -1325,35 +1341,35 @@ describe("link integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "json mode: a branch-list failure produces zero progress events (spinner suppressed)",
       () => {
         const { layer, out, workdir } = setup({
           format: "json",
           branches: { fail: statusCodeFailure(500) },
         });
-        writeLinkedParentRef(workdir, PARENT_REF);
         return Effect.gen(function* () {
+          yield* writeLinkedParentRef(workdir, PARENT_REF);
           const exit = yield* Effect.exit(
             link(flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() })),
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const json = JSON.stringify(exit.cause);
-            expect(json).toContain("LinkBranchListStatusError");
+            const causeText = Cause.pretty(exit.cause);
+            expect(causeText).toContain("LinkBranchListStatusError");
           }
           expect(out.progressEvents).toEqual([]);
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.live("stream-json mode: emits branch + parent_project_ref in the success payload", () => {
+    it.effect("stream-json mode: emits branch + parent_project_ref in the success payload", () => {
       const { layer, out, workdir } = setup({
         format: "stream-json",
         branches: { ok: [LINK_BRANCH] },
       });
-      writeLinkedParentRef(workdir, PARENT_REF);
       return Effect.gen(function* () {
+        yield* writeLinkedParentRef(workdir, PARENT_REF);
         yield* link(
           flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
         );
@@ -1368,40 +1384,36 @@ describe("link integration", () => {
   });
 
   describe("branch-name resolution: telemetry", () => {
-    it.live(
+    it.effect(
       "fires cli_project_linked with linked_via/parent_project_ref and a project group, no groupIdentify, and never the branch name",
       () => {
         const analytics = mockContextualAnalytics();
         const { layer, workdir } = setup({
           branches: { ok: [LINK_BRANCH] },
           analytics,
-          // A branch's own project ref always 404s on `getProject` (it isn't a
-          // real top-level project) — this is what routes telemetry into the
-          // CLI-2167 `else if (branchResolution)` branch instead of the plain
-          // `if (project)` branch.
+          // A branch's own project ref always 404s on `getProject`, routing telemetry into
+          // the branch-resolution arm instead of the plain project arm.
           project: { fail: statusCodeFailure(404) },
         });
-        writeLinkedParentRef(workdir, PARENT_REF);
         return Effect.gen(function* () {
+          yield* writeLinkedParentRef(workdir, PARENT_REF);
           yield* link(
             flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
           );
           const capture = analytics.captured.find((c) => c.event === "cli_project_linked");
-          const properties = capture?.properties as { groups?: unknown } | undefined;
+          const properties = capture?.properties;
           expect(properties).toMatchObject({
             linked_via: "branch",
             parent_project_ref: PARENT_REF,
           });
-          expect(properties?.groups).toEqual({ project: BRANCH_PROJECT_REF });
+          expect(properties?.["groups"]).toEqual({ project: BRANCH_PROJECT_REF });
           expect(analytics.groupIdentified).toHaveLength(0);
-          // The branch NAME is user-created content and must never leave the
-          // machine in any captured analytics payload.
-          expect(JSON.stringify(analytics.captured)).not.toContain("feature-branch");
+          expect(yield* jsonText(analytics.captured)).not.toContain("feature-branch");
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.live(
+    it.effect(
       "default-branch link (getProject(parent) returns 200): the normal 200 arm ALSO carries linked_via/parent_project_ref, plus its usual org/project groupIdentify richness (PR #6168 review)",
       () => {
         const analytics = mockContextualAnalytics();
@@ -1409,21 +1421,19 @@ describe("link integration", () => {
           branches: { ok: [LINK_BRANCH_DEFAULT] },
           analytics,
           // No `project` override — `HEALTHY_PROJECT.ref === PARENT_REF`, so
-          // `getProject(PARENT_REF)` returns 200 here, unlike the 404 test
-          // above: a default branch's own `project_ref` IS the parent's ref.
+          // `getProject(PARENT_REF)` returns 200 here, unlike the 404 test above.
         });
-        writeLinkedParentRef(workdir, PARENT_REF);
         return Effect.gen(function* () {
+          yield* writeLinkedParentRef(workdir, PARENT_REF);
           yield* link(flags({ refOrBranch: Option.some("main"), projectRef: Option.none() }));
           const captures = analytics.captured.filter((c) => c.event === "cli_project_linked");
           expect(captures).toHaveLength(1);
-          const properties = captures[0]?.properties as { groups?: unknown } | undefined;
+          const properties = captures[0]?.properties;
           expect(properties).toMatchObject({
             linked_via: "branch",
             parent_project_ref: PARENT_REF,
           });
-          expect(properties?.groups).toEqual({ organization: "org_123", project: PARENT_REF });
-          // The normal 200 arm's usual richness is untouched by the extension.
+          expect(properties?.["groups"]).toEqual({ organization: "org_123", project: PARENT_REF });
           expect(analytics.groupIdentified).toEqual([
             {
               groupType: "organization",
@@ -1436,78 +1446,199 @@ describe("link integration", () => {
               properties: { name: "My Project", organization_slug: "acme" },
             },
           ]);
-          expect(JSON.stringify(analytics.captured)).not.toContain('"main"');
+          expect(yield* jsonText(analytics.captured)).not.toContain('"main"');
         }).pipe(Effect.provide(layer));
       },
     );
   });
+});
 
-  describe("telemetry: --project-ref redaction (CLI-2167)", () => {
-    it.live(
-      "does not redact --project-ref in cli_command_executed when it is ref-shaped (Go parity: cmd/link.go:52)",
-      () => {
-        const out = mockOutput({ format: "text" });
-        const analytics = mockContextualAnalytics();
-        const apiMock = mockCommandPlatformApiService({
-          v1: {
-            getProject: () => Effect.succeed(HEALTHY_PROJECT),
-            getProjectApiKeys: () => Effect.succeed(SERVICE_KEYS),
-            getStorageConfig: () => Effect.succeed({ migrationVersion: "m" }),
-            getPoolerConfig: () => Effect.succeed(POOLER_PRIMARY),
-          },
-        });
-        const cliSettings = mockCommandSettings({
+// Records the Management API requests `link` makes, which the service-level mock above cannot.
+describe("link permissions", () => {
+  const API = "https://api.supabase.com";
+
+  function setupRecording(
+    opts: {
+      readonly selectResponses?: ReadonlyArray<string>;
+      /* A project-scoped token without API Key Secrets read: `reveal=true` is refused. */
+      readonly revealRefused?: boolean;
+    } = {},
+  ) {
+    const out = mockOutput({ format: "text", promptSelectResponses: opts.selectResponses });
+    const api = mockCommandPlatformApi({
+      handler: (request) =>
+        Effect.sync(() => {
+          const { pathname } = new URL(request.url);
+          if (request.method !== "GET") {
+            return jsonResponse(request, 404, { message: "unexpected request" });
+          }
+          if (pathname === "/v1/projects") {
+            return jsonResponse(request, 200, [HEALTHY_PROJECT]);
+          }
+          const match = /^\/v1\/projects\/([a-z]{20})(\/.*)?$/.exec(pathname);
+          if (match === null) {
+            // Tenant service probes: unreachable, which the link tolerates.
+            return jsonResponse(request, 404, {});
+          }
+          const [, ref, rest = ""] = match;
+          if (rest === "") {
+            return ref === BRANCH_PROJECT_REF
+              ? jsonResponse(request, 404, { message: "not found" })
+              : jsonResponse(request, 200, { ...HEALTHY_PROJECT, id: ref, ref });
+          }
+          if (rest === "/branches") return jsonResponse(request, 200, [LINK_BRANCH]);
+          if (rest === "/api-keys") {
+            return opts.revealRefused === true
+              ? jsonResponse(request, 403, {
+                  message:
+                    "Your account does not have the necessary privileges to access this endpoint.",
+                })
+              : jsonResponse(request, 200, SERVICE_KEYS);
+          }
+          if (rest === "/config/storage") {
+            return jsonResponse(request, 200, {
+              migrationVersion: "2026-01-01-000000",
+            });
+          }
+          if (rest === "/config/database/pooler") {
+            return jsonResponse(request, 200, POOLER_PRIMARY);
+          }
+          return jsonResponse(request, 404, { message: "unexpected request" });
+        }),
+    });
+    const layer = Layer.merge(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings: mockCommandSettings({
           workdir: tempRoot.current,
           projectId: Option.none(),
-        });
-        const layer = Layer.mergeAll(
-          buildTestRuntime({
-            out,
-            api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer({}) },
-            cliSettings,
-            analytics,
-          }),
-          commandRuntimeLayer(["link"]),
-          Stdio.layerTest({
-            args: Effect.succeed(["link", "--project-ref", VALID_REF]),
-          }),
-        );
-        return Effect.gen(function* () {
-          yield* linkHandler(flags({ projectRef: Option.some(VALID_REF) }));
-          const event = analytics.captured.find((c) => c.event === "cli_command_executed");
-          expect(event?.properties.flags).toEqual({ "project-ref": VALID_REF });
-        }).pipe(Effect.provide(layer));
-      },
+        }),
+        tty: mockTty({ stdinIsTty: true }),
+      }),
+      cliConfigValuesTestLayer,
     );
+    return { layer, api, out, workdir: tempRoot.current };
+  }
 
-    it.live(
-      "redacts --project-ref in cli_command_executed when it is a branch name, not a ref",
-      () => {
-        const out = mockOutput({ format: "text" });
-        const analytics = mockContextualAnalytics();
-        const apiMock = mockCommandPlatformApiService({ v1: {} });
-        const cliSettings = mockCommandSettings({
-          workdir: tempRoot.current,
-          projectId: Option.none(),
-        });
-        const layer = Layer.mergeAll(
-          buildTestRuntime({
-            out,
-            api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer({}) },
-            cliSettings,
-            analytics,
-          }),
-          commandRuntimeLayer(["link"]),
-          Stdio.layerTest({
-            args: Effect.succeed(["link", "--project-ref", "my-branch"]),
-          }),
-        );
-        return Effect.gen(function* () {
-          yield* Effect.exit(linkHandler(flags({ projectRef: Option.some("my-branch") })));
-          const event = analytics.captured.find((c) => c.event === "cli_command_executed");
-          expect(event?.properties.flags).toEqual({ "project-ref": "<redacted>" });
-        }).pipe(Effect.provide(layer));
-      },
-    );
+  const managementCalls = (api: { requests: ReadonlyArray<{ method: string; url: string }> }) =>
+    api.requests
+      .map(({ method, url }) => ({ method, url: new URL(url) }))
+      .filter(({ url }) => url.origin === API)
+      .map(({ method, url }) => `${method} ${url.pathname}${url.search}`);
+
+  it.effect("links by --project-ref, reading the project, its keys, storage and the pooler", () => {
+    const { layer, api, workdir } = setupRecording();
+    return Effect.gen(function* () {
+      yield* link(flags());
+
+      expect(managementCalls(api)).toEqual([
+        `GET /v1/projects/${VALID_REF}`,
+        `GET /v1/projects/${VALID_REF}/api-keys`,
+        `GET /v1/projects/${VALID_REF}/config/storage`,
+        `GET /v1/projects/${VALID_REF}/config/database/pooler`,
+      ]);
+      expect(api.requests.find(({ url }) => url.endsWith("/api-keys"))?.urlParams).toContain(
+        "reveal=true",
+      );
+      expect(yield* readTemp(workdir, "project-ref")).toBe(VALID_REF);
+      assertPermissionDrift({
+        command: "link",
+        activeFlags: { "project-ref": VALID_REF, "skip-pooler": false },
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
   });
+
+  it.effect("links with a token that cannot read secret keys, skipping the version checks", () => {
+    const { layer, api, out, workdir } = setupRecording({ revealRefused: true });
+    return Effect.gen(function* () {
+      yield* link(flags());
+
+      expect(api.requests.map(({ method, urlWithParams }) => `${method} ${urlWithParams}`)).toEqual(
+        [
+          `GET ${API}/v1/projects/${VALID_REF}`,
+          `GET ${API}/v1/projects/${VALID_REF}/api-keys?reveal=true`,
+          `GET ${API}/v1/projects/${VALID_REF}/config/storage`,
+          `GET ${API}/v1/projects/${VALID_REF}/config/database/pooler`,
+        ],
+      );
+      expect(out.stderrText).toContain("API Key Secrets: read");
+      expect(yield* readTemp(workdir, "project-ref")).toBe(VALID_REF);
+      assertPermissionDrift({
+        command: "link",
+        activeFlags: { "project-ref": VALID_REF, "skip-pooler": false },
+        requests: api.requests,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("lists the projects for the picker when no ref is given on a TTY", () => {
+    const { layer, api } = setupRecording({ selectResponses: [VALID_REF] });
+    return Effect.gen(function* () {
+      yield* link(flags({ projectRef: Option.none() }));
+
+      expect(managementCalls(api)).toEqual([
+        "GET /v1/projects",
+        `GET /v1/projects/${VALID_REF}`,
+        `GET /v1/projects/${VALID_REF}/api-keys`,
+        `GET /v1/projects/${VALID_REF}/config/storage`,
+        `GET /v1/projects/${VALID_REF}/config/database/pooler`,
+      ]);
+      assertPermissionDrift({
+        command: "link",
+        activeFlags: { "skip-pooler": false },
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("resolves a branch name through the linked parent's branch list", () => {
+    const { layer, api, workdir } = setupRecording();
+    return Effect.gen(function* () {
+      yield* writeLinkedParentRef(workdir, PARENT_REF);
+
+      yield* link(flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }));
+
+      expect(managementCalls(api)).toEqual([
+        `GET /v1/projects/${PARENT_REF}/branches`,
+        `GET /v1/projects/${BRANCH_PROJECT_REF}`,
+        `GET /v1/projects/${BRANCH_PROJECT_REF}/api-keys`,
+        `GET /v1/projects/${BRANCH_PROJECT_REF}/config/storage`,
+        `GET /v1/projects/${BRANCH_PROJECT_REF}/config/database/pooler`,
+      ]);
+      assertPermissionDrift({
+        command: "link",
+        activeFlags: { "skip-pooler": false },
+        requests: api.requests,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "verifies a cached parent against its branch list when linking a raw branch ref",
+    () => {
+      const { layer, api, workdir } = setupRecording();
+      return Effect.gen(function* () {
+        yield* writeLinkedProjectCacheFile(workdir, linkedProjectCacheJson(PARENT_REF));
+
+        yield* link(flags({ projectRef: Option.some(BRANCH_PROJECT_REF) }));
+
+        expect(managementCalls(api)).toEqual([
+          `GET /v1/projects/${BRANCH_PROJECT_REF}`,
+          `GET /v1/projects/${BRANCH_PROJECT_REF}/api-keys`,
+          `GET /v1/projects/${BRANCH_PROJECT_REF}/config/storage`,
+          `GET /v1/projects/${BRANCH_PROJECT_REF}/config/database/pooler`,
+          `GET /v1/projects/${PARENT_REF}/branches`,
+        ]);
+        assertPermissionDrift({
+          command: "link",
+          activeFlags: { "project-ref": BRANCH_PROJECT_REF, "skip-pooler": false },
+          requests: api.requests,
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });

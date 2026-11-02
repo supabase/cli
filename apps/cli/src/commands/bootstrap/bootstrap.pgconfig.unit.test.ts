@@ -39,7 +39,7 @@ describe("toPostgresUrl", () => {
     ).toBe("postgresql://admin:password@db.supabase.co:5432/postgres?connect_timeout=10");
   });
 
-  it("percent-encodes reserved characters in the userinfo (Go's url.UserPassword)", () => {
+  it("percent-encodes reserved characters in the userinfo", () => {
     // `@ / ? :` and space are escaped; the sub-delim `$` passes through.
     expect(
       toPostgresUrl({

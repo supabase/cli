@@ -1,7 +1,3 @@
-/**
- * Unit tests for push.plan.ts.
- */
-
 import type { CliConfig, ConfigChange, ConfigChangeSet, ProjectConfig } from "@supabase/config";
 import { comparableProjectConfigPaths, getDefaultCliConfig } from "@supabase/config";
 import { describe, expect, it } from "vitest";
@@ -10,11 +6,10 @@ import {
   PUSH_ADDON_GATES,
   PUSH_RESOURCES,
   PUSH_UNSUPPORTED_PREFIXES,
-  applyMfaAddonDecline,
   changesCommunicated,
   planConfigPush,
-  pushAddonPromptNeeded,
-  pushPromptKey,
+  pushEnablesAddon,
+  pushCostKey,
   pushResourceEnabled,
   pushResourceForPath,
   pushResponseBlock,
@@ -71,17 +66,17 @@ describe("PUSH_RESOURCES", () => {
   });
 });
 
-describe("pushPromptKey", () => {
+describe("pushCostKey", () => {
   it("returns the resource's own key for api/auth/storage", () => {
-    expect(pushPromptKey("api")).toBe("api");
-    expect(pushPromptKey("auth")).toBe("auth");
-    expect(pushPromptKey("storage")).toBe("storage");
+    expect(pushCostKey("api")).toBe("api");
+    expect(pushCostKey("auth")).toBe("auth");
+    expect(pushCostKey("storage")).toBe("storage");
   });
 
   it("routes every db.* resource to the shared 'db' cost-matrix key", () => {
-    expect(pushPromptKey("db.settings")).toBe("db");
-    expect(pushPromptKey("db.network_restrictions")).toBe("db");
-    expect(pushPromptKey("db.ssl_enforcement")).toBe("db");
+    expect(pushCostKey("db.settings")).toBe("db");
+    expect(pushCostKey("db.network_restrictions")).toBe("db");
+    expect(pushCostKey("db.ssl_enforcement")).toBe("db");
   });
 });
 
@@ -136,13 +131,9 @@ describe("pushResourceForPath", () => {
   });
 
   it("drift guard: every comparable config path resolves to a resource, or one of the two intentionally-unsupported prefixes", () => {
-    // `pushResourceForPath` never returns `undefined` (B12) — an
-    // unroutable path falls through to `"unsupported"` too, the same result
-    // an intentionally-listed prefix gets. So a plain `!== undefined`
-    // assertion here would never catch a new registry row this module
-    // forgot to route. Assert the stronger claim instead: every
-    // `"unsupported"` result must be explained by one of
-    // `PUSH_UNSUPPORTED_PREFIXES`, not by falling through unnoticed.
+    // An unroutable path also falls through to `"unsupported"`, the same result an
+    // intentionally-listed prefix gets, so a plain `!== undefined` assertion wouldn't catch a
+    // registry row this module forgot to route.
     for (const path of comparableProjectConfigPaths) {
       const resource = pushResourceForPath(path);
       const isIntentionallyUnsupported = PUSH_UNSUPPORTED_PREFIXES.some(
@@ -247,10 +238,8 @@ describe("pushResourceEnabled", () => {
   });
 
   it("is always true for auth and storage, regardless of their local enabled toggle (CLI-2314)", () => {
-    // `auth.enabled`/`storage.enabled` control only the local GoTrue/Storage
-    // Docker service — gating the whole resource on them silently dropped a
-    // user's declared hosted-auth/storage changes whenever they simply
-    // didn't run that service locally.
+    // `auth.enabled`/`storage.enabled` control only the local GoTrue/Storage Docker service; a
+    // resource-wide gate on them would drop a declared hosted change whenever unused locally.
     const base = getDefaultCliConfig();
     const authOff: CliConfig = { ...base, auth: { ...base.auth, enabled: false } };
     const storageOff: CliConfig = { ...base, storage: { ...base.storage, enabled: false } };
@@ -278,17 +267,17 @@ describe("PUSH_ADDON_GATES", () => {
   });
 });
 
-describe("pushAddonPromptNeeded", () => {
+describe("pushEnablesAddon", () => {
   it.each(PUSH_ADDON_GATES)("prompts when $costKey's verify_enabled flips to true", (gate) => {
     const changes = [change(gate.verifyPath, "update", true, false)];
-    expect(pushAddonPromptNeeded(changes, gate, {})).toBe(true);
+    expect(pushEnablesAddon(changes, gate, {})).toBe(true);
   });
 
   it.each(PUSH_ADDON_GATES)(
     "prompts when only $costKey's enroll_enabled flips to true and verify_enabled is false on the remote",
     (gate) => {
       const changes = [change(gate.enrollPath, "update", true, false)];
-      expect(pushAddonPromptNeeded(changes, gate, {})).toBe(true);
+      expect(pushEnablesAddon(changes, gate, {})).toBe(true);
     },
   );
 
@@ -297,13 +286,13 @@ describe("pushAddonPromptNeeded", () => {
     (gate) => {
       const changes = [change(gate.enrollPath, "update", true, false)];
       const remote = remoteWithVerifyEnabled(gate, true);
-      expect(pushAddonPromptNeeded(changes, gate, remote)).toBe(false);
+      expect(pushEnablesAddon(changes, gate, remote)).toBe(false);
     },
   );
 
   it.each(PUSH_ADDON_GATES)("does not prompt when neither $costKey flag is turning on", (gate) => {
     const changes = [change(gate.verifyPath, "update", false, false)];
-    expect(pushAddonPromptNeeded(changes, gate, {})).toBe(false);
+    expect(pushEnablesAddon(changes, gate, {})).toBe(false);
   });
 
   it.each(PUSH_ADDON_GATES)(
@@ -311,7 +300,7 @@ describe("pushAddonPromptNeeded", () => {
     (gate) => {
       const changes = [change(gate.verifyPath, "update", true, true)];
       const remote = remoteWithVerifyEnabled(gate, true);
-      expect(pushAddonPromptNeeded(changes, gate, remote)).toBe(false);
+      expect(pushEnablesAddon(changes, gate, remote)).toBe(false);
     },
   );
 });
@@ -328,53 +317,5 @@ describe("changesCommunicated", () => {
 
   it("returns an empty array when nothing was communicated", () => {
     expect(changesCommunicated([change(["auth", "site_url"], "update")], [])).toEqual([]);
-  });
-});
-
-describe("applyMfaAddonDecline", () => {
-  const gate = PUSH_ADDON_GATES[0];
-  if (gate === undefined) throw new Error("expected at least one addon gate");
-
-  it("drops the addon's changes outright when the remote already has both flags false", () => {
-    const changes = [
-      change(["auth", "site_url"], "update"),
-      change(gate.verifyPath, "update", true, false),
-      change(gate.enrollPath, "update", true, false),
-    ];
-    const remote: ProjectConfig = {
-      auth: { mfa: { phone: { verify_enabled: false, enroll_enabled: false } } },
-    };
-    const result = applyMfaAddonDecline(changes, gate, remote);
-    expect(result.map((c) => c.path)).toEqual([["auth", "site_url"]]);
-  });
-
-  it("drops the addon's changes outright when the remote has neither flag declared", () => {
-    const changes = [change(gate.verifyPath, "update", true, undefined)];
-    const result = applyMfaAddonDecline(changes, gate, {});
-    expect(result).toEqual([]);
-  });
-
-  it("replaces the addon's changes with explicit falses when the remote currently has verify_enabled true", () => {
-    const changes = [
-      change(["auth", "site_url"], "update"),
-      change(gate.verifyPath, "update", true, true),
-    ];
-    const remote: ProjectConfig = { auth: { mfa: { phone: { verify_enabled: true } } } };
-    const result = applyMfaAddonDecline(changes, gate, remote);
-    expect(result).toEqual([
-      change(["auth", "site_url"], "update"),
-      { path: gate.verifyPath, class: "update", local: false, remote: true, declared: true },
-      { path: gate.enrollPath, class: "update", local: false, remote: undefined, declared: true },
-    ]);
-  });
-
-  it("replaces the addon's changes with explicit falses when the remote currently has enroll_enabled true", () => {
-    const changes = [change(gate.enrollPath, "update", true, true)];
-    const remote: ProjectConfig = { auth: { mfa: { phone: { enroll_enabled: true } } } };
-    const result = applyMfaAddonDecline(changes, gate, remote);
-    expect(result).toEqual([
-      { path: gate.verifyPath, class: "update", local: false, remote: undefined, declared: true },
-      { path: gate.enrollPath, class: "update", local: false, remote: true, declared: true },
-    ]);
   });
 });

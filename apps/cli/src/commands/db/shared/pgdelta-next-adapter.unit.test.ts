@@ -45,8 +45,8 @@ function fakeDiagnostic(code: string, subject: string) {
 }
 
 function setupLibraries(sourcePool: Pool, desiredPool: Pool) {
-  const state = {
-    resolveCalls: [] as Array<{
+  const state: {
+    readonly resolveCalls: Array<{
       pool: Pool;
       options: {
         restrictToApplier?: boolean;
@@ -54,45 +54,53 @@ function setupLibraries(sourcePool: Pool, desiredPool: Pool) {
         skipBaseline?: boolean;
       };
       schema?: readonly string[];
-    }>,
-    extractCalls: [] as Array<{ pool: Pool; options: object | undefined }>,
-    planCalls: [] as Array<{
+    }>;
+    readonly extractCalls: Array<{ pool: Pool; options: object | undefined }>;
+    readonly planCalls: Array<{
       source: FakeFactBase;
       desired: FakeFactBase;
       options: FakePlanOptions & { redactSecrets: boolean };
-    }>,
-    renderOptions: [] as Array<{ allowDrops: boolean }>,
-    exportInputs: [] as object[],
-    declarativeInputs: [] as object[],
-    snapshotMetadata: [] as object[],
+    }>;
+    readonly renderOptions: Array<{ allowDrops: boolean }>;
+    readonly exportInputs: object[];
+    readonly declarativeInputs: object[];
+    readonly snapshotMetadata: object[];
+  } = {
+    resolveCalls: [],
+    extractCalls: [],
+    planCalls: [],
+    renderOptions: [],
+    exportInputs: [],
+    declarativeInputs: [],
+    snapshotMetadata: [],
   };
 
-  const extract = async (
+  const extract = (
     pool: Pool,
     options?: { redactSecrets?: boolean; statementTimeoutMs?: number },
   ) => {
     state.extractCalls.push({ pool, options });
     const source = pool === sourcePool;
     if (!source && pool !== desiredPool) {
-      throw new Error("unexpected pool passed to fake extractor");
+      return Promise.reject(new Error("unexpected pool passed to fake extractor"));
     }
-    return {
+    return Promise.resolve({
       factBase: { id: source ? "source-facts" : "desired-facts" },
       pgVersion: source ? "15.9" : "17.6",
       diagnostics: [
         fakeDiagnostic(source ? "source-warning" : "desired-warning", source ? "s" : "d"),
       ],
-    };
+    });
   };
 
   const libraries: PgDeltaNextLibraries<FakeFactBase, FakePlanOptions, FakePlan, FakeSubject> = {
-    resolveProfile: async (pool, options, schema) => {
+    resolveProfile: (pool, options, schema) => {
       state.resolveCalls.push({ pool, options, ...(schema !== undefined ? { schema } : {}) });
-      return {
+      return Promise.resolve({
         id: "supabase",
         planOptions: { managedView: "shared-profile-options" },
         extract,
-      };
+      });
     },
     plan: (source, desired, options) => {
       state.planCalls.push({ source, desired, options });
@@ -119,9 +127,9 @@ function setupLibraries(sourcePool: Pool, desiredPool: Pool) {
         ],
       };
     },
-    buildSchemaExport: async (_pool, input) => {
+    buildSchemaExport: (_pool, input) => {
       state.exportInputs.push(input);
-      return {
+      return Promise.resolve({
         files: [{ name: "public/tables/items.sql", sql: "create table items();" }],
         diagnostics: [fakeDiagnostic("export-warning", "export")],
         manifest: {
@@ -130,17 +138,17 @@ function setupLibraries(sourcePool: Pool, desiredPool: Pool) {
           profile: "supabase",
           defaultOwner: "postgres",
         },
-      };
+      });
     },
-    planSchemaFiles: async (_targetPool, _shadowPool, _files, input) => {
+    planSchemaFiles: (_targetPool, _shadowPool, _files, input) => {
       state.declarativeInputs.push(input);
-      return {
+      return Promise.resolve({
         plan: { source: "target-facts", desired: "loaded-files" },
         loadDiagnostics: [fakeDiagnostic("load-warning", "load")],
         targetDiagnostics: [fakeDiagnostic("target-warning", "target")],
         driftDiagnostics: [fakeDiagnostic("unmodeled_drift", "drift")],
         skipped: [{ file: "roles.sql", stmt: "create role ignored" }],
-      };
+      });
     },
     serializeSnapshot: (factBase, metadata) => {
       state.snapshotMetadata.push(metadata);
@@ -175,23 +183,23 @@ function setupLibraries(sourcePool: Pool, desiredPool: Pool) {
 }
 
 const unusedLibraries: PgDeltaNextLibraries<string, Record<string, never>, FakePlan, string> = {
-  resolveProfile: async () => {
-    throw new Error("unused");
-  },
+  resolveProfile: () => Promise.reject(new Error("unused")),
   plan: () => ({ source: "unused", desired: "unused" }),
   renderPlanFiles: () => ({ changes: false, files: [] }),
-  buildSchemaExport: async () => ({
-    files: [],
-    diagnostics: [],
-    manifest: { redactSecrets: true, scope: "database" },
-  }),
-  planSchemaFiles: async () => ({
-    plan: { source: "unused", desired: "unused" },
-    loadDiagnostics: [],
-    targetDiagnostics: [],
-    driftDiagnostics: [],
-    skipped: [],
-  }),
+  buildSchemaExport: () =>
+    Promise.resolve({
+      files: [],
+      diagnostics: [],
+      manifest: { redactSecrets: true, scope: "database" },
+    }),
+  planSchemaFiles: () =>
+    Promise.resolve({
+      plan: { source: "unused", desired: "unused" },
+      loadDiagnostics: [],
+      targetDiagnostics: [],
+      driftDiagnostics: [],
+      skipped: [],
+    }),
   serializeSnapshot: () => "unused",
   serializePlan: () => "unused",
   summarizeRemovals: () => ({ extensions: [], extensionIntents: [] }),
@@ -423,7 +431,7 @@ describe("PgDeltaNextAdapter", () => {
         expect(result.debug).toEqual({
           sourceSnapshot: expect.stringContaining("source-facts"),
           desiredSnapshot: expect.stringContaining("desired-facts"),
-          plan: JSON.stringify({ source: "source-facts", desired: "desired-facts" }),
+          plan: '{"source":"source-facts","desired":"desired-facts"}',
         });
         expect(state.snapshotMetadata).toEqual([
           { pgVersion: "15.9", redactSecrets: true, profile: "supabase" },
@@ -549,7 +557,7 @@ describe("PgDeltaNextAdapter", () => {
           ],
         });
         expect(planned.debug).toEqual({
-          plan: JSON.stringify({ source: "target-facts", desired: "loaded-files" }),
+          plan: '{"source":"target-facts","desired":"loaded-files"}',
         });
         expect(planned.files.map((file) => file.sql)).toEqual([
           "CREATE TABLE public.widgets (id integer, display_name text);\n",
@@ -566,15 +574,17 @@ describe("PgDeltaNextAdapter", () => {
     const desiredPool = new Pool();
     const layer = pgDeltaNextAdapterLayerFromLibraries({
       ...unusedLibraries,
-      resolveProfile: async () => ({
-        id: "supabase",
-        planOptions: {},
-        extract: async () => ({
-          factBase: "facts",
-          pgVersion: "17.6",
-          diagnostics: [],
+      resolveProfile: () =>
+        Promise.resolve({
+          id: "supabase",
+          planOptions: {},
+          extract: () =>
+            Promise.resolve({
+              factBase: "facts",
+              pgVersion: "17.6",
+              diagnostics: [],
+            }),
         }),
-      }),
       plan: () => ({
         source: "s",
         desired: "d",
@@ -631,9 +641,7 @@ describe("PgDeltaNextAdapter", () => {
     ]);
     const failingLayer = pgDeltaNextAdapterLayerFromLibraries({
       ...unusedLibraries,
-      planSchemaFiles: async () => {
-        throw cause;
-      },
+      planSchemaFiles: () => Promise.reject(cause),
     });
 
     return Effect.gen(function* () {
@@ -665,6 +673,38 @@ describe("PgDeltaNextAdapter", () => {
         },
       ]);
       expect(error.cause).toBe(cause);
+      yield* Effect.promise(() => Promise.all([targetPool.end(), shadowPool.end()]));
+    }).pipe(Effect.provide(failingLayer));
+  });
+
+  it.effect("maps a synchronous render failure to a typed planning error", () => {
+    const targetPool = new Pool();
+    const shadowPool = new Pool();
+    const cause = new Error("render exploded");
+    const failingLayer = pgDeltaNextAdapterLayerFromLibraries({
+      ...unusedLibraries,
+      renderPlanFiles: () => {
+        throw cause;
+      },
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* PgDeltaNextAdapter;
+      const error = yield* adapter
+        .planDeclarativeSchema({
+          targetPool,
+          shadowPool,
+          files: [],
+          allowDrops: false,
+          debug: false,
+        })
+        .pipe(Effect.flip);
+      expect(error).toBeInstanceOf(PgDeltaNextError);
+      expect(error).toMatchObject({
+        operation: "declarativePlan",
+        message: "Declarative schema planning failed: render exploded",
+        cause,
+      });
       yield* Effect.promise(() => Promise.all([targetPool.end(), shadowPool.end()]));
     }).pipe(Effect.provide(failingLayer));
   });

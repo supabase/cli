@@ -1,7 +1,16 @@
 import { Effect } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import {
+  compose,
+  withCondition,
+} from "../../../../../command-internal/command-permissions/model.ts";
+import { dbConfig } from "../../../../../command-internal/db-config.layer.ts";
+import { linkedProjectCache } from "../../../../../telemetry/linked-project-cache.layer.ts";
+import { withCliConfigFlags } from "../../../../../config/cli-config-flags.ts";
+import { CliConfigKeys } from "../../../../../config/cli-config-keys.ts";
 import { withJsonErrorHandling } from "../../../../../shared/output/json-error-handling.ts";
 import { Output } from "../../../../../shared/output/output.service.ts";
 import { aqua } from "../../../../../command-internal/colors.ts";
@@ -10,68 +19,47 @@ import { withCommandTelemetry } from "../../../../../telemetry/command-telemetry
 import { dbSchemaDeclarativeSharedBase } from "../declarative.shared.ts";
 import { dbSchemaDeclarativeGenerate } from "./generate.handler.ts";
 import { dbSchemaDeclarativeGenerateRuntimeLayer } from "./generate.layers.ts";
+import { cliConfigValuesLayer } from "../../../../../config/cli-config-values.layer.ts";
+import { branchResolution } from "../../../../../command-internal/target/branch-resolution.ts";
+import { targetFlags } from "../../../../../command-internal/target/target-flags.ts";
+import { withTargetPolicy } from "../../../../../command-internal/target/target-policy.ts";
 
 const config = {
-  overwrite: Flag.boolean("overwrite").pipe(
+  ...targetFlags({ subject: "database", dbUrl: true }),
+  overwrite: Flag.Boolean("overwrite").pipe(
     Flag.withDescription("Overwrite declarative schema files without confirmation."),
     Flag.withDefault(false),
   ),
-  // Deliberately NOT named `--output`/`-o`: the legacy root reserves those for
-  // the global machine-format flag (`OutputFlag`, `json|yaml|toml|env|…`),
-  // and a leaf string flag would shadow it — `generate -o json` would write a
-  // directory named `json` instead of being a (Go-ignored) format request.
-  // `db diff`'s local `--output`/`-o` shadowing is different: Go itself
-  // registers it (`cmd/db.go:222`), so parity fixes that name; this flag is
-  // TS-only and free to avoid the collision.
-  outputDir: Flag.string("output-dir").pipe(
+  // Not named `--output`/`-o`: that's reserved for the global machine-format flag
+  // (`OutputFlag`), and a leaf string flag would shadow it — `generate -o json` would write a
+  // directory literally named `json` instead of requesting JSON output.
+  outputDir: Flag.String("output-dir").pipe(
     Flag.withDescription(
       "Write the generated declarative schema to this directory without changing the configured declarative schema path.",
     ),
     Flag.optional,
   ),
-  reset: Flag.boolean("reset").pipe(
+  reset: Flag.Boolean("reset").pipe(
     Flag.withDescription("Reset local database before generating (local data will be lost)."),
     Flag.withDefault(false),
   ),
-  schema: Flag.string("schema").pipe(
+  schema: Flag.String("schema").pipe(
     Flag.withAlias("s"),
     Flag.withDescription("Comma separated list of schema to include."),
     Flag.atLeast(0),
-    // Go registers `--schema` as a cobra `StringSliceVarP`
-    // (`apps/cli-go/cmd/db_schema_declarative.go:495`, deleted in CLI-1970;
-    // last present at commit 7b469f5b3), which CSV-splits each
-    // occurrence so `-s public,auth` includes the two schemas separately. Mirror
-    // the `gen types` / `db lint` parsing so quoted commas are handled the same way.
+    // CSV-splits each occurrence so `-s public,auth` includes the two schemas separately, same
+    // as `gen types`/`db lint`'s quoted-comma parsing.
     Flag.mapTryCatch(
       (rawValues) => parseSchemaFlags(rawValues),
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
-  dbUrl: Flag.string("db-url").pipe(
-    Flag.withDescription(
-      "Generates declarative schema from the database specified by the connection string (must be percent-encoded).",
-    ),
-    Flag.optional,
-  ),
-  // Go gates explicit-target selection on `flag.Changed` (presence), not the bool
-  // value — `hasExplicitTargetFlag` is `Changed("local")||Changed("linked")||
-  // Changed("db-url")` (`apps/cli-go/cmd/db_schema_declarative.go:139-141`,
-  // deleted in CLI-1970; last present at commit 7b469f5b3). Model
-  // `--linked`/`--local` as `Option` (like `--db-url`) so `--linked=false` still
-  // takes the explicit linked path, matching Go (and the `db query` fix).
-  linked: Flag.boolean("linked").pipe(
-    Flag.withDescription("Generates declarative schema from the linked project."),
-    Flag.optional,
-  ),
-  local: Flag.boolean("local").pipe(
-    Flag.withDescription("Generates declarative schema from the local database."),
-    Flag.optional,
-  ),
-  password: Flag.string("password").pipe(
-    Flag.withAlias("p"),
-    Flag.withDescription("Password to your remote Postgres database."),
-    Flag.optional,
-  ),
+  password: CliConfigKeys.linkedDb.password.flag({
+    name: "password",
+    alias: "p",
+    description:
+      "Database password for the project selected with --remote. Not used for the local database or a database URL.",
+  }),
 } as const;
 
 // `--no-cache` is a shared flag on the `declarative` group (read from the parent),
@@ -83,9 +71,27 @@ export type DbSchemaDeclarativeGenerateFlags = CliCommand.Command.Config.Infer<t
 
 export const dbSchemaDeclarativeGenerateCommand = Command.make("generate", config).pipe(
   Command.withDescription(
-    "Exports a live database into the complete declarative schema tree. This replaces declarative files only; it does not create migration files or update migration history. Use --output-dir to stage an export without changing the configured declarative path. In non-interactive use, pass --local, --linked, or --db-url explicitly.",
+    "Exports a live database into the complete declarative schema tree. This replaces declarative files only; it does not create migration files or update migration history. Use --output-dir to stage an export without changing the configured declarative path. Generates from the local database unless --remote selects another.",
   ),
   Command.withShortDescription("Generate declarative schema from a database"),
+  withPermissions(
+    compose(
+      {
+        operations: [],
+        noApiEffectFlags: [
+          "overwrite",
+          "output-dir",
+          "reset",
+          "schema",
+          "no-cache",
+          "strict-coverage",
+        ],
+      },
+      dbConfig,
+      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      branchResolution,
+    ),
+  ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       // `--no-cache` is shared on the parent group; read the resolved value there.
@@ -96,10 +102,8 @@ export const dbSchemaDeclarativeGenerateCommand = Command.make("generate", confi
         strictCoverage: shared.strictCoverage,
       };
       return yield* dbSchemaDeclarativeGenerate(merged).pipe(
-        // Go's PostRun prints this on success via `fmt.Println` → stdout
-        // (`cmd/db_schema_declarative.go:93`), so keep it on stdout in text mode. In
-        // json / stream-json the bare human line would corrupt the payload, so emit a
-        // structured result instead (machine stdout is payload-only — CLI-1546).
+        // Printed on stdout in text mode; in json/stream-json the bare human line would corrupt
+        // the payload, so emit a structured result instead (machine stdout is payload-only).
         Effect.tap(() =>
           Effect.gen(function* () {
             const output = yield* Output;
@@ -118,18 +122,12 @@ export const dbSchemaDeclarativeGenerateCommand = Command.make("generate", confi
             "output-dir": merged.outputDir,
             reset: merged.reset,
             schema: merged.schema,
-            "db-url": merged.dbUrl,
-            linked: merged.linked,
-            local: merged.local,
-            // `password` must never be added to `safeFlags` — it is a credential and
-            // must always reach telemetry as `<redacted>` (matches Go, which never
-            // marks `--password` telemetry-safe).
+            // `password` must never be added to `safeFlags`: it's a credential and must always
+            // reach telemetry as `<redacted>`.
             password: merged.password,
           },
-          // Go registers `--schema`/`-s` (StringSliceVarP) and `--password`/`-p`
-          // (StringVarP) (`cmd/db_schema_declarative.go:495,500`); telemetry reports
-          // changed flags by canonical `flag.Name` via `pflag.Visit`, so map the
-          // shorthands so `generate -s public -p secret` logs `schema`/`password`.
+          // Telemetry reports changed flags by canonical name, so map the shorthands: `generate
+          // -s public -p secret` must log `schema`/`password`.
           aliases: { s: "schema", p: "password" },
         }),
         withJsonErrorHandling,
@@ -137,4 +135,11 @@ export const dbSchemaDeclarativeGenerateCommand = Command.make("generate", confi
     }),
   ),
   Command.provide(dbSchemaDeclarativeGenerateRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
+  withTargetPolicy({
+    group: "selectable",
+    consent: "none",
+    consentExemptReason: "reads the target and writes only local declarative files",
+  }),
 );

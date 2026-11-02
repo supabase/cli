@@ -1,43 +1,65 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, FileSystem, Path } from "effect";
 
-import { runSupabase } from "../../../../tests/helpers/cli.ts";
+import { runSupabaseEffect } from "../../../../tests/helpers/cli.ts";
 
 const E2E_TIMEOUT_MS = 30_000;
 
-/**
- * Golden-path e2e: `test new` writes a real file through the compiled-binary
- * boundary. Validates `Command.provide` + the runtime layer + FileSystem wiring.
- * Branch detail (json/stream-json, exists/write errors) is covered by the
- * integration suite.
- */
 describe("supabase test new", () => {
-  let projectDir: string;
-
-  beforeAll(() => {
-    projectDir = mkdtempSync(join(tmpdir(), "supabase-test-new-e2e-"));
-    mkdirSync(join(projectDir, "supabase"), { recursive: true });
-    writeFileSync(join(projectDir, "supabase", "config.toml"), 'project_id = "test-new-e2e"\n');
-  });
-
-  afterAll(() => {
-    rmSync(projectDir, { recursive: true, force: true });
-  });
-
-  test(
+  it.live(
     "scaffolds supabase/tests/<name>_test.sql and prints the created path",
-    { timeout: E2E_TIMEOUT_MS },
-    async () => {
-      const { exitCode, stdout } = await runSupabase(["test", "new", "pet"], {
-        cwd: projectDir,
-      });
-      expect(exitCode).toBe(0);
-      expect(stdout).toContain("Created new pgtap test at");
-      const target = join(projectDir, "supabase", "tests", "pet_test.sql");
-      expect(existsSync(target)).toBe(true);
-      expect(readFileSync(target, "utf8")).toContain("SELECT plan(1);");
-    },
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const projectDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-test-new-e2e-",
+        });
+        yield* fs.makeDirectory(path.join(projectDir, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(projectDir, "supabase", "config.toml"),
+          'project_id = "test-new-e2e"\n',
+        );
+
+        const { exitCode, stdout } = yield* runSupabaseEffect(["test", "new", "pet"], {
+          cwd: projectDir,
+        });
+        expect(exitCode).toBe(0);
+        expect(stdout).toContain("Created new pgtap test at");
+        const target = path.join(projectDir, "supabase", "tests", "pet_test.sql");
+        expect(yield* fs.exists(target)).toBe(true);
+        expect(yield* fs.readFileString(target)).toContain("SELECT plan(1);");
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    E2E_TIMEOUT_MS,
+  );
+
+  it.live(
+    "rejects traversal without writing files or terminal controls",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const projectDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-test-new-rejected-e2e-",
+        });
+        yield* fs.makeDirectory(path.join(projectDir, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(projectDir, "supabase", "config.toml"),
+          'project_id = "test-new-rejected-e2e"\n',
+        );
+
+        const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
+          ["test", "new", "../../nested/\u001b[2Jx", "--output-format", "text"],
+          { cwd: projectDir, env: { NO_COLOR: "1", FORCE_COLOR: undefined } },
+        );
+        expect(exitCode, stderr).toBe(1);
+        expect(stdout).toBe("");
+        expect(stderr).toContain('invalid test name: "../../nested/[2Jx"');
+        expect(stderr).not.toContain("\u001b");
+        expect(yield* fs.exists(path.join(projectDir, "nested"))).toBe(false);
+        expect(yield* fs.exists(path.join(projectDir, "supabase", "tests"))).toBe(false);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    E2E_TIMEOUT_MS,
   );
 });

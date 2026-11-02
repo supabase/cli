@@ -1,31 +1,54 @@
-import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { resolveSupabaseHome } from "./supabase-home.ts";
+import { expect, layer } from "@effect/vitest";
+import { BunServices } from "@effect/platform-bun";
+import { ConfigProvider, Effect, Path } from "effect";
 
-const HOME = join("/home", "test");
+import { withConfigEnv } from "../../../tests/helpers/command-mocks.ts";
+import { readSupabaseHome } from "./supabase-home.ts";
 
-describe("resolveSupabaseHome", () => {
-  it("returns SUPABASE_HOME when set to a non-empty value", () => {
-    expect(resolveSupabaseHome({ SUPABASE_HOME: "/custom/supabase" }, HOME)).toBe(
-      "/custom/supabase",
-    );
-  });
+layer(BunServices.layer)("readSupabaseHome", (it) => {
+  const resolve = (env: Record<string, string>) =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const home = path.join("/home", "test");
+      return { home, path, resolved: yield* withConfigEnv(env, readSupabaseHome(path, home)) };
+    });
 
-  it("trims surrounding whitespace from SUPABASE_HOME", () => {
-    expect(resolveSupabaseHome({ SUPABASE_HOME: "  /custom/supabase  " }, HOME)).toBe(
-      "/custom/supabase",
-    );
-  });
+  it.effect("returns SUPABASE_HOME when set to a non-empty value", () =>
+    Effect.gen(function* () {
+      const { resolved } = yield* resolve({ SUPABASE_HOME: "/custom/supabase" });
+      expect(resolved).toBe("/custom/supabase");
+    }),
+  );
 
-  it("falls back to <homeDir>/.supabase when SUPABASE_HOME is unset", () => {
-    expect(resolveSupabaseHome({}, HOME)).toBe(join(HOME, ".supabase"));
-  });
+  it.effect("trims surrounding whitespace from SUPABASE_HOME", () =>
+    Effect.gen(function* () {
+      const { resolved } = yield* resolve({ SUPABASE_HOME: "  /custom/supabase  " });
+      expect(resolved).toBe("/custom/supabase");
+    }),
+  );
 
-  it("falls back to <homeDir>/.supabase when SUPABASE_HOME is empty", () => {
-    expect(resolveSupabaseHome({ SUPABASE_HOME: "" }, HOME)).toBe(join(HOME, ".supabase"));
-  });
+  it.effect("falls back to <homeDir>/.supabase when SUPABASE_HOME is unset", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const home = path.join("/home", "test");
+      const resolved = yield* readSupabaseHome(path, home).pipe(
+        Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnvRecord({}))),
+      );
+      expect(resolved).toBe(path.join(home, ".supabase"));
+    }),
+  );
 
-  it("falls back to <homeDir>/.supabase when SUPABASE_HOME is whitespace only", () => {
-    expect(resolveSupabaseHome({ SUPABASE_HOME: "   " }, HOME)).toBe(join(HOME, ".supabase"));
-  });
+  it.effect("falls back to <homeDir>/.supabase when SUPABASE_HOME is empty", () =>
+    Effect.gen(function* () {
+      const { home, path, resolved } = yield* resolve({ SUPABASE_HOME: "" });
+      expect(resolved).toBe(path.join(home, ".supabase"));
+    }),
+  );
+
+  it.effect("falls back to <homeDir>/.supabase when SUPABASE_HOME is whitespace only", () =>
+    Effect.gen(function* () {
+      const { home, path, resolved } = yield* resolve({ SUPABASE_HOME: "   " });
+      expect(resolved).toBe(path.join(home, ".supabase"));
+    }),
+  );
 });

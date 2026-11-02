@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect";
+import { Effect, Option, Ref } from "effect";
 
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -19,12 +19,11 @@ export const projectsCreate = Effect.fn("projects.create")(function* (flags: Pro
     yield* requireExperimental;
   }
 
-  let createdRef: string | undefined;
+  const createdRef = yield* Ref.make(Option.none<string>());
 
   yield* Effect.gen(function* () {
-    // Go gates interactivity on `term.IsTerminal(stdin) && interactive`
-    // (`projects.go:63`); `--interactive` defaults to true. We additionally
-    // require a text-mode `Output` so json/stream-json never prompt.
+    // Interactive mode requires a TTY stdin, `--interactive` (default true), and text-mode
+    // output, so json/stream-json never prompt.
     const interactive = Option.getOrElse(flags.interactive, () => true);
     const effectiveInteractive = interactive && tty.stdinIsTty && output.interactive;
 
@@ -37,8 +36,6 @@ export const projectsCreate = Effect.fn("projects.create")(function* (flags: Pro
     const releaseChannel = Option.getOrUndefined(flags.releaseChannel);
     const postgresEngine = Option.getOrUndefined(flags.postgresEngine);
 
-    // Non-interactive: `--org-id`, `--db-password`, `--region` are required,
-    // plus exactly 1 positional arg for the project name.
     if (!effectiveInteractive) {
       const missing: Array<string> = [];
       if (name.length === 0) missing.push("project name");
@@ -64,11 +61,16 @@ export const projectsCreate = Effect.fn("projects.create")(function* (flags: Pro
       templateUrl: undefined,
       emitStructuredResult: true,
     });
-    createdRef = ref.length > 0 ? ref : undefined;
+    yield* Ref.set(createdRef, ref.length > 0 ? Option.some(ref) : Option.none());
   }).pipe(
     Effect.ensuring(
-      Effect.suspend(() =>
-        createdRef === undefined ? Effect.void : linkedProjectCache.cache(createdRef),
+      Ref.get(createdRef).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (ref) => linkedProjectCache.cache(ref),
+          }),
+        ),
       ),
     ),
     Effect.ensuring(telemetryState.flush),

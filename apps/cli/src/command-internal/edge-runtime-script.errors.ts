@@ -6,12 +6,10 @@ import {
 } from "../shared/telemetry/error-actionability.ts";
 
 /**
- * Running a TypeScript program inside the edge-runtime container failed (non-zero
- * exit whose stderr does not contain `"main worker has been destroyed"`, which
- * Go intentionally swallows). Byte-matches Go's wrapping
- * `errors.Errorf("%s: %w:\n%s", errPrefix, err, stderr)` in `RunEdgeRuntimeScript`
- * (`apps/cli-go/internal/utils/edgeruntime.go`), where `errPrefix` is supplied by
- * the caller (e.g. `"error diffing schema"`).
+ * Running a TypeScript program inside the edge-runtime container failed: a non-zero exit whose
+ * stderr does not contain `"main worker has been destroyed"` (which is otherwise swallowed). The
+ * message is `<errPrefix>: <cause>:\n<stderr>`, where `errPrefix` is supplied by the caller (e.g.
+ * `"error diffing schema"`).
  */
 export class EdgeRuntimeScriptError extends Data.TaggedError("EdgeRuntimeScriptError")<{
   readonly message: string;

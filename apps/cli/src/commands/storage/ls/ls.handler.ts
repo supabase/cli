@@ -1,7 +1,6 @@
-import { Effect, Option } from "effect";
+import { Effect, Option, Ref } from "effect";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -11,9 +10,9 @@ import {
   connectStorageGateway,
   loadStorageConfig,
   parseStorageUrlEffect,
+  resolveStorageTarget,
 } from "../storage.frame.ts";
 import type { StorageLsFlags } from "./ls.command.ts";
-import { StorageMutuallyExclusiveFlagsError } from "../storage.errors.ts";
 
 /**
  * `supabase storage ls [path]` — list objects by path prefix.
@@ -27,49 +26,38 @@ export const storageLs = Effect.fn("storage.ls")(function* (flags: StorageLsFlag
   const cliSettings = yield* CommandSettings;
   const telemetryState = yield* TelemetryState;
   const linkedProjectCache = yield* LinkedProjectCache;
-  const resolver = yield* ProjectRefResolver;
 
-  let linkedRef = "";
+  const linkedRef = yield* Ref.make(Option.none<string>());
 
   yield* Effect.gen(function* () {
     yield* assertStorageWorkdir(cliSettings.workdir);
 
-    // `--project-ref` never implies `--linked` and must not be silently
-    // discarded on the local target — see push.handler.ts's identical guard
-    // (db push) for the full TS-only rationale.
-    if (Option.isSome(flags.projectRef) && flags.local) {
-      return yield* Effect.fail(
-        new StorageMutuallyExclusiveFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
-        }),
-      );
+    const { projectRef } = yield* resolveStorageTarget(flags);
+    if (projectRef !== "") {
+      yield* Ref.set(linkedRef, Option.some(projectRef));
     }
 
-    // Routing reads the `--local` value (Go `storage.go:21-32`): local clears the
-    // ref, otherwise the linked path resolves it. No network — safe before the
-    // url parse below.
-    const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(flags.projectRef);
-    linkedRef = projectRef;
-
-    // Config is always loaded; a `[remotes.*]` match prints the override
-    // line.
+    // Config is always loaded; a `[remotes.*]` match prints the override line.
     const loaded = yield* loadStorageConfig(cliSettings, projectRef);
     if (loaded.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
     }
 
-    // Parse the URL BEFORE building the client (Go `ls.go:17`), so an invalid URL
-    // fails without an api-keys lookup or any Storage call.
+    // Parse the URL before building the client, so an invalid URL fails before any
+    // api-keys lookup or Storage call.
     const remotePath = yield* parseStorageUrlEffect(Option.getOrElse(flags.path, () => "ss:///"));
 
     const paths: Array<string> = [];
+    let count = 0;
     const callback = (objectPath: string) =>
-      output.format === "text"
-        ? output.raw(`${objectPath}\n`, "stdout")
-        : Effect.sync(() => {
-            paths.push(objectPath);
-          });
+      Effect.suspend(() => {
+        count++;
+        return output.format === "text"
+          ? output.raw(`${objectPath}\n`, "stdout")
+          : Effect.sync(() => {
+              paths.push(objectPath);
+            });
+      });
 
     yield* connectStorageGateway(
       { projectRef, config: loaded.config, userAgent: cliSettings.userAgent },
@@ -79,12 +67,21 @@ export const storageLs = Effect.fn("storage.ls")(function* (flags: StorageLsFlag
           : iterateStoragePaths(gateway, output, remotePath, callback),
     );
 
+    yield* Effect.annotateCurrentSpan({ "file.count": count });
+
     if (output.format !== "text") {
       yield* output.success("", { paths });
     }
   }).pipe(
     Effect.ensuring(
-      Effect.suspend(() => (linkedRef === "" ? Effect.void : linkedProjectCache.cache(linkedRef))),
+      Ref.get(linkedRef).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (ref) => linkedProjectCache.cache(ref),
+          }),
+        ),
+      ),
     ),
     Effect.ensuring(telemetryState.flush),
   );

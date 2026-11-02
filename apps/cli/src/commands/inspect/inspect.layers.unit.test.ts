@@ -1,15 +1,3 @@
-/**
- * Layer-exposure test for `inspectBaseLayer`.
- *
- * Verifies that `IdentityStitch` is exposed at the top level of the
- * runtime layer so that `withCommandTelemetry` can read
- * `stitchedDistinctId()` via `Effect.serviceOption(IdentityStitch)` and
- * attribute the `cli_command_executed` event to the gotrue id.
- *
- * See `db/lint/lint.layers.unit.test.ts` for the canonical pattern and a
- * detailed explanation of the bug this guards against.
- */
-
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { Effect, Layer, Option } from "effect";
@@ -29,6 +17,7 @@ import {
   mockTelemetryStateLayer,
   useTempWorkdir,
 } from "../../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-values-layer.ts";
 
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import {
@@ -44,14 +33,11 @@ import { DbConnection } from "../../command-internal/db-connection.service.ts";
 import { IdentityStitch } from "../../command-internal/identity-stitch.ts";
 
 import { inspectBaseLayer } from "./inspect.layers.ts";
+import { commandTargetLayer } from "../../shared/output/command-target.layer.ts";
 
 const tempRoot = useTempWorkdir("supabase-inspect-layers-");
 
-/**
- * Stub layer satisfying every external service required by
- * `inspectBaseLayer` from the root runtime. Services under test are
- * left as `Effect.die` no-ops — layer construction must not invoke them.
- */
+// Services under test are stubbed as `Effect.die` — layer construction must not invoke them.
 function ambientStubs() {
   const analytics = mockAnalytics();
   const out = mockOutput();
@@ -70,7 +56,7 @@ function ambientStubs() {
       connect: () => Effect.die("db-connection not needed for layer-exposure test"),
     }),
     Layer.succeed(DbConfigResolver, {
-      resolve: () => Effect.die("db-config-resolver not needed for layer-exposure test"),
+      resolveConnection: () => Effect.die("resolveConnection is not used by this test"),
       resolvePoolerFallback: () =>
         Effect.die("db-config-resolver not needed for layer-exposure test"),
     }),
@@ -78,31 +64,32 @@ function ambientStubs() {
 
   return Layer.mergeAll(
     BunServices.layer,
-    // The runtime layer under test builds the REAL commandSettingsLayer against
-    // the real filesystem — see isolatedHomeLayer's docs.
+    // Builds the real commandSettingsLayer against the real filesystem; see isolatedHomeLayer's docs.
     isolatedHomeLayer(tempRoot.current),
     mockTty(),
     mockProcessControl().layer,
     analytics.layer,
     mockTelemetryRuntime(),
     out.layer,
+    commandTargetLayer.pipe(Layer.provide(out.layer)),
     flagLayers,
     mockCommandSettings({ workdir: "/tmp/inspect-layers-test" }),
     mockCommandCredentialsLayer,
     mockLinkedProjectCacheLayer,
     mockTelemetryStateLayer,
+    cliConfigValuesTestLayer,
     heavyServiceStubs,
   );
 }
 
 describe("inspectBaseLayer — IdentityStitch exposure", () => {
-  it.live(
+  it.effect(
     "exposes IdentityStitch at top level so withCommandTelemetry can read stitchedDistinctId()",
     () => {
       return Effect.gen(function* () {
         const stitch = yield* Effect.serviceOption(IdentityStitch);
         expect(Option.isSome(stitch)).toBe(true);
-      }).pipe(Effect.provide(inspectBaseLayer), Effect.provide(ambientStubs()));
+      }).pipe(Effect.provide(Layer.provide(inspectBaseLayer, ambientStubs())));
     },
   );
 });

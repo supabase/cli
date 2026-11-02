@@ -2,39 +2,41 @@ import { BunServices } from "@effect/platform-bun";
 import { CliConfigStore } from "@supabase/config/effect";
 import {
   Cause,
+  Config,
   Console,
+  Crypto,
   Effect,
   Exit,
   FileSystem,
   Fiber,
   Layer,
   Path,
+  PlatformError,
+  Predicate,
   Runtime,
   Scope,
   Stdio,
 } from "effect";
-import { CliError, CliOutput, Command } from "effect/unstable/cli";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { CliError, CliOutput, Command } from "effect/cli";
+import { HttpClient } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
+import { REMOTE_FLAG_NAME } from "../../command-internal/target/remote-vocabulary.ts";
 import { CLI_VERSION } from "./version.ts";
-import { Credentials } from "../auth/credentials.service.ts";
 import type { CliProjectHome } from "../config/cli-project-home.service.ts";
 import type { CliSettings } from "../config/cli-settings.service.ts";
 import type { ProjectLinkState } from "../config/project-link-state.service.ts";
-import type { CommandPlatformApiFactory } from "../../auth/command-platform-api-factory.service.ts";
+import { legacyProjectStateLayer } from "../config/legacy-project-state.layer.ts";
+import type { LegacyProjectState } from "../config/legacy-project-state.service.ts";
 import { jsonCliOutputFormatter } from "../output/json-formatter.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
 import { outputLayerFor } from "../output/output.layer.ts";
+import { failureBesideClosedStdout, ignoreStdoutClosed } from "../output/errors.ts";
 import { normalizeCause } from "../output/normalize-error.ts";
 import type { OutputFormat } from "../output/types.ts";
 import { Output } from "../output/output.service.ts";
-import { GoChildExitError } from "../../command-internal/go-child-exit.error.ts";
-import {
-  GoProxyInvocation,
-  goProxyInvocationLayer,
-} from "../../command-internal/go-proxy-invocation.ts";
 import { cliSettingsLayer } from "../config/cli-settings.layer.ts";
+import { cliConfigProviderLayer } from "../config/cli-config-provider.layer.ts";
 import { cliProjectHomeLayer } from "../config/cli-project-home.layer.ts";
-import { CliProjectLocalServiceVersions } from "../config/cli-project-local-service-versions.service.ts";
 import { cliProjectContextLayer } from "../config/cli-project-context.layer.ts";
 import { projectLinkStateLayer } from "../config/project-link-state.layer.ts";
 import { processControlLayer } from "../runtime/process-control.layer.ts";
@@ -43,32 +45,49 @@ import { ttyLayer } from "../runtime/tty.layer.ts";
 import { CommandRuntime } from "../runtime/command-runtime.service.ts";
 import { ProcessControl } from "../runtime/process-control.service.ts";
 import type { RuntimeInfo } from "../runtime/runtime-info.service.ts";
-import type { Stdin } from "../runtime/stdin.service.ts";
 import type { Tty } from "../runtime/tty.service.ts";
 import type { Analytics } from "../telemetry/analytics.service.ts";
 import { aiToolLayer } from "../telemetry/ai-tool.layer.ts";
 import { AiTool } from "../telemetry/ai-tool.service.ts";
 import { telemetryRuntimeLayer } from "../telemetry/runtime.layer.ts";
 import type { TelemetryRuntime } from "../telemetry/runtime.service.ts";
-import { tracingLayer } from "../telemetry/tracing.layer.ts";
-import { CliArgs } from "./cli-args.service.ts";
-import { GLOBAL_VALUE_FLAG_TOKENS } from "./cobra-flag-groups.ts";
-import { resolveAgentOutputFormatFromArgs } from "./agent-output.ts";
+import {
+  resolveTraceSettings,
+  withDebugConsole,
+  withTraceExport,
+} from "../telemetry/trace-export.layer.ts";
+import { CliArgs, type CliArgsShape } from "./cli-args.service.ts";
+import { GLOBAL_VALUE_FLAG_TOKENS } from "./flag-groups.ts";
+import {
+  BOOLEAN_FLAG_VALUES,
+  resolveAgentOutputFormatFromArgs,
+  ROOT_BOOLEAN_FLAGS,
+} from "./agent-output.ts";
+import {
+  bareRemoteOperand,
+  hasConflictingRemotes,
+  joinRemoteOperands,
+  remoteOperandCapacity,
+  type RemoteArgvLeaf,
+} from "./remote-argv.ts";
 import { SuccessTrailer, successTrailerLayer } from "./success-trailer.ts";
 import type { CliErrorSuggestionContext } from "./subcommand-flag-suggestions.ts";
 import {
   flagAliasesFor,
+  isRemoteFlagMisuse,
   isValueTakingFlagTokenFor,
   resolvedCommandPathForArgv,
 } from "./subcommand-flag-suggestions.ts";
 
 /**
- * Services the two CLI shells provide before evaluating a root command. Keep
- * this list explicit: preserving the root command's requirement channel here
- * makes an accidentally unprovided service fail at the shell boundary instead
- * of becoming a runtime missing-service defect.
+ * Services available before evaluating the root command. Keep this list explicit: preserving the
+ * root command's requirement channel here makes an accidentally unprovided service fail at the
+ * shell boundary instead of becoming a runtime missing-service defect. Every entry must be
+ * genuinely satisfied at the root by `cliProgramFor`'s provide chain (including
+ * `fallbackCommandLayer`'s root `CommandRuntime` placeholder). Never widen this union to silence
+ * a leaked command requirement; provide the layer in the command instead.
  */
-type AllowedRunCliServices =
+export type AllowedRunCliServices =
   | Analytics
   | ChildProcessSpawner.ChildProcessSpawner
   | CliArgs
@@ -76,6 +95,8 @@ type AllowedRunCliServices =
   | CliSettings
   | CommandRuntime
   | FileSystem.FileSystem
+  | Crypto.Crypto
+  | LegacyProjectState
   | Path.Path
   | ProcessControl
   | ProjectLinkState
@@ -83,78 +104,49 @@ type AllowedRunCliServices =
   | Scope.Scope
   | Stdio.Stdio
   | TelemetryRuntime
-  | Tty
-  | CommandPlatformApiFactory
-  | Stdin
-  | "effect/unstable/cli/GlobalFlag/linked"
-  | "effect/unstable/cli/GlobalFlag/local";
+  | Tty;
 
-// Global flags that consume the following argv token as their value — a value
-// flag missing here would make `extractCommandPath` mistake its value for a
-// command-path segment, and would leave the flag's following token unconsumed
-// for every scanner below — silently mis-resolving `--workdir` for the bare
-// space-separated spelling, or missing the root `--version` behind
-// `--completions bash`. Derived from `PERSISTENT_VALUE_FLAG_NAMES` (see
-// `GLOBAL_VALUE_FLAG_TOKENS`) so the registries cannot drift apart again
-// (issue #6482).
+export type CliRootCommand = Command.Command<"supabase", {}, {}, unknown, AllowedRunCliServices>;
+
+// Global flags that consume their following argv token as a value; missing one here would make
+// `extractCommandPath` mistake its value for a command-path segment, and leave scanners below
+// unable to skip past it. Derived from `PERSISTENT_VALUE_FLAG_NAMES` so the two registries can't
+// drift apart.
 //
-// DELIBERATE MODEL SPLIT: the scanners below keep pflag-style semantics for
-// BOOLEAN globals — a bare `--debug` never consumes a following token here —
-// while the shipped parser also consumes a space-separated boolean literal
-// (`--debug false`), which `agent-output.ts`'s format walk mirrors. The
-// residual divergence only steers the upgrade-notice base-dir/force-fetch
-// choice and the signal-wrapper selection for spellings like
-// `--debug false --version`, predates the issue #6482 fixes, and is
-// deliberately left with the walk-consolidation follow-up rather than
-// widened into this scanner family piecemeal.
+// `extractCommandPath` treats a recognized bare boolean literal (`--debug false`) as consuming a
+// token too, but `rootFlagTokens`/`firstPositionalIndex` keep the stricter rule that a bare
+// boolean never consumes the next token — don't unify these; they answer different questions.
 const globalFlagsWithValues: ReadonlySet<string> = GLOBAL_VALUE_FLAG_TOKENS;
 
-// Commands that run their own foreground signal loop (serve/start daemons) and must
-// NOT be wrapped in the global signal-interrupt handler, which would otherwise race
-// their graceful shutdown. Matched by leading command-path segments.
+// Commands that run their own foreground signal loop (serve/start daemons) and must not be
+// wrapped by the global signal-interrupt handler, which would otherwise race their graceful
+// shutdown. Matched by leading command-path segments.
 //
-// Top-level `start` (["start"]) is deliberately NOT listed here: it used to proxy to the
-// Go binary, which managed SIGINT/SIGTERM itself, but the native TypeScript `start`
-// installs no signal handling of its own — excluding it left Ctrl-C mid-bring-up as a raw,
-// unhandled OS signal that hard-kills the process, skipping every Effect finalizer
-// including `rollbackStart`. Go's own `start` DID roll back on SIGINT
-// (`cmd/root.go:99,155` wraps every command's context with `signal.NotifyContext`;
-// formerly `internal/start/start.go:73-82`, which rolled back on any non-nil `run()`
-// error, including the `context.Canceled` a SIGINT produces — internal/start was
-// deleted as unreachable in CLI-1966, last present at commit a253ccba2), so native
-// `start` must participate in the global
-// wrapper to match. This list is matched purely against argv command-path segments.
-//
-// `["db", "start"]` (top-level `db start`) is ALSO deliberately not listed here, for the exact
-// same reason as `start` above: it used to proxy container bootstrap to the hidden Go
-// `db __db-bootstrap --mode start` seam, which held SIGINT/SIGTERM itself, but CLI-1954's
-// native port (`commands/db/start/start.handler.ts` -> `startDatabase`) installs
-// no signal handling of its own — it relies on the SAME `Effect.onError(() =>
-// rollbackStart(...))` wrapper `supabase start` uses, which only ever fires when this
-// process's own fiber is interrupted (by `Fiber.interrupt` below, or by an ordinary typed
-// failure) — a raw, unhandled OS signal skips it entirely, exactly like the `start` case above.
-//
-// `["db", "reset"]` was ALSO listed here once, for the same reason `db start` used to be:
-// its local path drove the hidden `db __db-bootstrap --mode recreate`/`--mode await-storage`
-// seam via a bespoke DIRECT `ChildProcess.make` spawn (not through `GoProxy`), which
-// held SIGINT/SIGTERM/SIGHUP itself while the Go child recreated the container — the global
-// handler's own `Fiber.interrupt` would otherwise race that child's Docker cleanup and lose
-// its real exit status. CLI-1955 removed that seam entirely: `db reset --local` is now fully
-// native TS (`command-internal/db-bootstrap/recreate-local-database.ts`), installing no signal
-// handling of its own. Its only remaining Go child is the niche `--experimental` remote
-// delegate, via the SAME `GoProxy.exec`/`execCapture` every other unlisted
-// command already uses safely alongside this global handler — so `db reset` was removed from
-// this list too, matching `db start`'s own precedent exactly.
+// `start` and `db start` are not listed here even though they sound similar: their
+// native implementations install no signal handling of their own, and instead rely on the global
+// handler's interruption to trigger their own rollback-on-error cleanup. Listing them would let a
+// raw Ctrl-C skip that cleanup entirely.
 const selfManagedSignalCommands: ReadonlyArray<ReadonlyArray<string>> = [["functions", "serve"]];
 
 /** Positional command-path tokens from argv, skipping global flags and their values. */
 export function extractCommandPath(args: ReadonlyArray<string>): ReadonlyArray<string> {
   const commandArgs: Array<string> = [];
   for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index]!;
+    const arg = args[index];
+    if (arg === undefined) continue;
+    if (arg === "--") return commandArgs;
     if (arg.startsWith("-")) {
       const [flag] = arg.split("=", 1);
       if (!arg.includes("=") && flag !== undefined && globalFlagsWithValues.has(flag)) {
+        index += 1;
+      } else if (shortClusterConsumesNextToken(arg, isGlobalValueFlagToken)) {
+        index += 1;
+      } else if (
+        !arg.includes("=") &&
+        flag !== undefined &&
+        ROOT_BOOLEAN_FLAGS.includes(flag) &&
+        BOOLEAN_FLAG_VALUES.has(args[index + 1] ?? "")
+      ) {
         index += 1;
       }
       continue;
@@ -166,7 +158,7 @@ export function extractCommandPath(args: ReadonlyArray<string>): ReadonlyArray<s
 
 /**
  * Yields argv tokens that are actual flag occurrences, with their positions,
- * honoring cobra/pflag boundaries: everything after a bare `--` is an operand,
+ * honoring flag boundaries: everything after a bare `--` is an operand,
  * and a token consumed as a value-taking global flag's value (`--profile -v`)
  * is not a flag.
  */
@@ -175,7 +167,8 @@ export function* rootFlagTokens(
   isValueTakingToken: (token: string) => boolean = isGlobalValueFlagToken,
 ): Generator<{ readonly token: string; readonly index: number }> {
   for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index]!;
+    const arg = args[index];
+    if (arg === undefined) continue;
     if (arg === "--") return;
     if (!arg.startsWith("-")) continue;
     yield { token: arg, index };
@@ -192,7 +185,7 @@ const isGlobalValueFlagToken = (token: string): boolean => globalFlagsWithValues
 
 /**
  * The full value-taking-token predicate for a real invocation: the global
- * flags plus the resolved leaf command's own value flags — pflag parses with
+ * flags plus the resolved leaf command's own value flags — parsing uses
  * the resolved command's complete flagset, so `login --name --debug` hands
  * `--debug` to `--name` and never sets the debug flag.
  */
@@ -207,28 +200,74 @@ function valueTakingFlagTokenPredicateForArgv(
   return (token) => isGlobalValueFlagToken(token) || leafPredicate(token);
 }
 
+/** How the resolved command reads operands; `undefined` unless `--remote` is given and accepted. */
+export function remoteArgvLeafFor(
+  rootCommand: Command.Command.Any,
+  args: ReadonlyArray<string>,
+): RemoteArgvLeaf | undefined {
+  if (!args.some((arg) => arg === "--remote" || arg.startsWith("--remote="))) return undefined;
+  const path = resolvedCommandPathForArgv(rootCommand, extractCommandPath(args));
+  const operandCapacity = remoteOperandCapacity(rootCommand, path);
+  if (operandCapacity === undefined) return undefined;
+  const isValueTakingToken = valueTakingFlagTokenPredicateForArgv(rootCommand, args);
+  return {
+    pathLength: path.length - 1,
+    operandCapacity,
+    consumesNextToken: (token) => {
+      const [flag] = token.split("=", 1);
+      return (
+        (!token.includes("=") && flag !== undefined && isValueTakingToken(flag)) ||
+        shortClusterConsumesNextToken(token, isValueTakingToken)
+      );
+    },
+  };
+}
+
+/**
+ * `rawArgs` with a bare `--remote <word>` joined to `--remote=<word>` wherever the command's
+ * operands leave no other reading, plus the word a bare `--remote` is still followed by and
+ * whether `--remote` is given more than once with different values.
+ */
+export function prepareCliArgs(
+  rootCommand: Command.Command.Any,
+  rawArgs: ReadonlyArray<string>,
+): CliArgsShape {
+  const leaf = remoteArgvLeafFor(rootCommand, rawArgs);
+  if (leaf === undefined) return { args: rawArgs };
+  const args = joinRemoteOperands(rawArgs, leaf);
+  return {
+    args,
+    bareRemoteOperand: bareRemoteOperand(args, leaf),
+    remoteConflict: hasConflictingRemotes(args, leaf),
+  };
+}
+
+/** `CliArgs` and a `Stdio` sharing one argv, so every reader sees the rewritten command line. */
+export const cliArgsLayer = (cliArgs: CliArgsShape) =>
+  Layer.mergeAll(
+    Layer.succeed(CliArgs, cliArgs),
+    Layer.effect(
+      Stdio.Stdio,
+      Effect.map(Stdio.Stdio, (stdio) =>
+        Stdio.make({ ...stdio, args: Effect.succeed(cliArgs.args) }),
+      ),
+    ),
+  );
+
 /** Whether `token` is an occurrence of the long or exact-short boolean flag `name`, bare or valued (`--help`, `--help=false`). */
 function isFlagOccurrence(token: string, name: string): boolean {
   return token === name || token.startsWith(`${name}=`);
 }
 
 /**
- * `strconv.ParseBool`'s true spellings — a TRUTHINESS set for the
- * pflag-modeled `--version=<value>` resolution below. Answers a different
- * question than `BOOLEAN_FLAG_VALUES` (`agent-output.ts`), which asks whether
- * the shipped parser ACCEPTS the value at all — that parser serves the
- * Version action for any accepted value, `--version=no` included, so the two
- * sets must not be merged. The residual divergence runs both ways — an
- * accepted-but-not-ParseBool-true spelling (`--version=no`) resolves
- * `version=false` here while the renderer still serves the version, and a
- * ParseBool-true spelling the parser rejects (`--version=t`) never serves
- * anything — but it only steers the upgrade-notice scans and predates the
- * issue #6482 fixes.
+ * The boolean true spellings (`1`, `t`, `T`, `TRUE`, `true`, `True`), used to resolve `--version=<value>` here. This answers a
+ * different question than `BOOLEAN_FLAG_VALUES` (`agent-output.ts`), which asks whether the
+ * shipped parser accepts the value at all — the two sets must not be merged.
  */
-const PFLAG_BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
+const BOOL_TRUE_VALUES = new Set(["1", "t", "T", "TRUE", "true", "True"]);
 
 /**
- * pflag reads a single-dash token as a cluster of shorthand flags until a
+ * A single-dash token is read as a cluster of shorthand flags until a
  * value-taking shorthand consumes the rest of the cluster as its value.
  */
 function* shortClusterFlagNames(
@@ -237,7 +276,7 @@ function* shortClusterFlagNames(
 ): Generator<string> {
   if (!token.startsWith("-") || token.startsWith("--")) return;
   for (let rest = token.slice(1); rest.length > 0; rest = rest.slice(1)) {
-    const short = `-${rest[0]!}`;
+    const short = `-${rest.charAt(0)}`;
     if (isValueTakingToken(short)) return;
     if (rest[1] === "=") {
       yield short;
@@ -247,21 +286,21 @@ function* shortClusterFlagNames(
   }
 }
 
-/** Whether a short cluster ends in a value-taking shorthand with no inline value, which pflag satisfies with the NEXT argv token (`-ho json`). */
+/** Whether a short cluster ends in a value-taking shorthand with no inline value, which consumes the NEXT argv token (`-ho json`). */
 function shortClusterConsumesNextToken(
   token: string,
   isValueTakingToken: (token: string) => boolean,
 ): boolean {
   if (!token.startsWith("-") || token.startsWith("--")) return false;
   for (let rest = token.slice(1); rest.length > 0; rest = rest.slice(1)) {
-    if (isValueTakingToken(`-${rest[0]!}`)) return rest.length === 1;
+    if (isValueTakingToken(`-${rest.charAt(0)}`)) return rest.length === 1;
     if (rest[1] === "=") return false;
   }
   return false;
 }
 
 /**
- * Index of the first positional token — pflag's view, with flags and their
+ * Index of the first positional token, with flags and their
  * consumed values skipped and everything from a bare `--` on positional —
  * or `args.length` when there is none.
  */
@@ -270,7 +309,8 @@ function firstPositionalIndex(
   isValueTakingToken: (token: string) => boolean,
 ): number {
   for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index]!;
+    const arg = args[index];
+    if (arg === undefined) continue;
     if (arg === "--") return index + 1;
     if (!arg.startsWith("-")) return index;
     const [flag] = arg.split("=", 1);
@@ -284,14 +324,10 @@ function firstPositionalIndex(
 }
 
 /**
- * Whether argv sets the ROOT `--version` flag — in any spelling pflag marks as
- * changed, which is what Go's `shouldFetchRelease` keys on: bare, valued
- * (`--version=false` included), or followed by a
- * space-form operand (`--version true` — cobra serves the version built-in
- * before it ever validates the stray operand). A subcommand's own flag of the
- * same name (`db reset --version x`) does not count: a positional precedes
- * it. Operands after `--` and tokens consumed as another flag's value never
- * count.
+ * Whether argv sets the root `--version` flag, in any spelling that marks it as changed: bare,
+ * valued (`--version=false` included), or followed by a space-form operand (`--version true`,
+ * since the version built-in is served before the stray operand is validated). A subcommand's
+ * own `--version` (`db reset --version x`) does not count, since a positional precedes it.
  */
 export function hasRootVersionFlag(
   args: ReadonlyArray<string>,
@@ -306,20 +342,11 @@ export function hasRootVersionFlag(
 }
 
 /**
- * Whether cobra serves this argv as a built-in — help at any depth, or root
- * version — without ever running `PersistentPreRunE`. Help counts on
- * presence: a false value on the root or a group still lands on cobra's
- * non-`Runnable()` help (execute() serves the built-ins and the Runnable
- * check before `preRun`), and the one input Go would instead run (a runnable
- * leaf under `--help=false`) is a spelling the vendored effect CLI serves
- * help for anyway. The version flag resolves pflag-style, last value wins: a
- * true value counts as the version built-in, `--version=false <leaf>` counts
- * as running the leaf — `ChangeWorkDir` included — and only a bare
- * invocation falls back to the non-runnable root's help. That is this
- * function's MODEL, not the shipped renderer's behavior: the parser serves
- * the Version action for any accepted value, `--version=no` included (see
- * `PFLAG_BOOL_TRUE`'s doc above for the deliberate split — only the
- * upgrade-notice checks ride on this resolution).
+ * Whether this argv resolves to a built-in action — help at any depth, or the root version —
+ * without ever running a command handler. Help counts on presence, regardless of value. The
+ * version flag resolves last-value-wins: a true value counts as the version
+ * built-in, `--version=false <leaf>` counts as running the leaf, and only a bare invocation with
+ * no positional falls back to the root's help. Used only by the upgrade-notice checks below.
  */
 export function hasRootHelpOrVersionFlag(
   args: ReadonlyArray<string>,
@@ -334,7 +361,7 @@ export function hasRootHelpOrVersionFlag(
     if (index < positional) {
       if (token === "--version") version = true;
       else if (token.startsWith("--version=")) {
-        version = PFLAG_BOOL_TRUE.has(token.slice("--version=".length));
+        version = BOOL_TRUE_VALUES.has(token.slice("--version=".length));
       }
     }
   }
@@ -376,21 +403,11 @@ function formatterLayerFor(
 }
 
 /**
- * Process exit code for a failed CLI run, matching Go cobra's exit-code
- * mapping. Delegates to Effect's own `Runtime` exit-code protocol (the same
- * one `Runtime.defaultTeardown` uses) rather than hand-rolling `ShowHelp`
- * classification: `CliError.ShowHelp` declares
- * `[Runtime.errorExitCode] = this.errors.length ? 1 : 0`, so a bare group
- * command's default handler failing with `ShowHelp({ errors: [] })` (no
- * subcommand given, e.g. `supabase branches`) reads as exit `0` here — matching
- * Go cobra's non-`Runnable()` handling, which internally returns
- * `flag.ErrHelp` and `ExecuteC()` maps that to "print help, return nil error".
- * A `ShowHelp` with a non-empty `errors` array (a genuine parse/validation
- * failure) reads as exit `1`, and any other failure (including a `Cause.die`
- * defect with no typed `ShowHelp` marker at all) falls back to
- * `Runtime.getErrorExitCode`'s default of `1`. An explicit `--help` invocation
- * never reaches this function — it's handled earlier as a successful
- * `GlobalFlag.Action` and exits 0 via the success path.
+ * Process exit code for a failed CLI run. Delegates to Effect's own `Runtime` exit-code protocol
+ * rather than hand-rolling classification: a bare group command's default handler failing with
+ * `ShowHelp({ errors: [] })` (no subcommand given) reads as exit `0`; a `ShowHelp` with a
+ * non-empty `errors` array, or any other failure, falls back to exit `1`. An explicit `--help`
+ * invocation never reaches this function — it exits 0 via the success path.
  */
 export function exitCodeForFailure(cause: Cause.Cause<unknown>): number {
   if (Cause.hasInterruptsOnly(cause)) return 130;
@@ -398,30 +415,16 @@ export function exitCodeForFailure(cause: Cause.Cause<unknown>): number {
 }
 
 /**
- * Whether `handledProgram` should render its generic `output.fail` stderr line
- * for a failed run, given the run's cause and the exit code `exitCodeForFailure`
- * already computed for it. False for a clean exit (`0`), an interrupt (`130`),
- * and a `GoChildExitError` (CLI-1879) — a delegated Go child already wrote
- * its own detailed failure to the inherited stderr, so a second generic line
- * here would be a line Go itself never prints.
- *
- * Checked by concrete type, NOT Effect's shared `[Runtime.errorReported]`
- * marker: `CliError.ShowHelp` also sets that marker to `false`, for an
- * unrelated reason (the CLI framework already rendered help/usage text) —
- * gating on the marker would ALSO suppress `normalizeCause`'s Go-parity
- * rendering for a `MissingOption` wrapped in `ShowHelp` (e.g. `Error: required
- * flag(s) "type" not set`), a real parity regression. See the test suite for
- * the regression this guards.
+ * Whether `handledProgram` should render its generic `output.fail` stderr line for a failed run.
+ * False only for a clean exit (`0`) or an interrupt (`130`); every other exit code reports.
  */
-export function shouldReportFailure(cause: Cause.Cause<unknown>, exitCode: number): boolean {
-  if (exitCode === 0 || exitCode === 130) return false;
-  return !(Cause.squash(cause) instanceof GoChildExitError);
+export function shouldReportFailure(exitCode: number): boolean {
+  return exitCode !== 0 && exitCode !== 130;
 }
 
 /**
- * A single `Console.log`/`Console.error` call captured while
- * `withoutParseErrorHelpDump` runs, so it can be replayed once the run's
- * outcome is known instead of being written immediately.
+ * A single `Console.log`/`Console.error` call captured while `withoutParseErrorHelpDump` runs, so
+ * it can be replayed once the run's outcome is known instead of being written immediately.
  */
 interface BufferedConsoleWrite {
   readonly method: "log" | "error";
@@ -429,12 +432,10 @@ interface BufferedConsoleWrite {
 }
 
 /**
- * A `Console.Console` that captures `log`/`error` calls into `sink` instead
- * of writing them, and forwards every other method straight through to the
- * real console. The vendored `effect` CLI library's parser only ever calls
- * `log`/`error` (`showHelp()` and the `Help`/`Version`/`Completions`
- * `GlobalFlag.Action`s in `Command.ts`) — the rest are implemented so this
- * stays a faithful `Console.Console` rather than a partial stand-in.
+ * A `Console.Console` that captures `log`/`error` calls into `sink` instead of writing them, and
+ * forwards every other method straight through to the real console. The vendored CLI library only
+ * ever calls `log`/`error`, but every method is implemented so this stays a faithful
+ * `Console.Console` rather than a partial stand-in.
  */
 function bufferingConsole(sink: Array<BufferedConsoleWrite>): Console.Console {
   const real = globalThis.console;
@@ -466,104 +467,21 @@ function bufferingConsole(sink: Array<BufferedConsoleWrite>): Console.Console {
 }
 
 /**
- * How `withoutParseErrorHelpDump` should dispose of its buffered
- * `Console.log`/`Console.error` writes, given how the wrapped effect failed:
- *
- * - `"flush-unchanged"` — success, or a "clean" `ShowHelp` (`errors: []` —
- *   an explicit `--help` or a bare group command with no subcommand, both
- *   of which map to exit `0` per `exitCodeForFailure` above), or any other
- *   failure. Those buffered writes (if any, there normally are none outside
- *   the two `ShowHelp` cases) are the actual intended output.
- * - `"drop"` — a genuine parse/validation failure Go cobra's
- *   `PersistentPreRunE` already suppresses usage for: `ValidateRequiredFlags`
- *   (cobra `command.go:1007`), which sets `cmd.SilenceUsage = true`
- *   (`apps/cli-go/cmd/root.go:97`) BEFORE it runs. This library's
- *   `MissingOption` is the one tag that maps to that stage — see CLI-1901 —
- *   but ONLY when the flag was never given at all. A required flag that IS
- *   present on argv but missing its value (e.g. `sso add --type` with
- *   nothing after it) also raises `MissingOption` in this library (it has no
- *   distinct "value required" tag), yet Go's own pflag raises a DIFFERENT,
- *   earlier `ParseFlags`-time error for that input (`flag needs an
- *   argument: --type`) which does NOT get `SilenceUsage` treatment — verified
- *   against the real binary (`apps/cli-go/supabase-go sso add --type`: full
- *   usage block on stderr, vs `sso add --project-ref x` with `--type` never
- *   mentioned at all: bare `required flag(s) "type" not set`, no usage). See
- *   `isMissingFlagTokenPresent` below for how this case is distinguished from
- *   a genuinely-absent flag.
- * - `"flush-help-doc-to-stderr"` — every other genuine parse/validation
- *   failure (`UnrecognizedOption`, `InvalidValue`, `MissingArgument`,
- *   `UnknownSubcommand`; multiple simultaneous errors also lands here).
- *   These map to cobra's `ParseFlags`/`ValidateArgs` (`command.go:919,968`),
- *   which run BEFORE `PersistentPreRunE` — Go still shows a usage block for
- *   these, just on stderr, never stdout (verified against the real
- *   `apps/cli-go/supabase-go` binary, e.g. `branches --bogus-flag` and
- *   `sso add --type bogus`). The help doc this library renders isn't
- *   byte-identical to cobra's shorter usage template (that would need a
- *   second formatter, out of scope for CLI-1901), but showing SOME usage
- *   content on the RIGHT stream is closer to Go than showing none at all.
- *
- * In every "genuine failure" case, the buffered `Console.error` write (the
- * library's own duplicate render of the errors) is always dropped — this
- * repo's own `handledProgram` + `normalizeCause` already render the single
- * Go-parity line for it (see `withoutParseErrorHelpDump` below).
+ * How `withoutParseErrorHelpDump` disposes of its buffered `Console` writes for a failed run.
+ * `"drop"` applies only when a required flag was never given at all (see
+ * `isMissingFlagTokenPresent`) — a required flag that's present but missing its value is a
+ * different, earlier parse error and must render normally. Every other genuine parse/validation
+ * failure gets its help doc redirected to stderr instead of stdout; the library's own duplicate
+ * error line is always dropped, since `handledProgram`/`normalizeCause` render that separately.
  */
 export type ParseErrorConsoleDisposition = "flush-unchanged" | "drop" | "flush-help-doc-to-stderr";
 
 /**
- * Whether `option`'s canonical long-form flag token (`--option` or
- * `--option=...`), or one of its short/long `aliases` (e.g. `-t`), appears
- * anywhere in the raw argv this run was invoked with BEFORE the `--`
- * operand terminator (if any) — used to tell a genuinely-absent required
- * flag (Go: `SilenceUsage`-suppressed) apart from one that's present but
- * missing its value (Go: a `ParseFlags`-time error, usage still shown). See
- * the `"drop"` case on `ParseErrorConsoleDisposition` above for the full
- * rationale. `aliases` come from `flagAliasesFor` (see
- * `classifyParseErrorConsoleOutput` below), already formatted with their
- * leading dash(es).
- *
- * Tokens after a literal `--` are always positional operands, never a flag
- * occurrence for ANY option — this mirrors the vendored `effect` CLI
- * library's own lexer, which treats `--` the same way (`internal/lexer.ts`,
- * `argv.indexOf("--")`). Without this cutoff, a command like
- * `migration repair -- 20230101000000 --status` (a required `Flag.choice`,
- * `commands/migration/repair/repair.command.ts`) would have its
- * trailing `--status` positional argument misread as evidence the `--status`
- * flag was given, flipping a genuinely-absent-flag failure (Go: no usage
- * shown) into a "present but missing its value" one (Go: usage shown) — see
- * CLI-1901.
- *
- * That `--` cutoff is only genuine when the scan reaches `--` as a LIVE
- * token, not when it was itself consumed as the VALUE of an immediately
- * preceding value-taking flag. Go/pflag's `parseArgs` (`flag.go`) only
- * recognizes `--` as the terminator when it's at the FRONT of the remaining
- * args on a fresh iteration; `parseLongArg`'s value branch pops the very
- * next raw token with no shape check at all, so a literal `--` right after a
- * value-taking flag gets swallowed as that flag's value and never reaches
- * the terminator check — e.g. `sso add --project-ref -- --type` hands the
- * literal string `--` to `--project-ref`, and parsing resumes normally on
- * `--type` (which then fails with pflag's OWN `ValueRequiredError` — a
- * `ParseFlags`-time error, usage still shown — since nothing follows it).
- * The scan below therefore folds the terminator check into the very same
- * loop that already skips consumed-value tokens, rather than precomputing
- * `args.indexOf("--")` up front — a Codex review finding on CLI-1901.
- *
- * `isValueTakingToken` (from `isValueTakingFlagTokenFor`, OR'd with
- * `globalFlagsWithValues` at the `classifyParseErrorConsoleOutput` call site
- * below) lets the scan skip a token immediately consumed as the VALUE of a
- * preceding value-taking flag — local OR global — instead of mistaking that
- * consumed token (or a consumed literal `--`, per above) for `option`'s own
- * occurrence. Go/pflag's `parseLongArg` (`flag.go`) unconditionally consumes
- * the very next argv entry as a value-taking flag's value, even when that
- * entry itself looks like another flag — e.g. `sso add --project-ref --type`
- * hands the literal string `--type` to `--project-ref`, so `--type` is never
- * seen as its own occurrence in Go, and its `MissingOption` failure keeps
- * Go's `SilenceUsage` treatment (no usage shown). The vendored `effect`
- * parser does NOT replicate that eager consumption (it only treats a
- * following token as a value when the lexer tags it `Value`, never a
- * flag-shaped token — `internal/parser.ts`'s `consumeFlagValueWithTokens`),
- * so without this skip the raw scan would find the literal `--type` token
- * and wrongly flush the help doc for an input Go shows no usage for — a
- * Codex review finding on CLI-1901.
+ * Whether `option`'s flag token, or one of its `aliases`, appears anywhere in argv before a live
+ * `--` terminator — used to tell a genuinely-absent required flag (usage suppressed) apart from
+ * one that's present but missing its value (a separate, earlier parse error that still shows
+ * usage). `isValueTakingToken` skips tokens consumed as another flag's value (including a literal
+ * `--`), so a consumed token is never mistaken for `option`'s own occurrence.
  */
 function isMissingFlagTokenPresent(
   option: string,
@@ -575,18 +493,15 @@ function isMissingFlagTokenPresent(
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
     if (arg === undefined) continue;
-    // A literal "--" only terminates flag parsing when reached as a LIVE
-    // token here — if the previous iteration already skipped it as a
-    // value-taking flag's consumed value (below), this line never runs for
-    // it, matching pflag's own ordering (see the doc comment above).
+    // A literal "--" only terminates parsing when reached live — if it was already skipped as a
+    // value-taking flag's consumed value below, this check never runs for it.
     if (arg === "--") break;
     if (tokens.some((token) => arg === token || arg.startsWith(`${token}=`))) return true;
     const equalIndex = arg.indexOf("=");
     const bareToken = equalIndex === -1 ? arg : arg.slice(0, equalIndex);
     if (equalIndex === -1 && isValueTakingToken(bareToken)) {
-      // Go/pflag consumes the following argv entry as `bareToken`'s value
-      // unconditionally — even a literal "--" — so skip it here too, before
-      // the next iteration's terminator check ever sees it.
+      // The following argv entry is consumed as `bareToken`'s value unconditionally — even a
+      // literal "--" — so skip it here too, before the terminator check ever sees it.
       index++;
     }
   }
@@ -598,77 +513,46 @@ export function classifyParseErrorConsoleOutput(
   context: CliErrorSuggestionContext,
 ): ParseErrorConsoleDisposition {
   const error = Cause.squash(cause);
-  if (!CliError.isCliError(error) || error._tag !== "ShowHelp" || error.errors.length === 0) {
+  if (
+    !CliError.isCliError(error) ||
+    !Predicate.isTagged(error, "ShowHelp") ||
+    error.errors.length === 0
+  ) {
     return "flush-unchanged";
   }
-  // `isValueTakingFlagTokenFor` only inspects the resolved LEAF command's own
-  // flags, so it has no visibility into value-taking GLOBAL flags (`--network-id`,
-  // `--profile`, etc. — see `globalFlagsWithValues` above). Without OR-ing those
-  // in, a global value flag consuming the very next token (e.g.
-  // `migration repair --network-id --status --local <version>` handing the
-  // literal `--status` to `--network-id`, per pflag's `parseLongArg`) would
-  // leave the required `status` flag looking "present" to the scan below, even
-  // though Go/pflag never sees it as its own occurrence and suppresses usage
-  // for it (`SilenceUsage`) — a Codex review finding on CLI-1901.
+  // `isValueTakingFlagTokenFor` only inspects the resolved leaf command's own flags, so
+  // value-taking global flags (`--network-id`, `--profile`, etc.) must be OR'd in — otherwise a
+  // global flag consuming the very next token could leave a genuinely-required flag looking
+  // "present" to the scan below.
   const isLeafValueTakingToken = isValueTakingFlagTokenFor(context.rootCommand, error.commandPath);
   const isValueTakingToken = (token: string) =>
     globalFlagsWithValues.has(token) || isLeafValueTakingToken(token);
   const isSuppressedMissingFlag = (inner: (typeof error.errors)[number]) =>
-    inner._tag === "MissingOption" &&
+    Predicate.isTagged(inner, "MissingOption") &&
     !isMissingFlagTokenPresent(
       inner.option,
       context.args,
       flagAliasesFor(context.rootCommand, error.commandPath, inner.option),
       isValueTakingToken,
     );
-  return error.errors.every(isSuppressedMissingFlag) ? "drop" : "flush-help-doc-to-stderr";
+  const isRemoteFlagError = (inner: (typeof error.errors)[number]) =>
+    (Predicate.isTagged(inner, "InvalidValue") &&
+      inner.kind === "flag" &&
+      inner.option === REMOTE_FLAG_NAME) ||
+    isRemoteFlagMisuse(inner, context.rootCommand);
+  return error.errors.every((inner) => isSuppressedMissingFlag(inner) || isRemoteFlagError(inner))
+    ? "drop"
+    : "flush-help-doc-to-stderr";
 }
 
 /**
- * Wraps `Command.runWith(rootCommand, ...)(args)` so the vendored `effect`
- * CLI library's OWN `Console.log`/`Console.error` writes are captured
- * instead of reaching the real console, then disposed of per
- * `classifyParseErrorConsoleOutput` once the run's outcome is known:
- * dropped entirely for a missing-required-flag failure, replayed to stderr
- * (never stdout) for every other genuine parse/validation failure, and
- * replayed unchanged for everything else. Either way, the library's own
- * duplicate error render never survives — this repo's own `handledProgram`
- * + `normalizeCause` already render the single Go-parity line for it. That
- * fixes both halves of CLI-1901 (the stdout help dump and the duplicate
- * error line) from this one call site, without patching the vendored
- * library itself.
+ * Wraps `Command.runWith(rootCommand, ...)(args)` so the vendored CLI library's own
+ * `Console.log`/`Console.error` writes are captured instead of reaching the real console, then
+ * disposed of per `classifyParseErrorConsoleOutput`: dropped for a missing-required-flag failure,
+ * replayed to stderr for other parse/validation failures, and replayed unchanged otherwise. Safe
+ * to wrap the whole call since no handler here writes through `Console` directly.
  *
- * TODO: remove this whole buffering/classification dance once upstream
- * Effect-TS/effect#6313 is fixed — https://github.com/Effect-TS/effect/issues/6313.
- * `runWith` has no supported way to opt out of, or redirect, its own
- * `showHelp` console writes; everything below exists only to work around
- * that gap from the outside.
- *
- * The "flush unchanged" outcome covers success, `--help`, `--version`,
- * `--completions`, and the bare-group-command help dump, all of which stay
- * untouched.
- *
- * Safe to wrap the entire `runWith` call — parsing AND the eventual command
- * handler, not just the parse phase that can actually raise `ShowHelp`: no
- * command handler in this codebase writes through `effect`'s `Console`
- * service directly (they go through the `Output` service instead). One
- * indirect exception is known — `@supabase/config`'s `loadCliConfigFile`
- * emits its deprecated-config-section warnings via `Console.error`, and is
- * reachable from handlers through `CliConfigStore`/`loadCliConfig` —
- * so it pins itself to the real console (`Effect.provideService(Console.Console,
- * globalThis.console)`) rather than relying on whatever `Console.Console` is
- * ambient here; see CLI-1901 and that package's `io.ts` for why (a
- * long-running command like `functions serve` would otherwise have the
- * warning buffered for its entire session instead of shown at startup).
- * Any other handler writing through `Console` directly would need the same
- * treatment — buffering here never delays or drops real command output
- * ONLY as long as that invariant holds. Note that Effect's OWN default
- * logger (`Effect.log*`) DOES resolve through this same `Console` reference
- * (`Logger.withConsoleLog`/`withConsoleError`) — this codebase has no
- * `Effect.log*` call sites today, but if one is ever added to a handler, its
- * output would be buffered too (deferred to end-of-run on the "flush
- * unchanged" path, or dropped on a genuine parse failure — which never runs
- * a handler in the first place, so that half is moot).
+ * TODO: remove once https://github.com/Effect-TS/effect/issues/6313 is fixed upstream.
  */
 export function withoutParseErrorHelpDump<A, E, R>(
   effect: Effect.Effect<A, E, R>,
@@ -687,9 +571,8 @@ export function withoutParseErrorHelpDump<A, E, R>(
       return yield* exit;
     }
     for (const write of sink) {
-      // The library's own duplicate error render never survives a genuine
-      // parse failure — only its help-doc `log` write gets a second look,
-      // redirected to stderr instead of its original stdout-bound method.
+      // The library's own duplicate error render never survives a genuine parse failure — only
+      // its help-doc `log` write gets a second look, redirected to stderr.
       if (disposition === "flush-help-doc-to-stderr" && write.method === "error") continue;
       const method = disposition === "flush-help-doc-to-stderr" ? "error" : write.method;
       yield* Console.consoleWith((console) =>
@@ -710,6 +593,7 @@ function cliSettingsLayerFor(runtimeLayer: Layer.Layer<never>) {
   return cliSettingsLayer.pipe(
     Layer.provide(cliProjectContextLayerFor(runtimeLayer)),
     Layer.provide(runtimeLayer),
+    Layer.provide(BunServices.layer),
   );
 }
 
@@ -722,52 +606,50 @@ function cliProjectHomeLayerFor(runtimeLayer: Layer.Layer<never>) {
   );
 }
 
-type AnyAnalyticsLayer = Layer.Layer<Analytics, never, any>;
-
-export interface RunCliOptions {
-  readonly analyticsLayer: AnyAnalyticsLayer;
+export interface RunCliOptions<BeforeParseError = never> {
+  /** Runs after runtime services are installed and before command parsing. */
+  readonly beforeParse?: Effect.Effect<void, BeforeParseError, FileSystem.FileSystem | Path.Path>;
+  /** The selected root's agent default, applied to failures `runCli` renders itself. */
+  readonly agentDefaultOutputFormat: OutputFormat;
+  readonly analyticsLayer: Layer.Layer<
+    Analytics,
+    Config.ConfigError | PlatformError.PlatformError,
+    CliSettings | Crypto.Crypto | FileSystem.FileSystem | Path.Path | RuntimeInfo | Tty
+  >;
   /**
-   * Runs just before the process exits on any invocation that exits 0 — the
-   * seam for the CLI's upgrade notice. `cleanShowHelp` marks the
-   * exit-0 ShowHelp failure branch (a bare group command), which cobra serves
-   * without `PersistentPreRunE`. Must never fail, and cannot change the exit
-   * code.
+   * Runs just before the process exits on any invocation that exits 0 — the seam for the CLI's
+   * upgrade notice. `cleanShowHelp` marks the exit-0 `ShowHelp` failure branch (a bare group
+   * command). Must never fail, and cannot change the exit code.
    */
   readonly afterSuccess?: (
     args: ReadonlyArray<string>,
     info: {
       readonly cleanShowHelp: boolean;
-      readonly delegatedToGo: boolean;
       readonly workingDirectory?: string;
       /** Value-taking-token predicate for this argv (global + resolved leaf flags) — see `valueTakingFlagTokenPredicateForArgv`. */
       readonly isValueTakingFlagToken: (token: string) => boolean;
     },
-  ) => Effect.Effect<void>;
+  ) => Effect.Effect<void, never, FileSystem.FileSystem | Path.Path | RuntimeInfo>;
 }
 
-function cliProgramFor<
+export function cliProgramFor<
   Name extends string,
   Input,
   ContextInput,
   E,
   R extends AllowedRunCliServices,
+  BeforeParseError,
 >(
   rootCommand: Command.Command<Name, Input, ContextInput, E, R>,
-  args: ReadonlyArray<string>,
-  options: RunCliOptions,
+  cliArgs: CliArgsShape,
+  options: RunCliOptions<BeforeParseError>,
   outputFormat: OutputFormat,
 ) {
+  const { args } = cliArgs;
   const runtimeLayer = Layer.mergeAll(processControlLayer, runtimeInfoLayer, ttyLayer);
   const fallbackCommandLayer = Layer.mergeAll(
-    // Root command env inference currently leaks some subcommand-provided services.
-    Layer.succeed(Credentials, {
-      getAccessToken: Effect.die("unexpected root credentials access"),
-      saveAccessToken: () => Effect.die("unexpected root credentials write"),
-      deleteAccessToken: Effect.die("unexpected root credentials deletion"),
-    }),
-    Layer.succeed(CliProjectLocalServiceVersions, {
-      load: Effect.die("unexpected root project local service versions access"),
-    }),
+    // Root command env inference leaks some subcommand-provided services; these stand-ins die
+    // if a root-level invocation ever touches them.
     Layer.succeed(CliConfigStore, {
       load: () => Effect.die("unexpected root cli-config access"),
       loadFile: () => Effect.die("unexpected root cli-config file access"),
@@ -781,54 +663,76 @@ function cliProgramFor<
       }),
     ),
   );
-  return withoutParseErrorHelpDump(Command.runWith(rootCommand, { version: CLI_VERSION })(args), {
-    rootCommand,
-    args,
-  }).pipe(
-    Effect.provide(formatterLayerFor(rootCommand, args, outputFormat)),
-    Effect.provide(options.analyticsLayer),
-    Effect.provide(tracingLayer),
-    Effect.provide(telemetryRuntimeLayer),
-    Effect.provide(cliSettingsLayerFor(runtimeLayer)),
-    Effect.provide(cliProjectHomeLayerFor(runtimeLayer)),
-    Effect.provide(cliProjectContextLayerFor(runtimeLayer)),
-    Effect.provide(projectLinkStateLayer),
-    Effect.provide(runtimeLayer),
-    Effect.provide(fallbackCommandLayer),
-    Effect.provide(Layer.succeed(CliArgs, { args })),
-    Effect.provide(BunServices.layer),
+  const commandProgram = options.beforeParse ?? Effect.void;
+  const commandLayer = formatterLayerFor(rootCommand, args, outputFormat).pipe(
+    Layer.provideMerge(options.analyticsLayer),
   );
+  const cliProgramLayer = telemetryRuntimeLayer.pipe(
+    Layer.provideMerge(cliSettingsLayerFor(runtimeLayer)),
+    Layer.provideMerge(cliProjectHomeLayerFor(runtimeLayer)),
+    Layer.provideMerge(cliProjectContextLayerFor(runtimeLayer)),
+    Layer.provideMerge(projectLinkStateLayer),
+    Layer.provideMerge(legacyProjectStateLayer),
+    Layer.provideMerge(runtimeLayer),
+    Layer.provideMerge(fallbackCommandLayer),
+    Layer.provideMerge(cliArgsLayer(cliArgs)),
+    Layer.provideMerge(BunServices.layer),
+  );
+  return withoutParseErrorHelpDump(
+    commandProgram.pipe(
+      Effect.andThen(Command.runWith(rootCommand, { version: CLI_VERSION })(args)),
+    ),
+    {
+      rootCommand,
+      args,
+    },
+  ).pipe(Effect.provide(commandLayer), withDebugConsole, Effect.provide(cliProgramLayer));
 }
 
-export async function runCli<
+/**
+ * Marks `cli.run` failed for a non-zero exit, after the outcome is already rendered and reported.
+ * It is recovered to the exit code right outside the span, so it is a span signal, not a CLI error.
+ */
+class CliNonZeroExit {
+  readonly _tag = "CliNonZeroExit";
+  readonly name = "CliNonZeroExit";
+  constructor(readonly code: number) {}
+}
+
+export const runCli = Effect.fnUntraced(function* <
   Name extends string,
   Input,
   ContextInput,
   E,
   R extends AllowedRunCliServices,
->(rootCommand: Command.Command<Name, Input, ContextInput, E, R>, options: RunCliOptions) {
-  const args = await Effect.runPromise(
-    Effect.gen(function* () {
-      const stdio = yield* Stdio.Stdio;
-      return yield* stdio.args;
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
+  BeforeParseError,
+>(
+  rootCommand: Command.Command<Name, Input, ContextInput, E, R>,
+  options: RunCliOptions<BeforeParseError>,
+) {
+  const bootMs = Math.round(performance.now());
+  const rawArgs = yield* Effect.gen(function* () {
+    const stdio = yield* Stdio.Stdio;
+    return yield* stdio.args;
+  }).pipe(Effect.provide(BunServices.layer));
+  const cliArgs = prepareCliArgs(rootCommand, rawArgs);
+  const { args } = cliArgs;
 
-  // Same `{ rootCommand, args }` shape `formatterLayerFor` builds below, so
-  // `normalizeCause`'s single-render fallback path (CLI-1901) can reuse
-  // `formatCliErrorsForDisplay` and surface the same subcommand-flag hint the
-  // text/json formatters would have shown before the vendored library's own
-  // duplicate render was suppressed.
+  // Same shape `formatterLayerFor` builds below, so `normalizeCause`'s fallback path can reuse
+  // `formatCliErrorsForDisplay` and surface the same subcommand-flag hint the formatters would.
   const suggestionContext = { rootCommand, args };
   const useGlobalSignalInterrupt = shouldUseGlobalSignalInterrupt(args);
-  const outputFormat = await Effect.runPromise(
-    Effect.gen(function* () {
-      const aiTool = yield* AiTool;
-      return resolveAgentOutputFormatFromArgs(args, aiTool.name);
-    }).pipe(Effect.provide(aiToolLayer)),
-  );
-  const cliProgram = cliProgramFor(rootCommand, args, options, outputFormat);
+  const outputFormat = yield* Effect.gen(function* () {
+    const aiTool = yield* AiTool;
+    return resolveAgentOutputFormatFromArgs(args, aiTool.name, options.agentDefaultOutputFormat);
+  }).pipe(Effect.provide(aiToolLayer));
+  const cliProgram = cliProgramFor(rootCommand, cliArgs, options, outputFormat);
 
+  const signalAwareLayer = processControlLayer.pipe(
+    Layer.provideMerge(runtimeInfoLayer),
+    Layer.provideMerge(ttyLayer),
+    Layer.provideMerge(BunServices.layer),
+  );
   const signalAwareProgram = Effect.scoped(
     Effect.gen(function* () {
       const processControl = yield* ProcessControl;
@@ -841,7 +745,7 @@ export async function runCli<
           .pipe(Effect.map((signal) => ({ _tag: "signal" as const, signal }))),
       );
 
-      if (outcome._tag === "signal") {
+      if (Predicate.isTagged(outcome, "signal")) {
         // SIGHUP must also stay held once cleanup begins.
         yield* Effect.scoped(
           processControl.holdSignals(["SIGHUP"]).pipe(Effect.andThen(Fiber.interrupt(cliFiber))),
@@ -851,12 +755,7 @@ export async function runCli<
 
       return yield* outcome.exit;
     }),
-  ).pipe(
-    Effect.provide(processControlLayer),
-    Effect.provide(runtimeInfoLayer),
-    Effect.provide(ttyLayer),
-    Effect.provide(BunServices.layer),
-  );
+  ).pipe(Effect.provide(signalAwareLayer));
 
   const selfManagedSignalProgram = Effect.scoped(
     Effect.gen(function* () {
@@ -867,13 +766,23 @@ export async function runCli<
   ).pipe(Effect.provide(processControlLayer));
 
   const handledRuntimeLayer = Layer.mergeAll(processControlLayer, runtimeInfoLayer, ttyLayer);
+  const runToExitCodeLayer = outputLayerFor(outputFormat).pipe(
+    Layer.provideMerge(telemetryRuntimeLayer),
+    Layer.provideMerge(cliProjectHomeLayerFor(handledRuntimeLayer)),
+    Layer.provideMerge(cliSettingsLayerFor(handledRuntimeLayer)),
+    Layer.provideMerge(cliProjectContextLayerFor(handledRuntimeLayer)),
+    Layer.provideMerge(ttyLayer),
+    Layer.provideMerge(successTrailerLayer),
+  );
+  const handledProgramLayer = processControlLayer.pipe(
+    Layer.provideMerge(runtimeInfoLayer),
+    Layer.provideMerge(BunServices.layer),
+    Layer.provideMerge(cliConfigProviderLayer),
+  );
 
-  const handledProgram = <A, E, R>(
-    program: Effect.Effect<A, E, R>,
-  ): Effect.Effect<never, unknown, never> =>
+  const runToExitCode = <A, E, R>(program: Effect.Effect<A, E, R>) =>
     Effect.gen(function* () {
       const processControl = yield* ProcessControl;
-      const goProxyInvocation = yield* GoProxyInvocation;
       const output = yield* Output;
       const successTrailer = yield* SuccessTrailer;
       const exit = yield* program.pipe(Effect.exit);
@@ -888,11 +797,9 @@ export async function runCli<
                     Effect.andThen(
                       Effect.gen(function* () {
                         if (afterSuccessHook !== undefined) {
-                          const delegatedToGo = yield* goProxyInvocation.wasDelegated;
                           const workingDirectory = yield* successTrailer.workingDirectory;
                           yield* afterSuccessHook(args, {
                             cleanShowHelp,
-                            delegatedToGo,
                             workingDirectory,
                             isValueTakingFlagToken: valueTakingFlagTokenPredicateForArgv(
                               rootCommand,
@@ -912,39 +819,52 @@ export async function runCli<
             })
           : Effect.void;
       if (Exit.isFailure(exit)) {
-        const exitCode = exitCodeForFailure(exit.cause);
-        // See `shouldReportFailure` for the reporting rules (and why they're
-        // NOT keyed on Effect's shared `[Runtime.errorReported]` marker).
-        // Literal `--help` never reaches this branch — it's handled as a
-        // successful `GlobalFlag.Action` and exits 0 via the success path
-        // below. See `exitCodeForFailure` for why a "clean" ShowHelp failure
-        // (e.g. a bare group command with no subcommand) also maps to exit 0.
-        if (shouldReportFailure(exit.cause, exitCode)) {
-          yield* output.fail(normalizeCause(exit.cause, suggestionContext));
+        const cause = failureBesideClosedStdout(exit.cause);
+        if (cause === undefined) {
+          // The reader is gone, so there is nobody left for a report, a notice, or a trailer.
+          return (yield* processControl.getExitCode) ?? 0;
+        }
+        const exitCode = exitCodeForFailure(cause);
+        // See `shouldReportFailure` and `exitCodeForFailure` for the exit-code/reporting rules; a
+        // literal `--help` never reaches this branch — it exits 0 via the success path below.
+        if (shouldReportFailure(exitCode)) {
+          yield* ignoreStdoutClosed(output.fail(normalizeCause(cause, suggestionContext)));
         }
         yield* afterSuccess(exitCode, true);
-        return yield* processControl.exit(exitCode);
+        return exitCode;
       }
       const exitCode = yield* processControl.getExitCode;
       yield* afterSuccess(exitCode ?? 0, false);
-      return yield* processControl.exit(exitCode ?? 0);
+      return exitCode ?? 0;
+    }).pipe(Effect.provide(runToExitCodeLayer));
+
+  // The exit code is resolved inside the traced scope so its flush completes before
+  // `processControl.exit`, which skips finalizers.
+  const handledProgram = <A, E, R>(program: Effect.Effect<A, E, R>) =>
+    Effect.gen(function* () {
+      const processControl = yield* ProcessControl;
+      const exitCode = yield* resolveTraceSettings.pipe(
+        Effect.flatMap((settings) =>
+          withTraceExport(settings, { "process.boot_ms": bootMs })(
+            runToExitCode(program).pipe(
+              Effect.tap((code) => Effect.annotateCurrentSpan("process.exit_code", code)),
+              Effect.flatMap((code) =>
+                code === 0 ? Effect.succeed(code) : Effect.fail(new CliNonZeroExit(code)),
+              ),
+            ),
+          ),
+        ),
+        Effect.catchTag("CliNonZeroExit", (failure) => Effect.succeed(failure.code)),
+      );
+      return yield* processControl.exit(exitCode);
     }).pipe(
-      Effect.provide(outputLayerFor(outputFormat)),
-      Effect.provide(telemetryRuntimeLayer),
-      Effect.provide(cliProjectHomeLayerFor(handledRuntimeLayer)),
-      Effect.provide(cliSettingsLayerFor(handledRuntimeLayer)),
-      Effect.provide(cliProjectContextLayerFor(handledRuntimeLayer)),
-      Effect.provide(processControlLayer),
-      Effect.provide(runtimeInfoLayer),
-      Effect.provide(ttyLayer),
-      Effect.provide(BunServices.layer),
-      Effect.provide(goProxyInvocationLayer),
-      Effect.provide(successTrailerLayer),
+      Effect.withTracerEnabled(false),
+      Effect.provideService(HttpClient.TracerPropagationEnabled, false),
+      Effect.provide(handledProgramLayer),
     );
 
   if (useGlobalSignalInterrupt) {
-    await Effect.runPromise(handledProgram(signalAwareProgram));
-  } else {
-    await Effect.runPromise(handledProgram(selfManagedSignalProgram));
+    return yield* handledProgram(signalAwareProgram);
   }
-}
+  return yield* handledProgram(selfManagedSignalProgram);
+});

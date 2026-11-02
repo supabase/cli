@@ -1,16 +1,25 @@
 import { type V1GetHostnameConfigOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Schema } from "effect";
 
-import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
+  VALID_REF,
   buildTestRuntime,
+  jsonResponse,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { domainsGet } from "./get.handler.ts";
 
 const HOSTNAME_RESPONSE: typeof V1GetHostnameConfigOutput.Type = {
@@ -31,17 +40,32 @@ const HOSTNAME_RESPONSE: typeof V1GetHostnameConfigOutput.Type = {
   },
 };
 
-type GoOutput = "env" | "pretty" | "json" | "toml" | "yaml";
+type OutputFlagValue = "env" | "pretty" | "json" | "toml" | "yaml";
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: GoOutput;
+  readonly outputFlag?: OutputFlagValue;
   readonly status?: number;
   readonly network?: "fail";
   readonly response?: unknown;
 }
 
+/** Just enough of the JSON envelope to reach the fields under assertion. */
+const JsonResult = Schema.Struct({
+  data: Schema.Struct({
+    result: Schema.Struct({
+      ownership_verification: Schema.Unknown,
+      custom_origin_server: Schema.String,
+      ssl: Schema.Struct({ status: Schema.String, validation_records: Schema.Unknown }),
+    }),
+  }),
+});
+
+const JsonEnvelope = Schema.Record(Schema.String, Schema.Unknown);
+
 const tempRoot = useTempWorkdir("supabase-domains-get-int-");
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
@@ -60,26 +84,34 @@ function setup(opts: SetupOpts = {}) {
     analytics,
     telemetry: telemetry.layer,
     linkedProjectCache: linkedProjectCache.layer,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api, analytics, telemetry, linkedProjectCache };
 }
 
-const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: false };
+const baseFlags = {
+  remote: Option.none(),
+  projectRef: Option.none<string>(),
+  includeRawOutput: Option.none<boolean>(),
+};
 
 describe("domains get integration", () => {
-  it.live("prints the hostname status to stderr in text mode", () => {
-    const { layer, out, telemetry, linkedProjectCache } = setup();
+  it.effect("prints the hostname status to stderr in text mode", () => {
+    const { layer, out, api, telemetry, linkedProjectCache } = setup();
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
       expect(out.stderrText).toContain("Custom hostname configuration not started.");
       expect(out.stdoutText).toBe("");
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cached).toBe(true);
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}/custom-hostname`,
+      ]);
+      assertPermissionDrift({ command: "domains get", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a structured success object for --output-format json", () => {
+  it.effect("emits a structured success object for --output-format json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
@@ -88,7 +120,7 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a structured success object for --output-format stream-json", () => {
+  it.effect("emits a structured success object for --output-format stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
@@ -96,20 +128,21 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits indented Go JSON to stdout with no status on stderr for -o json", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+  it.effect("emits indented JSON to stdout with no status on stderr for -o json", () => {
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
       expect(out.stdoutText.startsWith("{")).toBe(true);
       expect(out.stdoutText).toContain('"custom_hostname": "shop.acme.dev"');
       // Structured -o output: human status is suppressed entirely — see emit.
-      expect(out.stderrText).toBe("");
+      expect(out.stderrText).toBe(unverifiedTargetBanner());
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("backfills Go zero values in JSON output when the API omits nested fields", () => {
+  it.effect("backfills zero values in JSON output when the API omits nested fields", () => {
     const {
       ownership_verification: _ownershipVerification,
+      custom_origin_server: _customOriginServer,
       ...resultWithoutOwnershipVerification
     } = HOSTNAME_RESPONSE.data.result;
     const response: typeof V1GetHostnameConfigOutput.Type = {
@@ -118,20 +151,45 @@ describe("domains get integration", () => {
         ...HOSTNAME_RESPONSE.data,
         result: {
           ...resultWithoutOwnershipVerification,
-          ssl: { status: "pending_validation" },
+          ssl: { validation_records: [{ txt_name: "_acme" }] },
         },
       },
     };
-    const { layer, out } = setup({ goOutput: "json", response });
+    const { layer, out } = setup({ outputFlag: "json", response });
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
-      const parsed = JSON.parse(out.stdoutText) as typeof V1GetHostnameConfigOutput.Type;
+      const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(JsonResult))(out.stdoutText);
       expect(parsed.data.result.ownership_verification).toEqual({ type: "", name: "", value: "" });
-      expect(parsed.data.result.ssl.validation_records).toEqual([]);
+      expect(parsed.data.result.custom_origin_server).toBe("");
+      expect(parsed.data.result.ssl.status).toBe("");
+      expect(parsed.data.result.ssl.validation_records).toEqual([
+        { txt_name: "_acme", txt_value: "" },
+      ]);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("backfills Go zero values in JSON output when the API omits envelope fields", () => {
+  it.effect("handles a pending hostname response without SSL details", () => {
+    const { ssl: _ssl, ...resultWithoutSsl } = HOSTNAME_RESPONSE.data.result;
+    const response: typeof V1GetHostnameConfigOutput.Type = {
+      ...HOSTNAME_RESPONSE,
+      status: "2_initiated",
+      data: {
+        ...HOSTNAME_RESPONSE.data,
+        result: { ...resultWithoutSsl, status: "pending" },
+      },
+    };
+    const { layer, out } = setup({ response });
+    return Effect.gen(function* () {
+      yield* domainsGet(baseFlags);
+      expect(out.stderrText).toBe(
+        unverifiedTargetBanner() +
+          "Custom hostname setup is being initialized; please request re-verification in a few seconds.\n",
+      );
+      expect(out.stdoutText).toBe("");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("backfills zero values in JSON output when the API omits envelope fields", () => {
     const {
       status: _status,
       custom_hostname: _customHostname,
@@ -152,10 +210,12 @@ describe("domains get integration", () => {
         },
       },
     };
-    const { layer, out } = setup({ goOutput: "json", response });
+    const { layer, out } = setup({ outputFlag: "json", response });
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
-      const parsed = JSON.parse(out.stdoutText) as Record<string, unknown>;
+      const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(JsonEnvelope))(
+        out.stdoutText,
+      );
       expect(parsed.status).toBe("");
       expect(parsed.custom_hostname).toBe("");
       expect(parsed.data).toMatchObject({
@@ -168,7 +228,7 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prints processing guidance in text mode when the API omits envelope fields", () => {
+  it.effect("prints processing guidance in text mode when the API omits envelope fields", () => {
     const {
       status: _status,
       custom_hostname: _customHostname,
@@ -189,13 +249,14 @@ describe("domains get integration", () => {
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
       expect(out.stderrText).toBe(
-        "Custom hostname setup is being initialized; please request re-verification in a few seconds.\n",
+        unverifiedTargetBanner() +
+          "Custom hostname setup is being initialized; please request re-verification in a few seconds.\n",
       );
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prints outstanding ACME validation records in text mode", () => {
+  it.effect("prints outstanding ACME validation records in text mode", () => {
     const response: typeof V1GetHostnameConfigOutput.Type = {
       status: "2_initiated",
       custom_hostname: "sbstg4.thewheatfield.org",
@@ -225,7 +286,8 @@ describe("domains get integration", () => {
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
       expect(out.stderrText).toBe(
-        "Custom hostname verification in-progress; please configure the appropriate DNS entries and request re-verification.\n" +
+        unverifiedTargetBanner() +
+          "Custom hostname verification in-progress; please configure the appropriate DNS entries and request re-verification.\n" +
           "Required outstanding validation records:\n" +
           "\t_acme-challenge.sbstg4.thewheatfield.org TXT -> i6XyXv3kU4SRX9YcCE8h4LExoHE6y_poV1-5R1cjpk4\n",
       );
@@ -233,34 +295,61 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits YAML to stdout for -o yaml", () => {
-    const { layer, out } = setup({ goOutput: "yaml" });
+  it.effect("does not print partial ACME validation records", () => {
+    const response: typeof V1GetHostnameConfigOutput.Type = {
+      ...HOSTNAME_RESPONSE,
+      status: "2_initiated",
+      data: {
+        ...HOSTNAME_RESPONSE.data,
+        result: {
+          ...HOSTNAME_RESPONSE.data.result,
+          ssl: {
+            status: "pending_validation",
+            validation_records: [{ txt_name: "_acme-challenge.shop.acme.dev" }],
+          },
+        },
+      },
+    };
+    const { layer, out } = setup({ response });
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
-      // yaml.v3 lowercases the whole field name (CLI-1975).
+      expect(out.stderrText).toBe(
+        unverifiedTargetBanner() +
+          "Custom hostname verification in-progress; please configure the appropriate DNS entries and request re-verification.\n" +
+          "Required outstanding validation records:\n",
+      );
+      expect(out.stderrText).not.toContain("undefined");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("emits YAML to stdout for -o yaml", () => {
+    const { layer, out } = setup({ outputFlag: "yaml" });
+    return Effect.gen(function* () {
+      yield* domainsGet(baseFlags);
+      // YAML output lowercases the whole field name.
       expect(out.stdoutText).toContain("customhostname: shop.acme.dev");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits TOML to stdout for -o toml", () => {
-    const { layer, out } = setup({ goOutput: "toml" });
+  it.effect("emits TOML to stdout for -o toml", () => {
+    const { layer, out } = setup({ outputFlag: "toml" });
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
-      // BurntSushi emits PascalCase field names (CLI-1975).
+      // TOML output uses PascalCase field names.
       expect(out.stdoutText).toContain('CustomHostname = "shop.acme.dev"');
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits KEY=VALUE lines for -o env", () => {
-    const { layer, out } = setup({ goOutput: "env" });
+  it.effect("emits KEY=VALUE lines for -o env", () => {
+    const { layer, out } = setup({ outputFlag: "env" });
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
       expect(out.stdoutText).toContain('CUSTOM_HOSTNAME="shop.acme.dev"');
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("treats -o pretty as text mode (status to stderr only)", () => {
-    const { layer, out } = setup({ goOutput: "pretty" });
+  it.effect("treats -o pretty as text mode (status to stderr only)", () => {
+    const { layer, out } = setup({ outputFlag: "pretty" });
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
       expect(out.stderrText).toContain("Custom hostname configuration not started.");
@@ -268,35 +357,15 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("forces Go JSON output when --include-raw-output is set", () => {
-    const { layer, out } = setup();
-    return Effect.gen(function* () {
-      yield* domainsGet({ projectRef: Option.none(), includeRawOutput: true });
-      expect(out.stdoutText.startsWith("{")).toBe(true);
-      expect(out.stdoutText).toContain('"custom_hostname": "shop.acme.dev"');
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live(
-    "forces Go JSON even when -o is explicitly pretty and --include-raw-output is set",
-    () => {
-      const { layer, out } = setup({ goOutput: "pretty" });
-      return Effect.gen(function* () {
-        yield* domainsGet({ projectRef: Option.none(), includeRawOutput: true });
-        expect(out.stdoutText.startsWith("{")).toBe(true);
-      }).pipe(Effect.provide(layer));
-    },
-  );
-
-  it.live("fails with DomainsUnexpectedStatusError on HTTP 503", () => {
+  it.effect("fails with DomainsUnexpectedStatusError on HTTP 503", () => {
     const { layer, telemetry, linkedProjectCache } = setup({ status: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsGet(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("DomainsUnexpectedStatusError");
-        expect(json).toContain("unexpected get hostname status 503");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("DomainsUnexpectedStatusError");
+        expect(causeText).toContain("unexpected get hostname status 503");
       }
       // PersistentPostRun still fires on failure.
       expect(telemetry.flushed).toBe(true);
@@ -304,7 +373,7 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("suggests upgrade from entitlement_required envelope on 400", () => {
+  it.effect("suggests upgrade from entitlement_required envelope on 400", () => {
     const { layer, out, analytics, api } = setup({
       status: 400,
       response: {
@@ -321,6 +390,7 @@ describe("domains get integration", () => {
       const exit = yield* Effect.exit(domainsGet(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       expect(api.requests).toHaveLength(1);
+      assertPermissionDrift({ command: "domains get", requests: api.requests });
       expect(out.stderrText).toContain("Upgrade your plan:");
       expect(out.stderrText).toContain("/org/env-org/billing");
       expect(analytics.captured).toEqual([
@@ -332,7 +402,7 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("plain 404 without envelope produces no upgrade hint", () => {
+  it.effect("plain 404 without envelope produces no upgrade hint", () => {
     const { layer, out, analytics, api } = setup({
       status: 404,
       response: { message: "not found" },
@@ -346,7 +416,7 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("maps an HTTP error without a spinner in json mode", () => {
+  it.effect("maps an HTTP error without a spinner in json mode", () => {
     const { layer, out } = setup({ format: "json", status: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsGet(baseFlags));
@@ -355,16 +425,73 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with DomainsNetworkError on transport failure", () => {
+  it.effect("fails with DomainsNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsGet(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("DomainsNetworkError");
-        expect(json).toContain("failed to get custom hostname");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("DomainsNetworkError");
+        expect(causeText).toContain("failed to get custom hostname");
       }
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect(
+    "picks the project, fetches the hostname config and fills the linked-project cache through the real layers",
+    () => {
+      const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+      const api = mockCommandPlatformApi({
+        handler: (request) => {
+          const route = `${request.method} ${request.url}`;
+          if (route === "GET https://api.supabase.com/v1/projects") {
+            return Effect.succeed(jsonResponse(request, 200, [projectResponse(VALID_REF)]));
+          }
+          if (route === `GET https://api.supabase.com/v1/projects/${VALID_REF}`) {
+            return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
+          }
+          if (route === `GET https://api.supabase.com/v1/projects/${VALID_REF}/custom-hostname`) {
+            return Effect.succeed(jsonResponse(request, 200, HOSTNAME_RESPONSE));
+          }
+          return Effect.succeed(jsonResponse(request, 404, { message: "unexpected request" }));
+        },
+      });
+      const cliSettings = mockCommandSettings({
+        workdir: tempRoot.current,
+        projectId: Option.none(),
+      });
+      const layer = buildTestRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true }),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+        expect(yield* fs.exists(cachePath)).toBe(false);
+        yield* domainsGet(baseFlags);
+        expect(out.stderrText).toContain("Custom hostname configuration not started.");
+        expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          "GET https://api.supabase.com/v1/projects",
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}/custom-hostname`,
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+        ]);
+        expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+          ref: VALID_REF,
+        });
+        assertPermissionDrift({ command: "domains get", requests: api.requests, exact: true });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+});
+
+describeHostedTargetSelection("domains get", {
+  respond: (request) => Effect.succeed(jsonResponse(request, 200, HOSTNAME_RESPONSE)),
+  run: (flags) => domainsGet({ ...baseFlags, ...flags }),
 });

@@ -1,27 +1,49 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option, FileSystem, Schema } from "effect";
 
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
+  VALID_REF,
   buildTestRuntime,
+  jsonResponse,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { domainsDelete } from "./delete.handler.ts";
+import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
-type GoOutput = "env" | "pretty" | "json" | "toml" | "yaml";
+type OutputFlagValue = "env" | "pretty" | "json" | "toml" | "yaml";
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: GoOutput;
+  readonly outputFlag?: OutputFlagValue;
   readonly status?: number;
   readonly network?: "fail";
 }
 
 const tempRoot = useTempWorkdir("supabase-domains-delete-int-");
+
+const buildRuntime = (opts: Parameters<typeof buildTestRuntime>[0]) =>
+  Layer.mergeAll(
+    buildTestRuntime(opts),
+    Layer.succeed(YesFlag, true),
+    Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+  );
+
+const confirmed = `Confirmed by --yes: Delete the custom hostname config on project ${VALID_REF}\n`;
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
@@ -32,33 +54,40 @@ function setup(opts: SetupOpts = {}) {
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
   const telemetry = mockTelemetryStateTracked();
   const linkedProjectCache = mockLinkedProjectCacheTracked();
-  const layer = buildTestRuntime({
+  const layer = buildRuntime({
     out,
     api,
     cliSettings,
     telemetry: telemetry.layer,
     linkedProjectCache: linkedProjectCache.layer,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api, telemetry, linkedProjectCache };
 }
 
-const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: false };
+const baseFlags = {
+  remote: Option.none(),
+  projectRef: Option.none<string>(),
+  includeRawOutput: Option.none<boolean>(),
+};
 
 describe("domains delete integration", () => {
-  it.live("prints the success line to stderr in text mode", () => {
+  it.effect("prints the success line to stderr in text mode", () => {
     const { layer, out, api, telemetry, linkedProjectCache } = setup();
     return Effect.gen(function* () {
       yield* domainsDelete(baseFlags);
-      expect(out.stderrText).toBe("Deleted custom hostname config successfully.\n");
+      expect(out.stderrText).toBe(
+        unverifiedTargetBanner() + confirmed + "Deleted custom hostname config successfully.\n",
+      );
       expect(out.stdoutText).toBe("");
       expect(api.requests[0]?.method).toBe("DELETE");
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cached).toBe(true);
+      assertPermissionDrift({ command: "domains delete", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a structured success event for --output-format json", () => {
+  it.effect("emits a structured success event for --output-format json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* domainsDelete(baseFlags);
@@ -67,7 +96,7 @@ describe("domains delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a structured success event for --output-format stream-json", () => {
+  it.effect("emits a structured success event for --output-format stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
       yield* domainsDelete(baseFlags);
@@ -75,49 +104,42 @@ describe("domains delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("ignores -o json and still only prints to stderr (Go parity)", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+  it.effect("ignores -o json and still only prints to stderr", () => {
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* domainsDelete(baseFlags);
       expect(out.stdoutText).toBe("");
-      expect(out.stderrText).toBe("Deleted custom hostname config successfully.\n");
+      expect(out.stderrText).toBe(
+        unverifiedTargetBanner() + confirmed + "Deleted custom hostname config successfully.\n",
+      );
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("ignores --include-raw-output (inert on delete, Go parity)", () => {
-    const { layer, out } = setup();
-    return Effect.gen(function* () {
-      yield* domainsDelete({ projectRef: Option.none(), includeRawOutput: true });
-      expect(out.stdoutText).toBe("");
-      expect(out.stderrText).toBe("Deleted custom hostname config successfully.\n");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("fails with DomainsUnexpectedStatusError on HTTP 503", () => {
+  it.effect("fails with DomainsUnexpectedStatusError on HTTP 503", () => {
     const { layer, telemetry, linkedProjectCache } = setup({ status: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsDelete(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("unexpected delete hostname status 503");
+        expect(Cause.pretty(exit.cause)).toContain("unexpected delete hostname status 503");
       }
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with DomainsNetworkError on transport failure", () => {
+  it.effect("fails with DomainsNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsDelete(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to delete custom hostname");
+        expect(Cause.pretty(exit.cause)).toContain("failed to delete custom hostname");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("maps an HTTP error without a spinner in json mode", () => {
+  it.effect("maps an HTTP error without a spinner in json mode", () => {
     const { layer, out } = setup({ format: "json", status: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsDelete(baseFlags));
@@ -125,4 +147,72 @@ describe("domains delete integration", () => {
       expect(out.progressEvents).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect(
+    "picks the project, deletes the hostname config and fills the linked-project cache through the real layers",
+    () => {
+      const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+      const api = mockCommandPlatformApi({
+        handler: (request) => {
+          const route = `${request.method} ${request.url}`;
+          if (route === "GET https://api.supabase.com/v1/projects") {
+            return Effect.succeed(jsonResponse(request, 200, [projectResponse(VALID_REF)]));
+          }
+          if (route === `GET https://api.supabase.com/v1/projects/${VALID_REF}`) {
+            return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
+          }
+          if (
+            route === `DELETE https://api.supabase.com/v1/projects/${VALID_REF}/custom-hostname`
+          ) {
+            return Effect.succeed(jsonResponse(request, 200, {}));
+          }
+          return Effect.succeed(jsonResponse(request, 404, { message: "unexpected request" }));
+        },
+      });
+      const cliSettings = mockCommandSettings({
+        workdir: tempRoot.current,
+        projectId: Option.none(),
+      });
+      const layer = buildRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true }),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+        expect(yield* fs.exists(cachePath)).toBe(false);
+        yield* domainsDelete(baseFlags);
+        expect(out.stderrText).toBe(
+          `Target: project alpha (${VALID_REF})\n` +
+            `Confirmed by --yes: Delete the custom hostname config on project alpha (${VALID_REF})\n` +
+            "Deleted custom hostname config successfully.\n",
+        );
+        expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          "GET https://api.supabase.com/v1/projects",
+          `DELETE https://api.supabase.com/v1/projects/${VALID_REF}/custom-hostname`,
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+        ]);
+        expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+          ref: VALID_REF,
+        });
+        assertPermissionDrift({ command: "domains delete", requests: api.requests, exact: true });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+});
+
+describeHostedConsent("domains delete", {
+  api: { response: { status: 200, body: {} } },
+  invoke: () => ({ run: domainsDelete(baseFlags) }),
+});
+
+describeHostedTargetSelection("domains delete", {
+  respond: (request) => Effect.succeed(jsonResponse(request, 200, {})),
+  run: (flags) => domainsDelete({ ...baseFlags, ...flags }),
 });

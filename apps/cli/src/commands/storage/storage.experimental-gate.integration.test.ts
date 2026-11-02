@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
-import { CliOutput, Command } from "effect/unstable/cli";
+import { CliOutput, Command } from "effect/cli";
 
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
@@ -10,19 +10,16 @@ import {
   mockAnalytics,
   mockOutput,
   mockProcessControl,
+  mockRuntimeInfo,
   mockTelemetryRuntime,
   mockTty,
+  processEnvLayer,
 } from "../../../tests/helpers/mocks.ts";
-import { isolatedHomeLayer, useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
+import { useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
 import { ExperimentalRequiredError } from "../../command-internal/experimental-gate.ts";
 import { storageCommand } from "./storage.command.ts";
-import { StorageMutuallyExclusiveFlagsError } from "./storage.errors.ts";
-
-// The experimental gate runs before mutual-exclusivity checks. So
-// `supabase storage ls --linked --local` without `--experimental` must
-// surface the experimental-gate error, not the mutex error — this suite
-// proves that ordering is wired into the actual `.command.ts` handler
-// pipeline for all four leaves, not just the shared helper in isolation.
+import { TargetSelectorConflictError } from "../../command-internal/target/target.errors.ts";
+import { commandTargetLayer } from "../../shared/output/command-target.layer.ts";
 
 const tempRoot = useTempWorkdir("supabase-storage-experimental-int-");
 
@@ -37,25 +34,22 @@ function setup(args: ReadonlyArray<string>) {
     BunServices.layer,
     CliOutput.layer(textCliOutputFormatter()),
     out.layer,
+    commandTargetLayer.pipe(Layer.provide(out.layer)),
     Layer.succeed(CliArgs, { args }),
-    // `storageGatewayRuntimeLayer`'s cliSettings/credentials layers read
-    // real env/files when built. Neither check under test ever reaches that
-    // lazy factory, but isolate ambient env and homeDir defensively anyway —
-    // same rationale as the sibling experimental-gate tests (ssl-enforcement,
-    // postgres-config, network-bans).
-    isolatedHomeLayer(tempRoot.current, { SUPABASE_NO_KEYRING: "1" }),
+    // The cwd is a real directory so the handler's workdir check passes before the target conflict.
+    mockRuntimeInfo({ homeDir: tempRoot.current, cwd: tempRoot.current }),
+    processEnvLayer({ SUPABASE_NO_KEYRING: "1" }),
     mockProcessControl().layer,
     mockTty({ stdinIsTty: false, stdoutIsTty: false }),
     mockAnalytics().layer,
     mockTelemetryRuntime({
       configDir: `${tempRoot.current}/.supabase`,
-      tracesDir: `${tempRoot.current}/.supabase/traces`,
     }),
   );
   return { layer };
 }
 
-describe("storage experimental gate vs mutual-exclusivity ordering (Go PersistentPreRunE parity)", () => {
+describe("storage experimental gate vs mutual-exclusivity ordering", () => {
   const leaves: ReadonlyArray<{ readonly name: string; readonly args: ReadonlyArray<string> }> = [
     { name: "ls", args: ["storage", "ls", "ss:///bucket"] },
     { name: "cp", args: ["storage", "cp", "ss:///bucket/a", "ss:///bucket/b"] },
@@ -64,10 +58,10 @@ describe("storage experimental gate vs mutual-exclusivity ordering (Go Persisten
   ];
 
   for (const { name, args } of leaves) {
-    const conflictingArgs = [...args, "--linked", "--local"];
+    const conflictingArgs = [...args, "--remote", "--local"];
 
-    it.live(
-      `${name} --linked --local without --experimental fails with the gate error, not the mutex error`,
+    it.effect(
+      `${name} --remote --local without --experimental fails with the gate error, not the mutex error`,
       () => {
         const { layer } = setup(conflictingArgs);
         return Effect.gen(function* () {
@@ -85,7 +79,7 @@ describe("storage experimental gate vs mutual-exclusivity ordering (Go Persisten
       },
     );
 
-    it.live(`${name} --linked --local with --experimental fails with the mutex error`, () => {
+    it.effect(`${name} --remote --local with --experimental fails with the mutex error`, () => {
       const withExperimental = [...conflictingArgs, "--experimental"];
       const { layer } = setup(withExperimental);
       return Effect.gen(function* () {
@@ -96,7 +90,7 @@ describe("storage experimental gate vs mutual-exclusivity ordering (Go Persisten
         if (Exit.isFailure(exit)) {
           const failure = Cause.findErrorOption(exit.cause);
           expect(
-            Option.isSome(failure) && failure.value instanceof StorageMutuallyExclusiveFlagsError,
+            Option.isSome(failure) && failure.value instanceof TargetSelectorConflictError,
           ).toBe(true);
         }
       }).pipe(Effect.provide(layer));

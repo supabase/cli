@@ -57,10 +57,11 @@ its own curated error only when invoked (see "Entrypoints" below).
 - `CliConfig` — the config _document_ (`supabase/config.toml`/`.json`) — the full local superset
   the CLI reads and writes.
 - `ProjectConfig` — the hosted-project subset: a sparse overlay of the hosted sections (`api`,
-  `auth`, `db`, `realtime`, `storage`, `workers`, `experimental`) describing what a Supabase
-  project looks like on the platform. Produced by `toProjectConfig` from either a `CliConfig`
-  document or a Management API response — see "ProjectConfig: producing and validating values"
-  below.
+  `auth`, `db`, `storage`, `compute`, `experimental`) describing what a Supabase project looks
+  like on the platform. `realtime` is one of the seven sections a hosted response can speak for,
+  but every one of its config-side fields is local-only, so a `ProjectConfig` value never carries
+  a `realtime` key. Produced by `toProjectConfig` from either a `CliConfig` document or a
+  Management API response — see "ProjectConfig: producing and validating values" below.
 - `CliSettings` — the CLI's own runtime settings; lives in `apps/cli`, not this package.
 
 Use the `Cli*` prefix for the local checkout side and a bare `Project*` name for the hosted
@@ -72,14 +73,14 @@ for the full vocabulary.
 
 ## Entrypoints
 
-| Entrypoint              | Contents                                                                                                                                                                                                                                                                                                                                                                                                                        | Constraints                                                                                                                                                                                                                                                                                                |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.`                     | `CliConfigSchema`/`ProjectConfigSchema` and their types, config encoding, sparse-config defaults, the `ProjectConfig` converters, the config-diff classification engine (`diffProjectConfig`), error classes                                                                                                                                                                                                                    | Pure — browser/edge/Node/Bun-safe. No file IO, no Effect-returning function, no `@effect/platform-*`/`node:`/`bun:` module anywhere in its transitive import graph                                                                                                                                         |
-| `./io`                  | A Promise-based facade over the same file-IO/Effect programs as `./effect`                                                                                                                                                                                                                                                                                                                                                      | Resolved automatically via package.json export conditions (`bun`/`node`/`browser`/`default`). Requires one of the optional platform peers — `@effect/platform-bun` under Bun, `@effect/platform-node` under Node — installed at runtime; see "Installing" below for the failure mode when it's missing     |
-| `./effect`              | Effect-native superset of `.`: `CliConfigStore`/`cliConfigStoreLayer`, config loading/saving, project-environment resolution, functions-manifest inference                                                                                                                                                                                                                                                                      | Requires `effect`; requires a platform peer only for the file-IO programs, exactly like `./io`                                                                                                                                                                                                             |
-| `./internal`            | `ENV_CAPTURE_REGEX`, `AUTH_HOOK_NAMES`, `unmappedSecretApiPaths`, `projectConfigMappingRows`, the `ProjectConfigMappingRow`/`ProjectConfigApiAttributes`/`InternalLoadCliConfigOptions` types, plus `loadCliConfig`/`resolveCliConfigValue`/`resolveCliConfigSubtree` re-typed to additionally accept the internal-only `goViperCompat` option — the SAME runtime functions `./effect` exports, not independent implementations | **Not covered by semver, and only `apps/cli` may import it** (enforced by `src/monorepo-import-contract.unit.test.ts`). Exists solely for the Supabase CLI's own use and its contract-guard tests — any export here (its existence, shape, or behavior) can change or vanish in any release without notice |
-| `./schema.json`         | Generated JSON Schema for `CliConfig`                                                                                                                                                                                                                                                                                                                                                                                           | Draft 2020-12 — a language-agnostic contract for non-TypeScript consumers                                                                                                                                                                                                                                  |
-| `./project-schema.json` | Generated JSON Schema for `ProjectConfig`                                                                                                                                                                                                                                                                                                                                                                                       | Draft 2020-12 — a language-agnostic contract for non-TypeScript consumers                                                                                                                                                                                                                                  |
+| Entrypoint              | Contents                                                                                                                                                                                                                                                                                                                                                                                                                    | Constraints                                                                                                                                                                                                                                                                                                |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.`                     | `CliConfigSchema`/`ProjectConfigSchema` and their types, config encoding, sparse-config defaults, the `ProjectConfig` converters, the config-diff classification engine (`diffProjectConfig`), error classes                                                                                                                                                                                                                | Pure — browser/edge/Node/Bun-safe. No file IO, no Effect-returning function, no `@effect/platform-*`/`node:`/`bun:` module anywhere in its transitive import graph                                                                                                                                         |
+| `./io`                  | A Promise-based facade over the same file-IO/Effect programs as `./effect`                                                                                                                                                                                                                                                                                                                                                  | Resolved automatically via package.json export conditions (`bun`/`node`/`browser`/`default`). Requires one of the optional platform peers — `@effect/platform-bun` under Bun, `@effect/platform-node` under Node — installed at runtime; see "Installing" below for the failure mode when it's missing     |
+| `./effect`              | Effect-native superset of `.`: `CliConfigStore`/`cliConfigStoreLayer`, config loading/saving, project-environment resolution, functions-manifest inference                                                                                                                                                                                                                                                                  | Requires `effect`; requires a platform peer only for the file-IO programs, exactly like `./io`                                                                                                                                                                                                             |
+| `./internal`            | `ENV_CAPTURE_REGEX`, `AUTH_HOOK_NAMES`, `unmappedSecretApiPaths`, `projectConfigMappingRows`, the `ProjectConfigMappingRow`/`ProjectConfigApiAttributes`/`InternalLoadCliConfigOptions` types, plus `loadCliConfig`/`resolveCliConfigValue`/`resolveCliConfigSubtree` re-typed to additionally accept the internal-only `cliCompat` option — the SAME runtime functions `./effect` exports, not independent implementations | **Not covered by semver, and only `apps/cli` may import it** (enforced by `src/monorepo-import-contract.unit.test.ts`). Exists solely for the Supabase CLI's own use and its contract-guard tests — any export here (its existence, shape, or behavior) can change or vanish in any release without notice |
+| `./schema.json`         | Generated JSON Schema for `CliConfig`                                                                                                                                                                                                                                                                                                                                                                                       | Draft-07 — a language-agnostic contract for non-TypeScript consumers                                                                                                                                                                                                                                       |
+| `./project-schema.json` | Generated JSON Schema for `ProjectConfig`                                                                                                                                                                                                                                                                                                                                                                                   | Draft-07 — a language-agnostic contract for non-TypeScript consumers                                                                                                                                                                                                                                       |
 
 A few things worth calling out beyond the table:
 
@@ -174,16 +175,17 @@ Every runtime and type export of the pure `.` entrypoint, grouped by category:
 
 **JSON Schema generators + URLs**
 
-| Export                                                | What it is                                                |
-| ----------------------------------------------------- | --------------------------------------------------------- |
-| `toCliConfigJsonSchema` / `toProjectConfigJsonSchema` | Render each shape's JSON Schema (draft 2020-12) document. |
-| `CLI_CONFIG_SCHEMA_URL` / `PROJECT_CONFIG_SCHEMA_URL` | The `$id`/`$schema` URL for each generated document.      |
+| Export                                                | What it is                                           |
+| ----------------------------------------------------- | ---------------------------------------------------- |
+| `toCliConfigJsonSchema` / `toProjectConfigJsonSchema` | Render each shape's JSON Schema (draft-07) document. |
+| `CLI_CONFIG_SCHEMA_URL` / `PROJECT_CONFIG_SCHEMA_URL` | The `$id`/`$schema` URL for each generated document. |
 
 **Errors**
 
 | Export                                                          | What it is                                                              |
 | --------------------------------------------------------------- | ----------------------------------------------------------------------- |
 | `CliConfigParseError`                                           | A malformed `supabase/config.toml`/`.json`.                             |
+| `CliConfigRemovedKeyError`                                      | A config using removed keys, each named with its replacement.           |
 | `CliProjectEnvParseError`                                       | A malformed `.env`/`.env.local` file.                                   |
 | `DuplicateRemoteProjectIdError` / `InvalidRemoteProjectIdError` | A `[remotes.*]` block problem.                                          |
 | `ProjectConfigParseError`                                       | A Management API v2 response, or a caller argument, that failed to map. |
@@ -203,9 +205,10 @@ Effect:
 - `toProjectConfig(source)` — thin dispatcher over the two normalizers below; pass `{ cliConfig }`
   or `{ apiResponse }`. Throws `ProjectConfigParseError` when `source` carries neither key or both.
 - `fromConfigDocument(cliConfig)` — projection of a `CliConfig` document (or any `EffectiveConfig`)
-  onto the hosted sections (`api`, `auth`, `db`, `realtime`, `storage`, `workers`, `experimental`),
-  omitting every `x-secret` leaf and canonicalizing duration/byte-size fields the same way the API
-  side would. **Not a verbatim rendering of the document** — see
+  onto the hosted sections (`api`, `auth`, `db`, `storage`, `compute`, `experimental`; `realtime`
+  never surfaces, since every one of its config-side fields is local-only), omitting every
+  `x-secret` leaf and canonicalizing duration/byte-size fields the same way the API side would.
+  **Not a verbatim rendering of the document** — see
   [ADR 0021](https://github.com/supabase/cli/blob/develop/docs/adr/0021-projectconfig-convergence-semantics.md) for the push-precedence
   and sentinel-pruning semantics this applies.
 - `fromApiProjectConfig(input)` — translation of a Management API v2 project-config response (the
@@ -260,13 +263,19 @@ schema, not only Effect code.
 `ProjectConfigSchema` is derived from `CliConfigSchema`, never hand-declared, which gives it a
 specific, narrower validation contract — what it does and does not promise:
 
-- **Hosted sections only** — the same seven sections `ProjectConfig` itself carries; nothing else
-  validates.
+- **Hosted sections only** — the same sections `ProjectConfig` carries: `api`, `auth`, `db`,
+  `storage`, `compute`, `experimental`. `realtime` is absent because every one of its config-side
+  fields is local-only; nothing else validates.
 - **Deeply optional** — every key at every level is optional, mirroring `ProjectConfig`'s own
   `DeepPartial` shape, so a sparse fragment like `{ auth: { email: { smtp: { enabled: true } } } }`
   validates even without whatever sibling fields would otherwise be required.
 - **`x-secret` leaves removed** — no secret-marked field exists in this schema at all, matching
   the converters' own secret-omission behavior.
+- **Local-only fields removed** — a `DOCUMENT_ONLY_LOCAL_PATHS` field (local bind ports/TLS,
+  `db.migrations`/`db.seed`, every `[realtime]` field, and local-only `experimental.*` engine
+  selection) is absent from this schema and from `ProjectConfig`'s own type, matching
+  `fromConfigDocument`'s runtime omission. A section emptied entirely by that removal — `realtime`
+  today — is absent from both altogether, not merely present as an empty object.
 - **Cross-field checks stripped** — whole-struct business-rule refinements from the base schema
   (e.g. "if `enabled`, then `host` is required") are removed, since a deliberately sparse overlay
   can legitimately violate them.
@@ -298,18 +307,21 @@ A rejected `loadCliConfig`, `loadCliConfigFile`, or `saveCliConfig` call from `.
 with any of:
 
 - `CliConfigParseError` — a malformed `supabase/config.toml`/`.json`
+- `CliConfigRemovedKeyError` — a config using removed keys (`[inbucket]`,
+  `[auth.external.linkedin]`, `[auth.external.slack]`, a non-empty `experimental.orioledb_version`);
+  `removedKeys` lists every one with its replacement
 - `DuplicateRemoteProjectIdError` — two `[remotes.*]` blocks declare the same `project_id`
 - `InvalidRemoteProjectIdError` — a `[remotes.*]` block's `project_id` isn't a valid project ref
 - `CliProjectEnvParseError` — a malformed `.env`/`.env.local` file
 - `PlatformError` (from `effect/PlatformError`) — a host/OS failure surfaced by the underlying
   `FileSystem` service
 
-The four package-owned classes are plain Effect `Data.TaggedError` classes; `PlatformError` is
-Effect's own error class rather than one of this package's — but all five are classes, so a catch
+The five package-owned classes are plain Effect `Data.TaggedError` classes; `PlatformError` is
+Effect's own error class rather than one of this package's — but all six are classes, so a catch
 block can distinguish any of them with `instanceof`. What each carries:
 
-- `DuplicateRemoteProjectIdError` and `InvalidRemoteProjectIdError` set a real `error.message`
-  (verbatim the Go CLI's wording for the same failures).
+- `DuplicateRemoteProjectIdError`, `InvalidRemoteProjectIdError` and `CliConfigRemovedKeyError` set
+  a real `error.message`.
 - `PlatformError` sets `error.message` too, describing the failing filesystem operation, alongside
   `.module`/`.method`/`.description`.
 - `CliConfigParseError` and `CliProjectEnvParseError` carry structured fields instead of prose —

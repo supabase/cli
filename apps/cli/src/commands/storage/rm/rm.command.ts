@@ -1,33 +1,29 @@
 import { Effect, Layer } from "effect";
-import { Argument, Command, Flag } from "effect/unstable/cli";
+import { Argument, Command, Flag } from "effect/cli";
 
-import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
 import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-runtime.layer.ts";
-import {
-  StorageLinkedFlagDef,
-  StorageLocalFlagDef,
-  StorageProjectRefFlagDef,
-  assertStorageTargetsExclusive,
-} from "../storage.flags.ts";
+import { STORAGE_PERMISSIONS, storageTargetFlags } from "../storage.flags.ts";
 import { storageRm } from "./rm.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
-  files: Argument.string("file").pipe(
+  files: Argument.String("file").pipe(
     Argument.withDescription("File paths to remove."),
     Argument.variadic(),
   ),
-  recursive: Flag.boolean("recursive").pipe(
+  recursive: Flag.Boolean("recursive").pipe(
     Flag.withAlias("r"),
     Flag.withDescription("Recursively remove a directory."),
     Flag.withDefault(false),
   ),
-  linked: StorageLinkedFlagDef,
-  local: StorageLocalFlagDef,
-  projectRef: StorageProjectRefFlagDef,
+  ...storageTargetFlags,
 } as const;
 
 export const storageRmCommand = Command.make("rm", config).pipe(
@@ -43,32 +39,25 @@ export const storageRmCommand = Command.make("rm", config).pipe(
       description: "Remove multiple files from storage",
     },
   ]),
+  withPermissions(STORAGE_PERMISSIONS),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
-      // Gate before the mutex check below — order matters; see
-      // requireExperimental's doc comment for why.
       yield* requireExperimental;
-      const cliArgs = yield* CliArgs;
-      yield* assertStorageTargetsExclusive(cliArgs.args);
       const telemetryFlags = {
         recursive: flags.recursive,
-        linked: flags.linked,
-        local: flags.local,
-        "project-ref": flags.projectRef,
       };
       return yield* storageRm({
         files: flags.files.map(String),
         recursive: flags.recursive,
+        remote: flags.remote,
         linked: flags.linked,
         local: flags.local,
         projectRef: flags.projectRef,
-      }).pipe(
-        // TS-only flag with no Go telemetry-safety baseline; Go's nearest
-        // --project-ref registrations (cmd/pgdelta_catalog.go:44 and most
-        // others) are unmarked, so it stays redacted.
-        withCommandTelemetry({ flags: telemetryFlags }),
-      );
+      }).pipe(withCommandTelemetry({ flags: telemetryFlags }));
     }).pipe(withJsonErrorHandling),
   ),
   Command.provide(Layer.mergeAll(storageGatewayRuntimeLayer(["storage", "rm"]), stdinLayer)),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
+  withTargetPolicy({ group: "selectable", consent: "no" }),
 );

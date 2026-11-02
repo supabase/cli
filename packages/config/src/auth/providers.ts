@@ -118,15 +118,7 @@ const provider = (providerConfig: {
 
 const defaultExternal = {};
 
-/**
- * Go's deprecated `linkedin`/`slack` provider ids (`pkg/config/config.go:1418-
- * 1423`) are intentionally NOT modeled here — only their `_oidc` replacements
- * (`linkedin_oidc`, `slack_oidc`) are, matching Go's `(e external) validate()`,
- * which unconditionally deletes the deprecated keys before anything decodes
- * them. `io.ts`'s `normalizeDeprecatedExternalProviders` strips a config's
- * `linkedin`/`slack` table (warning on stderr when it was `enabled`, same as
- * Go) before this schema ever sees it.
- */
+/** OAuth providers. The removed `linkedin`/`slack` ids are rejected on load; use `linkedin_oidc`/`slack_oidc`. */
 export const external = Schema.Struct({
   apple: provider({
     id: "apple",

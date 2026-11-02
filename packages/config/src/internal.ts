@@ -1,21 +1,19 @@
 /**
- * NOT covered by semver. This subpath exists solely for `apps/cli`'s own use
- * and its contract-guard tests — every export here (its existence, its shape,
- * its behavior) can change or vanish in any release without notice. External
- * consumers must use `.`, `./effect`, or `./io` instead; only `apps/cli` may
- * import `@supabase/config/internal` (enforced by
- * `src/monorepo-import-contract.unit.test.ts`).
+ * Not covered by semver: exists solely for `apps/cli`'s own use, and can change or vanish in
+ * any release without notice. External consumers must use `.`, `./effect`, or `./io` instead.
  *
- * `loadCliConfig`/`resolveCliConfigValue`/`resolveCliConfigSubtree` below are
- * the SAME runtime functions `./effect` exports, just re-typed here to widen
- * their options parameter to the internal-only, Go-parity `goViperCompat`
- * knob (`InternalLoadCliConfigOptions` for `loadCliConfig`;
- * `resolveCliConfigValue`/`resolveCliConfigSubtree`'s own widened options
- * type is package-internal and not itself re-exported here) — this module
- * otherwise only re-exports types and registry data, not independent
- * implementations.
+ * `loadCliConfig`/`resolveCliConfigValue`/`resolveCliConfigSubtree` below are the same runtime
+ * functions `./effect` exports, re-typed here to widen their options parameter to the
+ * internal-only `cliCompat` knob.
  */
 export { ENV_CAPTURE_REGEX } from "./lib/env.ts";
+export {
+  DEFAULT_MIGRATION_CHECK_SEVERITY,
+  MIGRATION_CHECK_RULES,
+  mapMigrationCheckRules,
+  type MigrationCheckRule,
+  type MigrationCheckSeverity,
+} from "./db-migration-checks.ts";
 export {
   type AppliedConfigEdit,
   applyConfigEdits,
@@ -34,11 +32,20 @@ export { type ProjectConfigApiAttributes } from "./project-config/api-attributes
 export { type InternalLoadCliConfigOptions } from "./config-document.ts";
 export { resolveCliConfigValue, resolveCliConfigSubtree } from "./project.ts";
 export {
+  decodeMergedCliConfig,
+  type DecodeMergedCliConfigOptions,
   loadCliConfig,
+  mergeParsedCliConfig,
+  type MergedCliConfigDocument,
+  parseCliConfigDocumentFile,
+  type ParsedCliConfigDocument,
+  type ParseMergeCliConfigOptions,
   remoteNameForProjectRef,
   remoteProjectIdEntries,
   writeCliConfigDocumentText,
   decodeCliConfigDocumentForValidationEffect,
   type DecodeCliConfigDocumentForValidationEffectOptions,
+  parseCliConfigDocument,
 } from "./io.ts";
+export { PROVIDER_SIGNUP_ALIASES } from "./lib/provider-signup.ts";
 export { CliConfigWriteError } from "./errors.ts";

@@ -1,16 +1,24 @@
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose, withCondition } from "../../../command-internal/command-permissions/model.ts";
+import { dbConfig } from "../../../command-internal/db-config.layer.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { migrationDbRuntimeLayer } from "../migration.layers.ts";
 import { migrationDown } from "./down.handler.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { targetFlags } from "../../../command-internal/target/target-flags.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
-  // `--last` is conceptually a uint, default 1. Effect has no uint, so reject
-  // negatives explicitly to reproduce the established `ParseUint`-style rejection
-  // (the message differs slightly — an accepted small divergence).
-  last: Flag.integer("last").pipe(
+  // `--last` is conceptually a uint (default 1); Effect has no uint type, so negatives are
+  // rejected explicitly.
+  last: Flag.Int("last").pipe(
     Flag.withDescription("Reset up to the last n migration versions."),
     Flag.withDefault(1),
     Flag.mapTryCatch(
@@ -23,25 +31,7 @@ const config = {
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
-  dbUrl: Flag.string("db-url").pipe(
-    Flag.withDescription(
-      "Resets applied migrations on the database specified by the connection string (must be percent-encoded).",
-    ),
-    Flag.optional,
-  ),
-  linked: Flag.boolean("linked").pipe(
-    Flag.withDescription("Resets applied migrations on the linked project."),
-    Flag.withDefault(false),
-  ),
-  local: Flag.boolean("local").pipe(
-    Flag.withDescription("Resets applied migrations on the local database."),
-    Flag.withDefault(true),
-  ),
-  // TS-only override of the linked project ref — see push.command.ts (db push).
-  projectRef: Flag.string("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...targetFlags({ subject: "database", dbUrl: true }),
 } as const;
 
 export type MigrationDownFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -49,22 +39,26 @@ export type MigrationDownFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const migrationDownCommand = Command.make("down", config).pipe(
   Command.withDescription("Resets applied migrations up to the last n versions."),
   Command.withShortDescription("Resets applied migrations up to the last n versions"),
+  withPermissions(
+    compose(
+      { operations: [], noApiEffectFlags: ["last"] },
+      dbConfig,
+      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      branchResolution,
+    ),
+  ),
   Command.withHandler((flags) =>
     migrationDown(flags).pipe(
       withCommandTelemetry({
         flags: {
           last: flags.last,
-          "db-url": flags.dbUrl,
-          linked: flags.linked,
-          local: flags.local,
-          "project-ref": flags.projectRef,
         },
-        // TS-only flag with no Go telemetry-safety baseline; Go's nearest
-        // --project-ref registrations (cmd/pgdelta_catalog.go:44 and most
-        // others) are unmarked, so it stays redacted.
       }),
       withJsonErrorHandling,
     ),
   ),
   Command.provide(migrationDbRuntimeLayer(["migration", "down"])),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
+  withTargetPolicy({ group: "selectable", consent: "no" }),
 );

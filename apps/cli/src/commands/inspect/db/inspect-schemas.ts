@@ -1,10 +1,7 @@
 /**
- * Internal Postgres schemas the `inspect db` queries exclude, and the LIKE-escape
- * helper that turns them into `LIKE ANY($1)` exclusion patterns.
- *
- * The order is preserved verbatim because the escaped array is passed straight
- * through to `LIKE ANY($1)`, where order is observable in nothing but is kept
- * identical to avoid any drift from the established list.
+ * Internal Postgres schemas the `inspect db` queries exclude, and the LIKE-escape helper that
+ * turns them into `LIKE ANY($1)` exclusion patterns. Order has no functional effect but is
+ * kept identical to the established list to avoid any drift.
  */
 export const INTERNAL_SCHEMAS: ReadonlyArray<string> = [
   "information_schema",

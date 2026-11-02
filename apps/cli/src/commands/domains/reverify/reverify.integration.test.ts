@@ -1,16 +1,25 @@
 import { type V1GetHostnameConfigOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Schema } from "effect";
 
-import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
+  VALID_REF,
   buildTestRuntime,
+  jsonResponse,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { domainsReverify } from "./reverify.handler.ts";
 
 const HOSTNAME_RESPONSE: typeof V1GetHostnameConfigOutput.Type = {
@@ -31,17 +40,19 @@ const HOSTNAME_RESPONSE: typeof V1GetHostnameConfigOutput.Type = {
   },
 };
 
-type GoOutput = "env" | "pretty" | "json" | "toml" | "yaml";
+type OutputFlagValue = "env" | "pretty" | "json" | "toml" | "yaml";
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: GoOutput;
+  readonly outputFlag?: OutputFlagValue;
   readonly status?: number;
   readonly network?: "fail";
   readonly response?: unknown;
 }
 
 const tempRoot = useTempWorkdir("supabase-domains-reverify-int-");
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
@@ -60,15 +71,19 @@ function setup(opts: SetupOpts = {}) {
     analytics,
     telemetry: telemetry.layer,
     linkedProjectCache: linkedProjectCache.layer,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api, analytics, telemetry, linkedProjectCache };
 }
 
-const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: false };
+const baseFlags = {
+  remote: Option.none(),
+  projectRef: Option.none<string>(),
+  includeRawOutput: Option.none<boolean>(),
+};
 
 describe("domains reverify integration", () => {
-  it.live("suggests upgrade from entitlement_required envelope on 400", () => {
+  it.effect("suggests upgrade from entitlement_required envelope on 400", () => {
     const { layer, out, analytics, api } = setup({
       status: 400,
       response: {
@@ -96,7 +111,7 @@ describe("domains reverify integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prints the initializing status to stderr in text mode", () => {
+  it.effect("prints the initializing status to stderr in text mode", () => {
     const { layer, out, api, telemetry, linkedProjectCache } = setup();
     return Effect.gen(function* () {
       yield* domainsReverify(baseFlags);
@@ -105,10 +120,11 @@ describe("domains reverify integration", () => {
       expect(api.requests[0]?.url).toContain("/custom-hostname/reverify");
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cached).toBe(true);
+      assertPermissionDrift({ command: "domains reverify", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a structured success object for --output-format json", () => {
+  it.effect("emits a structured success object for --output-format json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* domainsReverify(baseFlags);
@@ -117,47 +133,39 @@ describe("domains reverify integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits indented Go JSON to stdout with no status on stderr for -o json", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+  it.effect("emits indented JSON to stdout with no status on stderr for -o json", () => {
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* domainsReverify(baseFlags);
       expect(out.stdoutText.startsWith("{")).toBe(true);
-      expect(out.stderrText).toBe("");
+      expect(out.stderrText).toBe(unverifiedTargetBanner());
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("forces Go JSON output when --include-raw-output is set", () => {
-    const { layer, out } = setup();
-    return Effect.gen(function* () {
-      yield* domainsReverify({ projectRef: Option.none(), includeRawOutput: true });
-      expect(out.stdoutText.startsWith("{")).toBe(true);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("fails with DomainsUnexpectedStatusError on HTTP 503", () => {
+  it.effect("fails with DomainsUnexpectedStatusError on HTTP 503", () => {
     const { layer, telemetry } = setup({ status: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsReverify(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("unexpected re-verify hostname status 503");
+        expect(Cause.pretty(exit.cause)).toContain("unexpected re-verify hostname status 503");
       }
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with DomainsNetworkError on transport failure", () => {
+  it.effect("fails with DomainsNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsReverify(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to re-verify custom hostname");
+        expect(Cause.pretty(exit.cause)).toContain("failed to re-verify custom hostname");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("maps an HTTP error without a spinner in json mode", () => {
+  it.effect("maps an HTTP error without a spinner in json mode", () => {
     const { layer, out } = setup({ format: "json", status: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsReverify(baseFlags));
@@ -165,4 +173,64 @@ describe("domains reverify integration", () => {
       expect(out.progressEvents).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect(
+    "picks the project, reverifies the hostname and fills the linked-project cache through the real layers",
+    () => {
+      const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+      const api = mockCommandPlatformApi({
+        handler: (request) => {
+          const route = `${request.method} ${request.url}`;
+          if (route === "GET https://api.supabase.com/v1/projects") {
+            return Effect.succeed(jsonResponse(request, 200, [projectResponse(VALID_REF)]));
+          }
+          if (route === `GET https://api.supabase.com/v1/projects/${VALID_REF}`) {
+            return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
+          }
+          if (
+            route ===
+            `POST https://api.supabase.com/v1/projects/${VALID_REF}/custom-hostname/reverify`
+          ) {
+            return Effect.succeed(jsonResponse(request, 201, HOSTNAME_RESPONSE));
+          }
+          return Effect.succeed(jsonResponse(request, 404, { message: "unexpected request" }));
+        },
+      });
+      const cliSettings = mockCommandSettings({
+        workdir: tempRoot.current,
+        projectId: Option.none(),
+      });
+      const layer = buildTestRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true }),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+        expect(yield* fs.exists(cachePath)).toBe(false);
+        yield* domainsReverify(baseFlags);
+        expect(out.stderrText).toContain("being initialized");
+        expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          "GET https://api.supabase.com/v1/projects",
+          `POST https://api.supabase.com/v1/projects/${VALID_REF}/custom-hostname/reverify`,
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+        ]);
+        expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+          ref: VALID_REF,
+        });
+        assertPermissionDrift({ command: "domains reverify", requests: api.requests, exact: true });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+});
+
+describeHostedTargetSelection("domains reverify", {
+  respond: (request) => Effect.succeed(jsonResponse(request, 201, HOSTNAME_RESPONSE)),
+  run: (flags) => domainsReverify({ ...baseFlags, ...flags }),
 });

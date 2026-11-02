@@ -1,8 +1,7 @@
 /**
- * The pure tar-header walk behind {@link validatePgDataArchive}'s pre-restore check.
- * Unit tests rather than integration ones because the interesting cases are all in the format
- * handling: chunk boundaries landing mid-header (or mid-MARKER-CONTENT), content that must be
- * stepped over rather than parsed, and bytes that are not a tar at all.
+ * The pure tar-header walk behind {@link validatePgDataArchive}'s pre-restore check. Unit
+ * tests, since the interesting cases are format handling: chunk boundaries landing mid-header or
+ * mid-marker-content, content stepped over rather than parsed, and non-tar bytes.
  */
 
 import { describe, expect, it } from "@effect/vitest";

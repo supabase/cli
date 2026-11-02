@@ -1,10 +1,12 @@
-import { Command } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { CompletionNoDescriptionsFlagDef } from "../completion.flags.ts";
 import { completionZsh } from "./zsh.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 
 const config = {
   noDescriptions: CompletionNoDescriptionsFlagDef,
@@ -27,8 +29,10 @@ export const completionZshCommand = Command.make("zsh", config).pipe(
       "You will need to start a new shell for this setup to take effect.",
   ),
   Command.withShortDescription("Generate the autocompletion script for zsh"),
+  withPermissions({ operations: [], noApiEffectFlags: ["no-descriptions"] }),
   Command.withHandler((flags) =>
     completionZsh(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(commandRuntimeLayer(["completion", "zsh"])),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

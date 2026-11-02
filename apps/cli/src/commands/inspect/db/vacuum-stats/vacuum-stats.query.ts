@@ -66,10 +66,9 @@ ORDER BY
   1`;
 
 /**
- * `inspect db vacuum-stats` — per-table vacuum statistics. The query
- * returns 11 columns but only 9 are rendered (`autovacuum_threshold`
- * and `autoanalyze_threshold` are dropped). The `rowcount` cell has a one-shot `-1` → `No
- * stats` replacement.
+ * `inspect db vacuum-stats` — per-table vacuum statistics. The query returns 11 columns but
+ * only 9 are rendered (`autovacuum_threshold`/`autoanalyze_threshold` are dropped). The
+ * `rowcount` cell has a one-shot `-1` → `No stats` replacement.
  */
 export const vacuumStatsSpec: InspectQuerySpec = {
   name: "vacuum-stats",

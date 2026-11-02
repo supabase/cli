@@ -7,15 +7,21 @@ import {
   statusCodeActionability,
 } from "../shared/telemetry/error-actionability.ts";
 
-/**
- * `--db-url` could not be parsed as a Postgres connection string. Mirrors Go's
- * `pgconn.ParseConfig` failure in `flags.ParseDatabaseConfig`.
- */
+/** `--db-url` could not be parsed as a Postgres connection string. */
 export class DbConfigParseUrlError extends Data.TaggedError("DbConfigParseUrlError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.provideFlags;
+  }
+}
+
+/** The shell libpq `PG*` environment is invalid for a linked connection. */
+export class DbConfigLibpqEnvError extends Data.TaggedError("DbConfigLibpqEnvError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
   }
 }
 
@@ -32,6 +38,19 @@ export class DbConfigLoadError extends Data.TaggedError("DbConfigLoadError")<{
     return actionability.invalidConfig;
   }
 }
+
+type PassthroughLoadFailureTag =
+  | "ProjectRefReadError"
+  | "CliConfigValueError"
+  | "CliConfigFlagConflictError";
+
+/** Config-load failures that keep their own tag instead of becoming {@link DbConfigLoadError}. */
+export const isPassthroughLoadFailure = <E extends { readonly _tag: string }>(
+  error: E,
+): error is Extract<E, { readonly _tag: PassthroughLoadFailureTag }> =>
+  error._tag === "ProjectRefReadError" ||
+  error._tag === "CliConfigValueError" ||
+  error._tag === "CliConfigFlagConflictError";
 
 /** Transport failure creating a temporary login role (`V1CreateLoginRole`). */
 export class DbConfigLoginRoleNetworkError extends Data.TaggedError(
@@ -102,16 +121,19 @@ export class DbConfigUnbanStatusError extends Data.TaggedError("DbConfigUnbanSta
 }
 
 /**
- * The linked project's direct database host is unreachable (IPv6-only) and no
- * connection pooler is configured. Byte-matches Go's
- * `"IPv6 is not supported on your current network"` with the `supabase link`
- * suggestion.
+ * A project's direct database host is unreachable (IPv6-only) and no connection pooler is
+ * configured. The message text is exact: `"IPv6 is not supported on your current network"`.
  */
 export class DbConfigIpv6Error extends Data.TaggedError("DbConfigIpv6Error")<{
   readonly message: string;
   readonly suggestion?: string;
+  /** `pooler-url` for a project other than the linked one; `link` (the default) otherwise. */
+  readonly remedy?: "link" | "pooler-url";
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    if (this.remedy === "pooler-url") {
+      return { ...actionability.dbConnection, suggestion_type: CliSuggestionType.ProvideFlags };
+    }
     // The rendered remediation is "Run supabase link --project-ref <ref> to
     // setup IPv4 connection", so the suggestion is link-shaped even though the
     // category stays db_connection.
@@ -124,9 +146,8 @@ export class DbConfigIpv6Error extends Data.TaggedError("DbConfigIpv6Error")<{
 }
 
 /**
- * Failed to connect to the linked project as the temporary login role after the
- * pooler refresh backoff was exhausted. Mirrors `initPoolerLogin` final
- * `backoff.RetryNotify` failure.
+ * Failed to connect to the linked project as the temporary login role after the pooler refresh
+ * backoff was exhausted.
  */
 export class DbConfigConnectTempRoleError extends Data.TaggedError("DbConfigConnectTempRoleError")<{
   readonly message: string;
@@ -137,10 +158,23 @@ export class DbConfigConnectTempRoleError extends Data.TaggedError("DbConfigConn
   }
 }
 
+/** The temp login role could not connect with network bans listed and no `--yes` to remove them. */
+export class LinkedDbNetworkBannedError extends Data.TaggedError("LinkedDbNetworkBannedError")<{
+  readonly message: string;
+  readonly suggestion?: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return {
+      ...actionability.dbConnection,
+      suggestion_type: CliSuggestionType.RunCommand,
+      suggested_command: "supabase network-bans remove",
+    };
+  }
+}
+
 /**
- * The configured pooler connection string does not match the linked project ref
- * or its domain falls outside the active profile (MITM guard). Mirrors the
- * `nil`-returning validation branches of `GetPoolerConfig`.
+ * The configured pooler connection string does not match the linked project ref, or its domain
+ * falls outside the active profile (MITM guard).
  */
 export class DbConfigPoolerLoginError extends Data.TaggedError("DbConfigPoolerLoginError")<{
   readonly message: string;

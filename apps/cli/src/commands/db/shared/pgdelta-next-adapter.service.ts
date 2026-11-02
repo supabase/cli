@@ -126,7 +126,7 @@ export interface PgDeltaNextSnapshotCaptureInput {
   readonly pool: Pool;
 }
 
-interface PgDeltaNextSnapshotCaptureResult {
+export interface PgDeltaNextSnapshotCaptureResult {
   readonly generation: "v2";
   readonly snapshot: string;
   readonly pgVersion: string;

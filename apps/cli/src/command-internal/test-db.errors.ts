@@ -2,15 +2,12 @@ import { Data } from "effect";
 
 import {
   actionability,
+  causeDeclaration,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
 
-/**
- * `create extension if not exists pgtap` failed. Byte-matches Go's
- * `"failed to enable pgTAP: " + err` (`apps/cli-go/internal/db/test/test.go:70`,
- * deleted in CLI-1970; last present at commit 7b469f5b3).
- */
+/** `create extension if not exists pgtap` failed. */
 export class TestDbEnablePgtapError extends Data.TaggedError("TestDbEnablePgtapError")<{
   readonly message: string;
 }> {
@@ -20,15 +17,15 @@ export class TestDbEnablePgtapError extends Data.TaggedError("TestDbEnablePgtapE
 }
 
 /**
- * `pg_prove` exited non-zero (test failures or a container error). Byte-matches
- * Go's `"error running container: exit " + code` (`apps/cli-go/internal/utils/docker.go`
- * `DockerStreamLogs`). The TAP failure detail is already on stdout.
+ * `pg_prove` exited non-zero (test failures or a container error). The TAP
+ * failure detail is already on stdout.
  */
 export class TestDbRunError extends Data.TaggedError("TestDbRunError")<{
   readonly message: string;
+  readonly cause?: unknown;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.dbFinding;
+    return causeDeclaration(this.cause) ?? actionability.dbFinding;
   }
 }
 
@@ -42,20 +39,5 @@ export class TestDbNoTestsError extends Data.TaggedError("TestDbNoTestsError")<{
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidInput;
-  }
-}
-
-/**
- * More than one of `--db-url` / `--linked` / `--local` was set. Reproduces
- * cobra's `MarkFlagsMutuallyExclusive("db-url", "linked", "local")` error from
- * `apps/cli-go/cmd/db.go:485`, byte-for-byte.
- */
-export class TestDbMutuallyExclusiveFlagsError extends Data.TaggedError(
-  "TestDbMutuallyExclusiveFlagsError",
-)<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
   }
 }

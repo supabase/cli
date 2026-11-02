@@ -17,18 +17,13 @@ const formerDeclarativeDefaultWarning = (formerDirRel: string, defaultDirRel: st
   )}\n`;
 
 /**
- * Warns when a project still has a declarative tree at the former default
- * `supabase/database` while relying on the implicit default, which now resolves
- * to `supabase/schemas`. Without this, an upgraded project silently stops
- * reading its existing tree: non-interactive sync reports "no declarative
- * schema found" with no hint why, and `--yes` regenerates a fresh tree that
- * ignores edits present only under the old path. TS-only guidance (no Go
- * counterpart); recorded in docs/go-cli-divergences.md.
+ * Warns when a project still has a declarative tree at the former default `supabase/database`
+ * while relying on the implicit default, which now resolves to `supabase/schemas` — otherwise an
+ * upgraded project silently stops reading its existing tree.
  *
- * Fires only when all three hold: `declarative_schema_path` is unset, the new
- * default directory has no entries, and the former default contains `.sql`
- * files or an export manifest. Probe failures read as "absent" so the warning
- * can never turn an unreadable directory into a command failure.
+ * Fires only when `declarative_schema_path` is unset, the new default directory has no entries,
+ * and the former default contains `.sql` files or an export manifest; probe failures read as
+ * "absent" so the warning can never turn an unreadable directory into a command failure.
  */
 export const warnFormerDeclarativeDefault = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
@@ -40,13 +35,13 @@ export const warnFormerDeclarativeDefault = Effect.fnUntraced(function* (
   const defaultDirRel = resolveDeclarativeDir(path, pgDelta);
   const defaultEntries = yield* fs
     .readDirectory(path.resolve(workdir, defaultDirRel))
-    .pipe(Effect.orElseSucceed(() => [] as string[]));
+    .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
   if (defaultEntries.length > 0) return;
 
   const formerDirRel = path.join(...FORMER_DEFAULT_SEGMENTS);
   const formerDir = path.resolve(workdir, formerDirRel);
   const formerSqlFiles = yield* walkSqlFiles(fs, formerDir, "").pipe(
-    Effect.orElseSucceed(() => [] as string[]),
+    Effect.orElseSucceed((): ReadonlyArray<string> => []),
   );
   const formerHasManifest = yield* fs
     .exists(path.join(formerDir, ".pgdelta-export.json"))

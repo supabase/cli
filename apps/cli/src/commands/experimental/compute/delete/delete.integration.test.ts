@@ -1,0 +1,788 @@
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, Layer, Option, FileSystem, Path, Schema } from "effect";
+import {
+  makeComputeProject,
+  seedLinkedComputeProject,
+  setupCompute,
+  computeResource,
+  computeRoute,
+  COMPUTE_PROJECT_REF,
+} from "../../../../../tests/helpers/compute.ts";
+import { describeComputeTargetSelection } from "../../../../../tests/helpers/compute-target-selection.ts";
+import { assertPermissionDrift } from "../../../../../tests/helpers/permission-drift.ts";
+import { projectResponse } from "../../../../../tests/helpers/permission-real-layers.ts";
+import {
+  ComputeNotDeployedError,
+  ComputeUnavailableError,
+  ComputeApiUnexpectedStatusError,
+  ComputeProjectNotFoundError,
+  ComputeRouteNotFoundError,
+} from "../../../../shared/compute/compute.errors.ts";
+import { describeHostedConsent } from "../../../../../tests/helpers/hosted-consent.ts";
+import { configValuesLayer } from "../../../../../tests/helpers/config-values-layer.ts";
+import { ComputeEnvNotSupportedError } from "../compute.errors.ts";
+import { computeDeleteCommand } from "./delete.command.ts";
+import { computeDelete } from "./delete.handler.ts";
+import { warningsOf } from "../../../../../tests/helpers/remote-selection.ts";
+
+const CONFIG = `project_id = "demo"\n\n[compute.api]\nruntime = "node"\nsize = "2gb"\n`;
+
+/**
+ * A project with `api` configured and on disk by default. Pass a bare config to
+ * get the orphan case — a compute deployed from somebody else's checkout, with
+ * nothing local behind it.
+ */
+function project(config = CONFIG) {
+  return makeComputeProject({
+    "supabase/config.toml": config,
+    ...(config === CONFIG ? { "supabase/compute/api/index.js": "export default {};\n" } : {}),
+  });
+}
+
+const getRoute = `GET ${computeRoute("/api")}`;
+const deleteRoute = `DELETE ${computeRoute("/api")}`;
+
+const routes = {
+  [getRoute]: {
+    status: 200,
+    body: { data: computeResource({ name: "api", runtime: "node", instances: 3 }) },
+  },
+  [deleteRoute]: { status: 204 },
+};
+
+describe("compute delete", () => {
+  it.effect("deletes after the name is typed back, and keeps the local files", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const repo = yield* project();
+      const { layer, out, http } = setupCompute({
+        workdir: repo.dir,
+        routes,
+        promptTextResponses: ["api"],
+      });
+
+      return yield* Effect.gen(function* () {
+        yield* computeDelete({
+          name: "api",
+          remote: Option.none(),
+          projectRef: Option.none(),
+        });
+
+        expect(http.routeKeys).toEqual([getRoute, deleteRoute]);
+        expect(out.stderrText).toContain('Permanently delete compute "api"');
+        assertPermissionDrift({
+          command: "compute delete",
+          variant: { computeEnabled: true },
+          requests: http.driftRequests,
+          exact: true,
+        });
+        // Labelled "declared" because this response carries no live tally.
+        // `spec.instances` is the target, not what is running.
+        expect(out.stderrText).toContain("3 declared instances");
+        expect(out.stdoutText).toContain("Kept");
+
+        // Nothing local is touched — that is what makes `push` a one-command undo.
+        expect(
+          yield* fs.exists(path.join(repo.dir, "supabase", "compute", "api", "index.js")),
+        ).toBe(true);
+        expect(yield* fs.readFileString(path.join(repo.dir, "supabase", "config.toml"))).toBe(
+          CONFIG,
+        );
+        // The redeploy hint is a success trailer, which lands on stderr.
+        expect(out.stderrText).toContain("supabase compute push api");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("picks the project, deletes the compute and records the linked project", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer, out, http } = setupCompute({
+        workdir: repo.dir,
+        realLayers: true,
+        interactive: true,
+        promptSelectResponses: [COMPUTE_PROJECT_REF],
+        promptTextResponses: ["api"],
+        routes: {
+          ...routes,
+          "GET /v1/projects": { status: 200, body: [projectResponse(COMPUTE_PROJECT_REF)] },
+          [`GET /v1/projects/${COMPUTE_PROJECT_REF}`]: {
+            status: 200,
+            body: projectResponse(COMPUTE_PROJECT_REF),
+          },
+        },
+      });
+
+      return yield* Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* computeDelete({ name: "api", remote: Option.none(), projectRef: Option.none() });
+
+        expect(http.routeKeys).toEqual([
+          "GET /v1/projects",
+          getRoute,
+          deleteRoute,
+          `GET /v1/projects/${COMPUTE_PROJECT_REF}`,
+        ]);
+        expect(out.promptSelectCalls).toHaveLength(1);
+        expect(out.stdoutText).toContain("Deleted Compute");
+        expect(yield* fs.exists(`${repo.dir}/supabase/.temp/linked-project.json`)).toBe(true);
+        assertPermissionDrift({
+          command: "compute delete",
+          variant: { computeEnabled: true },
+          requests: http.driftRequests,
+        });
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  // The refusal has to precede the DELETE. At emit time `--yes -o env` would
+  // remove the compute and then exit non-zero with no payload, which a script
+  // reads as "the delete failed" and may retry.
+  // Deletion never touches local files, so a malformed local config has no
+  // business standing between the user and a compute they named explicitly.
+  it.effect("deletes a remote compute despite an unparseable local config", () =>
+    Effect.gen(function* () {
+      const repo = yield* project("project_id = [unclosed\n");
+      const otherRef = "qrstuvwxyzabcdefghij";
+      const { layer, http } = setupCompute({
+        workdir: repo.dir,
+        yes: true,
+        routes: {
+          [`GET /v2/projects/${otherRef}/compute/api`]: {
+            status: 200,
+            body: { data: computeResource({ name: "api" }) },
+          },
+          [`DELETE /v2/projects/${otherRef}/compute/api`]: { status: 204 },
+        },
+      });
+
+      return yield* Effect.gen(function* () {
+        yield* computeDelete({
+          name: "api",
+          remote: Option.some({ _tag: "Ref", ref: otherRef }),
+          projectRef: Option.none(),
+        });
+
+        expect(http.routeKeys).toContain(`DELETE /v2/projects/${otherRef}/compute/api`);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  // The API grants `workers_read` for the GET and `workers_write`
+  // for the DELETE separately, so a credential holding only write could not
+  // delete a compute it is entitled to delete.
+  it.effect("deletes with --yes when the credential may not read the compute", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer, http } = setupCompute({
+        workdir: repo.dir,
+        yes: true,
+        routes: {
+          [getRoute]: { status: 403, body: { message: "insufficient scope" } },
+          [deleteRoute]: { status: 204 },
+        },
+      });
+
+      return yield* Effect.gen(function* () {
+        yield* computeDelete({ name: "api", remote: Option.none(), projectRef: Option.none() });
+
+        expect(http.routeKeys).toEqual([getRoute, deleteRoute]);
+        assertPermissionDrift({
+          command: "compute delete",
+          variant: { computeEnabled: true },
+          requests: http.driftRequests,
+        });
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("still confirms interactively when the compute cannot be read", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer, out, http } = setupCompute({
+        workdir: repo.dir,
+        promptTextResponses: ["api"],
+        routes: {
+          [getRoute]: { status: 403, body: { message: "insufficient scope" } },
+          [deleteRoute]: { status: 204 },
+        },
+      });
+
+      return yield* Effect.gen(function* () {
+        yield* computeDelete({ name: "api", remote: Option.none(), projectRef: Option.none() });
+
+        expect(out.stderrText).toContain('Permanently delete compute "api"');
+        // No count is quoted: the read that would have supplied one was refused.
+        expect(out.stderrText).not.toContain("will be terminated");
+        expect(http.routeKeys).toEqual([getRoute, deleteRoute]);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  // A refusal is not an absence: only a real 404 means there was nothing there.
+  it.effect("reports an unreadable compute as deleted, not as nothing to delete", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer, out, http } = setupCompute({
+        workdir: repo.dir,
+        yes: true,
+        routes: {
+          [getRoute]: { status: 403, body: { message: "insufficient scope" } },
+          [deleteRoute]: { status: 204 },
+        },
+      });
+
+      return yield* Effect.gen(function* () {
+        yield* computeDelete({ name: "api", remote: Option.none(), projectRef: Option.none() });
+
+        expect(out.stdoutText).toContain("Deleted Compute");
+        expect(out.stdoutText).not.toContain("nothing to delete");
+        expect(http.routeKeys).toEqual([getRoute, deleteRoute]);
+        assertPermissionDrift({
+          command: "compute delete",
+          variant: { computeEnabled: true },
+          requests: http.driftRequests,
+        });
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("refuses -o env before deleting anything", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer, http } = setupCompute({
+        workdir: repo.dir,
+        routes,
+        yes: true,
+        outputFlag: "env",
+      });
+
+      return yield* Effect.gen(function* () {
+        const error = yield* computeDelete({
+          name: "api",
+          remote: Option.none(),
+          projectRef: Option.none(),
+        }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(ComputeEnvNotSupportedError);
+        expect(http.routeKeys).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("skips the confirmation with --yes", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer, out, http } = setupCompute({ workdir: repo.dir, routes, yes: true });
+
+      return yield* Effect.gen(function* () {
+        yield* computeDelete({ name: "api", remote: Option.none(), projectRef: Option.none() });
+
+        expect(http.routeKeys).toEqual([getRoute, deleteRoute]);
+        expect(out.promptTextCalls).toEqual([]);
+        expect(out.stderrText).toContain('Confirmed by --yes: Permanently delete compute "api"');
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  const notDeployed = {
+    status: 404,
+    body: { error: { code: "not_found.compute.instance", message: "Compute instance not found" } },
+  };
+
+  it.effect("fails with `not deployed` before asking anything", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer, out } = setupCompute({
+        workdir: repo.dir,
+        routes: { [getRoute]: notDeployed },
+      });
+
+      return yield* Effect.gen(function* () {
+        const error = yield* computeDelete({
+          name: "api",
+          remote: Option.none(),
+          projectRef: Option.none(),
+        }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(ComputeNotDeployedError);
+        // Not `compute push`: somebody deleting "api" does not want to deploy it.
+        const suggestion = error instanceof ComputeNotDeployedError ? error.suggestion : "";
+        expect(suggestion).toContain("supabase compute list");
+        expect(suggestion).not.toContain("compute push");
+        expect(warningsOf(out)).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  const routerNotFound = (method: string) => ({
+    status: 404,
+    body: {
+      error: {
+        code: "not_found",
+        message: `Cannot ${method} ${computeRoute("/api")}`,
+      },
+    },
+  });
+
+  it.effect("does not read an unserved route as a compute that was never deployed", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer } = setupCompute({
+        workdir: repo.dir,
+        routes: { [getRoute]: routerNotFound("GET") },
+        yes: true,
+      });
+
+      return yield* Effect.gen(function* () {
+        const error = yield* computeDelete({
+          name: "api",
+          remote: Option.none(),
+          projectRef: Option.none(),
+        }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(ComputeRouteNotFoundError);
+        expect(error).not.toBeInstanceOf(ComputeNotDeployedError);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  const notEnrolled = {
+    status: 404,
+    body: {
+      error: {
+        code: "not_found.compute.not_enabled",
+        message: "Compute is not available for this project",
+      },
+    },
+  };
+
+  it.effect("names the alpha, not an undeployed compute, when the project is not enrolled", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer, out } = setupCompute({
+        workdir: repo.dir,
+        routes: { [getRoute]: notEnrolled },
+        yes: true,
+      });
+
+      return yield* Effect.gen(function* () {
+        const error = yield* computeDelete({
+          name: "api",
+          remote: Option.none(),
+          projectRef: Option.none(),
+        }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(ComputeUnavailableError);
+        expect(error).not.toBeInstanceOf(ComputeNotDeployedError);
+        expect(out.stdoutText).not.toContain("Deleted Compute");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("does not report a delete it never reached as done", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer, out } = setupCompute({
+        workdir: repo.dir,
+        routes: { ...routes, [deleteRoute]: routerNotFound("DELETE") },
+        yes: true,
+      });
+
+      return yield* Effect.gen(function* () {
+        const error = yield* computeDelete({
+          name: "api",
+          remote: Option.none(),
+          projectRef: Option.none(),
+        }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(ComputeRouteNotFoundError);
+        expect(out.stdoutText).not.toContain("Deleted Compute");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  const projectNotFound = {
+    status: 404,
+    body: { error: { code: "not_found", message: "Not Found" } },
+  };
+
+  it.effect("does not read a missing project as a compute that was never deployed", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer, out, http } = setupCompute({
+        workdir: repo.dir,
+        routes: { [getRoute]: projectNotFound },
+        yes: true,
+      });
+
+      return yield* Effect.gen(function* () {
+        const error = yield* computeDelete({
+          name: "api",
+          remote: Option.none(),
+          projectRef: Option.none(),
+        }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(ComputeProjectNotFoundError);
+        expect(error).not.toBeInstanceOf(ComputeNotDeployedError);
+        expect(http.routeKeys).toEqual([getRoute]);
+        expect(out.stdoutText).not.toContain("Deleted Compute");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("does not report a delete against a missing project as done", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer, out } = setupCompute({
+        workdir: repo.dir,
+        routes: { ...routes, [deleteRoute]: projectNotFound },
+        yes: true,
+      });
+
+      return yield* Effect.gen(function* () {
+        const error = yield* computeDelete({
+          name: "api",
+          remote: Option.none(),
+          projectRef: Option.none(),
+        }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(ComputeProjectNotFoundError);
+        expect(out.stdoutText).not.toContain("Deleted Compute");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  // `deleteCompute` already treats a DELETE 404 as done; the pre-flight GET used
+  // to contradict that, so a teardown script run twice failed the second time
+  // for a compute in exactly the state it asked for.
+  it.effect("succeeds under --yes when the compute is already gone", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer, out, http } = setupCompute({
+        workdir: repo.dir,
+        routes: { [getRoute]: notDeployed },
+        yes: true,
+      });
+
+      return yield* Effect.gen(function* () {
+        yield* computeDelete({ name: "api", remote: Option.none(), projectRef: Option.none() });
+
+        // Nothing to delete, so nothing is asked of the API beyond the lookup.
+        expect(http.routeKeys).toEqual([getRoute]);
+        expect(out.stdoutText).toContain("nothing to delete");
+        expect(out.stdoutText).not.toContain("Deleted Compute");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("emits the same payload shape for a no-op delete", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer, out, http } = setupCompute({
+        workdir: repo.dir,
+        routes: { [getRoute]: notDeployed },
+        yes: true,
+        outputFlag: "json",
+      });
+
+      return yield* Effect.gen(function* () {
+        yield* computeDelete({ name: "api", remote: Option.none(), projectRef: Option.none() });
+
+        const parsed: unknown = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+          out.stdoutText,
+        );
+        expect(parsed).toMatchObject({
+          compute_name: "api",
+          project_ref: COMPUTE_PROJECT_REF,
+          kept_config_entry: true,
+        });
+        expect(http.routeKeys).toEqual([getRoute]);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("treats a delete that races another one as done", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer, out } = setupCompute({
+        workdir: repo.dir,
+        routes: { ...routes, [deleteRoute]: notDeployed },
+        yes: true,
+      });
+
+      return yield* Effect.gen(function* () {
+        yield* computeDelete({ name: "api", remote: Option.none(), projectRef: Option.none() });
+
+        expect(out.stdoutText).toContain("Kept");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("surfaces an unexpected delete status", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer } = setupCompute({
+        workdir: repo.dir,
+        routes: { ...routes, [deleteRoute]: { status: 500, body: { message: "boom" } } },
+        yes: true,
+      });
+
+      return yield* Effect.gen(function* () {
+        const error = yield* computeDelete({
+          name: "api",
+          remote: Option.none(),
+          projectRef: Option.none(),
+        }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(ComputeApiUnexpectedStatusError);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("emits a structured result in json mode", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const repo = yield* project();
+      const { layer, out } = setupCompute({
+        workdir: repo.dir,
+        format: "json",
+        routes,
+        yes: true,
+      });
+
+      return yield* Effect.gen(function* () {
+        yield* computeDelete({ name: "api", remote: Option.none(), projectRef: Option.none() });
+
+        const success = out.messages.findLast(
+          (message) => message.type === "success" && message.data !== undefined,
+        );
+        expect(success?.data).toEqual({
+          compute_name: "api",
+          project_ref: COMPUTE_PROJECT_REF,
+          kept_source: path.join("supabase", "compute", "api"),
+          kept_config_entry: true,
+        });
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  // The live tally is what is actually running; `spec.instances` is the target.
+  // For a compute mid-provision the two differ, and a destructive confirmation is
+  // the worst place to overstate.
+  it.effect("counts the live instances in the confirmation when the API reports them", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer, out } = setupCompute({
+        workdir: repo.dir,
+        promptTextResponses: ["api"],
+        routes: {
+          ...routes,
+          [getRoute]: {
+            status: 200,
+            body: {
+              data: computeResource({
+                name: "api",
+                instances: 3,
+                instanceCounts: { declared: 3, live: 1, ready: 1, stale: 0 },
+              }),
+            },
+          },
+        },
+      });
+
+      return yield* Effect.gen(function* () {
+        yield* computeDelete({ name: "api", remote: Option.none(), projectRef: Option.none() });
+
+        expect(out.stderrText).toContain("1 running instance will be terminated");
+        expect(out.stderrText).not.toContain("3 running");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("pluralizes the live instance count in the confirmation", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer, out } = setupCompute({
+        workdir: repo.dir,
+        promptTextResponses: ["api"],
+        routes: {
+          ...routes,
+          [getRoute]: {
+            status: 200,
+            body: {
+              data: computeResource({
+                name: "api",
+                instances: 3,
+                instanceCounts: { declared: 3, live: 2, ready: 2, stale: 0 },
+              }),
+            },
+          },
+        },
+      });
+
+      return yield* Effect.gen(function* () {
+        yield* computeDelete({ name: "api", remote: Option.none(), projectRef: Option.none() });
+
+        expect(out.stderrText).toContain("2 running instances will be terminated");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  // Scaled to zero: there is a tally, and it says nothing is running. Warning
+  // about terminated instances there would invent a consequence.
+  it.effect("promises no terminations when nothing is running", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer, out } = setupCompute({
+        workdir: repo.dir,
+        promptTextResponses: ["api"],
+        routes: {
+          ...routes,
+          [getRoute]: {
+            status: 200,
+            body: {
+              data: computeResource({
+                name: "api",
+                instances: 2,
+                instanceCounts: { declared: 2, live: 0, ready: 0, stale: 0 },
+              }),
+            },
+          },
+        },
+      });
+
+      return yield* Effect.gen(function* () {
+        yield* computeDelete({ name: "api", remote: Option.none(), projectRef: Option.none() });
+
+        expect(out.stderrText).toContain('Permanently delete compute "api"');
+        expect(out.stderrText).not.toContain("will be terminated");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  // An orphan — deployed from another checkout — has no local entry and no local
+  // directory, so there is nothing that was "kept" and `push` has no source to
+  // redeploy from.
+  it.effect("does not claim to have kept local files it never had", () =>
+    Effect.gen(function* () {
+      const repo = yield* project('project_id = "demo"\n');
+      const { layer, out } = setupCompute({
+        workdir: repo.dir,
+        yes: true,
+        routes: {
+          [`GET ${computeRoute("/stray")}`]: {
+            status: 200,
+            body: { data: computeResource({ name: "stray" }) },
+          },
+          [`DELETE ${computeRoute("/stray")}`]: { status: 204 },
+        },
+      });
+
+      return yield* Effect.gen(function* () {
+        yield* computeDelete({ name: "stray", remote: Option.none(), projectRef: Option.none() });
+
+        expect(out.stdoutText).toContain("Deleted Compute");
+        expect(out.stdoutText).not.toContain("Kept");
+        expect(out.stdoutText).not.toContain("compute push stray");
+        expect(out.stderrText).toContain("nothing was kept");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("deletes a deployed compute named root", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer, out } = setupCompute({
+        workdir: repo.dir,
+        yes: true,
+        routes: {
+          [`GET ${computeRoute("/root")}`]: {
+            status: 200,
+            body: { data: computeResource({ name: "root" }) },
+          },
+          [`DELETE ${computeRoute("/root")}`]: { status: 204 },
+        },
+      });
+
+      return yield* Effect.gen(function* () {
+        yield* computeDelete({ name: "root", remote: Option.none(), projectRef: Option.none() });
+
+        expect(out.stdoutText).toContain("Deleted Compute");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  // A `config.toml` entry on its own is not something `push` can deploy from, so
+  // recommending it would send the user at a command that fails.
+  it.effect("keeps the config entry but does not advise redeploying without a source", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const repo = yield* project();
+      yield* fs.remove(path.join(repo.dir, "supabase", "compute", "api"), {
+        recursive: true,
+        force: true,
+      });
+      const { layer, out } = setupCompute({ workdir: repo.dir, routes, yes: true });
+
+      return yield* Effect.gen(function* () {
+        yield* computeDelete({ name: "api", remote: Option.none(), projectRef: Option.none() });
+
+        expect(out.stdoutText).toContain("supabase/config.toml entry");
+        expect(out.stdoutText).not.toContain("compute push api");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  // Deletion never reads the local source, so a `source` that does not resolve
+  // inside the project must not block removing the remote compute.
+  it.effect("deletes the remote compute even when the configured source is unusable", () =>
+    Effect.gen(function* () {
+      const repo = yield* project(
+        'project_id = "demo"\n\n[compute.api]\nsource = "../../elsewhere"\n',
+      );
+      const { layer, out, http } = setupCompute({ workdir: repo.dir, routes, yes: true });
+
+      return yield* Effect.gen(function* () {
+        yield* computeDelete({ name: "api", remote: Option.none(), projectRef: Option.none() });
+
+        expect(http.routeKeys).toContain(deleteRoute);
+        expect(out.stdoutText).toContain("Deleted Compute");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+});
+
+describeHostedConsent("compute delete", {
+  command: computeDeleteCommand,
+  typed: true,
+  setup: (workdir) =>
+    seedLinkedComputeProject(workdir, {
+      "supabase/config.toml": CONFIG,
+      "supabase/compute/api/index.js": "export default {};\n",
+    }),
+  invoke: ({ workdir }) => {
+    const { http } = setupCompute({ workdir, routes });
+    return {
+      run: computeDelete({ name: "api", remote: Option.none(), projectRef: Option.none() }).pipe(
+        Effect.provide(Layer.mergeAll(http.layer, configValuesLayer())),
+      ),
+      mutations: () => http.requests.filter((request) => request.method === "DELETE").length,
+    };
+  },
+});
+
+describeComputeTargetSelection("compute delete", {
+  operands: ["api"],
+  routes: (ref) => ({
+    [`GET /v2/projects/${ref}/compute/api`]: {
+      status: 200,
+      body: { data: computeResource({ name: "api", runtime: "node" }) },
+    },
+    [`DELETE /v2/projects/${ref}/compute/api`]: { status: 204 },
+  }),
+  run: (flags) => computeDelete({ name: "api", ...flags }),
+});

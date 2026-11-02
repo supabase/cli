@@ -1,14 +1,23 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { CliConfig } from "@supabase/config";
 import { CliConfigSchema } from "@supabase/config";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { afterEach, vi } from "vitest";
-import { Deferred, Effect, FileSystem, Layer, Path, Schema, Sink, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import {
+  Deferred,
+  Effect,
+  FileSystem,
+  Layer,
+  Path,
+  Schema,
+  Semaphore,
+  Sink,
+  Stream,
+  Tracer,
+} from "effect";
+import { ChildProcessSpawner } from "effect/process";
 
+import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-values-layer.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
 import { DbExecError } from "../db-connection.errors.ts";
 import { DbConnection, type DbSession } from "../db-connection.service.ts";
@@ -16,6 +25,7 @@ import { DockerRun, type DockerRunOpts } from "../docker-run.service.ts";
 import { DockerRunError } from "../docker-run.errors.ts";
 import {
   DbSetupError,
+  ensureStackWebhookSchema,
   resolveDbSetupPrelude,
   runDatabaseWebhooksSetup,
   startInitCurrentBranch,
@@ -26,18 +36,12 @@ import {
 const decodeConfig = Schema.decodeUnknownSync(CliConfigSchema);
 
 /**
- * Fingerprints unique to each transcribed SQL constant — see `db-setup.ts`'s
- * templates. No trailing `;`: `splitAndTrim` strips it from every
- * executed statement before `session.exec` sees it.
+ * Fingerprints unique to each transcribed SQL constant, with no trailing `;` (`splitAndTrim`
+ * strips it before `session.exec` sees it).
  *
- * `GLOBALS`/`SCHEMA_13`/`REVOKE_PRIVILEGES` are checked as SUBSTRINGS: each is
- * embedded inside a larger executed block (a preceding comment, a `DO`-style
- * conditional, or the sibling `alter default privileges` line). `SCHEMA_14`
- * is checked with `.endsWith` instead — `CREATE SCHEMA IF NOT EXISTS graphql`
- * is itself preceded by a comment block (so a plain equality check would
- * fail), but a naive substring check would also match 14.sql's unrelated
- * `CREATE SCHEMA IF NOT EXISTS graphql_public` statement, since `graphql` is
- * a prefix of `graphql_public`.
+ * `GLOBALS`/`SCHEMA_13`/`REVOKE_PRIVILEGES` are checked as substrings, since each is embedded in
+ * a larger executed block. `SCHEMA_14` is checked with `.endsWith` instead: a substring check
+ * would also match 14.sql's unrelated `graphql_public` schema statement.
  */
 const GLOBALS_FINGERPRINT = "CREATE ROLE anon";
 const SCHEMA_13_FINGERPRINT =
@@ -88,10 +92,7 @@ function mockDockerRun(opts: { exitCode?: number } = {}) {
         stderr: "",
       });
     },
-    // `runStartMigrateJob` (`db-setup.ts`) discards stdout via `runStream` (not
-    // `runCapture`), matching Go's `io.Discard` writer for these one-shot jobs — this
-    // suite's `docker.runs`/`captureOptsCalls` assertions track THIS method's calls, not
-    // `runCapture`'s (which nothing under test still calls).
+    // Tracks `runStream`'s calls (not `runCapture`'s): `runStartMigrateJob` calls `runStream`.
     runStream: (runOpts, streamOpts) => {
       runs.push(runOpts);
       captureOptsCalls.push({ teeStderr: streamOpts.teeStderr });
@@ -102,10 +103,8 @@ function mockDockerRun(opts: { exitCode?: number } = {}) {
 }
 
 /**
- * A `ChildProcessSpawner` where `docker image inspect <image>` always exits 0 (image
- * already cached) — feeds `runStartMigrateJob`'s own per-image `ensureImagesCached`
- * resolve (see `db-setup.ts`), so every job's `image` resolves to the SAME raw string this
- * suite's `baseInput` already asserts on, without needing a real Docker daemon.
+ * A `ChildProcessSpawner` where `docker image inspect <image>` always exits 0, so every job's
+ * image resolves to the raw string `baseInput` asserts on, without a real Docker daemon.
  */
 function mockAlwaysCachedSpawner(): ChildProcessSpawner.ChildProcessSpawner["Service"] {
   return ChildProcessSpawner.make((_command) =>
@@ -159,15 +158,18 @@ function mockDockerRunFails() {
   return { layer };
 }
 
-function makeWorkdir(): string {
-  return mkdtempSync(join(tmpdir(), "db-setup-"));
-}
+const makeWorkdir = Effect.fnUntraced(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs.makeTempDirectory({ prefix: "db-setup-" });
+});
 
-function writeConfigToml(workdir: string, content: string): void {
-  const supabaseDir = join(workdir, "supabase");
-  mkdirSync(supabaseDir, { recursive: true });
-  writeFileSync(join(supabaseDir, "config.toml"), content);
-}
+const writeConfigToml = Effect.fnUntraced(function* (workdir: string, content: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const supabaseDir = path.join(workdir, "supabase");
+  yield* fs.makeDirectory(supabaseDir, { recursive: true });
+  yield* fs.writeFileString(path.join(supabaseDir, "config.toml"), content);
+});
 
 const defaultConfig: CliConfig = decodeConfig({});
 
@@ -201,7 +203,6 @@ function baseInput(
     projectEnvValues: undefined,
     debug: false,
     version: "",
-    seedFlags: { noSeed: false, sqlPaths: [] },
     ...overrides,
   };
 }
@@ -226,6 +227,7 @@ const run = (
         out.layer,
         docker.layer,
         mockRuntimeInfo({ platform: "darwin" }),
+        cliConfigValuesTestLayer,
       ),
     ),
   );
@@ -237,265 +239,63 @@ describe("startSetupLocalDatabase", () => {
 
   describe("PG <= 14 vs PG >= 15 schema branch", () => {
     it.effect("PG14: execs globals + the PG14 initial schema, runs no one-shot docker jobs", () => {
-      const workdir = makeWorkdir();
-      const { session, calls } = fakeSession();
-      const out = mockOutput();
-      const docker = mockDockerRun();
-      return run(baseInput(workdir, session, { majorVersion: 14 }), out, docker).pipe(
-        Effect.map(() => {
-          const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
-          expect(execSql.some((sql) => sql.includes(GLOBALS_FINGERPRINT))).toBe(true);
-          expect(execSql.some((sql) => sql.endsWith(SCHEMA_14_FINGERPRINT_SUFFIX))).toBe(true);
-          expect(execSql.some((sql) => sql.includes(SCHEMA_13_FINGERPRINT))).toBe(false);
-          expect(docker.runs.length).toBe(0);
-          rmSync(workdir, { recursive: true, force: true });
-        }),
-      );
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const workdir = yield* makeWorkdir();
+        const { session, calls } = fakeSession();
+        const out = mockOutput();
+        const docker = mockDockerRun();
+        yield* run(baseInput(workdir, session, { majorVersion: 14 }), out, docker);
+        const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
+        expect(execSql.some((sql) => sql.includes(GLOBALS_FINGERPRINT))).toBe(true);
+        expect(execSql.some((sql) => sql.endsWith(SCHEMA_14_FINGERPRINT_SUFFIX))).toBe(true);
+        expect(execSql.some((sql) => sql.includes(SCHEMA_13_FINGERPRINT))).toBe(false);
+        expect(docker.runs.length).toBe(0);
+        yield* fs.remove(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer));
     });
 
     it.effect("PG13: execs globals + the PG13 initial schema, not the PG14 one", () => {
-      const workdir = makeWorkdir();
-      const { session, calls } = fakeSession();
-      const out = mockOutput();
-      const docker = mockDockerRun();
-      return run(baseInput(workdir, session, { majorVersion: 13 }), out, docker).pipe(
-        Effect.map(() => {
-          const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
-          expect(execSql.some((sql) => sql.includes(GLOBALS_FINGERPRINT))).toBe(true);
-          expect(execSql.some((sql) => sql.includes(SCHEMA_13_FINGERPRINT))).toBe(true);
-          expect(execSql.some((sql) => sql.endsWith(SCHEMA_14_FINGERPRINT_SUFFIX))).toBe(false);
-          expect(docker.runs.length).toBe(0);
-          rmSync(workdir, { recursive: true, force: true });
-        }),
-      );
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const workdir = yield* makeWorkdir();
+        const { session, calls } = fakeSession();
+        const out = mockOutput();
+        const docker = mockDockerRun();
+        yield* run(baseInput(workdir, session, { majorVersion: 13 }), out, docker);
+        const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
+        expect(execSql.some((sql) => sql.includes(GLOBALS_FINGERPRINT))).toBe(true);
+        expect(execSql.some((sql) => sql.includes(SCHEMA_13_FINGERPRINT))).toBe(true);
+        expect(execSql.some((sql) => sql.endsWith(SCHEMA_14_FINGERPRINT_SUFFIX))).toBe(false);
+        expect(docker.runs.length).toBe(0);
+        yield* fs.remove(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer));
     });
 
     it.effect("PG15+: runs one-shot docker jobs, execs no schema SQL at all", () => {
-      const workdir = makeWorkdir();
-      const { session, calls } = fakeSession();
-      const out = mockOutput();
-      const docker = mockDockerRun();
-      return run(baseInput(workdir, session, { majorVersion: 17 }), out, docker).pipe(
-        Effect.map(() => {
-          const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
-          expect(execSql.some((sql) => sql.includes(GLOBALS_FINGERPRINT))).toBe(false);
-          expect(execSql.some((sql) => sql.includes(SCHEMA_13_FINGERPRINT))).toBe(false);
-          expect(execSql.some((sql) => sql.endsWith(SCHEMA_14_FINGERPRINT_SUFFIX))).toBe(false);
-          // Default config: realtime, storage, and auth are all enabled.
-          expect(docker.runs.length).toBe(3);
-          rmSync(workdir, { recursive: true, force: true });
-        }),
-      );
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const workdir = yield* makeWorkdir();
+        const { session, calls } = fakeSession();
+        const out = mockOutput();
+        const docker = mockDockerRun();
+        yield* run(baseInput(workdir, session, { majorVersion: 17 }), out, docker);
+        const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
+        expect(execSql.some((sql) => sql.includes(GLOBALS_FINGERPRINT))).toBe(false);
+        expect(execSql.some((sql) => sql.includes(SCHEMA_13_FINGERPRINT))).toBe(false);
+        expect(execSql.some((sql) => sql.endsWith(SCHEMA_14_FINGERPRINT_SUFFIX))).toBe(false);
+        // Default config: realtime, storage, and auth are all enabled.
+        expect(docker.runs.length).toBe(3);
+        yield* fs.remove(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer));
     });
   });
 
   describe("PG15+ one-shot job gating", () => {
     it.effect("gates each job independently on its own service's enabled flag", () => {
-      const workdir = makeWorkdir();
-      const { session } = fakeSession();
-      const out = mockOutput();
-      const docker = mockDockerRun();
-      const config = decodeConfig({
-        realtime: { enabled: true },
-        storage: { enabled: false },
-        auth: { enabled: true },
-      });
-      return run(baseInput(workdir, session, { majorVersion: 15, config }), out, docker).pipe(
-        Effect.map(() => {
-          expect(docker.runs.length).toBe(2);
-          const images = docker.runs.map((r) => r.image);
-          expect(images).toContain("public.ecr.aws/supabase/realtime:v2.34.7");
-          expect(images).toContain("public.ecr.aws/supabase/gotrue:v2.170.0");
-          expect(images).not.toContain("public.ecr.aws/supabase/storage-api:v1.0.0");
-          rmSync(workdir, { recursive: true, force: true });
-        }),
-      );
-    });
-
-    it.effect("runs nothing when all three services are disabled", () => {
-      const workdir = makeWorkdir();
-      const { session } = fakeSession();
-      const out = mockOutput();
-      const docker = mockDockerRun();
-      const config = decodeConfig({
-        realtime: { enabled: false },
-        storage: { enabled: false },
-        auth: { enabled: false },
-      });
-      return run(baseInput(workdir, session, { majorVersion: 15, config }), out, docker).pipe(
-        Effect.map(() => {
-          expect(docker.runs.length).toBe(0);
-          rmSync(workdir, { recursive: true, force: true });
-        }),
-      );
-    });
-
-    it.effect(
-      "slim refs: runs realtime, storage, and auth one-shots on the resolved slim images",
-      () => {
-        vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
-        const workdir = makeWorkdir();
-        const { session } = fakeSession();
-        const out = mockOutput();
-        const docker = mockDockerRun();
-        return run(
-          baseInput(workdir, session, {
-            majorVersion: 15,
-            images: {
-              realtime: "ghcr.io/supabase/cli/realtime:v2.129.3",
-              storage: "ghcr.io/supabase/cli/storage:v1.70.3",
-              auth: "ghcr.io/supabase/cli/auth:v2.196.0",
-            },
-          }),
-          out,
-          docker,
-        ).pipe(
-          Effect.map(() => {
-            expect(docker.runs.map((job) => job.image)).toEqual([
-              "ghcr.io/supabase/cli/realtime:v2.129.3",
-              "ghcr.io/supabase/cli/storage:v1.70.3",
-              "ghcr.io/supabase/cli/auth:v2.196.0",
-            ]);
-            expect(docker.runs[0]?.cmd?.[0]).toBe("/app/bin/realtime");
-            expect(docker.runs[1]?.cmd).toEqual(["node", "dist/scripts/migrate-call.js"]);
-            expect(docker.runs[2]?.cmd).toEqual(["gotrue", "migrate"]);
-            rmSync(workdir, { recursive: true, force: true });
-          }),
-        );
-      },
-    );
-
-    it.effect(
-      "labels every one-shot job with the project's Docker labels, matching Go's DockerStart (review: Codex, PR #6022)",
-      () => {
-        const workdir = makeWorkdir();
-        const { session } = fakeSession();
-        const out = mockOutput();
-        const docker = mockDockerRun();
-        // Default config: realtime, storage, and auth are all enabled — 3 jobs.
-        return run(
-          baseInput(workdir, session, { majorVersion: 15, projectId: "labeled-proj" }),
-          out,
-          docker,
-        ).pipe(
-          Effect.map(() => {
-            expect(docker.runs.length).toBe(3);
-            for (const job of docker.runs) {
-              expect(job.labels).toEqual({
-                "com.supabase.cli.project": "labeled-proj",
-                "com.docker.compose.project": "labeled-proj",
-              });
-            }
-            rmSync(workdir, { recursive: true, force: true });
-          }),
-        );
-      },
-    );
-
-    it.effect(
-      "the realtime job's env matches `buildRealtimeEnv` on the internal db address + jwks",
-      () => {
-        const workdir = makeWorkdir();
-        const { session } = fakeSession();
-        const out = mockOutput();
-        const docker = mockDockerRun();
-        const config = decodeConfig({ storage: { enabled: false }, auth: { enabled: false } });
-        return run(
-          baseInput(workdir, session, {
-            majorVersion: 15,
-            config,
-            dbHost: "supabase_db_myproj",
-            jwks: '{"keys":["stub"]}',
-          }),
-          out,
-          docker,
-        ).pipe(
-          Effect.map(() => {
-            expect(docker.runs.length).toBe(1);
-            const job = docker.runs[0]!;
-            expect(job.cmd[0]).toBe("/app/bin/realtime");
-            expect(job.cmd[1]).toBe("eval");
-            expect(job.cmd[2]).toContain('Realtime.Tenants.health_check("realtime-dev")');
-            expect(job.env["DB_HOST"]).toBe("supabase_db_myproj");
-            expect(job.env["API_JWT_JWKS"]).toBe('{"keys":["stub"]}');
-            expect(job.network).toEqual({ _tag: "named", name: "supabase_network_proj" });
-            rmSync(workdir, { recursive: true, force: true });
-          }),
-        );
-      },
-    );
-
-    it.effect(
-      "the auth job's env derives API_EXTERNAL_URL from apiUrl and carries site_url + jwt secret",
-      () => {
-        const workdir = makeWorkdir();
-        const { session } = fakeSession();
-        const out = mockOutput();
-        const docker = mockDockerRun();
-        const config = decodeConfig({ realtime: { enabled: false }, storage: { enabled: false } });
-        return run(
-          baseInput(workdir, session, {
-            majorVersion: 15,
-            config,
-            apiUrl: "http://127.0.0.1:54321/",
-          }),
-          out,
-          docker,
-        ).pipe(
-          Effect.map(() => {
-            expect(docker.runs.length).toBe(1);
-            const job = docker.runs[0]!;
-            expect(job.cmd).toEqual(["gotrue", "migrate"]);
-            expect(job.env["API_EXTERNAL_URL"]).toBe("http://127.0.0.1:54321/auth/v1");
-            expect(job.env["GOTRUE_SITE_URL"]).toBe(config.auth.site_url);
-            expect(job.env["GOTRUE_JWT_SECRET"]).toBe(
-              "super-secret-jwt-token-with-at-least-32-characters-long",
-            );
-            rmSync(workdir, { recursive: true, force: true });
-          }),
-        );
-      },
-    );
-
-    it.effect(
-      "the auth job's GOTRUE_SITE_URL reflects the caller's resolved siteUrl, not the raw config value",
-      () => {
-        // `siteUrl` is already SUPABASE_AUTH_SITE_URL-overridden by the caller
-        // (`start.handler.ts`'s `values.authSiteUrl`) — the one-shot auth
-        // migration job must agree with the long-running GoTrue container,
-        // not fall back to reading the un-overridden `config.auth.site_url`.
-        const workdir = makeWorkdir();
-        const { session } = fakeSession();
-        const out = mockOutput();
-        const docker = mockDockerRun();
-        const config = decodeConfig({
-          realtime: { enabled: false },
-          storage: { enabled: false },
-          auth: { site_url: "http://raw-config-value.example" },
-        });
-        return run(
-          baseInput(workdir, session, {
-            majorVersion: 15,
-            config,
-            apiUrl: "http://127.0.0.1:54321/",
-            siteUrl: "http://env-overridden-value.example",
-          }),
-          out,
-          docker,
-        ).pipe(
-          Effect.map(() => {
-            const job = docker.runs[0]!;
-            expect(job.env["GOTRUE_SITE_URL"]).toBe("http://env-overridden-value.example");
-            rmSync(workdir, { recursive: true, force: true });
-          }),
-        );
-      },
-    );
-
-    it.effect(
-      "--debug tees every one-shot job's stderr, matching Go's utils.GetDebugLogger()",
-      () => {
-        const workdir = makeWorkdir();
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const workdir = yield* makeWorkdir();
         const { session } = fakeSession();
         const out = mockOutput();
         const docker = mockDockerRun();
@@ -504,154 +304,349 @@ describe("startSetupLocalDatabase", () => {
           storage: { enabled: false },
           auth: { enabled: true },
         });
-        return run(
-          baseInput(workdir, session, { majorVersion: 15, config, debug: true }),
-          out,
-          docker,
-        ).pipe(
-          Effect.map(() => {
-            expect(docker.runs.length).toBe(2);
-            expect(docker.captureOptsCalls).toEqual([{ teeStderr: true }, { teeStderr: true }]);
-            rmSync(workdir, { recursive: true, force: true });
-          }),
-        );
+        yield* run(baseInput(workdir, session, { majorVersion: 15, config }), out, docker);
+        expect(docker.runs.length).toBe(2);
+        const images = docker.runs.map((r) => r.image);
+        expect(images).toContain("public.ecr.aws/supabase/realtime:v2.34.7");
+        expect(images).toContain("public.ecr.aws/supabase/gotrue:v2.170.0");
+        expect(images).not.toContain("public.ecr.aws/supabase/storage-api:v1.0.0");
+        yield* fs.remove(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer));
+    });
+
+    it.effect("runs nothing when all three services are disabled", () => {
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const workdir = yield* makeWorkdir();
+        const { session } = fakeSession();
+        const out = mockOutput();
+        const docker = mockDockerRun();
+        const config = decodeConfig({
+          realtime: { enabled: false },
+          storage: { enabled: false },
+          auth: { enabled: false },
+        });
+        yield* run(baseInput(workdir, session, { majorVersion: 15, config }), out, docker);
+        expect(docker.runs.length).toBe(0);
+        yield* fs.remove(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer));
+    });
+
+    it.effect(
+      "slim refs: runs realtime, storage, and auth one-shots on the resolved slim images",
+      () => {
+        vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+        return Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const workdir = yield* makeWorkdir();
+          const { session } = fakeSession();
+          const out = mockOutput();
+          const docker = mockDockerRun();
+          yield* run(
+            baseInput(workdir, session, {
+              majorVersion: 15,
+              images: {
+                realtime: "ghcr.io/supabase/cli/realtime:v2.129.3",
+                storage: "ghcr.io/supabase/cli/storage:v1.70.3",
+                auth: "ghcr.io/supabase/cli/auth:v2.196.0",
+              },
+            }),
+            out,
+            docker,
+          );
+          expect(docker.runs.map((job) => job.image)).toEqual([
+            "ghcr.io/supabase/cli/realtime:v2.129.3",
+            "ghcr.io/supabase/cli/storage:v1.70.3",
+            "ghcr.io/supabase/cli/auth:v2.196.0",
+          ]);
+          expect(docker.runs[0]?.cmd?.[0]).toBe("/app/bin/realtime");
+          expect(docker.runs[1]?.cmd).toEqual(["node", "dist/scripts/migrate-call.js"]);
+          expect(docker.runs[2]?.cmd).toEqual(["gotrue", "migrate"]);
+          yield* fs.remove(workdir, { recursive: true, force: true });
+        }).pipe(Effect.provide(BunServices.layer));
       },
     );
 
-    it.effect("without --debug, one-shot jobs run with teeStderr off", () => {
-      const workdir = makeWorkdir();
-      const { session } = fakeSession();
-      const out = mockOutput();
-      const docker = mockDockerRun();
-      const config = decodeConfig({ storage: { enabled: false }, auth: { enabled: false } });
-      return run(
-        baseInput(workdir, session, { majorVersion: 15, config, debug: false }),
-        out,
-        docker,
-      ).pipe(
-        Effect.map(() => {
+    it.effect("labels every one-shot job with the project's Docker labels", () => {
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const workdir = yield* makeWorkdir();
+        const { session } = fakeSession();
+        const out = mockOutput();
+        const docker = mockDockerRun();
+        // Default config: realtime, storage, and auth are all enabled — 3 jobs.
+        yield* run(
+          baseInput(workdir, session, { majorVersion: 15, projectId: "labeled-proj" }),
+          out,
+          docker,
+        );
+        expect(docker.runs.length).toBe(3);
+        for (const job of docker.runs) {
+          expect(job.labels).toEqual({
+            "com.supabase.cli.project": "labeled-proj",
+            "com.docker.compose.project": "labeled-proj",
+          });
+        }
+        yield* fs.remove(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer));
+    });
+
+    it.effect(
+      "the realtime job's env matches `buildRealtimeEnv` on the internal db address + jwks",
+      () => {
+        return Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const workdir = yield* makeWorkdir();
+          const { session } = fakeSession();
+          const out = mockOutput();
+          const docker = mockDockerRun();
+          const config = decodeConfig({ storage: { enabled: false }, auth: { enabled: false } });
+          yield* run(
+            baseInput(workdir, session, {
+              majorVersion: 15,
+              config,
+              dbHost: "supabase_db_myproj",
+              jwks: '{"keys":["stub"]}',
+            }),
+            out,
+            docker,
+          );
           expect(docker.runs.length).toBe(1);
-          expect(docker.captureOptsCalls).toEqual([{ teeStderr: false }]);
-          rmSync(workdir, { recursive: true, force: true });
-        }),
-      );
+          const job = docker.runs[0]!;
+          expect(job.cmd[0]).toBe("/app/bin/realtime");
+          expect(job.cmd[1]).toBe("eval");
+          expect(job.cmd[2]).toContain('Realtime.Tenants.health_check("realtime-dev")');
+          expect(job.env["DB_HOST"]).toBe("supabase_db_myproj");
+          expect(job.env["API_JWT_JWKS"]).toBe('{"keys":["stub"]}');
+          expect(job.network).toEqual({ _tag: "named", name: "supabase_network_proj" });
+          yield* fs.remove(workdir, { recursive: true, force: true });
+        }).pipe(Effect.provide(BunServices.layer));
+      },
+    );
+
+    it.effect(
+      "the auth job's env derives API_EXTERNAL_URL from apiUrl and carries site_url + jwt secret",
+      () => {
+        return Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const workdir = yield* makeWorkdir();
+          const { session } = fakeSession();
+          const out = mockOutput();
+          const docker = mockDockerRun();
+          const config = decodeConfig({
+            realtime: { enabled: false },
+            storage: { enabled: false },
+          });
+          yield* run(
+            baseInput(workdir, session, {
+              majorVersion: 15,
+              config,
+              apiUrl: "http://127.0.0.1:54321/",
+            }),
+            out,
+            docker,
+          );
+          expect(docker.runs.length).toBe(1);
+          const job = docker.runs[0]!;
+          expect(job.cmd).toEqual(["gotrue", "migrate"]);
+          expect(job.env["API_EXTERNAL_URL"]).toBe("http://127.0.0.1:54321/auth/v1");
+          expect(job.env["GOTRUE_SITE_URL"]).toBe(config.auth.site_url);
+          expect(job.env["GOTRUE_JWT_SECRET"]).toBe(
+            "super-secret-jwt-token-with-at-least-32-characters-long",
+          );
+          yield* fs.remove(workdir, { recursive: true, force: true });
+        }).pipe(Effect.provide(BunServices.layer));
+      },
+    );
+
+    it.effect(
+      "the auth job's GOTRUE_SITE_URL reflects the caller's resolved siteUrl, not the raw config value",
+      () => {
+        return Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const workdir = yield* makeWorkdir();
+          const { session } = fakeSession();
+          const out = mockOutput();
+          const docker = mockDockerRun();
+          const config = decodeConfig({
+            realtime: { enabled: false },
+            storage: { enabled: false },
+            auth: { site_url: "http://raw-config-value.example" },
+          });
+          yield* run(
+            baseInput(workdir, session, {
+              majorVersion: 15,
+              config,
+              apiUrl: "http://127.0.0.1:54321/",
+              siteUrl: "http://env-overridden-value.example",
+            }),
+            out,
+            docker,
+          );
+          const job = docker.runs[0]!;
+          expect(job.env["GOTRUE_SITE_URL"]).toBe("http://env-overridden-value.example");
+          yield* fs.remove(workdir, { recursive: true, force: true });
+        }).pipe(Effect.provide(BunServices.layer));
+      },
+    );
+
+    it.effect("--debug tees every one-shot job's stderr", () => {
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const workdir = yield* makeWorkdir();
+        const { session } = fakeSession();
+        const out = mockOutput();
+        const docker = mockDockerRun();
+        const config = decodeConfig({
+          realtime: { enabled: true },
+          storage: { enabled: false },
+          auth: { enabled: true },
+        });
+        yield* run(
+          baseInput(workdir, session, { majorVersion: 15, config, debug: true }),
+          out,
+          docker,
+        );
+        expect(docker.runs.length).toBe(2);
+        expect(docker.captureOptsCalls).toEqual([{ teeStderr: true }, { teeStderr: true }]);
+        yield* fs.remove(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer));
+    });
+
+    it.effect("without --debug, one-shot jobs run with teeStderr off", () => {
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const workdir = yield* makeWorkdir();
+        const { session } = fakeSession();
+        const out = mockOutput();
+        const docker = mockDockerRun();
+        const config = decodeConfig({ storage: { enabled: false }, auth: { enabled: false } });
+        yield* run(
+          baseInput(workdir, session, { majorVersion: 15, config, debug: false }),
+          out,
+          docker,
+        );
+        expect(docker.runs.length).toBe(1);
+        expect(docker.captureOptsCalls).toEqual([{ teeStderr: false }]);
+        yield* fs.remove(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer));
     });
 
     it.effect("a non-zero exit from a one-shot job fails the whole pipeline", () => {
-      const workdir = makeWorkdir();
-      const { session } = fakeSession();
-      const out = mockOutput();
-      const docker = mockDockerRun({ exitCode: 1 });
-      const config = decodeConfig({ storage: { enabled: false }, auth: { enabled: false } });
-      return run(baseInput(workdir, session, { majorVersion: 15, config }), out, docker).pipe(
-        Effect.flip,
-        Effect.map((error) => {
-          expect(error).toBeInstanceOf(DbSetupError);
-          expect((error as DbSetupError).message).toBe("error running container: exit 1");
-          rmSync(workdir, { recursive: true, force: true });
-        }),
-      );
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const workdir = yield* makeWorkdir();
+        const { session } = fakeSession();
+        const out = mockOutput();
+        const docker = mockDockerRun({ exitCode: 1 });
+        const config = decodeConfig({ storage: { enabled: false }, auth: { enabled: false } });
+        const error = yield* run(
+          baseInput(workdir, session, { majorVersion: 15, config }),
+          out,
+          docker,
+        ).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(DbSetupError);
+        expect(error.message).toBe("error running container: exit 1");
+        yield* fs.remove(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer));
     });
   });
 
   describe("ApplyApiPrivileges tri-state", () => {
     it.effect("auto_expose_new_tables = true is a no-op (no revoke SQL exec'd)", () => {
-      const workdir = makeWorkdir();
-      writeConfigToml(workdir, "[api]\nauto_expose_new_tables = true\n");
-      const { session, calls } = fakeSession();
-      const out = mockOutput();
-      const docker = mockDockerRun();
-      return run(baseInput(workdir, session, { majorVersion: 14 }), out, docker).pipe(
-        Effect.map(() => {
-          const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
-          expect(execSql.some((sql) => sql.includes(REVOKE_PRIVILEGES_FINGERPRINT))).toBe(false);
-          rmSync(workdir, { recursive: true, force: true });
-        }),
-      );
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const workdir = yield* makeWorkdir();
+        yield* writeConfigToml(workdir, "[api]\nauto_expose_new_tables = true\n");
+        const { session, calls } = fakeSession();
+        const out = mockOutput();
+        const docker = mockDockerRun();
+        yield* run(baseInput(workdir, session, { majorVersion: 14 }), out, docker);
+        const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
+        expect(execSql.some((sql) => sql.includes(REVOKE_PRIVILEGES_FINGERPRINT))).toBe(false);
+        yield* fs.remove(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer));
     });
 
     it.effect("auto_expose_new_tables = false execs the revoke SQL", () => {
-      const workdir = makeWorkdir();
-      writeConfigToml(workdir, "[api]\nauto_expose_new_tables = false\n");
-      const { session, calls } = fakeSession();
-      const out = mockOutput();
-      const docker = mockDockerRun();
-      return run(baseInput(workdir, session, { majorVersion: 14 }), out, docker).pipe(
-        Effect.map(() => {
-          const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
-          expect(execSql.some((sql) => sql.includes(REVOKE_PRIVILEGES_FINGERPRINT))).toBe(true);
-          rmSync(workdir, { recursive: true, force: true });
-        }),
-      );
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const workdir = yield* makeWorkdir();
+        yield* writeConfigToml(workdir, "[api]\nauto_expose_new_tables = false\n");
+        const { session, calls } = fakeSession();
+        const out = mockOutput();
+        const docker = mockDockerRun();
+        yield* run(baseInput(workdir, session, { majorVersion: 14 }), out, docker);
+        const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
+        expect(execSql.some((sql) => sql.includes(REVOKE_PRIVILEGES_FINGERPRINT))).toBe(true);
+        yield* fs.remove(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer));
     });
 
     it.effect(
       "unset (no config.toml at all) matches the true behavior — no revoke SQL exec'd",
       () => {
-        const workdir = makeWorkdir();
-        const { session, calls } = fakeSession();
-        const out = mockOutput();
-        const docker = mockDockerRun();
-        return run(baseInput(workdir, session, { majorVersion: 14 }), out, docker).pipe(
-          Effect.map(() => {
-            const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
-            expect(execSql.some((sql) => sql.includes(REVOKE_PRIVILEGES_FINGERPRINT))).toBe(false);
-            rmSync(workdir, { recursive: true, force: true });
-          }),
-        );
+        return Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const workdir = yield* makeWorkdir();
+          const { session, calls } = fakeSession();
+          const out = mockOutput();
+          const docker = mockDockerRun();
+          yield* run(baseInput(workdir, session, { majorVersion: 14 }), out, docker);
+          const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
+          expect(execSql.some((sql) => sql.includes(REVOKE_PRIVILEGES_FINGERPRINT))).toBe(false);
+          yield* fs.remove(workdir, { recursive: true, force: true });
+        }).pipe(Effect.provide(BunServices.layer));
       },
     );
   });
 
   describe("vault upsert + custom-roles seed", () => {
     it.effect("upserts vault secrets before seeding supabase/roles.sql", () => {
-      const workdir = makeWorkdir();
-      writeConfigToml(workdir, '[db.vault]\nmy_secret = "shh"\n');
-      writeFileSync(
-        join(workdir, "supabase", "roles.sql"),
-        "grant select on all tables in schema public to custom_role;",
-      );
-      const { session, calls } = fakeSession();
-      const out = mockOutput();
-      const docker = mockDockerRun();
-      return run(baseInput(workdir, session, { majorVersion: 14 }), out, docker).pipe(
-        Effect.map(() => {
-          const vaultCallIndex = calls.findIndex(
-            (c) => c.kind === "query" && c.sql.includes("vault.create_secret"),
-          );
-          const rolesCallIndex = calls.findIndex(
-            (c) => c.kind === "exec" && c.sql.includes("custom_role"),
-          );
-          expect(vaultCallIndex).toBeGreaterThanOrEqual(0);
-          expect(rolesCallIndex).toBeGreaterThanOrEqual(0);
-          expect(vaultCallIndex).toBeLessThan(rolesCallIndex);
-          expect(out.rawChunks.map((c) => c.text)).toContain("Seeding globals from roles.sql...\n");
-          rmSync(workdir, { recursive: true, force: true });
-        }),
-      );
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const workdir = yield* makeWorkdir();
+        yield* writeConfigToml(workdir, '[db.vault]\nmy_secret = "shh"\n');
+        yield* fs.writeFileString(
+          path.join(workdir, "supabase", "roles.sql"),
+          "grant select on all tables in schema public to custom_role;",
+        );
+        const { session, calls } = fakeSession();
+        const out = mockOutput();
+        const docker = mockDockerRun();
+        yield* run(baseInput(workdir, session, { majorVersion: 14 }), out, docker);
+        const vaultCallIndex = calls.findIndex(
+          (c) => c.kind === "query" && c.sql.includes("vault.create_secret"),
+        );
+        const rolesCallIndex = calls.findIndex(
+          (c) => c.kind === "exec" && c.sql.includes("custom_role"),
+        );
+        expect(vaultCallIndex).toBeGreaterThanOrEqual(0);
+        expect(rolesCallIndex).toBeGreaterThanOrEqual(0);
+        expect(vaultCallIndex).toBeLessThan(rolesCallIndex);
+        expect(out.rawChunks.map((c) => c.text)).toContain("Seeding globals from roles.sql...\n");
+        yield* fs.remove(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer));
     });
 
     it.effect(
       "prints the seed message even when supabase/roles.sql is absent, and does not error",
       () => {
-        const workdir = makeWorkdir();
-        const { session, calls } = fakeSession();
-        const out = mockOutput();
-        const docker = mockDockerRun();
-        return run(baseInput(workdir, session, { majorVersion: 14 }), out, docker).pipe(
-          Effect.map(() => {
-            // Go's `SeedGlobals` prints before attempting the read (`pkg/migration/
-            // seed.go:84-97`) — a missing roles.sql is tolerated, not skipped.
-            expect(out.rawChunks.map((c) => c.text)).toContain(
-              "Seeding globals from roles.sql...\n",
-            );
-            const rolesCallIndex = calls.findIndex(
-              (c) => c.kind === "exec" && c.sql.includes("custom_role"),
-            );
-            expect(rolesCallIndex).toBe(-1);
-            rmSync(workdir, { recursive: true, force: true });
-          }),
-        );
+        return Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const workdir = yield* makeWorkdir();
+          const { session, calls } = fakeSession();
+          const out = mockOutput();
+          const docker = mockDockerRun();
+          yield* run(baseInput(workdir, session, { majorVersion: 14 }), out, docker);
+          expect(out.rawChunks.map((c) => c.text)).toContain("Seeding globals from roles.sql...\n");
+          const rolesCallIndex = calls.findIndex(
+            (c) => c.kind === "exec" && c.sql.includes("custom_role"),
+          );
+          expect(rolesCallIndex).toBe(-1);
+          yield* fs.remove(workdir, { recursive: true, force: true });
+        }).pipe(Effect.provide(BunServices.layer));
       },
     );
   });
@@ -684,52 +679,46 @@ describe("resolveDbSetupPrelude", () => {
     );
   });
 
-  it.effect(
-    'prints the banner BEFORE a JWKS resolution failure — matching Go\'s "initSchema" printing the banner before ever calling "initSchema15" -> "ResolveJWKS" (review: PRRT_kwDOErm0O86W6R-O)',
-    () => {
-      const out = mockOutput();
-      return run(
-        {
-          majorVersion: 15,
-          realtimeEnabledForSetup: true,
-          jwks: Effect.fail(new Error("jwks discovery failed")),
-        },
-        out,
-      ).pipe(
-        Effect.flip,
-        Effect.map((error) => {
-          expect(error.message).toBe("jwks discovery failed");
-          const banner = out.rawChunks.filter((c) => c.text === "Initialising schema...\n");
-          expect(banner.length).toBe(1);
-          expect(banner[0]?.stream).toBe("stderr");
-        }),
-      );
-    },
-  );
+  it.effect("prints the banner BEFORE a JWKS resolution failure", () => {
+    const out = mockOutput();
+    const jwksFailure = new Error("jwks discovery failed");
+    return run(
+      {
+        majorVersion: 15,
+        realtimeEnabledForSetup: true,
+        jwks: Effect.fail(jwksFailure),
+      },
+      out,
+    ).pipe(
+      Effect.flip,
+      Effect.map((error) => {
+        expect(error.message).toBe("jwks discovery failed");
+        const banner = out.rawChunks.filter((c) => c.text === "Initialising schema...\n");
+        expect(banner.length).toBe(1);
+        expect(banner[0]?.stream).toBe("stderr");
+      }),
+    );
+  });
 
-  it.effect(
-    "does not resolve JWKS on PG <= 14 even with realtime enabled — Go's initSchema never reaches initSchema15 there",
-    () => {
-      const out = mockOutput();
-      let jwksCalled = false;
-      const jwks = Effect.sync(() => {
-        jwksCalled = true;
-        return "unused";
-      });
-      return run({ majorVersion: 14, realtimeEnabledForSetup: true, jwks }, out).pipe(
-        Effect.map((resolved) => {
-          expect(jwksCalled).toBe(false);
-          expect(resolved.jwks).toBe("");
-        }),
-      );
-    },
-  );
+  it.effect("does not resolve JWKS on PG <= 14 even with realtime enabled", () => {
+    const out = mockOutput();
+    let jwksCalled = false;
+    const jwks = Effect.sync(() => {
+      jwksCalled = true;
+      return "unused";
+    });
+    return run({ majorVersion: 14, realtimeEnabledForSetup: true, jwks }, out).pipe(
+      Effect.map((resolved) => {
+        expect(jwksCalled).toBe(false);
+        expect(resolved.jwks).toBe("");
+      }),
+    );
+  });
 });
 
 /**
- * `supabase start` on an EXISTING volume never replays migrations, so this
- * convergence is the only thing that can reconcile the volume's pg_net with the
- * current `[experimental.webhooks]` setting — in both directions, and without ever
+ * On an existing volume, `supabase start` never replays migrations, so this convergence is the
+ * only thing that reconciles the volume's pg_net with the current webhooks setting, without
  * dropping an extension a user's own migration created.
  */
 describe("runDatabaseWebhooksSetup", () => {
@@ -837,8 +826,7 @@ describe("runDatabaseWebhooksSetup", () => {
   ])(
     "preserves pg_net when an applied history row records $description for statements",
     ({ historyValue }) => {
-      // Older volumes store NULL/`{}` in `schema_migrations.statements`. That is
-      // incomplete evidence, not proof the migration did not install pg_net.
+      // Older volumes store NULL/`{}` for `schema_migrations.statements`.
       const { execSql, effect } = converge(false, { appliedStatements: [historyValue] });
       return effect.pipe(
         Effect.map(() => {
@@ -849,7 +837,6 @@ describe("runDatabaseWebhooksSetup", () => {
   );
 
   it.effect("preserves pg_net when the migration history cannot be read", () => {
-    // Erring toward not dropping: an unreadable history is treated as ownership.
     const { execSql, effect } = converge(false, { historyUnavailable: true });
     return effect.pipe(
       Effect.map(() => {
@@ -859,41 +846,147 @@ describe("runDatabaseWebhooksSetup", () => {
   });
 });
 
-describe("startInitCurrentBranch", () => {
-  it.effect('writes supabase/.branches/_current_branch = "main" when absent', () => {
-    const workdir = makeWorkdir();
-    return Effect.gen(function* () {
+describe("ensureStackWebhookSchema", () => {
+  /**
+   * Two sessions on one database without `supabase_functions`, with PostgreSQL's advisory-lock
+   * and duplicate-schema semantics. Each schema check waits until the other session has sent a
+   * statement, so both checks overlap unless something serializes them.
+   */
+  const racingDatabase = Effect.gen(function* () {
+    const lock = yield* Semaphore.make(1);
+    const arrived = { first: yield* Deferred.make<void>(), second: yield* Deferred.make<void>() };
+    const creators: Array<keyof typeof arrived> = [];
+    let schemaExists = false;
+    const session = (name: keyof typeof arrived): DbSession => {
+      const other = name === "first" ? arrived.second : arrived.first;
+      const exec = (sql: string) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(arrived[name], undefined);
+          if (sql.includes("pg_advisory_lock(")) return yield* lock.take(1);
+          if (sql.includes("pg_advisory_unlock(")) return yield* lock.release(1);
+          if (!sql.includes("CREATE SCHEMA supabase_functions")) return;
+          if (schemaExists)
+            return yield* new DbExecError({
+              message:
+                'duplicate key value violates unique constraint "pg_namespace_nspname_index"',
+              code: "23505",
+            });
+          schemaExists = true;
+          creators.push(name);
+        }).pipe(Effect.asVoid);
+      return {
+        exec,
+        execBatch: (statements) =>
+          Effect.forEach(statements, ({ sql }) => exec(sql), { discard: true }),
+        query: () =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(arrived[name], undefined);
+            const missing = !schemaExists;
+            yield* Deferred.await(other);
+            return [{ missing }];
+          }),
+        extensionExists: () => Effect.succeed(false),
+        copyToCsv: () => Effect.succeed(new Uint8Array()),
+        queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
+      };
+    };
+    return { session, creators };
+  });
+
+  it.live("creates the schema once when two starts race on one database", () =>
+    Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      yield* startInitCurrentBranch(fs, path, workdir);
-      const content = yield* fs.readFileString(
-        join(workdir, "supabase", ".branches", "_current_branch"),
+      const database = yield* racingDatabase;
+      const ensure = (name: "first" | "second") =>
+        Effect.gen(function* () {
+          const tmpDir = yield* fs.makeTempDirectoryScoped({ prefix: `webhook-schema-${name}-` });
+          yield* ensureStackWebhookSchema(database.session(name), fs, path, tmpDir);
+        });
+      yield* Effect.all([ensure("first"), ensure("second")], { concurrency: "unbounded" });
+      expect(database.creators).toHaveLength(1);
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("releases the lock and reports no creation when the template fails", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tmpDir = yield* fs.makeTempDirectoryScoped({ prefix: "webhook-schema-failure-" });
+      const execSql: Array<string> = [];
+      const session: DbSession = {
+        ...fakeSession().session,
+        exec: (sql) =>
+          Effect.suspend(() => {
+            execSql.push(sql);
+            return sql.includes("CREATE TABLE supabase_functions.hooks")
+              ? Effect.fail(new DbExecError({ message: "disk full", code: "53100" }))
+              : Effect.void;
+          }),
+        query: () => Effect.succeed([{ missing: true }]),
+      };
+      const spans: Array<Tracer.NativeSpan> = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+
+      const error = yield* ensureStackWebhookSchema(session, fs, path, tmpDir).pipe(
+        Effect.flip,
+        Effect.withTracer(tracer),
+        Effect.withTracerEnabled(true),
       );
-      expect(content).toBe("main");
-    }).pipe(
-      Effect.provide(BunServices.layer),
-      Effect.map(() => {
-        rmSync(workdir, { recursive: true, force: true });
-      }),
-    );
+
+      expect(error).toBeInstanceOf(DbSetupError);
+      expect(execSql[0]).toContain("pg_advisory_lock(");
+      expect(execSql.at(-1)).toContain("pg_advisory_unlock(");
+      const span = spans.find(({ name }) => name === "DbSetup.ensureStackWebhookSchema");
+      expect(span).toBeDefined();
+      expect(span?.attributes.has("db.webhook_schema.created")).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+});
+
+describe("startInitCurrentBranch", () => {
+  it.effect('writes supabase/.branches/_current_branch = "main" when absent', () => {
+    return Effect.gen(function* () {
+      const fixtureFs = yield* FileSystem.FileSystem;
+      const workdir = yield* makeWorkdir();
+      yield* Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* startInitCurrentBranch(fs, path, workdir);
+        const content = yield* fs.readFileString(
+          path.join(workdir, "supabase", ".branches", "_current_branch"),
+        );
+        expect(content).toBe("main");
+      });
+      yield* fixtureFs.remove(workdir, { recursive: true, force: true });
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.effect("leaves an existing _current_branch file untouched", () => {
-    const workdir = makeWorkdir();
-    const branchesDir = join(workdir, "supabase", ".branches");
-    mkdirSync(branchesDir, { recursive: true });
-    writeFileSync(join(branchesDir, "_current_branch"), "feature-x");
     return Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      yield* startInitCurrentBranch(fs, path, workdir);
-      const content = yield* fs.readFileString(join(branchesDir, "_current_branch"));
-      expect(content).toBe("feature-x");
-    }).pipe(
-      Effect.provide(BunServices.layer),
-      Effect.map(() => {
-        rmSync(workdir, { recursive: true, force: true });
-      }),
-    );
+      const fixtureFs = yield* FileSystem.FileSystem;
+      const fixturePath = yield* Path.Path;
+      const workdir = yield* makeWorkdir();
+      const branchesDir = fixturePath.join(workdir, "supabase", ".branches");
+      yield* fixtureFs.makeDirectory(branchesDir, { recursive: true });
+      yield* fixtureFs.writeFileString(
+        fixturePath.join(branchesDir, "_current_branch"),
+        "feature-x",
+      );
+      yield* Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* startInitCurrentBranch(fs, path, workdir);
+        const content = yield* fs.readFileString(path.join(branchesDir, "_current_branch"));
+        expect(content).toBe("feature-x");
+      });
+      yield* fixtureFs.remove(workdir, { recursive: true, force: true });
+    }).pipe(Effect.provide(BunServices.layer));
   });
 });

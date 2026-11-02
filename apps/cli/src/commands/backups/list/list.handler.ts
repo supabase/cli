@@ -2,52 +2,52 @@ import type { V1ListAllBackupsOutput } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { renderGlamourTable } from "../../../output/glamour-table.ts";
 import { BackupListNetworkError, BackupListUnexpectedStatusError } from "../backups.errors.ts";
-import { encodeEnv, encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
+import { encodeEnv, encodeSortedJson } from "../../../command-internal/output.encoders.ts";
 import {
-  encodeGoToml,
-  encodeGoYaml,
-  goBool,
-  goInt,
-  goPtr,
-  goSlice,
-  goString,
-  goStruct,
-} from "../../../command-internal/go-struct-output.encoders.ts";
+  encodeStructToml,
+  encodeStructYaml,
+  shapeBool,
+  shapeInt,
+  shapePtr,
+  shapeSlice,
+  shapeString,
+  shapeStruct,
+} from "../../../command-internal/struct-output.encoders.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import { formatTimestamp } from "../../../command-internal/timestamp.format.ts";
-import { formatRegion } from "../backups.format.ts";
+import { formatRegion } from "../../../command-internal/region.format.ts";
 import type { BackupsListFlags } from "./list.command.ts";
 
-/** Type shape for `api.V1BackupsResponse` (`apps/cli-go/pkg/api/types.gen.go`). */
-const GO_BACKUPS_RESPONSE = goStruct([
+/** Struct shape for `-o yaml|toml` encoding of the backups response. */
+const BACKUPS_RESPONSE_SHAPE = shapeStruct([
   [
     "backups",
-    goSlice(
-      goStruct([
-        ["id", goInt],
-        ["inserted_at", goString],
-        ["is_physical_backup", goBool],
-        ["status", goString],
+    shapeSlice(
+      shapeStruct([
+        ["id", shapeInt],
+        ["inserted_at", shapeString],
+        ["is_physical_backup", shapeBool],
+        ["status", shapeString],
       ]),
     ),
   ],
   [
     "physical_backup_data",
-    goStruct([
-      ["earliest_physical_backup_date_unix", goPtr(goInt)],
-      ["latest_physical_backup_date_unix", goPtr(goInt)],
+    shapeStruct([
+      ["earliest_physical_backup_date_unix", shapePtr(shapeInt)],
+      ["latest_physical_backup_date_unix", shapePtr(shapeInt)],
     ]),
   ],
-  ["pitr_enabled", goBool],
-  ["region", goString],
-  ["walg_enabled", goBool],
+  ["pitr_enabled", shapeBool],
+  ["region", shapeString],
+  ["walg_enabled", shapeBool],
 ]);
 
 type BackupsResponse = typeof V1ListAllBackupsOutput.Type;
@@ -91,59 +91,53 @@ function renderLogicalTable(response: BackupsResponse): string {
 
 export const backupsList = Effect.fn("backups.list")(function* (flags: BackupsListFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
-  const ref = yield* resolver.resolve(flags.projectRef);
+  const ref = yield* resolveProjectTarget(flags);
 
-  // Write the linked-project cache and persist the telemetry state file
-  // whether the main API call succeeds or fails.
   yield* Effect.gen(function* () {
-    // The fetching spinner is only meaningful in human-facing text mode — in JSON / stream-json
-    // it would surface dangling `[task] start:` lines on stderr with no completion message.
+    // Spinner is text-mode only; in JSON/stream-json it would leave a dangling `[task] start:`
+    // line on stderr with no completion message.
     const fetching =
       output.format === "text" ? yield* output.task("Fetching backups...") : undefined;
     const response = yield* api.v1.listAllBackups({ ref }).pipe(
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
       Effect.catch(mapListError),
     );
-    yield* fetching?.clear() ?? Effect.void;
+    yield* fetching?.clear ?? Effect.void;
 
-    const goFmt = Option.getOrUndefined(goOutputFlag);
+    const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
-    if (goFmt === "json") {
-      yield* output.raw(encodeGoJson(response, { nullForEmptyArrays: ["backups"] }));
+    if (outputFlagFormat === "json") {
+      yield* output.raw(encodeSortedJson(response, { nullForEmptyArrays: ["backups"] }));
       return;
     }
-    if (goFmt === "yaml") {
-      yield* output.raw(encodeGoYaml(response, GO_BACKUPS_RESPONSE));
+    if (outputFlagFormat === "yaml") {
+      yield* output.raw(encodeStructYaml(response, BACKUPS_RESPONSE_SHAPE));
       return;
     }
-    if (goFmt === "toml") {
-      // The schema decodes the PITR-only `"backups": null` to `[]` (see the
-      // `nullForEmptyArrays` JSON hint above); mirror that by treating an
-      // empty list as a nil slice, which BurntSushi omits entirely.
+    if (outputFlagFormat === "toml") {
+      // Treats an empty backups list as absent, matching the nullForEmptyArrays JSON handling
+      // above.
       yield* output.raw(
-        encodeGoToml(
+        encodeStructToml(
           {
             ...response,
             backups: response.backups.length > 0 ? response.backups : undefined,
           },
-          GO_BACKUPS_RESPONSE,
+          BACKUPS_RESPONSE_SHAPE,
         ),
       );
       return;
     }
-    if (goFmt === "env") {
+    if (outputFlagFormat === "env") {
       yield* output.raw(encodeEnv(response) + "\n");
       return;
     }
 
-    // goFmt is undefined or "pretty" — defer to TS --output-format for JSON/stream-json,
-    // otherwise render the Glamour-styled table (Go --output pretty parity).
     if (output.format === "json" || output.format === "stream-json") {
       yield* output.success("", response);
       return;

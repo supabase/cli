@@ -18,7 +18,7 @@ describe("pathMatch", () => {
     });
   });
 
-  describe("`*` and `?` never cross `/` (Go's non-`/` rule)", () => {
+  describe("`*` and `?` never cross `/`", () => {
     it.each([
       ["*.sql", "sub/seed.sql", false],
       ["seed?.sql", "seed/.sql", false],
@@ -40,22 +40,16 @@ describe("pathMatch", () => {
       expect(pathMatch(pattern, name).matched).toBe(expected);
     });
 
-    it("treats a leading `!` as a literal class member, NOT negation (Go parity)", () => {
-      // Go's `path.Match` negates only with a leading `^`; `!` is an ordinary
-      // member. So `[!a]` matches `!` and `a`, and rejects anything else.
+    it("treats a leading `!` as a literal class member, NOT negation", () => {
       expect(pathMatch("[!a].sql", "!.sql").matched).toBe(true);
       expect(pathMatch("[!a].sql", "a.sql").matched).toBe(true);
       expect(pathMatch("[!a].sql", "b.sql").matched).toBe(false);
     });
   });
 
-  describe("byte-offset `*` retry against multibyte characters (Go path.Match parity)", () => {
+  describe("byte-offset `*` retry against multibyte characters", () => {
     it.each([
-      // `path.Match`'s byte-offset `*`-retry loop can land mid-multibyte-character and have a `?`
-      // consume the resulting invalid continuation byte as a single-byte `U+FFFD` "rune" —
-      // producing matches a code-point-stepping port would miss. Verified empirically
-      // (a fullwidth exclamation mark, U+FF01, is a
-      // single character but 3 UTF-8 bytes; an emoji, U+1F600, is 4 UTF-8 bytes):
+      // U+FF01 (fullwidth `！`) is 3 UTF-8 bytes; U+1F600 (😀) is 4 UTF-8 bytes.
       ["*??.sql", "！.sql", true],
       ["*??.sql", "😀.sql", true],
       ["*?.sql", "！.sql", true],
@@ -76,13 +70,13 @@ describe("pathMatch", () => {
     });
   });
 
-  describe("malformed patterns report badPattern (Go's path.ErrBadPattern)", () => {
+  describe("malformed patterns report badPattern", () => {
     it.each([
       "[", // unterminated class
       "[a", // unterminated class with member
       "[]", // empty class
       "[^]", // empty negated class
-      "[*!#@D#", // Go's config_test.go golden case
+      "[*!#@D#",
       "a\\", // trailing escape
     ])("%s => badPattern", (pattern) => {
       const result = pathMatch(pattern, "x");
@@ -91,10 +85,8 @@ describe("pathMatch", () => {
     });
 
     it("does not interpret POSIX/JS-only class syntax as a regex", () => {
-      // `[[:alpha:]]` is NOT a POSIX class. Go parses it as a normal class
-      // `[[:alph]` (members `[ : a l p h`) followed by a literal `]`, so it
-      // matches a class member char followed by `]` — never a JS `\w`-style
-      // range, and never throws.
+      // Parses `[[:alpha:]]` as a normal class `[[:alph]` (members `[ : a l p h`) followed by
+      // a literal `]` — not a POSIX class.
       expect(pathMatch("[[:alpha:]]", "a]").matched).toBe(true);
       expect(pathMatch("[[:alpha:]]", "[]").matched).toBe(true);
       expect(pathMatch("[[:alpha:]]", "z]").matched).toBe(false);

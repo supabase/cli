@@ -24,22 +24,22 @@ const defaultMaxTables = 10;
 const defaultMaxCatalogs = 2;
 const defaultAnalyticsBuckets = {};
 const defaultVector = {};
-// Go's embedded config template sets `[storage.vector] enabled = true`, which
-// `config.Load` merges as the base layer, so an omitted key resolves to `true`
-// (apps/cli-go/pkg/config/templates/config.toml + config_test.go:40).
+// Vector buckets default to enabled, unlike most other storage subsections.
 const defaultVectorEnabled = true;
 const defaultMaxBuckets = 10;
 const defaultMaxIndexes = 5;
 const defaultVectorBuckets = {};
 
-/**
- * `file_size_limit` accepts both a human-readable string (`"50MiB"`) and a bare
- * byte count (`5000000`), matching Go's `sizeInBytes` decoder
- * (apps/cli-go/pkg/config/config_test.go:TestFileSizeLimitConfigParsing). A
- * numeric value is normalized to its decimal string so the decoded type stays a
- * `string` for all consumers (`ramInBytes` parses either form identically).
- */
-const fileSizeLimit = Schema.Union([Schema.String, Schema.Number]).pipe(
+// Keeps the published `anyOf` object/array rendering of a bucket table; `Schema.Struct({})`
+// exports as `not: { type: "null" }` since effect 4.0.
+const emptyTable = Schema.Union([
+  Schema.Record(Schema.String, Schema.Unknown),
+  Schema.Array(Schema.Unknown),
+]);
+
+// Accepts a human-readable string (`"50MiB"`) or a bare byte count (`5000000`); a numeric
+// value is normalized to its decimal string so the decoded type is always a `string`.
+const fileSizeLimit = Schema.Union([Schema.String, Schema.Finite]).pipe(
   Schema.decodeTo(Schema.String, {
     decode: SchemaGetter.transform((value) => (typeof value === "number" ? String(value) : value)),
     encode: SchemaGetter.transform((value) => value),
@@ -126,19 +126,19 @@ export const storage = Schema.Struct({
       tags,
       links,
     }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultAnalyticsEnabled))),
-    max_namespaces: Schema.Number.annotate({
+    max_namespaces: Schema.Finite.annotate({
       default: defaultMaxNamespaces,
       description: "Maximum number of analytics namespaces.",
       tags,
       links,
     }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMaxNamespaces))),
-    max_tables: Schema.Number.annotate({
+    max_tables: Schema.Finite.annotate({
       default: defaultMaxTables,
       description: "Maximum number of analytics tables.",
       tags,
       links,
     }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMaxTables))),
-    max_catalogs: Schema.Number.annotate({
+    max_catalogs: Schema.Finite.annotate({
       default: defaultMaxCatalogs,
       description: "Maximum number of analytics catalogs.",
       tags,
@@ -146,9 +146,7 @@ export const storage = Schema.Struct({
     }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMaxCatalogs))),
     buckets: Schema.Record(
       Schema.String,
-      Schema.Struct({}).pipe(
-        Schema.withDecodingDefault(Effect.succeed({ ...defaultAnalyticsBuckets })),
-      ),
+      emptyTable.pipe(Schema.withDecodingDefault(Effect.succeed({ ...defaultAnalyticsBuckets }))),
     )
       .annotate({
         default: defaultAnalyticsBuckets,
@@ -164,13 +162,13 @@ export const storage = Schema.Struct({
       tags,
       links,
     }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultVectorEnabled))),
-    max_buckets: Schema.Number.annotate({
+    max_buckets: Schema.Finite.annotate({
       default: defaultMaxBuckets,
       description: "Maximum number of vector buckets.",
       tags,
       links,
     }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMaxBuckets))),
-    max_indexes: Schema.Number.annotate({
+    max_indexes: Schema.Finite.annotate({
       default: defaultMaxIndexes,
       description: "Maximum number of vector indexes.",
       tags,
@@ -178,9 +176,7 @@ export const storage = Schema.Struct({
     }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMaxIndexes))),
     buckets: Schema.Record(
       Schema.String,
-      Schema.Struct({}).pipe(
-        Schema.withDecodingDefault(Effect.succeed({ ...defaultVectorBuckets })),
-      ),
+      emptyTable.pipe(Schema.withDecodingDefault(Effect.succeed({ ...defaultVectorBuckets }))),
     )
       .annotate({
         default: defaultVectorBuckets,

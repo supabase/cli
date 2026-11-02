@@ -1,0 +1,184 @@
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, Exit, FileSystem, Layer, Option, Path, Ref, Scope } from "effect";
+import { StackError } from "@supabase/stack/effect";
+import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import {
+  mockCommandSettings,
+  mockTelemetryStateTracked,
+} from "../../../../../tests/helpers/command-mocks.ts";
+import * as StackNamespace from "../../../../../../../packages/stack/src/StackNamespace.ts";
+import { StackApi, stackApiLayer, stackTargetResolverLayer } from "../stack.shared.ts";
+import { stackStop } from "./stop.handler.ts";
+import { selection } from "../../../../../tests/helpers/pins.ts";
+
+const flags = (id?: string) => ({
+  all: Option.none<boolean>(),
+  stack: Option.none<string>(),
+  stackId: Option.fromUndefinedOr(id),
+});
+const live = Layer.provideMerge(stackApiLayer, BunServices.layer);
+const fixture = Effect.fn("StackStopTest.fixture")(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-stop-" });
+  const api = yield* StackApi;
+  const locations = { stateRoot: path.join(root, "stacks"), cacheRoot: path.join(root, "cache") };
+  const stack = yield* api.create({ ...locations, projectRoot: root, runtime: "native" });
+  const output = mockOutput();
+  const telemetry = mockTelemetryStateTracked();
+  const settings = mockCommandSettings({ workdir: root, supabaseHome: root });
+  const layer = Layer.mergeAll(
+    output.layer,
+    telemetry.layer,
+    settings,
+    stackTargetResolverLayer.pipe(Layer.provide(settings)),
+  );
+  return { root, api, locations, stack, output, telemetry, layer };
+});
+
+describe("stack stop", () => {
+  it.live("stops an owner while preserving standalone definitions", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture();
+      const stopped = yield* Ref.make(false);
+      yield* Effect.acquireUseRelease(
+        f.stack.services.create({
+          service: "mail",
+          pin: selection.mail,
+          config: {},
+          endpoints: {},
+        }),
+        (mail) =>
+          Effect.gen(function* () {
+            expect((yield* f.api.discover(f.locations))[0]?.host).toBeDefined();
+            yield* stackStop(flags(f.stack.id)).pipe(Effect.provide(f.layer));
+            yield* Ref.set(stopped, true);
+            expect((yield* f.stack.services.list).map(({ id }) => id)).toEqual([mail.id]);
+            expect(f.output.stdoutText).toContain(`Stack ${f.stack.id} stopped.`);
+            expect(f.telemetry.flushed).toBe(true);
+          }),
+        () => Ref.get(stopped).pipe(Effect.flatMap((done) => (done ? Effect.void : f.stack.stop))),
+      );
+    }).pipe(Effect.provide(live)),
+  );
+
+  it.effect(
+    "stop all reclaims ownerless stacks and keeps their definitions without claiming a stop",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture();
+        yield* f.api.create({
+          ...f.locations,
+          projectRoot: f.root,
+          name: "second",
+          runtime: "native",
+        });
+        yield* stackStop({ ...flags(), all: Option.some(true) }).pipe(Effect.provide(f.layer));
+        yield* stackStop({ ...flags(), all: Option.some(true) }).pipe(Effect.provide(f.layer));
+        expect(
+          f.output.stdoutText.match(/was not running; leftover resources were reclaimed/g),
+        ).toHaveLength(4);
+        expect(f.output.stdoutText).not.toContain("stopped.");
+        expect((yield* f.api.discover(f.locations)).every(({ host }) => host === undefined)).toBe(
+          true,
+        );
+        expect(f.telemetry.flushed).toBe(true);
+      }).pipe(Effect.provide(live)),
+  );
+
+  it.effect.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "stop all continues past siblings whose state cannot be decoded or accessed and warns about them",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture();
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const broken = path.join(f.locations.stateRoot, "broken");
+        yield* fs.makeDirectory(broken);
+        yield* fs.writeFileString(path.join(broken, "state.json"), "{broken");
+        const locked = path.join(f.locations.stateRoot, "locked");
+        yield* fs.makeDirectory(locked);
+        yield* Effect.acquireRelease(fs.chmod(locked, 0o000), () =>
+          fs.chmod(locked, 0o700).pipe(Effect.orDie),
+        );
+        yield* stackStop({ ...flags(), all: Option.some(true) }).pipe(Effect.provide(f.layer));
+        expect(f.output.stdoutText.match(/was not running/g)).toHaveLength(1);
+        expect(f.output.stderrText).toContain("Warning: skipping invalid stack broken");
+        expect(f.output.stderrText).toContain("Warning: skipping invalid stack locked");
+        expect(f.output.stdoutText).not.toContain("Warning");
+        expect(yield* fs.readFileString(path.join(broken, "state.json"))).toBe("{broken");
+        expect(f.telemetry.flushed).toBe(true);
+      }).pipe(Effect.provide(live)),
+  );
+
+  it.effect("surfaces a shutdown failure after a successful owner preflight", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture();
+      const saved = (yield* f.api.discover(f.locations))[0];
+      if (saved === undefined) return yield* Effect.die("created stack missing");
+      const failedApi = Layer.succeed(
+        StackApi,
+        StackApi.of({
+          ...f.api,
+          find: () =>
+            Effect.succeed(
+              Option.some({
+                ...saved,
+                host: {
+                  stackId: f.stack.id,
+                  identity: saved.definition.identity,
+                  pid: 1,
+                  port: 1,
+                  release: "test",
+                },
+              }),
+            ),
+          open: () =>
+            Effect.succeed({
+              ...f.stack,
+              stop: Effect.fail(
+                new StackError({ operation: "shutdown", message: "owner disconnected" }),
+              ),
+            }),
+        }),
+      );
+      const error = yield* stackStop(flags(f.stack.id)).pipe(
+        Effect.provide(Layer.provideMerge(f.layer, failedApi)),
+        Effect.flip,
+      );
+      expect(error.reason).toBe("stack");
+      expect(error.detail).toContain(`${f.stack.id}: owner disconnected`);
+      expect(f.output.stdoutText).toBe("");
+      expect(f.telemetry.flushed).toBe(true);
+    }).pipe(Effect.provide(live)),
+  );
+
+  it.live("fails when an ownerless stack's lease is held by another process", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture();
+      const state = yield* StackNamespace.Service.pipe(
+        Effect.provide(StackNamespace.layer({ root: f.locations.stateRoot })),
+      );
+      const holder = yield* Scope.make();
+      const lease = yield* state.acquireLease(f.stack.id).pipe(Scope.provide(holder));
+      yield* lease.publishHolder({
+        role: "sweeper",
+        pid: process.pid,
+        startedAt: "2026-01-01T00:00:00.000Z",
+      });
+      const error = yield* stackStop(flags(f.stack.id)).pipe(
+        Effect.provide(f.layer),
+        Effect.flip,
+        Effect.ensuring(Scope.close(holder, Exit.void)),
+      );
+      expect(error.reason).toBe("stack");
+      expect(error.detail).toContain(`${f.stack.id}: Another process holds the stack lease`);
+      expect(f.output.stdoutText).toBe("");
+      expect((yield* f.api.discover(f.locations)).map(({ definition }) => definition.id)).toEqual([
+        f.stack.id,
+      ]);
+      expect(f.telemetry.flushed).toBe(true);
+    }).pipe(Effect.provide(live)),
+  );
+});

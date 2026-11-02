@@ -1,0 +1,57 @@
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { stringSliceFlag } from "../../../../command-internal/string-slice-flag.ts";
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
+import { stackStatus } from "./status.handler.ts";
+import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
+import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
+
+const config = {
+  stack: Flag.String("stack").pipe(Flag.withDescription("Inspect a named stack."), Flag.optional),
+  stackId: Flag.String("stack-id").pipe(
+    Flag.withDescription("Inspect an existing stack by id or unique id prefix."),
+    Flag.optional,
+  ),
+  env: Flag.Boolean("env").pipe(
+    Flag.withDescription("Export connection URLs and credentials as environment variables."),
+    Flag.withDefault(false),
+  ),
+  overrideName: stringSliceFlag(
+    "override-name",
+    "Rename an exported variable: API_URL=NEXT_PUBLIC_SUPABASE_URL (requires --env).",
+  ),
+} as const;
+
+export type StackStatusFlags = CliCommand.Command.Config.Infer<typeof config>;
+
+export const stackStatusCommand = Command.make("status", config).pipe(
+  Command.withDescription("Show the state of a managed local Supabase stack."),
+  Command.withShortDescription("Show stack status"),
+  Command.withExamples([
+    {
+      command: "supabase stack status",
+      description: "Show the current project stack",
+    },
+    {
+      command: "supabase stack status --stack feature-a",
+      description: "Show a named stack",
+    },
+    {
+      command: "supabase stack status --env --output-format text > .env.local",
+      description: "Export connection variables as dotenv",
+    },
+  ]),
+  withPermissions({
+    operations: [],
+    noApiEffectFlags: ["stack", "stack-id", "env", "override-name"],
+  }),
+  Command.withHandler((flags) =>
+    stackStatus(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
+  ),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
+);

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Option, PlatformError, Sink, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { Deferred, Effect, Option, Path, PlatformError, Sink, Stream } from "effect";
+import { ChildProcessSpawner } from "effect/process";
 
-import { configFileHasUncommittedChanges } from "./git-status.ts";
+import { pathHasUncommittedChanges } from "./git-status.ts";
 
 /** Matches the standing `mockSpawner` shape in `container-cli.unit.test.ts`. */
 function mockSpawner(
@@ -26,14 +26,12 @@ function mockSpawner(
       spawned.push({ command: cmd, args, cwd });
 
       if (opts.spawnFails === true) {
-        return yield* Effect.fail(
-          PlatformError.systemError({
-            _tag: "NotFound",
-            module: "ChildProcess",
-            method: "spawn",
-            description: `${cmd} not found`,
-          }),
-        );
+        return yield* PlatformError.systemError({
+          _tag: "NotFound",
+          module: "ChildProcess",
+          method: "spawn",
+          description: `${cmd} not found`,
+        });
       }
 
       const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
@@ -66,11 +64,12 @@ function mockSpawner(
   };
 }
 
-describe("configFileHasUncommittedChanges", () => {
+describe("pathHasUncommittedChanges", () => {
   it.live("reports dirty when git status --porcelain reports non-empty output", () => {
     const mock = mockSpawner({ stdout: " M config.toml\n" });
-    return configFileHasUncommittedChanges("/repo/supabase/config.toml").pipe(
+    return pathHasUncommittedChanges("/repo/supabase/config.toml").pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+      Effect.provide(Path.layer),
       Effect.map((result) => {
         expect(Option.isSome(result)).toBe(true);
         if (Option.isSome(result)) expect(result.value).toBe(true);
@@ -80,8 +79,9 @@ describe("configFileHasUncommittedChanges", () => {
 
   it.live("reports clean when git status --porcelain exits 0 with empty output", () => {
     const mock = mockSpawner({ stdout: "" });
-    return configFileHasUncommittedChanges("/repo/supabase/config.toml").pipe(
+    return pathHasUncommittedChanges("/repo/supabase/config.toml").pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+      Effect.provide(Path.layer),
       Effect.map((result) => {
         expect(Option.isSome(result)).toBe(true);
         if (Option.isSome(result)) expect(result.value).toBe(false);
@@ -91,8 +91,9 @@ describe("configFileHasUncommittedChanges", () => {
 
   it.live("degrades to none when git status exits non-zero (e.g. outside a work tree)", () => {
     const mock = mockSpawner({ exitCode: 128, stdout: "" });
-    return configFileHasUncommittedChanges("/repo/supabase/config.toml").pipe(
+    return pathHasUncommittedChanges("/repo/supabase/config.toml").pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+      Effect.provide(Path.layer),
       Effect.map((result) => {
         expect(Option.isNone(result)).toBe(true);
       }),
@@ -101,8 +102,9 @@ describe("configFileHasUncommittedChanges", () => {
 
   it.live("degrades to none when git cannot be spawned", () => {
     const mock = mockSpawner({ spawnFails: true });
-    return configFileHasUncommittedChanges("/repo/supabase/config.toml").pipe(
+    return pathHasUncommittedChanges("/repo/supabase/config.toml").pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+      Effect.provide(Path.layer),
       Effect.map((result) => {
         expect(Option.isNone(result)).toBe(true);
       }),
@@ -113,13 +115,36 @@ describe("configFileHasUncommittedChanges", () => {
     "runs `git status --porcelain -- <basename>` with cwd set to the file's directory",
     () => {
       const mock = mockSpawner({ stdout: "" });
-      return configFileHasUncommittedChanges("/repo/supabase/config.toml").pipe(
+      return pathHasUncommittedChanges("/repo/supabase/config.toml").pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+        Effect.provide(Path.layer),
         Effect.map(() => {
           expect(mock.spawned).toEqual([
             {
               command: "git",
               args: ["status", "--porcelain", "--", "config.toml"],
+              cwd: "/repo/supabase",
+            },
+          ]);
+        }),
+      );
+    },
+  );
+
+  it.live(
+    "works the same way for a directory path: reports dirty using the directory's own basename as the pathspec",
+    () => {
+      const mock = mockSpawner({ stdout: " M migrations/20260101000000_init.sql\n" });
+      return pathHasUncommittedChanges("/repo/supabase/migrations").pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+        Effect.provide(Path.layer),
+        Effect.map((result) => {
+          expect(Option.isSome(result)).toBe(true);
+          if (Option.isSome(result)) expect(result.value).toBe(true);
+          expect(mock.spawned).toEqual([
+            {
+              command: "git",
+              args: ["status", "--porcelain", "--", "migrations"],
               cwd: "/repo/supabase",
             },
           ]);

@@ -2,7 +2,8 @@ import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { aqua } from "../../../command-internal/colors.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Stdin } from "../../../shared/runtime/stdin.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
@@ -20,22 +21,15 @@ export const encryptionUpdateRootKey = Effect.fn("encryption.update-root-key")(f
 ) {
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* ProjectRefResolver;
   const stdin = yield* Stdin;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
-  const ref = yield* resolver.resolve(flags.projectRef);
+  const ref = yield* resolveProjectTarget(flags);
 
-  // Faithful port of `update.Run` + `credentials.PromptMasked(os.Stdin)`.
-  // The prompt is unconditionally written to stderr, the key is read
-  // (masked on a TTY, `io.Copy` of all stdin when piped), then a trailing
-  // newline is printed to stdout (`defer fmt.Println()`) — even when stdin
-  // is piped. Both read paths trim, matching `strings.TrimSpace(input)`.
-  // The stderr prompt + stdout newline are reproduced only in text mode;
-  // json / stream-json reserve stdout for the structured result. On a TTY
-  // the masked prompt uses clack framing, so the rendered prompt is not
-  // byte-identical to the reference implementation (see SIDE_EFFECTS.md).
+  // In text mode, the piped-input path writes the prompt to stderr and echoes a
+  // trailing newline to stdout after reading; on a TTY the masked prompt uses
+  // clack framing instead — see SIDE_EFFECTS.md for that divergence.
   let rootKey: string;
   if (stdin.isTTY) {
     rootKey = yield* output.promptPassword("Enter a new root key: ");
@@ -45,26 +39,23 @@ export const encryptionUpdateRootKey = Effect.fn("encryption.update-root-key")(f
     if (output.format === "text") yield* output.raw("\n", "stdout");
   }
 
-  // Write the linked-project cache and persist the telemetry state file on
-  // success and failure.
+  // Runs on both success and failure.
   yield* Effect.gen(function* () {
+    yield* requireHostedMutationConsent({ action: "Replace the project's root encryption key" });
+
     const updating =
       output.format === "text" ? yield* output.task("Updating root key...") : undefined;
     const response = yield* api.v1.updatePgsodiumConfig({ ref, root_key: rootKey }).pipe(
       Effect.tapError(() => updating?.fail() ?? Effect.void),
       Effect.catch(mapUpdateError),
     );
-    yield* updating?.clear() ?? Effect.void;
+    yield* updating?.clear ?? Effect.void;
 
     if (output.format !== "text") {
-      // json / stream-json — emit a structured result.
       yield* output.success("", { root_key: response.root_key });
       return;
     }
 
-    // text — Go: `fmt.Fprintln(os.Stderr, "Finished "+utils.Aqua("supabase
-    // root-key update")+".")` (`internal/encryption/update/update.go:26`).
-    // `aqua` renders cyan on a TTY and plain when piped, like lipgloss.
     yield* output.raw(`Finished ${aqua("supabase root-key update")}.\n`, "stderr");
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });

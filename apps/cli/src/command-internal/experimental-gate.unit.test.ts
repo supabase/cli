@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Effect, Exit, Layer } from "effect";
 
+import { withEnvVar } from "../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { ExperimentalFlag } from "./global-flags.ts";
 import { ExperimentalRequiredError, requireExperimental } from "./experimental-gate.ts";
@@ -14,103 +15,81 @@ describe("requireExperimental", () => {
     requireExperimental.pipe(Effect.provide(withFlag(true))),
   );
 
-  it.effect("fails with Go's byte-exact message when neither flag nor env is set", () =>
+  it.effect("fails with the gate message when neither flag nor env is set", () =>
     Effect.gen(function* () {
-      const saved = process.env[ENV];
-      delete process.env[ENV];
-      const error = yield* requireExperimental.pipe(Effect.provide(withFlag(false)), Effect.flip);
-      if (saved === undefined) delete process.env[ENV];
-      else process.env[ENV] = saved;
+      const error = yield* withEnvVar(
+        ENV,
+        undefined,
+        requireExperimental.pipe(Effect.provide(withFlag(false)), Effect.flip),
+      );
       expect(error).toBeInstanceOf(ExperimentalRequiredError);
       expect(error.message).toBe("must set the --experimental flag to run this command");
     }),
   );
 
-  it.effect("passes when SUPABASE_EXPERIMENTAL=1 even without the flag (viper AutomaticEnv)", () =>
+  it.effect("passes when SUPABASE_EXPERIMENTAL=1 even without the flag", () =>
     Effect.gen(function* () {
-      const saved = process.env[ENV];
-      process.env[ENV] = "1";
-      const exit = yield* requireExperimental.pipe(Effect.provide(withFlag(false)), Effect.exit);
-      if (saved === undefined) delete process.env[ENV];
-      else process.env[ENV] = saved;
-      expect(exit._tag).toBe("Success");
+      const exit = yield* withEnvVar(
+        ENV,
+        "1",
+        requireExperimental.pipe(Effect.provide(withFlag(false)), Effect.exit),
+      );
+      expect(Exit.isSuccess(exit)).toBe(true);
     }),
   );
 
-  it.effect(
-    "fails even with SUPABASE_EXPERIMENTAL=1 when --experimental=false is explicit (viper Changed wins)",
-    () =>
-      Effect.gen(function* () {
-        // viper's bound-pflag lookup returns the flag value whenever Changed is true —
-        // BEFORE falling back to AutomaticEnv — so an
-        // explicit --experimental=false must win over SUPABASE_EXPERIMENTAL=1.
-        const saved = process.env[ENV];
-        process.env[ENV] = "1";
-        const error = yield* requireExperimental.pipe(
+  it.effect("fails even with SUPABASE_EXPERIMENTAL=1 when --experimental=false is explicit", () =>
+    Effect.gen(function* () {
+      const error = yield* withEnvVar(
+        ENV,
+        "1",
+        requireExperimental.pipe(
           Effect.provide(withFlag(false, ["--experimental=false"])),
           Effect.flip,
-        );
-        if (saved === undefined) delete process.env[ENV];
-        else process.env[ENV] = saved;
-        expect(error).toBeInstanceOf(ExperimentalRequiredError);
-      }),
+        ),
+      );
+      expect(error).toBeInstanceOf(ExperimentalRequiredError);
+    }),
   );
 
   it.effect(
     "passes with SUPABASE_EXPERIMENTAL=1 when --experimental=false is a positional operand after --",
     () =>
       Effect.gen(function* () {
-        // Both pflag/cobra (a value placed after --
-        // never sets cmd.Flags().Changed(...)) and this CLI's own lexer
-        // (effect/unstable/cli/internal/lexer.ts, `argv.indexOf("--")`) stop parsing
-        // flags at the first bare `--`. A positional operand that merely LOOKS like a
-        // flag — e.g. a migration name literally called `--experimental=false` passed
-        // as `db pull -- --experimental=false` — must not be mistaken for an explicit
-        // `--experimental=false` and must not suppress the SUPABASE_EXPERIMENTAL=1
-        // AutomaticEnv fallback.
-        const saved = process.env[ENV];
-        process.env[ENV] = "1";
-        const exit = yield* requireExperimental.pipe(
-          Effect.provide(withFlag(false, ["--", "--experimental=false"])),
-          Effect.exit,
+        const exit = yield* withEnvVar(
+          ENV,
+          "1",
+          requireExperimental.pipe(
+            Effect.provide(withFlag(false, ["--", "--experimental=false"])),
+            Effect.exit,
+          ),
         );
-        if (saved === undefined) delete process.env[ENV];
-        else process.env[ENV] = saved;
-        expect(exit._tag).toBe("Success");
+        expect(Exit.isSuccess(exit)).toBe(true);
       }),
   );
 
-  it.effect(
-    "a repeated --experimental=false --experimental=true keeps the LAST occurrence (viper Set() wins)",
-    () =>
-      Effect.gen(function* () {
-        // pflag/viper bind ONE variable per flag, so repeated occurrences collapse to
-        // whichever Set() call happened last — verified empirically against the pinned
-        // cobra@v1.10.2/pflag@v1.0.10/viper@v1.21.0 versions. A scan that
-        // merely checks "does any pre-terminator token say false" gets this ordering
-        // backwards and would incorrectly fail open here.
-        const exit = yield* requireExperimental.pipe(
-          Effect.provide(
-            withFlag(false, ["db", "pull", "--experimental=false", "--experimental=true"]),
-          ),
-          Effect.exit,
-        );
-        expect(exit._tag).toBe("Success");
-      }),
+  it.effect("a repeated --experimental=false --experimental=true keeps the LAST occurrence", () =>
+    Effect.gen(function* () {
+      const exit = yield* requireExperimental.pipe(
+        Effect.provide(
+          withFlag(false, ["db", "pull", "--experimental=false", "--experimental=true"]),
+        ),
+        Effect.exit,
+      );
+      expect(Exit.isSuccess(exit)).toBe(true);
+    }),
   );
 
-  it.effect(
-    "a repeated --experimental=true --experimental=false keeps the LAST occurrence (viper Set() wins)",
-    () =>
-      Effect.gen(function* () {
-        const error = yield* requireExperimental.pipe(
-          Effect.provide(
-            withFlag(true, ["db", "pull", "--experimental=true", "--experimental=false"]),
-          ),
-          Effect.flip,
-        );
-        expect(error).toBeInstanceOf(ExperimentalRequiredError);
-      }),
+  it.effect("a repeated --experimental=true --experimental=false keeps the LAST occurrence", () =>
+    Effect.gen(function* () {
+      const error = yield* requireExperimental.pipe(
+        Effect.provide(
+          withFlag(true, ["db", "pull", "--experimental=true", "--experimental=false"]),
+        ),
+        Effect.flip,
+      );
+      expect(error).toBeInstanceOf(ExperimentalRequiredError);
+    }),
   );
 
   it.effect("a repeated --experimental=false --experimental (bare) keeps the LAST occurrence", () =>
@@ -119,7 +98,7 @@ describe("requireExperimental", () => {
         Effect.provide(withFlag(false, ["db", "pull", "--experimental=false", "--experimental"])),
         Effect.exit,
       );
-      expect(exit._tag).toBe("Success");
+      expect(Exit.isSuccess(exit)).toBe(true);
     }),
   );
 });

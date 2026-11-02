@@ -45,15 +45,16 @@ export class InvalidFunctionDownloadResponseError extends Data.TaggedError(
   }
 }
 
+export class FunctionEszipDownloadError extends Data.Error<{ readonly message: string }> {}
+
 export class UnsafeFunctionDownloadPathError extends Data.TaggedError(
   "UnsafeFunctionDownloadPathError",
 )<{
   readonly message: string;
   /**
-   * True when a 200 response's multipart filename/metadata entrypoint
-   * resolved outside `supabase/functions` — an API response problem, not a
-   * local write/rename failure (the other construction sites, which keep the
-   * default `permission` classification).
+   * True when a 200 response's multipart filename/metadata entrypoint resolved outside
+   * `supabase/functions` — an API response problem, not a local write/rename failure (the other
+   * construction sites keep the default `permission` classification).
    */
   readonly unsafeResponsePath?: boolean;
 }> {

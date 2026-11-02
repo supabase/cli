@@ -1,9 +1,13 @@
 import * as Schema from "effect/Schema";
 
+// open string helper
+export const OpenString = Schema.declare(
+  (value: unknown): value is string & {} => typeof value === "string",
+);
 // non-recursive definitions
-export const SupavisorConfigResponse = Schema.Struct({
+export const SupavisorConfigResponse_Output = Schema.Struct({
   identifier: Schema.String,
-  database_type: Schema.Literals(["PRIMARY", "READ_REPLICA"]),
+  database_type: Schema.Union([Schema.Literals(["PRIMARY", "READ_REPLICA"]), OpenString]),
   is_using_scram_auth: Schema.Boolean,
   db_user: Schema.String,
   db_host: Schema.String,
@@ -49,13 +53,16 @@ export const SupavisorConfigResponse = Schema.Struct({
       ),
     Schema.Null,
   ]),
-  pool_mode: Schema.Literals(["transaction", "session"]),
-}).annotate({ identifier: "SupavisorConfigResponse" });
-export const ApiKeyResponse = Schema.Struct({
+  pool_mode: Schema.Union([Schema.Literals(["transaction", "session"]), OpenString]),
+}).annotate({ identifier: "SupavisorConfigResponse_Output" });
+export const ApiKeyResponse_Output = Schema.Struct({
   api_key: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   id: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   type: Schema.optionalKey(
-    Schema.Union([Schema.Literals(["legacy", "publishable", "secret"]), Schema.Null]),
+    Schema.Union([
+      Schema.Union([Schema.Literals(["legacy", "publishable", "secret"]), Schema.Null]),
+      OpenString,
+    ]),
   ),
   prefix: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   name: Schema.String,
@@ -73,20 +80,23 @@ export const ApiKeyResponse = Schema.Struct({
   updated_at: Schema.optionalKey(
     Schema.Union([Schema.String.annotate({ format: "date-time" }), Schema.Null]),
   ),
-}).annotate({ identifier: "ApiKeyResponse" });
-export const V1ServiceHealthResponse = Schema.Struct({
-  name: Schema.Literals([
-    "auth",
-    "db",
-    "db_postgres_user",
-    "pooler",
-    "realtime",
-    "rest",
-    "storage",
-    "pg_bouncer",
+}).annotate({ identifier: "ApiKeyResponse_Output" });
+export const V1ServiceHealthResponse_Output = Schema.Struct({
+  name: Schema.Union([
+    Schema.Literals([
+      "auth",
+      "db",
+      "db_postgres_user",
+      "pooler",
+      "realtime",
+      "rest",
+      "storage",
+      "pg_bouncer",
+    ]),
+    OpenString,
   ]),
   healthy: Schema.Boolean.annotate({ description: "Deprecated. Use `status` instead." }),
-  status: Schema.Literals(["COMING_UP", "ACTIVE_HEALTHY", "UNHEALTHY"]),
+  status: Schema.Union([Schema.Literals(["COMING_UP", "ACTIVE_HEALTHY", "UNHEALTHY"]), OpenString]),
   info: Schema.optionalKey(
     Schema.Union([
       Schema.Struct({
@@ -114,12 +124,13 @@ export const V1ServiceHealthResponse = Schema.Struct({
     ]),
   ),
   error: Schema.optionalKey(Schema.String),
-}).annotate({ identifier: "V1ServiceHealthResponse" });
-export const BranchResponse = Schema.Struct({
+}).annotate({ identifier: "V1ServiceHealthResponse_Output" });
+export const BranchResponse_Output = Schema.Struct({
   id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -151,16 +162,19 @@ export const BranchResponse = Schema.Struct({
     }).check(Schema.isFinite().annotate({ expected: "a finite number" })),
   ),
   persistent: Schema.Boolean,
-  status: Schema.Literals([
-    "CREATING_PROJECT",
-    "RUNNING_MIGRATIONS",
-    "MIGRATIONS_PASSED",
-    "MIGRATIONS_FAILED",
-    "FUNCTIONS_DEPLOYED",
-    "FUNCTIONS_FAILED",
-  ]).annotate({
-    description: "This field is deprecated. List action runs to get branch status instead.",
-  }),
+  status: Schema.Union([
+    Schema.Literals([
+      "CREATING_PROJECT",
+      "RUNNING_MIGRATIONS",
+      "MIGRATIONS_PASSED",
+      "MIGRATIONS_FAILED",
+      "FUNCTIONS_DEPLOYED",
+      "FUNCTIONS_FAILED",
+    ]).annotate({
+      description: "This field is deprecated. List action runs to get branch status instead.",
+    }),
+    OpenString,
+  ]),
   created_at: Schema.String.annotate({ format: "date-time" }),
   updated_at: Schema.String.annotate({ format: "date-time" }),
   review_requested_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
@@ -168,38 +182,41 @@ export const BranchResponse = Schema.Struct({
   notify_url: Schema.optionalKey(Schema.String.annotate({ format: "uri" })),
   deletion_scheduled_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
   preview_project_status: Schema.optionalKey(
-    Schema.Literals([
-      "INACTIVE",
-      "ACTIVE_HEALTHY",
-      "ACTIVE_UNHEALTHY",
-      "COMING_UP",
-      "UNKNOWN",
-      "GOING_DOWN",
-      "INIT_FAILED",
-      "REMOVED",
-      "RESTORING",
-      "UPGRADING",
-      "PAUSING",
-      "RESTORE_FAILED",
-      "RESTARTING",
-      "PAUSE_FAILED",
-      "RESIZING",
+    Schema.Union([
+      Schema.Literals([
+        "INACTIVE",
+        "ACTIVE_HEALTHY",
+        "ACTIVE_UNHEALTHY",
+        "COMING_UP",
+        "UNKNOWN",
+        "GOING_DOWN",
+        "INIT_FAILED",
+        "REMOVED",
+        "RESTORING",
+        "UPGRADING",
+        "PAUSING",
+        "RESTORE_FAILED",
+        "RESTARTING",
+        "PAUSE_FAILED",
+        "RESIZING",
+      ]),
+      OpenString,
     ]),
   ),
-}).annotate({ identifier: "BranchResponse" });
-export const V1StorageBucketResponse = Schema.Struct({
+}).annotate({ identifier: "BranchResponse_Output" });
+export const V1StorageBucketResponse_Output = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
   owner: Schema.String,
   created_at: Schema.String,
   updated_at: Schema.String,
   public: Schema.Boolean,
-}).annotate({ identifier: "V1StorageBucketResponse" });
-export const FunctionResponse = Schema.Struct({
+}).annotate({ identifier: "V1StorageBucketResponse_Output" });
+export const FunctionResponse_Output = Schema.Struct({
   id: Schema.String,
   slug: Schema.String,
   name: Schema.String,
-  status: Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]),
+  status: Schema.Union([Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]), OpenString]),
   version: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
@@ -238,25 +255,29 @@ export const FunctionResponse = Schema.Struct({
   verify_jwt: Schema.optionalKey(Schema.Boolean),
   import_map: Schema.optionalKey(Schema.Boolean),
   entrypoint_path: Schema.optionalKey(Schema.String),
-  import_map_path: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+  import_map_path: Schema.optionalKey(Schema.String),
   ezbr_sha256: Schema.optionalKey(Schema.String),
-}).annotate({ identifier: "FunctionResponse" });
-export const OrganizationResponseV1 = Schema.Struct({
+}).annotate({ identifier: "FunctionResponse_Output" });
+export const OrganizationResponseV1_Output = Schema.Struct({
   id: Schema.String.annotate({ description: "Deprecated: Use `slug` instead." }),
   slug: Schema.String.annotate({ description: "Organization slug" }).check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
   name: Schema.String,
-}).annotate({ identifier: "OrganizationResponseV1" });
-export const V1ProjectWithDatabaseResponse = Schema.Struct({
+}).annotate({ identifier: "OrganizationResponseV1_Output" });
+export const V1ProjectWithDatabaseResponse_Output = Schema.Struct({
   id: Schema.String.annotate({ description: "Deprecated: Use `ref` instead." }),
   ref: Schema.String.annotate({ description: "Project ref" })
-    .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+    )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -264,29 +285,32 @@ export const V1ProjectWithDatabaseResponse = Schema.Struct({
     description: "Deprecated: Use `organization_slug` instead.",
   }),
   organization_slug: Schema.String.annotate({ description: "Organization slug" }).check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
   name: Schema.String.annotate({ description: "Name of your project" }),
   region: Schema.String.annotate({ description: "Region of your project" }),
   created_at: Schema.String.annotate({ description: "Creation timestamp" }),
-  status: Schema.Literals([
-    "INACTIVE",
-    "ACTIVE_HEALTHY",
-    "ACTIVE_UNHEALTHY",
-    "COMING_UP",
-    "UNKNOWN",
-    "GOING_DOWN",
-    "INIT_FAILED",
-    "REMOVED",
-    "RESTORING",
-    "UPGRADING",
-    "PAUSING",
-    "RESTORE_FAILED",
-    "RESTARTING",
-    "PAUSE_FAILED",
-    "RESIZING",
+  status: Schema.Union([
+    Schema.Literals([
+      "INACTIVE",
+      "ACTIVE_HEALTHY",
+      "ACTIVE_UNHEALTHY",
+      "COMING_UP",
+      "UNKNOWN",
+      "GOING_DOWN",
+      "INIT_FAILED",
+      "REMOVED",
+      "RESTORING",
+      "UPGRADING",
+      "PAUSING",
+      "RESTORE_FAILED",
+      "RESTARTING",
+      "PAUSE_FAILED",
+      "RESIZING",
+    ]),
+    OpenString,
   ]),
   database: Schema.Struct({
     host: Schema.String.annotate({ description: "Database host" }),
@@ -294,25 +318,26 @@ export const V1ProjectWithDatabaseResponse = Schema.Struct({
     postgres_engine: Schema.String.annotate({ description: "Database engine" }),
     release_channel: Schema.String.annotate({ description: "Release channel" }),
   }),
-}).annotate({ identifier: "V1ProjectWithDatabaseResponse" });
-export const SecretResponse = Schema.Struct({
+}).annotate({ identifier: "V1ProjectWithDatabaseResponse_Output" });
+export const SecretResponse_Output = Schema.Struct({
   name: Schema.String,
   value: Schema.String,
   updated_at: Schema.optionalKey(Schema.String),
-}).annotate({ identifier: "SecretResponse" });
-export const V1OrganizationMemberResponse = Schema.Struct({
+}).annotate({ identifier: "SecretResponse_Output" });
+export const V1OrganizationMemberResponse_Output = Schema.Struct({
   user_id: Schema.String,
   user_name: Schema.String,
   email: Schema.optionalKey(Schema.String),
-  role_name: Schema.String,
+  role_name: Schema.optionalKey(Schema.String),
   mfa_enabled: Schema.Boolean,
   avatar_url: Schema.Union([Schema.String, Schema.Null]),
-}).annotate({ identifier: "V1OrganizationMemberResponse" });
-export const ThirdPartyAuth = Schema.Struct({
+}).annotate({ identifier: "V1OrganizationMemberResponse_Output" });
+export const ThirdPartyAuth_Output = Schema.Struct({
   id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -327,68 +352,28 @@ export const ThirdPartyAuth = Schema.Struct({
   inserted_at: Schema.String,
   updated_at: Schema.String,
   resolved_at: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-}).annotate({ identifier: "ThirdPartyAuth" });
+}).annotate({ identifier: "ThirdPartyAuth_Output" });
 // recursive definitions
-export type UpdateCustomHostnameResponseJsonValue =
+export type JsonValue_Output =
   | string
   | number
   | boolean
   | null
-  | ReadonlyArray<UpdateCustomHostnameResponseJsonValue>
-  | { readonly [x: string]: UpdateCustomHostnameResponseJsonValue };
-export const UpdateCustomHostnameResponseJsonValue = Schema.Union([
+  | ReadonlyArray<JsonValue_Output>
+  | { readonly [x: string]: JsonValue_Output };
+export const JsonValue_Output = Schema.Union([
   Schema.Union([
     Schema.String,
     Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
     Schema.Boolean,
     Schema.Null,
   ]),
-  Schema.Array(
-    Schema.suspend(
-      (): Schema.Codec<UpdateCustomHostnameResponseJsonValue> =>
-        UpdateCustomHostnameResponseJsonValue,
-    ),
-  ),
+  Schema.Array(Schema.suspend((): Schema.Codec<JsonValue_Output> => JsonValue_Output)),
   Schema.Record(
     Schema.String,
-    Schema.suspend(
-      (): Schema.Codec<UpdateCustomHostnameResponseJsonValue> =>
-        UpdateCustomHostnameResponseJsonValue,
-    ),
+    Schema.suspend((): Schema.Codec<JsonValue_Output> => JsonValue_Output),
   ),
-]).annotate({
-  description: "Any JSON-serializable value",
-  identifier: "UpdateCustomHostnameResponseJsonValue",
-});
-export type ListProjectAddonsResponseJsonValue =
-  | string
-  | number
-  | boolean
-  | null
-  | ReadonlyArray<ListProjectAddonsResponseJsonValue>
-  | { readonly [x: string]: ListProjectAddonsResponseJsonValue };
-export const ListProjectAddonsResponseJsonValue = Schema.Union([
-  Schema.Union([
-    Schema.String,
-    Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-    Schema.Boolean,
-    Schema.Null,
-  ]),
-  Schema.Array(
-    Schema.suspend(
-      (): Schema.Codec<ListProjectAddonsResponseJsonValue> => ListProjectAddonsResponseJsonValue,
-    ),
-  ),
-  Schema.Record(
-    Schema.String,
-    Schema.suspend(
-      (): Schema.Codec<ListProjectAddonsResponseJsonValue> => ListProjectAddonsResponseJsonValue,
-    ),
-  ),
-]).annotate({
-  description: "Any JSON-serializable value",
-  identifier: "ListProjectAddonsResponseJsonValue",
-});
+]).annotate({ description: "Any JSON-serializable value", identifier: "JsonValue_Output" });
 // binary input helpers
 export const BinaryInput = Schema.Union([
   Schema.Uint8Array,
@@ -398,11 +383,13 @@ export const BinaryInput = Schema.Union([
 // operation schemas
 export const V1AcceptInviteExternalJitAccessInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -412,6 +399,7 @@ export const V1AcceptInviteExternalJitAccessInput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -428,6 +416,7 @@ export const V1AcceptInviteExternalJitAccessOutput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -437,9 +426,7 @@ export const V1AcceptInviteExternalJitAccessOutput = Schema.Struct({
   ),
   user_roles: Schema.Array(
     Schema.Struct({
-      role: Schema.String.check(
-        Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-      ),
+      role: Schema.String,
       expires_at: Schema.optionalKey(
         Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
       ),
@@ -452,6 +439,7 @@ export const V1AcceptInviteExternalJitAccessOutput = Schema.Struct({
                   Schema.isPattern(
                     new RegExp(
                       "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                      "u",
                     ),
                   ).annotate({
                     expected:
@@ -468,6 +456,7 @@ export const V1AcceptInviteExternalJitAccessOutput = Schema.Struct({
                   Schema.isPattern(
                     new RegExp(
                       "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                      "u",
                     ),
                   ).annotate({
                     expected:
@@ -485,63 +474,81 @@ export const V1AcceptInviteExternalJitAccessOutput = Schema.Struct({
 });
 export const V1ActivateCustomHostnameInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
 export const V1ActivateCustomHostnameOutput = Schema.Struct({
   status: Schema.optionalKey(
-    Schema.Literals([
-      "1_not_started",
-      "2_initiated",
-      "3_challenge_verified",
-      "4_origin_setup_completed",
-      "5_services_reconfigured",
+    Schema.Union([
+      Schema.Literals([
+        "1_not_started",
+        "2_initiated",
+        "3_challenge_verified",
+        "4_origin_setup_completed",
+        "5_services_reconfigured",
+      ]),
+      OpenString,
     ]),
   ),
   custom_hostname: Schema.optionalKey(Schema.String),
   data: Schema.Struct({
     success: Schema.Boolean,
-    errors: Schema.Array(UpdateCustomHostnameResponseJsonValue),
-    messages: Schema.Array(UpdateCustomHostnameResponseJsonValue),
+    errors: Schema.Array(JsonValue_Output),
+    messages: Schema.Array(JsonValue_Output),
     result: Schema.Struct({
       id: Schema.String,
       hostname: Schema.String,
-      ssl: Schema.Struct({
-        status: Schema.String,
-        validation_records: Schema.optionalKey(
-          Schema.Array(Schema.Struct({ txt_name: Schema.String, txt_value: Schema.String })),
-        ),
-        validation_errors: Schema.optionalKey(
-          Schema.Array(Schema.Struct({ message: Schema.String })),
-        ),
-      }),
-      ownership_verification: Schema.optionalKey(
-        Schema.Struct({ type: Schema.String, name: Schema.String, value: Schema.String }),
+      ssl: Schema.optionalKey(
+        Schema.Struct({
+          status: Schema.optionalKey(Schema.String),
+          validation_records: Schema.optionalKey(
+            Schema.Array(
+              Schema.Struct({
+                txt_name: Schema.optionalKey(Schema.String),
+                txt_value: Schema.optionalKey(Schema.String),
+              }),
+            ),
+          ),
+          validation_errors: Schema.optionalKey(
+            Schema.Array(Schema.Struct({ message: Schema.String })),
+          ),
+        }),
       ),
-      custom_origin_server: Schema.String,
+      ownership_verification: Schema.optionalKey(
+        Schema.Struct({
+          type: Schema.optionalKey(Schema.String),
+          name: Schema.optionalKey(Schema.String),
+          value: Schema.optionalKey(Schema.String),
+        }),
+      ),
+      custom_origin_server: Schema.optionalKey(Schema.String),
       verification_errors: Schema.optionalKey(Schema.Array(Schema.String)),
-      status: Schema.String,
+      status: Schema.optionalKey(Schema.String),
     }),
   }),
 });
 export const V1ActivateVanitySubdomainConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   vanity_subdomain: Schema.String.check(
-    Schema.isMaxLength(63).annotate({ expected: "a value with a length of at most 63" }),
+    Schema.isMaxCodePoints(63).annotate({ expected: "a string with at most 63 code points" }),
   ),
 });
 export const V1ActivateVanitySubdomainConfigOutput = Schema.Struct({
@@ -549,11 +556,13 @@ export const V1ActivateVanitySubdomainConfigOutput = Schema.Struct({
 });
 export const V1ApplyAMigrationInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -566,11 +575,13 @@ export const V1ApplyAMigrationInput = Schema.Struct({
 });
 export const V1ApplyProjectAddonInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -612,11 +623,13 @@ export const V1ApplyProjectAddonInput = Schema.Struct({
 });
 export const V1AuthorizeJitAccessInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -628,6 +641,7 @@ export const V1AuthorizeJitAccessInput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -638,6 +652,7 @@ export const V1AuthorizeJitAccessInput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:))$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -647,20 +662,22 @@ export const V1AuthorizeJitAccessInput = Schema.Struct({
   ]),
 });
 export const V1AuthorizeJitAccessOutput = Schema.Struct({
-  user_id: Schema.String.annotate({ format: "uuid" }).check(
-    Schema.isPattern(
-      new RegExp(
-        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-      ),
-    ).annotate({
-      expected:
-        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-    }),
-  ),
-  user_role: Schema.Struct({
-    role: Schema.String.check(
-      Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+  user_id: Schema.optionalKey(
+    Schema.String.annotate({ format: "uuid" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
+        ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
     ),
+  ),
+  act: Schema.optionalKey(Schema.String),
+  user_role: Schema.Struct({
+    role: Schema.String,
     expires_at: Schema.optionalKey(
       Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
     ),
@@ -673,6 +690,7 @@ export const V1AuthorizeJitAccessOutput = Schema.Struct({
                 Schema.isPattern(
                   new RegExp(
                     "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                    "u",
                   ),
                 ).annotate({
                   expected:
@@ -689,6 +707,7 @@ export const V1AuthorizeJitAccessOutput = Schema.Struct({
                 Schema.isPattern(
                   new RegExp(
                     "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                    "u",
                   ),
                 ).annotate({
                   expected:
@@ -708,6 +727,7 @@ export const V1AuthorizeUserInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -723,7 +743,7 @@ export const V1AuthorizeUserInput = Schema.Struct({
   code_challenge_method: Schema.optionalKey(Schema.Literals(["plain", "sha256", "S256"])),
   organization_slug: Schema.optionalKey(
     Schema.String.check(
-      Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+      Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[\\w-]+$",
       }),
     ),
@@ -733,11 +753,13 @@ export const V1AuthorizeUserInput = Schema.Struct({
 });
 export const V1BulkCreateSecretsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -747,26 +769,32 @@ export const V1BulkCreateSecretsInput = Schema.Struct({
         description: "Secret name must not start with the SUPABASE_ prefix.",
       })
         .check(
-          Schema.isMaxLength(256).annotate({ expected: "a value with a length of at most 256" }),
+          Schema.isMaxCodePoints(256).annotate({
+            expected: "a string with at most 256 code points",
+          }),
         )
         .check(
-          Schema.isPattern(new RegExp("^(?!SUPABASE_).*")).annotate({
+          Schema.isPattern(new RegExp("^(?!SUPABASE_).*", "u")).annotate({
             expected: "a string matching the RegExp ^(?!SUPABASE_).*",
           }),
         ),
       value: Schema.String.check(
-        Schema.isMaxLength(24576).annotate({ expected: "a value with a length of at most 24576" }),
+        Schema.isMaxCodePoints(24576).annotate({
+          expected: "a string with at most 24576 code points",
+        }),
       ),
     }),
   ).check(Schema.isMaxLength(100).annotate({ expected: "a value with a length of at most 100" })),
 });
 export const V1BulkDeleteSecretsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -774,11 +802,13 @@ export const V1BulkDeleteSecretsInput = Schema.Struct({
 });
 export const V1BulkUpdateFunctionsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -786,7 +816,7 @@ export const V1BulkUpdateFunctionsInput = Schema.Struct({
     Schema.Struct({
       id: Schema.String,
       slug: Schema.String.check(
-        Schema.isPattern(new RegExp("^[A-Za-z][A-Za-z0-9_-]*$")).annotate({
+        Schema.isPattern(new RegExp("^[A-Za-z][A-Za-z0-9_-]*$", "u")).annotate({
           expected: "a string matching the RegExp ^[A-Za-z][A-Za-z0-9_-]*$",
         }),
       ),
@@ -831,7 +861,7 @@ export const V1BulkUpdateFunctionsOutput = Schema.Struct({
       id: Schema.String,
       slug: Schema.String,
       name: Schema.String,
-      status: Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]),
+      status: Schema.Union([Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]), OpenString]),
       version: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
@@ -870,34 +900,38 @@ export const V1BulkUpdateFunctionsOutput = Schema.Struct({
       verify_jwt: Schema.optionalKey(Schema.Boolean),
       import_map: Schema.optionalKey(Schema.Boolean),
       entrypoint_path: Schema.optionalKey(Schema.String),
-      import_map_path: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+      import_map_path: Schema.optionalKey(Schema.String),
       ezbr_sha256: Schema.optionalKey(Schema.String),
     }),
   ),
 });
 export const V1CancelAProjectRestorationInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
 export const V1CheckVanitySubdomainAvailabilityInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   vanity_subdomain: Schema.String.check(
-    Schema.isMaxLength(63).annotate({ expected: "a value with a length of at most 63" }),
+    Schema.isMaxCodePoints(63).annotate({ expected: "a string with at most 63 code points" }),
   ),
 });
 export const V1CheckVanitySubdomainAvailabilityOutput = Schema.Struct({
@@ -905,7 +939,7 @@ export const V1CheckVanitySubdomainAvailabilityOutput = Schema.Struct({
 });
 export const V1ClaimProjectForOrganizationInput = Schema.Struct({
   slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -913,22 +947,26 @@ export const V1ClaimProjectForOrganizationInput = Schema.Struct({
 });
 export const V1CountActionRunsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
 export const V1CreateABranchInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -987,6 +1025,7 @@ export const V1CreateABranchOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -1018,16 +1057,19 @@ export const V1CreateABranchOutput = Schema.Struct({
     }).check(Schema.isFinite().annotate({ expected: "a finite number" })),
   ),
   persistent: Schema.Boolean,
-  status: Schema.Literals([
-    "CREATING_PROJECT",
-    "RUNNING_MIGRATIONS",
-    "MIGRATIONS_PASSED",
-    "MIGRATIONS_FAILED",
-    "FUNCTIONS_DEPLOYED",
-    "FUNCTIONS_FAILED",
-  ]).annotate({
-    description: "This field is deprecated. List action runs to get branch status instead.",
-  }),
+  status: Schema.Union([
+    Schema.Literals([
+      "CREATING_PROJECT",
+      "RUNNING_MIGRATIONS",
+      "MIGRATIONS_PASSED",
+      "MIGRATIONS_FAILED",
+      "FUNCTIONS_DEPLOYED",
+      "FUNCTIONS_FAILED",
+    ]).annotate({
+      description: "This field is deprecated. List action runs to get branch status instead.",
+    }),
+    OpenString,
+  ]),
   created_at: Schema.String.annotate({ format: "date-time" }),
   updated_at: Schema.String.annotate({ format: "date-time" }),
   review_requested_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
@@ -1035,38 +1077,43 @@ export const V1CreateABranchOutput = Schema.Struct({
   notify_url: Schema.optionalKey(Schema.String.annotate({ format: "uri" })),
   deletion_scheduled_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
   preview_project_status: Schema.optionalKey(
-    Schema.Literals([
-      "INACTIVE",
-      "ACTIVE_HEALTHY",
-      "ACTIVE_UNHEALTHY",
-      "COMING_UP",
-      "UNKNOWN",
-      "GOING_DOWN",
-      "INIT_FAILED",
-      "REMOVED",
-      "RESTORING",
-      "UPGRADING",
-      "PAUSING",
-      "RESTORE_FAILED",
-      "RESTARTING",
-      "PAUSE_FAILED",
-      "RESIZING",
+    Schema.Union([
+      Schema.Literals([
+        "INACTIVE",
+        "ACTIVE_HEALTHY",
+        "ACTIVE_UNHEALTHY",
+        "COMING_UP",
+        "UNKNOWN",
+        "GOING_DOWN",
+        "INIT_FAILED",
+        "REMOVED",
+        "RESTORING",
+        "UPGRADING",
+        "PAUSING",
+        "RESTORE_FAILED",
+        "RESTARTING",
+        "PAUSE_FAILED",
+        "RESIZING",
+      ]),
+      OpenString,
     ]),
   ),
 });
 export const V1CreateAFunctionInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   slug: Schema.optionalKey(
     Schema.String.check(
-      Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$")).annotate({
+      Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[A-Za-z0-9_-]+$",
       }),
     ),
@@ -1083,7 +1130,7 @@ export const V1CreateAFunctionOutput = Schema.Struct({
   id: Schema.String,
   slug: Schema.String,
   name: Schema.String,
-  status: Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]),
+  status: Schema.Union([Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]), OpenString]),
   version: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
@@ -1122,19 +1169,19 @@ export const V1CreateAFunctionOutput = Schema.Struct({
   verify_jwt: Schema.optionalKey(Schema.Boolean),
   import_map: Schema.optionalKey(Schema.Boolean),
   entrypoint_path: Schema.optionalKey(Schema.String),
-  import_map_path: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+  import_map_path: Schema.optionalKey(Schema.String),
   ezbr_sha256: Schema.optionalKey(Schema.String),
 });
 export const V1CreateAProjectInput = Schema.Struct({
   db_pass: Schema.String.annotate({ description: "Database password" }),
   name: Schema.String.annotate({ description: "Name of your project" }).check(
-    Schema.isMaxLength(256).annotate({ expected: "a value with a length of at most 256" }),
+    Schema.isMaxCodePoints(256).annotate({ expected: "a string with at most 256 code points" }),
   ),
   organization_id: Schema.optionalKey(
     Schema.String.annotate({ description: "Deprecated: Use `organization_slug` instead." }),
   ),
   organization_slug: Schema.String.annotate({ description: "Organization slug" }).check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -1266,10 +1313,14 @@ export const V1CreateAProjectInput = Schema.Struct({
 export const V1CreateAProjectOutput = Schema.Struct({
   id: Schema.String.annotate({ description: "Deprecated: Use `ref` instead." }),
   ref: Schema.String.annotate({ description: "Project ref" })
-    .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+    )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -1277,38 +1328,43 @@ export const V1CreateAProjectOutput = Schema.Struct({
     description: "Deprecated: Use `organization_slug` instead.",
   }),
   organization_slug: Schema.String.annotate({ description: "Organization slug" }).check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
   name: Schema.String.annotate({ description: "Name of your project" }),
   region: Schema.String.annotate({ description: "Region of your project" }),
   created_at: Schema.String.annotate({ description: "Creation timestamp" }),
-  status: Schema.Literals([
-    "INACTIVE",
-    "ACTIVE_HEALTHY",
-    "ACTIVE_UNHEALTHY",
-    "COMING_UP",
-    "UNKNOWN",
-    "GOING_DOWN",
-    "INIT_FAILED",
-    "REMOVED",
-    "RESTORING",
-    "UPGRADING",
-    "PAUSING",
-    "RESTORE_FAILED",
-    "RESTARTING",
-    "PAUSE_FAILED",
-    "RESIZING",
+  status: Schema.Union([
+    Schema.Literals([
+      "INACTIVE",
+      "ACTIVE_HEALTHY",
+      "ACTIVE_UNHEALTHY",
+      "COMING_UP",
+      "UNKNOWN",
+      "GOING_DOWN",
+      "INIT_FAILED",
+      "REMOVED",
+      "RESTORING",
+      "UPGRADING",
+      "PAUSING",
+      "RESTORE_FAILED",
+      "RESTARTING",
+      "PAUSE_FAILED",
+      "RESIZING",
+    ]),
+    OpenString,
   ]),
 });
 export const V1CreateASsoProviderInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -1323,8 +1379,8 @@ export const V1CreateASsoProviderInput = Schema.Struct({
         Schema.Struct({
           name: Schema.optionalKey(Schema.String),
           names: Schema.optionalKey(Schema.Array(Schema.String)),
-          default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
           array: Schema.optionalKey(Schema.Boolean),
+          default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
         }),
       ),
     }),
@@ -1353,19 +1409,22 @@ export const V1CreateASsoProviderOutput = Schema.Struct({
               Schema.Struct({
                 name: Schema.optionalKey(Schema.String),
                 names: Schema.optionalKey(Schema.Array(Schema.String)),
-                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
                 array: Schema.optionalKey(Schema.Boolean),
+                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
               }),
             ),
           ),
         }),
       ),
       name_id_format: Schema.optionalKey(
-        Schema.Literals([
-          "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified",
-          "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
-          "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
-          "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+        Schema.Union([
+          Schema.Literals([
+            "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified",
+            "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
+            "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+            "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+          ]),
+          OpenString,
         ]),
       ),
     }),
@@ -1384,13 +1443,13 @@ export const V1CreateASsoProviderOutput = Schema.Struct({
 });
 export const V1CreateAnOrganizationInput = Schema.Struct({
   name: Schema.String.check(
-    Schema.isMaxLength(256).annotate({ expected: "a value with a length of at most 256" }),
+    Schema.isMaxCodePoints(256).annotate({ expected: "a string with at most 256 code points" }),
   ),
 });
 export const V1CreateAnOrganizationOutput = Schema.Struct({
   id: Schema.String.annotate({ description: "Deprecated: Use `slug` instead." }),
   slug: Schema.String.annotate({ description: "Organization slug" }).check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -1398,11 +1457,13 @@ export const V1CreateAnOrganizationOutput = Schema.Struct({
 });
 export const V1CreateLegacySigningKeyInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -1412,25 +1473,31 @@ export const V1CreateLegacySigningKeyOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
         "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
     }),
   ),
-  algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
-  status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
+  algorithm: Schema.Union([Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]), OpenString]),
+  status: Schema.Union([
+    Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
+    OpenString,
+  ]),
   public_jwk: Schema.Json.annotate({ expected: "JSON value" }),
   created_at: Schema.String.annotate({ format: "date-time" }),
   updated_at: Schema.String.annotate({ format: "date-time" }),
 });
 export const V1CreateLoginRoleInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -1456,22 +1523,26 @@ export const V1CreateLoginRoleOutput = Schema.Struct({
 });
 export const V1CreateProjectApiKeyInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   reveal: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
   type: Schema.Literals(["publishable", "secret"]),
   name: Schema.String.check(
-    Schema.isMinLength(4).annotate({ expected: "a value with a length of at least 4" }),
+    Schema.isMinCodePoints(4).annotate({ expected: "a string with at least 4 code points" }),
   )
-    .check(Schema.isMaxLength(64).annotate({ expected: "a value with a length of at most 64" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z_][a-z0-9_]+$")).annotate({
+      Schema.isMaxCodePoints(64).annotate({ expected: "a string with at most 64 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z_][a-z0-9_]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z_][a-z0-9_]+$",
       }),
     ),
@@ -1487,7 +1558,10 @@ export const V1CreateProjectApiKeyOutput = Schema.Struct({
   api_key: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   id: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   type: Schema.optionalKey(
-    Schema.Union([Schema.Literals(["legacy", "publishable", "secret"]), Schema.Null]),
+    Schema.Union([
+      Schema.Union([Schema.Literals(["legacy", "publishable", "secret"]), Schema.Null]),
+      OpenString,
+    ]),
   ),
   prefix: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   name: Schema.String,
@@ -1508,11 +1582,13 @@ export const V1CreateProjectApiKeyOutput = Schema.Struct({
 });
 export const V1CreateProjectClaimTokenInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -1526,6 +1602,7 @@ export const V1CreateProjectClaimTokenOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -1535,11 +1612,13 @@ export const V1CreateProjectClaimTokenOutput = Schema.Struct({
 });
 export const V1CreateProjectSigningKeyInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -1554,6 +1633,7 @@ export const V1CreateProjectSigningKeyInput = Schema.Struct({
               Schema.isPattern(
                 new RegExp(
                   "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "u",
                 ),
               ).annotate({
                 expected:
@@ -1589,6 +1669,7 @@ export const V1CreateProjectSigningKeyInput = Schema.Struct({
               Schema.isPattern(
                 new RegExp(
                   "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "u",
                 ),
               ).annotate({
                 expected:
@@ -1620,6 +1701,7 @@ export const V1CreateProjectSigningKeyInput = Schema.Struct({
               Schema.isPattern(
                 new RegExp(
                   "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "u",
                 ),
               ).annotate({
                 expected:
@@ -1650,6 +1732,7 @@ export const V1CreateProjectSigningKeyInput = Schema.Struct({
               Schema.isPattern(
                 new RegExp(
                   "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "u",
                 ),
               ).annotate({
                 expected:
@@ -1671,7 +1754,9 @@ export const V1CreateProjectSigningKeyInput = Schema.Struct({
           kty: Schema.Literal("oct"),
           alg: Schema.optionalKey(Schema.Literal("HS256")),
           k: Schema.String.check(
-            Schema.isMinLength(16).annotate({ expected: "a value with a length of at least 16" }),
+            Schema.isMinCodePoints(16).annotate({
+              expected: "a string with at least 16 code points",
+            }),
           ),
         }),
       ],
@@ -1684,25 +1769,31 @@ export const V1CreateProjectSigningKeyOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
         "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
     }),
   ),
-  algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
-  status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
+  algorithm: Schema.Union([Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]), OpenString]),
+  status: Schema.Union([
+    Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
+    OpenString,
+  ]),
   public_jwk: Schema.Json.annotate({ expected: "JSON value" }),
   created_at: Schema.String.annotate({ format: "date-time" }),
   updated_at: Schema.String.annotate({ format: "date-time" }),
 });
 export const V1CreateProjectTpaIntegrationInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -1715,6 +1806,7 @@ export const V1CreateProjectTpaIntegrationOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -1732,41 +1824,50 @@ export const V1CreateProjectTpaIntegrationOutput = Schema.Struct({
 });
 export const V1CreateRestorePointInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   name: Schema.String.check(
-    Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }),
+    Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
   ),
 });
 export const V1CreateRestorePointOutput = Schema.Struct({
   name: Schema.String,
-  status: Schema.Literals(["AVAILABLE", "PENDING", "REMOVED", "FAILED"]),
+  status: Schema.Union([
+    Schema.Literals(["AVAILABLE", "PENDING", "REMOVED", "FAILED"]),
+    OpenString,
+  ]),
   completed_on: Schema.Union([Schema.String.annotate({ format: "date-time" }), Schema.Null]),
 });
 export const V1DeactivateVanitySubdomainConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
 export const V1DeleteHostnameConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -1775,10 +1876,14 @@ export const V1DeleteHostnameConfigInput = Schema.Struct({
 export const V1DeleteABranchInput = Schema.Struct({
   branch_id_or_ref: Schema.Union([
     Schema.String.annotate({ description: "Project ref" })
-      .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
-      .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
       .check(
-        Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+      )
+      .check(
+        Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+      )
+      .check(
+        Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
           expected: "a string matching the RegExp ^[a-z]+$",
         }),
       ),
@@ -1786,6 +1891,7 @@ export const V1DeleteABranchInput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -1798,27 +1904,31 @@ export const V1DeleteABranchInput = Schema.Struct({
 export const V1DeleteABranchOutput = Schema.Struct({ message: Schema.Literal("ok") });
 export const V1DeleteAFunctionInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   function_slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[A-Za-z0-9_-]+$",
     }),
   ),
 });
 export const V1DeleteAProjectInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -1840,11 +1950,13 @@ export const V1DeleteAProjectOutput = Schema.Struct({
 });
 export const V1DeleteASsoProviderInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -1852,6 +1964,7 @@ export const V1DeleteASsoProviderInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -1874,19 +1987,22 @@ export const V1DeleteASsoProviderOutput = Schema.Struct({
               Schema.Struct({
                 name: Schema.optionalKey(Schema.String),
                 names: Schema.optionalKey(Schema.Array(Schema.String)),
-                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
                 array: Schema.optionalKey(Schema.Boolean),
+                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
               }),
             ),
           ),
         }),
       ),
       name_id_format: Schema.optionalKey(
-        Schema.Literals([
-          "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified",
-          "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
-          "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
-          "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+        Schema.Union([
+          Schema.Literals([
+            "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified",
+            "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
+            "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+            "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+          ]),
+          OpenString,
         ]),
       ),
     }),
@@ -1905,11 +2021,13 @@ export const V1DeleteASsoProviderOutput = Schema.Struct({
 });
 export const V1DeleteInviteExternalJitAccessInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -1917,6 +2035,7 @@ export const V1DeleteInviteExternalJitAccessInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -1926,11 +2045,13 @@ export const V1DeleteInviteExternalJitAccessInput = Schema.Struct({
 });
 export const V1DeleteJitAccessInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -1938,6 +2059,7 @@ export const V1DeleteJitAccessInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -1947,11 +2069,13 @@ export const V1DeleteJitAccessInput = Schema.Struct({
 });
 export const V1DeleteLoginRolesInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -1959,11 +2083,13 @@ export const V1DeleteLoginRolesInput = Schema.Struct({
 export const V1DeleteLoginRolesOutput = Schema.Struct({ message: Schema.Literal("ok") });
 export const V1DeleteNetworkBansInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -1979,11 +2105,13 @@ export const V1DeleteNetworkBansInput = Schema.Struct({
 });
 export const V1DeleteProjectApiKeyInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -1991,6 +2119,7 @@ export const V1DeleteProjectApiKeyInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -2005,7 +2134,10 @@ export const V1DeleteProjectApiKeyOutput = Schema.Struct({
   api_key: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   id: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   type: Schema.optionalKey(
-    Schema.Union([Schema.Literals(["legacy", "publishable", "secret"]), Schema.Null]),
+    Schema.Union([
+      Schema.Union([Schema.Literals(["legacy", "publishable", "secret"]), Schema.Null]),
+      OpenString,
+    ]),
   ),
   prefix: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   name: Schema.String,
@@ -2026,22 +2158,26 @@ export const V1DeleteProjectApiKeyOutput = Schema.Struct({
 });
 export const V1DeleteProjectClaimTokenInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
 export const V1DeleteProjectTpaIntegrationInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -2049,6 +2185,7 @@ export const V1DeleteProjectTpaIntegrationInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -2061,6 +2198,7 @@ export const V1DeleteProjectTpaIntegrationOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -2078,17 +2216,19 @@ export const V1DeleteProjectTpaIntegrationOutput = Schema.Struct({
 });
 export const V1DeployAFunctionInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   slug: Schema.optionalKey(
     Schema.String.check(
-      Schema.isPattern(new RegExp("^[A-Za-z][A-Za-z0-9_-]*$")).annotate({
+      Schema.isPattern(new RegExp("^[A-Za-z][A-Za-z0-9_-]*$", "u")).annotate({
         expected: "a string matching the RegExp ^[A-Za-z][A-Za-z0-9_-]*$",
       }),
     ),
@@ -2109,7 +2249,7 @@ export const V1DeployAFunctionOutput = Schema.Struct({
   id: Schema.String,
   slug: Schema.String,
   name: Schema.String,
-  status: Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]),
+  status: Schema.Union([Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]), OpenString]),
   version: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
@@ -2152,16 +2292,20 @@ export const V1DeployAFunctionOutput = Schema.Struct({
   verify_jwt: Schema.optionalKey(Schema.Boolean),
   import_map: Schema.optionalKey(Schema.Boolean),
   entrypoint_path: Schema.optionalKey(Schema.String),
-  import_map_path: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+  import_map_path: Schema.optionalKey(Schema.String),
   ezbr_sha256: Schema.optionalKey(Schema.String),
 });
 export const V1DiffABranchInput = Schema.Struct({
   branch_id_or_ref: Schema.Union([
     Schema.String.annotate({ description: "Project ref" })
-      .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
-      .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
       .check(
-        Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+      )
+      .check(
+        Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+      )
+      .check(
+        Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
           expected: "a string matching the RegExp ^[a-z]+$",
         }),
       ),
@@ -2169,6 +2313,7 @@ export const V1DiffABranchInput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -2182,33 +2327,39 @@ export const V1DiffABranchInput = Schema.Struct({
 export const V1DiffABranchOutput = Schema.String;
 export const V1DisablePreviewBranchingInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
 export const V1DisableReadonlyModeTemporarilyInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
 export const V1EnableDatabaseWebhookInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -2227,6 +2378,7 @@ export const V1ExchangeOauthTokenInput = Schema.Struct({
         Schema.isPattern(
           new RegExp(
             "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "u",
           ),
         ).annotate({
           expected:
@@ -2278,11 +2430,13 @@ export const V1ExchangeOauthTokenOutput = Schema.Struct({
 export const V1GenerateTypescriptTypesInput = Schema.Struct({
   included_schemas: Schema.optionalKey(Schema.String),
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -2290,11 +2444,13 @@ export const V1GenerateTypescriptTypesInput = Schema.Struct({
 export const V1GenerateTypescriptTypesOutput = Schema.Struct({ types: Schema.String });
 export const V1GetABranchInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -2305,6 +2461,7 @@ export const V1GetABranchOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -2336,16 +2493,19 @@ export const V1GetABranchOutput = Schema.Struct({
     }).check(Schema.isFinite().annotate({ expected: "a finite number" })),
   ),
   persistent: Schema.Boolean,
-  status: Schema.Literals([
-    "CREATING_PROJECT",
-    "RUNNING_MIGRATIONS",
-    "MIGRATIONS_PASSED",
-    "MIGRATIONS_FAILED",
-    "FUNCTIONS_DEPLOYED",
-    "FUNCTIONS_FAILED",
-  ]).annotate({
-    description: "This field is deprecated. List action runs to get branch status instead.",
-  }),
+  status: Schema.Union([
+    Schema.Literals([
+      "CREATING_PROJECT",
+      "RUNNING_MIGRATIONS",
+      "MIGRATIONS_PASSED",
+      "MIGRATIONS_FAILED",
+      "FUNCTIONS_DEPLOYED",
+      "FUNCTIONS_FAILED",
+    ]).annotate({
+      description: "This field is deprecated. List action runs to get branch status instead.",
+    }),
+    OpenString,
+  ]),
   created_at: Schema.String.annotate({ format: "date-time" }),
   updated_at: Schema.String.annotate({ format: "date-time" }),
   review_requested_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
@@ -2353,6 +2513,61 @@ export const V1GetABranchOutput = Schema.Struct({
   notify_url: Schema.optionalKey(Schema.String.annotate({ format: "uri" })),
   deletion_scheduled_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
   preview_project_status: Schema.optionalKey(
+    Schema.Union([
+      Schema.Literals([
+        "INACTIVE",
+        "ACTIVE_HEALTHY",
+        "ACTIVE_UNHEALTHY",
+        "COMING_UP",
+        "UNKNOWN",
+        "GOING_DOWN",
+        "INIT_FAILED",
+        "REMOVED",
+        "RESTORING",
+        "UPGRADING",
+        "PAUSING",
+        "RESTORE_FAILED",
+        "RESTARTING",
+        "PAUSE_FAILED",
+        "RESIZING",
+      ]),
+      OpenString,
+    ]),
+  ),
+});
+export const V1GetABranchConfigInput = Schema.Struct({
+  branch_id_or_ref: Schema.Union([
+    Schema.String.annotate({ description: "Project ref" })
+      .check(
+        Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+      )
+      .check(
+        Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+      )
+      .check(
+        Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+          expected: "a string matching the RegExp ^[a-z]+$",
+        }),
+      ),
+    Schema.String.annotate({ format: "uuid" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
+        ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
+    ),
+  ]),
+});
+export const V1GetABranchConfigOutput = Schema.Struct({
+  ref: Schema.String,
+  postgres_version: Schema.String,
+  postgres_engine: Schema.String,
+  release_channel: Schema.String,
+  status: Schema.Union([
     Schema.Literals([
       "INACTIVE",
       "ACTIVE_HEALTHY",
@@ -2370,51 +2585,7 @@ export const V1GetABranchOutput = Schema.Struct({
       "PAUSE_FAILED",
       "RESIZING",
     ]),
-  ),
-});
-export const V1GetABranchConfigInput = Schema.Struct({
-  branch_id_or_ref: Schema.Union([
-    Schema.String.annotate({ description: "Project ref" })
-      .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
-      .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
-      .check(
-        Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
-          expected: "a string matching the RegExp ^[a-z]+$",
-        }),
-      ),
-    Schema.String.annotate({ format: "uuid" }).check(
-      Schema.isPattern(
-        new RegExp(
-          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-        ),
-      ).annotate({
-        expected:
-          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-      }),
-    ),
-  ]),
-});
-export const V1GetABranchConfigOutput = Schema.Struct({
-  ref: Schema.String,
-  postgres_version: Schema.String,
-  postgres_engine: Schema.String,
-  release_channel: Schema.String,
-  status: Schema.Literals([
-    "INACTIVE",
-    "ACTIVE_HEALTHY",
-    "ACTIVE_UNHEALTHY",
-    "COMING_UP",
-    "UNKNOWN",
-    "GOING_DOWN",
-    "INIT_FAILED",
-    "REMOVED",
-    "RESTORING",
-    "UPGRADING",
-    "PAUSING",
-    "RESTORE_FAILED",
-    "RESTARTING",
-    "PAUSE_FAILED",
-    "RESIZING",
+    OpenString,
   ]),
   db_host: Schema.String,
   db_port: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
@@ -2430,16 +2601,18 @@ export const V1GetABranchConfigOutput = Schema.Struct({
 });
 export const V1GetAFunctionInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   function_slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[A-Za-z0-9_-]+$",
     }),
   ),
@@ -2448,7 +2621,7 @@ export const V1GetAFunctionOutput = Schema.Struct({
   id: Schema.String,
   slug: Schema.String,
   name: Schema.String,
-  status: Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]),
+  status: Schema.Union([Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]), OpenString]),
   version: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
@@ -2487,21 +2660,23 @@ export const V1GetAFunctionOutput = Schema.Struct({
   verify_jwt: Schema.optionalKey(Schema.Boolean),
   import_map: Schema.optionalKey(Schema.Boolean),
   entrypoint_path: Schema.optionalKey(Schema.String),
-  import_map_path: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+  import_map_path: Schema.optionalKey(Schema.String),
   ezbr_sha256: Schema.optionalKey(Schema.String),
 });
 export const V1GetAFunctionBodyInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   function_slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[A-Za-z0-9_-]+$",
     }),
   ),
@@ -2509,24 +2684,24 @@ export const V1GetAFunctionBodyInput = Schema.Struct({
 export const V1GetAFunctionBodyOutput = Schema.Record(Schema.String, Schema.Never);
 export const V1GetAMigrationInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   version: Schema.String.check(
-    Schema.isPattern(new RegExp("^\\d+$")).annotate({
+    Schema.isPattern(new RegExp("^\\d+$", "u")).annotate({
       expected: "a string matching the RegExp ^\\d+$",
     }),
   ),
 });
 export const V1GetAMigrationOutput = Schema.Struct({
-  version: Schema.String.check(
-    Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-  ),
+  version: Schema.String,
   name: Schema.optionalKey(Schema.String),
   statements: Schema.optionalKey(Schema.Array(Schema.String)),
   rollback: Schema.optionalKey(Schema.Array(Schema.String)),
@@ -2538,6 +2713,7 @@ export const V1GetASnippetInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -2550,39 +2726,50 @@ export const V1GetASnippetOutput = Schema.Struct({
   inserted_at: Schema.String,
   updated_at: Schema.String,
   type: Schema.Literal("sql"),
-  visibility: Schema.Literals(["user", "project", "org", "public"]),
+  visibility: Schema.Union([Schema.Literals(["user", "project", "org", "public"]), OpenString]),
   name: Schema.String,
   description: Schema.Union([Schema.String, Schema.Null]),
   project: Schema.Struct({
     id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
     name: Schema.String,
   }),
-  owner: Schema.Struct({
-    id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-    username: Schema.String,
-  }),
-  updated_by: Schema.Struct({
-    id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-    username: Schema.String,
-  }),
+  owner: Schema.Union([
+    Schema.Struct({
+      id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+      username: Schema.String,
+    }),
+    Schema.Null,
+  ]),
+  updated_by: Schema.Union([
+    Schema.Struct({
+      id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+      username: Schema.String,
+    }),
+    Schema.Null,
+  ]),
   favorite: Schema.Boolean,
-  content: Schema.Struct({
-    favorite: Schema.optionalKey(
-      Schema.Boolean.annotate({
-        description: "Deprecated: Rely on root-level favorite property instead.",
-      }),
-    ),
-    schema_version: Schema.String,
-    sql: Schema.String,
-  }),
+  content: Schema.Union([
+    Schema.Struct({
+      favorite: Schema.optionalKey(
+        Schema.Boolean.annotate({
+          description: "Deprecated: Rely on root-level favorite property instead.",
+        }),
+      ),
+      schema_version: Schema.optionalKey(Schema.String),
+      sql: Schema.String,
+    }),
+    Schema.Null,
+  ]),
 });
 export const V1GetASsoProviderInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -2590,6 +2777,7 @@ export const V1GetASsoProviderInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -2612,19 +2800,22 @@ export const V1GetASsoProviderOutput = Schema.Struct({
               Schema.Struct({
                 name: Schema.optionalKey(Schema.String),
                 names: Schema.optionalKey(Schema.Array(Schema.String)),
-                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
                 array: Schema.optionalKey(Schema.Boolean),
+                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
               }),
             ),
           ),
         }),
       ),
       name_id_format: Schema.optionalKey(
-        Schema.Literals([
-          "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified",
-          "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
-          "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
-          "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+        Schema.Union([
+          Schema.Literals([
+            "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified",
+            "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
+            "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+            "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+          ]),
+          OpenString,
         ]),
       ),
     }),
@@ -2643,11 +2834,13 @@ export const V1GetASsoProviderOutput = Schema.Struct({
 });
 export const V1GetActionRunInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -2658,15 +2851,21 @@ export const V1GetActionRunOutput = Schema.Struct({
   branch_id: Schema.String,
   run_steps: Schema.Array(
     Schema.Struct({
-      name: Schema.Literals(["clone", "pull", "health", "configure", "migrate", "seed", "deploy"]),
-      status: Schema.Literals([
-        "CREATED",
-        "DEAD",
-        "EXITED",
-        "PAUSED",
-        "REMOVING",
-        "RESTARTING",
-        "RUNNING",
+      name: Schema.Union([
+        Schema.Literals(["clone", "pull", "health", "configure", "migrate", "seed", "deploy"]),
+        OpenString,
+      ]),
+      status: Schema.Union([
+        Schema.Literals([
+          "CREATED",
+          "DEAD",
+          "EXITED",
+          "PAUSED",
+          "REMOVING",
+          "RESTARTING",
+          "RUNNING",
+        ]),
+        OpenString,
       ]),
       created_at: Schema.String,
       updated_at: Schema.String,
@@ -2683,11 +2882,13 @@ export const V1GetActionRunOutput = Schema.Struct({
 });
 export const V1GetActionRunLogsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -2696,7 +2897,7 @@ export const V1GetActionRunLogsInput = Schema.Struct({
 export const V1GetActionRunLogsOutput = Schema.String;
 export const V1GetAllProjectsForOrganizationInput = Schema.Struct({
   slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -2738,72 +2939,83 @@ export const V1GetAllProjectsForOrganizationOutput = Schema.Struct({
       cloud_provider: Schema.String,
       region: Schema.String,
       is_branch: Schema.Boolean,
-      status: Schema.Literals([
-        "INACTIVE",
-        "ACTIVE_HEALTHY",
-        "ACTIVE_UNHEALTHY",
-        "COMING_UP",
-        "UNKNOWN",
-        "GOING_DOWN",
-        "INIT_FAILED",
-        "REMOVED",
-        "RESTORING",
-        "UPGRADING",
-        "PAUSING",
-        "RESTORE_FAILED",
-        "RESTARTING",
-        "PAUSE_FAILED",
-        "RESIZING",
+      status: Schema.Union([
+        Schema.Literals([
+          "INACTIVE",
+          "ACTIVE_HEALTHY",
+          "ACTIVE_UNHEALTHY",
+          "COMING_UP",
+          "UNKNOWN",
+          "GOING_DOWN",
+          "INIT_FAILED",
+          "REMOVED",
+          "RESTORING",
+          "UPGRADING",
+          "PAUSING",
+          "RESTORE_FAILED",
+          "RESTARTING",
+          "PAUSE_FAILED",
+          "RESIZING",
+        ]),
+        OpenString,
       ]),
       inserted_at: Schema.String,
       databases: Schema.Array(
         Schema.Struct({
           infra_compute_size: Schema.optionalKey(
-            Schema.Literals([
-              "pico",
-              "nano",
-              "micro",
-              "small",
-              "medium",
-              "large",
-              "xlarge",
-              "2xlarge",
-              "4xlarge",
-              "8xlarge",
-              "12xlarge",
-              "16xlarge",
-              "24xlarge",
-              "24xlarge_optimized_memory",
-              "24xlarge_optimized_cpu",
-              "24xlarge_high_memory",
-              "48xlarge",
-              "48xlarge_optimized_memory",
-              "48xlarge_optimized_cpu",
-              "48xlarge_high_memory",
+            Schema.Union([
+              Schema.Literals([
+                "pico",
+                "nano",
+                "micro",
+                "small",
+                "medium",
+                "large",
+                "xlarge",
+                "2xlarge",
+                "4xlarge",
+                "8xlarge",
+                "12xlarge",
+                "16xlarge",
+                "24xlarge",
+                "24xlarge_optimized_memory",
+                "24xlarge_optimized_cpu",
+                "24xlarge_high_memory",
+                "48xlarge",
+                "48xlarge_optimized_memory",
+                "48xlarge_optimized_cpu",
+                "48xlarge_high_memory",
+              ]),
+              OpenString,
             ]),
           ),
           region: Schema.String,
-          status: Schema.Literals([
-            "ACTIVE_HEALTHY",
-            "ACTIVE_UNHEALTHY",
-            "COMING_UP",
-            "GOING_DOWN",
-            "INIT_FAILED",
-            "REMOVED",
-            "RESTORING",
-            "UNKNOWN",
-            "INIT_READ_REPLICA",
-            "INIT_READ_REPLICA_FAILED",
-            "RESTARTING",
-            "RESIZING",
+          status: Schema.Union([
+            Schema.Literals([
+              "ACTIVE_HEALTHY",
+              "ACTIVE_UNHEALTHY",
+              "COMING_UP",
+              "GOING_DOWN",
+              "INIT_FAILED",
+              "REMOVED",
+              "RESTORING",
+              "UNKNOWN",
+              "INIT_READ_REPLICA",
+              "INIT_READ_REPLICA_FAILED",
+              "RESTARTING",
+              "RESIZING",
+            ]),
+            OpenString,
           ]),
           cloud_provider: Schema.String,
           identifier: Schema.String,
-          type: Schema.Literals(["PRIMARY", "READ_REPLICA"]),
+          type: Schema.Union([Schema.Literals(["PRIMARY", "READ_REPLICA"]), OpenString]),
           disk_volume_size_gb: Schema.optionalKey(
             Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
           ),
-          disk_type: Schema.optionalKey(Schema.Literals(["gp3", "io2"])),
+          disk_type: Schema.optionalKey(
+            Schema.Union([Schema.Literals(["gp3", "io2"]), OpenString]),
+          ),
           disk_throughput_mbps: Schema.optionalKey(
             Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
           ),
@@ -2826,7 +3038,7 @@ export const V1GetAllProjectsForOrganizationOutput = Schema.Struct({
 });
 export const V1GetAnOrganizationInput = Schema.Struct({
   slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -2834,25 +3046,35 @@ export const V1GetAnOrganizationInput = Schema.Struct({
 export const V1GetAnOrganizationOutput = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
-  plan: Schema.optionalKey(Schema.Literals(["free", "pro", "team", "enterprise", "platform"])),
+  plan: Schema.optionalKey(
+    Schema.Union([Schema.Literals(["free", "pro", "team", "enterprise", "platform"]), OpenString]),
+  ),
   opt_in_tags: Schema.Array(
-    Schema.Literals([
-      "AI_SQL_GENERATOR_OPT_IN",
-      "AI_DATA_GENERATOR_OPT_IN",
-      "AI_LOG_GENERATOR_OPT_IN",
+    Schema.Union([
+      Schema.Literals([
+        "AI_SQL_GENERATOR_OPT_IN",
+        "AI_DATA_GENERATOR_OPT_IN",
+        "AI_LOG_GENERATOR_OPT_IN",
+      ]),
+      OpenString,
     ]),
   ),
   allowed_release_channels: Schema.Array(
-    Schema.Literals(["internal", "alpha", "beta", "ga", "withdrawn", "preview"]),
+    Schema.Union([
+      Schema.Literals(["internal", "alpha", "beta", "ga", "withdrawn", "preview"]),
+      OpenString,
+    ]),
   ),
 });
 export const V1GetAuthServiceConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -2886,7 +3108,10 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
       ),
     Schema.Null,
   ]),
-  db_max_pool_size_unit: Schema.Union([Schema.Literals(["connections", "percent"]), Schema.Null]),
+  db_max_pool_size_unit: Schema.Union([
+    Schema.Union([Schema.Literals(["connections", "percent"]), Schema.Null]),
+    OpenString,
+  ]),
   disable_signup: Schema.Union([Schema.Boolean, Schema.Null]),
   external_anonymous_users_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   external_apple_additional_client_ids: Schema.Union([Schema.String, Schema.Null]),
@@ -3142,7 +3367,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   nimbus_oauth_client_id: Schema.Union([Schema.String, Schema.Null]),
-  nimbus_oauth_email_optional: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
+  nimbus_oauth_email_optional: Schema.Union([Schema.Boolean, Schema.Null]),
   nimbus_oauth_client_secret: Schema.Union([Schema.String, Schema.Null]),
   password_hibp_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   password_min_length: Schema.Union([
@@ -3160,13 +3385,16 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   password_required_characters: Schema.Union([
-    Schema.Literals([
-      "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
-      "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
-      "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\\\:\"|<>?,./`~",
-      "",
+    Schema.Union([
+      Schema.Literals([
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
+        "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
+        "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\\\:\"|<>?,./`~",
+        "",
+      ]),
+      Schema.Null,
     ]),
-    Schema.Null,
+    OpenString,
   ]),
   rate_limit_anonymous_users: Schema.Union([
     Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
@@ -3273,8 +3501,8 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   security_sb_forwarded_for_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   security_captcha_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   security_captcha_provider: Schema.Union([
-    Schema.Literals(["turnstile", "hcaptcha"]),
-    Schema.Null,
+    Schema.Union([Schema.Literals(["turnstile", "hcaptcha"]), Schema.Null]),
+    OpenString,
   ]),
   security_captcha_secret: Schema.Union([Schema.String, Schema.Null]),
   security_manual_linking_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
@@ -3292,6 +3520,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
       ),
     Schema.Null,
   ]),
+  security_update_password_require_current_password: Schema.Union([Schema.Boolean, Schema.Null]),
   security_update_password_require_reauthentication: Schema.Union([Schema.Boolean, Schema.Null]),
   sessions_inactivity_timeout: Schema.Union([
     Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
@@ -3347,8 +3576,11 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
       }),
     ),
   sms_provider: Schema.Union([
-    Schema.Literals(["messagebird", "textlocal", "twilio", "twilio_verify", "vonage"]),
-    Schema.Null,
+    Schema.Union([
+      Schema.Literals(["messagebird", "textlocal", "twilio", "twilio_verify", "vonage"]),
+      Schema.Null,
+    ]),
+    OpenString,
   ]),
   sms_template: Schema.Union([Schema.String, Schema.Null]),
   sms_test_otp: Schema.Union([Schema.String, Schema.Null]),
@@ -3373,6 +3605,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -3450,35 +3683,40 @@ export const V1GetAvailableRegionsOutput = Schema.Struct({
   recommendations: Schema.Struct({
     smartGroup: Schema.Struct({
       name: Schema.String,
-      code: Schema.Literals(["americas", "emea", "apac"]),
+      code: Schema.Union([Schema.Literals(["americas", "emea", "apac"]), OpenString]),
       type: Schema.Literal("smartGroup"),
     }),
     specific: Schema.Array(
       Schema.Struct({
         name: Schema.String,
-        code: Schema.Literals([
-          "us-east-1",
-          "us-east-2",
-          "us-west-1",
-          "us-west-2",
-          "ap-southeast-1",
-          "ap-northeast-1",
-          "ap-northeast-2",
-          "ap-east-1",
-          "ap-southeast-2",
-          "eu-west-1",
-          "eu-west-2",
-          "eu-west-3",
-          "eu-north-1",
-          "eu-central-1",
-          "eu-central-2",
-          "ca-central-1",
-          "ap-south-1",
-          "sa-east-1",
+        code: Schema.Union([
+          Schema.Literals([
+            "us-east-1",
+            "us-east-2",
+            "us-west-1",
+            "us-west-2",
+            "ap-southeast-1",
+            "ap-northeast-1",
+            "ap-northeast-2",
+            "ap-east-1",
+            "ap-southeast-2",
+            "eu-west-1",
+            "eu-west-2",
+            "eu-west-3",
+            "eu-north-1",
+            "eu-central-1",
+            "eu-central-2",
+            "ca-central-1",
+            "ap-south-1",
+            "sa-east-1",
+          ]),
+          OpenString,
         ]),
         type: Schema.Literal("specific"),
-        provider: Schema.Literals(["AWS", "AWS_K8S", "AWS_NIMBUS"]),
-        status: Schema.optionalKey(Schema.Literals(["capacity", "other"])),
+        provider: Schema.Union([Schema.Literals(["AWS", "AWS_K8S", "AWS_NIMBUS"]), OpenString]),
+        status: Schema.optionalKey(
+          Schema.Union([Schema.Literals(["capacity", "other"]), OpenString]),
+        ),
       }),
     ),
   }),
@@ -3486,47 +3724,54 @@ export const V1GetAvailableRegionsOutput = Schema.Struct({
     smartGroup: Schema.Array(
       Schema.Struct({
         name: Schema.String,
-        code: Schema.Literals(["americas", "emea", "apac"]),
+        code: Schema.Union([Schema.Literals(["americas", "emea", "apac"]), OpenString]),
         type: Schema.Literal("smartGroup"),
       }),
     ),
     specific: Schema.Array(
       Schema.Struct({
         name: Schema.String,
-        code: Schema.Literals([
-          "us-east-1",
-          "us-east-2",
-          "us-west-1",
-          "us-west-2",
-          "ap-southeast-1",
-          "ap-northeast-1",
-          "ap-northeast-2",
-          "ap-east-1",
-          "ap-southeast-2",
-          "eu-west-1",
-          "eu-west-2",
-          "eu-west-3",
-          "eu-north-1",
-          "eu-central-1",
-          "eu-central-2",
-          "ca-central-1",
-          "ap-south-1",
-          "sa-east-1",
+        code: Schema.Union([
+          Schema.Literals([
+            "us-east-1",
+            "us-east-2",
+            "us-west-1",
+            "us-west-2",
+            "ap-southeast-1",
+            "ap-northeast-1",
+            "ap-northeast-2",
+            "ap-east-1",
+            "ap-southeast-2",
+            "eu-west-1",
+            "eu-west-2",
+            "eu-west-3",
+            "eu-north-1",
+            "eu-central-1",
+            "eu-central-2",
+            "ca-central-1",
+            "ap-south-1",
+            "sa-east-1",
+          ]),
+          OpenString,
         ]),
         type: Schema.Literal("specific"),
-        provider: Schema.Literals(["AWS", "AWS_K8S", "AWS_NIMBUS"]),
-        status: Schema.optionalKey(Schema.Literals(["capacity", "other"])),
+        provider: Schema.Union([Schema.Literals(["AWS", "AWS_K8S", "AWS_NIMBUS"]), OpenString]),
+        status: Schema.optionalKey(
+          Schema.Union([Schema.Literals(["capacity", "other"]), OpenString]),
+        ),
       }),
     ),
   }),
 });
 export const V1GetBackupScheduleInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -3536,7 +3781,7 @@ export const V1GetBackupScheduleOutput = Schema.Struct({
     description: "Time of day to schedule daily backups, in UTC. Format: HH:MM:SS.",
   }).check(
     Schema.isPattern(
-      new RegExp("^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?$"),
+      new RegExp("^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?$", "u"),
     ).annotate({
       expected:
         "a string matching the RegExp ^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?$",
@@ -3549,11 +3794,13 @@ export const V1GetBackupScheduleOutput = Schema.Struct({
 });
 export const V1GetDatabaseDiskInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -3608,37 +3855,34 @@ export const V1GetDatabaseDiskOutput = Schema.Struct({
 });
 export const V1GetDatabaseMetadataInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
 export const V1GetDatabaseMetadataOutput = Schema.Struct({
   databases: Schema.Array(
-    Schema.StructWithRest(
-      Schema.Struct({
-        name: Schema.String,
-        schemas: Schema.Array(
-          Schema.StructWithRest(Schema.Struct({ name: Schema.String }), [
-            Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })),
-          ]),
-        ),
-      }),
-      [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
-    ),
+    Schema.Struct({
+      name: Schema.String,
+      schemas: Schema.Array(Schema.Struct({ name: Schema.String })),
+    }),
   ),
 });
 export const V1GetDatabaseOpenapiInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -3650,11 +3894,13 @@ export const V1GetDatabaseOpenapiOutput = Schema.Record(
 );
 export const V1GetDiskUtilizationInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -3671,58 +3917,76 @@ export const V1GetDiskUtilizationOutput = Schema.Struct({
 });
 export const V1GetHostnameConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
 export const V1GetHostnameConfigOutput = Schema.Struct({
   status: Schema.optionalKey(
-    Schema.Literals([
-      "1_not_started",
-      "2_initiated",
-      "3_challenge_verified",
-      "4_origin_setup_completed",
-      "5_services_reconfigured",
+    Schema.Union([
+      Schema.Literals([
+        "1_not_started",
+        "2_initiated",
+        "3_challenge_verified",
+        "4_origin_setup_completed",
+        "5_services_reconfigured",
+      ]),
+      OpenString,
     ]),
   ),
   custom_hostname: Schema.optionalKey(Schema.String),
   data: Schema.Struct({
     success: Schema.Boolean,
-    errors: Schema.Array(UpdateCustomHostnameResponseJsonValue),
-    messages: Schema.Array(UpdateCustomHostnameResponseJsonValue),
+    errors: Schema.Array(JsonValue_Output),
+    messages: Schema.Array(JsonValue_Output),
     result: Schema.Struct({
       id: Schema.String,
       hostname: Schema.String,
-      ssl: Schema.Struct({
-        status: Schema.String,
-        validation_records: Schema.optionalKey(
-          Schema.Array(Schema.Struct({ txt_name: Schema.String, txt_value: Schema.String })),
-        ),
-        validation_errors: Schema.optionalKey(
-          Schema.Array(Schema.Struct({ message: Schema.String })),
-        ),
-      }),
-      ownership_verification: Schema.optionalKey(
-        Schema.Struct({ type: Schema.String, name: Schema.String, value: Schema.String }),
+      ssl: Schema.optionalKey(
+        Schema.Struct({
+          status: Schema.optionalKey(Schema.String),
+          validation_records: Schema.optionalKey(
+            Schema.Array(
+              Schema.Struct({
+                txt_name: Schema.optionalKey(Schema.String),
+                txt_value: Schema.optionalKey(Schema.String),
+              }),
+            ),
+          ),
+          validation_errors: Schema.optionalKey(
+            Schema.Array(Schema.Struct({ message: Schema.String })),
+          ),
+        }),
       ),
-      custom_origin_server: Schema.String,
+      ownership_verification: Schema.optionalKey(
+        Schema.Struct({
+          type: Schema.optionalKey(Schema.String),
+          name: Schema.optionalKey(Schema.String),
+          value: Schema.optionalKey(Schema.String),
+        }),
+      ),
+      custom_origin_server: Schema.optionalKey(Schema.String),
       verification_errors: Schema.optionalKey(Schema.Array(Schema.String)),
-      status: Schema.String,
+      status: Schema.optionalKey(Schema.String),
     }),
   }),
 });
 export const V1GetJitAccessInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -3733,6 +3997,7 @@ export const V1GetJitAccessOutput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -3742,9 +4007,7 @@ export const V1GetJitAccessOutput = Schema.Struct({
   ),
   user_roles: Schema.Array(
     Schema.Struct({
-      role: Schema.String.check(
-        Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-      ),
+      role: Schema.String,
       expires_at: Schema.optionalKey(
         Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
       ),
@@ -3757,6 +4020,7 @@ export const V1GetJitAccessOutput = Schema.Struct({
                   Schema.isPattern(
                     new RegExp(
                       "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                      "u",
                     ),
                   ).annotate({
                     expected:
@@ -3773,6 +4037,7 @@ export const V1GetJitAccessOutput = Schema.Struct({
                   Schema.isPattern(
                     new RegExp(
                       "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                      "u",
                     ),
                   ).annotate({
                     expected:
@@ -3790,11 +4055,13 @@ export const V1GetJitAccessOutput = Schema.Struct({
 });
 export const V1GetJitAccessConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -3802,15 +4069,19 @@ export const V1GetJitAccessConfigInput = Schema.Struct({
 export const V1GetJitAccessConfigOutput = Schema.Union(
   [
     Schema.Struct({
-      state: Schema.Literals(["enabled", "disabled"]),
+      state: Schema.Union([Schema.Literals(["enabled", "disabled"]), OpenString]),
       appliedSuccessfully: Schema.optionalKey(Schema.Boolean),
     }),
     Schema.Struct({
       state: Schema.Literal("unavailable"),
-      unavailableReason: Schema.Literals([
-        "postgres_upgrade_required",
-        "ssl_enforcement_required",
-        "temporarily_unavailable",
+      unavailableReason: Schema.Union([
+        Schema.Literals([
+          "platform_unsupported",
+          "postgres_upgrade_required",
+          "ssl_enforcement_required",
+          "temporarily_unavailable",
+        ]),
+        OpenString,
       ]),
     }),
   ],
@@ -3818,11 +4089,13 @@ export const V1GetJitAccessConfigOutput = Schema.Union(
 );
 export const V1GetLegacySigningKeyInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -3832,31 +4105,37 @@ export const V1GetLegacySigningKeyOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
         "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
     }),
   ),
-  algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
-  status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
+  algorithm: Schema.Union([Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]), OpenString]),
+  status: Schema.Union([
+    Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
+    OpenString,
+  ]),
   public_jwk: Schema.Json.annotate({ expected: "JSON value" }),
   created_at: Schema.String.annotate({ format: "date-time" }),
   updated_at: Schema.String.annotate({ format: "date-time" }),
 });
 export const V1GetNetworkRestrictionsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
 export const V1GetNetworkRestrictionsOutput = Schema.Struct({
-  entitlement: Schema.Literals(["disallowed", "allowed"]),
+  entitlement: Schema.Union([Schema.Literals(["disallowed", "allowed"]), OpenString]),
   config: Schema.Struct({
     dbAllowedCidrs: Schema.optionalKey(Schema.Array(Schema.String)),
     dbAllowedCidrsV6: Schema.optionalKey(Schema.Array(Schema.String)),
@@ -3873,13 +4152,13 @@ export const V1GetNetworkRestrictionsOutput = Schema.Struct({
         "Populated when a new config has been received, but not registered as successfully applied to a project.",
     }),
   ),
-  status: Schema.Literals(["stored", "applied"]),
+  status: Schema.Union([Schema.Literals(["stored", "applied"]), OpenString]),
   updated_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
   applied_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
 });
 export const V1GetOrganizationEntitlementsInput = Schema.Struct({
   slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -3888,76 +4167,79 @@ export const V1GetOrganizationEntitlementsOutput = Schema.Struct({
   entitlements: Schema.Array(
     Schema.Struct({
       feature: Schema.Struct({
-        key: Schema.Literals([
-          "instances.compute_update_available_sizes",
-          "instances.read_replicas",
-          "instances.disk_modifications",
-          "instances.high_availability",
-          "instances.orioledb",
-          "replication.etl",
-          "storage.max_file_size",
-          "storage.max_file_size.configurable",
-          "storage.image_transformations",
-          "storage.vector_buckets",
-          "storage.iceberg_catalog",
-          "storage.purge_cache",
-          "security.audit_logs_days",
-          "security.questionnaire",
-          "security.soc2_report",
-          "security.iso27001_certificate",
-          "security.private_link",
-          "security.enforce_mfa",
-          "log.retention_days",
-          "custom_domain",
-          "vanity_subdomain",
-          "ipv4",
-          "pitr.available_variants",
-          "log_drains",
-          "audit_log_drains",
-          "branching_limit",
-          "branching_persistent",
-          "auth.mfa_phone",
-          "auth.mfa_web_authn",
-          "auth.mfa_enhanced_security",
-          "auth.hooks",
-          "auth.platform.sso",
-          "auth.custom_jwt_template",
-          "auth.saml_2",
-          "auth.user_sessions",
-          "auth.leaked_password_protection",
-          "auth.advanced_auth_settings",
-          "auth.performance_settings",
-          "auth.password_hibp",
-          "auth.custom_oauth.max_providers",
-          "backup.retention_days",
-          "backup.restore_to_new_project",
-          "backup.schedule",
-          "function.max_count",
-          "function.size_limit_mb",
-          "realtime.max_concurrent_users",
-          "realtime.max_events_per_second",
-          "realtime.max_joins_per_second",
-          "realtime.max_channels_per_client",
-          "realtime.max_bytes_per_second",
-          "realtime.max_presence_events_per_second",
-          "realtime.max_payload_size_in_kb",
-          "project_scoped_roles",
-          "security.member_roles",
-          "project_pausing",
-          "project_cloning",
-          "project_restore_after_expiry",
-          "assistant.advance_model",
-          "integrations.github_connections",
-          "integrations.github_push_webhooks_limit",
-          "dedicated_pooler",
-          "observability.dashboard_advanced_metrics",
-          "api.members.invitations",
-          "api.members.roles",
+        key: Schema.Union([
+          Schema.Literals([
+            "instances.compute_update_available_sizes",
+            "instances.read_replicas",
+            "instances.disk_modifications",
+            "instances.high_availability",
+            "instances.orioledb",
+            "replication.etl",
+            "storage.max_file_size",
+            "storage.max_file_size.configurable",
+            "storage.image_transformations",
+            "storage.vector_buckets",
+            "storage.iceberg_catalog",
+            "storage.purge_cache",
+            "security.audit_logs_days",
+            "security.questionnaire",
+            "security.soc2_report",
+            "security.iso27001_certificate",
+            "security.private_link",
+            "security.enforce_mfa",
+            "log.retention_days",
+            "custom_domain",
+            "vanity_subdomain",
+            "ipv4",
+            "pitr.available_variants",
+            "log_drains",
+            "audit_log_drains",
+            "branching_limit",
+            "branching_persistent",
+            "auth.mfa_phone",
+            "auth.mfa_web_authn",
+            "auth.mfa_enhanced_security",
+            "auth.hooks",
+            "auth.platform.sso",
+            "auth.custom_jwt_template",
+            "auth.saml_2",
+            "auth.user_sessions",
+            "auth.leaked_password_protection",
+            "auth.advanced_auth_settings",
+            "auth.performance_settings",
+            "auth.password_hibp",
+            "auth.custom_oauth.max_providers",
+            "backup.retention_days",
+            "backup.restore_to_new_project",
+            "backup.schedule",
+            "function.max_count",
+            "function.size_limit_mb",
+            "realtime.max_concurrent_users",
+            "realtime.max_events_per_second",
+            "realtime.max_joins_per_second",
+            "realtime.max_channels_per_client",
+            "realtime.max_bytes_per_second",
+            "realtime.max_presence_events_per_second",
+            "realtime.max_payload_size_in_kb",
+            "project_scoped_roles",
+            "security.member_roles",
+            "project_pausing",
+            "project_cloning",
+            "project_restore_after_expiry",
+            "assistant.advance_model",
+            "integrations.github_connections",
+            "integrations.github_push_webhooks_limit",
+            "dedicated_pooler",
+            "observability.dashboard_advanced_metrics",
+            "api.members.invitations",
+            "api.members.roles",
+          ]),
+          OpenString,
         ]),
-        type: Schema.Literals(["boolean", "numeric", "set"]),
+        type: Schema.Union([Schema.Literals(["boolean", "numeric", "set"]), OpenString]),
       }),
       hasAccess: Schema.Boolean,
-      type: Schema.Literals(["boolean", "numeric", "set"]),
+      type: Schema.Union([Schema.Literals(["boolean", "numeric", "set"]), OpenString]),
       config: Schema.Union([
         Schema.Struct({ enabled: Schema.Boolean }),
         Schema.Struct({
@@ -3973,7 +4255,7 @@ export const V1GetOrganizationEntitlementsOutput = Schema.Struct({
 });
 export const V1GetOrganizationProjectClaimInput = Schema.Struct({
   slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -3992,10 +4274,16 @@ export const V1GetOrganizationProjectClaimOutput = Schema.Struct({
         limit: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
       }),
     ),
-    source_subscription_plan: Schema.Literals(["free", "pro", "team", "enterprise", "platform"]),
-    target_subscription_plan: Schema.Union([
+    source_subscription_plan: Schema.Union([
       Schema.Literals(["free", "pro", "team", "enterprise", "platform"]),
-      Schema.Null,
+      OpenString,
+    ]),
+    target_subscription_plan: Schema.Union([
+      Schema.Union([
+        Schema.Literals(["free", "pro", "team", "enterprise", "platform"]),
+        Schema.Null,
+      ]),
+      OpenString,
     ]),
   }),
   expires_at: Schema.String,
@@ -4004,6 +4292,7 @@ export const V1GetOrganizationProjectClaimOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -4013,20 +4302,22 @@ export const V1GetOrganizationProjectClaimOutput = Schema.Struct({
 });
 export const V1GetPerformanceAdvisorsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
 export const V1GetPerformanceAdvisorsOutput = Schema.Struct({
   lints: Schema.Array(
-    Schema.StructWithRest(
-      Schema.Struct({
-        name: Schema.Literals([
+    Schema.Struct({
+      name: Schema.Union([
+        Schema.Literals([
           "unindexed_foreign_keys",
           "auth_users_exposed",
           "auth_rls_initplan",
@@ -4063,60 +4354,70 @@ export const V1GetPerformanceAdvisorsOutput = Schema.Struct({
           "instance_telemetry_lost",
           "instance_db_down",
           "instance_alert_firing",
-          "log_service_error_rate_high",
+          "log_data_api_error_rate_high",
+          "log_auth_error_rate_high",
+          "log_storage_error_rate_high",
+          "log_edge_function_error_rate_high",
+          "realtime_authorization_timeouts",
+          "realtime_postgres_changes_spike",
+          "realtime_concurrent_users_near_limit",
           "project_not_active",
           "advisor_check_unavailable",
         ]),
-        title: Schema.String,
-        level: Schema.Literals(["ERROR", "WARN", "INFO"]),
-        facing: Schema.Literal("EXTERNAL"),
-        categories: Schema.Array(Schema.Literals(["PERFORMANCE", "SECURITY", "HEALTH"])),
-        description: Schema.String,
-        detail: Schema.String,
-        remediation: Schema.String,
-        metadata: Schema.optionalKey(
-          Schema.StructWithRest(
-            Schema.Struct({
-              schema: Schema.optionalKey(Schema.String),
-              name: Schema.optionalKey(Schema.String),
-              entity: Schema.optionalKey(Schema.String),
-              type: Schema.optionalKey(
-                Schema.Literals([
-                  "table",
-                  "view",
-                  "materialized view",
-                  "foreign table",
-                  "auth",
-                  "function",
-                  "extension",
-                  "compliance",
-                  "health",
-                ]),
-              ),
-              fkey_name: Schema.optionalKey(Schema.String),
-              fkey_columns: Schema.optionalKey(
-                Schema.Array(
-                  Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-                ),
-              ),
-            }),
-            [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+        OpenString,
+      ]),
+      title: Schema.String,
+      level: Schema.Union([Schema.Literals(["ERROR", "WARN", "INFO"]), OpenString]),
+      facing: Schema.Literal("EXTERNAL"),
+      categories: Schema.Array(
+        Schema.Union([Schema.Literals(["PERFORMANCE", "SECURITY", "HEALTH"]), OpenString]),
+      ),
+      description: Schema.String,
+      detail: Schema.String,
+      remediation: Schema.String,
+      metadata: Schema.optionalKey(
+        Schema.Struct({
+          schema: Schema.optionalKey(Schema.String),
+          name: Schema.optionalKey(Schema.String),
+          entity: Schema.optionalKey(Schema.String),
+          type: Schema.optionalKey(
+            Schema.Union([
+              Schema.Literals([
+                "table",
+                "view",
+                "materialized view",
+                "foreign table",
+                "auth",
+                "function",
+                "extension",
+                "compliance",
+                "health",
+              ]),
+              OpenString,
+            ]),
           ),
-        ),
-        cache_key: Schema.String,
-        observed_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
-      }),
-      [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
-    ),
+          fkey_name: Schema.optionalKey(Schema.String),
+          fkey_columns: Schema.optionalKey(
+            Schema.Array(
+              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+            ),
+          ),
+        }),
+      ),
+      cache_key: Schema.String,
+      observed_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+    }),
   ),
 });
 export const V1GetPgsodiumConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4128,23 +4429,27 @@ export const V1GetPgsodiumConfigOutput = Schema.Struct({
 });
 export const V1GetPoolerConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
-export const V1GetPoolerConfigOutput = Schema.Array(SupavisorConfigResponse);
+export const V1GetPoolerConfigOutput = Schema.Array(SupavisorConfigResponse_Output);
 export const V1GetPostgresConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4152,10 +4457,50 @@ export const V1GetPostgresConfigInput = Schema.Struct({
 export const V1GetPostgresConfigOutput = Schema.Struct({
   effective_cache_size: Schema.optionalKey(Schema.String),
   logical_decoding_work_mem: Schema.optionalKey(Schema.String),
+  "pg_stat_statements.max": Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(100).annotate({
+          expected: "a value greater than or equal to 100",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(45000).annotate({
+          expected: "a value less than or equal to 45000",
+        }),
+      ),
+  ),
+  "pg_net.batch_size": Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(32767).annotate({
+          expected: "a value less than or equal to 32767",
+        }),
+      ),
+  ),
+  autovacuum_max_workers: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
+  ),
+  autovacuum_work_mem: Schema.optionalKey(Schema.String),
   "cron.log_statement": Schema.optionalKey(Schema.Boolean),
   log_autovacuum_min_duration: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
         expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
       }),
     ),
@@ -4169,7 +4514,7 @@ export const V1GetPostgresConfigOutput = Schema.Struct({
   log_replication_commands: Schema.optionalKey(Schema.Boolean),
   log_startup_progress_interval: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
         expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
       }),
     ),
@@ -4311,11 +4656,13 @@ export const V1GetPostgresConfigOutput = Schema.Struct({
         }),
       ),
   ),
-  session_replication_role: Schema.optionalKey(Schema.Literals(["origin", "replica", "local"])),
+  session_replication_role: Schema.optionalKey(
+    Schema.Union([Schema.Literals(["origin", "replica", "local"]), OpenString]),
+  ),
   shared_buffers: Schema.optionalKey(Schema.String),
   statement_timeout: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
         expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
       }),
     ),
@@ -4324,7 +4671,7 @@ export const V1GetPostgresConfigOutput = Schema.Struct({
   wal_keep_size: Schema.optionalKey(Schema.String),
   wal_sender_timeout: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
         expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
       }),
     ),
@@ -4332,7 +4679,7 @@ export const V1GetPostgresConfigOutput = Schema.Struct({
   work_mem: Schema.optionalKey(Schema.String),
   checkpoint_timeout: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: s" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
         expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
       }),
     ),
@@ -4341,11 +4688,13 @@ export const V1GetPostgresConfigOutput = Schema.Struct({
 });
 export const V1GetPostgresUpgradeEligibilityInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4353,19 +4702,21 @@ export const V1GetPostgresUpgradeEligibilityInput = Schema.Struct({
 export const V1GetPostgresUpgradeEligibilityOutput = Schema.Struct({
   eligible: Schema.Boolean,
   current_app_version: Schema.String,
-  current_app_version_release_channel: Schema.Literals([
-    "internal",
-    "alpha",
-    "beta",
-    "ga",
-    "withdrawn",
-    "preview",
+  current_app_version_release_channel: Schema.Union([
+    Schema.Literals(["internal", "alpha", "beta", "ga", "withdrawn", "preview"]),
+    OpenString,
   ]),
   latest_app_version: Schema.String,
   target_upgrade_versions: Schema.Array(
     Schema.Struct({
-      postgres_version: Schema.Literals(["13", "14", "15", "17", "17-oriole"]),
-      release_channel: Schema.Literals(["internal", "alpha", "beta", "ga", "withdrawn", "preview"]),
+      postgres_version: Schema.Union([
+        Schema.Literals(["13", "14", "15", "17", "17-oriole"]),
+        OpenString,
+      ]),
+      release_channel: Schema.Union([
+        Schema.Literals(["internal", "alpha", "beta", "ga", "withdrawn", "preview"]),
+        OpenString,
+      ]),
       app_version: Schema.String,
     }),
   ),
@@ -4432,6 +4783,7 @@ export const V1GetPostgresUpgradeEligibilityOutput = Schema.Struct({
         Schema.Struct({ type: Schema.Literal("pg_graphql_introspection_change") }),
         Schema.Struct({ type: Schema.Literal("ltree_reindex_required") }),
         Schema.Struct({ type: Schema.Literal("operator_estimator_gate") }),
+        Schema.Struct({ type: Schema.Literal("btree_gist_nan_reindex") }),
       ],
       { mode: "oneOf" },
     ),
@@ -4439,11 +4791,13 @@ export const V1GetPostgresUpgradeEligibilityOutput = Schema.Struct({
 });
 export const V1GetPostgresUpgradeStatusInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4454,35 +4808,39 @@ export const V1GetPostgresUpgradeStatusOutput = Schema.Struct({
     Schema.Struct({
       initiated_at: Schema.String,
       latest_status_at: Schema.String,
-      target_version: Schema.Number.check(
-        Schema.isFinite().annotate({ expected: "a finite number" }),
-      ),
+      target_version: Schema.String,
       error: Schema.optionalKey(
-        Schema.Literals([
-          "1_upgraded_instance_launch_failed",
-          "2_volume_detachchment_from_upgraded_instance_failed",
-          "3_volume_attachment_to_original_instance_failed",
-          "4_data_upgrade_initiation_failed",
-          "5_data_upgrade_completion_failed",
-          "6_volume_detachchment_from_original_instance_failed",
-          "7_volume_attachment_to_upgraded_instance_failed",
-          "8_upgrade_completion_failed",
-          "9_post_physical_backup_failed",
+        Schema.Union([
+          Schema.Literals([
+            "1_upgraded_instance_launch_failed",
+            "2_volume_detachchment_from_upgraded_instance_failed",
+            "3_volume_attachment_to_original_instance_failed",
+            "4_data_upgrade_initiation_failed",
+            "5_data_upgrade_completion_failed",
+            "6_volume_detachchment_from_original_instance_failed",
+            "7_volume_attachment_to_upgraded_instance_failed",
+            "8_upgrade_completion_failed",
+            "9_post_physical_backup_failed",
+          ]),
+          OpenString,
         ]),
       ),
       progress: Schema.optionalKey(
-        Schema.Literals([
-          "0_requested",
-          "1_started",
-          "2_launched_upgraded_instance",
-          "3_detached_volume_from_upgraded_instance",
-          "4_attached_volume_to_original_instance",
-          "5_initiated_data_upgrade",
-          "6_completed_data_upgrade",
-          "7_detached_volume_from_original_instance",
-          "8_attached_volume_to_upgraded_instance",
-          "9_completed_upgrade",
-          "10_completed_post_physical_backup",
+        Schema.Union([
+          Schema.Literals([
+            "0_requested",
+            "1_started",
+            "2_launched_upgraded_instance",
+            "3_detached_volume_from_upgraded_instance",
+            "4_attached_volume_to_original_instance",
+            "5_initiated_data_upgrade",
+            "6_completed_data_upgrade",
+            "7_detached_volume_from_original_instance",
+            "8_attached_volume_to_upgraded_instance",
+            "9_completed_upgrade",
+            "10_completed_post_physical_backup",
+          ]),
+          OpenString,
         ]),
       ),
       status: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
@@ -4492,11 +4850,13 @@ export const V1GetPostgresUpgradeStatusOutput = Schema.Struct({
 });
 export const V1GetPostgrestServiceConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4549,6 +4909,38 @@ export const V1GetPostgrestServiceConfigOutput = Schema.Struct({
       ),
     Schema.Null,
   ]),
+  db_pool_max_lifetime: Schema.Union([
+    Schema.Number.annotate({
+      description: "If `null`, the value is automatically configured to 1800.",
+    })
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(3600).annotate({
+          expected: "a value less than or equal to 3600",
+        }),
+      ),
+    Schema.Null,
+  ]),
+  db_pool_max_idletime: Schema.Union([
+    Schema.Number.annotate({
+      description: "If `null`, the value is automatically configured to 30.",
+    })
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(60).annotate({ expected: "a value less than or equal to 60" }),
+      ),
+    Schema.Null,
+  ]),
   jwt_secret: Schema.optionalKey(Schema.String),
 });
 export const V1GetProfileInput = Schema.Record(Schema.String, Schema.Never);
@@ -4559,11 +4951,13 @@ export const V1GetProfileOutput = Schema.Struct({
 });
 export const V1GetProjectInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4571,10 +4965,14 @@ export const V1GetProjectInput = Schema.Struct({
 export const V1GetProjectOutput = Schema.Struct({
   id: Schema.String.annotate({ description: "Deprecated: Use `ref` instead." }),
   ref: Schema.String.annotate({ description: "Project ref" })
-    .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+    )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4582,29 +4980,32 @@ export const V1GetProjectOutput = Schema.Struct({
     description: "Deprecated: Use `organization_slug` instead.",
   }),
   organization_slug: Schema.String.annotate({ description: "Organization slug" }).check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
   name: Schema.String.annotate({ description: "Name of your project" }),
   region: Schema.String.annotate({ description: "Region of your project" }),
   created_at: Schema.String.annotate({ description: "Creation timestamp" }),
-  status: Schema.Literals([
-    "INACTIVE",
-    "ACTIVE_HEALTHY",
-    "ACTIVE_UNHEALTHY",
-    "COMING_UP",
-    "UNKNOWN",
-    "GOING_DOWN",
-    "INIT_FAILED",
-    "REMOVED",
-    "RESTORING",
-    "UPGRADING",
-    "PAUSING",
-    "RESTORE_FAILED",
-    "RESTARTING",
-    "PAUSE_FAILED",
-    "RESIZING",
+  status: Schema.Union([
+    Schema.Literals([
+      "INACTIVE",
+      "ACTIVE_HEALTHY",
+      "ACTIVE_UNHEALTHY",
+      "COMING_UP",
+      "UNKNOWN",
+      "GOING_DOWN",
+      "INIT_FAILED",
+      "REMOVED",
+      "RESTORING",
+      "UPGRADING",
+      "PAUSING",
+      "RESTORE_FAILED",
+      "RESTARTING",
+      "PAUSE_FAILED",
+      "RESIZING",
+    ]),
+    OpenString,
   ]),
   database: Schema.Struct({
     host: Schema.String.annotate({ description: "Database host" }),
@@ -4615,11 +5016,13 @@ export const V1GetProjectOutput = Schema.Struct({
 });
 export const V1GetProjectApiKeyInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4627,6 +5030,7 @@ export const V1GetProjectApiKeyInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -4639,7 +5043,10 @@ export const V1GetProjectApiKeyOutput = Schema.Struct({
   api_key: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   id: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   type: Schema.optionalKey(
-    Schema.Union([Schema.Literals(["legacy", "publishable", "secret"]), Schema.Null]),
+    Schema.Union([
+      Schema.Union([Schema.Literals(["legacy", "publishable", "secret"]), Schema.Null]),
+      OpenString,
+    ]),
   ),
   prefix: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   name: Schema.String,
@@ -4660,24 +5067,28 @@ export const V1GetProjectApiKeyOutput = Schema.Struct({
 });
 export const V1GetProjectApiKeysInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   reveal: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
 });
-export const V1GetProjectApiKeysOutput = Schema.Array(ApiKeyResponse);
+export const V1GetProjectApiKeysOutput = Schema.Array(ApiKeyResponse_Output);
 export const V1GetProjectClaimTokenInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4690,6 +5101,7 @@ export const V1GetProjectClaimTokenOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -4699,11 +5111,13 @@ export const V1GetProjectClaimTokenOutput = Schema.Struct({
 });
 export const V1GetProjectDiskAutoscaleConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4745,11 +5159,13 @@ export const V1GetProjectDiskAutoscaleConfigOutput = Schema.Struct({
 });
 export const V1GetProjectFunctionCombinedStatsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4780,11 +5196,13 @@ export const V1GetProjectFunctionCombinedStatsOutput = Schema.Struct({
 });
 export const V1GetProjectLegacyApiKeysInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4792,11 +5210,13 @@ export const V1GetProjectLegacyApiKeysInput = Schema.Struct({
 export const V1GetProjectLegacyApiKeysOutput = Schema.Struct({ enabled: Schema.Boolean });
 export const V1GetProjectLogsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4828,47 +5248,26 @@ export const V1GetProjectLogsOutput = Schema.Struct({
 });
 export const V1GetProjectLogsAllInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
-  sql: Schema.optionalKey(Schema.String),
-  iso_timestamp_start: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
-  iso_timestamp_end: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
-});
-export const V1GetProjectLogsAllOutput = Schema.Struct({
-  result: Schema.optionalKey(Schema.Array(Schema.Json.annotate({ expected: "JSON value" }))),
-  error: Schema.optionalKey(
-    Schema.Union([
-      Schema.String,
-      Schema.Struct({
-        code: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-        errors: Schema.Array(
-          Schema.Struct({
-            domain: Schema.String,
-            location: Schema.String,
-            locationType: Schema.String,
-            message: Schema.String,
-            reason: Schema.String,
-          }),
-        ),
-        message: Schema.String,
-        status: Schema.String,
-      }),
-    ]),
-  ),
 });
 export const V1GetProjectPgbouncerConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4901,7 +5300,9 @@ export const V1GetProjectPgbouncerConfigOutput = Schema.Struct({
         }),
       ),
   ),
-  pool_mode: Schema.optionalKey(Schema.Literals(["transaction", "session", "statement"])),
+  pool_mode: Schema.optionalKey(
+    Schema.Union([Schema.Literals(["transaction", "session", "statement"]), OpenString]),
+  ),
   connection_string: Schema.optionalKey(Schema.String),
   server_idle_timeout: Schema.optionalKey(
     Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
@@ -4961,6 +5362,7 @@ export const V1GetProjectSigningKeyInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -4968,11 +5370,13 @@ export const V1GetProjectSigningKeyInput = Schema.Struct({
     }),
   ),
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4982,25 +5386,31 @@ export const V1GetProjectSigningKeyOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
         "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
     }),
   ),
-  algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
-  status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
+  algorithm: Schema.Union([Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]), OpenString]),
+  status: Schema.Union([
+    Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
+    OpenString,
+  ]),
   public_jwk: Schema.Json.annotate({ expected: "JSON value" }),
   created_at: Schema.String.annotate({ format: "date-time" }),
   updated_at: Schema.String.annotate({ format: "date-time" }),
 });
 export const V1GetProjectSigningKeysInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5012,14 +5422,18 @@ export const V1GetProjectSigningKeysOutput = Schema.Struct({
         Schema.isPattern(
           new RegExp(
             "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "u",
           ),
         ).annotate({
           expected:
             "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
         }),
       ),
-      algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
-      status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
+      algorithm: Schema.Union([Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]), OpenString]),
+      status: Schema.Union([
+        Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
+        OpenString,
+      ]),
       public_jwk: Schema.Json.annotate({ expected: "JSON value" }),
       created_at: Schema.String.annotate({ format: "date-time" }),
       updated_at: Schema.String.annotate({ format: "date-time" }),
@@ -5028,11 +5442,13 @@ export const V1GetProjectSigningKeysOutput = Schema.Struct({
 });
 export const V1GetProjectTpaIntegrationInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5040,6 +5456,7 @@ export const V1GetProjectTpaIntegrationInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -5052,6 +5469,7 @@ export const V1GetProjectTpaIntegrationOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -5069,11 +5487,13 @@ export const V1GetProjectTpaIntegrationOutput = Schema.Struct({
 });
 export const V1GetProjectUsageApiCountInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5123,11 +5543,13 @@ export const V1GetProjectUsageApiCountOutput = Schema.Struct({
 });
 export const V1GetProjectUsageRequestCountInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5162,11 +5584,13 @@ export const V1GetProjectUsageRequestCountOutput = Schema.Struct({
 });
 export const V1GetReadonlyModeStatusInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5178,11 +5602,13 @@ export const V1GetReadonlyModeStatusOutput = Schema.Struct({
 });
 export const V1GetRealtimeConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5229,8 +5655,8 @@ export const V1GetRealtimeConfigOutput = Schema.Struct({
         }),
       )
       .check(
-        Schema.isLessThanOrEqualTo(50000).annotate({
-          expected: "a value less than or equal to 50000",
+        Schema.isLessThanOrEqualTo(300000).annotate({
+          expected: "a value less than or equal to 300000",
         }),
       ),
     Schema.Null,
@@ -5339,35 +5765,49 @@ export const V1GetRealtimeConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   presence_enabled: Schema.Boolean.annotate({ description: "Whether to enable presence" }),
+  admin_suspended_at: Schema.Union([
+    Schema.String.annotate({
+      description: "If set, the Realtime service has been suspended by an admin.",
+      format: "date-time",
+    }),
+    Schema.Null,
+  ]),
 });
 export const V1GetRestorePointInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   name: Schema.optionalKey(
     Schema.String.check(
-      Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }),
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
     ),
   ),
 });
 export const V1GetRestorePointOutput = Schema.Struct({
   name: Schema.String,
-  status: Schema.Literals(["AVAILABLE", "PENDING", "REMOVED", "FAILED"]),
+  status: Schema.Union([
+    Schema.Literals(["AVAILABLE", "PENDING", "REMOVED", "FAILED"]),
+    OpenString,
+  ]),
   completed_on: Schema.Union([Schema.String.annotate({ format: "date-time" }), Schema.Null]),
 });
 export const V1GetSecurityAdvisorsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5375,9 +5815,9 @@ export const V1GetSecurityAdvisorsInput = Schema.Struct({
 });
 export const V1GetSecurityAdvisorsOutput = Schema.Struct({
   lints: Schema.Array(
-    Schema.StructWithRest(
-      Schema.Struct({
-        name: Schema.Literals([
+    Schema.Struct({
+      name: Schema.Union([
+        Schema.Literals([
           "unindexed_foreign_keys",
           "auth_users_exposed",
           "auth_rls_initplan",
@@ -5414,60 +5854,70 @@ export const V1GetSecurityAdvisorsOutput = Schema.Struct({
           "instance_telemetry_lost",
           "instance_db_down",
           "instance_alert_firing",
-          "log_service_error_rate_high",
+          "log_data_api_error_rate_high",
+          "log_auth_error_rate_high",
+          "log_storage_error_rate_high",
+          "log_edge_function_error_rate_high",
+          "realtime_authorization_timeouts",
+          "realtime_postgres_changes_spike",
+          "realtime_concurrent_users_near_limit",
           "project_not_active",
           "advisor_check_unavailable",
         ]),
-        title: Schema.String,
-        level: Schema.Literals(["ERROR", "WARN", "INFO"]),
-        facing: Schema.Literal("EXTERNAL"),
-        categories: Schema.Array(Schema.Literals(["PERFORMANCE", "SECURITY", "HEALTH"])),
-        description: Schema.String,
-        detail: Schema.String,
-        remediation: Schema.String,
-        metadata: Schema.optionalKey(
-          Schema.StructWithRest(
-            Schema.Struct({
-              schema: Schema.optionalKey(Schema.String),
-              name: Schema.optionalKey(Schema.String),
-              entity: Schema.optionalKey(Schema.String),
-              type: Schema.optionalKey(
-                Schema.Literals([
-                  "table",
-                  "view",
-                  "materialized view",
-                  "foreign table",
-                  "auth",
-                  "function",
-                  "extension",
-                  "compliance",
-                  "health",
-                ]),
-              ),
-              fkey_name: Schema.optionalKey(Schema.String),
-              fkey_columns: Schema.optionalKey(
-                Schema.Array(
-                  Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-                ),
-              ),
-            }),
-            [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+        OpenString,
+      ]),
+      title: Schema.String,
+      level: Schema.Union([Schema.Literals(["ERROR", "WARN", "INFO"]), OpenString]),
+      facing: Schema.Literal("EXTERNAL"),
+      categories: Schema.Array(
+        Schema.Union([Schema.Literals(["PERFORMANCE", "SECURITY", "HEALTH"]), OpenString]),
+      ),
+      description: Schema.String,
+      detail: Schema.String,
+      remediation: Schema.String,
+      metadata: Schema.optionalKey(
+        Schema.Struct({
+          schema: Schema.optionalKey(Schema.String),
+          name: Schema.optionalKey(Schema.String),
+          entity: Schema.optionalKey(Schema.String),
+          type: Schema.optionalKey(
+            Schema.Union([
+              Schema.Literals([
+                "table",
+                "view",
+                "materialized view",
+                "foreign table",
+                "auth",
+                "function",
+                "extension",
+                "compliance",
+                "health",
+              ]),
+              OpenString,
+            ]),
           ),
-        ),
-        cache_key: Schema.String,
-        observed_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
-      }),
-      [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
-    ),
+          fkey_name: Schema.optionalKey(Schema.String),
+          fkey_columns: Schema.optionalKey(
+            Schema.Array(
+              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+            ),
+          ),
+        }),
+      ),
+      cache_key: Schema.String,
+      observed_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+    }),
   ),
 });
 export const V1GetServicesHealthInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5503,14 +5953,16 @@ export const V1GetServicesHealthInput = Schema.Struct({
       ),
   ),
 });
-export const V1GetServicesHealthOutput = Schema.Array(V1ServiceHealthResponse);
+export const V1GetServicesHealthOutput = Schema.Array(V1ServiceHealthResponse_Output);
 export const V1GetSslEnforcementConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5521,11 +5973,13 @@ export const V1GetSslEnforcementConfigOutput = Schema.Struct({
 });
 export const V1GetStorageConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5609,24 +6063,31 @@ export const V1GetStorageConfigOutput = Schema.Struct({
         ),
     }),
   }),
-  capabilities: Schema.Struct({ list_v2: Schema.Boolean, iceberg_catalog: Schema.Boolean }),
-  external: Schema.Struct({ upstreamTarget: Schema.Literals(["main", "canary"]) }),
-  migrationVersion: Schema.String,
-  databasePoolMode: Schema.optionalKey(Schema.String),
+  capabilities: Schema.Struct({
+    list_v2: Schema.Boolean,
+    iceberg_catalog: Schema.Boolean,
+    object_versioning: Schema.Boolean,
+  }),
+  external: Schema.Struct({
+    upstreamTarget: Schema.Union([Schema.Literals(["main", "canary"]), OpenString]),
+  }),
+  migrationVersion: Schema.Union([Schema.String, Schema.Null]),
 });
 export const V1GetVanitySubdomainConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
 export const V1GetVanitySubdomainConfigOutput = Schema.Struct({
-  status: Schema.Literals(["not-used", "custom-domain-used", "active"]),
+  status: Schema.Union([Schema.Literals(["not-used", "custom-domain-used", "active"]), OpenString]),
   custom_domain: Schema.optionalKey(
     Schema.String.check(
       Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
@@ -5635,11 +6096,13 @@ export const V1GetVanitySubdomainConfigOutput = Schema.Struct({
 });
 export const V1InviteExternalJitAccessInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5649,6 +6112,7 @@ export const V1InviteExternalJitAccessInput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -5672,6 +6136,7 @@ export const V1InviteExternalJitAccessInput = Schema.Struct({
                   Schema.isPattern(
                     new RegExp(
                       "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                      "u",
                     ),
                   ).annotate({
                     expected:
@@ -5688,6 +6153,7 @@ export const V1InviteExternalJitAccessInput = Schema.Struct({
                   Schema.isPattern(
                     new RegExp(
                       "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                      "u",
                     ),
                   ).annotate({
                     expected:
@@ -5708,6 +6174,7 @@ export const V1InviteExternalJitAccessOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -5718,6 +6185,7 @@ export const V1InviteExternalJitAccessOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -5726,9 +6194,7 @@ export const V1InviteExternalJitAccessOutput = Schema.Struct({
   ),
   user_roles: Schema.Array(
     Schema.Struct({
-      role: Schema.String.check(
-        Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-      ),
+      role: Schema.String,
       expires_at: Schema.optionalKey(
         Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
       ),
@@ -5741,6 +6207,7 @@ export const V1InviteExternalJitAccessOutput = Schema.Struct({
                   Schema.isPattern(
                     new RegExp(
                       "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                      "u",
                     ),
                   ).annotate({
                     expected:
@@ -5757,6 +6224,7 @@ export const V1InviteExternalJitAccessOutput = Schema.Struct({
                   Schema.isPattern(
                     new RegExp(
                       "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                      "u",
                     ),
                   ).annotate({
                     expected:
@@ -5774,11 +6242,13 @@ export const V1InviteExternalJitAccessOutput = Schema.Struct({
 });
 export const V1ListActionRunsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5801,23 +6271,21 @@ export const V1ListActionRunsOutput = Schema.Array(
     branch_id: Schema.String,
     run_steps: Schema.Array(
       Schema.Struct({
-        name: Schema.Literals([
-          "clone",
-          "pull",
-          "health",
-          "configure",
-          "migrate",
-          "seed",
-          "deploy",
+        name: Schema.Union([
+          Schema.Literals(["clone", "pull", "health", "configure", "migrate", "seed", "deploy"]),
+          OpenString,
         ]),
-        status: Schema.Literals([
-          "CREATED",
-          "DEAD",
-          "EXITED",
-          "PAUSED",
-          "REMOVING",
-          "RESTARTING",
-          "RUNNING",
+        status: Schema.Union([
+          Schema.Literals([
+            "CREATED",
+            "DEAD",
+            "EXITED",
+            "PAUSED",
+            "REMOVING",
+            "RESTARTING",
+            "RUNNING",
+          ]),
+          OpenString,
         ]),
         created_at: Schema.String,
         updated_at: Schema.String,
@@ -5835,11 +6303,13 @@ export const V1ListActionRunsOutput = Schema.Array(
 );
 export const V1ListAllBackupsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5862,13 +6332,9 @@ export const V1ListAllBackupsOutput = Schema.Struct({
           }),
         ),
       is_physical_backup: Schema.Boolean,
-      status: Schema.Literals([
-        "COMPLETED",
-        "FAILED",
-        "PENDING",
-        "REMOVED",
-        "ARCHIVED",
-        "CANCELLED",
+      status: Schema.Union([
+        Schema.Literals(["COMPLETED", "FAILED", "PENDING", "REMOVED", "ARCHIVED", "CANCELLED"]),
+        OpenString,
       ]),
       inserted_at: Schema.String,
     }),
@@ -5904,47 +6370,55 @@ export const V1ListAllBackupsOutput = Schema.Struct({
 });
 export const V1ListAllBranchesInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
-export const V1ListAllBranchesOutput = Schema.Array(BranchResponse);
+export const V1ListAllBranchesOutput = Schema.Array(BranchResponse_Output);
 export const V1ListAllBucketsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
-export const V1ListAllBucketsOutput = Schema.Array(V1StorageBucketResponse);
+export const V1ListAllBucketsOutput = Schema.Array(V1StorageBucketResponse_Output);
 export const V1ListAllFunctionsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
-export const V1ListAllFunctionsOutput = Schema.Array(FunctionResponse);
+export const V1ListAllFunctionsOutput = Schema.Array(FunctionResponse_Output);
 export const V1ListAllNetworkBansInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5954,11 +6428,13 @@ export const V1ListAllNetworkBansOutput = Schema.Struct({
 });
 export const V1ListAllNetworkBansEnrichedInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5973,29 +6449,33 @@ export const V1ListAllNetworkBansEnrichedOutput = Schema.Struct({
   ),
 });
 export const V1ListAllOrganizationsInput = Schema.Record(Schema.String, Schema.Never);
-export const V1ListAllOrganizationsOutput = Schema.Array(OrganizationResponseV1);
+export const V1ListAllOrganizationsOutput = Schema.Array(OrganizationResponseV1_Output);
 export const V1ListAllProjectsInput = Schema.Record(Schema.String, Schema.Never);
-export const V1ListAllProjectsOutput = Schema.Array(V1ProjectWithDatabaseResponse);
+export const V1ListAllProjectsOutput = Schema.Array(V1ProjectWithDatabaseResponse_Output);
 export const V1ListAllSecretsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
-export const V1ListAllSecretsOutput = Schema.Array(SecretResponse);
+export const V1ListAllSecretsOutput = Schema.Array(SecretResponse_Output);
 export const V1ListAllSnippetsInput = Schema.Struct({
   project_ref: Schema.optionalKey(
     Schema.String.check(
-      Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+      Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
     )
-      .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
       .check(
-        Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+      )
+      .check(
+        Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
           expected: "a string matching the RegExp ^[a-z]+$",
         }),
       ),
@@ -6012,21 +6492,27 @@ export const V1ListAllSnippetsOutput = Schema.Struct({
       inserted_at: Schema.String,
       updated_at: Schema.String,
       type: Schema.Literal("sql"),
-      visibility: Schema.Literals(["user", "project", "org", "public"]),
+      visibility: Schema.Union([Schema.Literals(["user", "project", "org", "public"]), OpenString]),
       name: Schema.String,
       description: Schema.Union([Schema.String, Schema.Null]),
       project: Schema.Struct({
         id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
         name: Schema.String,
       }),
-      owner: Schema.Struct({
-        id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-        username: Schema.String,
-      }),
-      updated_by: Schema.Struct({
-        id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-        username: Schema.String,
-      }),
+      owner: Schema.Union([
+        Schema.Struct({
+          id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          username: Schema.String,
+        }),
+        Schema.Null,
+      ]),
+      updated_by: Schema.Union([
+        Schema.Struct({
+          id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          username: Schema.String,
+        }),
+        Schema.Null,
+      ]),
       favorite: Schema.Boolean,
     }),
   ),
@@ -6034,11 +6520,13 @@ export const V1ListAllSnippetsOutput = Schema.Struct({
 });
 export const V1ListAllSsoProviderInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6060,19 +6548,22 @@ export const V1ListAllSsoProviderOutput = Schema.Struct({
                   Schema.Struct({
                     name: Schema.optionalKey(Schema.String),
                     names: Schema.optionalKey(Schema.Array(Schema.String)),
-                    default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
                     array: Schema.optionalKey(Schema.Boolean),
+                    default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
                   }),
                 ),
               ),
             }),
           ),
           name_id_format: Schema.optionalKey(
-            Schema.Literals([
-              "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified",
-              "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
-              "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
-              "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+            Schema.Union([
+              Schema.Literals([
+                "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified",
+                "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
+                "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+                "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+              ]),
+              OpenString,
             ]),
           ),
         }),
@@ -6093,11 +6584,13 @@ export const V1ListAllSsoProviderOutput = Schema.Struct({
 });
 export const V1ListAvailableRestoreVersionsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6106,18 +6599,26 @@ export const V1ListAvailableRestoreVersionsOutput = Schema.Struct({
   available_versions: Schema.Array(
     Schema.Struct({
       version: Schema.String,
-      release_channel: Schema.Literals(["internal", "alpha", "beta", "ga", "withdrawn", "preview"]),
-      postgres_engine: Schema.Literals(["13", "14", "15", "17", "17-oriole"]),
+      release_channel: Schema.Union([
+        Schema.Literals(["internal", "alpha", "beta", "ga", "withdrawn", "preview"]),
+        OpenString,
+      ]),
+      postgres_engine: Schema.Union([
+        Schema.Literals(["13", "14", "15", "17", "17-oriole"]),
+        OpenString,
+      ]),
     }),
   ),
 });
 export const V1ListJitAccessInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6130,6 +6631,7 @@ export const V1ListJitAccessOutput = Schema.Struct({
           Schema.isPattern(
             new RegExp(
               "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "u",
             ),
           ).annotate({
             expected:
@@ -6141,9 +6643,7 @@ export const V1ListJitAccessOutput = Schema.Struct({
         expires_at: Schema.Null,
         user_roles: Schema.Array(
           Schema.Struct({
-            role: Schema.String.check(
-              Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-            ),
+            role: Schema.String,
             expires_at: Schema.optionalKey(
               Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
             ),
@@ -6156,6 +6656,7 @@ export const V1ListJitAccessOutput = Schema.Struct({
                         Schema.isPattern(
                           new RegExp(
                             "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                            "u",
                           ),
                         ).annotate({
                           expected:
@@ -6172,6 +6673,7 @@ export const V1ListJitAccessOutput = Schema.Struct({
                         Schema.isPattern(
                           new RegExp(
                             "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                            "u",
                           ),
                         ).annotate({
                           expected:
@@ -6194,6 +6696,7 @@ export const V1ListJitAccessOutput = Schema.Struct({
           Schema.isPattern(
             new RegExp(
               "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "u",
             ),
           ).annotate({
             expected:
@@ -6203,9 +6706,7 @@ export const V1ListJitAccessOutput = Schema.Struct({
         expires_at: Schema.String,
         user_roles: Schema.Array(
           Schema.Struct({
-            role: Schema.String.check(
-              Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-            ),
+            role: Schema.String,
             expires_at: Schema.optionalKey(
               Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
             ),
@@ -6218,6 +6719,7 @@ export const V1ListJitAccessOutput = Schema.Struct({
                         Schema.isPattern(
                           new RegExp(
                             "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                            "u",
                           ),
                         ).annotate({
                           expected:
@@ -6234,6 +6736,7 @@ export const V1ListJitAccessOutput = Schema.Struct({
                         Schema.isPattern(
                           new RegExp(
                             "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                            "u",
                           ),
                         ).annotate({
                           expected:
@@ -6254,38 +6757,37 @@ export const V1ListJitAccessOutput = Schema.Struct({
 });
 export const V1ListMigrationHistoryInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
 export const V1ListMigrationHistoryOutput = Schema.Array(
-  Schema.Struct({
-    version: Schema.String.check(
-      Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-    ),
-    name: Schema.optionalKey(Schema.String),
-  }),
+  Schema.Struct({ version: Schema.String, name: Schema.optionalKey(Schema.String) }),
 );
 export const V1ListOrganizationMembersInput = Schema.Struct({
   slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
 });
-export const V1ListOrganizationMembersOutput = Schema.Array(V1OrganizationMemberResponse);
+export const V1ListOrganizationMembersOutput = Schema.Array(V1OrganizationMemberResponse_Output);
 export const V1ListProjectAddonsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6293,73 +6795,22 @@ export const V1ListProjectAddonsInput = Schema.Struct({
 export const V1ListProjectAddonsOutput = Schema.Struct({
   selected_addons: Schema.Array(
     Schema.Struct({
-      type: Schema.Literals([
-        "custom_domain",
-        "compute_instance",
-        "pitr",
-        "ipv4",
-        "auth_mfa_phone",
-        "auth_mfa_web_authn",
-        "log_drain",
-        "etl_pipeline",
+      type: Schema.Union([
+        Schema.Literals([
+          "custom_domain",
+          "compute_instance",
+          "pitr",
+          "ipv4",
+          "auth_mfa_phone",
+          "auth_mfa_web_authn",
+          "log_drain",
+          "etl_pipeline",
+        ]),
+        OpenString,
       ]),
       variant: Schema.Struct({
         id: Schema.Union([
-          Schema.Literals([
-            "ci_micro",
-            "ci_small",
-            "ci_medium",
-            "ci_large",
-            "ci_xlarge",
-            "ci_2xlarge",
-            "ci_4xlarge",
-            "ci_8xlarge",
-            "ci_12xlarge",
-            "ci_16xlarge",
-            "ci_24xlarge",
-            "ci_24xlarge_optimized_cpu",
-            "ci_24xlarge_optimized_memory",
-            "ci_24xlarge_high_memory",
-            "ci_48xlarge",
-            "ci_48xlarge_optimized_cpu",
-            "ci_48xlarge_optimized_memory",
-            "ci_48xlarge_high_memory",
-          ]),
-          Schema.Literal("cd_default"),
-          Schema.Literals(["pitr_7", "pitr_14", "pitr_28"]),
-          Schema.Literal("ipv4_default"),
-          Schema.Literal("auth_mfa_phone_default"),
-          Schema.Literal("auth_mfa_web_authn_default"),
-          Schema.Literal("log_drain_default"),
-          Schema.Literal("etl_pipeline_default"),
-        ]),
-        name: Schema.String,
-        price: Schema.Struct({
-          description: Schema.String,
-          type: Schema.Literals(["fixed", "usage"]),
-          interval: Schema.Literals(["monthly", "hourly"]),
-          amount: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-        }),
-        meta: Schema.optionalKey(ListProjectAddonsResponseJsonValue),
-      }),
-    }),
-  ),
-  available_addons: Schema.Array(
-    Schema.Struct({
-      type: Schema.Literals([
-        "custom_domain",
-        "compute_instance",
-        "pitr",
-        "ipv4",
-        "auth_mfa_phone",
-        "auth_mfa_web_authn",
-        "log_drain",
-        "etl_pipeline",
-      ]),
-      name: Schema.String,
-      variants: Schema.Array(
-        Schema.Struct({
-          id: Schema.Union([
+          Schema.Union([
             Schema.Literals([
               "ci_micro",
               "ci_small",
@@ -6380,8 +6831,71 @@ export const V1ListProjectAddonsOutput = Schema.Struct({
               "ci_48xlarge_optimized_memory",
               "ci_48xlarge_high_memory",
             ]),
+            OpenString,
+          ]),
+          Schema.Literal("cd_default"),
+          Schema.Union([Schema.Literals(["pitr_7", "pitr_14", "pitr_28"]), OpenString]),
+          Schema.Literal("ipv4_default"),
+          Schema.Literal("auth_mfa_phone_default"),
+          Schema.Literal("auth_mfa_web_authn_default"),
+          Schema.Literal("log_drain_default"),
+          Schema.Literal("etl_pipeline_default"),
+        ]),
+        name: Schema.String,
+        price: Schema.Struct({
+          description: Schema.String,
+          type: Schema.Union([Schema.Literals(["fixed", "usage"]), OpenString]),
+          interval: Schema.Union([Schema.Literals(["monthly", "hourly"]), OpenString]),
+          amount: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+        }),
+        meta: Schema.optionalKey(JsonValue_Output),
+      }),
+    }),
+  ),
+  available_addons: Schema.Array(
+    Schema.Struct({
+      type: Schema.Union([
+        Schema.Literals([
+          "custom_domain",
+          "compute_instance",
+          "pitr",
+          "ipv4",
+          "auth_mfa_phone",
+          "auth_mfa_web_authn",
+          "log_drain",
+          "etl_pipeline",
+        ]),
+        OpenString,
+      ]),
+      name: Schema.String,
+      variants: Schema.Array(
+        Schema.Struct({
+          id: Schema.Union([
+            Schema.Union([
+              Schema.Literals([
+                "ci_micro",
+                "ci_small",
+                "ci_medium",
+                "ci_large",
+                "ci_xlarge",
+                "ci_2xlarge",
+                "ci_4xlarge",
+                "ci_8xlarge",
+                "ci_12xlarge",
+                "ci_16xlarge",
+                "ci_24xlarge",
+                "ci_24xlarge_optimized_cpu",
+                "ci_24xlarge_optimized_memory",
+                "ci_24xlarge_high_memory",
+                "ci_48xlarge",
+                "ci_48xlarge_optimized_cpu",
+                "ci_48xlarge_optimized_memory",
+                "ci_48xlarge_high_memory",
+              ]),
+              OpenString,
+            ]),
             Schema.Literal("cd_default"),
-            Schema.Literals(["pitr_7", "pitr_14", "pitr_28"]),
+            Schema.Union([Schema.Literals(["pitr_7", "pitr_14", "pitr_28"]), OpenString]),
             Schema.Literal("ipv4_default"),
             Schema.Literal("auth_mfa_phone_default"),
             Schema.Literal("auth_mfa_web_authn_default"),
@@ -6391,13 +6905,13 @@ export const V1ListProjectAddonsOutput = Schema.Struct({
           name: Schema.String,
           price: Schema.Struct({
             description: Schema.String,
-            type: Schema.Literals(["fixed", "usage"]),
-            interval: Schema.Literals(["monthly", "hourly"]),
+            type: Schema.Union([Schema.Literals(["fixed", "usage"]), OpenString]),
+            interval: Schema.Union([Schema.Literals(["monthly", "hourly"]), OpenString]),
             amount: Schema.Number.check(
               Schema.isFinite().annotate({ expected: "a finite number" }),
             ),
           }),
-          meta: Schema.optionalKey(ListProjectAddonsResponseJsonValue),
+          meta: Schema.optionalKey(JsonValue_Output),
         }),
       ),
     }),
@@ -6405,23 +6919,29 @@ export const V1ListProjectAddonsOutput = Schema.Struct({
 });
 export const V1ListProjectTpaIntegrationsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
-export const V1ListProjectTpaIntegrationsOutput = Schema.Array(ThirdPartyAuth);
+export const V1ListProjectTpaIntegrationsOutput = Schema.Array(ThirdPartyAuth_Output);
 export const V1MergeABranchInput = Schema.Struct({
   branch_id_or_ref: Schema.Union([
     Schema.String.annotate({ description: "Project ref" })
-      .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
-      .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
       .check(
-        Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+      )
+      .check(
+        Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+      )
+      .check(
+        Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
           expected: "a string matching the RegExp ^[a-z]+$",
         }),
       ),
@@ -6429,6 +6949,7 @@ export const V1MergeABranchInput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -6444,11 +6965,13 @@ export const V1MergeABranchOutput = Schema.Struct({
 });
 export const V1ModifyDatabaseDiskInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6503,11 +7026,13 @@ export const V1ModifyDatabaseDiskInput = Schema.Struct({
 });
 export const V1OauthAuthorizeProjectClaimInput = Schema.Struct({
   project_ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6515,6 +7040,7 @@ export const V1OauthAuthorizeProjectClaimInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -6530,16 +7056,18 @@ export const V1OauthAuthorizeProjectClaimInput = Schema.Struct({
 });
 export const V1PatchAMigrationInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   version: Schema.String.check(
-    Schema.isPattern(new RegExp("^\\d+$")).annotate({
+    Schema.isPattern(new RegExp("^\\d+$", "u")).annotate({
       expected: "a string matching the RegExp ^\\d+$",
     }),
   ),
@@ -6548,11 +7076,13 @@ export const V1PatchAMigrationInput = Schema.Struct({
 });
 export const V1PatchNetworkRestrictionsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6570,10 +7100,15 @@ export const V1PatchNetworkRestrictionsInput = Schema.Struct({
   ),
 });
 export const V1PatchNetworkRestrictionsOutput = Schema.Struct({
-  entitlement: Schema.Literals(["disallowed", "allowed"]),
+  entitlement: Schema.Union([Schema.Literals(["disallowed", "allowed"]), OpenString]),
   config: Schema.Struct({
     dbAllowedCidrs: Schema.optionalKey(
-      Schema.Array(Schema.Struct({ address: Schema.String, type: Schema.Literals(["v4", "v6"]) })),
+      Schema.Array(
+        Schema.Struct({
+          address: Schema.String,
+          type: Schema.Union([Schema.Literals(["v4", "v6"]), OpenString]),
+        }),
+      ),
     ),
   }).annotate({
     description:
@@ -6583,7 +7118,10 @@ export const V1PatchNetworkRestrictionsOutput = Schema.Struct({
     Schema.Struct({
       dbAllowedCidrs: Schema.optionalKey(
         Schema.Array(
-          Schema.Struct({ address: Schema.String, type: Schema.Literals(["v4", "v6"]) }),
+          Schema.Struct({
+            address: Schema.String,
+            type: Schema.Union([Schema.Literals(["v4", "v6"]), OpenString]),
+          }),
         ),
       ),
     }).annotate({
@@ -6593,15 +7131,17 @@ export const V1PatchNetworkRestrictionsOutput = Schema.Struct({
   ),
   updated_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
   applied_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
-  status: Schema.Literals(["stored", "applied"]),
+  status: Schema.Union([Schema.Literals(["stored", "applied"]), OpenString]),
 });
 export const V1PauseAProjectInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6609,10 +7149,14 @@ export const V1PauseAProjectInput = Schema.Struct({
 export const V1PushABranchInput = Schema.Struct({
   branch_id_or_ref: Schema.Union([
     Schema.String.annotate({ description: "Project ref" })
-      .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
-      .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
       .check(
-        Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+      )
+      .check(
+        Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+      )
+      .check(
+        Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
           expected: "a string matching the RegExp ^[a-z]+$",
         }),
       ),
@@ -6620,6 +7164,7 @@ export const V1PushABranchInput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -6635,11 +7180,13 @@ export const V1PushABranchOutput = Schema.Struct({
 });
 export const V1ReadOnlyQueryInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6650,11 +7197,13 @@ export const V1ReadOnlyQueryInput = Schema.Struct({
 });
 export const V1RemoveAReadReplicaInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6662,11 +7211,13 @@ export const V1RemoveAReadReplicaInput = Schema.Struct({
 });
 export const V1RemoveProjectAddonInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6701,6 +7252,7 @@ export const V1RemoveProjectSigningKeyInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -6708,11 +7260,13 @@ export const V1RemoveProjectSigningKeyInput = Schema.Struct({
     }),
   ),
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6722,14 +7276,18 @@ export const V1RemoveProjectSigningKeyOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
         "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
     }),
   ),
-  algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
-  status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
+  algorithm: Schema.Union([Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]), OpenString]),
+  status: Schema.Union([
+    Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
+    OpenString,
+  ]),
   public_jwk: Schema.Json.annotate({ expected: "JSON value" }),
   created_at: Schema.String.annotate({ format: "date-time" }),
   updated_at: Schema.String.annotate({ format: "date-time" }),
@@ -6737,10 +7295,14 @@ export const V1RemoveProjectSigningKeyOutput = Schema.Struct({
 export const V1ResetABranchInput = Schema.Struct({
   branch_id_or_ref: Schema.Union([
     Schema.String.annotate({ description: "Project ref" })
-      .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
-      .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
       .check(
-        Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+      )
+      .check(
+        Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+      )
+      .check(
+        Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
           expected: "a string matching the RegExp ^[a-z]+$",
         }),
       ),
@@ -6748,6 +7310,7 @@ export const V1ResetABranchInput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -6763,11 +7326,13 @@ export const V1ResetABranchOutput = Schema.Struct({
 });
 export const V1RestartAProjectInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6775,10 +7340,14 @@ export const V1RestartAProjectInput = Schema.Struct({
 export const V1RestoreABranchInput = Schema.Struct({
   branch_id_or_ref: Schema.Union([
     Schema.String.annotate({ description: "Project ref" })
-      .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
-      .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
       .check(
-        Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+      )
+      .check(
+        Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+      )
+      .check(
+        Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
           expected: "a string matching the RegExp ^[a-z]+$",
         }),
       ),
@@ -6786,6 +7355,7 @@ export const V1RestoreABranchInput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -6799,22 +7369,26 @@ export const V1RestoreABranchOutput = Schema.Struct({
 });
 export const V1RestoreAProjectInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
 export const V1RestorePhysicalBackupInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6832,11 +7406,13 @@ export const V1RestorePhysicalBackupInput = Schema.Struct({
 });
 export const V1RestorePitrBackupInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6856,6 +7432,7 @@ export const V1RevokeTokenInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -6867,27 +7444,31 @@ export const V1RevokeTokenInput = Schema.Struct({
 });
 export const V1RollbackMigrationsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   gte: Schema.String.check(
-    Schema.isPattern(new RegExp("^\\d+$")).annotate({
+    Schema.isPattern(new RegExp("^\\d+$", "u")).annotate({
       expected: "a string matching the RegExp ^\\d+$",
     }),
   ),
 });
 export const V1RunAQueryInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6899,11 +7480,13 @@ export const V1RunAQueryInput = Schema.Struct({
 });
 export const V1ScrapeProjectMetricsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6911,11 +7494,13 @@ export const V1ScrapeProjectMetricsInput = Schema.Struct({
 export const V1ScrapeProjectMetricsOutput = Schema.String;
 export const V1SetupAReadReplicaInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6942,36 +7527,44 @@ export const V1SetupAReadReplicaInput = Schema.Struct({
 });
 export const V1ShutdownRealtimeInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
 export const V1UndoInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   name: Schema.String.check(
-    Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }),
+    Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
   ),
 });
 export const V1UpdateABranchConfigInput = Schema.Struct({
   branch_id_or_ref: Schema.Union([
     Schema.String.annotate({ description: "Project ref" })
-      .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
-      .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
       .check(
-        Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+      )
+      .check(
+        Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+      )
+      .check(
+        Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
           expected: "a string matching the RegExp ^[a-z]+$",
         }),
       ),
@@ -6979,6 +7572,7 @@ export const V1UpdateABranchConfigInput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -7018,6 +7612,7 @@ export const V1UpdateABranchConfigOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -7049,16 +7644,19 @@ export const V1UpdateABranchConfigOutput = Schema.Struct({
     }).check(Schema.isFinite().annotate({ expected: "a finite number" })),
   ),
   persistent: Schema.Boolean,
-  status: Schema.Literals([
-    "CREATING_PROJECT",
-    "RUNNING_MIGRATIONS",
-    "MIGRATIONS_PASSED",
-    "MIGRATIONS_FAILED",
-    "FUNCTIONS_DEPLOYED",
-    "FUNCTIONS_FAILED",
-  ]).annotate({
-    description: "This field is deprecated. List action runs to get branch status instead.",
-  }),
+  status: Schema.Union([
+    Schema.Literals([
+      "CREATING_PROJECT",
+      "RUNNING_MIGRATIONS",
+      "MIGRATIONS_PASSED",
+      "MIGRATIONS_FAILED",
+      "FUNCTIONS_DEPLOYED",
+      "FUNCTIONS_FAILED",
+    ]).annotate({
+      description: "This field is deprecated. List action runs to get branch status instead.",
+    }),
+    OpenString,
+  ]),
   created_at: Schema.String.annotate({ format: "date-time" }),
   updated_at: Schema.String.annotate({ format: "date-time" }),
   review_requested_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
@@ -7066,43 +7664,48 @@ export const V1UpdateABranchConfigOutput = Schema.Struct({
   notify_url: Schema.optionalKey(Schema.String.annotate({ format: "uri" })),
   deletion_scheduled_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
   preview_project_status: Schema.optionalKey(
-    Schema.Literals([
-      "INACTIVE",
-      "ACTIVE_HEALTHY",
-      "ACTIVE_UNHEALTHY",
-      "COMING_UP",
-      "UNKNOWN",
-      "GOING_DOWN",
-      "INIT_FAILED",
-      "REMOVED",
-      "RESTORING",
-      "UPGRADING",
-      "PAUSING",
-      "RESTORE_FAILED",
-      "RESTARTING",
-      "PAUSE_FAILED",
-      "RESIZING",
+    Schema.Union([
+      Schema.Literals([
+        "INACTIVE",
+        "ACTIVE_HEALTHY",
+        "ACTIVE_UNHEALTHY",
+        "COMING_UP",
+        "UNKNOWN",
+        "GOING_DOWN",
+        "INIT_FAILED",
+        "REMOVED",
+        "RESTORING",
+        "UPGRADING",
+        "PAUSING",
+        "RESTORE_FAILED",
+        "RESTARTING",
+        "PAUSE_FAILED",
+        "RESIZING",
+      ]),
+      OpenString,
     ]),
   ),
 });
 export const V1UpdateAFunctionInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   function_slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[A-Za-z0-9_-]+$",
     }),
   ),
   slug: Schema.optionalKey(
     Schema.String.check(
-      Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$")).annotate({
+      Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[A-Za-z0-9_-]+$",
       }),
     ),
@@ -7119,7 +7722,7 @@ export const V1UpdateAFunctionOutput = Schema.Struct({
   id: Schema.String,
   slug: Schema.String,
   name: Schema.String,
-  status: Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]),
+  status: Schema.Union([Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]), OpenString]),
   version: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
@@ -7158,22 +7761,26 @@ export const V1UpdateAFunctionOutput = Schema.Struct({
   verify_jwt: Schema.optionalKey(Schema.Boolean),
   import_map: Schema.optionalKey(Schema.Boolean),
   entrypoint_path: Schema.optionalKey(Schema.String),
-  import_map_path: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+  import_map_path: Schema.optionalKey(Schema.String),
   ezbr_sha256: Schema.optionalKey(Schema.String),
 });
 export const V1UpdateAProjectInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   name: Schema.String.check(
     Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-  ).check(Schema.isMaxLength(256).annotate({ expected: "a value with a length of at most 256" })),
+  ).check(
+    Schema.isMaxCodePoints(256).annotate({ expected: "a string with at most 256 code points" }),
+  ),
 });
 export const V1UpdateAProjectOutput = Schema.Struct({
   id: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
@@ -7192,11 +7799,13 @@ export const V1UpdateAProjectOutput = Schema.Struct({
 });
 export const V1UpdateASsoProviderInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -7204,6 +7813,7 @@ export const V1UpdateASsoProviderInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -7220,8 +7830,8 @@ export const V1UpdateASsoProviderInput = Schema.Struct({
         Schema.Struct({
           name: Schema.optionalKey(Schema.String),
           names: Schema.optionalKey(Schema.Array(Schema.String)),
-          default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
           array: Schema.optionalKey(Schema.Boolean),
+          default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
         }),
       ),
     }),
@@ -7250,19 +7860,22 @@ export const V1UpdateASsoProviderOutput = Schema.Struct({
               Schema.Struct({
                 name: Schema.optionalKey(Schema.String),
                 names: Schema.optionalKey(Schema.Array(Schema.String)),
-                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
                 array: Schema.optionalKey(Schema.Boolean),
+                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
               }),
             ),
           ),
         }),
       ),
       name_id_format: Schema.optionalKey(
-        Schema.Literals([
-          "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified",
-          "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
-          "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
-          "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+        Schema.Union([
+          Schema.Literals([
+            "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified",
+            "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
+            "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+            "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+          ]),
+          OpenString,
         ]),
       ),
     }),
@@ -7281,11 +7894,13 @@ export const V1UpdateASsoProviderOutput = Schema.Struct({
 });
 export const V1UpdateActionRunStatusInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -7315,18 +7930,20 @@ export const V1UpdateActionRunStatusInput = Schema.Struct({
 export const V1UpdateActionRunStatusOutput = Schema.Struct({ message: Schema.Literal("ok") });
 export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   site_url: Schema.optionalKey(
     Schema.Union([
       Schema.String.check(
-        Schema.isPattern(new RegExp("^[^,]+$")).annotate({
+        Schema.isPattern(new RegExp("^[^,]+$", "u")).annotate({
           expected: "a string matching the RegExp ^[^,]+$",
         }),
       ),
@@ -7356,6 +7973,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
         Schema.isPattern(
           new RegExp(
             "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+            "u",
           ),
         ).annotate({
           expected:
@@ -7497,7 +8115,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   saml_external_url: Schema.optionalKey(
     Schema.Union([
       Schema.String.check(
-        Schema.isPattern(new RegExp("^[^,]+$")).annotate({
+        Schema.isPattern(new RegExp("^[^,]+$", "u")).annotate({
           expected: "a string matching the RegExp ^[^,]+$",
         }),
       ),
@@ -7514,21 +8132,29 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   security_captcha_secret: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   sessions_timebox: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })).check(
-        Schema.isGreaterThanOrEqualTo(0).annotate({
-          expected: "a value greater than or equal to 0",
-        }),
-      ),
+      Schema.Number.annotate({
+        description: "Session timebox in hours. Maximum 8760 hours (1 year).",
+      })
+        .check(Schema.isFinite().annotate({ expected: "a finite number" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(0).annotate({
+            expected: "a value greater than or equal to 0",
+          }),
+        ),
       Schema.Null,
     ]),
   ),
   sessions_inactivity_timeout: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })).check(
-        Schema.isGreaterThanOrEqualTo(0).annotate({
-          expected: "a value greater than or equal to 0",
-        }),
-      ),
+      Schema.Number.annotate({
+        description: "Session inactivity timeout in hours. Maximum 8760 hours (1 year).",
+      })
+        .check(Schema.isFinite().annotate({ expected: "a finite number" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(0).annotate({
+            expected: "a value greater than or equal to 0",
+          }),
+        ),
       Schema.Null,
     ]),
   ),
@@ -7537,7 +8163,10 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
     Schema.Union([
       Schema.String.check(
         Schema.isPattern(
-          new RegExp("^(?:\\s*|\\s*[a-zA-Z0-9_-]+(?:\\s*,+\\s*[a-zA-Z0-9_-]+)*(?:\\s*,+)?\\s*)$"),
+          new RegExp(
+            "^(?:\\s*|\\s*[a-zA-Z0-9_-]+(?:\\s*,+\\s*[a-zA-Z0-9_-]+)*(?:\\s*,+)?\\s*)$",
+            "u",
+          ),
         ).annotate({
           expected:
             "a string matching the RegExp ^(?:\\s*|\\s*[a-zA-Z0-9_-]+(?:\\s*,+\\s*[a-zA-Z0-9_-]+)*(?:\\s*,+)?\\s*)$",
@@ -7694,9 +8323,20 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   security_update_password_require_reauthentication: Schema.optionalKey(
     Schema.Union([Schema.Boolean, Schema.Null]),
   ),
+  security_update_password_require_current_password: Schema.optionalKey(
+    Schema.Union([
+      Schema.Boolean.annotate({
+        description: "Require the user's current password when updating their password.",
+      }),
+      Schema.Null,
+    ]),
+  ),
   security_refresh_token_reuse_interval: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      Schema.Number.annotate({
+        description: "Refresh token reuse interval in seconds. Maximum 300 seconds (5 minutes).",
+      })
+        .check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(0).annotate({
             expected: "a value greater than or equal to 0",
@@ -7795,7 +8435,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
     Schema.Union([
       Schema.String.check(
         Schema.isPattern(
-          new RegExp("^(?:[0-9]{1,15}=(?:[0-9]+,[0-9]{1,15}=|[0-9]{2,}=)*[0-9]+,?)?$"),
+          new RegExp("^(?:[0-9]{1,15}=(?:[0-9]+,[0-9]{1,15}=|[0-9]{2,}=)*[0-9]+,?)?$", "u"),
         ).annotate({
           expected:
             "a string matching the RegExp ^(?:[0-9]{1,15}=(?:[0-9]+,[0-9]{1,15}=|[0-9]{2,}=)*[0-9]+,?)?$",
@@ -8071,7 +8711,10 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
       ),
     Schema.Null,
   ]),
-  db_max_pool_size_unit: Schema.Union([Schema.Literals(["connections", "percent"]), Schema.Null]),
+  db_max_pool_size_unit: Schema.Union([
+    Schema.Union([Schema.Literals(["connections", "percent"]), Schema.Null]),
+    OpenString,
+  ]),
   disable_signup: Schema.Union([Schema.Boolean, Schema.Null]),
   external_anonymous_users_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   external_apple_additional_client_ids: Schema.Union([Schema.String, Schema.Null]),
@@ -8327,7 +8970,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   nimbus_oauth_client_id: Schema.Union([Schema.String, Schema.Null]),
-  nimbus_oauth_email_optional: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
+  nimbus_oauth_email_optional: Schema.Union([Schema.Boolean, Schema.Null]),
   nimbus_oauth_client_secret: Schema.Union([Schema.String, Schema.Null]),
   password_hibp_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   password_min_length: Schema.Union([
@@ -8345,13 +8988,16 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   password_required_characters: Schema.Union([
-    Schema.Literals([
-      "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
-      "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
-      "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\\\:\"|<>?,./`~",
-      "",
+    Schema.Union([
+      Schema.Literals([
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
+        "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
+        "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\\\:\"|<>?,./`~",
+        "",
+      ]),
+      Schema.Null,
     ]),
-    Schema.Null,
+    OpenString,
   ]),
   rate_limit_anonymous_users: Schema.Union([
     Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
@@ -8458,8 +9104,8 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   security_sb_forwarded_for_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   security_captcha_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   security_captcha_provider: Schema.Union([
-    Schema.Literals(["turnstile", "hcaptcha"]),
-    Schema.Null,
+    Schema.Union([Schema.Literals(["turnstile", "hcaptcha"]), Schema.Null]),
+    OpenString,
   ]),
   security_captcha_secret: Schema.Union([Schema.String, Schema.Null]),
   security_manual_linking_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
@@ -8477,6 +9123,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
       ),
     Schema.Null,
   ]),
+  security_update_password_require_current_password: Schema.Union([Schema.Boolean, Schema.Null]),
   security_update_password_require_reauthentication: Schema.Union([Schema.Boolean, Schema.Null]),
   sessions_inactivity_timeout: Schema.Union([
     Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
@@ -8532,8 +9179,11 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
       }),
     ),
   sms_provider: Schema.Union([
-    Schema.Literals(["messagebird", "textlocal", "twilio", "twilio_verify", "vonage"]),
-    Schema.Null,
+    Schema.Union([
+      Schema.Literals(["messagebird", "textlocal", "twilio", "twilio_verify", "vonage"]),
+      Schema.Null,
+    ]),
+    OpenString,
   ]),
   sms_template: Schema.Union([Schema.String, Schema.Null]),
   sms_test_otp: Schema.Union([Schema.String, Schema.Null]),
@@ -8558,6 +9208,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -8606,11 +9257,13 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
 });
 export const V1UpdateBackupScheduleInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -8618,7 +9271,7 @@ export const V1UpdateBackupScheduleInput = Schema.Struct({
     description: "Time of day to schedule daily backups, in UTC. Format: HH:MM:SS.",
   }).check(
     Schema.isPattern(
-      new RegExp("^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?$"),
+      new RegExp("^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?$", "u"),
     ).annotate({
       expected:
         "a string matching the RegExp ^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?$",
@@ -8630,7 +9283,7 @@ export const V1UpdateBackupScheduleOutput = Schema.Struct({
     description: "Time of day to schedule daily backups, in UTC. Format: HH:MM:SS.",
   }).check(
     Schema.isPattern(
-      new RegExp("^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?$"),
+      new RegExp("^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?$", "u"),
     ).annotate({
       expected:
         "a string matching the RegExp ^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?$",
@@ -8643,76 +9296,98 @@ export const V1UpdateBackupScheduleOutput = Schema.Struct({
 });
 export const V1UpdateDatabasePasswordInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   password: Schema.String.check(
-    Schema.isMinLength(4).annotate({ expected: "a value with a length of at least 4" }),
+    Schema.isMinCodePoints(4).annotate({ expected: "a string with at least 4 code points" }),
   ),
 });
 export const V1UpdateDatabasePasswordOutput = Schema.Struct({ message: Schema.String });
 export const V1UpdateHostnameConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   custom_hostname: Schema.String.check(
     Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-  ).check(Schema.isMaxLength(253).annotate({ expected: "a value with a length of at most 253" })),
+  ).check(
+    Schema.isMaxCodePoints(253).annotate({ expected: "a string with at most 253 code points" }),
+  ),
 });
 export const V1UpdateHostnameConfigOutput = Schema.Struct({
   status: Schema.optionalKey(
-    Schema.Literals([
-      "1_not_started",
-      "2_initiated",
-      "3_challenge_verified",
-      "4_origin_setup_completed",
-      "5_services_reconfigured",
+    Schema.Union([
+      Schema.Literals([
+        "1_not_started",
+        "2_initiated",
+        "3_challenge_verified",
+        "4_origin_setup_completed",
+        "5_services_reconfigured",
+      ]),
+      OpenString,
     ]),
   ),
   custom_hostname: Schema.optionalKey(Schema.String),
   data: Schema.Struct({
     success: Schema.Boolean,
-    errors: Schema.Array(UpdateCustomHostnameResponseJsonValue),
-    messages: Schema.Array(UpdateCustomHostnameResponseJsonValue),
+    errors: Schema.Array(JsonValue_Output),
+    messages: Schema.Array(JsonValue_Output),
     result: Schema.Struct({
       id: Schema.String,
       hostname: Schema.String,
-      ssl: Schema.Struct({
-        status: Schema.String,
-        validation_records: Schema.optionalKey(
-          Schema.Array(Schema.Struct({ txt_name: Schema.String, txt_value: Schema.String })),
-        ),
-        validation_errors: Schema.optionalKey(
-          Schema.Array(Schema.Struct({ message: Schema.String })),
-        ),
-      }),
-      ownership_verification: Schema.optionalKey(
-        Schema.Struct({ type: Schema.String, name: Schema.String, value: Schema.String }),
+      ssl: Schema.optionalKey(
+        Schema.Struct({
+          status: Schema.optionalKey(Schema.String),
+          validation_records: Schema.optionalKey(
+            Schema.Array(
+              Schema.Struct({
+                txt_name: Schema.optionalKey(Schema.String),
+                txt_value: Schema.optionalKey(Schema.String),
+              }),
+            ),
+          ),
+          validation_errors: Schema.optionalKey(
+            Schema.Array(Schema.Struct({ message: Schema.String })),
+          ),
+        }),
       ),
-      custom_origin_server: Schema.String,
+      ownership_verification: Schema.optionalKey(
+        Schema.Struct({
+          type: Schema.optionalKey(Schema.String),
+          name: Schema.optionalKey(Schema.String),
+          value: Schema.optionalKey(Schema.String),
+        }),
+      ),
+      custom_origin_server: Schema.optionalKey(Schema.String),
       verification_errors: Schema.optionalKey(Schema.Array(Schema.String)),
-      status: Schema.String,
+      status: Schema.optionalKey(Schema.String),
     }),
   }),
 });
 export const V1UpdateJitAccessInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -8722,6 +9397,7 @@ export const V1UpdateJitAccessInput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -8745,6 +9421,7 @@ export const V1UpdateJitAccessInput = Schema.Struct({
                   Schema.isPattern(
                     new RegExp(
                       "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                      "u",
                     ),
                   ).annotate({
                     expected:
@@ -8761,6 +9438,7 @@ export const V1UpdateJitAccessInput = Schema.Struct({
                   Schema.isPattern(
                     new RegExp(
                       "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                      "u",
                     ),
                   ).annotate({
                     expected:
@@ -8782,6 +9460,7 @@ export const V1UpdateJitAccessOutput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -8791,9 +9470,7 @@ export const V1UpdateJitAccessOutput = Schema.Struct({
   ),
   user_roles: Schema.Array(
     Schema.Struct({
-      role: Schema.String.check(
-        Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-      ),
+      role: Schema.String,
       expires_at: Schema.optionalKey(
         Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
       ),
@@ -8806,6 +9483,7 @@ export const V1UpdateJitAccessOutput = Schema.Struct({
                   Schema.isPattern(
                     new RegExp(
                       "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                      "u",
                     ),
                   ).annotate({
                     expected:
@@ -8822,6 +9500,7 @@ export const V1UpdateJitAccessOutput = Schema.Struct({
                   Schema.isPattern(
                     new RegExp(
                       "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                      "u",
                     ),
                   ).annotate({
                     expected:
@@ -8839,11 +9518,13 @@ export const V1UpdateJitAccessOutput = Schema.Struct({
 });
 export const V1UpdateJitAccessConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -8852,15 +9533,19 @@ export const V1UpdateJitAccessConfigInput = Schema.Struct({
 export const V1UpdateJitAccessConfigOutput = Schema.Union(
   [
     Schema.Struct({
-      state: Schema.Literals(["enabled", "disabled"]),
+      state: Schema.Union([Schema.Literals(["enabled", "disabled"]), OpenString]),
       appliedSuccessfully: Schema.optionalKey(Schema.Boolean),
     }),
     Schema.Struct({
       state: Schema.Literal("unavailable"),
-      unavailableReason: Schema.Literals([
-        "postgres_upgrade_required",
-        "ssl_enforcement_required",
-        "temporarily_unavailable",
+      unavailableReason: Schema.Union([
+        Schema.Literals([
+          "platform_unsupported",
+          "postgres_upgrade_required",
+          "ssl_enforcement_required",
+          "temporarily_unavailable",
+        ]),
+        OpenString,
       ]),
     }),
   ],
@@ -8868,11 +9553,13 @@ export const V1UpdateJitAccessConfigOutput = Schema.Union(
 );
 export const V1UpdateNetworkRestrictionsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -8880,7 +9567,7 @@ export const V1UpdateNetworkRestrictionsInput = Schema.Struct({
   dbAllowedCidrsV6: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 export const V1UpdateNetworkRestrictionsOutput = Schema.Struct({
-  entitlement: Schema.Literals(["disallowed", "allowed"]),
+  entitlement: Schema.Union([Schema.Literals(["disallowed", "allowed"]), OpenString]),
   config: Schema.Struct({
     dbAllowedCidrs: Schema.optionalKey(Schema.Array(Schema.String)),
     dbAllowedCidrsV6: Schema.optionalKey(Schema.Array(Schema.String)),
@@ -8897,17 +9584,19 @@ export const V1UpdateNetworkRestrictionsOutput = Schema.Struct({
         "Populated when a new config has been received, but not registered as successfully applied to a project.",
     }),
   ),
-  status: Schema.Literals(["stored", "applied"]),
+  status: Schema.Union([Schema.Literals(["stored", "applied"]), OpenString]),
   updated_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
   applied_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
 });
 export const V1UpdatePgsodiumConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -8922,11 +9611,13 @@ export const V1UpdatePgsodiumConfigOutput = Schema.Struct({
 });
 export const V1UpdatePoolerConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -8971,20 +9662,62 @@ export const V1UpdatePoolerConfigOutput = Schema.Struct({
 });
 export const V1UpdatePostgresConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   effective_cache_size: Schema.optionalKey(Schema.String),
   logical_decoding_work_mem: Schema.optionalKey(Schema.String),
+  "pg_stat_statements.max": Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(100).annotate({
+          expected: "a value greater than or equal to 100",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(45000).annotate({
+          expected: "a value less than or equal to 45000",
+        }),
+      ),
+  ),
+  "pg_net.batch_size": Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(32767).annotate({
+          expected: "a value less than or equal to 32767",
+        }),
+      ),
+  ),
+  autovacuum_max_workers: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
+  ),
+  autovacuum_work_mem: Schema.optionalKey(Schema.String),
   "cron.log_statement": Schema.optionalKey(Schema.Boolean),
   log_autovacuum_min_duration: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
         expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
       }),
     ),
@@ -8998,7 +9731,7 @@ export const V1UpdatePostgresConfigInput = Schema.Struct({
   log_replication_commands: Schema.optionalKey(Schema.Boolean),
   log_startup_progress_interval: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
         expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
       }),
     ),
@@ -9144,7 +9877,7 @@ export const V1UpdatePostgresConfigInput = Schema.Struct({
   shared_buffers: Schema.optionalKey(Schema.String),
   statement_timeout: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
         expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
       }),
     ),
@@ -9153,7 +9886,7 @@ export const V1UpdatePostgresConfigInput = Schema.Struct({
   wal_keep_size: Schema.optionalKey(Schema.String),
   wal_sender_timeout: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
         expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
       }),
     ),
@@ -9161,7 +9894,7 @@ export const V1UpdatePostgresConfigInput = Schema.Struct({
   work_mem: Schema.optionalKey(Schema.String),
   checkpoint_timeout: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: s" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
         expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
       }),
     ),
@@ -9172,10 +9905,50 @@ export const V1UpdatePostgresConfigInput = Schema.Struct({
 export const V1UpdatePostgresConfigOutput = Schema.Struct({
   effective_cache_size: Schema.optionalKey(Schema.String),
   logical_decoding_work_mem: Schema.optionalKey(Schema.String),
+  "pg_stat_statements.max": Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(100).annotate({
+          expected: "a value greater than or equal to 100",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(45000).annotate({
+          expected: "a value less than or equal to 45000",
+        }),
+      ),
+  ),
+  "pg_net.batch_size": Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(32767).annotate({
+          expected: "a value less than or equal to 32767",
+        }),
+      ),
+  ),
+  autovacuum_max_workers: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
+  ),
+  autovacuum_work_mem: Schema.optionalKey(Schema.String),
   "cron.log_statement": Schema.optionalKey(Schema.Boolean),
   log_autovacuum_min_duration: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
         expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
       }),
     ),
@@ -9189,7 +9962,7 @@ export const V1UpdatePostgresConfigOutput = Schema.Struct({
   log_replication_commands: Schema.optionalKey(Schema.Boolean),
   log_startup_progress_interval: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
         expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
       }),
     ),
@@ -9331,11 +10104,13 @@ export const V1UpdatePostgresConfigOutput = Schema.Struct({
         }),
       ),
   ),
-  session_replication_role: Schema.optionalKey(Schema.Literals(["origin", "replica", "local"])),
+  session_replication_role: Schema.optionalKey(
+    Schema.Union([Schema.Literals(["origin", "replica", "local"]), OpenString]),
+  ),
   shared_buffers: Schema.optionalKey(Schema.String),
   statement_timeout: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
         expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
       }),
     ),
@@ -9344,7 +10119,7 @@ export const V1UpdatePostgresConfigOutput = Schema.Struct({
   wal_keep_size: Schema.optionalKey(Schema.String),
   wal_sender_timeout: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
         expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
       }),
     ),
@@ -9352,7 +10127,7 @@ export const V1UpdatePostgresConfigOutput = Schema.Struct({
   work_mem: Schema.optionalKey(Schema.String),
   checkpoint_timeout: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: s" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
         expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
       }),
     ),
@@ -9361,11 +10136,13 @@ export const V1UpdatePostgresConfigOutput = Schema.Struct({
 });
 export const V1UpdatePostgrestServiceConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -9398,6 +10175,30 @@ export const V1UpdatePostgrestServiceConfigInput = Schema.Struct({
       ),
   ),
   db_pool_acquisition_timeout: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(60).annotate({ expected: "a value less than or equal to 60" }),
+      ),
+  ),
+  db_pool_max_lifetime: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(3600).annotate({
+          expected: "a value less than or equal to 3600",
+        }),
+      ),
+  ),
+  db_pool_max_idletime: Schema.optionalKey(
     Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(0).annotate({
@@ -9457,14 +10258,48 @@ export const V1UpdatePostgrestServiceConfigOutput = Schema.Struct({
       ),
     Schema.Null,
   ]),
+  db_pool_max_lifetime: Schema.Union([
+    Schema.Number.annotate({
+      description: "If `null`, the value is automatically configured to 1800.",
+    })
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(3600).annotate({
+          expected: "a value less than or equal to 3600",
+        }),
+      ),
+    Schema.Null,
+  ]),
+  db_pool_max_idletime: Schema.Union([
+    Schema.Number.annotate({
+      description: "If `null`, the value is automatically configured to 30.",
+    })
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(60).annotate({ expected: "a value less than or equal to 60" }),
+      ),
+    Schema.Null,
+  ]),
 });
 export const V1UpdateProjectApiKeyInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -9472,6 +10307,7 @@ export const V1UpdateProjectApiKeyInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -9481,11 +10317,13 @@ export const V1UpdateProjectApiKeyInput = Schema.Struct({
   reveal: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
   name: Schema.optionalKey(
     Schema.String.check(
-      Schema.isMinLength(4).annotate({ expected: "a value with a length of at least 4" }),
+      Schema.isMinCodePoints(4).annotate({ expected: "a string with at least 4 code points" }),
     )
-      .check(Schema.isMaxLength(64).annotate({ expected: "a value with a length of at most 64" }))
       .check(
-        Schema.isPattern(new RegExp("^[a-z_][a-z0-9_]+$")).annotate({
+        Schema.isMaxCodePoints(64).annotate({ expected: "a string with at most 64 code points" }),
+      )
+      .check(
+        Schema.isPattern(new RegExp("^[a-z_][a-z0-9_]+$", "u")).annotate({
           expected: "a string matching the RegExp ^[a-z_][a-z0-9_]+$",
         }),
       ),
@@ -9502,7 +10340,10 @@ export const V1UpdateProjectApiKeyOutput = Schema.Struct({
   api_key: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   id: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   type: Schema.optionalKey(
-    Schema.Union([Schema.Literals(["legacy", "publishable", "secret"]), Schema.Null]),
+    Schema.Union([
+      Schema.Union([Schema.Literals(["legacy", "publishable", "secret"]), Schema.Null]),
+      OpenString,
+    ]),
   ),
   prefix: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   name: Schema.String,
@@ -9523,11 +10364,13 @@ export const V1UpdateProjectApiKeyOutput = Schema.Struct({
 });
 export const V1UpdateProjectLegacyApiKeysInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -9539,6 +10382,7 @@ export const V1UpdateProjectSigningKeyInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -9546,11 +10390,13 @@ export const V1UpdateProjectSigningKeyInput = Schema.Struct({
     }),
   ),
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -9561,25 +10407,31 @@ export const V1UpdateProjectSigningKeyOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
         "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
     }),
   ),
-  algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
-  status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
+  algorithm: Schema.Union([Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]), OpenString]),
+  status: Schema.Union([
+    Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
+    OpenString,
+  ]),
   public_jwk: Schema.Json.annotate({ expected: "JSON value" }),
   created_at: Schema.String.annotate({ format: "date-time" }),
   updated_at: Schema.String.annotate({ format: "date-time" }),
 });
 export const V1UpdateRealtimeConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -9621,8 +10473,8 @@ export const V1UpdateRealtimeConfigInput = Schema.Struct({
         }),
       )
       .check(
-        Schema.isLessThanOrEqualTo(50000).annotate({
-          expected: "a value less than or equal to 50000",
+        Schema.isLessThanOrEqualTo(300000).annotate({
+          expected: "a value less than or equal to 300000",
         }),
       ),
   ),
@@ -9728,11 +10580,13 @@ export const V1UpdateRealtimeConfigInput = Schema.Struct({
 });
 export const V1UpdateSslEnforcementConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -9744,11 +10598,13 @@ export const V1UpdateSslEnforcementConfigOutput = Schema.Struct({
 });
 export const V1UpdateStorageConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -9844,11 +10700,13 @@ export const V1UpdateStorageConfigInput = Schema.Struct({
 });
 export const V1UpgradePostgresVersionInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -9860,11 +10718,13 @@ export const V1UpgradePostgresVersionInput = Schema.Struct({
 export const V1UpgradePostgresVersionOutput = Schema.Struct({ tracking_id: Schema.String });
 export const V1UpsertAMigrationInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -9877,71 +10737,94 @@ export const V1UpsertAMigrationInput = Schema.Struct({
 });
 export const V1VerifyDnsConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
 export const V1VerifyDnsConfigOutput = Schema.Struct({
   status: Schema.optionalKey(
-    Schema.Literals([
-      "1_not_started",
-      "2_initiated",
-      "3_challenge_verified",
-      "4_origin_setup_completed",
-      "5_services_reconfigured",
+    Schema.Union([
+      Schema.Literals([
+        "1_not_started",
+        "2_initiated",
+        "3_challenge_verified",
+        "4_origin_setup_completed",
+        "5_services_reconfigured",
+      ]),
+      OpenString,
     ]),
   ),
   custom_hostname: Schema.optionalKey(Schema.String),
   data: Schema.Struct({
     success: Schema.Boolean,
-    errors: Schema.Array(UpdateCustomHostnameResponseJsonValue),
-    messages: Schema.Array(UpdateCustomHostnameResponseJsonValue),
+    errors: Schema.Array(JsonValue_Output),
+    messages: Schema.Array(JsonValue_Output),
     result: Schema.Struct({
       id: Schema.String,
       hostname: Schema.String,
-      ssl: Schema.Struct({
-        status: Schema.String,
-        validation_records: Schema.optionalKey(
-          Schema.Array(Schema.Struct({ txt_name: Schema.String, txt_value: Schema.String })),
-        ),
-        validation_errors: Schema.optionalKey(
-          Schema.Array(Schema.Struct({ message: Schema.String })),
-        ),
-      }),
-      ownership_verification: Schema.optionalKey(
-        Schema.Struct({ type: Schema.String, name: Schema.String, value: Schema.String }),
+      ssl: Schema.optionalKey(
+        Schema.Struct({
+          status: Schema.optionalKey(Schema.String),
+          validation_records: Schema.optionalKey(
+            Schema.Array(
+              Schema.Struct({
+                txt_name: Schema.optionalKey(Schema.String),
+                txt_value: Schema.optionalKey(Schema.String),
+              }),
+            ),
+          ),
+          validation_errors: Schema.optionalKey(
+            Schema.Array(Schema.Struct({ message: Schema.String })),
+          ),
+        }),
       ),
-      custom_origin_server: Schema.String,
+      ownership_verification: Schema.optionalKey(
+        Schema.Struct({
+          type: Schema.optionalKey(Schema.String),
+          name: Schema.optionalKey(Schema.String),
+          value: Schema.optionalKey(Schema.String),
+        }),
+      ),
+      custom_origin_server: Schema.optionalKey(Schema.String),
       verification_errors: Schema.optionalKey(Schema.Array(Schema.String)),
-      status: Schema.String,
+      status: Schema.optionalKey(Schema.String),
     }),
   }),
 });
 export const V2AssignOrganizationMemberRoleInput = Schema.Struct({
   slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
   user_id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
       new RegExp(
-        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+        "u",
       ),
     ).annotate({
       expected:
-        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
     }),
   ),
   data: Schema.Struct({
     type: Schema.Literal("organization_member_role").annotate({ description: "Resource type." }),
     attributes: Schema.Struct({
-      role: Schema.Literals(["owner", "administrator", "developer", "read-only"]).annotate({
+      role: Schema.Literals([
+        "owner",
+        "administrator",
+        "developer",
+        "read-only",
+        "no-access",
+      ]).annotate({
         description:
           "Role name to assign. Must be one of: owner, administrator, developer, read-only. Must be on a Team or Enterprise plan to use the read-only role.",
       }),
@@ -9965,23 +10848,212 @@ export const V2AssignOrganizationMemberRoleOutput = Schema.Struct({
       name: Schema.String.annotate({
         description: "Role name. For project-scoped assignments this is the base role name.",
       }),
-      scope: Schema.Literals(["organization", "project"]).annotate({
-        description:
-          "Whether this role applies org-wide or is scoped to specific projects for the user.",
-      }),
+      scope: Schema.Union([
+        Schema.Literals(["organization", "project"]).annotate({
+          description:
+            "Whether this role applies org-wide or is scoped to specific projects for the user.",
+        }),
+        OpenString,
+      ]),
       projects: Schema.Array(Schema.Struct({ ref: Schema.String, name: Schema.String })).annotate({
         description: "Project refs this role is scoped to. Empty array for org-level roles.",
       }),
     }),
   }),
 });
+export const V2CreateABranchInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  data: Schema.Struct({
+    type: Schema.Literal("branch").annotate({ description: "Resource type." }),
+    attributes: Schema.Struct({
+      name: Schema.String.annotate({ description: "Name of the branch." }).check(
+        Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+      ),
+      git_branch: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "Git branch to track. Must exist on the connected GitHub repository when the project has one.",
+        }).check(
+          Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+        ),
+      ),
+      region: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "Region to create the branch in. Omit to inherit the region of the project it branches from.",
+        }),
+      ),
+      persistent: Schema.optionalKey(
+        Schema.Boolean.annotate({
+          description:
+            "Whether the branch is kept when its git branch is deleted or its PR is merged.",
+        }),
+      ),
+      with_data: Schema.optionalKey(
+        Schema.Boolean.annotate({
+          description: "Whether to seed the branch from the project's latest physical backup.",
+        }),
+      ),
+      desired_instance_size: Schema.optionalKey(
+        Schema.Literals([
+          "nano",
+          "micro",
+          "small",
+          "medium",
+          "large",
+          "xlarge",
+          "2xlarge",
+          "4xlarge",
+          "8xlarge",
+          "12xlarge",
+          "16xlarge",
+          "24xlarge",
+          "24xlarge_optimized_memory",
+          "24xlarge_optimized_cpu",
+          "24xlarge_high_memory",
+          "48xlarge",
+          "48xlarge_optimized_memory",
+          "48xlarge_optimized_cpu",
+          "48xlarge_high_memory",
+        ]).annotate({
+          description:
+            "Desired instance size. Omit this field to always default to the smallest possible size.",
+        }),
+      ),
+      desired_disk_size_gb: Schema.optionalKey(
+        Schema.Number.annotate({
+          description:
+            "Desired disk size in GB. Omit this field to default to the smallest disk size available on the plan.",
+        })
+          .check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(8).annotate({
+              expected: "a value greater than or equal to 8",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(61440).annotate({
+              expected: "a value less than or equal to 61440",
+            }),
+          ),
+      ),
+      notify_url: Schema.optionalKey(
+        Schema.String.annotate({
+          description: "HTTP endpoint to receive branch status updates.",
+          format: "uri",
+        }),
+      ),
+    }),
+  }),
+});
+export const V2CreateABranchOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("branch").annotate({ description: "Resource type." }),
+    id: Schema.String.annotate({ description: "ID of the branch.", format: "uuid" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
+        ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
+    ),
+    attributes: Schema.Struct({
+      name: Schema.String.annotate({ description: "Name of the branch." }),
+      project_ref: Schema.String.annotate({
+        description: "Ref of the project backing this branch.",
+      }),
+      parent_project_ref: Schema.String.annotate({
+        description: "Ref of the project it branches from.",
+      }),
+      is_default: Schema.Boolean.annotate({
+        description: "Whether this is the default branch of the project.",
+      }),
+      persistent: Schema.Boolean.annotate({
+        description:
+          "Whether the branch is kept when its git branch is deleted or its PR is merged.",
+      }),
+      with_data: Schema.Boolean.annotate({
+        description: "Whether the branch is seeded from the project's data.",
+      }),
+      git_branch: Schema.optionalKey(
+        Schema.String.annotate({ description: "Git branch being tracked." }),
+      ),
+      notify_url: Schema.optionalKey(
+        Schema.String.annotate({
+          description: "HTTP endpoint receiving branch status updates.",
+          format: "uri",
+        }),
+      ),
+      created_at: Schema.String.annotate({
+        description: "Creation timestamp.",
+        format: "date-time",
+      }),
+      updated_at: Schema.String.annotate({
+        description: "Last update timestamp.",
+        format: "date-time",
+      }),
+    }),
+  }),
+});
+export const V2CreateComputeInstanceUploadInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  name: Schema.String.check(
+    Schema.isPattern(new RegExp("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$", "u")).annotate({
+      expected: "a string matching the RegExp ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
+    }),
+  ),
+});
+export const V2CreateComputeInstanceUploadOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("project_compute_instance_upload").annotate({
+      description: "Resource type.",
+    }),
+    id: Schema.String.annotate({
+      description: "Upload id to pass to the deploy endpoint as `context_upload_id`.",
+    }),
+    attributes: Schema.Struct({
+      url: Schema.String.annotate({
+        description: "Presigned destination for the `.tar.gz` build context.",
+      }),
+      method: Schema.String,
+      expires_at: Schema.String.annotate({
+        description: "When the slot stops accepting the upload.",
+      }),
+    }),
+  }),
+});
 export const V2CreateLogDrainInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -10096,7 +11168,7 @@ export const V2CreateLogDrainOutput = Schema.Struct({
       config: Schema.Union([
         Schema.Struct({
           url: Schema.optionalKey(Schema.String),
-          http: Schema.optionalKey(Schema.Literals(["http1", "http2"])),
+          http: Schema.optionalKey(Schema.Union([Schema.Literals(["http1", "http2"]), OpenString])),
           gzip: Schema.optionalKey(Schema.Boolean),
           headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
         }).annotate({ title: "webhook" }),
@@ -10169,26 +11241,388 @@ export const V2CreateLogDrainOutput = Schema.Struct({
           headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
         }).annotate({ title: "otlp" }),
       ]),
-      backend_type: Schema.Literals([
-        "postgres",
-        "bigquery",
-        "clickhouse",
-        "webhook",
-        "datadog",
-        "loki",
-        "sentry",
-        "s3",
-        "axiom",
-        "last9",
-        "otlp",
-        "syslog",
+      backend_type: Schema.Union([
+        Schema.Literals([
+          "postgres",
+          "bigquery",
+          "clickhouse",
+          "webhook",
+          "datadog",
+          "loki",
+          "sentry",
+          "s3",
+          "axiom",
+          "last9",
+          "otlp",
+          "syslog",
+        ]),
+        OpenString,
       ]),
+    }),
+  }),
+});
+export const V2CreateNotebookInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  data: Schema.Struct({
+    type: Schema.Literal("notebook").annotate({ description: "Resource type." }),
+    attributes: Schema.Struct({
+      name: Schema.String.check(
+        Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+      ).check(
+        Schema.isMaxCodePoints(255).annotate({ expected: "a string with at most 255 code points" }),
+      ),
+      description: Schema.optionalKey(
+        Schema.String.check(
+          Schema.isMaxCodePoints(10000).annotate({
+            expected: "a string with at most 10000 code points",
+          }),
+        ),
+      ),
+      favorite: Schema.optionalKey(Schema.Boolean),
+      content: Schema.Struct({
+        cells: Schema.Array(
+          Schema.Union(
+            [
+              Schema.StructWithRest(
+                Schema.Struct({
+                  id: Schema.optionalKey(Schema.String),
+                  type: Schema.Literal("markdown"),
+                  text: Schema.String,
+                }),
+                [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+              ),
+              Schema.StructWithRest(
+                Schema.Struct({
+                  id: Schema.optionalKey(Schema.String),
+                  type: Schema.Literal("database"),
+                  sql: Schema.String.annotate({
+                    description: "SQL run against the project database.",
+                  }),
+                  row_limit: Schema.optionalKey(
+                    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+                      .check(
+                        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                          expected: "a value less than or equal to 9007199254740991",
+                        }),
+                      )
+                      .check(
+                        Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" }),
+                      ),
+                  ),
+                  database_identifier: Schema.optionalKey(
+                    Schema.String.annotate({
+                      description: "Read replica to run against. Omit to use the primary database.",
+                    }),
+                  ),
+                  title: Schema.optionalKey(Schema.String),
+                  view: Schema.optionalKey(Schema.Literals(["table", "chart"])),
+                  chart: Schema.optionalKey(
+                    Schema.StructWithRest(
+                      Schema.Struct({
+                        type: Schema.Literals(["bar", "line"]),
+                        x_column: Schema.String.annotate({
+                          description: "Result column used for the x axis.",
+                        }),
+                        y_series: Schema.Array(
+                          Schema.StructWithRest(
+                            Schema.Struct({
+                              column: Schema.String.annotate({
+                                description: "Result column plotted as a series.",
+                              }),
+                            }),
+                            [
+                              Schema.Record(
+                                Schema.String,
+                                Schema.Json.annotate({ expected: "JSON value" }),
+                              ),
+                            ],
+                          ),
+                        ).check(
+                          Schema.isMaxLength(3).annotate({
+                            expected: "a value with a length of at most 3",
+                          }),
+                        ),
+                        scale: Schema.Literals(["linear", "log"]),
+                        cumulative: Schema.Boolean,
+                        show_labels: Schema.Boolean,
+                      }),
+                      [
+                        Schema.Record(
+                          Schema.String,
+                          Schema.Json.annotate({ expected: "JSON value" }),
+                        ),
+                      ],
+                    ).annotate({
+                      description: "Chart configuration, retained even while `view` is `table`.",
+                    }),
+                  ),
+                }),
+                [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+              ),
+              Schema.StructWithRest(
+                Schema.Struct({
+                  id: Schema.optionalKey(Schema.String),
+                  type: Schema.Literal("log"),
+                  sql: Schema.String.annotate({ description: "SQL run against the project logs." }),
+                  time_range: Schema.Union(
+                    [
+                      Schema.StructWithRest(
+                        Schema.Struct({
+                          type: Schema.Literal("absolute"),
+                          start: Schema.String.annotate({
+                            description: "ISO 8601 start of the range.",
+                          }),
+                          end: Schema.String.annotate({
+                            description: "ISO 8601 end of the range.",
+                          }),
+                        }),
+                        [
+                          Schema.Record(
+                            Schema.String,
+                            Schema.Json.annotate({ expected: "JSON value" }),
+                          ),
+                        ],
+                      ),
+                      Schema.StructWithRest(
+                        Schema.Struct({
+                          type: Schema.Literal("relative"),
+                          unit: Schema.Literals(["minute", "hour", "day", "week", "month", "year"]),
+                          amount: Schema.Number.check(
+                            Schema.isInt().annotate({ expected: "an integer" }),
+                          )
+                            .check(
+                              Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                                expected: "a value less than or equal to 9007199254740991",
+                              }),
+                            )
+                            .check(
+                              Schema.isGreaterThan(0).annotate({
+                                expected: "a value greater than 0",
+                              }),
+                            ),
+                        }),
+                        [
+                          Schema.Record(
+                            Schema.String,
+                            Schema.Json.annotate({ expected: "JSON value" }),
+                          ),
+                        ],
+                      ),
+                    ],
+                    { mode: "oneOf" },
+                  ),
+                  title: Schema.optionalKey(Schema.String),
+                  view: Schema.optionalKey(Schema.Literals(["table", "chart"])),
+                  chart: Schema.optionalKey(
+                    Schema.StructWithRest(
+                      Schema.Struct({
+                        type: Schema.Literals(["bar", "line"]),
+                        x_column: Schema.String.annotate({
+                          description: "Result column used for the x axis.",
+                        }),
+                        y_series: Schema.Array(
+                          Schema.StructWithRest(
+                            Schema.Struct({
+                              column: Schema.String.annotate({
+                                description: "Result column plotted as a series.",
+                              }),
+                            }),
+                            [
+                              Schema.Record(
+                                Schema.String,
+                                Schema.Json.annotate({ expected: "JSON value" }),
+                              ),
+                            ],
+                          ),
+                        ).check(
+                          Schema.isMaxLength(3).annotate({
+                            expected: "a value with a length of at most 3",
+                          }),
+                        ),
+                        scale: Schema.Literals(["linear", "log"]),
+                        cumulative: Schema.Boolean,
+                        show_labels: Schema.Boolean,
+                      }),
+                      [
+                        Schema.Record(
+                          Schema.String,
+                          Schema.Json.annotate({ expected: "JSON value" }),
+                        ),
+                      ],
+                    ).annotate({
+                      description: "Chart configuration, retained even while `view` is `table`.",
+                    }),
+                  ),
+                }),
+                [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+              ),
+            ],
+            { mode: "oneOf" },
+          ),
+        ),
+      }),
+    }),
+  }),
+});
+export const V2CreateNotebookOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("notebook").annotate({ description: "Resource type." }),
+    id: Schema.String,
+    attributes: Schema.Struct({
+      name: Schema.String,
+      description: Schema.Union([Schema.String, Schema.Null]),
+      favorite: Schema.Boolean,
+      inserted_at: Schema.String,
+      updated_at: Schema.String,
+      owner: Schema.Union([
+        Schema.Struct({
+          id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          username: Schema.String,
+        }).annotate({ description: "User who created the notebook." }),
+        Schema.Null,
+      ]),
+      updated_by: Schema.Union([
+        Schema.Struct({
+          id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          username: Schema.String,
+        }).annotate({ description: "User who last wrote to the notebook." }),
+        Schema.Null,
+      ]),
+      content: Schema.Struct({
+        schema_version: Schema.Number.check(
+          Schema.isFinite().annotate({ expected: "a finite number" }),
+        ),
+        cells: Schema.Array(
+          Schema.Union(
+            [
+              Schema.Struct({
+                id: Schema.String,
+                type: Schema.Literal("markdown"),
+                text: Schema.String,
+              }),
+              Schema.Struct({
+                id: Schema.String,
+                type: Schema.Literal("database"),
+                sql: Schema.String.annotate({
+                  description: "SQL run against the project database.",
+                }),
+                row_limit: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+                  .check(
+                    Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                      expected: "a value less than or equal to 9007199254740991",
+                    }),
+                  )
+                  .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
+                database_identifier: Schema.optionalKey(
+                  Schema.String.annotate({
+                    description: "Read replica to run against. Omit to use the primary database.",
+                  }),
+                ),
+                title: Schema.optionalKey(Schema.String),
+                view: Schema.optionalKey(
+                  Schema.Union([Schema.Literals(["table", "chart"]), OpenString]),
+                ),
+                chart: Schema.optionalKey(
+                  Schema.Struct({
+                    type: Schema.Union([Schema.Literals(["bar", "line"]), OpenString]),
+                    x_column: Schema.String.annotate({
+                      description: "Result column used for the x axis.",
+                    }),
+                    y_series: Schema.Array(
+                      Schema.Struct({
+                        column: Schema.String.annotate({
+                          description: "Result column plotted as a series.",
+                        }),
+                      }),
+                    ),
+                    scale: Schema.Union([Schema.Literals(["linear", "log"]), OpenString]),
+                    cumulative: Schema.Boolean,
+                    show_labels: Schema.Boolean,
+                  }).annotate({
+                    description: "Chart configuration, retained even while `view` is `table`.",
+                  }),
+                ),
+              }),
+              Schema.Struct({
+                id: Schema.String,
+                type: Schema.Literal("log"),
+                sql: Schema.String.annotate({ description: "SQL run against the project logs." }),
+                time_range: Schema.Union(
+                  [
+                    Schema.Struct({
+                      type: Schema.Literal("absolute"),
+                      start: Schema.String.annotate({
+                        description: "ISO 8601 start of the range.",
+                      }),
+                      end: Schema.String.annotate({ description: "ISO 8601 end of the range." }),
+                    }),
+                    Schema.Struct({
+                      type: Schema.Literal("relative"),
+                      unit: Schema.Union([
+                        Schema.Literals(["minute", "hour", "day", "week", "month", "year"]),
+                        OpenString,
+                      ]),
+                      amount: Schema.Number.check(
+                        Schema.isInt().annotate({ expected: "an integer" }),
+                      )
+                        .check(
+                          Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                            expected: "a value less than or equal to 9007199254740991",
+                          }),
+                        )
+                        .check(
+                          Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" }),
+                        ),
+                    }),
+                  ],
+                  { mode: "oneOf" },
+                ),
+                title: Schema.optionalKey(Schema.String),
+                view: Schema.optionalKey(
+                  Schema.Union([Schema.Literals(["table", "chart"]), OpenString]),
+                ),
+                chart: Schema.optionalKey(
+                  Schema.Struct({
+                    type: Schema.Union([Schema.Literals(["bar", "line"]), OpenString]),
+                    x_column: Schema.String.annotate({
+                      description: "Result column used for the x axis.",
+                    }),
+                    y_series: Schema.Array(
+                      Schema.Struct({
+                        column: Schema.String.annotate({
+                          description: "Result column plotted as a series.",
+                        }),
+                      }),
+                    ),
+                    scale: Schema.Union([Schema.Literals(["linear", "log"]), OpenString]),
+                    cumulative: Schema.Boolean,
+                    show_labels: Schema.Boolean,
+                  }).annotate({
+                    description: "Chart configuration, retained even while `view` is `table`.",
+                  }),
+                ),
+              }),
+            ],
+            { mode: "oneOf" },
+          ),
+        ),
+      }),
     }),
   }),
 });
 export const V2CreateOrganizationInvitationsInput = Schema.Struct({
   slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -10203,15 +11637,22 @@ export const V2CreateOrganizationInvitationsInput = Schema.Struct({
           Schema.isPattern(
             new RegExp(
               "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+              "u",
             ),
           ).annotate({
             expected:
               "a string matching the RegExp ^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
           }),
         ),
-        role: Schema.Literals(["owner", "administrator", "developer", "read-only"]).annotate({
+        role: Schema.Literals([
+          "owner",
+          "administrator",
+          "developer",
+          "read-only",
+          "no-access",
+        ]).annotate({
           description:
-            "Role name to assign. Must be on a Team or Enterprise plan to use the read-only role.",
+            "Role name to assign. Must be on an Enterprise plan to use the read-only or no-access roles. no-access grants no project visibility until project-scoped roles are assigned separately.",
         }),
         projects: Schema.optionalKey(
           Schema.Array(
@@ -10236,7 +11677,52 @@ export const V2CreateOrganizationInvitationsOutput = Schema.Struct({
   error: Schema.optionalKey(
     Schema.Struct({
       id: Schema.optionalKey(Schema.String),
-      code: Schema.String,
+      code: Schema.Union([
+        Schema.Literals([
+          "bad_request",
+          "forbidden",
+          "internal_server_error",
+          "not_found",
+          "payment_required",
+          "rate_limit_exceeded",
+          "request_timeout",
+          "request_too_large",
+          "unauthorized",
+          "validation_failed",
+          "agentic_credential_not_found",
+          "backup_unsupported",
+          "branch_admin_required",
+          "compute_build_context_too_large",
+          "compute_build_in_progress",
+          "compute_deploy_rate_limit_exceeded",
+          "compute_instance_limit_exceeded",
+          "compute_instance_not_found",
+          "compute_not_enabled",
+          "compute_request_rejected",
+          "compute_unavailable",
+          "notebook_cell_duplicate",
+          "notebook_cell_unknown",
+          "notebook_disabled",
+          "notebook_not_found",
+          "notebook_sort_invalid",
+          "organization_invitation_email_delivery_failed",
+          "organization_invitations_partially_failed",
+          "organization_role_name_invalid",
+          "organization_role_not_entitled",
+          "pagination_cursor_invalid",
+          "project_branch_resync_unsupported",
+          "project_not_found",
+          "project_privatelink_disabled",
+          "project_transfer_disabled",
+          "delivery_not_found",
+          "endpoint_disabled",
+          "endpoint_event_type_not_subscribed",
+          "endpoint_not_found",
+          "endpoint_url_unresolvable",
+          "webhooks_access_disabled",
+        ]),
+        OpenString,
+      ]),
       message: Schema.String,
       description: Schema.optionalKey(Schema.String),
       links: Schema.optionalKey(
@@ -10287,6 +11773,7 @@ export const V2CreateOrganizationInvitationsOutput = Schema.Struct({
                 Schema.isPattern(
                   new RegExp(
                     "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+                    "u",
                   ),
                 ).annotate({
                   expected:
@@ -10310,6 +11797,7 @@ export const V2CreateOrganizationInvitationsOutput = Schema.Struct({
           Schema.isPattern(
             new RegExp(
               "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+              "u",
             ),
           ).annotate({
             expected:
@@ -10322,11 +11810,13 @@ export const V2CreateOrganizationInvitationsOutput = Schema.Struct({
 });
 export const V2CreatePrivateLinkAssociationInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -10337,11 +11827,15 @@ export const V2CreatePrivateLinkAssociationInput = Schema.Struct({
         description: "The AWS account ID to add to the project PrivateLink share.",
       })
         .check(
-          Schema.isMinLength(12).annotate({ expected: "a value with a length of at least 12" }),
+          Schema.isMinCodePoints(12).annotate({
+            expected: "a string with at least 12 code points",
+          }),
         )
-        .check(Schema.isMaxLength(12).annotate({ expected: "a value with a length of at most 12" }))
         .check(
-          Schema.isPattern(new RegExp("^\\d{12}$")).annotate({
+          Schema.isMaxCodePoints(12).annotate({ expected: "a string with at most 12 code points" }),
+        )
+        .check(
+          Schema.isPattern(new RegExp("^\\d{12}$", "u")).annotate({
             expected: "a string matching the RegExp ^\\d{12}$",
           }),
         ),
@@ -10349,7 +11843,9 @@ export const V2CreatePrivateLinkAssociationInput = Schema.Struct({
         Schema.String.annotate({
           description: "Optional human-readable name for the AWS account.",
         }).check(
-          Schema.isMaxLength(128).annotate({ expected: "a value with a length of at most 128" }),
+          Schema.isMaxCodePoints(128).annotate({
+            expected: "a string with at most 128 code points",
+          }),
         ),
       ),
       database_identifier: Schema.optionalKey(
@@ -10370,28 +11866,35 @@ export const V2CreatePrivateLinkAssociationOutput = Schema.Struct({
         description: "The AWS account ID this PrivateLink share is associated with.",
       })
         .check(
-          Schema.isMinLength(12).annotate({ expected: "a value with a length of at least 12" }),
+          Schema.isMinCodePoints(12).annotate({
+            expected: "a string with at least 12 code points",
+          }),
         )
-        .check(Schema.isMaxLength(12).annotate({ expected: "a value with a length of at most 12" }))
         .check(
-          Schema.isPattern(new RegExp("^\\d{12}$")).annotate({
+          Schema.isMaxCodePoints(12).annotate({ expected: "a string with at most 12 code points" }),
+        )
+        .check(
+          Schema.isPattern(new RegExp("^\\d{12}$", "u")).annotate({
             expected: "a string matching the RegExp ^\\d{12}$",
           }),
         ),
       account_name: Schema.optionalKey(
         Schema.String.annotate({ description: "Human-readable name for the AWS account." }),
       ),
-      status: Schema.Literals([
-        "CREATING",
-        "READY",
-        "ASSOCIATION_REQUEST_EXPIRED",
-        "ASSOCIATION_ACCEPTED",
-        "CREATION_FAILED",
-        "DELETING",
-      ]).annotate({
-        description:
-          "\n  - `CREATING`: The PrivateLink resources and the Association are in the process of being created. The PrivateLink Share cannot be accepted yet.\n  - `READY`: The PrivateLink resources have been created and the PrivateLink Share can be accepted for the duration of 12h after sharing. See `shared_at`.\n  - `ASSOCIATION_REQUEST_EXPIRED`: The PrivateLink Share has not been accepted within the 12h time limit. This association can now be deleted.\n  - `ASSOCIATION_ACCEPTED`: The PrivateLink Share was successfully accepted.\n  - `CREATION_FAILED`: The PrivateLink resources failed to create. This likely means something went wrong on Supabase's and and support should be contacted.\n  - `DELETING`: The PrivateLink resources and the Association are in the process of being deleted. The PrivateLink Share cannot be accepted yet.\n",
-      }),
+      status: Schema.Union([
+        Schema.Literals([
+          "CREATING",
+          "READY",
+          "ASSOCIATION_REQUEST_EXPIRED",
+          "ASSOCIATION_ACCEPTED",
+          "CREATION_FAILED",
+          "DELETING",
+        ]).annotate({
+          description:
+            "\n  - `CREATING`: The PrivateLink resources and the Association are in the process of being created. The PrivateLink Share cannot be accepted yet.\n  - `READY`: The PrivateLink resources have been created and the PrivateLink Share can be accepted for the duration of 12h after sharing. See `shared_at`.\n  - `ASSOCIATION_REQUEST_EXPIRED`: The PrivateLink Share has not been accepted within the 12h time limit. This association can now be deleted.\n  - `ASSOCIATION_ACCEPTED`: The PrivateLink Share was successfully accepted.\n  - `CREATION_FAILED`: The PrivateLink resources failed to create. This likely means something went wrong on Supabase's and and support should be contacted.\n  - `DELETING`: The PrivateLink resources and the Association are in the process of being deleted. The PrivateLink Share cannot be accepted yet.\n",
+        }),
+        OpenString,
+      ]),
       shared_at: Schema.Union([
         Schema.String.annotate({
           description:
@@ -10400,13 +11903,20 @@ export const V2CreatePrivateLinkAssociationOutput = Schema.Struct({
         }),
         Schema.Null,
       ]),
-      database_type: Schema.Literals(["PRIMARY", "READ_REPLICA"]).annotate({
-        description:
-          "Whether this PrivateLink share targets the primary database or a read replica.",
-      }),
+      database_type: Schema.Union([
+        Schema.Literals(["PRIMARY", "READ_REPLICA"]).annotate({
+          description:
+            "Whether this PrivateLink share targets the primary database or a read replica.",
+        }),
+        OpenString,
+      ]),
       database_identifier: Schema.String.annotate({
         description:
           "Identifier of the database this PrivateLink share targets - the project ref for the primary, or the read replica identifier.",
+      }),
+      custom_dns_name: Schema.String.annotate({
+        description:
+          "The custom DNS name configured on the AWS VPC Lattice resource configuration.",
       }),
       resource_access_manager_resource_config_id: Schema.optionalKey(
         Schema.String.annotate({
@@ -10429,62 +11939,33 @@ export const V2CreatePrivateLinkAssociationOutput = Schema.Struct({
     }),
   }),
 });
-export const V2CreateWorkerUploadInput = Schema.Struct({
+export const V2DeleteAComputeInstanceInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   name: Schema.String.check(
-    Schema.isPattern(new RegExp("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")).annotate({
-      expected: "a string matching the RegExp ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
-    }),
-  ),
-});
-export const V2CreateWorkerUploadOutput = Schema.Struct({
-  data: Schema.Struct({
-    type: Schema.Literal("project_worker_upload").annotate({ description: "Resource type." }),
-    id: Schema.String.annotate({
-      description: "Upload id to pass to the deploy endpoint as `context_upload_id`.",
-    }),
-    attributes: Schema.Struct({
-      url: Schema.String.annotate({
-        description: "Presigned destination for the `.tar.gz` build context.",
-      }),
-      method: Schema.String,
-      expires_at: Schema.String.annotate({
-        description: "When the slot stops accepting the upload.",
-      }),
-    }),
-  }),
-});
-export const V2DeleteAWorkerInput = Schema.Struct({
-  ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
-  )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
-    .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
-        expected: "a string matching the RegExp ^[a-z]+$",
-      }),
-    ),
-  name: Schema.String.check(
-    Schema.isPattern(new RegExp("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")).annotate({
+    Schema.isPattern(new RegExp("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$", "u")).annotate({
       expected: "a string matching the RegExp ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
     }),
   ),
 });
 export const V2DeleteLogDrainInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -10492,6 +11973,31 @@ export const V2DeleteLogDrainInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
+      ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
+  ),
+});
+export const V2DeleteNotebookInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -10501,7 +12007,7 @@ export const V2DeleteLogDrainInput = Schema.Struct({
 });
 export const V2DeleteOrganizationInvitationsInput = Schema.Struct({
   slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -10516,6 +12022,7 @@ export const V2DeleteOrganizationInvitationsInput = Schema.Struct({
           Schema.isPattern(
             new RegExp(
               "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+              "u",
             ),
           ).annotate({
             expected:
@@ -10540,6 +12047,7 @@ export const V2DeleteOrganizationInvitationsOutput = Schema.Struct({
           Schema.isPattern(
             new RegExp(
               "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+              "u",
             ),
           ).annotate({
             expected:
@@ -10552,11 +12060,13 @@ export const V2DeleteOrganizationInvitationsOutput = Schema.Struct({
 });
 export const V2DeletePrivateLinkAssociationInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -10564,34 +12074,38 @@ export const V2DeletePrivateLinkAssociationInput = Schema.Struct({
 });
 export const V2DeletePrivateLinkAssociationForDatabaseInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   aws_account_id: Schema.String,
   database_identifier: Schema.String,
 });
-export const V2DeployAWorkerInput = Schema.Struct({
+export const V2DeployAComputeInstanceInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   name: Schema.String.check(
-    Schema.isPattern(new RegExp("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")).annotate({
+    Schema.isPattern(new RegExp("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$", "u")).annotate({
       expected: "a string matching the RegExp ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
     }),
   ),
   data: Schema.Struct({
-    type: Schema.Literal("project_worker").annotate({ description: "Resource type." }),
+    type: Schema.Literal("project_compute_instance").annotate({ description: "Resource type." }),
     attributes: Schema.Struct({
       spec: Schema.Struct({
         runtime: Schema.optionalKey(Schema.String),
@@ -10618,10 +12132,10 @@ export const V2DeployAWorkerInput = Schema.Struct({
     }),
   }),
 });
-export const V2DeployAWorkerOutput = Schema.Struct({
+export const V2DeployAComputeInstanceOutput = Schema.Struct({
   data: Schema.Struct({
-    type: Schema.Literal("project_worker").annotate({ description: "Resource type." }),
-    id: Schema.String.annotate({ description: "Worker name." }),
+    type: Schema.Literal("project_compute_instance").annotate({ description: "Resource type." }),
+    id: Schema.String.annotate({ description: "Compute instance name." }),
     attributes: Schema.Struct({
       spec: Schema.Struct({
         runtime: Schema.optionalKey(Schema.String),
@@ -10639,7 +12153,7 @@ export const V2DeployAWorkerOutput = Schema.Struct({
             }),
           ),
       }),
-      build_state: Schema.Literals(["building", "active", "failed"]),
+      build_state: Schema.Union([Schema.Literals(["building", "active", "failed"]), OpenString]),
       secret_generation: Schema.String,
       state_reason: Schema.optionalKey(Schema.String),
       image_version: Schema.optionalKey(Schema.String),
@@ -10696,26 +12210,52 @@ export const V2DeployAWorkerOutput = Schema.Struct({
     }),
   }),
 });
-export const V2GetAWorkerInput = Schema.Struct({
+export const V2DownloadProjectBackupInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  data: Schema.Struct({
+    type: Schema.Literal("project_backup_file_url").annotate({ description: "Resource type." }),
+    id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+  }),
+});
+export const V2DownloadProjectBackupOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("project_backup_file_url").annotate({ description: "Resource type." }),
+    id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+    attributes: Schema.Struct({ file_url: Schema.String }),
+  }),
+});
+export const V2GetAComputeInstanceInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   name: Schema.String.check(
-    Schema.isPattern(new RegExp("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")).annotate({
+    Schema.isPattern(new RegExp("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$", "u")).annotate({
       expected: "a string matching the RegExp ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
     }),
   ),
 });
-export const V2GetAWorkerOutput = Schema.Struct({
+export const V2GetAComputeInstanceOutput = Schema.Struct({
   data: Schema.Struct({
-    type: Schema.Literal("project_worker").annotate({ description: "Resource type." }),
-    id: Schema.String.annotate({ description: "Worker name." }),
+    type: Schema.Literal("project_compute_instance").annotate({ description: "Resource type." }),
+    id: Schema.String.annotate({ description: "Compute instance name." }),
     attributes: Schema.Struct({
       spec: Schema.Struct({
         runtime: Schema.optionalKey(Schema.String),
@@ -10733,7 +12273,7 @@ export const V2GetAWorkerOutput = Schema.Struct({
             }),
           ),
       }),
-      build_state: Schema.Literals(["building", "active", "failed"]),
+      build_state: Schema.Union([Schema.Literals(["building", "active", "failed"]), OpenString]),
       secret_generation: Schema.String,
       state_reason: Schema.optionalKey(Schema.String),
       image_version: Schema.optionalKey(Schema.String),
@@ -10787,16 +12327,188 @@ export const V2GetAWorkerOutput = Schema.Struct({
         }),
       ),
       instances_error: Schema.optionalKey(Schema.String),
+    }),
+  }),
+});
+export const V2GetNotebookInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
+      ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
+  ),
+});
+export const V2GetNotebookOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("notebook").annotate({ description: "Resource type." }),
+    id: Schema.String,
+    attributes: Schema.Struct({
+      name: Schema.String,
+      description: Schema.Union([Schema.String, Schema.Null]),
+      favorite: Schema.Boolean,
+      inserted_at: Schema.String,
+      updated_at: Schema.String,
+      owner: Schema.Union([
+        Schema.Struct({
+          id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          username: Schema.String,
+        }).annotate({ description: "User who created the notebook." }),
+        Schema.Null,
+      ]),
+      updated_by: Schema.Union([
+        Schema.Struct({
+          id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          username: Schema.String,
+        }).annotate({ description: "User who last wrote to the notebook." }),
+        Schema.Null,
+      ]),
+      content: Schema.Struct({
+        schema_version: Schema.Number.check(
+          Schema.isFinite().annotate({ expected: "a finite number" }),
+        ),
+        cells: Schema.Array(
+          Schema.Union(
+            [
+              Schema.Struct({
+                id: Schema.String,
+                type: Schema.Literal("markdown"),
+                text: Schema.String,
+              }),
+              Schema.Struct({
+                id: Schema.String,
+                type: Schema.Literal("database"),
+                sql: Schema.String.annotate({
+                  description: "SQL run against the project database.",
+                }),
+                row_limit: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+                  .check(
+                    Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                      expected: "a value less than or equal to 9007199254740991",
+                    }),
+                  )
+                  .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
+                database_identifier: Schema.optionalKey(
+                  Schema.String.annotate({
+                    description: "Read replica to run against. Omit to use the primary database.",
+                  }),
+                ),
+                title: Schema.optionalKey(Schema.String),
+                view: Schema.optionalKey(
+                  Schema.Union([Schema.Literals(["table", "chart"]), OpenString]),
+                ),
+                chart: Schema.optionalKey(
+                  Schema.Struct({
+                    type: Schema.Union([Schema.Literals(["bar", "line"]), OpenString]),
+                    x_column: Schema.String.annotate({
+                      description: "Result column used for the x axis.",
+                    }),
+                    y_series: Schema.Array(
+                      Schema.Struct({
+                        column: Schema.String.annotate({
+                          description: "Result column plotted as a series.",
+                        }),
+                      }),
+                    ),
+                    scale: Schema.Union([Schema.Literals(["linear", "log"]), OpenString]),
+                    cumulative: Schema.Boolean,
+                    show_labels: Schema.Boolean,
+                  }).annotate({
+                    description: "Chart configuration, retained even while `view` is `table`.",
+                  }),
+                ),
+              }),
+              Schema.Struct({
+                id: Schema.String,
+                type: Schema.Literal("log"),
+                sql: Schema.String.annotate({ description: "SQL run against the project logs." }),
+                time_range: Schema.Union(
+                  [
+                    Schema.Struct({
+                      type: Schema.Literal("absolute"),
+                      start: Schema.String.annotate({
+                        description: "ISO 8601 start of the range.",
+                      }),
+                      end: Schema.String.annotate({ description: "ISO 8601 end of the range." }),
+                    }),
+                    Schema.Struct({
+                      type: Schema.Literal("relative"),
+                      unit: Schema.Union([
+                        Schema.Literals(["minute", "hour", "day", "week", "month", "year"]),
+                        OpenString,
+                      ]),
+                      amount: Schema.Number.check(
+                        Schema.isInt().annotate({ expected: "an integer" }),
+                      )
+                        .check(
+                          Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                            expected: "a value less than or equal to 9007199254740991",
+                          }),
+                        )
+                        .check(
+                          Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" }),
+                        ),
+                    }),
+                  ],
+                  { mode: "oneOf" },
+                ),
+                title: Schema.optionalKey(Schema.String),
+                view: Schema.optionalKey(
+                  Schema.Union([Schema.Literals(["table", "chart"]), OpenString]),
+                ),
+                chart: Schema.optionalKey(
+                  Schema.Struct({
+                    type: Schema.Union([Schema.Literals(["bar", "line"]), OpenString]),
+                    x_column: Schema.String.annotate({
+                      description: "Result column used for the x axis.",
+                    }),
+                    y_series: Schema.Array(
+                      Schema.Struct({
+                        column: Schema.String.annotate({
+                          description: "Result column plotted as a series.",
+                        }),
+                      }),
+                    ),
+                    scale: Schema.Union([Schema.Literals(["linear", "log"]), OpenString]),
+                    cumulative: Schema.Boolean,
+                    show_labels: Schema.Boolean,
+                  }).annotate({
+                    description: "Chart configuration, retained even while `view` is `table`.",
+                  }),
+                ),
+              }),
+            ],
+            { mode: "oneOf" },
+          ),
+        ),
+      }),
     }),
   }),
 });
 export const V2GetProjectConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -10826,12 +12538,18 @@ export const V2GetProjectConfigOutput = Schema.Struct({
           description: "Whether the database rejects plaintext connections",
         }),
         network_restrictions: Schema.Struct({
-          entitlement: Schema.Literals(["disallowed", "allowed"]),
-          status: Schema.Literals(["stored", "applied"]).annotate({
-            description: "Whether the allowlist below is applied to the project or only stored.",
-          }),
+          entitlement: Schema.Union([Schema.Literals(["disallowed", "allowed"]), OpenString]),
+          status: Schema.Union([
+            Schema.Literals(["stored", "applied"]).annotate({
+              description: "Whether the allowlist below is applied to the project or only stored.",
+            }),
+            OpenString,
+          ]),
           allowed_cidrs: Schema.Array(
-            Schema.Struct({ address: Schema.String, type: Schema.Literals(["v4", "v6"]) }),
+            Schema.Struct({
+              address: Schema.String,
+              type: Schema.Union([Schema.Literals(["v4", "v6"]), OpenString]),
+            }),
           ),
           updated_at: Schema.optionalKey(Schema.String),
           applied_at: Schema.optionalKey(Schema.String),
@@ -10839,14 +12557,28 @@ export const V2GetProjectConfigOutput = Schema.Struct({
         postgres_settings: Schema.Struct({
           effective_cache_size: Schema.optionalKey(Schema.String),
           logical_decoding_work_mem: Schema.optionalKey(Schema.String),
+          autovacuum_max_workers: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(1).annotate({
+                  expected: "a value greater than or equal to 1",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(262143).annotate({
+                  expected: "a value less than or equal to 262143",
+                }),
+              ),
+          ),
+          autovacuum_work_mem: Schema.optionalKey(Schema.String),
           log_autovacuum_min_duration: Schema.optionalKey(
             Schema.String.annotate({ description: "Default unit: ms" }).check(
-              Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate(
-                {
-                  expected:
-                    "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
-                },
-              ),
+              Schema.isPattern(
+                new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u"),
+              ).annotate({
+                expected:
+                  "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+              }),
             ),
           ),
           log_checkpoints: Schema.optionalKey(Schema.Boolean),
@@ -10858,12 +12590,12 @@ export const V2GetProjectConfigOutput = Schema.Struct({
           log_replication_commands: Schema.optionalKey(Schema.Boolean),
           log_startup_progress_interval: Schema.optionalKey(
             Schema.String.annotate({ description: "Default unit: ms" }).check(
-              Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate(
-                {
-                  expected:
-                    "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
-                },
-              ),
+              Schema.isPattern(
+                new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u"),
+              ).annotate({
+                expected:
+                  "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+              }),
             ),
           ),
           log_temp_files: Schema.optionalKey(Schema.String),
@@ -11004,51 +12736,80 @@ export const V2GetProjectConfigOutput = Schema.Struct({
               ),
           ),
           session_replication_role: Schema.optionalKey(
-            Schema.Literals(["origin", "replica", "local"]),
+            Schema.Union([Schema.Literals(["origin", "replica", "local"]), OpenString]),
           ),
           shared_buffers: Schema.optionalKey(Schema.String),
           statement_timeout: Schema.optionalKey(
             Schema.String.annotate({ description: "Default unit: ms" }).check(
-              Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate(
-                {
-                  expected:
-                    "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
-                },
-              ),
+              Schema.isPattern(
+                new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u"),
+              ).annotate({
+                expected:
+                  "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+              }),
             ),
           ),
           track_commit_timestamp: Schema.optionalKey(Schema.Boolean),
           wal_keep_size: Schema.optionalKey(Schema.String),
           wal_sender_timeout: Schema.optionalKey(
             Schema.String.annotate({ description: "Default unit: ms" }).check(
-              Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate(
-                {
-                  expected:
-                    "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
-                },
-              ),
+              Schema.isPattern(
+                new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u"),
+              ).annotate({
+                expected:
+                  "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+              }),
             ),
           ),
           work_mem: Schema.optionalKey(Schema.String),
           checkpoint_timeout: Schema.optionalKey(
             Schema.String.annotate({ description: "Default unit: s" }).check(
-              Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate(
-                {
-                  expected:
-                    "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
-                },
-              ),
+              Schema.isPattern(
+                new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u"),
+              ).annotate({
+                expected:
+                  "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+              }),
             ),
           ),
           hot_standby_feedback: Schema.optionalKey(Schema.Boolean),
           cron_log_statement: Schema.optionalKey(Schema.Boolean),
+          pg_net_batch_size: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(32767).annotate({
+                  expected: "a value less than or equal to 32767",
+                }),
+              ),
+          ),
+          pg_stat_statements_max: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(100).annotate({
+                  expected: "a value greater than or equal to 100",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(45000).annotate({
+                  expected: "a value less than or equal to 45000",
+                }),
+              ),
+          ),
         }).annotate({
           description:
             "Postgres parameter overrides. Empty when the project runs entirely on defaults.",
         }),
       }),
       pooler: Schema.Struct({
-        pool_mode: Schema.Literals(["transaction", "session", "statement"]),
+        pool_mode: Schema.Union([
+          Schema.Literals(["transaction", "session", "statement"]),
+          OpenString,
+        ]),
         ignore_startup_parameters: Schema.String,
         server_idle_timeout: Schema.Number.check(
           Schema.isInt().annotate({ expected: "an integer" }),
@@ -11158,6 +12919,32 @@ export const V2GetProjectConfigOutput = Schema.Struct({
           .check(
             Schema.isLessThanOrEqualTo(9007199254740991).annotate({
               expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        db_pool_max_lifetime: Schema.Number.check(
+          Schema.isInt().annotate({ expected: "an integer" }),
+        )
+          .check(
+            Schema.isGreaterThanOrEqualTo(0).annotate({
+              expected: "a value greater than or equal to 0",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(3600).annotate({
+              expected: "a value less than or equal to 3600",
+            }),
+          ),
+        db_pool_max_idletime: Schema.Number.check(
+          Schema.isInt().annotate({ expected: "an integer" }),
+        )
+          .check(
+            Schema.isGreaterThanOrEqualTo(0).annotate({
+              expected: "a value greater than or equal to 0",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(60).annotate({
+              expected: "a value less than or equal to 60",
             }),
           ),
         db_pool: Schema.Union([
@@ -11386,10 +13173,13 @@ export const V2GetProjectConfigOutput = Schema.Struct({
               ),
           }),
         }),
-        capabilities: Schema.Struct({ list_v2: Schema.Boolean, iceberg_catalog: Schema.Boolean }),
-        upstream_target: Schema.Literals(["main", "canary"]),
-        migration_version: Schema.String,
-        database_pool_mode: Schema.String,
+        capabilities: Schema.Struct({
+          list_v2: Schema.Boolean,
+          iceberg_catalog: Schema.Boolean,
+          object_versioning: Schema.Boolean,
+        }),
+        upstream_target: Schema.Union([Schema.Literals(["main", "canary"]), OpenString]),
+        migration_version: Schema.Union([Schema.String, Schema.Null]),
       }).annotate({
         description:
           "Read from the storage service's admin API rather than the middleware DB, so unlike the rest of this resource it reflects the tenant's live config.",
@@ -11397,22 +13187,24 @@ export const V2GetProjectConfigOutput = Schema.Struct({
     }),
   }),
 });
-export const V2ListAllWorkersInput = Schema.Struct({
+export const V2ListAllComputeInstancesInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
-export const V2ListAllWorkersOutput = Schema.Struct({
+export const V2ListAllComputeInstancesOutput = Schema.Struct({
   data: Schema.Array(
     Schema.Struct({
-      type: Schema.Literal("project_worker").annotate({ description: "Resource type." }),
-      id: Schema.String.annotate({ description: "Worker name." }),
+      type: Schema.Literal("project_compute_instance").annotate({ description: "Resource type." }),
+      id: Schema.String.annotate({ description: "Compute instance name." }),
       attributes: Schema.Struct({
         spec: Schema.Struct({
           runtime: Schema.optionalKey(Schema.String),
@@ -11430,7 +13222,7 @@ export const V2ListAllWorkersOutput = Schema.Struct({
               }),
             ),
         }),
-        build_state: Schema.Literals(["building", "active", "failed"]),
+        build_state: Schema.Union([Schema.Literals(["building", "active", "failed"]), OpenString]),
         secret_generation: Schema.String,
         state_reason: Schema.optionalKey(Schema.String),
         image_version: Schema.optionalKey(Schema.String),
@@ -11490,11 +13282,13 @@ export const V2ListAllWorkersOutput = Schema.Struct({
 });
 export const V2ListLogDrainsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -11510,7 +13304,9 @@ export const V2ListLogDrainsOutput = Schema.Struct({
         config: Schema.Union([
           Schema.Struct({
             url: Schema.optionalKey(Schema.String),
-            http: Schema.optionalKey(Schema.Literals(["http1", "http2"])),
+            http: Schema.optionalKey(
+              Schema.Union([Schema.Literals(["http1", "http2"]), OpenString]),
+            ),
             gzip: Schema.optionalKey(Schema.Boolean),
             headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
           }).annotate({ title: "webhook" }),
@@ -11583,27 +13379,131 @@ export const V2ListLogDrainsOutput = Schema.Struct({
             headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
           }).annotate({ title: "otlp" }),
         ]),
-        backend_type: Schema.Literals([
-          "postgres",
-          "bigquery",
-          "clickhouse",
-          "webhook",
-          "datadog",
-          "loki",
-          "sentry",
-          "s3",
-          "axiom",
-          "last9",
-          "otlp",
-          "syslog",
+        backend_type: Schema.Union([
+          Schema.Literals([
+            "postgres",
+            "bigquery",
+            "clickhouse",
+            "webhook",
+            "datadog",
+            "loki",
+            "sentry",
+            "s3",
+            "axiom",
+            "last9",
+            "otlp",
+            "syslog",
+          ]),
+          OpenString,
         ]),
       }),
     }),
   ),
 });
+export const V2ListNotebooksInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  page: Schema.optionalKey(
+    Schema.Struct({
+      size: Schema.optionalKey(
+        Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(1).annotate({
+              expected: "a value greater than or equal to 1",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(100).annotate({
+              expected: "a value less than or equal to 100",
+            }),
+          ),
+      ),
+      after: Schema.optionalKey(
+        Schema.String.check(
+          Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+        ),
+      ),
+      before: Schema.optionalKey(
+        Schema.String.check(
+          Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+        ),
+      ),
+    }),
+  ),
+  filter: Schema.optionalKey(
+    Schema.Struct({
+      name: Schema.optionalKey(
+        Schema.String.check(
+          Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+        ),
+      ),
+    }),
+  ),
+  sort: Schema.optionalKey(Schema.Literals(["name", "-name", "inserted_at", "-inserted_at"])),
+});
+export const V2ListNotebooksOutput = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      type: Schema.Literal("notebook").annotate({ description: "Resource type." }),
+      id: Schema.String,
+      attributes: Schema.Struct({
+        name: Schema.String,
+        description: Schema.Union([Schema.String, Schema.Null]),
+        favorite: Schema.Boolean,
+        inserted_at: Schema.String,
+        updated_at: Schema.String,
+        owner: Schema.Union([
+          Schema.Struct({
+            id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+            username: Schema.String,
+          }).annotate({ description: "User who created the notebook." }),
+          Schema.Null,
+        ]),
+        updated_by: Schema.Union([
+          Schema.Struct({
+            id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+            username: Schema.String,
+          }).annotate({ description: "User who last wrote to the notebook." }),
+          Schema.Null,
+        ]),
+      }),
+    }),
+  ),
+  links: Schema.Struct({
+    first: Schema.optionalKey(
+      Schema.Union([
+        Schema.String.annotate({ description: "URL path to the first page if available." }),
+        Schema.Null,
+      ]),
+    ),
+    prev: Schema.Union([
+      Schema.String.annotate({ description: "URL path to the previous page." }),
+      Schema.Null,
+    ]),
+    next: Schema.Union([
+      Schema.String.annotate({ description: "URL path to the next page." }),
+      Schema.Null,
+    ]),
+    last: Schema.optionalKey(
+      Schema.Union([
+        Schema.String.annotate({ description: "URL path to the last page if available." }),
+        Schema.Null,
+      ]),
+    ),
+  }),
+});
 export const V2ListOrganizationGithubConnectionsInput = Schema.Struct({
   slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -11625,13 +13525,17 @@ export const V2ListOrganizationGithubConnectionsInput = Schema.Struct({
       after: Schema.optionalKey(
         Schema.String.annotate({ description: "Project ref" })
           .check(
-            Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+            Schema.isMinCodePoints(20).annotate({
+              expected: "a string with at least 20 code points",
+            }),
           )
           .check(
-            Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }),
+            Schema.isMaxCodePoints(20).annotate({
+              expected: "a string with at most 20 code points",
+            }),
           )
           .check(
-            Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+            Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
               expected: "a string matching the RegExp ^[a-z]+$",
             }),
           ),
@@ -11639,13 +13543,17 @@ export const V2ListOrganizationGithubConnectionsInput = Schema.Struct({
       before: Schema.optionalKey(
         Schema.String.annotate({ description: "Project ref" })
           .check(
-            Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+            Schema.isMinCodePoints(20).annotate({
+              expected: "a string with at least 20 code points",
+            }),
           )
           .check(
-            Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }),
+            Schema.isMaxCodePoints(20).annotate({
+              expected: "a string with at most 20 code points",
+            }),
           )
           .check(
-            Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+            Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
               expected: "a string matching the RegExp ^[a-z]+$",
             }),
           ),
@@ -11657,13 +13565,17 @@ export const V2ListOrganizationGithubConnectionsInput = Schema.Struct({
       project_ref: Schema.optionalKey(
         Schema.String.annotate({ description: "Project ref" })
           .check(
-            Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+            Schema.isMinCodePoints(20).annotate({
+              expected: "a string with at least 20 code points",
+            }),
           )
           .check(
-            Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }),
+            Schema.isMaxCodePoints(20).annotate({
+              expected: "a string with at most 20 code points",
+            }),
           )
           .check(
-            Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+            Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
               expected: "a string matching the RegExp ^[a-z]+$",
             }),
           ),
@@ -11698,13 +13610,17 @@ export const V2ListOrganizationGithubConnectionsOutput = Schema.Struct({
           id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
           ref: Schema.String.annotate({ description: "Project ref" })
             .check(
-              Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+              Schema.isMinCodePoints(20).annotate({
+                expected: "a string with at least 20 code points",
+              }),
             )
             .check(
-              Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }),
+              Schema.isMaxCodePoints(20).annotate({
+                expected: "a string with at most 20 code points",
+              }),
             )
             .check(
-              Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+              Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
                 expected: "a string matching the RegExp ^[a-z]+$",
               }),
             ),
@@ -11748,9 +13664,71 @@ export const V2ListOrganizationGithubConnectionsOutput = Schema.Struct({
     ),
   }),
 });
+export const V2ListOrganizationMaintenanceWindowsInput = Schema.Struct({
+  slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
+  ),
+});
+export const V2ListOrganizationMaintenanceWindowsOutput = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      type: Schema.Literal("maintenance_window").annotate({ description: "Resource type." }),
+      id: Schema.String.annotate({ description: "AWS region." }),
+      attributes: Schema.Struct({
+        window: Schema.Struct({
+          day: Schema.Union([
+            Schema.Literals(["mon", "tue", "wed", "thu", "fri", "sat", "sun"]).annotate({
+              description: "UTC day the window starts.",
+            }),
+            OpenString,
+          ]),
+          start_utc: Schema.String.annotate({ description: "UTC start time." }),
+          duration_minutes: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                expected: "a value greater than or equal to -9007199254740991",
+              }),
+            )
+            .check(
+              Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                expected: "a value less than or equal to 9007199254740991",
+              }),
+            ),
+        }),
+        current_window: Schema.Union([
+          Schema.Struct({
+            start_at: Schema.String.annotate({
+              description: "Start of the occurrence, inclusive.",
+              format: "date-time",
+            }),
+            end_at: Schema.String.annotate({
+              description: "End of the occurrence, exclusive.",
+              format: "date-time",
+            }),
+          }).annotate({ description: "The open occurrence, or null when the window is closed." }),
+          Schema.Null,
+        ]),
+        next_windows: Schema.Array(
+          Schema.Struct({
+            start_at: Schema.String.annotate({
+              description: "Start of the occurrence, inclusive.",
+              format: "date-time",
+            }),
+            end_at: Schema.String.annotate({
+              description: "End of the occurrence, exclusive.",
+              format: "date-time",
+            }),
+          }),
+        ).annotate({ description: "The next five occurrences that start after now, in order." }),
+      }),
+    }),
+  ),
+});
 export const V2ListOrganizationMembersInput = Schema.Struct({
   slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -11774,6 +13752,7 @@ export const V2ListOrganizationMembersInput = Schema.Struct({
           Schema.isPattern(
             new RegExp(
               "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "u",
             ),
           ).annotate({
             expected:
@@ -11786,6 +13765,7 @@ export const V2ListOrganizationMembersInput = Schema.Struct({
           Schema.isPattern(
             new RegExp(
               "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "u",
             ),
           ).annotate({
             expected:
@@ -11803,6 +13783,7 @@ export const V2ListOrganizationMembersInput = Schema.Struct({
           Schema.isPattern(
             new RegExp(
               "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+              "u",
             ),
           ).annotate({
             expected:
@@ -11821,6 +13802,7 @@ export const V2ListOrganizationMembersOutput = Schema.Struct({
         Schema.isPattern(
           new RegExp(
             "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+            "u",
           ),
         ).annotate({
           expected:
@@ -11851,10 +13833,13 @@ export const V2ListOrganizationMembersOutput = Schema.Struct({
             name: Schema.String.annotate({
               description: "Role name. For project-scoped roles this is the base role name.",
             }),
-            scope: Schema.Literals(["organization", "project"]).annotate({
-              description:
-                "Whether this role applies org-wide or is scoped to specific projects for the user.",
-            }),
+            scope: Schema.Union([
+              Schema.Literals(["organization", "project"]).annotate({
+                description:
+                  "Whether this role applies org-wide or is scoped to specific projects for the user.",
+              }),
+              OpenString,
+            ]),
             projects: Schema.Array(
               Schema.Struct({ ref: Schema.String, name: Schema.String }),
             ).annotate({
@@ -11893,7 +13878,7 @@ export const V2ListOrganizationMembersOutput = Schema.Struct({
 });
 export const V2ListOrganizationProjectsInput = Schema.Struct({
   slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -11937,33 +13922,40 @@ export const V2ListOrganizationProjectsOutput = Schema.Struct({
       type: Schema.Literal("project").annotate({ description: "Resource type." }),
       id: Schema.String.annotate({ description: "Project ref" })
         .check(
-          Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+          Schema.isMinCodePoints(20).annotate({
+            expected: "a string with at least 20 code points",
+          }),
         )
-        .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
         .check(
-          Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+          Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+        )
+        .check(
+          Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
             expected: "a string matching the RegExp ^[a-z]+$",
           }),
         ),
       attributes: Schema.Struct({
         name: Schema.String.annotate({ description: "Project name" }),
-        status: Schema.Literals([
-          "INACTIVE",
-          "ACTIVE_HEALTHY",
-          "ACTIVE_UNHEALTHY",
-          "COMING_UP",
-          "UNKNOWN",
-          "GOING_DOWN",
-          "INIT_FAILED",
-          "REMOVED",
-          "RESTORING",
-          "UPGRADING",
-          "PAUSING",
-          "RESTORE_FAILED",
-          "RESTARTING",
-          "PAUSE_FAILED",
-          "RESIZING",
-        ]).annotate({ description: "Project status" }),
+        status: Schema.Union([
+          Schema.Literals([
+            "INACTIVE",
+            "ACTIVE_HEALTHY",
+            "ACTIVE_UNHEALTHY",
+            "COMING_UP",
+            "UNKNOWN",
+            "GOING_DOWN",
+            "INIT_FAILED",
+            "REMOVED",
+            "RESTORING",
+            "UPGRADING",
+            "PAUSING",
+            "RESTORE_FAILED",
+            "RESTARTING",
+            "PAUSE_FAILED",
+            "RESIZING",
+          ]).annotate({ description: "Project status" }),
+          OpenString,
+        ]),
         cloud_provider: Schema.String.annotate({
           description: "Cloud provider hosting the project",
         }),
@@ -11974,49 +13966,57 @@ export const V2ListOrganizationProjectsOutput = Schema.Struct({
             cloud_provider: Schema.String,
             identifier: Schema.String,
             region: Schema.Union([Schema.String, Schema.Null]),
-            status: Schema.Literals([
-              "ACTIVE_HEALTHY",
-              "ACTIVE_UNHEALTHY",
-              "COMING_UP",
-              "GOING_DOWN",
-              "INIT_FAILED",
-              "REMOVED",
-              "RESTORING",
-              "UNKNOWN",
-              "INIT_READ_REPLICA",
-              "INIT_READ_REPLICA_FAILED",
-              "RESTARTING",
-              "RESIZING",
-            ]),
-            type: Schema.Literals(["PRIMARY", "READ_REPLICA"]),
-            infra_compute_size: Schema.optionalKey(
+            status: Schema.Union([
               Schema.Literals([
-                "pico",
-                "nano",
-                "micro",
-                "small",
-                "medium",
-                "large",
-                "xlarge",
-                "2xlarge",
-                "4xlarge",
-                "8xlarge",
-                "12xlarge",
-                "16xlarge",
-                "24xlarge",
-                "24xlarge_optimized_memory",
-                "24xlarge_optimized_cpu",
-                "24xlarge_high_memory",
-                "48xlarge",
-                "48xlarge_optimized_memory",
-                "48xlarge_optimized_cpu",
-                "48xlarge_high_memory",
+                "ACTIVE_HEALTHY",
+                "ACTIVE_UNHEALTHY",
+                "COMING_UP",
+                "GOING_DOWN",
+                "INIT_FAILED",
+                "REMOVED",
+                "RESTORING",
+                "UNKNOWN",
+                "INIT_READ_REPLICA",
+                "INIT_READ_REPLICA_FAILED",
+                "RESTARTING",
+                "RESIZING",
+              ]),
+              OpenString,
+            ]),
+            type: Schema.Union([Schema.Literals(["PRIMARY", "READ_REPLICA"]), OpenString]),
+            infra_compute_size: Schema.optionalKey(
+              Schema.Union([
+                Schema.Literals([
+                  "pico",
+                  "nano",
+                  "micro",
+                  "small",
+                  "medium",
+                  "large",
+                  "xlarge",
+                  "2xlarge",
+                  "4xlarge",
+                  "8xlarge",
+                  "12xlarge",
+                  "16xlarge",
+                  "24xlarge",
+                  "24xlarge_optimized_memory",
+                  "24xlarge_optimized_cpu",
+                  "24xlarge_high_memory",
+                  "48xlarge",
+                  "48xlarge_optimized_memory",
+                  "48xlarge_optimized_cpu",
+                  "48xlarge_high_memory",
+                ]),
+                OpenString,
               ]),
             ),
             disk_volume_size_gb: Schema.optionalKey(
               Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
             ),
-            disk_type: Schema.optionalKey(Schema.Literals(["gp3", "io2"])),
+            disk_type: Schema.optionalKey(
+              Schema.Union([Schema.Literals(["gp3", "io2"]), OpenString]),
+            ),
             disk_throughput_mbps: Schema.optionalKey(
               Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
             ),
@@ -12053,7 +14053,7 @@ export const V2ListOrganizationProjectsOutput = Schema.Struct({
 });
 export const V2ListOrganizationRolesInput = Schema.Struct({
   slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -12068,11 +14068,13 @@ export const V2ListOrganizationRolesOutput = Schema.Struct({
 });
 export const V2ListPrivateLinkAssociationsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -12087,30 +14089,37 @@ export const V2ListPrivateLinkAssociationsOutput = Schema.Struct({
           description: "The AWS account ID this PrivateLink share is associated with.",
         })
           .check(
-            Schema.isMinLength(12).annotate({ expected: "a value with a length of at least 12" }),
+            Schema.isMinCodePoints(12).annotate({
+              expected: "a string with at least 12 code points",
+            }),
           )
           .check(
-            Schema.isMaxLength(12).annotate({ expected: "a value with a length of at most 12" }),
+            Schema.isMaxCodePoints(12).annotate({
+              expected: "a string with at most 12 code points",
+            }),
           )
           .check(
-            Schema.isPattern(new RegExp("^\\d{12}$")).annotate({
+            Schema.isPattern(new RegExp("^\\d{12}$", "u")).annotate({
               expected: "a string matching the RegExp ^\\d{12}$",
             }),
           ),
         account_name: Schema.optionalKey(
           Schema.String.annotate({ description: "Human-readable name for the AWS account." }),
         ),
-        status: Schema.Literals([
-          "CREATING",
-          "READY",
-          "ASSOCIATION_REQUEST_EXPIRED",
-          "ASSOCIATION_ACCEPTED",
-          "CREATION_FAILED",
-          "DELETING",
-        ]).annotate({
-          description:
-            "\n  - `CREATING`: The PrivateLink resources and the Association are in the process of being created. The PrivateLink Share cannot be accepted yet.\n  - `READY`: The PrivateLink resources have been created and the PrivateLink Share can be accepted for the duration of 12h after sharing. See `shared_at`.\n  - `ASSOCIATION_REQUEST_EXPIRED`: The PrivateLink Share has not been accepted within the 12h time limit. This association can now be deleted.\n  - `ASSOCIATION_ACCEPTED`: The PrivateLink Share was successfully accepted.\n  - `CREATION_FAILED`: The PrivateLink resources failed to create. This likely means something went wrong on Supabase's and and support should be contacted.\n  - `DELETING`: The PrivateLink resources and the Association are in the process of being deleted. The PrivateLink Share cannot be accepted yet.\n",
-        }),
+        status: Schema.Union([
+          Schema.Literals([
+            "CREATING",
+            "READY",
+            "ASSOCIATION_REQUEST_EXPIRED",
+            "ASSOCIATION_ACCEPTED",
+            "CREATION_FAILED",
+            "DELETING",
+          ]).annotate({
+            description:
+              "\n  - `CREATING`: The PrivateLink resources and the Association are in the process of being created. The PrivateLink Share cannot be accepted yet.\n  - `READY`: The PrivateLink resources have been created and the PrivateLink Share can be accepted for the duration of 12h after sharing. See `shared_at`.\n  - `ASSOCIATION_REQUEST_EXPIRED`: The PrivateLink Share has not been accepted within the 12h time limit. This association can now be deleted.\n  - `ASSOCIATION_ACCEPTED`: The PrivateLink Share was successfully accepted.\n  - `CREATION_FAILED`: The PrivateLink resources failed to create. This likely means something went wrong on Supabase's and and support should be contacted.\n  - `DELETING`: The PrivateLink resources and the Association are in the process of being deleted. The PrivateLink Share cannot be accepted yet.\n",
+          }),
+          OpenString,
+        ]),
         shared_at: Schema.Union([
           Schema.String.annotate({
             description:
@@ -12119,13 +14128,20 @@ export const V2ListPrivateLinkAssociationsOutput = Schema.Struct({
           }),
           Schema.Null,
         ]),
-        database_type: Schema.Literals(["PRIMARY", "READ_REPLICA"]).annotate({
-          description:
-            "Whether this PrivateLink share targets the primary database or a read replica.",
-        }),
+        database_type: Schema.Union([
+          Schema.Literals(["PRIMARY", "READ_REPLICA"]).annotate({
+            description:
+              "Whether this PrivateLink share targets the primary database or a read replica.",
+          }),
+          OpenString,
+        ]),
         database_identifier: Schema.String.annotate({
           description:
             "Identifier of the database this PrivateLink share targets - the project ref for the primary, or the read replica identifier.",
+        }),
+        custom_dns_name: Schema.String.annotate({
+          description:
+            "The custom DNS name configured on the AWS VPC Lattice resource configuration.",
         }),
         resource_access_manager_resource_config_id: Schema.optionalKey(
           Schema.String.annotate({
@@ -12149,13 +14165,1430 @@ export const V2ListPrivateLinkAssociationsOutput = Schema.Struct({
     }),
   ),
 });
+export const V2OrganizationsSlugWebhooksDeliveriesIdGetInput = Schema.Struct({
+  slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
+  ),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
+      ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
+  ),
+});
+export const V2OrganizationsSlugWebhooksDeliveriesIdGetOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("delivery").annotate({ description: "Resource type." }),
+    id: Schema.String.annotate({
+      description: "Identifier of a delivery (UUID v7).",
+      format: "uuid",
+    }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
+        ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
+    ),
+    attributes: Schema.Struct({
+      id: Schema.String.annotate({
+        description: "Identifier of a delivery (UUID v7).",
+        format: "uuid",
+      }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "u",
+          ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        }),
+      ),
+      event_id: Schema.String.annotate({
+        description: "Identifier of the event, which triggered the delivery (UUID v7).",
+        format: "uuid",
+      }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "u",
+          ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        }),
+      ),
+      status: Schema.Union([
+        Schema.Literals(["pending", "success", "failure", "skipped"]).annotate({
+          description: "Status of the delivery attempt.",
+        }),
+        OpenString,
+      ]),
+      response_code: Schema.Number.annotate({
+        description: "HTTP status code of the response, `0` if unavailable.",
+      })
+        .check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+            expected: "a value greater than or equal to -9007199254740991",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+            expected: "a value less than or equal to 9007199254740991",
+          }),
+        ),
+      response_headers: Schema.Record(Schema.String, Schema.String).annotate({
+        description: "HTTP headers of the response, `{}` if unavailable.",
+      }),
+      response_body: Schema.Union([
+        Schema.Union([
+          Schema.Record(Schema.String, Schema.String).annotate({
+            description:
+              "Parsed JSON representation of an HTTP body of the response, `{}` if unavailable.",
+          }),
+          Schema.String.annotate({
+            description: "String representation of an HTTP body of the response.",
+          }),
+        ]),
+        Schema.Null,
+      ]),
+      error_code: Schema.Union([Schema.String, Schema.Null]),
+      error_message: Schema.Union([Schema.String, Schema.Null]),
+      attempt_timestamp: Schema.String.annotate({
+        description: "Timestamp of the attempt.",
+        format: "date-time",
+      }),
+      event: Schema.Struct({
+        type: Schema.Union([
+          Schema.Literals([
+            "v1.project.paused",
+            "v1.project.created",
+            "v1.project.restored",
+            "v1.project.transferred",
+            "v1.project.removed",
+            "v1.project.restarted",
+            "v1.project.status.changed",
+            "v1.project.backup.started",
+            "v1.project.branch.created",
+            "v1.project.branch.updated",
+            "v1.project.branch.removed",
+            "v1.project.secrets.leaked",
+            "v1.organization.member.invitation.created",
+            "v1.organization.member.invitation.canceled",
+            "v1.organization.member.added",
+            "v1.organization.member.removed",
+            "v1.organization.member.role.assigned",
+            "v1.organization.member.role.removed",
+            "v1.organization.member.role.updated",
+            "v1.organization.billing.plan.upgraded",
+            "v1.organization.billing.plan.downgraded",
+            "v1.organization.secrets.leaked",
+          ]).annotate({ description: "Webhook event type." }),
+          OpenString,
+        ]),
+        payload: Schema.Struct({
+          organization_slug: Schema.String.annotate({ description: "Organization slug" }).check(
+            Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
+              expected: "a string matching the RegExp ^[\\w-]+$",
+            }),
+          ),
+          project_ref: Schema.Union([
+            Schema.String.annotate({ description: "Project ref" })
+              .check(
+                Schema.isMinCodePoints(20).annotate({
+                  expected: "a string with at least 20 code points",
+                }),
+              )
+              .check(
+                Schema.isMaxCodePoints(20).annotate({
+                  expected: "a string with at most 20 code points",
+                }),
+              )
+              .check(
+                Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+                  expected: "a string matching the RegExp ^[a-z]+$",
+                }),
+              ),
+            Schema.Null,
+          ]),
+        }).annotate({ description: "Final data sent to the consumer." }),
+        timestamp: Schema.String.annotate({
+          description: "Timestamp of event publication.",
+          format: "date-time",
+        }),
+      }),
+    }),
+  }),
+});
+export const V2OrganizationsSlugWebhooksDeliveriesIdRetryPostInput = Schema.Struct({
+  slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
+  ),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
+      ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
+  ),
+});
+export const V2OrganizationsSlugWebhooksDeliveriesIdRetryPostOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("ingress").annotate({ description: "Resource type." }),
+    id: Schema.String,
+  }),
+});
+export const V2OrganizationsSlugWebhooksEndpointsDeleteInput = Schema.Struct({
+  slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
+  ),
+});
+export const V2OrganizationsSlugWebhooksEndpointsDeleteOutput = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      type: Schema.Literal("endpoint").annotate({ description: "Resource type." }),
+      id: Schema.String.annotate({
+        description: "Identifier of an endpoint (UUID v7).",
+        format: "uuid",
+      }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "u",
+          ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        }),
+      ),
+      attributes: Schema.Struct({
+        id: Schema.String.annotate({
+          description: "Identifier of an endpoint (UUID v7).",
+          format: "uuid",
+        }).check(
+          Schema.isPattern(
+            new RegExp(
+              "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "u",
+            ),
+          ).annotate({
+            expected:
+              "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          }),
+        ),
+        url: Schema.String.annotate({
+          description:
+            "Publicly available URL where to send the events, must use a domain and be resolvable to a non-reserved IP address.",
+          format: "uri",
+        }),
+        enabled: Schema.Boolean.annotate({
+          description:
+            "Whether the endpoint is enabled or not - disabled endpoints won't emit any events.",
+        }),
+        description: Schema.Union([
+          Schema.String.check(
+            Schema.isMaxCodePoints(512).annotate({
+              expected: "a string with at most 512 code points",
+            }),
+          ),
+          Schema.Null,
+        ]).annotate({ description: "Optional description for the endpoint." }),
+        event_types: Schema.Array(
+          Schema.Struct({
+            type: Schema.Union([
+              Schema.Literals([
+                "v1.project.paused",
+                "v1.project.created",
+                "v1.project.restored",
+                "v1.project.transferred",
+                "v1.project.removed",
+                "v1.project.restarted",
+                "v1.project.status.changed",
+                "v1.project.backup.started",
+                "v1.project.branch.created",
+                "v1.project.branch.updated",
+                "v1.project.branch.removed",
+                "v1.project.secrets.leaked",
+                "v1.organization.member.invitation.created",
+                "v1.organization.member.invitation.canceled",
+                "v1.organization.member.added",
+                "v1.organization.member.removed",
+                "v1.organization.member.role.assigned",
+                "v1.organization.member.role.removed",
+                "v1.organization.member.role.updated",
+                "v1.organization.billing.plan.upgraded",
+                "v1.organization.billing.plan.downgraded",
+                "v1.organization.secrets.leaked",
+                "*",
+              ]).annotate({ description: "Webhook event type." }),
+              OpenString,
+            ]),
+          }),
+        )
+          .annotate({
+            description: "List of subscribed events for which to receive the webhook event.",
+          })
+          .check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+        custom_headers: Schema.optionalKey(
+          Schema.Record(Schema.String, Schema.String).annotate({
+            description:
+              "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
+          }),
+        ),
+        created_by: Schema.String.annotate({
+          description: "ID of the user who created the endpoint.",
+          format: "uuid",
+        }).check(
+          Schema.isPattern(
+            new RegExp(
+              "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "u",
+            ),
+          ).annotate({
+            expected:
+              "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          }),
+        ),
+        created_at: Schema.String.annotate({
+          description: "Timestamp of endpoint's creation.",
+          format: "date-time",
+        }),
+      }),
+    }),
+  ),
+});
+export const V2OrganizationsSlugWebhooksEndpointsGetInput = Schema.Struct({
+  slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
+  ),
+  "page[offset]": Schema.optionalKey(
+    Schema.String.check(
+      Schema.isPattern(new RegExp("^\\d+$", "u")).annotate({
+        expected: "a string matching the RegExp ^\\d+$",
+      }),
+    ),
+  ),
+  "page[limit]": Schema.optionalKey(
+    Schema.String.check(
+      Schema.isPattern(new RegExp("^\\d+$", "u")).annotate({
+        expected: "a string matching the RegExp ^\\d+$",
+      }),
+    ),
+  ),
+});
+export const V2OrganizationsSlugWebhooksEndpointsGetOutput = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      type: Schema.Literal("endpoint").annotate({ description: "Resource type." }),
+      id: Schema.String.annotate({
+        description: "Identifier of an endpoint (UUID v7).",
+        format: "uuid",
+      }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "u",
+          ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        }),
+      ),
+      attributes: Schema.Struct({
+        id: Schema.String.annotate({
+          description: "Identifier of an endpoint (UUID v7).",
+          format: "uuid",
+        }).check(
+          Schema.isPattern(
+            new RegExp(
+              "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "u",
+            ),
+          ).annotate({
+            expected:
+              "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          }),
+        ),
+        url: Schema.String.annotate({
+          description:
+            "Publicly available URL where to send the events, must use a domain and be resolvable to a non-reserved IP address.",
+          format: "uri",
+        }),
+        enabled: Schema.Boolean.annotate({
+          description:
+            "Whether the endpoint is enabled or not - disabled endpoints won't emit any events.",
+        }),
+        description: Schema.Union([
+          Schema.String.check(
+            Schema.isMaxCodePoints(512).annotate({
+              expected: "a string with at most 512 code points",
+            }),
+          ),
+          Schema.Null,
+        ]).annotate({ description: "Optional description for the endpoint." }),
+        event_types: Schema.Array(
+          Schema.Struct({
+            type: Schema.Union([
+              Schema.Literals([
+                "v1.project.paused",
+                "v1.project.created",
+                "v1.project.restored",
+                "v1.project.transferred",
+                "v1.project.removed",
+                "v1.project.restarted",
+                "v1.project.status.changed",
+                "v1.project.backup.started",
+                "v1.project.branch.created",
+                "v1.project.branch.updated",
+                "v1.project.branch.removed",
+                "v1.project.secrets.leaked",
+                "v1.organization.member.invitation.created",
+                "v1.organization.member.invitation.canceled",
+                "v1.organization.member.added",
+                "v1.organization.member.removed",
+                "v1.organization.member.role.assigned",
+                "v1.organization.member.role.removed",
+                "v1.organization.member.role.updated",
+                "v1.organization.billing.plan.upgraded",
+                "v1.organization.billing.plan.downgraded",
+                "v1.organization.secrets.leaked",
+                "*",
+              ]).annotate({ description: "Webhook event type." }),
+              OpenString,
+            ]),
+          }),
+        )
+          .annotate({
+            description: "List of subscribed events for which to receive the webhook event.",
+          })
+          .check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+        custom_headers: Schema.optionalKey(
+          Schema.Record(Schema.String, Schema.String).annotate({
+            description:
+              "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
+          }),
+        ),
+        created_by: Schema.String.annotate({
+          description: "ID of the user who created the endpoint.",
+          format: "uuid",
+        }).check(
+          Schema.isPattern(
+            new RegExp(
+              "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "u",
+            ),
+          ).annotate({
+            expected:
+              "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          }),
+        ),
+        created_at: Schema.String.annotate({
+          description: "Timestamp of endpoint's creation.",
+          format: "date-time",
+        }),
+      }),
+    }),
+  ),
+  links: Schema.Struct({
+    first: Schema.optionalKey(
+      Schema.Union([Schema.String, Schema.Null]).annotate({
+        description: "URL path to the first page if available.",
+      }),
+    ),
+    prev: Schema.Union([Schema.String, Schema.Null]).annotate({
+      description: "URL path to the previous page.",
+    }),
+    next: Schema.Union([Schema.String, Schema.Null]).annotate({
+      description: "URL path to the next page.",
+    }),
+    last: Schema.optionalKey(
+      Schema.Union([Schema.String, Schema.Null]).annotate({
+        description: "URL path to the last page if available.",
+      }),
+    ),
+  }),
+});
+export const V2OrganizationsSlugWebhooksEndpointsIdDeleteInput = Schema.Struct({
+  slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
+  ),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
+      ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
+  ),
+});
+export const V2OrganizationsSlugWebhooksEndpointsIdDeleteOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("endpoint").annotate({ description: "Resource type." }),
+    id: Schema.String.annotate({
+      description: "Identifier of an endpoint (UUID v7).",
+      format: "uuid",
+    }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
+        ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
+    ),
+    attributes: Schema.Struct({
+      id: Schema.String.annotate({
+        description: "Identifier of an endpoint (UUID v7).",
+        format: "uuid",
+      }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "u",
+          ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        }),
+      ),
+      url: Schema.String.annotate({
+        description:
+          "Publicly available URL where to send the events, must use a domain and be resolvable to a non-reserved IP address.",
+        format: "uri",
+      }),
+      enabled: Schema.Boolean.annotate({
+        description:
+          "Whether the endpoint is enabled or not - disabled endpoints won't emit any events.",
+      }),
+      description: Schema.Union([
+        Schema.String.check(
+          Schema.isMaxCodePoints(512).annotate({
+            expected: "a string with at most 512 code points",
+          }),
+        ),
+        Schema.Null,
+      ]).annotate({ description: "Optional description for the endpoint." }),
+      event_types: Schema.Array(
+        Schema.Struct({
+          type: Schema.Union([
+            Schema.Literals([
+              "v1.project.paused",
+              "v1.project.created",
+              "v1.project.restored",
+              "v1.project.transferred",
+              "v1.project.removed",
+              "v1.project.restarted",
+              "v1.project.status.changed",
+              "v1.project.backup.started",
+              "v1.project.branch.created",
+              "v1.project.branch.updated",
+              "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
+              "v1.organization.member.invitation.created",
+              "v1.organization.member.invitation.canceled",
+              "v1.organization.member.added",
+              "v1.organization.member.removed",
+              "v1.organization.member.role.assigned",
+              "v1.organization.member.role.removed",
+              "v1.organization.member.role.updated",
+              "v1.organization.billing.plan.upgraded",
+              "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
+              "*",
+            ]).annotate({ description: "Webhook event type." }),
+            OpenString,
+          ]),
+        }),
+      )
+        .annotate({
+          description: "List of subscribed events for which to receive the webhook event.",
+        })
+        .check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" })),
+      custom_headers: Schema.optionalKey(
+        Schema.Record(Schema.String, Schema.String).annotate({
+          description:
+            "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
+        }),
+      ),
+      created_by: Schema.String.annotate({
+        description: "ID of the user who created the endpoint.",
+        format: "uuid",
+      }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "u",
+          ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        }),
+      ),
+      created_at: Schema.String.annotate({
+        description: "Timestamp of endpoint's creation.",
+        format: "date-time",
+      }),
+    }),
+  }),
+});
+export const V2OrganizationsSlugWebhooksEndpointsIdDeliveriesGetInput = Schema.Struct({
+  slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
+  ),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
+      ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
+  ),
+  "page[before]": Schema.optionalKey(
+    Schema.String.annotate({ format: "uuid" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
+        ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
+    ),
+  ),
+  "page[after]": Schema.optionalKey(
+    Schema.String.annotate({ format: "uuid" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
+        ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
+    ),
+  ),
+  "page[size]": Schema.optionalKey(
+    Schema.String.check(
+      Schema.isPattern(new RegExp("^\\d+$", "u")).annotate({
+        expected: "a string matching the RegExp ^\\d+$",
+      }),
+    ),
+  ),
+});
+export const V2OrganizationsSlugWebhooksEndpointsIdDeliveriesGetOutput = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      type: Schema.Literal("delivery").annotate({ description: "Resource type." }),
+      id: Schema.String.annotate({
+        description: "Identifier of a delivery (UUID v7).",
+        format: "uuid",
+      }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "u",
+          ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        }),
+      ),
+      attributes: Schema.Struct({
+        id: Schema.String.annotate({
+          description: "Identifier of a delivery (UUID v7).",
+          format: "uuid",
+        }).check(
+          Schema.isPattern(
+            new RegExp(
+              "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "u",
+            ),
+          ).annotate({
+            expected:
+              "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          }),
+        ),
+        event_id: Schema.String.annotate({
+          description: "Identifier of the event, which triggered the delivery (UUID v7).",
+          format: "uuid",
+        }).check(
+          Schema.isPattern(
+            new RegExp(
+              "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "u",
+            ),
+          ).annotate({
+            expected:
+              "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          }),
+        ),
+        status: Schema.Union([
+          Schema.Literals(["pending", "success", "failure", "skipped"]).annotate({
+            description: "Status of the delivery attempt.",
+          }),
+          OpenString,
+        ]),
+        response_code: Schema.Number.annotate({
+          description: "HTTP status code of the response, `0` if unavailable.",
+        })
+          .check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        response_headers: Schema.Record(Schema.String, Schema.String).annotate({
+          description: "HTTP headers of the response, `{}` if unavailable.",
+        }),
+        response_body: Schema.Union([
+          Schema.Union([
+            Schema.Record(Schema.String, Schema.String).annotate({
+              description:
+                "Parsed JSON representation of an HTTP body of the response, `{}` if unavailable.",
+            }),
+            Schema.String.annotate({
+              description: "String representation of an HTTP body of the response.",
+            }),
+          ]),
+          Schema.Null,
+        ]),
+        error_code: Schema.Union([Schema.String, Schema.Null]),
+        error_message: Schema.Union([Schema.String, Schema.Null]),
+        attempt_timestamp: Schema.String.annotate({
+          description: "Timestamp of the attempt.",
+          format: "date-time",
+        }),
+        event: Schema.Struct({
+          type: Schema.Union([
+            Schema.Literals([
+              "v1.project.paused",
+              "v1.project.created",
+              "v1.project.restored",
+              "v1.project.transferred",
+              "v1.project.removed",
+              "v1.project.restarted",
+              "v1.project.status.changed",
+              "v1.project.backup.started",
+              "v1.project.branch.created",
+              "v1.project.branch.updated",
+              "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
+              "v1.organization.member.invitation.created",
+              "v1.organization.member.invitation.canceled",
+              "v1.organization.member.added",
+              "v1.organization.member.removed",
+              "v1.organization.member.role.assigned",
+              "v1.organization.member.role.removed",
+              "v1.organization.member.role.updated",
+              "v1.organization.billing.plan.upgraded",
+              "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
+            ]).annotate({ description: "Webhook event type." }),
+            OpenString,
+          ]),
+          payload: Schema.Struct({
+            organization_slug: Schema.String.annotate({ description: "Organization slug" }).check(
+              Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
+                expected: "a string matching the RegExp ^[\\w-]+$",
+              }),
+            ),
+            project_ref: Schema.Union([
+              Schema.String.annotate({ description: "Project ref" })
+                .check(
+                  Schema.isMinCodePoints(20).annotate({
+                    expected: "a string with at least 20 code points",
+                  }),
+                )
+                .check(
+                  Schema.isMaxCodePoints(20).annotate({
+                    expected: "a string with at most 20 code points",
+                  }),
+                )
+                .check(
+                  Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+                    expected: "a string matching the RegExp ^[a-z]+$",
+                  }),
+                ),
+              Schema.Null,
+            ]),
+          }).annotate({ description: "Final data sent to the consumer." }),
+          timestamp: Schema.String.annotate({
+            description: "Timestamp of event publication.",
+            format: "date-time",
+          }),
+        }),
+      }),
+    }),
+  ),
+  links: Schema.Struct({
+    first: Schema.optionalKey(
+      Schema.Union([Schema.String, Schema.Null]).annotate({
+        description: "URL path to the first page if available.",
+      }),
+    ),
+    prev: Schema.Union([Schema.String, Schema.Null]).annotate({
+      description: "URL path to the previous page.",
+    }),
+    next: Schema.Union([Schema.String, Schema.Null]).annotate({
+      description: "URL path to the next page.",
+    }),
+    last: Schema.optionalKey(
+      Schema.Union([Schema.String, Schema.Null]).annotate({
+        description: "URL path to the last page if available.",
+      }),
+    ),
+  }),
+});
+export const V2OrganizationsSlugWebhooksEndpointsIdGetInput = Schema.Struct({
+  slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
+  ),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
+      ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
+  ),
+});
+export const V2OrganizationsSlugWebhooksEndpointsIdGetOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("endpoint").annotate({ description: "Resource type." }),
+    id: Schema.String.annotate({
+      description: "Identifier of an endpoint (UUID v7).",
+      format: "uuid",
+    }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
+        ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
+    ),
+    attributes: Schema.Struct({
+      id: Schema.String.annotate({
+        description: "Identifier of an endpoint (UUID v7).",
+        format: "uuid",
+      }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "u",
+          ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        }),
+      ),
+      url: Schema.String.annotate({
+        description:
+          "Publicly available URL where to send the events, must use a domain and be resolvable to a non-reserved IP address.",
+        format: "uri",
+      }),
+      enabled: Schema.Boolean.annotate({
+        description:
+          "Whether the endpoint is enabled or not - disabled endpoints won't emit any events.",
+      }),
+      description: Schema.Union([
+        Schema.String.check(
+          Schema.isMaxCodePoints(512).annotate({
+            expected: "a string with at most 512 code points",
+          }),
+        ),
+        Schema.Null,
+      ]).annotate({ description: "Optional description for the endpoint." }),
+      event_types: Schema.Array(
+        Schema.Struct({
+          type: Schema.Union([
+            Schema.Literals([
+              "v1.project.paused",
+              "v1.project.created",
+              "v1.project.restored",
+              "v1.project.transferred",
+              "v1.project.removed",
+              "v1.project.restarted",
+              "v1.project.status.changed",
+              "v1.project.backup.started",
+              "v1.project.branch.created",
+              "v1.project.branch.updated",
+              "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
+              "v1.organization.member.invitation.created",
+              "v1.organization.member.invitation.canceled",
+              "v1.organization.member.added",
+              "v1.organization.member.removed",
+              "v1.organization.member.role.assigned",
+              "v1.organization.member.role.removed",
+              "v1.organization.member.role.updated",
+              "v1.organization.billing.plan.upgraded",
+              "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
+              "*",
+            ]).annotate({ description: "Webhook event type." }),
+            OpenString,
+          ]),
+        }),
+      )
+        .annotate({
+          description: "List of subscribed events for which to receive the webhook event.",
+        })
+        .check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" })),
+      custom_headers: Schema.optionalKey(
+        Schema.Record(Schema.String, Schema.String).annotate({
+          description:
+            "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
+        }),
+      ),
+      created_by: Schema.String.annotate({
+        description: "ID of the user who created the endpoint.",
+        format: "uuid",
+      }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "u",
+          ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        }),
+      ),
+      created_at: Schema.String.annotate({
+        description: "Timestamp of endpoint's creation.",
+        format: "date-time",
+      }),
+    }),
+  }),
+});
+export const V2OrganizationsSlugWebhooksEndpointsIdPatchInput = Schema.Struct({
+  slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
+  ),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
+      ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
+  ),
+  data: Schema.Struct({
+    type: Schema.Literal("endpoint").annotate({ description: "Resource type." }),
+    attributes: Schema.Struct({
+      url: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "Publicly available URL where to send the events, must use a domain and be resolvable to a non-reserved IP address.",
+          format: "uri",
+        }),
+      ),
+      enabled: Schema.optionalKey(
+        Schema.Boolean.annotate({
+          description:
+            "Whether the endpoint is enabled or not - disabled endpoints won't emit any events.",
+        }),
+      ),
+      description: Schema.optionalKey(
+        Schema.Union([
+          Schema.String.check(
+            Schema.isMaxCodePoints(512).annotate({
+              expected: "a string with at most 512 code points",
+            }),
+          ),
+          Schema.Null,
+        ]).annotate({ description: "Optional description for the endpoint." }),
+      ),
+      event_types: Schema.optionalKey(
+        Schema.Array(
+          Schema.Struct({
+            type: Schema.Literals([
+              "v1.project.paused",
+              "v1.project.created",
+              "v1.project.restored",
+              "v1.project.transferred",
+              "v1.project.removed",
+              "v1.project.restarted",
+              "v1.project.status.changed",
+              "v1.project.backup.started",
+              "v1.project.branch.created",
+              "v1.project.branch.updated",
+              "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
+              "v1.organization.member.invitation.created",
+              "v1.organization.member.invitation.canceled",
+              "v1.organization.member.added",
+              "v1.organization.member.removed",
+              "v1.organization.member.role.assigned",
+              "v1.organization.member.role.removed",
+              "v1.organization.member.role.updated",
+              "v1.organization.billing.plan.upgraded",
+              "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
+              "*",
+            ]).annotate({ description: "Webhook event type." }),
+          }),
+        )
+          .annotate({
+            description: "List of subscribed events for which to receive the webhook event.",
+          })
+          .check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+      ),
+      custom_headers: Schema.optionalKey(
+        Schema.Record(Schema.String, Schema.String).annotate({
+          description:
+            "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
+        }),
+      ),
+      signing_secret: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "Secret key to use when signing. All events will be signed according to the [Standard Webhooks](https://www.standardwebhooks.com/) specification.",
+        })
+          .check(
+            Schema.isMinCodePoints(8).annotate({
+              expected: "a string with at least 8 code points",
+            }),
+          )
+          .check(
+            Schema.isMaxCodePoints(64).annotate({
+              expected: "a string with at most 64 code points",
+            }),
+          ),
+      ),
+    }),
+  }),
+});
+export const V2OrganizationsSlugWebhooksEndpointsIdPatchOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("endpoint").annotate({ description: "Resource type." }),
+    id: Schema.String.annotate({
+      description: "Identifier of an endpoint (UUID v7).",
+      format: "uuid",
+    }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
+        ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
+    ),
+    attributes: Schema.Struct({
+      id: Schema.String.annotate({
+        description: "Identifier of an endpoint (UUID v7).",
+        format: "uuid",
+      }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "u",
+          ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        }),
+      ),
+      url: Schema.String.annotate({
+        description:
+          "Publicly available URL where to send the events, must use a domain and be resolvable to a non-reserved IP address.",
+        format: "uri",
+      }),
+      enabled: Schema.Boolean.annotate({
+        description:
+          "Whether the endpoint is enabled or not - disabled endpoints won't emit any events.",
+      }),
+      description: Schema.Union([
+        Schema.String.check(
+          Schema.isMaxCodePoints(512).annotate({
+            expected: "a string with at most 512 code points",
+          }),
+        ),
+        Schema.Null,
+      ]).annotate({ description: "Optional description for the endpoint." }),
+      event_types: Schema.Array(
+        Schema.Struct({
+          type: Schema.Union([
+            Schema.Literals([
+              "v1.project.paused",
+              "v1.project.created",
+              "v1.project.restored",
+              "v1.project.transferred",
+              "v1.project.removed",
+              "v1.project.restarted",
+              "v1.project.status.changed",
+              "v1.project.backup.started",
+              "v1.project.branch.created",
+              "v1.project.branch.updated",
+              "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
+              "v1.organization.member.invitation.created",
+              "v1.organization.member.invitation.canceled",
+              "v1.organization.member.added",
+              "v1.organization.member.removed",
+              "v1.organization.member.role.assigned",
+              "v1.organization.member.role.removed",
+              "v1.organization.member.role.updated",
+              "v1.organization.billing.plan.upgraded",
+              "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
+              "*",
+            ]).annotate({ description: "Webhook event type." }),
+            OpenString,
+          ]),
+        }),
+      )
+        .annotate({
+          description: "List of subscribed events for which to receive the webhook event.",
+        })
+        .check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" })),
+      custom_headers: Schema.optionalKey(
+        Schema.Record(Schema.String, Schema.String).annotate({
+          description:
+            "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
+        }),
+      ),
+      created_by: Schema.String.annotate({
+        description: "ID of the user who created the endpoint.",
+        format: "uuid",
+      }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "u",
+          ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        }),
+      ),
+      created_at: Schema.String.annotate({
+        description: "Timestamp of endpoint's creation.",
+        format: "date-time",
+      }),
+    }),
+  }),
+});
+export const V2OrganizationsSlugWebhooksEndpointsIdTestPostInput = Schema.Struct({
+  slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
+  ),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
+      ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
+  ),
+  data: Schema.optionalKey(
+    Schema.Struct({
+      type: Schema.Literal("event").annotate({ description: "Resource type." }),
+      attributes: Schema.Struct({
+        type: Schema.Literals([
+          "v1.project.paused",
+          "v1.project.created",
+          "v1.project.restored",
+          "v1.project.transferred",
+          "v1.project.removed",
+          "v1.project.restarted",
+          "v1.project.status.changed",
+          "v1.project.backup.started",
+          "v1.project.branch.created",
+          "v1.project.branch.updated",
+          "v1.project.branch.removed",
+          "v1.project.secrets.leaked",
+          "v1.organization.member.invitation.created",
+          "v1.organization.member.invitation.canceled",
+          "v1.organization.member.added",
+          "v1.organization.member.removed",
+          "v1.organization.member.role.assigned",
+          "v1.organization.member.role.removed",
+          "v1.organization.member.role.updated",
+          "v1.organization.billing.plan.upgraded",
+          "v1.organization.billing.plan.downgraded",
+          "v1.organization.secrets.leaked",
+        ]).annotate({ description: "Webhook event type." }),
+      }),
+    }),
+  ),
+});
+export const V2OrganizationsSlugWebhooksEndpointsIdTestPostOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("ingress").annotate({ description: "Resource type." }),
+    id: Schema.String,
+  }),
+});
+export const V2OrganizationsSlugWebhooksEndpointsPostInput = Schema.Struct({
+  slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
+  ),
+  data: Schema.Struct({
+    type: Schema.Literal("endpoint").annotate({ description: "Resource type." }),
+    attributes: Schema.Struct({
+      url: Schema.String.annotate({
+        description:
+          "Publicly available URL where to send the events, must use a domain and be resolvable to a non-reserved IP address.",
+        format: "uri",
+      }),
+      enabled: Schema.optionalKey(
+        Schema.Boolean.annotate({
+          description:
+            "Whether the endpoint is enabled or not - disabled endpoints won't emit any events.",
+        }),
+      ),
+      description: Schema.optionalKey(
+        Schema.Union([
+          Schema.String.check(
+            Schema.isMaxCodePoints(512).annotate({
+              expected: "a string with at most 512 code points",
+            }),
+          ),
+          Schema.Null,
+        ]).annotate({ description: "Optional description for the endpoint." }),
+      ),
+      event_types: Schema.Array(
+        Schema.Struct({
+          type: Schema.Literals([
+            "v1.project.paused",
+            "v1.project.created",
+            "v1.project.restored",
+            "v1.project.transferred",
+            "v1.project.removed",
+            "v1.project.restarted",
+            "v1.project.status.changed",
+            "v1.project.backup.started",
+            "v1.project.branch.created",
+            "v1.project.branch.updated",
+            "v1.project.branch.removed",
+            "v1.project.secrets.leaked",
+            "v1.organization.member.invitation.created",
+            "v1.organization.member.invitation.canceled",
+            "v1.organization.member.added",
+            "v1.organization.member.removed",
+            "v1.organization.member.role.assigned",
+            "v1.organization.member.role.removed",
+            "v1.organization.member.role.updated",
+            "v1.organization.billing.plan.upgraded",
+            "v1.organization.billing.plan.downgraded",
+            "v1.organization.secrets.leaked",
+            "*",
+          ]).annotate({ description: "Webhook event type." }),
+        }),
+      )
+        .annotate({
+          description: "List of subscribed events for which to receive the webhook event.",
+        })
+        .check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" })),
+      custom_headers: Schema.optionalKey(
+        Schema.Record(Schema.String, Schema.String).annotate({
+          description:
+            "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
+        }),
+      ),
+      signing_secret: Schema.String.annotate({
+        description:
+          "Secret key to use when signing. All events will be signed according to the [Standard Webhooks](https://www.standardwebhooks.com/) specification.",
+      })
+        .check(
+          Schema.isMinCodePoints(8).annotate({ expected: "a string with at least 8 code points" }),
+        )
+        .check(
+          Schema.isMaxCodePoints(64).annotate({ expected: "a string with at most 64 code points" }),
+        ),
+    }),
+  }),
+});
+export const V2OrganizationsSlugWebhooksEndpointsPostOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("endpoint").annotate({ description: "Resource type." }),
+    id: Schema.String.annotate({
+      description: "Identifier of an endpoint (UUID v7).",
+      format: "uuid",
+    }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
+        ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
+    ),
+    attributes: Schema.Struct({
+      id: Schema.String.annotate({
+        description: "Identifier of an endpoint (UUID v7).",
+        format: "uuid",
+      }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "u",
+          ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        }),
+      ),
+      url: Schema.String.annotate({
+        description:
+          "Publicly available URL where to send the events, must use a domain and be resolvable to a non-reserved IP address.",
+        format: "uri",
+      }),
+      enabled: Schema.Boolean.annotate({
+        description:
+          "Whether the endpoint is enabled or not - disabled endpoints won't emit any events.",
+      }),
+      description: Schema.Union([
+        Schema.String.check(
+          Schema.isMaxCodePoints(512).annotate({
+            expected: "a string with at most 512 code points",
+          }),
+        ),
+        Schema.Null,
+      ]).annotate({ description: "Optional description for the endpoint." }),
+      event_types: Schema.Array(
+        Schema.Struct({
+          type: Schema.Union([
+            Schema.Literals([
+              "v1.project.paused",
+              "v1.project.created",
+              "v1.project.restored",
+              "v1.project.transferred",
+              "v1.project.removed",
+              "v1.project.restarted",
+              "v1.project.status.changed",
+              "v1.project.backup.started",
+              "v1.project.branch.created",
+              "v1.project.branch.updated",
+              "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
+              "v1.organization.member.invitation.created",
+              "v1.organization.member.invitation.canceled",
+              "v1.organization.member.added",
+              "v1.organization.member.removed",
+              "v1.organization.member.role.assigned",
+              "v1.organization.member.role.removed",
+              "v1.organization.member.role.updated",
+              "v1.organization.billing.plan.upgraded",
+              "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
+              "*",
+            ]).annotate({ description: "Webhook event type." }),
+            OpenString,
+          ]),
+        }),
+      )
+        .annotate({
+          description: "List of subscribed events for which to receive the webhook event.",
+        })
+        .check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" })),
+      custom_headers: Schema.optionalKey(
+        Schema.Record(Schema.String, Schema.String).annotate({
+          description:
+            "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
+        }),
+      ),
+      created_by: Schema.String.annotate({
+        description: "ID of the user who created the endpoint.",
+        format: "uuid",
+      }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "u",
+          ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        }),
+      ),
+      created_at: Schema.String.annotate({
+        description: "Timestamp of endpoint's creation.",
+        format: "date-time",
+      }),
+    }),
+  }),
+});
 export const V2PreviewAProjectTransferInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -12175,13 +15608,1508 @@ export const V2PreviewAProjectTransferOutput = Schema.Struct({
     }),
   }),
 });
+export const V2ProjectsRefWebhooksDeliveriesIdGetInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
+      ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
+  ),
+});
+export const V2ProjectsRefWebhooksDeliveriesIdGetOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("delivery").annotate({ description: "Resource type." }),
+    id: Schema.String.annotate({
+      description: "Identifier of a delivery (UUID v7).",
+      format: "uuid",
+    }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
+        ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
+    ),
+    attributes: Schema.Struct({
+      id: Schema.String.annotate({
+        description: "Identifier of a delivery (UUID v7).",
+        format: "uuid",
+      }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "u",
+          ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        }),
+      ),
+      event_id: Schema.String.annotate({
+        description: "Identifier of the event, which triggered the delivery (UUID v7).",
+        format: "uuid",
+      }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "u",
+          ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        }),
+      ),
+      status: Schema.Union([
+        Schema.Literals(["pending", "success", "failure", "skipped"]).annotate({
+          description: "Status of the delivery attempt.",
+        }),
+        OpenString,
+      ]),
+      response_code: Schema.Number.annotate({
+        description: "HTTP status code of the response, `0` if unavailable.",
+      })
+        .check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+            expected: "a value greater than or equal to -9007199254740991",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+            expected: "a value less than or equal to 9007199254740991",
+          }),
+        ),
+      response_headers: Schema.Record(Schema.String, Schema.String).annotate({
+        description: "HTTP headers of the response, `{}` if unavailable.",
+      }),
+      response_body: Schema.Union([
+        Schema.Union([
+          Schema.Record(Schema.String, Schema.String).annotate({
+            description:
+              "Parsed JSON representation of an HTTP body of the response, `{}` if unavailable.",
+          }),
+          Schema.String.annotate({
+            description: "String representation of an HTTP body of the response.",
+          }),
+        ]),
+        Schema.Null,
+      ]),
+      error_code: Schema.Union([Schema.String, Schema.Null]),
+      error_message: Schema.Union([Schema.String, Schema.Null]),
+      attempt_timestamp: Schema.String.annotate({
+        description: "Timestamp of the attempt.",
+        format: "date-time",
+      }),
+      event: Schema.Struct({
+        type: Schema.Union([
+          Schema.Literals([
+            "v1.project.paused",
+            "v1.project.created",
+            "v1.project.restored",
+            "v1.project.transferred",
+            "v1.project.removed",
+            "v1.project.restarted",
+            "v1.project.status.changed",
+            "v1.project.backup.started",
+            "v1.project.branch.created",
+            "v1.project.branch.updated",
+            "v1.project.branch.removed",
+            "v1.project.secrets.leaked",
+            "v1.organization.member.invitation.created",
+            "v1.organization.member.invitation.canceled",
+            "v1.organization.member.added",
+            "v1.organization.member.removed",
+            "v1.organization.member.role.assigned",
+            "v1.organization.member.role.removed",
+            "v1.organization.member.role.updated",
+            "v1.organization.billing.plan.upgraded",
+            "v1.organization.billing.plan.downgraded",
+            "v1.organization.secrets.leaked",
+          ]).annotate({ description: "Webhook event type." }),
+          OpenString,
+        ]),
+        payload: Schema.Struct({
+          organization_slug: Schema.String.annotate({ description: "Organization slug" }).check(
+            Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
+              expected: "a string matching the RegExp ^[\\w-]+$",
+            }),
+          ),
+          project_ref: Schema.Union([
+            Schema.String.annotate({ description: "Project ref" })
+              .check(
+                Schema.isMinCodePoints(20).annotate({
+                  expected: "a string with at least 20 code points",
+                }),
+              )
+              .check(
+                Schema.isMaxCodePoints(20).annotate({
+                  expected: "a string with at most 20 code points",
+                }),
+              )
+              .check(
+                Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+                  expected: "a string matching the RegExp ^[a-z]+$",
+                }),
+              ),
+            Schema.Null,
+          ]),
+        }).annotate({ description: "Final data sent to the consumer." }),
+        timestamp: Schema.String.annotate({
+          description: "Timestamp of event publication.",
+          format: "date-time",
+        }),
+      }),
+    }),
+  }),
+});
+export const V2ProjectsRefWebhooksDeliveriesIdRetryPostInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
+      ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
+  ),
+});
+export const V2ProjectsRefWebhooksDeliveriesIdRetryPostOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("ingress").annotate({ description: "Resource type." }),
+    id: Schema.String,
+  }),
+});
+export const V2ProjectsRefWebhooksEndpointsDeleteInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+});
+export const V2ProjectsRefWebhooksEndpointsDeleteOutput = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      type: Schema.Literal("endpoint").annotate({ description: "Resource type." }),
+      id: Schema.String.annotate({
+        description: "Identifier of an endpoint (UUID v7).",
+        format: "uuid",
+      }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "u",
+          ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        }),
+      ),
+      attributes: Schema.Struct({
+        id: Schema.String.annotate({
+          description: "Identifier of an endpoint (UUID v7).",
+          format: "uuid",
+        }).check(
+          Schema.isPattern(
+            new RegExp(
+              "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "u",
+            ),
+          ).annotate({
+            expected:
+              "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          }),
+        ),
+        url: Schema.String.annotate({
+          description:
+            "Publicly available URL where to send the events, must use a domain and be resolvable to a non-reserved IP address.",
+          format: "uri",
+        }),
+        enabled: Schema.Boolean.annotate({
+          description:
+            "Whether the endpoint is enabled or not - disabled endpoints won't emit any events.",
+        }),
+        description: Schema.Union([
+          Schema.String.check(
+            Schema.isMaxCodePoints(512).annotate({
+              expected: "a string with at most 512 code points",
+            }),
+          ),
+          Schema.Null,
+        ]).annotate({ description: "Optional description for the endpoint." }),
+        event_types: Schema.Array(
+          Schema.Struct({
+            type: Schema.Union([
+              Schema.Literals([
+                "v1.project.paused",
+                "v1.project.created",
+                "v1.project.restored",
+                "v1.project.transferred",
+                "v1.project.removed",
+                "v1.project.restarted",
+                "v1.project.status.changed",
+                "v1.project.backup.started",
+                "v1.project.branch.created",
+                "v1.project.branch.updated",
+                "v1.project.branch.removed",
+                "v1.project.secrets.leaked",
+                "v1.organization.member.invitation.created",
+                "v1.organization.member.invitation.canceled",
+                "v1.organization.member.added",
+                "v1.organization.member.removed",
+                "v1.organization.member.role.assigned",
+                "v1.organization.member.role.removed",
+                "v1.organization.member.role.updated",
+                "v1.organization.billing.plan.upgraded",
+                "v1.organization.billing.plan.downgraded",
+                "v1.organization.secrets.leaked",
+                "*",
+              ]).annotate({ description: "Webhook event type." }),
+              OpenString,
+            ]),
+          }),
+        )
+          .annotate({
+            description: "List of subscribed events for which to receive the webhook event.",
+          })
+          .check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+        custom_headers: Schema.optionalKey(
+          Schema.Record(Schema.String, Schema.String).annotate({
+            description:
+              "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
+          }),
+        ),
+        created_by: Schema.String.annotate({
+          description: "ID of the user who created the endpoint.",
+          format: "uuid",
+        }).check(
+          Schema.isPattern(
+            new RegExp(
+              "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "u",
+            ),
+          ).annotate({
+            expected:
+              "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          }),
+        ),
+        created_at: Schema.String.annotate({
+          description: "Timestamp of endpoint's creation.",
+          format: "date-time",
+        }),
+      }),
+    }),
+  ),
+});
+export const V2ProjectsRefWebhooksEndpointsGetInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  "page[offset]": Schema.optionalKey(
+    Schema.String.check(
+      Schema.isPattern(new RegExp("^\\d+$", "u")).annotate({
+        expected: "a string matching the RegExp ^\\d+$",
+      }),
+    ),
+  ),
+  "page[limit]": Schema.optionalKey(
+    Schema.String.check(
+      Schema.isPattern(new RegExp("^\\d+$", "u")).annotate({
+        expected: "a string matching the RegExp ^\\d+$",
+      }),
+    ),
+  ),
+});
+export const V2ProjectsRefWebhooksEndpointsGetOutput = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      type: Schema.Literal("endpoint").annotate({ description: "Resource type." }),
+      id: Schema.String.annotate({
+        description: "Identifier of an endpoint (UUID v7).",
+        format: "uuid",
+      }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "u",
+          ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        }),
+      ),
+      attributes: Schema.Struct({
+        id: Schema.String.annotate({
+          description: "Identifier of an endpoint (UUID v7).",
+          format: "uuid",
+        }).check(
+          Schema.isPattern(
+            new RegExp(
+              "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "u",
+            ),
+          ).annotate({
+            expected:
+              "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          }),
+        ),
+        url: Schema.String.annotate({
+          description:
+            "Publicly available URL where to send the events, must use a domain and be resolvable to a non-reserved IP address.",
+          format: "uri",
+        }),
+        enabled: Schema.Boolean.annotate({
+          description:
+            "Whether the endpoint is enabled or not - disabled endpoints won't emit any events.",
+        }),
+        description: Schema.Union([
+          Schema.String.check(
+            Schema.isMaxCodePoints(512).annotate({
+              expected: "a string with at most 512 code points",
+            }),
+          ),
+          Schema.Null,
+        ]).annotate({ description: "Optional description for the endpoint." }),
+        event_types: Schema.Array(
+          Schema.Struct({
+            type: Schema.Union([
+              Schema.Literals([
+                "v1.project.paused",
+                "v1.project.created",
+                "v1.project.restored",
+                "v1.project.transferred",
+                "v1.project.removed",
+                "v1.project.restarted",
+                "v1.project.status.changed",
+                "v1.project.backup.started",
+                "v1.project.branch.created",
+                "v1.project.branch.updated",
+                "v1.project.branch.removed",
+                "v1.project.secrets.leaked",
+                "v1.organization.member.invitation.created",
+                "v1.organization.member.invitation.canceled",
+                "v1.organization.member.added",
+                "v1.organization.member.removed",
+                "v1.organization.member.role.assigned",
+                "v1.organization.member.role.removed",
+                "v1.organization.member.role.updated",
+                "v1.organization.billing.plan.upgraded",
+                "v1.organization.billing.plan.downgraded",
+                "v1.organization.secrets.leaked",
+                "*",
+              ]).annotate({ description: "Webhook event type." }),
+              OpenString,
+            ]),
+          }),
+        )
+          .annotate({
+            description: "List of subscribed events for which to receive the webhook event.",
+          })
+          .check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+        custom_headers: Schema.optionalKey(
+          Schema.Record(Schema.String, Schema.String).annotate({
+            description:
+              "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
+          }),
+        ),
+        created_by: Schema.String.annotate({
+          description: "ID of the user who created the endpoint.",
+          format: "uuid",
+        }).check(
+          Schema.isPattern(
+            new RegExp(
+              "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "u",
+            ),
+          ).annotate({
+            expected:
+              "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          }),
+        ),
+        created_at: Schema.String.annotate({
+          description: "Timestamp of endpoint's creation.",
+          format: "date-time",
+        }),
+      }),
+    }),
+  ),
+  links: Schema.Struct({
+    first: Schema.optionalKey(
+      Schema.Union([Schema.String, Schema.Null]).annotate({
+        description: "URL path to the first page if available.",
+      }),
+    ),
+    prev: Schema.Union([Schema.String, Schema.Null]).annotate({
+      description: "URL path to the previous page.",
+    }),
+    next: Schema.Union([Schema.String, Schema.Null]).annotate({
+      description: "URL path to the next page.",
+    }),
+    last: Schema.optionalKey(
+      Schema.Union([Schema.String, Schema.Null]).annotate({
+        description: "URL path to the last page if available.",
+      }),
+    ),
+  }),
+});
+export const V2ProjectsRefWebhooksEndpointsIdDeleteInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
+      ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
+  ),
+});
+export const V2ProjectsRefWebhooksEndpointsIdDeleteOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("endpoint").annotate({ description: "Resource type." }),
+    id: Schema.String.annotate({
+      description: "Identifier of an endpoint (UUID v7).",
+      format: "uuid",
+    }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
+        ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
+    ),
+    attributes: Schema.Struct({
+      id: Schema.String.annotate({
+        description: "Identifier of an endpoint (UUID v7).",
+        format: "uuid",
+      }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "u",
+          ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        }),
+      ),
+      url: Schema.String.annotate({
+        description:
+          "Publicly available URL where to send the events, must use a domain and be resolvable to a non-reserved IP address.",
+        format: "uri",
+      }),
+      enabled: Schema.Boolean.annotate({
+        description:
+          "Whether the endpoint is enabled or not - disabled endpoints won't emit any events.",
+      }),
+      description: Schema.Union([
+        Schema.String.check(
+          Schema.isMaxCodePoints(512).annotate({
+            expected: "a string with at most 512 code points",
+          }),
+        ),
+        Schema.Null,
+      ]).annotate({ description: "Optional description for the endpoint." }),
+      event_types: Schema.Array(
+        Schema.Struct({
+          type: Schema.Union([
+            Schema.Literals([
+              "v1.project.paused",
+              "v1.project.created",
+              "v1.project.restored",
+              "v1.project.transferred",
+              "v1.project.removed",
+              "v1.project.restarted",
+              "v1.project.status.changed",
+              "v1.project.backup.started",
+              "v1.project.branch.created",
+              "v1.project.branch.updated",
+              "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
+              "v1.organization.member.invitation.created",
+              "v1.organization.member.invitation.canceled",
+              "v1.organization.member.added",
+              "v1.organization.member.removed",
+              "v1.organization.member.role.assigned",
+              "v1.organization.member.role.removed",
+              "v1.organization.member.role.updated",
+              "v1.organization.billing.plan.upgraded",
+              "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
+              "*",
+            ]).annotate({ description: "Webhook event type." }),
+            OpenString,
+          ]),
+        }),
+      )
+        .annotate({
+          description: "List of subscribed events for which to receive the webhook event.",
+        })
+        .check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" })),
+      custom_headers: Schema.optionalKey(
+        Schema.Record(Schema.String, Schema.String).annotate({
+          description:
+            "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
+        }),
+      ),
+      created_by: Schema.String.annotate({
+        description: "ID of the user who created the endpoint.",
+        format: "uuid",
+      }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "u",
+          ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        }),
+      ),
+      created_at: Schema.String.annotate({
+        description: "Timestamp of endpoint's creation.",
+        format: "date-time",
+      }),
+    }),
+  }),
+});
+export const V2ProjectsRefWebhooksEndpointsIdDeliveriesGetInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
+      ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
+  ),
+  "page[before]": Schema.optionalKey(
+    Schema.String.annotate({ format: "uuid" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
+        ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
+    ),
+  ),
+  "page[after]": Schema.optionalKey(
+    Schema.String.annotate({ format: "uuid" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
+        ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
+    ),
+  ),
+  "page[size]": Schema.optionalKey(
+    Schema.String.check(
+      Schema.isPattern(new RegExp("^\\d+$", "u")).annotate({
+        expected: "a string matching the RegExp ^\\d+$",
+      }),
+    ),
+  ),
+});
+export const V2ProjectsRefWebhooksEndpointsIdDeliveriesGetOutput = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      type: Schema.Literal("delivery").annotate({ description: "Resource type." }),
+      id: Schema.String.annotate({
+        description: "Identifier of a delivery (UUID v7).",
+        format: "uuid",
+      }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "u",
+          ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        }),
+      ),
+      attributes: Schema.Struct({
+        id: Schema.String.annotate({
+          description: "Identifier of a delivery (UUID v7).",
+          format: "uuid",
+        }).check(
+          Schema.isPattern(
+            new RegExp(
+              "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "u",
+            ),
+          ).annotate({
+            expected:
+              "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          }),
+        ),
+        event_id: Schema.String.annotate({
+          description: "Identifier of the event, which triggered the delivery (UUID v7).",
+          format: "uuid",
+        }).check(
+          Schema.isPattern(
+            new RegExp(
+              "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "u",
+            ),
+          ).annotate({
+            expected:
+              "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          }),
+        ),
+        status: Schema.Union([
+          Schema.Literals(["pending", "success", "failure", "skipped"]).annotate({
+            description: "Status of the delivery attempt.",
+          }),
+          OpenString,
+        ]),
+        response_code: Schema.Number.annotate({
+          description: "HTTP status code of the response, `0` if unavailable.",
+        })
+          .check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        response_headers: Schema.Record(Schema.String, Schema.String).annotate({
+          description: "HTTP headers of the response, `{}` if unavailable.",
+        }),
+        response_body: Schema.Union([
+          Schema.Union([
+            Schema.Record(Schema.String, Schema.String).annotate({
+              description:
+                "Parsed JSON representation of an HTTP body of the response, `{}` if unavailable.",
+            }),
+            Schema.String.annotate({
+              description: "String representation of an HTTP body of the response.",
+            }),
+          ]),
+          Schema.Null,
+        ]),
+        error_code: Schema.Union([Schema.String, Schema.Null]),
+        error_message: Schema.Union([Schema.String, Schema.Null]),
+        attempt_timestamp: Schema.String.annotate({
+          description: "Timestamp of the attempt.",
+          format: "date-time",
+        }),
+        event: Schema.Struct({
+          type: Schema.Union([
+            Schema.Literals([
+              "v1.project.paused",
+              "v1.project.created",
+              "v1.project.restored",
+              "v1.project.transferred",
+              "v1.project.removed",
+              "v1.project.restarted",
+              "v1.project.status.changed",
+              "v1.project.backup.started",
+              "v1.project.branch.created",
+              "v1.project.branch.updated",
+              "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
+              "v1.organization.member.invitation.created",
+              "v1.organization.member.invitation.canceled",
+              "v1.organization.member.added",
+              "v1.organization.member.removed",
+              "v1.organization.member.role.assigned",
+              "v1.organization.member.role.removed",
+              "v1.organization.member.role.updated",
+              "v1.organization.billing.plan.upgraded",
+              "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
+            ]).annotate({ description: "Webhook event type." }),
+            OpenString,
+          ]),
+          payload: Schema.Struct({
+            organization_slug: Schema.String.annotate({ description: "Organization slug" }).check(
+              Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
+                expected: "a string matching the RegExp ^[\\w-]+$",
+              }),
+            ),
+            project_ref: Schema.Union([
+              Schema.String.annotate({ description: "Project ref" })
+                .check(
+                  Schema.isMinCodePoints(20).annotate({
+                    expected: "a string with at least 20 code points",
+                  }),
+                )
+                .check(
+                  Schema.isMaxCodePoints(20).annotate({
+                    expected: "a string with at most 20 code points",
+                  }),
+                )
+                .check(
+                  Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+                    expected: "a string matching the RegExp ^[a-z]+$",
+                  }),
+                ),
+              Schema.Null,
+            ]),
+          }).annotate({ description: "Final data sent to the consumer." }),
+          timestamp: Schema.String.annotate({
+            description: "Timestamp of event publication.",
+            format: "date-time",
+          }),
+        }),
+      }),
+    }),
+  ),
+  links: Schema.Struct({
+    first: Schema.optionalKey(
+      Schema.Union([Schema.String, Schema.Null]).annotate({
+        description: "URL path to the first page if available.",
+      }),
+    ),
+    prev: Schema.Union([Schema.String, Schema.Null]).annotate({
+      description: "URL path to the previous page.",
+    }),
+    next: Schema.Union([Schema.String, Schema.Null]).annotate({
+      description: "URL path to the next page.",
+    }),
+    last: Schema.optionalKey(
+      Schema.Union([Schema.String, Schema.Null]).annotate({
+        description: "URL path to the last page if available.",
+      }),
+    ),
+  }),
+});
+export const V2ProjectsRefWebhooksEndpointsIdGetInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
+      ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
+  ),
+});
+export const V2ProjectsRefWebhooksEndpointsIdGetOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("endpoint").annotate({ description: "Resource type." }),
+    id: Schema.String.annotate({
+      description: "Identifier of an endpoint (UUID v7).",
+      format: "uuid",
+    }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
+        ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
+    ),
+    attributes: Schema.Struct({
+      id: Schema.String.annotate({
+        description: "Identifier of an endpoint (UUID v7).",
+        format: "uuid",
+      }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "u",
+          ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        }),
+      ),
+      url: Schema.String.annotate({
+        description:
+          "Publicly available URL where to send the events, must use a domain and be resolvable to a non-reserved IP address.",
+        format: "uri",
+      }),
+      enabled: Schema.Boolean.annotate({
+        description:
+          "Whether the endpoint is enabled or not - disabled endpoints won't emit any events.",
+      }),
+      description: Schema.Union([
+        Schema.String.check(
+          Schema.isMaxCodePoints(512).annotate({
+            expected: "a string with at most 512 code points",
+          }),
+        ),
+        Schema.Null,
+      ]).annotate({ description: "Optional description for the endpoint." }),
+      event_types: Schema.Array(
+        Schema.Struct({
+          type: Schema.Union([
+            Schema.Literals([
+              "v1.project.paused",
+              "v1.project.created",
+              "v1.project.restored",
+              "v1.project.transferred",
+              "v1.project.removed",
+              "v1.project.restarted",
+              "v1.project.status.changed",
+              "v1.project.backup.started",
+              "v1.project.branch.created",
+              "v1.project.branch.updated",
+              "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
+              "v1.organization.member.invitation.created",
+              "v1.organization.member.invitation.canceled",
+              "v1.organization.member.added",
+              "v1.organization.member.removed",
+              "v1.organization.member.role.assigned",
+              "v1.organization.member.role.removed",
+              "v1.organization.member.role.updated",
+              "v1.organization.billing.plan.upgraded",
+              "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
+              "*",
+            ]).annotate({ description: "Webhook event type." }),
+            OpenString,
+          ]),
+        }),
+      )
+        .annotate({
+          description: "List of subscribed events for which to receive the webhook event.",
+        })
+        .check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" })),
+      custom_headers: Schema.optionalKey(
+        Schema.Record(Schema.String, Schema.String).annotate({
+          description:
+            "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
+        }),
+      ),
+      created_by: Schema.String.annotate({
+        description: "ID of the user who created the endpoint.",
+        format: "uuid",
+      }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "u",
+          ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        }),
+      ),
+      created_at: Schema.String.annotate({
+        description: "Timestamp of endpoint's creation.",
+        format: "date-time",
+      }),
+    }),
+  }),
+});
+export const V2ProjectsRefWebhooksEndpointsIdPatchInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
+      ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
+  ),
+  data: Schema.Struct({
+    type: Schema.Literal("endpoint").annotate({ description: "Resource type." }),
+    attributes: Schema.Struct({
+      url: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "Publicly available URL where to send the events, must use a domain and be resolvable to a non-reserved IP address.",
+          format: "uri",
+        }),
+      ),
+      enabled: Schema.optionalKey(
+        Schema.Boolean.annotate({
+          description:
+            "Whether the endpoint is enabled or not - disabled endpoints won't emit any events.",
+        }),
+      ),
+      description: Schema.optionalKey(
+        Schema.Union([
+          Schema.String.check(
+            Schema.isMaxCodePoints(512).annotate({
+              expected: "a string with at most 512 code points",
+            }),
+          ),
+          Schema.Null,
+        ]).annotate({ description: "Optional description for the endpoint." }),
+      ),
+      event_types: Schema.optionalKey(
+        Schema.Array(
+          Schema.Struct({
+            type: Schema.Literals([
+              "v1.project.paused",
+              "v1.project.created",
+              "v1.project.restored",
+              "v1.project.transferred",
+              "v1.project.removed",
+              "v1.project.restarted",
+              "v1.project.status.changed",
+              "v1.project.backup.started",
+              "v1.project.branch.created",
+              "v1.project.branch.updated",
+              "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
+              "v1.organization.member.invitation.created",
+              "v1.organization.member.invitation.canceled",
+              "v1.organization.member.added",
+              "v1.organization.member.removed",
+              "v1.organization.member.role.assigned",
+              "v1.organization.member.role.removed",
+              "v1.organization.member.role.updated",
+              "v1.organization.billing.plan.upgraded",
+              "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
+              "*",
+            ]).annotate({ description: "Webhook event type." }),
+          }),
+        )
+          .annotate({
+            description: "List of subscribed events for which to receive the webhook event.",
+          })
+          .check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+      ),
+      custom_headers: Schema.optionalKey(
+        Schema.Record(Schema.String, Schema.String).annotate({
+          description:
+            "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
+        }),
+      ),
+      signing_secret: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "Secret key to use when signing. All events will be signed according to the [Standard Webhooks](https://www.standardwebhooks.com/) specification.",
+        })
+          .check(
+            Schema.isMinCodePoints(8).annotate({
+              expected: "a string with at least 8 code points",
+            }),
+          )
+          .check(
+            Schema.isMaxCodePoints(64).annotate({
+              expected: "a string with at most 64 code points",
+            }),
+          ),
+      ),
+    }),
+  }),
+});
+export const V2ProjectsRefWebhooksEndpointsIdPatchOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("endpoint").annotate({ description: "Resource type." }),
+    id: Schema.String.annotate({
+      description: "Identifier of an endpoint (UUID v7).",
+      format: "uuid",
+    }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
+        ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
+    ),
+    attributes: Schema.Struct({
+      id: Schema.String.annotate({
+        description: "Identifier of an endpoint (UUID v7).",
+        format: "uuid",
+      }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "u",
+          ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        }),
+      ),
+      url: Schema.String.annotate({
+        description:
+          "Publicly available URL where to send the events, must use a domain and be resolvable to a non-reserved IP address.",
+        format: "uri",
+      }),
+      enabled: Schema.Boolean.annotate({
+        description:
+          "Whether the endpoint is enabled or not - disabled endpoints won't emit any events.",
+      }),
+      description: Schema.Union([
+        Schema.String.check(
+          Schema.isMaxCodePoints(512).annotate({
+            expected: "a string with at most 512 code points",
+          }),
+        ),
+        Schema.Null,
+      ]).annotate({ description: "Optional description for the endpoint." }),
+      event_types: Schema.Array(
+        Schema.Struct({
+          type: Schema.Union([
+            Schema.Literals([
+              "v1.project.paused",
+              "v1.project.created",
+              "v1.project.restored",
+              "v1.project.transferred",
+              "v1.project.removed",
+              "v1.project.restarted",
+              "v1.project.status.changed",
+              "v1.project.backup.started",
+              "v1.project.branch.created",
+              "v1.project.branch.updated",
+              "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
+              "v1.organization.member.invitation.created",
+              "v1.organization.member.invitation.canceled",
+              "v1.organization.member.added",
+              "v1.organization.member.removed",
+              "v1.organization.member.role.assigned",
+              "v1.organization.member.role.removed",
+              "v1.organization.member.role.updated",
+              "v1.organization.billing.plan.upgraded",
+              "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
+              "*",
+            ]).annotate({ description: "Webhook event type." }),
+            OpenString,
+          ]),
+        }),
+      )
+        .annotate({
+          description: "List of subscribed events for which to receive the webhook event.",
+        })
+        .check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" })),
+      custom_headers: Schema.optionalKey(
+        Schema.Record(Schema.String, Schema.String).annotate({
+          description:
+            "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
+        }),
+      ),
+      created_by: Schema.String.annotate({
+        description: "ID of the user who created the endpoint.",
+        format: "uuid",
+      }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "u",
+          ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        }),
+      ),
+      created_at: Schema.String.annotate({
+        description: "Timestamp of endpoint's creation.",
+        format: "date-time",
+      }),
+    }),
+  }),
+});
+export const V2ProjectsRefWebhooksEndpointsIdTestPostInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
+      ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
+  ),
+  data: Schema.optionalKey(
+    Schema.Struct({
+      type: Schema.Literal("event").annotate({ description: "Resource type." }),
+      attributes: Schema.Struct({
+        type: Schema.Literals([
+          "v1.project.paused",
+          "v1.project.created",
+          "v1.project.restored",
+          "v1.project.transferred",
+          "v1.project.removed",
+          "v1.project.restarted",
+          "v1.project.status.changed",
+          "v1.project.backup.started",
+          "v1.project.branch.created",
+          "v1.project.branch.updated",
+          "v1.project.branch.removed",
+          "v1.project.secrets.leaked",
+          "v1.organization.member.invitation.created",
+          "v1.organization.member.invitation.canceled",
+          "v1.organization.member.added",
+          "v1.organization.member.removed",
+          "v1.organization.member.role.assigned",
+          "v1.organization.member.role.removed",
+          "v1.organization.member.role.updated",
+          "v1.organization.billing.plan.upgraded",
+          "v1.organization.billing.plan.downgraded",
+          "v1.organization.secrets.leaked",
+        ]).annotate({ description: "Webhook event type." }),
+      }),
+    }),
+  ),
+});
+export const V2ProjectsRefWebhooksEndpointsIdTestPostOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("ingress").annotate({ description: "Resource type." }),
+    id: Schema.String,
+  }),
+});
+export const V2ProjectsRefWebhooksEndpointsPostInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  data: Schema.Struct({
+    type: Schema.Literal("endpoint").annotate({ description: "Resource type." }),
+    attributes: Schema.Struct({
+      url: Schema.String.annotate({
+        description:
+          "Publicly available URL where to send the events, must use a domain and be resolvable to a non-reserved IP address.",
+        format: "uri",
+      }),
+      enabled: Schema.optionalKey(
+        Schema.Boolean.annotate({
+          description:
+            "Whether the endpoint is enabled or not - disabled endpoints won't emit any events.",
+        }),
+      ),
+      description: Schema.optionalKey(
+        Schema.Union([
+          Schema.String.check(
+            Schema.isMaxCodePoints(512).annotate({
+              expected: "a string with at most 512 code points",
+            }),
+          ),
+          Schema.Null,
+        ]).annotate({ description: "Optional description for the endpoint." }),
+      ),
+      event_types: Schema.Array(
+        Schema.Struct({
+          type: Schema.Literals([
+            "v1.project.paused",
+            "v1.project.created",
+            "v1.project.restored",
+            "v1.project.transferred",
+            "v1.project.removed",
+            "v1.project.restarted",
+            "v1.project.status.changed",
+            "v1.project.backup.started",
+            "v1.project.branch.created",
+            "v1.project.branch.updated",
+            "v1.project.branch.removed",
+            "v1.project.secrets.leaked",
+            "v1.organization.member.invitation.created",
+            "v1.organization.member.invitation.canceled",
+            "v1.organization.member.added",
+            "v1.organization.member.removed",
+            "v1.organization.member.role.assigned",
+            "v1.organization.member.role.removed",
+            "v1.organization.member.role.updated",
+            "v1.organization.billing.plan.upgraded",
+            "v1.organization.billing.plan.downgraded",
+            "v1.organization.secrets.leaked",
+            "*",
+          ]).annotate({ description: "Webhook event type." }),
+        }),
+      )
+        .annotate({
+          description: "List of subscribed events for which to receive the webhook event.",
+        })
+        .check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" })),
+      custom_headers: Schema.optionalKey(
+        Schema.Record(Schema.String, Schema.String).annotate({
+          description:
+            "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
+        }),
+      ),
+      signing_secret: Schema.String.annotate({
+        description:
+          "Secret key to use when signing. All events will be signed according to the [Standard Webhooks](https://www.standardwebhooks.com/) specification.",
+      })
+        .check(
+          Schema.isMinCodePoints(8).annotate({ expected: "a string with at least 8 code points" }),
+        )
+        .check(
+          Schema.isMaxCodePoints(64).annotate({ expected: "a string with at most 64 code points" }),
+        ),
+    }),
+  }),
+});
+export const V2ProjectsRefWebhooksEndpointsPostOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("endpoint").annotate({ description: "Resource type." }),
+    id: Schema.String.annotate({
+      description: "Identifier of an endpoint (UUID v7).",
+      format: "uuid",
+    }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
+        ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
+    ),
+    attributes: Schema.Struct({
+      id: Schema.String.annotate({
+        description: "Identifier of an endpoint (UUID v7).",
+        format: "uuid",
+      }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "u",
+          ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        }),
+      ),
+      url: Schema.String.annotate({
+        description:
+          "Publicly available URL where to send the events, must use a domain and be resolvable to a non-reserved IP address.",
+        format: "uri",
+      }),
+      enabled: Schema.Boolean.annotate({
+        description:
+          "Whether the endpoint is enabled or not - disabled endpoints won't emit any events.",
+      }),
+      description: Schema.Union([
+        Schema.String.check(
+          Schema.isMaxCodePoints(512).annotate({
+            expected: "a string with at most 512 code points",
+          }),
+        ),
+        Schema.Null,
+      ]).annotate({ description: "Optional description for the endpoint." }),
+      event_types: Schema.Array(
+        Schema.Struct({
+          type: Schema.Union([
+            Schema.Literals([
+              "v1.project.paused",
+              "v1.project.created",
+              "v1.project.restored",
+              "v1.project.transferred",
+              "v1.project.removed",
+              "v1.project.restarted",
+              "v1.project.status.changed",
+              "v1.project.backup.started",
+              "v1.project.branch.created",
+              "v1.project.branch.updated",
+              "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
+              "v1.organization.member.invitation.created",
+              "v1.organization.member.invitation.canceled",
+              "v1.organization.member.added",
+              "v1.organization.member.removed",
+              "v1.organization.member.role.assigned",
+              "v1.organization.member.role.removed",
+              "v1.organization.member.role.updated",
+              "v1.organization.billing.plan.upgraded",
+              "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
+              "*",
+            ]).annotate({ description: "Webhook event type." }),
+            OpenString,
+          ]),
+        }),
+      )
+        .annotate({
+          description: "List of subscribed events for which to receive the webhook event.",
+        })
+        .check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" })),
+      custom_headers: Schema.optionalKey(
+        Schema.Record(Schema.String, Schema.String).annotate({
+          description:
+            "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
+        }),
+      ),
+      created_by: Schema.String.annotate({
+        description: "ID of the user who created the endpoint.",
+        format: "uuid",
+      }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "u",
+          ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        }),
+      ),
+      created_at: Schema.String.annotate({
+        description: "Timestamp of endpoint's creation.",
+        format: "date-time",
+      }),
+    }),
+  }),
+});
+export const V2RemoveOrganizationMembersInput = Schema.Struct({
+  slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
+  ),
+  user_id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+        "u",
+      ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+    }),
+  ),
+});
 export const V2RunProjectAdvisorsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -12228,7 +17156,13 @@ export const V2RunProjectAdvisorsInput = Schema.Struct({
               "instance_telemetry_lost",
               "instance_db_down",
               "instance_alert_firing",
-              "log_service_error_rate_high",
+              "log_data_api_error_rate_high",
+              "log_auth_error_rate_high",
+              "log_storage_error_rate_high",
+              "log_edge_function_error_rate_high",
+              "realtime_authorization_timeouts",
+              "realtime_postgres_changes_spike",
+              "realtime_concurrent_users_near_limit",
             ]),
           }),
         )
@@ -12236,7 +17170,7 @@ export const V2RunProjectAdvisorsInput = Schema.Struct({
             Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
           )
           .check(
-            Schema.isMaxLength(10).annotate({ expected: "a value with a length of at most 10" }),
+            Schema.isMaxLength(15).annotate({ expected: "a value with a length of at most 15" }),
           ),
       }),
     }),
@@ -12249,51 +17183,62 @@ export const V2RunProjectAdvisorsOutput = Schema.Struct({
     attributes: Schema.Struct({
       lints: Schema.Array(
         Schema.Struct({
-          name: Schema.Literals([
-            "unindexed_foreign_keys",
-            "auth_users_exposed",
-            "auth_rls_initplan",
-            "no_primary_key",
-            "unused_index",
-            "multiple_permissive_policies",
-            "policy_exists_rls_disabled",
-            "rls_enabled_no_policy",
-            "duplicate_index",
-            "security_definer_view",
-            "function_search_path_mutable",
-            "rls_disabled_in_public",
-            "extension_in_public",
-            "rls_references_user_metadata",
-            "materialized_view_in_api",
-            "foreign_table_in_api",
-            "unsupported_reg_types",
-            "auth_otp_long_expiry",
-            "auth_otp_short_length",
-            "ssl_not_enforced",
-            "log_connections_not_enabled",
-            "network_restrictions_not_set",
-            "password_requirements_min_length",
-            "pitr_not_enabled",
-            "auth_leaked_password_protection",
-            "auth_insufficient_mfa_options",
-            "auth_password_policy_missing",
-            "leaked_service_key",
-            "no_backup_admin",
-            "vulnerable_postgres_version",
-            "db_not_reachable",
-            "db_connection_failing",
-            "db_connection_limit_reached",
-            "instance_telemetry_lost",
-            "instance_db_down",
-            "instance_alert_firing",
-            "log_service_error_rate_high",
-            "project_not_active",
-            "advisor_check_unavailable",
+          name: Schema.Union([
+            Schema.Literals([
+              "unindexed_foreign_keys",
+              "auth_users_exposed",
+              "auth_rls_initplan",
+              "no_primary_key",
+              "unused_index",
+              "multiple_permissive_policies",
+              "policy_exists_rls_disabled",
+              "rls_enabled_no_policy",
+              "duplicate_index",
+              "security_definer_view",
+              "function_search_path_mutable",
+              "rls_disabled_in_public",
+              "extension_in_public",
+              "rls_references_user_metadata",
+              "materialized_view_in_api",
+              "foreign_table_in_api",
+              "unsupported_reg_types",
+              "auth_otp_long_expiry",
+              "auth_otp_short_length",
+              "ssl_not_enforced",
+              "log_connections_not_enabled",
+              "network_restrictions_not_set",
+              "password_requirements_min_length",
+              "pitr_not_enabled",
+              "auth_leaked_password_protection",
+              "auth_insufficient_mfa_options",
+              "auth_password_policy_missing",
+              "leaked_service_key",
+              "no_backup_admin",
+              "vulnerable_postgres_version",
+              "db_not_reachable",
+              "db_connection_failing",
+              "db_connection_limit_reached",
+              "instance_telemetry_lost",
+              "instance_db_down",
+              "instance_alert_firing",
+              "log_data_api_error_rate_high",
+              "log_auth_error_rate_high",
+              "log_storage_error_rate_high",
+              "log_edge_function_error_rate_high",
+              "realtime_authorization_timeouts",
+              "realtime_postgres_changes_spike",
+              "realtime_concurrent_users_near_limit",
+              "project_not_active",
+              "advisor_check_unavailable",
+            ]),
+            OpenString,
           ]),
           title: Schema.String,
-          level: Schema.Literals(["ERROR", "WARN", "INFO"]),
+          level: Schema.Union([Schema.Literals(["ERROR", "WARN", "INFO"]), OpenString]),
           facing: Schema.Literal("EXTERNAL"),
-          categories: Schema.Array(Schema.Literals(["PERFORMANCE", "SECURITY", "HEALTH"])),
+          categories: Schema.Array(
+            Schema.Union([Schema.Literals(["PERFORMANCE", "SECURITY", "HEALTH"]), OpenString]),
+          ),
           description: Schema.String,
           detail: Schema.String,
           remediation: Schema.String,
@@ -12303,16 +17248,19 @@ export const V2RunProjectAdvisorsOutput = Schema.Struct({
               name: Schema.optionalKey(Schema.String),
               entity: Schema.optionalKey(Schema.String),
               type: Schema.optionalKey(
-                Schema.Literals([
-                  "table",
-                  "view",
-                  "materialized view",
-                  "foreign table",
-                  "auth",
-                  "function",
-                  "extension",
-                  "compliance",
-                  "health",
+                Schema.Union([
+                  Schema.Literals([
+                    "table",
+                    "view",
+                    "materialized view",
+                    "foreign table",
+                    "auth",
+                    "function",
+                    "extension",
+                    "compliance",
+                    "health",
+                  ]),
+                  OpenString,
                 ]),
               ),
               fkey_name: Schema.optionalKey(Schema.String),
@@ -12332,11 +17280,13 @@ export const V2RunProjectAdvisorsOutput = Schema.Struct({
 });
 export const V2TransferAProjectInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -12347,11 +17297,13 @@ export const V2TransferAProjectInput = Schema.Struct({
 });
 export const V2UpdateLogDrainInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -12359,6 +17311,7 @@ export const V2UpdateLogDrainInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -12478,7 +17431,7 @@ export const V2UpdateLogDrainOutput = Schema.Struct({
       config: Schema.Union([
         Schema.Struct({
           url: Schema.optionalKey(Schema.String),
-          http: Schema.optionalKey(Schema.Literals(["http1", "http2"])),
+          http: Schema.optionalKey(Schema.Union([Schema.Literals(["http1", "http2"]), OpenString])),
           gzip: Schema.optionalKey(Schema.Boolean),
           headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
         }).annotate({ title: "webhook" }),
@@ -12551,20 +17504,412 @@ export const V2UpdateLogDrainOutput = Schema.Struct({
           headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
         }).annotate({ title: "otlp" }),
       ]),
-      backend_type: Schema.Literals([
-        "postgres",
-        "bigquery",
-        "clickhouse",
-        "webhook",
-        "datadog",
-        "loki",
-        "sentry",
-        "s3",
-        "axiom",
-        "last9",
-        "otlp",
-        "syslog",
+      backend_type: Schema.Union([
+        Schema.Literals([
+          "postgres",
+          "bigquery",
+          "clickhouse",
+          "webhook",
+          "datadog",
+          "loki",
+          "sentry",
+          "s3",
+          "axiom",
+          "last9",
+          "otlp",
+          "syslog",
+        ]),
+        OpenString,
       ]),
+    }),
+  }),
+});
+export const V2UpdateNotebookInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
+      ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
+  ),
+  data: Schema.Struct({
+    type: Schema.Literal("notebook").annotate({ description: "Resource type." }),
+    attributes: Schema.Struct({
+      name: Schema.optionalKey(
+        Schema.String.check(
+          Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+        ).check(
+          Schema.isMaxCodePoints(255).annotate({
+            expected: "a string with at most 255 code points",
+          }),
+        ),
+      ),
+      description: Schema.optionalKey(
+        Schema.String.check(
+          Schema.isMaxCodePoints(10000).annotate({
+            expected: "a string with at most 10000 code points",
+          }),
+        ),
+      ),
+      favorite: Schema.optionalKey(Schema.Boolean),
+      content: Schema.optionalKey(
+        Schema.Struct({
+          cells: Schema.Array(
+            Schema.Union(
+              [
+                Schema.StructWithRest(
+                  Schema.Struct({
+                    id: Schema.optionalKey(Schema.String),
+                    type: Schema.Literal("markdown"),
+                    text: Schema.String,
+                  }),
+                  [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+                ),
+                Schema.StructWithRest(
+                  Schema.Struct({
+                    id: Schema.optionalKey(Schema.String),
+                    type: Schema.Literal("database"),
+                    sql: Schema.String.annotate({
+                      description: "SQL run against the project database.",
+                    }),
+                    row_limit: Schema.optionalKey(
+                      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+                        .check(
+                          Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                            expected: "a value less than or equal to 9007199254740991",
+                          }),
+                        )
+                        .check(
+                          Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" }),
+                        ),
+                    ),
+                    database_identifier: Schema.optionalKey(
+                      Schema.String.annotate({
+                        description:
+                          "Read replica to run against. Omit to use the primary database.",
+                      }),
+                    ),
+                    title: Schema.optionalKey(Schema.String),
+                    view: Schema.optionalKey(Schema.Literals(["table", "chart"])),
+                    chart: Schema.optionalKey(
+                      Schema.StructWithRest(
+                        Schema.Struct({
+                          type: Schema.Literals(["bar", "line"]),
+                          x_column: Schema.String.annotate({
+                            description: "Result column used for the x axis.",
+                          }),
+                          y_series: Schema.Array(
+                            Schema.StructWithRest(
+                              Schema.Struct({
+                                column: Schema.String.annotate({
+                                  description: "Result column plotted as a series.",
+                                }),
+                              }),
+                              [
+                                Schema.Record(
+                                  Schema.String,
+                                  Schema.Json.annotate({ expected: "JSON value" }),
+                                ),
+                              ],
+                            ),
+                          ).check(
+                            Schema.isMaxLength(3).annotate({
+                              expected: "a value with a length of at most 3",
+                            }),
+                          ),
+                          scale: Schema.Literals(["linear", "log"]),
+                          cumulative: Schema.Boolean,
+                          show_labels: Schema.Boolean,
+                        }),
+                        [
+                          Schema.Record(
+                            Schema.String,
+                            Schema.Json.annotate({ expected: "JSON value" }),
+                          ),
+                        ],
+                      ).annotate({
+                        description: "Chart configuration, retained even while `view` is `table`.",
+                      }),
+                    ),
+                  }),
+                  [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+                ),
+                Schema.StructWithRest(
+                  Schema.Struct({
+                    id: Schema.optionalKey(Schema.String),
+                    type: Schema.Literal("log"),
+                    sql: Schema.String.annotate({
+                      description: "SQL run against the project logs.",
+                    }),
+                    time_range: Schema.Union(
+                      [
+                        Schema.StructWithRest(
+                          Schema.Struct({
+                            type: Schema.Literal("absolute"),
+                            start: Schema.String.annotate({
+                              description: "ISO 8601 start of the range.",
+                            }),
+                            end: Schema.String.annotate({
+                              description: "ISO 8601 end of the range.",
+                            }),
+                          }),
+                          [
+                            Schema.Record(
+                              Schema.String,
+                              Schema.Json.annotate({ expected: "JSON value" }),
+                            ),
+                          ],
+                        ),
+                        Schema.StructWithRest(
+                          Schema.Struct({
+                            type: Schema.Literal("relative"),
+                            unit: Schema.Literals([
+                              "minute",
+                              "hour",
+                              "day",
+                              "week",
+                              "month",
+                              "year",
+                            ]),
+                            amount: Schema.Number.check(
+                              Schema.isInt().annotate({ expected: "an integer" }),
+                            )
+                              .check(
+                                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                                  expected: "a value less than or equal to 9007199254740991",
+                                }),
+                              )
+                              .check(
+                                Schema.isGreaterThan(0).annotate({
+                                  expected: "a value greater than 0",
+                                }),
+                              ),
+                          }),
+                          [
+                            Schema.Record(
+                              Schema.String,
+                              Schema.Json.annotate({ expected: "JSON value" }),
+                            ),
+                          ],
+                        ),
+                      ],
+                      { mode: "oneOf" },
+                    ),
+                    title: Schema.optionalKey(Schema.String),
+                    view: Schema.optionalKey(Schema.Literals(["table", "chart"])),
+                    chart: Schema.optionalKey(
+                      Schema.StructWithRest(
+                        Schema.Struct({
+                          type: Schema.Literals(["bar", "line"]),
+                          x_column: Schema.String.annotate({
+                            description: "Result column used for the x axis.",
+                          }),
+                          y_series: Schema.Array(
+                            Schema.StructWithRest(
+                              Schema.Struct({
+                                column: Schema.String.annotate({
+                                  description: "Result column plotted as a series.",
+                                }),
+                              }),
+                              [
+                                Schema.Record(
+                                  Schema.String,
+                                  Schema.Json.annotate({ expected: "JSON value" }),
+                                ),
+                              ],
+                            ),
+                          ).check(
+                            Schema.isMaxLength(3).annotate({
+                              expected: "a value with a length of at most 3",
+                            }),
+                          ),
+                          scale: Schema.Literals(["linear", "log"]),
+                          cumulative: Schema.Boolean,
+                          show_labels: Schema.Boolean,
+                        }),
+                        [
+                          Schema.Record(
+                            Schema.String,
+                            Schema.Json.annotate({ expected: "JSON value" }),
+                          ),
+                        ],
+                      ).annotate({
+                        description: "Chart configuration, retained even while `view` is `table`.",
+                      }),
+                    ),
+                  }),
+                  [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+                ),
+              ],
+              { mode: "oneOf" },
+            ),
+          ),
+        }).annotate({
+          description:
+            "Replaces the notebook body. A cell keeps its identity by echoing back its `id`; a cell sent without an `id` is added as a new one.",
+        }),
+      ),
+    }),
+  }),
+});
+export const V2UpdateNotebookOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("notebook").annotate({ description: "Resource type." }),
+    id: Schema.String,
+    attributes: Schema.Struct({
+      name: Schema.String,
+      description: Schema.Union([Schema.String, Schema.Null]),
+      favorite: Schema.Boolean,
+      inserted_at: Schema.String,
+      updated_at: Schema.String,
+      owner: Schema.Union([
+        Schema.Struct({
+          id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          username: Schema.String,
+        }).annotate({ description: "User who created the notebook." }),
+        Schema.Null,
+      ]),
+      updated_by: Schema.Union([
+        Schema.Struct({
+          id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          username: Schema.String,
+        }).annotate({ description: "User who last wrote to the notebook." }),
+        Schema.Null,
+      ]),
+      content: Schema.Struct({
+        schema_version: Schema.Number.check(
+          Schema.isFinite().annotate({ expected: "a finite number" }),
+        ),
+        cells: Schema.Array(
+          Schema.Union(
+            [
+              Schema.Struct({
+                id: Schema.String,
+                type: Schema.Literal("markdown"),
+                text: Schema.String,
+              }),
+              Schema.Struct({
+                id: Schema.String,
+                type: Schema.Literal("database"),
+                sql: Schema.String.annotate({
+                  description: "SQL run against the project database.",
+                }),
+                row_limit: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+                  .check(
+                    Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                      expected: "a value less than or equal to 9007199254740991",
+                    }),
+                  )
+                  .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
+                database_identifier: Schema.optionalKey(
+                  Schema.String.annotate({
+                    description: "Read replica to run against. Omit to use the primary database.",
+                  }),
+                ),
+                title: Schema.optionalKey(Schema.String),
+                view: Schema.optionalKey(
+                  Schema.Union([Schema.Literals(["table", "chart"]), OpenString]),
+                ),
+                chart: Schema.optionalKey(
+                  Schema.Struct({
+                    type: Schema.Union([Schema.Literals(["bar", "line"]), OpenString]),
+                    x_column: Schema.String.annotate({
+                      description: "Result column used for the x axis.",
+                    }),
+                    y_series: Schema.Array(
+                      Schema.Struct({
+                        column: Schema.String.annotate({
+                          description: "Result column plotted as a series.",
+                        }),
+                      }),
+                    ),
+                    scale: Schema.Union([Schema.Literals(["linear", "log"]), OpenString]),
+                    cumulative: Schema.Boolean,
+                    show_labels: Schema.Boolean,
+                  }).annotate({
+                    description: "Chart configuration, retained even while `view` is `table`.",
+                  }),
+                ),
+              }),
+              Schema.Struct({
+                id: Schema.String,
+                type: Schema.Literal("log"),
+                sql: Schema.String.annotate({ description: "SQL run against the project logs." }),
+                time_range: Schema.Union(
+                  [
+                    Schema.Struct({
+                      type: Schema.Literal("absolute"),
+                      start: Schema.String.annotate({
+                        description: "ISO 8601 start of the range.",
+                      }),
+                      end: Schema.String.annotate({ description: "ISO 8601 end of the range." }),
+                    }),
+                    Schema.Struct({
+                      type: Schema.Literal("relative"),
+                      unit: Schema.Union([
+                        Schema.Literals(["minute", "hour", "day", "week", "month", "year"]),
+                        OpenString,
+                      ]),
+                      amount: Schema.Number.check(
+                        Schema.isInt().annotate({ expected: "an integer" }),
+                      )
+                        .check(
+                          Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                            expected: "a value less than or equal to 9007199254740991",
+                          }),
+                        )
+                        .check(
+                          Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" }),
+                        ),
+                    }),
+                  ],
+                  { mode: "oneOf" },
+                ),
+                title: Schema.optionalKey(Schema.String),
+                view: Schema.optionalKey(
+                  Schema.Union([Schema.Literals(["table", "chart"]), OpenString]),
+                ),
+                chart: Schema.optionalKey(
+                  Schema.Struct({
+                    type: Schema.Union([Schema.Literals(["bar", "line"]), OpenString]),
+                    x_column: Schema.String.annotate({
+                      description: "Result column used for the x axis.",
+                    }),
+                    y_series: Schema.Array(
+                      Schema.Struct({
+                        column: Schema.String.annotate({
+                          description: "Result column plotted as a series.",
+                        }),
+                      }),
+                    ),
+                    scale: Schema.Union([Schema.Literals(["linear", "log"]), OpenString]),
+                    cumulative: Schema.Boolean,
+                    show_labels: Schema.Boolean,
+                  }).annotate({
+                    description: "Chart configuration, retained even while `view` is `table`.",
+                  }),
+                ),
+              }),
+            ],
+            { mode: "oneOf" },
+          ),
+        ),
+      }),
     }),
   }),
 });
@@ -12586,6 +17931,7 @@ export const V1DeleteProjectClaimTokenOutput = Schema.Void;
 export const V1DisablePreviewBranchingOutput = Schema.Void;
 export const V1DisableReadonlyModeTemporarilyOutput = Schema.Void;
 export const V1EnableDatabaseWebhookOutput = Schema.Void;
+export const V1GetProjectLogsAllOutput = Schema.Void;
 export const V1ModifyDatabaseDiskOutput = Schema.Void;
 export const V1OauthAuthorizeProjectClaimOutput = Schema.Void;
 export const V1PatchAMigrationOutput = Schema.Void;
@@ -12606,10 +17952,12 @@ export const V1UndoOutput = Schema.Void;
 export const V1UpdateRealtimeConfigOutput = Schema.Void;
 export const V1UpdateStorageConfigOutput = Schema.Void;
 export const V1UpsertAMigrationOutput = Schema.Void;
-export const V2DeleteAWorkerOutput = Schema.Void;
+export const V2DeleteAComputeInstanceOutput = Schema.Void;
 export const V2DeleteLogDrainOutput = Schema.Void;
+export const V2DeleteNotebookOutput = Schema.Void;
 export const V2DeletePrivateLinkAssociationOutput = Schema.Void;
 export const V2DeletePrivateLinkAssociationForDatabaseOutput = Schema.Void;
+export const V2RemoveOrganizationMembersOutput = Schema.Void;
 export const V2TransferAProjectOutput = Schema.Void;
 
 export const openApiOperationIdMap = {
@@ -12784,29 +18132,64 @@ export const openApiOperationIdMap = {
   "v1-upsert-a-migration": "v1UpsertAMigration",
   "v1-verify-dns-config": "v1VerifyDnsConfig",
   "v2-assign-organization-member-role": "v2AssignOrganizationMemberRole",
+  "v2-create-a-branch": "v2CreateABranch",
+  "v2-create-compute-instance-upload": "v2CreateComputeInstanceUpload",
   "v2-create-log-drain": "v2CreateLogDrain",
+  "v2-create-notebook": "v2CreateNotebook",
   "v2-create-organization-invitations": "v2CreateOrganizationInvitations",
   "v2-create-private-link-association": "v2CreatePrivateLinkAssociation",
-  "v2-create-worker-upload": "v2CreateWorkerUpload",
-  "v2-delete-a-worker": "v2DeleteAWorker",
+  "v2-delete-a-compute-instance": "v2DeleteAComputeInstance",
   "v2-delete-log-drain": "v2DeleteLogDrain",
+  "v2-delete-notebook": "v2DeleteNotebook",
   "v2-delete-organization-invitations": "v2DeleteOrganizationInvitations",
   "v2-delete-private-link-association": "v2DeletePrivateLinkAssociation",
   "v2-delete-private-link-association-for-database": "v2DeletePrivateLinkAssociationForDatabase",
-  "v2-deploy-a-worker": "v2DeployAWorker",
-  "v2-get-a-worker": "v2GetAWorker",
+  "v2-deploy-a-compute-instance": "v2DeployAComputeInstance",
+  "v2-download-project-backup": "v2DownloadProjectBackup",
+  "v2-get-a-compute-instance": "v2GetAComputeInstance",
+  "v2-get-notebook": "v2GetNotebook",
   "v2-get-project-config": "v2GetProjectConfig",
-  "v2-list-all-workers": "v2ListAllWorkers",
+  "v2-list-all-compute-instances": "v2ListAllComputeInstances",
   "v2-list-log-drains": "v2ListLogDrains",
+  "v2-list-notebooks": "v2ListNotebooks",
   "v2-list-organization-github-connections": "v2ListOrganizationGithubConnections",
+  "v2-list-organization-maintenance-windows": "v2ListOrganizationMaintenanceWindows",
   "v2-list-organization-members": "v2ListOrganizationMembers",
   "v2-list-organization-projects": "v2ListOrganizationProjects",
   "v2-list-organization-roles": "v2ListOrganizationRoles",
   "v2-list-private-link-associations": "v2ListPrivateLinkAssociations",
+  "v2-organizations-slug-webhooks-deliveries-id-get": "v2OrganizationsSlugWebhooksDeliveriesIdGet",
+  "v2-organizations-slug-webhooks-deliveries-id-retry-post":
+    "v2OrganizationsSlugWebhooksDeliveriesIdRetryPost",
+  "v2-organizations-slug-webhooks-endpoints-delete": "v2OrganizationsSlugWebhooksEndpointsDelete",
+  "v2-organizations-slug-webhooks-endpoints-get": "v2OrganizationsSlugWebhooksEndpointsGet",
+  "v2-organizations-slug-webhooks-endpoints-id-delete":
+    "v2OrganizationsSlugWebhooksEndpointsIdDelete",
+  "v2-organizations-slug-webhooks-endpoints-id-deliveries-get":
+    "v2OrganizationsSlugWebhooksEndpointsIdDeliveriesGet",
+  "v2-organizations-slug-webhooks-endpoints-id-get": "v2OrganizationsSlugWebhooksEndpointsIdGet",
+  "v2-organizations-slug-webhooks-endpoints-id-patch":
+    "v2OrganizationsSlugWebhooksEndpointsIdPatch",
+  "v2-organizations-slug-webhooks-endpoints-id-test-post":
+    "v2OrganizationsSlugWebhooksEndpointsIdTestPost",
+  "v2-organizations-slug-webhooks-endpoints-post": "v2OrganizationsSlugWebhooksEndpointsPost",
   "v2-preview-a-project-transfer": "v2PreviewAProjectTransfer",
+  "v2-projects-ref-webhooks-deliveries-id-get": "v2ProjectsRefWebhooksDeliveriesIdGet",
+  "v2-projects-ref-webhooks-deliveries-id-retry-post": "v2ProjectsRefWebhooksDeliveriesIdRetryPost",
+  "v2-projects-ref-webhooks-endpoints-delete": "v2ProjectsRefWebhooksEndpointsDelete",
+  "v2-projects-ref-webhooks-endpoints-get": "v2ProjectsRefWebhooksEndpointsGet",
+  "v2-projects-ref-webhooks-endpoints-id-delete": "v2ProjectsRefWebhooksEndpointsIdDelete",
+  "v2-projects-ref-webhooks-endpoints-id-deliveries-get":
+    "v2ProjectsRefWebhooksEndpointsIdDeliveriesGet",
+  "v2-projects-ref-webhooks-endpoints-id-get": "v2ProjectsRefWebhooksEndpointsIdGet",
+  "v2-projects-ref-webhooks-endpoints-id-patch": "v2ProjectsRefWebhooksEndpointsIdPatch",
+  "v2-projects-ref-webhooks-endpoints-id-test-post": "v2ProjectsRefWebhooksEndpointsIdTestPost",
+  "v2-projects-ref-webhooks-endpoints-post": "v2ProjectsRefWebhooksEndpointsPost",
+  "v2-remove-organization-members": "v2RemoveOrganizationMembers",
   "v2-run-project-advisors": "v2RunProjectAdvisors",
   "v2-transfer-a-project": "v2TransferAProject",
   "v2-update-log-drain": "v2UpdateLogDrain",
+  "v2-update-notebook": "v2UpdateNotebook",
 } as const;
 
 export const operationDefinitions = {
@@ -12825,7 +18208,8 @@ export const operationDefinitions = {
   },
   v1ActivateCustomHostname: {
     id: "v1ActivateCustomHostname",
-    description: "[Beta] Activates a custom hostname for a project.",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/custom-hostname/activate",
     pathParams: ["ref"],
@@ -12838,7 +18222,8 @@ export const operationDefinitions = {
   },
   v1ActivateVanitySubdomainConfig: {
     id: "v1ActivateVanitySubdomainConfig",
-    description: "[Beta] Activates a vanity subdomain for a project.",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/vanity-subdomain/activate",
     pathParams: ["ref"],
@@ -12899,7 +18284,8 @@ export const operationDefinitions = {
   },
   v1AuthorizeUser: {
     id: "v1AuthorizeUser",
-    description: "[Beta] Authorize user through oauth",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/oauth/authorize",
     pathParams: [],
@@ -12977,7 +18363,8 @@ export const operationDefinitions = {
   },
   v1CheckVanitySubdomainAvailability: {
     id: "v1CheckVanitySubdomainAvailability",
-    description: "[Beta] Checks vanity subdomain availability",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/vanity-subdomain/check-availability",
     pathParams: ["ref"],
@@ -13149,7 +18536,8 @@ export const operationDefinitions = {
   },
   v1CreateLoginRole: {
     id: "v1CreateLoginRole",
-    description: "[Beta] Create a login role for CLI with temporary password",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/cli/login-role",
     pathParams: ["ref"],
@@ -13239,7 +18627,8 @@ export const operationDefinitions = {
   },
   v1DeactivateVanitySubdomainConfig: {
     id: "v1DeactivateVanitySubdomainConfig",
-    description: "[Beta] Deletes a project's vanity subdomain configuration",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "DELETE",
     path: "/v1/projects/{ref}/vanity-subdomain",
     pathParams: ["ref"],
@@ -13252,7 +18641,8 @@ export const operationDefinitions = {
   },
   v1DeleteHostnameConfig: {
     id: "v1DeleteHostnameConfig",
-    description: "[Beta] Deletes a project's custom hostname configuration",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "DELETE",
     path: "/v1/projects/{ref}/custom-hostname",
     pathParams: ["ref"],
@@ -13344,7 +18734,8 @@ export const operationDefinitions = {
   },
   v1DeleteLoginRoles: {
     id: "v1DeleteLoginRoles",
-    description: "[Beta] Delete existing login roles used by CLI",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "DELETE",
     path: "/v1/projects/{ref}/cli/login-role",
     pathParams: ["ref"],
@@ -13357,7 +18748,8 @@ export const operationDefinitions = {
   },
   v1DeleteNetworkBans: {
     id: "v1DeleteNetworkBans",
-    description: "[Beta] Remove network bans.",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "DELETE",
     path: "/v1/projects/{ref}/network-bans",
     pathParams: ["ref"],
@@ -13426,7 +18818,8 @@ export const operationDefinitions = {
   },
   v1DiffABranch: {
     id: "v1DiffABranch",
-    description: "Diffs the specified database branch",
+    description:
+      "Diffs the specified database branch\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/branches/{branch_id_or_ref}/diff",
     pathParams: ["branch_id_or_ref"],
@@ -13465,7 +18858,8 @@ export const operationDefinitions = {
   },
   v1EnableDatabaseWebhook: {
     id: "v1EnableDatabaseWebhook",
-    description: "[Beta] Enables Database Webhooks on the project",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/database/webhooks/enable",
     pathParams: ["ref"],
@@ -13479,7 +18873,7 @@ export const operationDefinitions = {
   v1ExchangeOauthToken: {
     id: "v1ExchangeOauthToken",
     description:
-      "Supports `authorization_code`, `refresh_token`, and `urn:ietf:params:oauth:grant-type:jwt-bearer` grant types. The `jwt-bearer` grant type (IDJAG — identity-directed JWT assertion) is in beta and available on Team and Enterprise plans only.",
+      "Supports `authorization_code`, `refresh_token`, and `urn:ietf:params:oauth:grant-type:jwt-bearer` grant types. The `jwt-bearer` grant type (IDJAG — identity-directed JWT assertion) is in beta and available on Team and Enterprise plans only.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/oauth/token",
     pathParams: [],
@@ -13662,7 +19056,8 @@ export const operationDefinitions = {
   },
   v1GetAvailableRegions: {
     id: "v1GetAvailableRegions",
-    description: "[Beta] Gets the list of available regions that can be used for a new project",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/projects/available-regions",
     pathParams: [],
@@ -13742,7 +19137,8 @@ export const operationDefinitions = {
   },
   v1GetHostnameConfig: {
     id: "v1GetHostnameConfig",
-    description: "[Beta] Gets project's custom hostname config",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/projects/{ref}/custom-hostname",
     pathParams: ["ref"],
@@ -13768,7 +19164,8 @@ export const operationDefinitions = {
   },
   v1GetJitAccessConfig: {
     id: "v1GetJitAccessConfig",
-    description: "[Beta] Get project's temporary access configuration.",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/projects/{ref}/jit-access",
     pathParams: ["ref"],
@@ -13795,7 +19192,8 @@ export const operationDefinitions = {
   },
   v1GetNetworkRestrictions: {
     id: "v1GetNetworkRestrictions",
-    description: "[Beta] Gets project's network restrictions",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/projects/{ref}/network-restrictions",
     pathParams: ["ref"],
@@ -13849,7 +19247,8 @@ export const operationDefinitions = {
   },
   v1GetPgsodiumConfig: {
     id: "v1GetPgsodiumConfig",
-    description: "[Beta] Gets project's pgsodium config",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/projects/{ref}/pgsodium",
     pathParams: ["ref"],
@@ -13888,7 +19287,8 @@ export const operationDefinitions = {
   },
   v1GetPostgresUpgradeEligibility: {
     id: "v1GetPostgresUpgradeEligibility",
-    description: "[Beta] Returns the project's eligibility for upgrades",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/projects/{ref}/upgrade/eligibility",
     pathParams: ["ref"],
@@ -13901,7 +19301,8 @@ export const operationDefinitions = {
   },
   v1GetPostgresUpgradeStatus: {
     id: "v1GetPostgresUpgradeStatus",
-    description: "[Beta] Gets the latest status of the project's upgrade",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/projects/{ref}/upgrade/status",
     pathParams: ["ref"],
@@ -14047,14 +19448,14 @@ export const operationDefinitions = {
   v1GetProjectLogsAll: {
     id: "v1GetProjectLogsAll",
     description:
-      "Executes a SQL query on the project's logs.\n\nEither the `iso_timestamp_start` and `iso_timestamp_end` parameters must be provided.\nIf both are not provided, only the last 1 minute of logs will be queried.\nThe timestamp range must be no more than 24 hours and is rounded to the nearest minute. If the range is more than 24 hours, a validation error will be thrown.\n\nNote: Unless the `sql` parameter is provided, only edge_logs will be queried. See the [log query docs](https://supabase.com/docs/guides/monitoring-and-debugging/logs#logs-explorer) for all available sources.",
+      "This endpoint has been removed and always responds with `410 Gone`. Use `GET /v1/projects/{ref}/analytics/endpoints/logs` instead. See the [migration guide](https://supabase.com/changelog/48235-migration-of-supabase-management-api-logs-all-analytics-endpoint-to-logs-endpoint).",
     method: "GET",
     path: "/v1/projects/{ref}/analytics/endpoints/logs.all",
     pathParams: ["ref"],
-    queryParams: ["sql", "iso_timestamp_start", "iso_timestamp_end"],
+    queryParams: [],
     headerParams: [],
     requestBody: { kind: "none" },
-    response: { kind: "json" },
+    response: { kind: "void" },
     inputSchema: V1GetProjectLogsAllInput,
     outputSchema: V1GetProjectLogsAllOutput,
   },
@@ -14204,7 +19605,8 @@ export const operationDefinitions = {
   },
   v1GetSslEnforcementConfig: {
     id: "v1GetSslEnforcementConfig",
-    description: "[Beta] Get project's SSL enforcement configuration.",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/projects/{ref}/ssl-enforcement",
     pathParams: ["ref"],
@@ -14230,7 +19632,8 @@ export const operationDefinitions = {
   },
   v1GetVanitySubdomainConfig: {
     id: "v1GetVanitySubdomainConfig",
-    description: "[Beta] Gets current vanity subdomain config",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/projects/{ref}/vanity-subdomain",
     pathParams: ["ref"],
@@ -14322,7 +19725,8 @@ export const operationDefinitions = {
   },
   v1ListAllNetworkBans: {
     id: "v1ListAllNetworkBans",
-    description: "[Beta] Gets project's network bans",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/network-bans/retrieve",
     pathParams: ["ref"],
@@ -14336,7 +19740,7 @@ export const operationDefinitions = {
   v1ListAllNetworkBansEnriched: {
     id: "v1ListAllNetworkBansEnriched",
     description:
-      "[Beta] Gets project's network bans with additional information about which databases they affect",
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/network-bans/retrieve/enriched",
     pathParams: ["ref"],
@@ -14555,7 +19959,8 @@ export const operationDefinitions = {
   },
   v1PatchNetworkRestrictions: {
     id: "v1PatchNetworkRestrictions",
-    description: "[Alpha] Updates project's network restrictions by adding or removing CIDRs",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Alpha** stage.",
     method: "PATCH",
     path: "/v1/projects/{ref}/network-restrictions",
     pathParams: ["ref"],
@@ -14594,7 +19999,8 @@ export const operationDefinitions = {
   },
   v1ReadOnlyQuery: {
     id: "v1ReadOnlyQuery",
-    description: "All entity references must be schema qualified.",
+    description:
+      "All entity references must be schema qualified.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/database/query/read-only",
     pathParams: ["ref"],
@@ -14607,7 +20013,8 @@ export const operationDefinitions = {
   },
   v1RemoveAReadReplica: {
     id: "v1RemoveAReadReplica",
-    description: "[Beta] Remove a read replica",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/read-replicas/remove",
     pathParams: ["ref"],
@@ -14730,7 +20137,8 @@ export const operationDefinitions = {
   },
   v1RevokeToken: {
     id: "v1RevokeToken",
-    description: "[Beta] Revoke oauth app authorization and it's corresponding tokens",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/oauth/revoke",
     pathParams: [],
@@ -14760,7 +20168,8 @@ export const operationDefinitions = {
   },
   v1RunAQuery: {
     id: "v1RunAQuery",
-    description: "[Beta] Run sql query",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/database/query",
     pathParams: ["ref"],
@@ -14791,7 +20200,8 @@ export const operationDefinitions = {
   },
   v1SetupAReadReplica: {
     id: "v1SetupAReadReplica",
-    description: "[Beta] Set up a read replica",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/read-replicas/setup",
     pathParams: ["ref"],
@@ -15007,6 +20417,7 @@ export const operationDefinitions = {
         "password_required_characters",
         "security_manual_linking_enabled",
         "security_update_password_require_reauthentication",
+        "security_update_password_require_current_password",
         "security_refresh_token_reuse_interval",
         "mailer_otp_exp",
         "mailer_otp_length",
@@ -15202,7 +20613,8 @@ export const operationDefinitions = {
   },
   v1UpdateHostnameConfig: {
     id: "v1UpdateHostnameConfig",
-    description: "[Beta] Updates project's custom hostname configuration",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/custom-hostname/initialize",
     pathParams: ["ref"],
@@ -15228,7 +20640,8 @@ export const operationDefinitions = {
   },
   v1UpdateJitAccessConfig: {
     id: "v1UpdateJitAccessConfig",
-    description: "[Beta] Update project's temporary access configuration.",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "PUT",
     path: "/v1/projects/{ref}/jit-access",
     pathParams: ["ref"],
@@ -15241,7 +20654,8 @@ export const operationDefinitions = {
   },
   v1UpdateNetworkRestrictions: {
     id: "v1UpdateNetworkRestrictions",
-    description: "[Beta] Updates project's network restrictions",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/network-restrictions/apply",
     pathParams: ["ref"],
@@ -15259,7 +20673,7 @@ export const operationDefinitions = {
   v1UpdatePgsodiumConfig: {
     id: "v1UpdatePgsodiumConfig",
     description:
-      "[Beta] Updates project's pgsodium config. Updating the root_key can cause all data encrypted with the older key to become inaccessible.",
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "PUT",
     path: "/v1/projects/{ref}/pgsodium",
     pathParams: ["ref"],
@@ -15301,6 +20715,10 @@ export const operationDefinitions = {
       fields: [
         "effective_cache_size",
         "logical_decoding_work_mem",
+        "pg_stat_statements.max",
+        "pg_net.batch_size",
+        "autovacuum_max_workers",
+        "autovacuum_work_mem",
         "cron.log_statement",
         "log_autovacuum_min_duration",
         "log_checkpoints",
@@ -15361,6 +20779,8 @@ export const operationDefinitions = {
         "max_rows",
         "db_pool",
         "db_pool_acquisition_timeout",
+        "db_pool_max_lifetime",
+        "db_pool_max_idletime",
       ],
     },
     response: { kind: "json" },
@@ -15443,7 +20863,8 @@ export const operationDefinitions = {
   },
   v1UpdateSslEnforcementConfig: {
     id: "v1UpdateSslEnforcementConfig",
-    description: "[Beta] Update project's SSL enforcement configuration.",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "PUT",
     path: "/v1/projects/{ref}/ssl-enforcement",
     pathParams: ["ref"],
@@ -15473,7 +20894,8 @@ export const operationDefinitions = {
   },
   v1UpgradePostgresVersion: {
     id: "v1UpgradePostgresVersion",
-    description: "[Beta] Upgrades the project's Postgres version",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/upgrade",
     pathParams: ["ref"],
@@ -15508,7 +20930,7 @@ export const operationDefinitions = {
   v1VerifyDnsConfig: {
     id: "v1VerifyDnsConfig",
     description:
-      "[Beta] Attempts to verify the DNS configuration for project's custom hostname configuration",
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/custom-hostname/reverify",
     pathParams: ["ref"],
@@ -15533,6 +20955,34 @@ export const operationDefinitions = {
     inputSchema: V2AssignOrganizationMemberRoleInput,
     outputSchema: V2AssignOrganizationMemberRoleOutput,
   },
+  v2CreateABranch: {
+    id: "v2CreateABranch",
+    description:
+      "Creates a database branch from the specified project. Compute and disk size can be set here so the branch is provisioned at the requested size, instead of being resized after creation.",
+    method: "POST",
+    path: "/v2/projects/{ref}/branches",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2CreateABranchInput,
+    outputSchema: V2CreateABranchOutput,
+  },
+  v2CreateComputeInstanceUpload: {
+    id: "v2CreateComputeInstanceUpload",
+    description:
+      "PUT the `.tar.gz` build context to the returned `url` before `expires_at`, then deploy with the upload id as `context_upload_id`. The bytes go straight to storage — no management API request carries them.\n\nThis endpoint is currently in its **Alpha** stage.",
+    method: "POST",
+    path: "/v2/projects/{ref}/compute/{name}/uploads",
+    pathParams: ["ref", "name"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2CreateComputeInstanceUploadInput,
+    outputSchema: V2CreateComputeInstanceUploadOutput,
+  },
   v2CreateLogDrain: {
     id: "v2CreateLogDrain",
     description: "Create a log drain for a project",
@@ -15545,6 +20995,20 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2CreateLogDrainInput,
     outputSchema: V2CreateLogDrainOutput,
+  },
+  v2CreateNotebook: {
+    id: "v2CreateNotebook",
+    description:
+      "Creates a notebook shared with everyone who has access to the project. Cell ids are assigned by the server and returned in the response.",
+    method: "POST",
+    path: "/v2/projects/{ref}/notebooks",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2CreateNotebookInput,
+    outputSchema: V2CreateNotebookOutput,
   },
   v2CreateOrganizationInvitations: {
     id: "v2CreateOrganizationInvitations",
@@ -15574,32 +21038,19 @@ export const operationDefinitions = {
     inputSchema: V2CreatePrivateLinkAssociationInput,
     outputSchema: V2CreatePrivateLinkAssociationOutput,
   },
-  v2CreateWorkerUpload: {
-    id: "v2CreateWorkerUpload",
+  v2DeleteAComputeInstance: {
+    id: "v2DeleteAComputeInstance",
     description:
-      "PUT the `.tar.gz` build context to the returned `url` before `expires_at`, then deploy with the upload id as `context_upload_id`. The bytes go straight to storage — no management API request carries them.",
-    method: "POST",
-    path: "/v2/projects/{ref}/workers/{name}/uploads",
-    pathParams: ["ref", "name"],
-    queryParams: [],
-    headerParams: [],
-    requestBody: { kind: "none" },
-    response: { kind: "json" },
-    inputSchema: V2CreateWorkerUploadInput,
-    outputSchema: V2CreateWorkerUploadOutput,
-  },
-  v2DeleteAWorker: {
-    id: "v2DeleteAWorker",
-    description: "Tombstones the worker. Its instances and image are torn down asynchronously.",
+      "Tombstones the compute instance. Its running instances and image are torn down asynchronously.\n\nThis endpoint is currently in its **Alpha** stage.",
     method: "DELETE",
-    path: "/v2/projects/{ref}/workers/{name}",
+    path: "/v2/projects/{ref}/compute/{name}",
     pathParams: ["ref", "name"],
     queryParams: [],
     headerParams: [],
     requestBody: { kind: "none" },
     response: { kind: "void" },
-    inputSchema: V2DeleteAWorkerInput,
-    outputSchema: V2DeleteAWorkerOutput,
+    inputSchema: V2DeleteAComputeInstanceInput,
+    outputSchema: V2DeleteAComputeInstanceOutput,
   },
   v2DeleteLogDrain: {
     id: "v2DeleteLogDrain",
@@ -15613,6 +21064,19 @@ export const operationDefinitions = {
     response: { kind: "void" },
     inputSchema: V2DeleteLogDrainInput,
     outputSchema: V2DeleteLogDrainOutput,
+  },
+  v2DeleteNotebook: {
+    id: "v2DeleteNotebook",
+    description: "Delete a notebook",
+    method: "DELETE",
+    path: "/v2/projects/{ref}/notebooks/{id}",
+    pathParams: ["ref", "id"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "void" },
+    inputSchema: V2DeleteNotebookInput,
+    outputSchema: V2DeleteNotebookOutput,
   },
   v2DeleteOrganizationInvitations: {
     id: "v2DeleteOrganizationInvitations",
@@ -15655,38 +21119,64 @@ export const operationDefinitions = {
     inputSchema: V2DeletePrivateLinkAssociationForDatabaseInput,
     outputSchema: V2DeletePrivateLinkAssociationForDatabaseOutput,
   },
-  v2DeployAWorker: {
-    id: "v2DeployAWorker",
+  v2DeployAComputeInstance: {
+    id: "v2DeployAComputeInstance",
     description:
-      "Creates the worker if it does not exist, building from a context staged through the uploads endpoint. The build runs asynchronously: this answers 202 and the worker reaches `build_state` `active` or `failed` later.",
+      "Creates the compute instance if it does not exist, building from a context staged through the uploads endpoint. The build runs asynchronously: this answers 202 and the compute instance reaches `build_state` `active` or `failed` later.\n\nThis endpoint is currently in its **Alpha** stage.",
     method: "POST",
-    path: "/v2/projects/{ref}/workers/{name}/deploy",
+    path: "/v2/projects/{ref}/compute/{name}/deploy",
     pathParams: ["ref", "name"],
     queryParams: [],
     headerParams: [],
     requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
     response: { kind: "json" },
-    inputSchema: V2DeployAWorkerInput,
-    outputSchema: V2DeployAWorkerOutput,
+    inputSchema: V2DeployAComputeInstanceInput,
+    outputSchema: V2DeployAComputeInstanceOutput,
   },
-  v2GetAWorker: {
-    id: "v2GetAWorker",
+  v2DownloadProjectBackup: {
+    id: "v2DownloadProjectBackup",
+    description: "Download project backup",
+    method: "POST",
+    path: "/v2/projects/{ref}/backups/download",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2DownloadProjectBackupInput,
+    outputSchema: V2DownloadProjectBackupOutput,
+  },
+  v2GetAComputeInstance: {
+    id: "v2GetAComputeInstance",
     description:
-      "Returns a worker along with its instance tally. Poll this after a deploy until `build_state` leaves `building`.",
+      "Returns a compute instance along with the counts of its running instances. Poll this after a deploy until `build_state` leaves `building`.\n\nThis endpoint is currently in its **Alpha** stage.",
     method: "GET",
-    path: "/v2/projects/{ref}/workers/{name}",
+    path: "/v2/projects/{ref}/compute/{name}",
     pathParams: ["ref", "name"],
     queryParams: [],
     headerParams: [],
     requestBody: { kind: "none" },
     response: { kind: "json" },
-    inputSchema: V2GetAWorkerInput,
-    outputSchema: V2GetAWorkerOutput,
+    inputSchema: V2GetAComputeInstanceInput,
+    outputSchema: V2GetAComputeInstanceOutput,
+  },
+  v2GetNotebook: {
+    id: "v2GetNotebook",
+    description: "Get a notebook",
+    method: "GET",
+    path: "/v2/projects/{ref}/notebooks/{id}",
+    pathParams: ["ref", "id"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2GetNotebookInput,
+    outputSchema: V2GetNotebookOutput,
   },
   v2GetProjectConfig: {
     id: "v2GetProjectConfig",
     description:
-      "Returns the project's database, pooler, Auth, Data API, Realtime and Storage configuration — the same configuration a branch inherits from its base project. Each is the effective config, so a setting the project has never overridden is reported at its platform default rather than as null. Auth secrets are returned as an HMAC of their value. `storage` is read live from the storage service; the rest come from this platform's own records.",
+      "Returns the project's database, pooler, Auth, Data API, Realtime and Storage configuration — the same configuration a branch inherits from its base project. Each is the effective config, so a setting the project has never overridden is reported at its platform default rather than as null. Auth secrets are returned as an HMAC of their value. `storage` is read live from the storage service; the rest come from this platform's own records.\n\nThis endpoint is currently in its **Alpha** stage.",
     method: "GET",
     path: "/v2/projects/{ref}/config",
     pathParams: ["ref"],
@@ -15697,18 +21187,19 @@ export const operationDefinitions = {
     inputSchema: V2GetProjectConfigInput,
     outputSchema: V2GetProjectConfigOutput,
   },
-  v2ListAllWorkers: {
-    id: "v2ListAllWorkers",
-    description: "Returns all workers you've previously deployed to the specified project.",
+  v2ListAllComputeInstances: {
+    id: "v2ListAllComputeInstances",
+    description:
+      "Returns all compute instances you've previously deployed to the specified project.\n\nThis endpoint is currently in its **Alpha** stage.",
     method: "GET",
-    path: "/v2/projects/{ref}/workers",
+    path: "/v2/projects/{ref}/compute",
     pathParams: ["ref"],
     queryParams: [],
     headerParams: [],
     requestBody: { kind: "none" },
     response: { kind: "json" },
-    inputSchema: V2ListAllWorkersInput,
-    outputSchema: V2ListAllWorkersOutput,
+    inputSchema: V2ListAllComputeInstancesInput,
+    outputSchema: V2ListAllComputeInstancesOutput,
   },
   v2ListLogDrains: {
     id: "v2ListLogDrains",
@@ -15723,6 +21214,20 @@ export const operationDefinitions = {
     inputSchema: V2ListLogDrainsInput,
     outputSchema: V2ListLogDrainsOutput,
   },
+  v2ListNotebooks: {
+    id: "v2ListNotebooks",
+    description:
+      "Returns a cursor-paginated list of the project notebooks. Notebook bodies are omitted — read a single notebook to get its cells.",
+    method: "GET",
+    path: "/v2/projects/{ref}/notebooks",
+    pathParams: ["ref"],
+    queryParams: ["page", "filter", "sort"],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2ListNotebooksInput,
+    outputSchema: V2ListNotebooksOutput,
+  },
   v2ListOrganizationGithubConnections: {
     id: "v2ListOrganizationGithubConnections",
     description:
@@ -15736,6 +21241,20 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2ListOrganizationGithubConnectionsInput,
     outputSchema: V2ListOrganizationGithubConnectionsOutput,
+  },
+  v2ListOrganizationMaintenanceWindows: {
+    id: "v2ListOrganizationMaintenanceWindows",
+    description:
+      "Returns the weekly maintenance window for each region, with the open occurrence and the next five.",
+    method: "GET",
+    path: "/v2/organizations/{slug}/maintenance/windows",
+    pathParams: ["slug"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2ListOrganizationMaintenanceWindowsInput,
+    outputSchema: V2ListOrganizationMaintenanceWindowsOutput,
   },
   v2ListOrganizationMembers: {
     id: "v2ListOrganizationMembers",
@@ -15791,6 +21310,141 @@ export const operationDefinitions = {
     inputSchema: V2ListPrivateLinkAssociationsInput,
     outputSchema: V2ListPrivateLinkAssociationsOutput,
   },
+  v2OrganizationsSlugWebhooksDeliveriesIdGet: {
+    id: "v2OrganizationsSlugWebhooksDeliveriesIdGet",
+    description: "Get details of a specific delivery attempt.",
+    method: "GET",
+    path: "/v2/organizations/{slug}/webhooks/deliveries/{id}",
+    pathParams: ["slug", "id"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2OrganizationsSlugWebhooksDeliveriesIdGetInput,
+    outputSchema: V2OrganizationsSlugWebhooksDeliveriesIdGetOutput,
+  },
+  v2OrganizationsSlugWebhooksDeliveriesIdRetryPost: {
+    id: "v2OrganizationsSlugWebhooksDeliveriesIdRetryPost",
+    description:
+      "Retry delivering the same event again.\n\nAutomatic retries are not applicable to manual retries - if the delivery fails, there won't be any automatic retries attempted.\n\nThis endpoint is heavy rate-limited to allow for 10 request within 60 seconds.",
+    method: "POST",
+    path: "/v2/organizations/{slug}/webhooks/deliveries/{id}/retry",
+    pathParams: ["slug", "id"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2OrganizationsSlugWebhooksDeliveriesIdRetryPostInput,
+    outputSchema: V2OrganizationsSlugWebhooksDeliveriesIdRetryPostOutput,
+  },
+  v2OrganizationsSlugWebhooksEndpointsDelete: {
+    id: "v2OrganizationsSlugWebhooksEndpointsDelete",
+    description:
+      "Delete all endpoints including all events and deliveries.\n\nAny in-flight webhooks will result in a no-op.",
+    method: "DELETE",
+    path: "/v2/organizations/{slug}/webhooks/endpoints",
+    pathParams: ["slug"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2OrganizationsSlugWebhooksEndpointsDeleteInput,
+    outputSchema: V2OrganizationsSlugWebhooksEndpointsDeleteOutput,
+  },
+  v2OrganizationsSlugWebhooksEndpointsGet: {
+    id: "v2OrganizationsSlugWebhooksEndpointsGet",
+    description: "List all Webhook endpoints based on a project's ref or an organization's slug.",
+    method: "GET",
+    path: "/v2/organizations/{slug}/webhooks/endpoints",
+    pathParams: ["slug"],
+    queryParams: ["page[offset]", "page[limit]"],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2OrganizationsSlugWebhooksEndpointsGetInput,
+    outputSchema: V2OrganizationsSlugWebhooksEndpointsGetOutput,
+  },
+  v2OrganizationsSlugWebhooksEndpointsIdDelete: {
+    id: "v2OrganizationsSlugWebhooksEndpointsIdDelete",
+    description:
+      "Delete the endpoint including all events and deliveries\n\nAny in-flight webhooks will result in a no-op.",
+    method: "DELETE",
+    path: "/v2/organizations/{slug}/webhooks/endpoints/{id}",
+    pathParams: ["slug", "id"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2OrganizationsSlugWebhooksEndpointsIdDeleteInput,
+    outputSchema: V2OrganizationsSlugWebhooksEndpointsIdDeleteOutput,
+  },
+  v2OrganizationsSlugWebhooksEndpointsIdDeliveriesGet: {
+    id: "v2OrganizationsSlugWebhooksEndpointsIdDeliveriesGet",
+    description:
+      "List all deliveries for a specific endpoint in descending order (newest first).\n\nDeliveries which has expired are no longer available and will not be listed.",
+    method: "GET",
+    path: "/v2/organizations/{slug}/webhooks/endpoints/{id}/deliveries",
+    pathParams: ["slug", "id"],
+    queryParams: ["page[before]", "page[after]", "page[size]"],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2OrganizationsSlugWebhooksEndpointsIdDeliveriesGetInput,
+    outputSchema: V2OrganizationsSlugWebhooksEndpointsIdDeliveriesGetOutput,
+  },
+  v2OrganizationsSlugWebhooksEndpointsIdGet: {
+    id: "v2OrganizationsSlugWebhooksEndpointsIdGet",
+    description: "Get details of a specific endpoint.",
+    method: "GET",
+    path: "/v2/organizations/{slug}/webhooks/endpoints/{id}",
+    pathParams: ["slug", "id"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2OrganizationsSlugWebhooksEndpointsIdGetInput,
+    outputSchema: V2OrganizationsSlugWebhooksEndpointsIdGetOutput,
+  },
+  v2OrganizationsSlugWebhooksEndpointsIdPatch: {
+    id: "v2OrganizationsSlugWebhooksEndpointsIdPatch",
+    description: "Update endpoint's configuration.",
+    method: "PATCH",
+    path: "/v2/organizations/{slug}/webhooks/endpoints/{id}",
+    pathParams: ["slug", "id"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2OrganizationsSlugWebhooksEndpointsIdPatchInput,
+    outputSchema: V2OrganizationsSlugWebhooksEndpointsIdPatchOutput,
+  },
+  v2OrganizationsSlugWebhooksEndpointsIdTestPost: {
+    id: "v2OrganizationsSlugWebhooksEndpointsIdTestPost",
+    description:
+      "Ingests and schedules a test webhook event to be published out this endpoints.\n\nWhich event type to use can be specified in the request body, otherwise\nit will use any matching type the endpoint is listening for.\n\nThe event will contain `is_test: true` in it's payload.\n\nThis endpoint is heavy rate-limited to allow for 10 request within 60 seconds.",
+    method: "POST",
+    path: "/v2/organizations/{slug}/webhooks/endpoints/{id}/test",
+    pathParams: ["slug", "id"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2OrganizationsSlugWebhooksEndpointsIdTestPostInput,
+    outputSchema: V2OrganizationsSlugWebhooksEndpointsIdTestPostOutput,
+  },
+  v2OrganizationsSlugWebhooksEndpointsPost: {
+    id: "v2OrganizationsSlugWebhooksEndpointsPost",
+    description: "Create new endpoint configuration to subscribe to specific webhook events.",
+    method: "POST",
+    path: "/v2/organizations/{slug}/webhooks/endpoints",
+    pathParams: ["slug"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2OrganizationsSlugWebhooksEndpointsPostInput,
+    outputSchema: V2OrganizationsSlugWebhooksEndpointsPostOutput,
+  },
   v2PreviewAProjectTransfer: {
     id: "v2PreviewAProjectTransfer",
     description:
@@ -15804,6 +21458,155 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2PreviewAProjectTransferInput,
     outputSchema: V2PreviewAProjectTransferOutput,
+  },
+  v2ProjectsRefWebhooksDeliveriesIdGet: {
+    id: "v2ProjectsRefWebhooksDeliveriesIdGet",
+    description: "Get details of a specific delivery attempt.",
+    method: "GET",
+    path: "/v2/projects/{ref}/webhooks/deliveries/{id}",
+    pathParams: ["ref", "id"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2ProjectsRefWebhooksDeliveriesIdGetInput,
+    outputSchema: V2ProjectsRefWebhooksDeliveriesIdGetOutput,
+  },
+  v2ProjectsRefWebhooksDeliveriesIdRetryPost: {
+    id: "v2ProjectsRefWebhooksDeliveriesIdRetryPost",
+    description:
+      "Retry delivering the same event again.\n\nAutomatic retries are not applicable to manual retries - if the delivery fails, there won't be any automatic retries attempted.\n\nThis endpoint is heavy rate-limited to allow for 10 request within 60 seconds.",
+    method: "POST",
+    path: "/v2/projects/{ref}/webhooks/deliveries/{id}/retry",
+    pathParams: ["ref", "id"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2ProjectsRefWebhooksDeliveriesIdRetryPostInput,
+    outputSchema: V2ProjectsRefWebhooksDeliveriesIdRetryPostOutput,
+  },
+  v2ProjectsRefWebhooksEndpointsDelete: {
+    id: "v2ProjectsRefWebhooksEndpointsDelete",
+    description:
+      "Delete all endpoints including all events and deliveries.\n\nAny in-flight webhooks will result in a no-op.",
+    method: "DELETE",
+    path: "/v2/projects/{ref}/webhooks/endpoints",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2ProjectsRefWebhooksEndpointsDeleteInput,
+    outputSchema: V2ProjectsRefWebhooksEndpointsDeleteOutput,
+  },
+  v2ProjectsRefWebhooksEndpointsGet: {
+    id: "v2ProjectsRefWebhooksEndpointsGet",
+    description: "List all Webhook endpoints based on a project's ref or an organization's slug.",
+    method: "GET",
+    path: "/v2/projects/{ref}/webhooks/endpoints",
+    pathParams: ["ref"],
+    queryParams: ["page[offset]", "page[limit]"],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2ProjectsRefWebhooksEndpointsGetInput,
+    outputSchema: V2ProjectsRefWebhooksEndpointsGetOutput,
+  },
+  v2ProjectsRefWebhooksEndpointsIdDelete: {
+    id: "v2ProjectsRefWebhooksEndpointsIdDelete",
+    description:
+      "Delete the endpoint including all events and deliveries\n\nAny in-flight webhooks will result in a no-op.",
+    method: "DELETE",
+    path: "/v2/projects/{ref}/webhooks/endpoints/{id}",
+    pathParams: ["ref", "id"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2ProjectsRefWebhooksEndpointsIdDeleteInput,
+    outputSchema: V2ProjectsRefWebhooksEndpointsIdDeleteOutput,
+  },
+  v2ProjectsRefWebhooksEndpointsIdDeliveriesGet: {
+    id: "v2ProjectsRefWebhooksEndpointsIdDeliveriesGet",
+    description:
+      "List all deliveries for a specific endpoint in descending order (newest first).\n\nDeliveries which has expired are no longer available and will not be listed.",
+    method: "GET",
+    path: "/v2/projects/{ref}/webhooks/endpoints/{id}/deliveries",
+    pathParams: ["ref", "id"],
+    queryParams: ["page[before]", "page[after]", "page[size]"],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2ProjectsRefWebhooksEndpointsIdDeliveriesGetInput,
+    outputSchema: V2ProjectsRefWebhooksEndpointsIdDeliveriesGetOutput,
+  },
+  v2ProjectsRefWebhooksEndpointsIdGet: {
+    id: "v2ProjectsRefWebhooksEndpointsIdGet",
+    description: "Get details of a specific endpoint.",
+    method: "GET",
+    path: "/v2/projects/{ref}/webhooks/endpoints/{id}",
+    pathParams: ["ref", "id"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2ProjectsRefWebhooksEndpointsIdGetInput,
+    outputSchema: V2ProjectsRefWebhooksEndpointsIdGetOutput,
+  },
+  v2ProjectsRefWebhooksEndpointsIdPatch: {
+    id: "v2ProjectsRefWebhooksEndpointsIdPatch",
+    description: "Update endpoint's configuration.",
+    method: "PATCH",
+    path: "/v2/projects/{ref}/webhooks/endpoints/{id}",
+    pathParams: ["ref", "id"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2ProjectsRefWebhooksEndpointsIdPatchInput,
+    outputSchema: V2ProjectsRefWebhooksEndpointsIdPatchOutput,
+  },
+  v2ProjectsRefWebhooksEndpointsIdTestPost: {
+    id: "v2ProjectsRefWebhooksEndpointsIdTestPost",
+    description:
+      "Ingests and schedules a test webhook event to be published out this endpoints.\n\nWhich event type to use can be specified in the request body, otherwise\nit will use any matching type the endpoint is listening for.\n\nThe event will contain `is_test: true` in it's payload.\n\nThis endpoint is heavy rate-limited to allow for 10 request within 60 seconds.",
+    method: "POST",
+    path: "/v2/projects/{ref}/webhooks/endpoints/{id}/test",
+    pathParams: ["ref", "id"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2ProjectsRefWebhooksEndpointsIdTestPostInput,
+    outputSchema: V2ProjectsRefWebhooksEndpointsIdTestPostOutput,
+  },
+  v2ProjectsRefWebhooksEndpointsPost: {
+    id: "v2ProjectsRefWebhooksEndpointsPost",
+    description: "Create new endpoint configuration to subscribe to specific webhook events.",
+    method: "POST",
+    path: "/v2/projects/{ref}/webhooks/endpoints",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2ProjectsRefWebhooksEndpointsPostInput,
+    outputSchema: V2ProjectsRefWebhooksEndpointsPostOutput,
+  },
+  v2RemoveOrganizationMembers: {
+    id: "v2RemoveOrganizationMembers",
+    description:
+      "Removes one or more organization members including their roles and project-scoped permissions.",
+    method: "DELETE",
+    path: "/v2/organizations/{slug}/members/{user_id}",
+    pathParams: ["slug", "user_id"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "void" },
+    inputSchema: V2RemoveOrganizationMembersInput,
+    outputSchema: V2RemoveOrganizationMembersOutput,
   },
   v2RunProjectAdvisors: {
     id: "v2RunProjectAdvisors",
@@ -15843,6 +21646,20 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2UpdateLogDrainInput,
     outputSchema: V2UpdateLogDrainOutput,
+  },
+  v2UpdateNotebook: {
+    id: "v2UpdateNotebook",
+    description:
+      "Updates the attributes provided and leaves the rest untouched. Sending `content` replaces the whole notebook body.",
+    method: "PATCH",
+    path: "/v2/projects/{ref}/notebooks/{id}",
+    pathParams: ["ref", "id"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2UpdateNotebookInput,
+    outputSchema: V2UpdateNotebookOutput,
   },
 } as const;
 

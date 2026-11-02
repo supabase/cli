@@ -1,13 +1,6 @@
 /**
- * Layer-exposure test for `genTypesRuntimeLayer`.
- *
- * Verifies that `IdentityStitch` is exposed at the top level of the
- * runtime layer so that `withCommandTelemetry` can read
- * `stitchedDistinctId()` via `Effect.serviceOption(IdentityStitch)` and
- * attribute the `cli_command_executed` event to the gotrue id.
- *
- * See `db/lint/lint.layers.unit.test.ts` for the canonical pattern and a
- * detailed explanation of the bug this guards against.
+ * Layer-exposure test for `genTypesRuntimeLayer`. See `db/lint/lint.layers.unit.test.ts` for
+ * the canonical pattern.
  */
 
 import { describe, expect, it } from "@effect/vitest";
@@ -29,6 +22,7 @@ import {
   mockTelemetryStateLayer,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
@@ -44,6 +38,7 @@ import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { IdentityStitch } from "../../../command-internal/identity-stitch.ts";
 
 import { genTypesRuntimeLayer } from "./types.layers.ts";
+import { commandTargetLayer } from "../../../shared/output/command-target.layer.ts";
 
 const tempRoot = useTempWorkdir("supabase-gen-types-layers-");
 
@@ -69,8 +64,8 @@ function ambientStubs() {
     Layer.succeed(ProjectRefResolver, {
       resolve: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       resolveForLink: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
+      resolveRef: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       resolveOptional: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
-      loadProjectRef: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       promptProjectRef: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
     }),
     Layer.succeed(CommandPlatformApiFactory, {
@@ -80,31 +75,33 @@ function ambientStubs() {
 
   return Layer.mergeAll(
     BunServices.layer,
-    // The runtime layer under test builds the REAL commandSettingsLayer against
-    // the real filesystem — see isolatedHomeLayer's docs.
+    // Builds the real commandSettingsLayer against the real filesystem — see
+    // isolatedHomeLayer's docs.
     isolatedHomeLayer(tempRoot.current),
     mockTty(),
     mockProcessControl().layer,
     analytics.layer,
     mockTelemetryRuntime(),
     out.layer,
+    commandTargetLayer.pipe(Layer.provide(out.layer)),
     flagLayers,
     mockCommandSettings({ workdir: "/tmp/gen-types-layers-test" }),
     mockCommandCredentialsLayer,
     mockLinkedProjectCacheLayer,
     mockTelemetryStateLayer,
+    cliConfigValuesTestLayer,
     heavyServiceStubs,
   );
 }
 
 describe("genTypesRuntimeLayer — IdentityStitch exposure", () => {
-  it.live(
+  it.effect(
     "exposes IdentityStitch at top level so withCommandTelemetry can read stitchedDistinctId()",
     () => {
       return Effect.gen(function* () {
         const stitch = yield* Effect.serviceOption(IdentityStitch);
         expect(Option.isSome(stitch)).toBe(true);
-      }).pipe(Effect.provide(genTypesRuntimeLayer), Effect.provide(ambientStubs()));
+      }).pipe(Effect.provide(genTypesRuntimeLayer.pipe(Layer.provide(ambientStubs()))));
     },
   );
 });

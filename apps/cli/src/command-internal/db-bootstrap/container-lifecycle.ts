@@ -1,20 +1,16 @@
 /**
- * Port of Go's `DockerStart` (`apps/cli-go/internal/utils/docker.go:363-440`):
- * given a fully-resolved {@link StartContainerSpec} (image already
- * resolved by `image-prepull.ts` — see its doc comment), sets the two
- * project-identity labels, provisions this container's own named volumes,
- * builds the `docker create` argv (`docker-create-args.ts`), spawns `docker
- * create`, copies any `secretFiles` into the just-created container via
- * `docker cp` (see {@link copyStartSecretFilesIntoContainer}), then
+ * Given a fully-resolved {@link StartContainerSpec}, sets the two project-identity labels,
+ * provisions the container's own named volumes, builds the `docker create` argv, spawns `docker
+ * create`, copies any `secretFiles` in via `docker cp` (see
+ * {@link copyStartSecretFilesIntoContainer}), runs the caller's optional `beforeStart` hook, then
  * spawns `docker start`.
  *
- * Network creation (`DockerNetworkCreateIfNotExists`) is deliberately NOT part
- * of this per-container function — see {@link ensureNetwork}'s doc
- * comment for why it is hoisted to run once instead of once per container.
+ * Network creation is not part of this per-container function; see {@link ensureNetwork} for why
+ * it runs once instead of once per container.
  */
 
 import { Data, Effect, Stream } from "effect";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import {
   actionability,
@@ -38,33 +34,23 @@ import {
 import {
   buildStartContainerCreateArgs,
   applyBitbucketStartContainerFilter,
+  applyHealthStartInterval,
   isDockerClientEnvKey,
   type StartContainerSpec,
 } from "./docker-create-args.ts";
+import { POSTGRES_DATA_DIR } from "./postgres.service.ts";
 
-/** Structural element type of {@link StartContainerSpec.secretFiles} — not exported from `docker-create-args.ts`, so referenced positionally here. */
 type StartSecretFileSpec = NonNullable<StartContainerSpec["secretFiles"]>[number];
 
-/** Structural element type of {@link StartContainerSpec.preStartArchives} — same reasoning as {@link StartSecretFileSpec}. */
 type StartPreStartArchiveSpec = NonNullable<StartContainerSpec["preStartArchives"]>[number];
 
 type Spawner = ChildProcessSpawner["Service"];
 
 /**
- * Go's `composeProjectLabel` (`apps/cli-go/internal/utils/docker.go:60`,
- * unexported there). This port does not integrate with docker-compose
- * anywhere (an intentional architecture decision), but the label is still set
- * unconditionally, matching Go's own unconditional assignment
- * (`docker.go:376`) regardless of whether compose is actually in use: external
- * tooling that groups/filters containers by this label (Docker Desktop's
- * Compose view, `docker compose ls`, the VS Code Docker extension) would
- * otherwise silently stop recognizing the local stack's containers.
- *
- * A same-value private constant already exists at
- * `shared/functions/functions-docker.ts` (`dockerComposeProjectLabel`, for the
- * unrelated `functions deploy`/`functions serve` Docker Desktop extension
- * gateway) but is neither exported nor in the same Docker-usage domain as
- * `start` — not hoisted from there.
+ * Set unconditionally on every container, even though this CLI doesn't integrate with
+ * docker-compose: external tooling that groups/filters containers by this label (Docker
+ * Desktop's Compose view, `docker compose ls`, the VS Code Docker extension) would otherwise
+ * stop recognizing the local stack's containers.
  */
 export const COMPOSE_PROJECT_LABEL = "com.docker.compose.project";
 
@@ -133,62 +119,39 @@ export type ContainerError = VolumeCreateError | ContainerCreateError | Containe
 
 export interface ContainerOpts {
   /**
-   * Go's `Config.ProjectId`, already sanitized (`sanitizeProjectId`) by
-   * the caller's config-load pipeline — `DockerStart` itself performs no
-   * sanitization, it just reads the already-sanitized singleton
-   * (`docker.go:375-376`). Merged onto both {@link CLI_PROJECT_LABEL}
-   * and {@link COMPOSE_PROJECT_LABEL}, overwriting any value the caller
-   * may have already set under those keys in `spec.labels` — exactly like
-   * Go's unconditional map assignment.
+   * Merged onto both {@link CLI_PROJECT_LABEL} and {@link COMPOSE_PROJECT_LABEL}, overwriting
+   * any value the caller already set for those keys in `spec.labels`.
    */
   readonly projectId: string;
-  /**
-   * `os.Getenv("BITBUCKET_CLONE_DIR") != ""` — see `isBitbucketPipeline`
-   * (`shared/bitbucket-pipeline.ts`). Passed in rather than read here so
-   * this module stays a pure effect orchestrator with no direct env access,
-   * matching `applyBitbucketStartContainerFilter`'s own boolean-flag
-   * shape (`docker-create-args.ts`).
-   */
+  /** Passed in (rather than read via env here) so this module stays a pure effect orchestrator. */
   readonly isBitbucketPipeline: boolean;
   /**
-   * `CommandSettings.workdir` — the project's own working directory. Stamped onto every
-   * created container as {@link CLI_WORKDIR_LABEL} (see that constant's doc
-   * comment) so a later `stop`/{@link rollbackStart} can find this exact directory
-   * again from the container's own label, without depending on being invoked from the
-   * same cwd/`--workdir` `start` was.
+   * Whether the engine takes `--health-start-interval`, probed once per run by each command that
+   * reads Docker's health status. Shadow databases leave it unset: nothing reads theirs.
+   */
+  readonly healthStartInterval?: boolean;
+  /**
+   * Stamped onto every created container as {@link CLI_WORKDIR_LABEL} so a later `stop` or
+   * {@link rollbackStart} can find this directory from the container's own label alone, without
+   * depending on the invoking cwd/`--workdir` matching `start`'s.
    *
-   * NOT used to stage {@link StartContainerSpec.secretFiles} on host disk anymore —
-   * those are delivered straight into the created container via `docker cp` (see
-   * {@link copyStartSecretFilesIntoContainer}), so they never touch host disk at
-   * all. This label is still load-bearing for OTHER host-persisted staging under the same
-   * `<workdir>/supabase/.temp/start-secrets/<containerName>/` tree that this function
-   * itself never writes — e.g. Edge Runtime's own env-file/multiline-env-script
-   * staging (`shared/functions/serve.ts`'s `startEdgeRuntimeContainer`),
-   * which `cleanupStartSecrets` (`start-secrets-cleanup.ts`) still reclaims
-   * by this same label once that container is torn down.
+   * `cleanupStartSecrets` also uses this label to reclaim other host-persisted staging under this
+   * project (e.g. Edge Runtime's env-file staging) once a container is torn down.
    */
   readonly workdir: string;
   /**
-   * `DockerStart`'s platform-specific `extraHosts` package var
-   * (`docker_linux.go`/`docker_darwin.go`/`docker_windows.go`), merged onto
-   * EVERY container's `HostConfig.ExtraHosts` (`docker.go:378`) — Linux-only
-   * (`["host.docker.internal:host-gateway"]`); empty on Docker Desktop
-   * platforms, which already resolve that hostname natively. Merged here
-   * (not per-spec) for the same reason the two project-identity labels are:
-   * Go applies it identically to every container this orchestrator creates.
+   * Merged onto every container's `HostConfig.ExtraHosts`. Linux-only
+   * (`["host.docker.internal:host-gateway"]`); empty on Docker Desktop platforms, which already
+   * resolve that hostname natively.
    */
   readonly extraHosts: ReadonlyArray<string>;
 }
 
 /**
- * Extracts every named-volume source from `binds` (Go's `loader.ParseVolume`
- * classification loop, `docker.go:388-399`): a bind is `source:target[:mode]`
- * (see `docker-create-args.ts`'s `StartContainerSpec.binds` doc comment
- * and its own worked examples in `docker-create-args.unit.test.ts`), and its
- * source segment is a named volume exactly when
- * {@link isBindMountSource} says it is NOT a bind-mount path. No dedupe
- * is applied — Go's own `sources` slice doesn't dedupe either, and
- * `Docker.VolumeCreate` is idempotent for a repeated name.
+ * Extracts every named-volume source from `binds` (`source:target[:mode]`; see
+ * `docker-create-args.ts`'s `StartContainerSpec.binds` doc comment). A source is a named volume
+ * exactly when {@link isBindMountSource} says it is not a bind-mount path. Not deduped —
+ * `docker volume create` is idempotent for a repeated name.
  */
 function namedVolumeSources(binds: ReadonlyArray<string>): ReadonlyArray<string> {
   const sources: Array<string> = [];
@@ -202,19 +165,15 @@ function namedVolumeSources(binds: ReadonlyArray<string>): ReadonlyArray<string>
 }
 
 /**
- * Whether `docker`/`podman network create`'s stderr reports the network
- * already existing — the CLI-subprocess equivalent of Go's
- * `errdefs.IsConflict(err)` (`docker.go:70`), which inspects a structured
- * Engine API error instead of stderr text. Docker's real message is `Error
- * response from daemon: network with name <id> already exists`; Podman's is
- * worded differently (`network name <id> already used`), hence the broader
- * pattern rather than matching Docker's exact sentence.
+ * Whether `docker`/`podman network create`'s stderr reports the network already existing.
+ * Docker's message is "network with name <id> already exists"; Podman's is "network name <id>
+ * already used" — hence the broader pattern instead of matching Docker's exact wording.
  */
 function isNetworkAlreadyExistsError(stderr: string): boolean {
   return /already exists|already used/iu.test(stderr);
 }
 
-/** Go's `portErrorPattern` (`apps/cli-go/internal/utils/docker.go:657`). */
+/** Matches Docker's "port is already allocated" bind error, capturing the port spec. */
 const PORT_BIND_ERROR_PATTERN = /Bind for (.*) failed: port is already allocated/;
 
 function parsePortBindError(stderr: string): string | undefined {
@@ -222,20 +181,9 @@ function parsePortBindError(stderr: string): string | undefined {
 }
 
 /**
- * A scoped-down port of Go's `suggestDockerStop`
- * (`apps/cli-go/internal/utils/docker.go:667-686`): Go lists every running
- * container, matches the failed host port against each container's own
- * published ports, and reports either `supabase stop --project-id <id>` (the
- * port owner carries the CLI project label) or a bare `docker stop <name>`
- * (it doesn't) — then `docker.go:425-436` appends a further "configure a
- * different port" suggestion on top of that.
- *
- * Reproducing the lookup would mean this pure CLI-orchestration function also
- * lists and inspects every other running container purely to word a hint —
- * disproportionate plumbing for a suggestion string. This reproduces only the
- * detection Go itself starts from (the same regex match) and folds both of
- * Go's suggestion branches into one still-actionable sentence that covers
- * either case without the extra lookup.
+ * Suggests fixes for a "port already allocated" failure without inspecting every running
+ * container to identify the specific owner — disproportionate plumbing for a hint — folding both
+ * possible causes into one still-actionable sentence.
  */
 function portConflictSuggestion(hostPort: string, serviceLabel: string): string {
   return (
@@ -246,29 +194,13 @@ function portConflictSuggestion(hostPort: string, serviceLabel: string): string 
 }
 
 /**
- * Go's `DockerNetworkCreateIfNotExists` (`docker.go:63-77`) via `docker
- * network create --label ... <networkId>`, treating "already exists" as
- * success.
+ * Creates the shared docker network for this project via `docker network create --label ...`,
+ * treating "already exists" as success.
  *
- * Called ONCE, up front, by the caller orchestrating a whole `start` run —
- * NOT per-container the way Go's `DockerStart` calls it on every single
- * invocation. Go's repeated call is a no-op after the first (the network
- * already exists), so this is a pure optimization, not a behavior change: a
- * `start` run's containers are exclusively created by this same code path in
- * one process, never interleaved with an external network deletion, so the
- * network is guaranteed to still exist for every later `createContainer`
- * call in the same run.
- *
- * Mirrors Go's own `isUserDefined(mode)` guard (`docker.go:65`,
- * `docker_linux.go:10` and platform siblings) that runs first inside
- * `DockerNetworkCreateIfNotExists` itself: `--network-id default|bridge|host|
- * none` names a built-in Docker network that already exists and cannot be
- * created (`docker network create host` errors with "operation is not
- * permitted on predefined host network"), so this returns immediately without
- * spawning `docker network create` at all for those names, reusing the same
- * `isUserDefinedDockerNetwork` check `shared/functions/functions-docker.ts`
- * already applies for the unrelated `functions deploy`/`functions serve`
- * extension-gateway network.
+ * Called once per `start` run rather than once per container: callers holding the project lifecycle
+ * lock keep other lifecycle commands from pruning it before every {@link createContainer} call has run.
+ * Returns immediately for a built-in network name (`default`, `bridge`, `host`, `none`), which
+ * already exists and cannot be created.
  */
 export function ensureNetwork(
   spawner: Spawner,
@@ -321,40 +253,34 @@ export function ensureNetwork(
       );
       if (exitCode !== 0 && !isNetworkAlreadyExistsError(stderr)) {
         const message = stderr.trim();
-        return yield* Effect.fail(
-          new NetworkCreateError({
-            message:
-              message.length > 0
-                ? `failed to create docker network: ${message}`
-                : "failed to create docker network",
-            reason: containerCliReason(message),
-          }),
-        );
+        return yield* new NetworkCreateError({
+          message:
+            message.length > 0
+              ? `failed to create docker network: ${message}`
+              : "failed to create docker network",
+          reason: containerCliReason(message),
+        });
       }
     }),
   );
 }
 
 /**
- * Whether `volume create`'s stderr reports the volume already existing —
- * podman's "volume with name <name> already exists: volume already exists",
- * either half. A "...but was not created for the current specification"
- * conflict deliberately does not match, so a real spec conflict still fails.
+ * Whether `volume create`'s stderr reports the volume already existing (Podman's "volume with
+ * name <name> already exists: volume already exists", matching either half). A "...but was not
+ * created for the current specification" conflict does not match, so a real spec conflict still
+ * fails.
  */
 function isVolumeAlreadyExistsError(stderr: string): boolean {
   return /volume (?:with name \S+ )?already exists/iu.test(stderr);
 }
 
 /**
- * Go's per-source-name `Docker.VolumeCreate` call (`docker.go:407-415`) via
- * `docker volume create --label ...`, treating "already exists" as success the
- * same way {@link ensureNetwork} does; any other non-zero exit is a
- * real failure.
+ * Creates a named volume via `docker volume create --label ...`, treating "already exists" as
+ * success, the same way {@link ensureNetwork} does; any other non-zero exit is a real failure.
  *
- * Go's Engine API is idempotent for a repeated name, including against Podman's
- * Docker-compat endpoint; `podman volume create` goes through libpod instead
- * and rejects it, so every `stop`/`start` cycle aborted the bring-up on the
- * volumes `stop` preserves (supabase/cli#6020).
+ * Podman's `volume create` (unlike Docker's) is not idempotent for a repeated name and rejects it
+ * outright, which would otherwise abort a `start` on volumes an earlier `stop` preserved.
  */
 export function ensureVolume(
   spawner: Spawner,
@@ -396,15 +322,11 @@ export function ensureVolume(
       );
       if (exitCode !== 0 && !isVolumeAlreadyExistsError(stderr)) {
         const message = stderr.trim();
-        return yield* Effect.fail(
-          new VolumeCreateError({
-            message:
-              message.length > 0
-                ? `failed to create volume: ${message}`
-                : "failed to create volume",
-            reason: containerCliReason(message),
-          }),
-        );
+        return yield* new VolumeCreateError({
+          message:
+            message.length > 0 ? `failed to create volume: ${message}` : "failed to create volume",
+          reason: containerCliReason(message),
+        });
       }
     }),
   );
@@ -420,34 +342,16 @@ export class VolumeInspectError extends Data.TaggedError("VolumeInspectError")<{
 }
 
 /** Docker's/Podman's "no such volume" stderr shape for `volume inspect`. */
-function isVolumeNotFoundMessage(message: string): boolean {
+export function isVolumeNotFoundMessage(message: string): boolean {
   return /no such volume/iu.test(message);
 }
 
 /**
- * Go's pre-create existence check (`_, err := utils.Docker.VolumeInspect(ctx,
- * utils.DbId); utils.NoBackupVolume = errdefs.IsNotFound(err)`,
- * `apps/cli-go/internal/db/start/start.go:165-167`), run BEFORE the volume is
- * created — `docker volume create` is idempotent, so creating first would lose
- * whether the volume already existed. `docker volume inspect <name>` exits 0
- * when the volume exists; a confirmed "no such volume" resolves to `false`,
- * matching Go's `errdefs.IsNotFound`. Any OTHER inspect failure (permission
- * denied, daemon unreachable, …) resolves to `true` instead — Go's
- * `errdefs.IsNotFound(err)` is `false` for any error that isn't specifically a
- * not-found, so Go always defaults to treating the volume as pre-existing
- * (protected from rollback's `volume prune`) unless it can positively confirm
- * otherwise; collapsing every non-zero exit into "doesn't exist" would let an
- * ambiguous inspect failure on a stack with real prior data get pruned by
- * {@link rollbackStart} after any later failure — a data-loss
- * regression Go's own gate doesn't have. Only a spawn failure (neither
- * `docker` nor `podman` on `PATH`) is a real error here.
- *
- * A separate, additional export — NOT called from {@link ensureVolume}
- * itself, whose existing idempotent-create behavior must not change. The caller
- * orchestrating a `start` run checks this BEFORE creating the volume, to gate the
- * `SetupLocalDatabase`-equivalent pipeline and bucket seeding on "was this a
- * fresh volume", matching Go's exact check-before-create ordering
- * (`internal/db/start/start.go:165-184`).
+ * Runs before the volume is created (creation is idempotent, so creating first would lose
+ * whether it already existed). A confirmed "no such volume" resolves to `false`; any other
+ * inspect failure resolves to `true` instead, so an ambiguous failure never lets
+ * {@link rollbackStart} prune a volume that may hold real prior data. Separate from
+ * {@link ensureVolume}, which must keep its own idempotent-create behavior unchanged.
  */
 export function volumeExists(
   spawner: Spawner,
@@ -490,14 +394,9 @@ export class ContainerRemoveError extends Data.TaggedError("ContainerRemoveError
 }
 
 /**
- * Port of Go's `db reset`-only `Docker.ContainerRemove(ctx, DbId,
- * container.RemoveOptions{Force: true})` (`apps/cli-go/internal/db/reset/reset.go:147-149`)
- * via `docker container rm -f <id>`. Unlike most other container lookups in this codebase,
- * Go does NOT tolerate a "not found" response here — a genuine remove failure is a hard
- * `failed to remove container: %w` — so this propagates ANY non-zero exit without the
- * usual "no such container" swallow. `-f` alone (no `-v`) matches Go's `RemoveOptions`,
- * which sets `Force` but not `RemoveVolumes` — the paired named volume is removed
- * separately by {@link removeVolume}.
+ * Removes a container via `docker container rm -f <id>`. Any non-zero exit is a real failure —
+ * unlike other container lookups here, a missing container is not swallowed into success.
+ * `-f` alone (no `-v`); the paired named volume is removed separately by {@link removeVolume}.
  */
 export function removeContainer(
   spawner: Spawner,
@@ -522,12 +421,9 @@ export class VolumeRemoveError extends Data.TaggedError("VolumeRemoveError")<{
 }
 
 /**
- * Port of Go's `db reset`-only `Docker.VolumeRemove(ctx, DbId, true)`
- * (`apps/cli-go/internal/db/reset/reset.go:150-152`) via `docker volume rm -f <name>`.
- * The `force` argument makes a MISSING volume a no-op (Docker's `DELETE /volumes/{name}`
- * returns 204 even when the volume doesn't exist, once `force` is set — verified against
- * a real Docker daemon), so — unlike {@link removeContainer} — no special-casing is
- * needed here: any non-zero exit is a genuine failure.
+ * Removes a volume via `docker volume rm -f <name>`. `force` makes removing an already-missing
+ * volume a no-op, so — unlike {@link removeContainer} — no special-casing is needed here: any
+ * non-zero exit is a genuine failure.
  */
 export function removeVolume(
   spawner: Spawner,
@@ -549,22 +445,13 @@ function dockerCreateContainer(
   return Effect.scoped(
     Effect.gen(function* () {
       // `docker-create-args.ts` emits the key-only `-e KEY` form (never `-e KEY=value`) so
-      // secrets never appear in argv/`ps`/`/proc/<pid>/cmdline` (CWE-214/209) — Docker then
-      // resolves each key's value from THIS spawned process's own environment. `extendEnv:
-      // true` keeps the rest of the parent's env (PATH, the real DOCKER_HOST, …) so the docker
-      // CLI invocation itself still behaves correctly; `env` supplies the actual secret values.
-      // Matches the same pattern already used for `docker run` (`docker-run.layer.ts`)
-      // and image resolution (`docker-image-resolve.ts`).
+      // secrets never appear in argv/`ps`/`/proc/<pid>/cmdline`; Docker resolves each key's value
+      // from this spawned process's own environment instead. `extendEnv: true` keeps the rest of
+      // the parent's env (PATH, the real DOCKER_HOST, …) while `env` supplies the secret values.
       //
-      // Callers must have already stripped `isDockerClientEnvKey` keys (e.g. a
-      // container-facing `DOCKER_HOST`, set by Vector's spec for a tcp/npipe daemon host) from
-      // `env` before calling this function — those are emitted inline as `-e KEY=value` by
-      // `buildStartContainerCreateArgs` instead, since `extendEnv: true` merges `env` INTO
-      // this spawned process's own environment (per Effect's `ChildProcess` semantics,
-      // prioritizing `env`'s values), and that same environment is what the `docker`/`podman`
-      // CLI client itself reads `DOCKER_HOST` from to pick which daemon to talk to. Letting a
-      // container-facing `DOCKER_HOST` leak in here would hijack this `docker create` call's own
-      // daemon target before the container even exists.
+      // Callers must already have stripped `isDockerClientEnvKey` keys (e.g. a container-facing
+      // `DOCKER_HOST`) from `env` — those go inline as `-e KEY=value` instead, since merging one
+      // in here would hijack which daemon this `docker create` call itself talks to.
       const child = yield* spawnContainerCli(spawner, args, {
         stdin: "ignore",
         stdout: "pipe",
@@ -598,15 +485,13 @@ function dockerCreateContainer(
       );
       if (exitCode !== 0) {
         const message = stderr.trim();
-        return yield* Effect.fail(
-          new ContainerCreateError({
-            message:
-              message.length > 0
-                ? `failed to create docker container: ${message}`
-                : "failed to create docker container",
-            reason: containerCliReason(message),
-          }),
-        );
+        return yield* new ContainerCreateError({
+          message:
+            message.length > 0
+              ? `failed to create docker container: ${message}`
+              : "failed to create docker container",
+          reason: containerCliReason(message),
+        });
       }
       return stdout.trim();
     }),
@@ -652,20 +537,16 @@ function dockerStartContainer(
         }`;
         const hostPort = parsePortBindError(trimmed);
         if (hostPort === undefined) {
-          return yield* Effect.fail(
-            new ContainerStartError({
-              message: base,
-              reason: containerCliReason(trimmed),
-            }),
-          );
+          return yield* new ContainerStartError({
+            message: base,
+            reason: containerCliReason(trimmed),
+          });
         }
         const serviceLabel = spec.networkAliases?.[0] ?? spec.containerName;
-        return yield* Effect.fail(
-          new ContainerStartError({
-            message: `${base}${portConflictSuggestion(hostPort, serviceLabel)}`,
-            reason: "port_conflict",
-          }),
-        );
+        return yield* new ContainerStartError({
+          message: `${base}${portConflictSuggestion(hostPort, serviceLabel)}`,
+          reason: "port_conflict",
+        });
       }
     }),
   );
@@ -713,11 +594,10 @@ const secretCopyFailure = (detail: string): ContainerCreateError =>
   });
 
 /**
- * Streams all secret files as one archive after create and before start. `Bun.Archive` exposes no
- * per-entry mode option, so the unit test pins its `0644` default. That mode keeps the files
- * readable by non-root Kong/Postgres processes and matches Go's result. Once copied, the files
- * live in the container filesystem, so normal restarts need no host artifact. This mirrors Go's
- * path-independent Engine API delivery without exposing plaintext through host files or argv.
+ * Streams all secret files as one archive after create and before start. `Bun.Archive` exposes
+ * no per-entry mode option, so the unit test pins its `0644` default, which keeps the files
+ * readable by non-root Kong/Postgres processes. Once copied, the files live in the container
+ * filesystem, so normal restarts need no host artifact.
  */
 function copyStartSecretFilesIntoContainer(
   spawner: Spawner,
@@ -748,17 +628,13 @@ function copyStartSecretFilesIntoContainer(
 }
 
 /**
- * `docker cp - <containerId>:<containerPath>` with one
- * {@link StartContainerSpec.preStartArchives} entry's tar bytes on stdin — the ONE `docker
- * cp` form that preserves each archive member's uid/gid inside the container (the host-path form
- * rewrites ownership to root, which a restored Postgres data directory cannot survive; see that
- * field's own doc comment).
+ * `docker cp - <containerId>:<containerPath>` for one {@link StartContainerSpec.preStartArchives}
+ * entry — the form that preserves each archive member's uid/gid; the host-path form resets
+ * ownership to root, which a restored Postgres data directory cannot survive.
  *
- * Sequenced by {@link createContainer} between `docker create` and `docker start`, for the
- * same two reasons the secret-file copies are: the container must exist for `docker cp` to have a
- * target, and must not be running yet so its entrypoint never races the copy — which for an
- * archive is not merely a race but the whole point, since the entrypoint's behavior depends on
- * what it finds already unpacked.
+ * Sequenced by {@link createContainer} between `docker create` and `docker start`: the container
+ * must exist for `docker cp` to have a target and must not be running yet, since the entrypoint's
+ * behavior depends on what it finds already unpacked.
  */
 function extractPreStartArchiveIntoContainer(
   spawner: Spawner,
@@ -777,29 +653,42 @@ function extractPreStartArchiveIntoContainer(
   );
 }
 
+/** Docker's, Podman's and older Docker clients' `cp` diagnostics for a missing `PG_VERSION`. */
+const PG_VERSION_MISSING_PATTERN =
+  /could not find the file \S*\/PG_VERSION in container|"\S*\/PG_VERSION" could not be found on container|no such container:path: \S+:\S*\/PG_VERSION/iu;
+
 /**
- * Port of Go's `DockerStart` (`apps/cli-go/internal/utils/docker.go:363-440`),
- * minus image resolution (already done by `image-prepull.ts`) and network
- * creation (hoisted, see {@link ensureNetwork}):
- *
- * 1. Merge the two project-identity labels onto `spec.labels`.
- * 2. Provision this container's own named volumes (skipped entirely under
- *    Bitbucket Pipelines, matching Go).
- * 3. Apply the Bitbucket named-volume-bind / security-opt filter
- *    (`applyBitbucketStartContainerFilter`, already ported).
- * 4. `docker create`.
- * 5. Copy any `secretFiles` into the just-created (not yet started) container
- *    as one stdin tar archive via `docker cp`
- *    (`copyStartSecretFilesIntoContainer`) — a TS-port-only step with no
- *    Go equivalent, see `docker-create-args.ts`'s `secretFiles` doc comment.
- *    Runs strictly between `docker create` and `docker start`: the container
- *    must already exist for `docker cp` to have a target, and must not be
- *    running yet so its entrypoint never races the copy.
- * 6. Unpack any `preStartArchives` into the same created-but-unstarted
- *    container via `docker cp -` (`extractPreStartArchiveIntoContainer`)
- *    — also TS-port-only, and for the shadow baseline cache's restored PGDATA
- *    the "not started yet" half of step 5's ordering is the entire point.
- * 7. `docker start`.
+ * Whether the Postgres data directory of a created, not-yet-started container already holds a
+ * cluster (`PG_VERSION`, written by `initdb`). Only a diagnostic reporting `PG_VERSION` itself
+ * as missing resolves `false`; every other outcome resolves `true`, so an ambiguous probe never
+ * runs setup over real data.
+ */
+export const postgresDataInitialized = Effect.fn("ContainerLifecycle.postgresDataInitialized")(
+  function* (spawner: Spawner, containerId: string) {
+    const initialized = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const child = yield* spawnContainerCli(
+          spawner,
+          ["cp", `${containerId}:${POSTGRES_DATA_DIR}/PG_VERSION`, "-"],
+          { stdin: "ignore", stdout: "ignore", stderr: "pipe" },
+        );
+        const [exitCode, stderr] = yield* Effect.all(
+          [child.exitCode.pipe(Effect.map(Number)), collectText(child.stderr)],
+          { concurrency: "unbounded" },
+        );
+        return exitCode === 0 || !PG_VERSION_MISSING_PATTERN.test(stderr);
+      }),
+    ).pipe(Effect.orElseSucceed(() => true));
+    yield* Effect.annotateCurrentSpan({ "db.data_initialized": initialized });
+    return initialized;
+  },
+);
+
+/**
+ * Provisions this container's named volumes (skipped under Bitbucket Pipelines), creates it,
+ * copies any `secretFiles` and `preStartArchives` in via `docker cp` while it's created but not
+ * yet running (so its entrypoint never races the copy), runs `beforeStart` with the container id
+ * while it is still stopped, then starts it.
  *
  * Resolves to the created container's id/name on success.
  */
@@ -807,6 +696,7 @@ export function createContainer(
   spawner: Spawner,
   spec: StartContainerSpec,
   opts: ContainerOpts,
+  beforeStart?: (containerId: string) => Effect.Effect<void>,
 ): Effect.Effect<string, ContainerError> {
   return Effect.gen(function* () {
     const labels: Record<string, string> = {
@@ -814,10 +704,8 @@ export function createContainer(
       [CLI_PROJECT_LABEL]: opts.projectId,
       [COMPOSE_PROJECT_LABEL]: opts.projectId,
     };
-    // The workdir label is stamped on the CONTAINER only, not on its named volumes below
-    // (`ensureVolume` is passed `labels`, not `containerLabels`) — a volume's own
-    // name already carries the project id, and nothing ever reads a workdir label back off a
-    // volume the way `listContainerIdsAndNames` does for containers.
+    // The workdir label goes on the container only, not its named volumes below: a volume's name
+    // already carries the project id, and nothing reads a workdir label back off a volume.
     const containerLabels: Record<string, string> = {
       ...labels,
       [CLI_WORKDIR_LABEL]: opts.workdir,
@@ -834,28 +722,26 @@ export function createContainer(
       }
     }
 
-    const finalSpec = applyBitbucketStartContainerFilter(labeledSpec, opts.isBitbucketPipeline);
+    const finalSpec = applyHealthStartInterval(
+      applyBitbucketStartContainerFilter(labeledSpec, opts.isBitbucketPipeline),
+      opts.healthStartInterval === true,
+    );
 
     const createArgs = buildStartContainerCreateArgs(finalSpec);
-    // `isDockerClientEnvKey` keys (e.g. Vector's container-facing `DOCKER_HOST`) are
-    // already emitted inline as `-e KEY=value` by `buildStartContainerCreateArgs` above —
-    // see `dockerCreateContainer`'s doc comment for why they must not also reach the
-    // spawned `docker create` process's own environment.
+    // `isDockerClientEnvKey` keys are already emitted inline as `-e KEY=value` above; see
+    // `dockerCreateContainer` for why they must not also reach this process's own environment.
     const createProcessEnv = Object.fromEntries(
       Object.entries(finalSpec.env).filter(([key]) => !isDockerClientEnvKey(key)),
     );
     const containerId = yield* dockerCreateContainer(spawner, createArgs, createProcessEnv);
     yield* copyStartSecretFilesIntoContainer(spawner, containerId, finalSpec.secretFiles ?? []);
-    // Sequentially, not concurrently like the secret files: two archives could legitimately
-    // overlap in the container's filesystem, so the spec's own order has to be the applied order.
+    // Sequential, not concurrent like the secret files: archives can legitimately overlap in the
+    // container's filesystem, so the spec's own order must be the applied order.
     //
-    // A failed extraction removes the just-created container (best-effort, `-v` so an anonymous
-    // volume goes with it) before failing. The secret-file/`docker start` steps deliberately do
-    // NOT do this — their established post-create failure window leaves cleanup to the caller's
-    // finalizer (see `createShadowDatabase`'s doc comment, `shadow-database.ts`) — but
-    // `preStartArchives`' one producer (the shadow baseline cache's warm restore) recovers from
-    // this exact failure by provisioning a replacement, which must not accumulate an orphaned
-    // created container per recovery.
+    // A failed extraction removes the just-created container first (unlike a secret-file or
+    // `docker start` failure, which leave cleanup to the caller's finalizer): this step's one
+    // producer, the shadow baseline cache's warm restore, retries by provisioning a replacement
+    // container, and must not leak an orphaned one per retry.
     yield* Effect.forEach(
       finalSpec.preStartArchives ?? [],
       (archive) => extractPreStartArchiveIntoContainer(spawner, containerId, archive),
@@ -869,7 +755,18 @@ export function createContainer(
         }).pipe(Effect.orElseSucceed(() => 0)),
       ),
     );
+    if (beforeStart !== undefined) {
+      yield* beforeStart(containerId);
+    }
     yield* dockerStartContainer(spawner, containerId, finalSpec);
     return containerId;
-  });
+  }).pipe(
+    Effect.withSpan("ContainerLifecycle.createContainer", {
+      attributes: {
+        "container.name": spec.containerName,
+        "image.name": spec.image,
+        "container.pre_start_archive_count": spec.preStartArchives?.length ?? 0,
+      },
+    }),
+  );
 }

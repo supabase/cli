@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
+import { processEnvLayer } from "../../../tests/helpers/mocks.ts";
 import { buildIssueUrl } from "../../shared/issue/issue-url.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import type { OutputFormat } from "../../shared/output/types.ts";
@@ -14,32 +15,6 @@ type IssueOutputMessage = {
   readonly message: string;
   readonly data?: Record<string, unknown>;
 };
-
-function issueProcessEnvLayer(values: Readonly<Record<string, string | undefined>> = {}) {
-  return Layer.effectDiscard(
-    Effect.acquireRelease(
-      Effect.sync(() => {
-        const snapshot = { ...process.env };
-        for (const key of Object.keys(process.env)) {
-          delete process.env[key];
-        }
-        for (const [key, value] of Object.entries(values)) {
-          if (value !== undefined) process.env[key] = value;
-        }
-        return snapshot;
-      }),
-      (snapshot) =>
-        Effect.sync(() => {
-          for (const key of Object.keys(process.env)) {
-            delete process.env[key];
-          }
-          for (const [key, value] of Object.entries(snapshot)) {
-            if (value !== undefined) process.env[key] = value;
-          }
-        }),
-    ),
-  );
-}
 
 function issueMockOutput(opts: { readonly format?: OutputFormat } = {}) {
   const messages: IssueOutputMessage[] = [];
@@ -64,12 +39,12 @@ function issueMockOutput(opts: { readonly format?: OutputFormat } = {}) {
           fail: () => Effect.void,
           info: () => Effect.void,
           cancel: () => Effect.void,
-          clear: () => Effect.void,
+          clear: Effect.void,
         }),
       promptText: () => Effect.succeed(""),
       promptPassword: () => Effect.succeed(""),
       promptConfirm: () => Effect.succeed(true),
-      promptSelect: (_message, options) => Effect.succeed(options[0]!.value),
+      promptSelect: (_message, options) => Effect.succeed(options[0]?.value ?? ""),
       promptMultiSelect: (_message, options) =>
         Effect.succeed(options.map((option) => option.value)),
       progress: () =>
@@ -79,6 +54,7 @@ function issueMockOutput(opts: { readonly format?: OutputFormat } = {}) {
           message: () => Effect.void,
           stop: () => Effect.void,
         }),
+      result: () => Effect.void,
       success: (message: string, data?: Record<string, unknown>) =>
         Effect.sync(() => {
           messages.push({ type: "success", message, data });
@@ -137,9 +113,7 @@ function issueSetup(
     TelemetryRuntime,
     TelemetryRuntime.of({
       configDir: "/test/config",
-      tracesDir: "/test/config/traces",
       consent: "granted",
-      showDebug: false,
       deviceId: "device-id",
       sessionId: "session-id",
       identity: makeTelemetryIdentity(undefined),
@@ -156,13 +130,13 @@ function issueSetup(
     browser.layer,
     runtimeInfo,
     telemetryRuntime,
-    issueProcessEnvLayer(opts.env ?? {}),
+    processEnvLayer(opts.env ?? {}),
   );
   return { layer, out, browser };
 }
 
 describe("issue", () => {
-  it.live("opens bug form with runtime fields and user-provided context", () => {
+  it.effect("opens bug form with runtime fields and user-provided context", () => {
     const { layer, out, browser } = issueSetup();
 
     return Effect.gen(function* () {
@@ -179,7 +153,7 @@ describe("issue", () => {
       });
 
       expect(browser.openedUrls).toHaveLength(1);
-      const params = issueParams(browser.openedUrls[0]!);
+      const params = issueParams(browser.openedUrls[0] ?? "");
       expect(params.get("template")).toBe("bug-report.yml");
       expect(params.get("affected-area")).toBe("Local development");
       expect(params.get("cli-version")).toBe("1.2.3-test");
@@ -196,7 +170,7 @@ describe("issue", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prints the bug URL without opening a browser when requested", () => {
+  it.effect("prints the bug URL without opening a browser when requested", () => {
     const { layer, out, browser } = issueSetup({
       env: { SUPABASE_INSTALL_METHOD: "asdf" },
     });
@@ -223,7 +197,7 @@ describe("issue", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("opens feature form with matching issue form field IDs", () => {
+  it.effect("opens feature form with matching issue form field IDs", () => {
     const { layer, browser } = issueSetup();
 
     return Effect.gen(function* () {
@@ -237,7 +211,7 @@ describe("issue", () => {
         noBrowser: false,
       });
 
-      const params = issueParams(browser.openedUrls[0]!);
+      const params = issueParams(browser.openedUrls[0] ?? "");
       expect(params.get("template")).toBe("feature-request.yml");
       expect(params.get("existing-issues")).toBe("I have searched the existing issues.");
       expect(params.get("affected-area")).toBe("Auth");
@@ -247,7 +221,7 @@ describe("issue", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("opens docs form with matching issue form field IDs", () => {
+  it.effect("opens docs form with matching issue form field IDs", () => {
     const { layer, browser } = issueSetup();
 
     return Effect.gen(function* () {
@@ -260,7 +234,7 @@ describe("issue", () => {
         noBrowser: false,
       });
 
-      const params = issueParams(browser.openedUrls[0]!);
+      const params = issueParams(browser.openedUrls[0] ?? "");
       expect(params.get("template")).toBe("docs.yml");
       expect(params.get("link")).toBe("https://supabase.com/docs/guides/cli");
       expect(params.get("issue-type")).toBe("Incorrect documentation");

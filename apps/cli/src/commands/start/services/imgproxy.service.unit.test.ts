@@ -7,7 +7,7 @@ import {
 } from "./imgproxy.service.ts";
 
 describe("buildImgproxyEnv", () => {
-  test("matches Go's fully static Env literal, including the literal (non-boolean) IMGPROXY_USE_ETAG value", () => {
+  test("uses a fully static Env literal, including the literal (non-boolean) IMGPROXY_USE_ETAG value", () => {
     expect(buildImgproxyEnv()).toEqual({
       IMGPROXY_BIND: ":5001",
       IMGPROXY_LOCAL_FILESYSTEM_ROOT: "/",

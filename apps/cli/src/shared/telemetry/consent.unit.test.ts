@@ -1,101 +1,88 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { Effect, Layer, Option } from "effect";
+import { Clock, ConfigProvider, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
 import { cliSettingsLayer } from "../config/cli-settings.layer.ts";
-import {
-  mockCliProjectContext,
-  mockRuntimeInfo,
-  processEnvLayer,
-} from "../../../tests/helpers/mocks.ts";
+import { useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
+import { mockCliProjectContext, mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
 import { getEffectiveConsent, readTelemetryConfig } from "./consent.ts";
 import type { TelemetryConfig } from "./types.ts";
 
-function makeConfig(consent: TelemetryConfig["consent"]): TelemetryConfig {
-  return {
+const makeConfig = (consent: TelemetryConfig["consent"]) =>
+  Effect.map(Clock.currentTimeMillis, (now): TelemetryConfig => ({
     consent,
     device_id: "test-device",
     session_id: "test-session",
-    session_last_active: Date.now(),
-  };
-}
+    session_last_active: now,
+  }));
 
 function withEnv(env: Record<string, string>) {
-  const runtimeInfoLayer = mockRuntimeInfo();
-  const cliProjectContextLayer = mockCliProjectContext();
-  return Layer.mergeAll(
-    runtimeInfoLayer,
-    cliProjectContextLayer,
-    processEnvLayer(env),
-    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(cliProjectContextLayer)),
+  return cliSettingsLayer.pipe(
+    Layer.provide(mockRuntimeInfo()),
+    Layer.provide(mockCliProjectContext()),
+    Layer.provide(
+      ConfigProvider.layer(ConfigProvider.fromEnvRecord(env, { preserveEmptyStrings: true })),
+    ),
+    Layer.provide(BunServices.layer),
   );
 }
 
 function emptyEnv() {
-  const runtimeInfoLayer = mockRuntimeInfo();
-  const cliProjectContextLayer = mockCliProjectContext();
-  return Layer.mergeAll(
-    runtimeInfoLayer,
-    cliProjectContextLayer,
-    processEnvLayer(),
-    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(cliProjectContextLayer)),
-  );
+  return withEnv({});
 }
 
-function makeTempDir(): string {
-  return mkdtempSync(path.join(tmpdir(), "supabase-consent-test-"));
-}
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
-function writeTelemetryFile(dir: string, content: string): void {
-  writeFileSync(path.join(dir, "telemetry.json"), content);
-}
+const writeTelemetryFile = (dir: string, content: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    yield* fs.writeFileString(path.join(dir, "telemetry.json"), content);
+  });
 
 describe("getEffectiveConsent", () => {
-  it.live("returns denied when DO_NOT_TRACK=1", () =>
+  it.effect("returns denied when DO_NOT_TRACK=1", () =>
     Effect.gen(function* () {
-      const consent = yield* getEffectiveConsent(Option.some(makeConfig("granted")));
+      const consent = yield* getEffectiveConsent(Option.some(yield* makeConfig("granted")));
       expect(consent).toBe("denied");
     }).pipe(Effect.provide(withEnv({ DO_NOT_TRACK: "1" }))),
   );
 
-  it.live("returns denied when SUPABASE_TELEMETRY_DISABLED=1", () =>
+  it.effect("returns denied when SUPABASE_TELEMETRY_DISABLED=1", () =>
     Effect.gen(function* () {
-      const consent = yield* getEffectiveConsent(Option.some(makeConfig("granted")));
+      const consent = yield* getEffectiveConsent(Option.some(yield* makeConfig("granted")));
       expect(consent).toBe("denied");
     }).pipe(Effect.provide(withEnv({ SUPABASE_TELEMETRY_DISABLED: "1" }))),
   );
 
-  it.live("SUPABASE_TELEMETRY_DISABLED=1 takes precedence over persisted granted consent", () =>
+  it.effect("SUPABASE_TELEMETRY_DISABLED=1 takes precedence over persisted granted consent", () =>
     Effect.gen(function* () {
       const consent = yield* getEffectiveConsent(Option.none());
       expect(consent).toBe("denied");
     }).pipe(Effect.provide(withEnv({ SUPABASE_TELEMETRY_DISABLED: "1" }))),
   );
 
-  it.live("DO_NOT_TRACK=1 takes precedence over persisted granted consent", () =>
+  it.effect("DO_NOT_TRACK=1 takes precedence over persisted granted consent", () =>
     Effect.gen(function* () {
-      const consent = yield* getEffectiveConsent(Option.some(makeConfig("granted")));
+      const consent = yield* getEffectiveConsent(Option.some(yield* makeConfig("granted")));
       expect(consent).toBe("denied");
     }).pipe(Effect.provide(withEnv({ DO_NOT_TRACK: "1" }))),
   );
 
-  it.live("SUPABASE_TELEMETRY_DISABLED=1 takes precedence over DO_NOT_TRACK=1", () =>
+  it.effect("SUPABASE_TELEMETRY_DISABLED=1 takes precedence over DO_NOT_TRACK=1", () =>
     Effect.gen(function* () {
-      const consent = yield* getEffectiveConsent(Option.some(makeConfig("granted")));
+      const consent = yield* getEffectiveConsent(Option.some(yield* makeConfig("granted")));
       expect(consent).toBe("denied");
     }).pipe(Effect.provide(withEnv({ SUPABASE_TELEMETRY_DISABLED: "1", DO_NOT_TRACK: "1" }))),
   );
 
-  it.live("returns config consent value when set", () =>
+  it.effect("returns config consent value when set", () =>
     Effect.gen(function* () {
-      expect(yield* getEffectiveConsent(Option.some(makeConfig("granted")))).toBe("granted");
-      expect(yield* getEffectiveConsent(Option.some(makeConfig("denied")))).toBe("denied");
+      expect(yield* getEffectiveConsent(Option.some(yield* makeConfig("granted")))).toBe("granted");
+      expect(yield* getEffectiveConsent(Option.some(yield* makeConfig("denied")))).toBe("denied");
     }).pipe(Effect.provide(emptyEnv())),
   );
 
-  it.live("defaults to granted when no config (opt-out model)", () =>
+  it.effect("defaults to granted when no config (opt-out model)", () =>
     Effect.gen(function* () {
       const consent = yield* getEffectiveConsent(Option.none());
       expect(consent).toBe("granted");
@@ -104,34 +91,33 @@ describe("getEffectiveConsent", () => {
 });
 
 describe("readTelemetryConfig", () => {
-  it.live("decodes a valid telemetry config", () => {
-    const dir = makeTempDir();
-    const expected = makeConfig("denied");
-    writeTelemetryFile(dir, JSON.stringify(expected));
+  const tempRoot = useTempWorkdir("supabase-consent-test-");
 
-    return Effect.gen(function* () {
+  it.effect("decodes a valid telemetry config", () =>
+    Effect.gen(function* () {
+      const dir = tempRoot.current;
+      const expected = yield* makeConfig("denied");
+      yield* writeTelemetryFile(dir, yield* encodeJson(expected));
+
       const config = yield* readTelemetryConfig(dir);
       expect(config).toEqual(Option.some(expected));
-    }).pipe(
-      Effect.provide(BunServices.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
-    );
-  });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.live("decodes a legacy disabled telemetry state as denied consent", () => {
-    const dir = makeTempDir();
-    writeTelemetryFile(
-      dir,
-      JSON.stringify({
-        enabled: false,
-        device_id: "legacy-device",
-        session_id: "legacy-session",
-        session_last_active: "2026-04-01T12:00:00Z",
-        schema_version: 1,
-      }),
-    );
+  it.effect("decodes a legacy disabled telemetry state as denied consent", () =>
+    Effect.gen(function* () {
+      const dir = tempRoot.current;
+      yield* writeTelemetryFile(
+        dir,
+        yield* encodeJson({
+          enabled: false,
+          device_id: "legacy-device",
+          session_id: "legacy-session",
+          session_last_active: "2026-04-01T12:00:00Z",
+          schema_version: 1,
+        }),
+      );
 
-    return Effect.gen(function* () {
       const config = yield* readTelemetryConfig(dir);
       expect(config).toEqual(
         Option.some({
@@ -141,27 +127,24 @@ describe("readTelemetryConfig", () => {
           session_last_active: Date.parse("2026-04-01T12:00:00Z"),
         }),
       );
-    }).pipe(
-      Effect.provide(BunServices.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
-    );
-  });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.live("decodes a legacy enabled telemetry state as granted consent", () => {
-    const dir = makeTempDir();
-    writeTelemetryFile(
-      dir,
-      JSON.stringify({
-        enabled: true,
-        device_id: "legacy-device",
-        session_id: "legacy-session",
-        session_last_active: "2026-04-01T12:00:00Z",
-        distinct_id: "user-123",
-        schema_version: 1,
-      }),
-    );
+  it.effect("decodes a legacy enabled telemetry state as granted consent", () =>
+    Effect.gen(function* () {
+      const dir = tempRoot.current;
+      yield* writeTelemetryFile(
+        dir,
+        yield* encodeJson({
+          enabled: true,
+          device_id: "legacy-device",
+          session_id: "legacy-session",
+          session_last_active: "2026-04-01T12:00:00Z",
+          distinct_id: "user-123",
+          schema_version: 1,
+        }),
+      );
 
-    return Effect.gen(function* () {
       const config = yield* readTelemetryConfig(dir);
       expect(config).toEqual(
         Option.some({
@@ -172,35 +155,66 @@ describe("readTelemetryConfig", () => {
           distinct_id: "user-123",
         }),
       );
-    }).pipe(
-      Effect.provide(BunServices.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
-    );
-  });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.live("returns none for malformed JSON instead of throwing", () => {
-    const dir = makeTempDir();
-    writeTelemetryFile(dir, "");
+  it.effect("keeps an overflowed session_last_active and the persisted consent", () =>
+    Effect.gen(function* () {
+      const dir = tempRoot.current;
+      yield* writeTelemetryFile(
+        dir,
+        '{"consent":"denied","device_id":"device","session_id":"session","session_last_active":1e999}',
+      );
 
-    return Effect.gen(function* () {
+      const config = yield* readTelemetryConfig(dir);
+      expect(config).toEqual(
+        Option.some({
+          consent: "denied",
+          device_id: "device",
+          session_id: "session",
+          session_last_active: Infinity,
+        }),
+      );
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("decodes a legacy state whose schema_version overflowed", () =>
+    Effect.gen(function* () {
+      const dir = tempRoot.current;
+      yield* writeTelemetryFile(
+        dir,
+        '{"enabled":false,"device_id":"legacy-device","session_id":"legacy-session","session_last_active":"2026-04-01T12:00:00Z","schema_version":1e999}',
+      );
+
+      const config = yield* readTelemetryConfig(dir);
+      expect(config).toEqual(
+        Option.some({
+          consent: "denied",
+          device_id: "legacy-device",
+          session_id: "legacy-session",
+          session_last_active: Date.parse("2026-04-01T12:00:00Z"),
+        }),
+      );
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("returns none for malformed JSON instead of throwing", () =>
+    Effect.gen(function* () {
+      const dir = tempRoot.current;
+      yield* writeTelemetryFile(dir, "");
+
       const config = yield* readTelemetryConfig(dir);
       expect(config).toEqual(Option.none());
-    }).pipe(
-      Effect.provide(BunServices.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
-    );
-  });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.live("returns none for structurally invalid telemetry config", () => {
-    const dir = makeTempDir();
-    writeTelemetryFile(dir, JSON.stringify({ consent: "granted" }));
+  it.effect("returns none for structurally invalid telemetry config", () =>
+    Effect.gen(function* () {
+      const dir = tempRoot.current;
+      yield* writeTelemetryFile(dir, yield* encodeJson({ consent: "granted" }));
 
-    return Effect.gen(function* () {
       const config = yield* readTelemetryConfig(dir);
       expect(config).toEqual(Option.none());
-    }).pipe(
-      Effect.provide(BunServices.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
-    );
-  });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 });

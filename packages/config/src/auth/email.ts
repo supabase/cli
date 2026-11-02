@@ -26,15 +26,10 @@ const defaultSubject = "";
 const defaultContentPath = "";
 
 /**
- * Go's `Auth.Email.Template`/`Notification` are genuine `map[string]emailTemplate`/
- * `map[string]notification` (`apps/cli-go/pkg/config/auth.go:247-248`) — open maps with no key
- * restriction at all; `(e *email) validate(fsys)` (`pkg/config/config.go:1293-1313`) iterates
- * every entry regardless of name. The known template/notification names below are the ones the
- * Studio/docs UI and `config push`'s Management API sync recognise, but an unrecognized key like
- * `[auth.email.template.custom]` is still a legitimate config shape Go accepts — it's simply
- * never synced anywhere, same as an unmodeled `auth.external` provider. Record keys therefore
- * accept any string, matching Go; only decode failures on a KNOWN/matching name would be a
- * Go-parity bug.
+ * `auth.email.template`/`notification` are open maps with no key restriction: an
+ * unrecognized key like `auth.email.template.custom` is a legitimate config
+ * shape, just never synced by Studio or `config push`. Record keys accept any
+ * string.
  */
 const templateName = Schema.String;
 const notificationName = Schema.String;
@@ -81,9 +76,19 @@ const notification = Schema.Struct({
 }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 
 export const email = Schema.Struct({
+  enabled: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      default: defaultEnableSignup,
+      description:
+        "Allow/disallow the email provider. When false, users can't sign up or sign in with email (password, magic link or OTP); set `auth.enable_signup = false` to block new signups only.",
+      tags,
+      links: [links.auth],
+    }),
+  ),
   enable_signup: Schema.Boolean.annotate({
     default: defaultEnableSignup,
-    description: "Allow/disallow new user signups via email to your project.",
+    description:
+      "Deprecated: use `auth.email.enabled` instead. Allow/disallow the email provider; when false, users can't sign up or sign in with email.",
     tags,
     links: [links.auth],
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEnableSignup))),
@@ -114,13 +119,13 @@ export const email = Schema.Struct({
     tags,
     links: [links.auth],
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMaxFrequency))),
-  otp_length: Schema.Number.annotate({
+  otp_length: Schema.Finite.annotate({
     default: defaultOtpLength,
     description: "Number of characters used in the email OTP.",
     tags,
     links: [links.auth],
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultOtpLength))),
-  otp_expiry: Schema.Number.annotate({
+  otp_expiry: Schema.Finite.annotate({
     default: defaultOtpExpiry,
     description: "Number of seconds before the email OTP expires.",
     tags,
@@ -138,7 +143,7 @@ export const email = Schema.Struct({
         }),
       ),
       port: Schema.optionalKey(
-        Schema.Number.annotate({
+        Schema.Finite.annotate({
           description: "Port number of the SMTP server.",
         }),
       ),

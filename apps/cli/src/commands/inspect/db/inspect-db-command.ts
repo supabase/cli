@@ -1,60 +1,30 @@
 import { Effect } from "effect";
-import { Flag } from "effect/unstable/cli";
 
+import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { dbConfig } from "../../../command-internal/db-config.layer.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { targetFlags } from "../../../command-internal/target/target-flags.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import type { InspectConnectionFlags } from "./inspect-query.ts";
 
-/**
- * The `inspect` persistent flag set, inherited by every `inspect db` subcommand.
- * Shared verbatim across all 25 commands
- * so the flag names and descriptions live in one place. `Command.make` reads this
- * immutable descriptor without mutating it, so a single instance is safe to reuse.
- */
-export const INSPECT_DB_FLAGS = {
-  dbUrl: Flag.string("db-url").pipe(
-    Flag.withDescription(
-      "Inspect the database specified by the connection string (must be percent-encoded).",
-    ),
-    Flag.optional,
-  ),
-  linked: Flag.boolean("linked").pipe(
-    Flag.withDescription("Inspect the linked project."),
-    Flag.withDefault(false),
-  ),
-  local: Flag.boolean("local").pipe(
-    Flag.withDescription("Inspect the local database."),
-    Flag.withDefault(false),
-  ),
-  // TS-only override of the linked project ref — see push.command.ts (db push).
-  projectRef: Flag.string("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
-} as const;
+/** The persistent flag set every `inspect db` subcommand inherits. */
+export const INSPECT_DB_FLAGS = targetFlags({ subject: "database", dbUrl: true });
 
-/**
- * Wraps an `inspect db` handler with the standard command-level pipeline: legacy
- * telemetry instrumentation (the Go-shape `cli_command_executed` event, with the
- * three connection flags) and the machine-format JSON error envelope. Shared by
- * all 25 command files so the wiring is defined once.
- */
+/** The Management API calls every `inspect db` subcommand makes, all through the database-config resolver. */
+export const INSPECT_DB_PERMISSIONS = compose(dbConfig, branchResolution);
+/** Target policy shared by every `inspect db` command. */
+export const withInspectDbTargetPolicy = withTargetPolicy({
+  group: "selectable",
+  consent: "none",
+  consentExemptReason: "read-only",
+});
+
+/** Wraps an `inspect db` handler with telemetry and the machine-format JSON error envelope. */
 export function inspectDbCommandHandler<E, R>(
   handler: (flags: InspectConnectionFlags) => Effect.Effect<void, E, R>,
 ) {
   return (flags: InspectConnectionFlags) =>
-    handler(flags).pipe(
-      withCommandTelemetry({
-        flags: {
-          "db-url": flags.dbUrl,
-          linked: flags.linked,
-          local: flags.local,
-          "project-ref": flags.projectRef,
-        },
-        // TS-only flag with no Go telemetry-safety baseline; Go's nearest
-        // --project-ref registrations (cmd/pgdelta_catalog.go:44 and most
-        // others) are unmarked, so it stays redacted.
-      }),
-      withJsonErrorHandling,
-    );
+    handler(flags).pipe(withCommandTelemetry(), withJsonErrorHandling);
 }

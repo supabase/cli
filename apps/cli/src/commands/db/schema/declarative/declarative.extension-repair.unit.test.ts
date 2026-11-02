@@ -1,9 +1,6 @@
-import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect } from "effect";
+import { Effect, FileSystem, Path } from "effect";
 
 import { useTempWorkdir } from "../../../../../tests/helpers/command-mocks.ts";
 import { appendExtensionDeclarations } from "./declarative.extension-repair.ts";
@@ -13,13 +10,15 @@ describe("appendExtensionDeclarations", () => {
 
   it.effect("creates root extension.sql with sorted idempotent declarations", () => {
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const result = yield* appendExtensionDeclarations(tmp.current, [
         "uuid-ossp",
         "pgcrypto",
         "pgcrypto",
       ]);
       expect(result.addedExtensions).toEqual(["pgcrypto", "uuid-ossp"]);
-      expect(readFileSync(join(tmp.current, "extension.sql"), "utf8")).toBe(
+      expect(yield* fs.readFileString(path.join(tmp.current, "extension.sql"))).toBe(
         [
           'CREATE EXTENSION IF NOT EXISTS "pgcrypto" WITH SCHEMA "extensions";',
           'CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA "extensions";',
@@ -33,12 +32,14 @@ describe("appendExtensionDeclarations", () => {
   });
 
   it.effect("preserves existing contents and CRLF newlines", () => {
-    const extensionPath = join(tmp.current, "extension.sql");
-    writeFileSync(extensionPath, 'CREATE EXTENSION "pgcrypto";\r\n-- keep me');
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const extensionPath = path.join(tmp.current, "extension.sql");
+      yield* fs.writeFileString(extensionPath, 'CREATE EXTENSION "pgcrypto";\r\n-- keep me');
       const result = yield* appendExtensionDeclarations(tmp.current, ["pgcrypto", "pg_net"]);
       expect(result.addedExtensions).toEqual(["pg_net"]);
-      expect(readFileSync(extensionPath, "utf8")).toBe(
+      expect(yield* fs.readFileString(extensionPath)).toBe(
         'CREATE EXTENSION "pgcrypto";\r\n-- keep me\r\n' +
           'CREATE EXTENSION IF NOT EXISTS "pg_net" WITH SCHEMA "extensions";\r\n',
       );

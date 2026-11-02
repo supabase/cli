@@ -1,0 +1,42 @@
+import { Effect, FileSystem, Option, Path } from "effect";
+import { InvalidProjectRefError } from "../../config/project-ref.errors.ts";
+import {
+  INVALID_PROJECT_REF_MESSAGE,
+  PROJECT_REF_PATTERN,
+} from "../../config/project-ref.service.ts";
+import { readLinkSnapshotSoft } from "../../shared/config/link-snapshot.ts";
+
+// Mirrors `ProjectRefResolver` (`project-ref.layer.ts`) source by source:
+//
+// - The caller-supplied override (`--project-ref` and/or `SUPABASE_PROJECT_ID`,
+//   captured by `CommandSettings`) is validated against `PROJECT_REF_PATTERN`
+//   and fails with the shared `InvalidProjectRefError` when malformed — the
+//   same hard check every project-ref caller applies to a value
+//   the user typed, so a typo is reported instead of silently falling through
+//   to a different project's context.
+// - The link `supabase link` records is the soft half (`resolveOptional`): it is
+//   read directly rather than through `ProjectRefResolver`, because that layer requires
+//   `CommandPlatformApiFactory` for its prompt path, and feedback must keep working
+//   when the user isn't logged in. A broken or malformed link degrades to
+//   "unlinked" instead of failing the command — the workdir can be an untrusted
+//   checkout where the file is a symlink to a local secret, and anything that
+//   isn't a well-formed ref is discarded rather than sent to the feedback backend.
+export const resolveFeedbackProjectRef = Effect.fnUntraced(function* (
+  workdir: string,
+  override: Option.Option<string>,
+) {
+  if (Option.isSome(override)) {
+    if (!PROJECT_REF_PATTERN.test(override.value)) {
+      return yield* new InvalidProjectRefError({
+        ref: override.value,
+        message: INVALID_PROJECT_REF_MESSAGE,
+      });
+    }
+    return override;
+  }
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  return yield* readLinkSnapshotSoft(fs, path, workdir).pipe(
+    Effect.map((snapshot) => Option.filter(snapshot.ref, (ref) => PROJECT_REF_PATTERN.test(ref))),
+  );
+});

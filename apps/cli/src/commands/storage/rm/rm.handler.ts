@@ -1,43 +1,39 @@
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path, Ref } from "effect";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { resolveYesWithProjectEnv } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { bold } from "../../../command-internal/colors.ts";
-import { loadProjectEnv } from "../../../command-internal/db-config.toml-read.ts";
+import { loadProjectEnvValues } from "../../../command-internal/db-config.toml-read.ts";
+import { requireTargetMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
+import type { HostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.token.ts";
 import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
 import {
   DELETE_OBJECTS_LIMIT,
   type StorageGateway,
 } from "../../../command-internal/storage-gateway.ts";
-import { StorageGatewayStatusError } from "../../../command-internal/storage-gateway.errors.ts";
 import { splitBucketPrefix, storageIsDir } from "../../../command-internal/storage-url.ts";
+import type { TargetFlagValues } from "../../../command-internal/target/target-flags.ts";
 import {
   assertStorageWorkdir,
   connectStorageGateway,
   loadStorageConfig,
   parseStorageUrlEffect,
+  resolveStorageTarget,
 } from "../storage.frame.ts";
 import {
   StorageMissingBucketError,
   StorageMissingFlagError,
-  StorageMutuallyExclusiveFlagsError,
   StorageObjectNotFoundError,
+  StorageRmConfirmationRequiredError,
 } from "../storage.errors.ts";
 import { listStoragePaths } from "../storage.iterate.ts";
 
-export interface StorageRmFlags {
+export interface StorageRmFlags extends TargetFlagValues {
   readonly files: ReadonlyArray<string>;
   readonly recursive: boolean;
-  // `linked` is carried for parity with the ls/cp/mv handler signatures; routing
-  // reads only `local` (Go `storage.go:21-32` reads `GetBool("local")`).
-  readonly linked: boolean;
-  readonly local: boolean;
-  // TS-only override of the linked project ref — see push.command.ts (db push).
-  readonly projectRef: Option.Option<string>;
 }
 
 interface RmSummary {
@@ -56,46 +52,31 @@ export const storageRm = Effect.fn("storage.rm")(function* (flags: StorageRmFlag
   const cliSettings = yield* CommandSettings;
   const telemetryState = yield* TelemetryState;
   const linkedProjectCache = yield* LinkedProjectCache;
-  const resolver = yield* ProjectRefResolver;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  let linkedRef = "";
+  const linkedRef = yield* Ref.make(Option.none<string>());
 
   yield* Effect.gen(function* () {
     yield* assertStorageWorkdir(cliSettings.workdir);
 
-    // Resolve the project ref BEFORE reading the project `.env`: the
-    // linked-project ref must be resolved strictly before the config load
-    // (the `.env` work). An unlinked workdir must fail fast with the
-    // not-linked guidance before a malformed/unreadable `supabase/.env` gets
-    // a chance to mask it with an env-parse error.
-    // `--project-ref` never implies `--linked` and must not be silently
-    // discarded on the local target — see push.handler.ts's identical guard
-    // (db push) for the full TS-only rationale.
-    if (Option.isSome(flags.projectRef) && flags.local) {
-      return yield* Effect.fail(
-        new StorageMutuallyExclusiveFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
-        }),
-      );
+    const { target, projectRef } = yield* resolveStorageTarget(flags);
+    if (projectRef !== "") {
+      yield* Ref.set(linkedRef, Option.some(projectRef));
     }
-
-    const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(flags.projectRef);
-    linkedRef = projectRef;
-    // `--yes` OR `SUPABASE_YES`. Both the `--local` and (default) `--linked`
-    // branches load the project `.env` files before the confirmation
-    // prompt, so a `SUPABASE_YES` set only in `supabase/.env` must
-    // auto-confirm here too.
-    const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
-    const yes = yield* resolveYesWithProjectEnv(projectEnv);
+    // Only the local per-bucket prompt honours a project `.env` `SUPABASE_YES`; loaded after the
+    // target so an unlinked workdir fails as not linked, not as an env-parse error.
+    const localYes =
+      target.kind === "local"
+        ? yield* resolveYesWithProjectEnv(
+            yield* loadProjectEnvValues(fs, path, cliSettings.workdir),
+          )
+        : false;
     const loaded = yield* loadStorageConfig(cliSettings, projectRef);
     if (loaded.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
     }
 
-    // Group paths by bucket, validating BEFORE building the client (Go `rm.go:31-47`).
     const groups = new Map<string, Array<string>>();
     for (const objectPath of flags.files) {
       const remotePath = yield* parseStorageUrlEffect(objectPath);
@@ -111,29 +92,47 @@ export const storageRm = Effect.fn("storage.rm")(function* (flags: StorageRmFlag
       else existing.push(prefix);
     }
 
+    // No paths and no `-r` falls through to the missing-`-r` failure below.
+    const missingRecursive = groups.size === 0 && !flags.recursive;
+    if (target.kind === "local" && !localYes && !missingRecursive && output.format !== "text") {
+      return yield* new StorageRmConfirmationRequiredError();
+    }
+
     const summary: RmSummary = { deleted: [], buckets_deleted: [] };
 
     yield* connectStorageGateway(
       { projectRef, config: loaded.config, userAgent: cliSettings.userAgent },
       (gateway) =>
         Effect.gen(function* () {
-          // No paths: `-r` deletes every bucket, otherwise it's a missing-flag
-          // error (Go `rm.go:52-63`, after the client is built).
+          // No paths given: `-r` deletes every bucket, otherwise it's a missing-flag error.
           if (groups.size === 0) {
             if (!flags.recursive) {
               return yield* new StorageMissingFlagError();
             }
-            const buckets = yield* gateway.listBuckets();
+            const buckets = yield* gateway.listBuckets;
             for (const b of buckets) groups.set(b.name, [""]);
           }
 
+          const consent =
+            groups.size === 0
+              ? Option.none<HostedMutationConsent>()
+              : yield* requireTargetMutationConsent(target, {
+                  action: `Delete objects in ${groups.size} bucket${groups.size === 1 ? "" : "s"}`,
+                  details: [...groups].map(
+                    ([bucket, prefixes]) =>
+                      `Delete from ${bucket}: ${prefixes.map(describePrefix).join(", ")}`,
+                  ),
+                });
+
           for (const [bucket, prefixes] of groups) {
-            const shouldDelete = yield* promptYesNo(
-              output,
-              yes,
-              `Confirm deleting files in bucket ${bold(bucket)}?`,
-              false,
-            );
+            const shouldDelete = Option.isSome(consent)
+              ? true
+              : yield* promptYesNo(
+                  output,
+                  localYes,
+                  `Confirm deleting files in bucket ${bold(bucket)}?`,
+                  false,
+                );
             if (!shouldDelete) continue;
 
             // Always try deleting first in case the paths are extensionless files.
@@ -152,6 +151,12 @@ export const storageRm = Effect.fn("storage.rm")(function* (flags: StorageRmFlag
             }
           }
 
+          yield* Effect.annotateCurrentSpan({
+            "bucket.count": groups.size,
+            "file.count": summary.deleted.length,
+            "bucket.deleted_count": summary.buckets_deleted.length,
+          });
+
           if (output.format !== "text") {
             yield* output.success("", {
               deleted: summary.deleted,
@@ -162,13 +167,23 @@ export const storageRm = Effect.fn("storage.rm")(function* (flags: StorageRmFlag
     );
   }).pipe(
     Effect.ensuring(
-      Effect.suspend(() => (linkedRef === "" ? Effect.void : linkedProjectCache.cache(linkedRef))),
+      Ref.get(linkedRef).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (ref) => linkedProjectCache.cache(ref),
+          }),
+        ),
+      ),
     ),
     Effect.ensuring(telemetryState.flush),
   );
 });
 
-/** Go `rm.deleteObjects` (`rm.go:145-156`): DELETE in chunks of DELETE_OBJECTS_LIMIT. */
+const describePrefix = (prefix: string): string =>
+  prefix === "" ? "every object and the bucket itself" : prefix;
+
+/** Deletes objects in chunks of DELETE_OBJECTS_LIMIT. */
 const deleteObjects = (
   gateway: StorageGateway,
   bucket: string,
@@ -187,55 +202,55 @@ const deleteObjects = (
   });
 
 /**
- * Go `RemoveStoragePathAll` (`rm.go:102-143`): BFS over the prefix tree (LIFO),
- * deleting files per directory, then deleting the bucket itself when the prefix
- * is empty. `prefix` is terminated by `/` or empty.
+ * Walks the prefix tree with a stack, deleting files per directory, then the bucket
+ * itself once the prefix is empty. `prefix` ends with `/` or is empty.
  */
-const removeStoragePathAll = (
+const removeStoragePathAll = Effect.fn("storage.rm.removeAll")(function* (
   gateway: StorageGateway,
   output: typeof Output.Service,
   bucket: string,
   prefix: string,
   summary: RmSummary,
-) =>
-  Effect.gen(function* () {
-    const queue: Array<string> = [prefix];
-    while (queue.length > 0) {
-      const dirPrefix = queue.pop();
-      if (dirPrefix === undefined) break;
-      const paths = yield* listStoragePaths(gateway, output, `/${bucket}/${dirPrefix}`);
-      if (paths.length === 0 && prefix.length > 0) {
-        return yield* new StorageObjectNotFoundError(`${bucket}/${prefix}`);
-      }
-      const files: Array<string> = [];
-      for (const objectName of paths) {
-        const objectPrefix = dirPrefix + objectName;
-        if (objectName.endsWith("/")) {
-          queue.push(objectPrefix);
-        } else {
-          files.push(objectPrefix);
-        }
-      }
-      if (files.length > 0) {
-        yield* output.raw(`Deleting objects: [${files.join(" ")}]\n`, "stderr");
-        yield* deleteObjects(gateway, bucket, files, summary);
+) {
+  let deletedCount = 0;
+  const queue: Array<string> = [prefix];
+  while (queue.length > 0) {
+    const dirPrefix = queue.pop();
+    if (dirPrefix === undefined) break;
+    const paths = yield* listStoragePaths(gateway, output, `/${bucket}/${dirPrefix}`);
+    if (paths.length === 0 && prefix.length > 0) {
+      return yield* new StorageObjectNotFoundError(`${bucket}/${prefix}`);
+    }
+    const files: Array<string> = [];
+    for (const objectName of paths) {
+      const objectPrefix = dirPrefix + objectName;
+      if (objectName.endsWith("/")) {
+        queue.push(objectPrefix);
+      } else {
+        files.push(objectPrefix);
       }
     }
-    if (prefix.length === 0) {
-      yield* output.raw(`Deleting bucket: ${bucket}\n`, "stderr");
-      yield* gateway.deleteBucket(bucket).pipe(
-        Effect.flatMap((message) =>
-          Effect.gen(function* () {
-            yield* output.raw(`${message}\n`, "stderr");
-            summary.buckets_deleted.push(bucket);
-          }),
-        ),
-        Effect.catch((error) =>
-          error instanceof StorageGatewayStatusError &&
-          error.body.includes('"error":"Bucket not found"')
-            ? output.raw(`Bucket not found: ${bucket}\n`, "stderr")
-            : Effect.fail(error),
-        ),
-      );
+    if (files.length > 0) {
+      yield* output.raw(`Deleting objects: [${files.join(" ")}]\n`, "stderr");
+      yield* deleteObjects(gateway, bucket, files, summary);
+      deletedCount += files.length;
     }
-  });
+  }
+  yield* Effect.annotateCurrentSpan({ "file.count": deletedCount });
+  if (prefix.length === 0) {
+    yield* output.raw(`Deleting bucket: ${bucket}\n`, "stderr");
+    yield* gateway.deleteBucket(bucket).pipe(
+      Effect.flatMap((message) =>
+        Effect.gen(function* () {
+          yield* output.raw(`${message}\n`, "stderr");
+          summary.buckets_deleted.push(bucket);
+        }),
+      ),
+      Effect.catchTag("StorageGatewayStatusError", (error) =>
+        error.body.includes('"error":"Bucket not found"')
+          ? output.raw(`Bucket not found: ${bucket}\n`, "stderr")
+          : Effect.fail(error),
+      ),
+    );
+  }
+});

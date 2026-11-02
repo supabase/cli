@@ -73,17 +73,10 @@ function missing(provider: string, field: string) {
 }
 
 /**
- * Go's `(s *sms) validate()` (`apps/cli-go/pkg/config/config.go:1348-1410`): a boolean `switch`
- * that inspects providers in a FIXED priority order — twilio, twilio_verify, messagebird,
- * textlocal, vonage — and validates ONLY the first one whose `enabled` is true, matching Go's
- * `switch` short-circuit semantics. A later enabled-but-incomplete provider is never even looked
- * at. This replaces five independent per-provider `requiredWhenEnabled` checks (one per provider
- * sub-struct) that used to validate EVERY enabled provider table regardless of priority — a real
- * Go-parity gap, since a stale secondary `[auth.sms.*]` block Go silently ignores could make this
- * schema reject a config Go accepts. `s.EnableSignup`'s own switch case (`config.go:1408-1410`, a
- * WARN-only "no SMS provider enabled" notice with no throwing equivalent) isn't reproduced here,
- * matching this package's established precedent of not porting WARN-only branches (e.g. the
- * `auth.captcha.secret`/`assertEnvLoaded` case).
+ * Validates providers in a fixed priority order — twilio, twilio_verify,
+ * messagebird, textlocal, vonage — checking only the first one whose `enabled`
+ * is true; a later enabled-but-incomplete provider is never inspected, so a
+ * stale secondary `[auth.sms.*]` block doesn't cause a rejection.
  */
 function validateSmsProviderSwitch(value: SmsProviderSwitchInput) {
   if (value.twilio.enabled) {
@@ -145,9 +138,19 @@ function validateSmsProviderSwitch(value: SmsProviderSwitchInput) {
 }
 
 export const sms = Schema.Struct({
+  enabled: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      default: defaultEnableSignup,
+      description:
+        "Allow/disallow the phone provider. When false, users can't sign up or sign in with a phone number (password or SMS OTP); set `auth.enable_signup = false` to block new signups only.",
+      tags,
+      links: [links.auth],
+    }),
+  ),
   enable_signup: Schema.Boolean.annotate({
     default: defaultEnableSignup,
-    description: "Allow/disallow new user signups via SMS to your project.",
+    description:
+      "Deprecated: use `auth.sms.enabled` instead. Allow/disallow the phone provider; when false, users can't sign up or sign in with a phone number.",
     tags,
     links: [links.auth],
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEnableSignup))),
@@ -170,13 +173,13 @@ export const sms = Schema.Struct({
     tags,
     links: [links.auth],
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMaxFrequency))),
-  otp_length: Schema.Number.annotate({
+  otp_length: Schema.Finite.annotate({
     default: defaultOtpLength,
     description: "Number of characters used in the SMS OTP.",
     tags,
     links: [links.auth],
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultOtpLength))),
-  otp_expiry: Schema.Number.annotate({
+  otp_expiry: Schema.Finite.annotate({
     default: defaultOtpExpiry,
     description: "Number of seconds before the SMS OTP expires.",
     tags,

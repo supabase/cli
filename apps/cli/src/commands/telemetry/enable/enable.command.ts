@@ -1,9 +1,11 @@
-import { Command } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { telemetryEnable } from "./enable.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 
 const config = {};
 export type TelemetryEnableFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -11,14 +13,12 @@ export type TelemetryEnableFlags = CliCommand.Command.Config.Infer<typeof config
 export const telemetryEnableCommand = Command.make("enable", config).pipe(
   Command.withDescription("Enable CLI telemetry."),
   Command.withShortDescription("Enable telemetry"),
+  withPermissions({ operations: [] }),
   Command.withHandler((flags) =>
-    // Go parity (`cmd/root.go:131-138,171-181`): `cli_command_executed` fires
-    // gated on the pre-toggle consent snapshot, same as `disable` — see that
-    // command's comment. In the common case (enabling from a disabled state)
-    // the snapshot is `false`, so the event stays silent; running `enable`
-    // when telemetry is ALREADY enabled fires it, matching Go's uniform,
-    // state-based (not command-based) gate.
+    // `cli_command_executed` fires based on the consent value read at layer-construction
+    // time: silent when enabling from a disabled state, since the snapshot is `false`.
     telemetryEnable(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(commandRuntimeLayer(["telemetry", "enable"])),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

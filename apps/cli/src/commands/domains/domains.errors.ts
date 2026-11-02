@@ -34,9 +34,8 @@ class DomainsUnexpectedStatusError extends Data.TaggedError("DomainsUnexpectedSt
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    // The gated create/get/activate/reverify wrappers currently do not retain
-    // the entitlement check's boolean on this shared error. Keep 404 on the
-    // conservative API-status policy until that typed signal is threaded.
+    // Entitlement-gated wrappers don't retain their check's boolean on this shared
+    // error, so 404 stays on the conservative API-status policy until that signal is threaded through.
     return statusCodeActionability(this.status);
   }
 }

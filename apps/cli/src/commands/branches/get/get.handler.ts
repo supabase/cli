@@ -13,15 +13,14 @@ import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.serv
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { Tty } from "../../../shared/runtime/tty.service.ts";
 import {
   encodeEnv,
-  encodeGoJson,
+  encodeSortedJson,
   encodeToml,
   encodeYaml,
-} from "../../../command-internal/go-output.encoders.ts";
+} from "../../../command-internal/output.encoders.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
-import { resolveParentScopedProjectRef } from "../../../command-internal/parent-project-ref.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import {
   BranchesApiKeysNetworkError,
   BranchesApiKeysUnexpectedStatusError,
@@ -76,26 +75,23 @@ const mapPoolerError = mapHttpError({
 
 export const branchesGet = Effect.fn("branches.get")(function* (flags: BranchesGetFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const cliSettings = yield* CommandSettings;
-  void (yield* Tty); // ensures Tty is in handler R so promptBranchId resolves
 
-  // `branches` is PARENT-scoped: after `supabase link <branch>`,
-  // `supabase/.temp/project-ref` holds the branch's own ref, and the platform
-  // 403s on that ref for every branches-management endpoint (CLI-2167 follow-up).
-  const ref = yield* resolveParentScopedProjectRef(flags.projectRef);
+  // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
+  // holds the branch's own ref, which the platform 403s on for every branches-management endpoint.
+  const ref = yield* resolveProjectTarget(
+    { remote: flags.remote, projectRef: flags.projectRef },
+    { parent: true },
+  );
+  yield* Effect.annotateCurrentSpan("project.ref", ref);
 
   yield* Effect.gen(function* () {
-    // Branch-id resolution. Empty input goes through the prompt helper.
     const branchInput = yield* promptBranchId(flags.name, ref);
 
-    // ------------------------------------------------------------------
-    // 1. Lookup: if input is not a UUID and not a ref pattern, fetch the
-    //    project ref via V1GetABranch (`GET /v1/projects/{ref}/branches/{name}`).
-    // ------------------------------------------------------------------
     let branchIdOrRef = branchInput;
     if (!BRANCH_UUID_PATTERN.test(branchInput) && !BRANCH_PROJECT_REF_PATTERN.test(branchInput)) {
       const lookup = yield* api.v1
@@ -104,10 +100,6 @@ export const branchesGet = Effect.fn("branches.get")(function* (flags: BranchesG
       branchIdOrRef = lookup.project_ref;
     }
 
-    // ------------------------------------------------------------------
-    // 2. Detail: V1GetABranchConfig (`GET /v1/branches/{id_or_ref}`).
-    //    Mask db_user / db_pass / jwt_secret with `******` when nil.
-    // ------------------------------------------------------------------
     const fetching =
       output.format === "text" ? yield* output.task("Fetching branch...") : undefined;
     const rawDetail: BranchDetail = yield* api.v1
@@ -116,7 +108,7 @@ export const branchesGet = Effect.fn("branches.get")(function* (flags: BranchesG
         Effect.tapError(() => fetching?.fail() ?? Effect.void),
         Effect.catch(mapGetError),
       );
-    yield* fetching?.clear() ?? Effect.void;
+    yield* fetching?.clear ?? Effect.void;
     const detail: BranchDetail = {
       ...rawDetail,
       db_user: rawDetail.db_user ?? "******",
@@ -124,18 +116,18 @@ export const branchesGet = Effect.fn("branches.get")(function* (flags: BranchesG
       jwt_secret: rawDetail.jwt_secret ?? "******",
     };
 
-    const goFmt = Option.getOrUndefined(goOutputFlag);
-    const wantsEnvMap = goFmt !== undefined && goFmt !== "pretty";
+    const outputFlagFormat = Option.getOrUndefined(outputFlag);
+    const wantsEnvMap = outputFlagFormat !== undefined && outputFlagFormat !== "pretty";
     const wantsTsStructured = output.format === "json" || output.format === "stream-json";
 
-    if (goFmt === "pretty" || (goFmt === undefined && output.format === "text")) {
+    if (
+      outputFlagFormat === "pretty" ||
+      (outputFlagFormat === undefined && output.format === "text")
+    ) {
       yield* output.raw(renderBranchGetTable(detail));
       return;
     }
 
-    // ------------------------------------------------------------------
-    // 3+4. API keys + pooler config (only for non-pretty modes).
-    // ------------------------------------------------------------------
     const keys: ApiKeys = yield* api.v1
       .getProjectApiKeys({ ref: detail.ref })
       .pipe(Effect.catch(mapApiKeysError));
@@ -152,8 +144,6 @@ export const branchesGet = Effect.fn("branches.get")(function* (flags: BranchesG
     const host = projectHost(cliSettings.profile);
     const projected = toStandardEnvs(detail, primary, keys, host);
     if (projected.poolerWarning !== undefined && output.format === "text") {
-      // Established output: `fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), err)`.
-      // The "WARNING:" prefix is yellow, then a space, then the parse error message.
       yield* output.raw(
         `${styleText("yellow", "WARNING:")} ${projected.poolerWarning}\n`,
         "stderr",
@@ -161,31 +151,30 @@ export const branchesGet = Effect.fn("branches.get")(function* (flags: BranchesG
     }
     const envMap = projected.envs;
 
-    if (goFmt === "json") {
-      yield* output.raw(encodeGoJson(envMap));
+    if (outputFlagFormat === "json") {
+      yield* output.raw(encodeSortedJson(envMap));
       return;
     }
-    if (goFmt === "yaml") {
+    if (outputFlagFormat === "yaml") {
       yield* output.raw(encodeYaml(envMap));
       return;
     }
-    if (goFmt === "toml") {
+    if (outputFlagFormat === "toml") {
       yield* output.raw(encodeToml(envMap) + "\n");
       return;
     }
-    if (goFmt === "env") {
+    if (outputFlagFormat === "env") {
       yield* output.raw(encodeEnv(envMap) + "\n");
       return;
     }
 
     if (wantsTsStructured) {
-      // No goFmt set but TS structured output requested.
       yield* output.success("", envMap);
       return;
     }
 
-    // Defensive — should be unreachable given the wantsEnvMap branch above.
+    // Unreachable in practice: wantsEnvMap is already true by this point.
     void wantsEnvMap;
-    yield* output.raw(encodeGoJson(envMap));
+    yield* output.raw(encodeSortedJson(envMap));
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });

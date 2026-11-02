@@ -1,16 +1,14 @@
 /**
- * Post-recreate satellite-container restart + Kong reload, shared by both PG14's
- * `RestartDatabase` and PG15's `resetDatabase15` (`apps/cli-go/internal/db/reset/
- * reset.go:214-288`) — the ONLY two Go call sites of `restartServices`. Neither `db
- * start` nor `supabase start` calls any of this: it exists purely to bring the
- * satellite containers (storage/auth/realtime/pooler) back in sync with a `db`
- * container that was just recreated or force-restarted out from under them, and to
- * reload Kong's nginx so its cached upstream addresses (which may have changed if a
- * satellite container came back on a different one) stop 502ing.
+ * Post-recreate satellite-container restart + Kong reload, shared by both PG14's and PG15's
+ * `db reset` paths. Neither `db start` nor `supabase start` calls this: it exists purely to
+ * bring the satellite containers (storage/auth/realtime/pooler) back in sync with a `db`
+ * container that was just recreated or force-restarted out from under them, and to reload Kong's
+ * nginx so its cached upstream addresses (which may have changed) stop 502ing. PG15's path also
+ * stops those satellites before it removes the `db` container ({@link stopSatelliteServices}).
  */
 
 import { Data, Effect, Option, Result } from "effect";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import {
   actionability,
@@ -30,7 +28,7 @@ import { serviceContainerName } from "../docker-ids.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
-/** `docker restart <id>` (the db container itself) failed — used only by PG14's `RestartDatabase`. */
+/** `docker restart <id>` (the db container itself) failed — used only by PG14's reset path. */
 export class ContainerRestartError extends Data.TaggedError("ContainerRestartError")<{
   readonly message: string;
 }> {
@@ -40,13 +38,9 @@ export class ContainerRestartError extends Data.TaggedError("ContainerRestartErr
 }
 
 /**
- * Port of Go's `Docker.ContainerRestart(ctx, utils.DbId, container.StopOptions{})`
- * (`apps/cli-go/internal/db/reset/reset.go:218-220`), used ONLY by PG14's
- * `RestartDatabase` to restart the `db` container itself after `pg_terminate_backend`
- * (pg_cron must restart, per Go's own comment). Unlike the satellite restarts below,
- * this one does NOT tolerate "not found" — Go's own `RestartDatabase` has no
- * `errdefs.IsNotFound` guard on this call at all, so ANY failure is a hard
- * `failed to restart container: %w`.
+ * Restarts the `db` container itself, used only by PG14's reset path after
+ * `pg_terminate_backend` (pg_cron must restart). Unlike the satellite restarts below, this does
+ * not tolerate "not found" — any failure is a hard error.
  */
 export function restartContainer(
   spawner: Spawner,
@@ -61,20 +55,19 @@ export function restartContainer(
 }
 
 /**
- * One satellite service's restart, tolerant of "not found" (Go's `!errdefs.IsNotFound(err)`
- * guard, `reset.go:231`) — a service excluded from the stack (e.g. `[realtime] enabled =
- * false`) has no container to restart, and that's not an error. Never fails the surrounding
- * `Effect.all` itself: resolves `Option.some(message)` on a genuine failure so the caller
- * can join every service's outcome the way Go's `errors.Join(result...)` does, and
- * `Option.none()` on success OR a tolerated not-found.
+ * One satellite service's stop or restart, tolerant of "not found" — a service excluded from the
+ * stack has no container, and that's not an error. Never fails the surrounding `Effect.all`
+ * itself: resolves `Option.some(message)` on a genuine failure so the caller can join every
+ * service's outcome, and `Option.none()` on success or a tolerated not-found.
  */
-const restartSatelliteService = (
+const runSatelliteService = (
   spawner: Spawner,
+  verb: "stop" | "restart",
   containerId: string,
 ): Effect.Effect<Option.Option<string>> =>
   Effect.scoped(
     Effect.gen(function* () {
-      const child = yield* spawnContainerCli(spawner, ["restart", containerId], {
+      const child = yield* spawnContainerCli(spawner, [verb, containerId], {
         stdin: "ignore",
         stdout: "ignore",
         stderr: "pipe",
@@ -87,18 +80,18 @@ const restartSatelliteService = (
       const trimmed = stderr.trim();
       if (isContainerNotFoundMessage(trimmed)) return Option.none();
       return Option.some(
-        `failed to restart ${containerId}: ${trimmed.length > 0 ? trimmed : `exit ${exitCode}`}`,
+        `failed to ${verb} ${containerId}: ${trimmed.length > 0 ? trimmed : `exit ${exitCode}`}`,
       );
     }),
   ).pipe(
     Effect.catch((cause) =>
       Effect.succeed(
-        Option.some(`failed to restart ${containerId}: ${describeContainerCliFailure(cause)}`),
+        Option.some(`failed to ${verb} ${containerId}: ${describeContainerCliFailure(cause)}`),
       ),
     ),
   );
 
-/** One or more satellite-service restarts failed. Messages are newline-joined, matching Go's `errors.Join`. */
+/** One or more satellite-service stops or restarts failed. Messages are newline-joined. */
 export class RestartServicesError extends Data.TaggedError("RestartServicesError")<{
   readonly message: string;
 }> {
@@ -108,17 +101,14 @@ export class RestartServicesError extends Data.TaggedError("RestartServicesError
 }
 
 /**
- * Port of Go's `restartServices` restart half (`reset.go:227-239`): restarts
- * storage/auth/realtime/pooler CONCURRENTLY (Go's `utils.WaitAll`, a goroutine per
- * service) — NOT PostgREST, which "automatically reconnects and listens for schema
- * changes" (Go's own comment) — and does NOT wait for them to become healthy
- * afterward ("those services may be excluded from starting"). Every per-service
- * failure (excluding a tolerated not-found) is joined into one newline-separated
- * message, matching `errors.Join`. Not exported outside this module — only
- * {@link restartServicesAndReloadKong} calls this directly.
+ * Stops or restarts storage/auth/realtime/pooler concurrently — not PostgREST, which reconnects and
+ * listens for schema changes on its own — and never waits for them to become healthy, since
+ * some may be excluded from the stack. Every per-service failure (excluding a
+ * tolerated not-found) is joined into one newline-separated message.
  */
-function restartSatelliteServices(
+function runSatelliteServices(
   spawner: Spawner,
+  verb: "stop" | "restart",
   projectId: string,
 ): Effect.Effect<void, RestartServicesError> {
   const containerIds = [
@@ -129,21 +119,28 @@ function restartSatelliteServices(
   ];
   return Effect.gen(function* () {
     const results = yield* Effect.all(
-      containerIds.map((containerId) => restartSatelliteService(spawner, containerId)),
+      containerIds.map((containerId) => runSatelliteService(spawner, verb, containerId)),
       { concurrency: "unbounded" },
     );
     const failures = results.filter(Option.isSome).map((result) => result.value);
     if (failures.length > 0) {
-      return yield* Effect.fail(new RestartServicesError({ message: failures.join("\n") }));
+      return yield* new RestartServicesError({ message: failures.join("\n") });
     }
-  });
+  }).pipe(Effect.withSpan(`RestartServices.${verb}Satellites`));
 }
 
 /**
- * Gateway-recovery hint, byte-matching Go's `suggestKongRecovery`
- * (`reset.go:281-288`): rendered as a `Suggestion:` line by `Output.fail`, mirroring
- * `utils.CmdSuggestion`.
+ * Stops storage/auth/realtime/pooler before `db reset` removes the db container: left running,
+ * `unless-stopped` restarts them and their own migrations race the one-shot init jobs (#6915).
  */
+export function stopSatelliteServices(
+  spawner: Spawner,
+  projectId: string,
+): Effect.Effect<void, RestartServicesError> {
+  return runSatelliteServices(spawner, "stop", projectId);
+}
+
+/** Gateway-recovery hint, rendered as a `Suggestion:` line by `Output.fail`. */
 function kongRecoverySuggestion(kongId: string): string {
   return (
     "Local services restarted, but API routes may return 502 until the gateway reloads.\n" +
@@ -153,7 +150,7 @@ function kongRecoverySuggestion(kongId: string): string {
   );
 }
 
-/** Kong could not be reloaded — fails the WHOLE command (unlike `functions serve`'s best-effort reload). */
+/** Kong could not be reloaded — fails the whole command (unlike `functions serve`'s best-effort reload). */
 export class KongReloadError extends Data.TaggedError("KongReloadError")<{
   readonly message: string;
   readonly suggestion: string;
@@ -163,7 +160,7 @@ export class KongReloadError extends Data.TaggedError("KongReloadError")<{
   }
 }
 
-/** `docker exec <id> <cmd...>`, combined stdout+stderr into one buffer — mirrors Go's shared `io.Writer` in `DockerExecOnceWithStream(ctx, KongId, "", nil, cmd, &out, &out)`. Never fails the Effect itself: a spawn failure (no docker/podman) folds into `exitCode: 1`. */
+/** `docker exec <id> <cmd...>`, combined stdout+stderr into one buffer. Never fails the Effect itself: a spawn failure (no docker/podman) folds into `exitCode: 1`. */
 function execCaptureCombined(
   spawner: Spawner,
   containerId: string,
@@ -194,16 +191,11 @@ function execCaptureCombined(
 }
 
 /**
- * Port of Go's `reloadKong` (`reset.go:253-276`): inspect Kong's container — not
- * found means Kong is excluded from the stack (`return nil`, not an error); any OTHER
- * inspect failure is wrapped with the recovery suggestion; not running means there's
- * no stale cache to flush (`return nil`); otherwise `docker exec <kongId> kong reload
- * --nginx-conf /home/kong/custom_nginx.template` (the flag is required — a bare
- * `kong reload` regenerates nginx.conf from Kong's default template and drops the
- * custom `email_templates` server, reintroducing #6059), failing hard (with the same
- * suggestion) on a non-zero exit, the combined output appended when non-empty. Not
- * exported outside this module — only {@link restartServicesAndReloadKong}
- * calls this directly.
+ * Inspects Kong's container: not found means it's excluded from the stack (no error); any
+ * other inspect failure or a non-zero reload exit fails hard with the recovery suggestion; not
+ * running means there's no stale cache to flush. The `--nginx-conf` flag is required — a bare
+ * `kong reload` regenerates nginx.conf from Kong's default template and drops the custom
+ * `email_templates` server.
  */
 function reloadKong(spawner: Spawner, projectId: string): Effect.Effect<void, KongReloadError> {
   const kongId = serviceContainerName("kong", projectId);
@@ -211,12 +203,10 @@ function reloadKong(spawner: Spawner, projectId: string): Effect.Effect<void, Ko
     const inspected = yield* inspectContainerState(spawner, kongId).pipe(Effect.result);
     if (Result.isFailure(inspected)) {
       if (isContainerNotFoundMessage(inspected.failure.message)) return;
-      return yield* Effect.fail(
-        new KongReloadError({
-          message: `failed to inspect kong: ${inspected.failure.message}`,
-          suggestion: kongRecoverySuggestion(kongId),
-        }),
-      );
+      return yield* new KongReloadError({
+        message: `failed to inspect kong: ${inspected.failure.message}`,
+        suggestion: kongRecoverySuggestion(kongId),
+      });
     }
     if (!inspected.success.running) return;
     const result = yield* execCaptureCombined(spawner, kongId, [
@@ -227,34 +217,29 @@ function reloadKong(spawner: Spawner, projectId: string): Effect.Effect<void, Ko
     ]);
     if (result.exitCode !== 0) {
       const trimmed = result.output.trim();
-      // Go's `DockerExecOnceWithStream` (`utils/docker.go:646-648`) sets a FIXED constant
-      // error, `errors.New("error executing command")`, for `iresp.ExitCode > 0` — not the
-      // exit code itself. `reloadKong` then wraps it as `failed to reload kong: %w[:\n%s]`
-      // (`reset.go:269-274`), so the `%w` slot is always this exact string, never `exit N`.
-      return yield* Effect.fail(
-        new KongReloadError({
-          message:
-            trimmed.length > 0
-              ? `failed to reload kong: error executing command:\n${trimmed}`
-              : "failed to reload kong: error executing command",
-          suggestion: kongRecoverySuggestion(kongId),
-        }),
-      );
+      // The established message is always "error executing command", never "exit N" — kept
+      // byte-identical for compatibility.
+      return yield* new KongReloadError({
+        message:
+          trimmed.length > 0
+            ? `failed to reload kong: error executing command:\n${trimmed}`
+            : "failed to reload kong: error executing command",
+        suggestion: kongRecoverySuggestion(kongId),
+      });
     }
-  });
+  }).pipe(Effect.withSpan("RestartServices.reloadKong"));
 }
 
 /**
- * Port of Go's `restartServices` (`reset.go:227-241`): the satellite restarts above,
- * then {@link reloadKong} — ONLY when every restart succeeded (Go returns the
- * joined restart error immediately, without ever attempting the Kong reload).
+ * Runs the satellite restarts above, then {@link reloadKong} — only when every restart
+ * succeeded; a restart failure skips the Kong reload entirely.
  */
 export function restartServicesAndReloadKong(
   spawner: Spawner,
   projectId: string,
 ): Effect.Effect<void, RestartServicesError | KongReloadError> {
   return Effect.gen(function* () {
-    yield* restartSatelliteServices(spawner, projectId);
+    yield* runSatelliteServices(spawner, "restart", projectId);
     yield* reloadKong(spawner, projectId);
-  });
+  }).pipe(Effect.withSpan("RestartServices.restartAndReloadKong"));
 }

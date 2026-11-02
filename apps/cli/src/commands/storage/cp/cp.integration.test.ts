@@ -1,17 +1,35 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Path, Predicate } from "effect";
 
-import { setupStorage } from "../../../../tests/helpers/storage.ts";
-import { VALID_REF, useTempWorkdir } from "../../../../tests/helpers/command-mocks.ts";
+import {
+  BARE_REMOTE,
+  NO_TARGET,
+  branchLookupsOf,
+  describeDbTargetSelection,
+  storageTargetOf,
+} from "../../../../tests/helpers/db-target-selection.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import {
+  setupStorage,
+  STORAGE_TEST_JWT_SECRET,
+  storageConsentApi,
+  storageConsentServices,
+  storageTestBranch,
+} from "../../../../tests/helpers/storage.ts";
+import { VALID_REF, useTempWorkdir, withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import { StackStorageCapabilityError } from "../../../command-internal/stack-storage.ts";
+import { generateLocalJwt } from "../../../command-internal/local-jwt.ts";
+import { StorageUnsupportedOperationError } from "../storage.errors.ts";
 import { storageCp } from "./cp.handler.ts";
 import type { StorageCpFlags } from "./cp.command.ts";
 
 const BUCKET = "/storage/v1/bucket";
 const OBJECT = (p: string) => `/storage/v1/object/${p}`;
 const LIST = (bucket: string) => `/storage/v1/object/list/${bucket}`;
+const REVEALED_API_KEYS = `GET https://api.supabase.com/v1/projects/${VALID_REF}/api-keys?reveal=true`;
+const PROJECT_LOOKUP = `GET https://api.supabase.com/v1/projects/${VALID_REF}`;
+const CACHE_FILE = "supabase/.temp/linked-project.json";
 
 function cpFlags(opts: {
   src: string;
@@ -20,7 +38,7 @@ function cpFlags(opts: {
   cacheControl?: string;
   contentType?: string;
   jobs?: number;
-  local?: boolean;
+  remote?: boolean;
 }): StorageCpFlags {
   return {
     src: opts.src,
@@ -29,70 +47,74 @@ function cpFlags(opts: {
     cacheControl: opts.cacheControl === undefined ? Option.none() : Option.some(opts.cacheControl),
     contentType: opts.contentType === undefined ? Option.none() : Option.some(opts.contentType),
     jobs: opts.jobs === undefined ? Option.none() : Option.some(opts.jobs),
-    linked: true,
-    local: opts.local ?? true,
-    projectRef: Option.none(),
+    ...(opts.remote === true ? BARE_REMOTE : NO_TARGET),
   };
 }
 
 function prefixOf(body: unknown): string {
-  return typeof body === "object" &&
-    body !== null &&
-    typeof (body as { prefix?: unknown }).prefix === "string"
-    ? (body as { prefix: string }).prefix
+  return Predicate.hasProperty(body, "prefix") && Predicate.isString(body.prefix)
+    ? body.prefix
     : "";
+}
+
+function failureErrors<A, E>(exit: Exit.Exit<A, E>): ReadonlyArray<E> {
+  if (!Exit.isFailure(exit)) return [];
+  expect(exit.cause.reasons.every(Cause.isFailReason)).toBe(true);
+  return exit.cause.reasons.filter(Cause.isFailReason).map((reason) => reason.error);
 }
 
 describe("storage cp", () => {
   const tmp = useTempWorkdir("supabase-storage-cp-");
 
-  it.live("uploads a single local file with a sniffed content-type", () => {
-    writeFileSync(join(tmp.current, "readme.md"), "hello world");
+  it.effect("uploads a single local file with a sniffed content-type", () => {
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       routes: [{ method: "POST", match: OBJECT("private/readme.md"), body: {} }],
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.writeFileString(path.join(tmp.current, "readme.md"), "hello world");
       const exit = yield* storageCp(
-        cpFlags({ src: join(tmp.current, "readme.md"), dst: "ss:///private/readme.md" }),
-      ).pipe(Effect.provide(layer), Effect.exit);
+        cpFlags({ src: path.join(tmp.current, "readme.md"), dst: "ss:///private/readme.md" }),
+      ).pipe(Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       const upload = requests.find((r) => r.url.includes(OBJECT("private/readme.md")));
       expect(upload?.method).toBe("POST");
-      // Single upload does NOT set x-upsert (Overwrite stays false).
+      // Single upload doesn't set x-upsert (overwrite stays false).
       expect(upload?.headers["x-upsert"]).toBeUndefined();
       expect(upload?.headers["cache-control"]).toBe("max-age=3600");
       expect(upload?.headers["content-type"]).toContain("text/plain");
-    });
+    }).pipe(Effect.provide(layer));
   });
 
-  it.live("honors --content-type and --cache-control on upload", () => {
-    writeFileSync(join(tmp.current, "data.bin"), "hello");
+  it.effect("honors --content-type and --cache-control on upload", () => {
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       routes: [{ method: "POST", match: OBJECT("private/data.bin"), body: {} }],
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.writeFileString(path.join(tmp.current, "data.bin"), "hello");
       const exit = yield* storageCp(
         cpFlags({
-          src: join(tmp.current, "data.bin"),
+          src: path.join(tmp.current, "data.bin"),
           dst: "ss:///private/data.bin",
           contentType: "application/custom",
           cacheControl: "max-age=60",
         }),
-      ).pipe(Effect.provide(layer), Effect.exit);
+      ).pipe(Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       const upload = requests.find((r) => r.url.includes(OBJECT("private/data.bin")));
       expect(upload?.headers["content-type"]).toBe("application/custom");
       expect(upload?.headers["cache-control"]).toBe("max-age=60");
-    });
+    }).pipe(Effect.provide(layer));
   });
 
-  it.live("recursively uploads a directory, auto-creating a missing bucket", () => {
-    mkdirSync(join(tmp.current, "upload"), { recursive: true });
-    writeFileSync(join(tmp.current, "upload", "readme.md"), "hello");
+  it.effect("recursively uploads a directory, auto-creating a missing bucket", () => {
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -111,9 +133,13 @@ describe("storage cp", () => {
       ],
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(tmp.current, "upload"), { recursive: true });
+      yield* fs.writeFileString(path.join(tmp.current, "upload", "readme.md"), "hello");
       const exit = yield* storageCp(
-        cpFlags({ src: join(tmp.current, "upload"), dst: "ss://", recursive: true }),
-      ).pipe(Effect.provide(layer), Effect.exit);
+        cpFlags({ src: path.join(tmp.current, "upload"), dst: "ss://", recursive: true }),
+      ).pipe(Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       // Recursive uploads set x-upsert; bucket auto-created then upload retried.
       const uploads = requests.filter((r) => r.url.includes(OBJECT("upload/readme.md")));
@@ -122,48 +148,51 @@ describe("storage cp", () => {
       expect(
         requests.some((r) => r.method === "POST" && r.url.endsWith("/storage/v1/bucket")),
       ).toBe(true);
-    });
+    }).pipe(Effect.provide(layer));
   });
 
-  it.live("downloads a single remote object to a new local file", () => {
-    const dst = join(tmp.current, "out.md");
+  it.effect("downloads a single remote object to a new local file", () => {
     const { layer } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       routes: [{ method: "GET", match: OBJECT("private/readme.md"), rawBody: "downloaded-bytes" }],
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dst = path.join(tmp.current, "out.md");
       const exit = yield* storageCp(cpFlags({ src: "ss:///private/readme.md", dst })).pipe(
-        Effect.provide(layer),
         Effect.exit,
       );
       expect(Exit.isSuccess(exit)).toBe(true);
-      expect(readFileSync(dst, "utf8")).toBe("downloaded-bytes");
-    });
+      expect(yield* fs.readFileString(dst)).toBe("downloaded-bytes");
+    }).pipe(Effect.provide(layer));
   });
 
-  it.live("refuses to overwrite an existing local file on a single download", () => {
-    const dst = join(tmp.current, "exists.md");
-    writeFileSync(dst, "original");
+  it.effect("refuses to overwrite an existing local file on a single download", () => {
     const { layer } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       routes: [{ method: "GET", match: OBJECT("private/readme.md"), rawBody: "new" }],
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dst = path.join(tmp.current, "exists.md");
+      yield* fs.writeFileString(dst, "original");
       const exit = yield* storageCp(cpFlags({ src: "ss:///private/readme.md", dst })).pipe(
-        Effect.provide(layer),
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("failed to create file");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("failed to create file");
+      }
       // The existing file is untouched.
-      expect(readFileSync(dst, "utf8")).toBe("original");
-    });
+      expect(yield* fs.readFileString(dst)).toBe("original");
+    }).pipe(Effect.provide(layer));
   });
 
-  it.live("recursively downloads nested objects, creating parent dirs", () => {
-    const dst = join(tmp.current, "dl");
+  it.effect("recursively downloads nested objects, creating parent dirs", () => {
     const { layer } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -188,40 +217,45 @@ describe("storage cp", () => {
       ],
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dst = path.join(tmp.current, "dl");
       const exit = yield* storageCp(cpFlags({ src: "ss:///private/", dst, recursive: true })).pipe(
-        Effect.provide(layer),
         Effect.exit,
       );
       expect(Exit.isSuccess(exit)).toBe(true);
-      expect(readFileSync(join(dst, "a.txt"), "utf8")).toBe("a-content");
-      expect(readFileSync(join(dst, "folder", "b.txt"), "utf8")).toBe("b-content");
-    });
+      expect(yield* fs.readFileString(path.join(dst, "a.txt"))).toBe("a-content");
+      expect(yield* fs.readFileString(path.join(dst, "folder", "b.txt"))).toBe("b-content");
+    }).pipe(Effect.provide(layer));
   });
 
-  it.live("recursively downloads into an existing directory (nests under the remote base)", () => {
-    const dst = join(tmp.current, "existing");
-    mkdirSync(dst, { recursive: true });
-    const { layer } = setupStorage(tmp.current, {
-      toml: 'project_id = "test"\n',
-      local: true,
-      routes: [
-        { method: "POST", match: LIST("private"), body: [{ name: "a.txt", id: "ai" }] },
-        { method: "GET", match: OBJECT("private/a.txt"), rawBody: "a" },
-      ],
-    });
-    return Effect.gen(function* () {
-      const exit = yield* storageCp(cpFlags({ src: "ss:///private/", dst, recursive: true })).pipe(
-        Effect.provide(layer),
-        Effect.exit,
-      );
-      expect(Exit.isSuccess(exit)).toBe(true);
-      // Existing dir → nest under base("/private/") = "private".
-      expect(readFileSync(join(dst, "private", "a.txt"), "utf8")).toBe("a");
-    });
-  });
+  it.effect(
+    "recursively downloads into an existing directory (nests under the remote base)",
+    () => {
+      const { layer } = setupStorage(tmp.current, {
+        toml: 'project_id = "test"\n',
+        local: true,
+        routes: [
+          { method: "POST", match: LIST("private"), body: [{ name: "a.txt", id: "ai" }] },
+          { method: "GET", match: OBJECT("private/a.txt"), rawBody: "a" },
+        ],
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dst = path.join(tmp.current, "existing");
+        yield* fs.makeDirectory(dst, { recursive: true });
+        const exit = yield* storageCp(
+          cpFlags({ src: "ss:///private/", dst, recursive: true }),
+        ).pipe(Effect.exit);
+        expect(Exit.isSuccess(exit)).toBe(true);
+        // Existing dir → nest under base("/private/") = "private".
+        expect(yield* fs.readFileString(path.join(dst, "private", "a.txt"))).toBe("a");
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.live("creates a directory for an empty bucket on recursive download", () => {
-    const dst = join(tmp.current, "dl-empty");
+  it.effect("creates a directory for an empty bucket on recursive download", () => {
     const { layer } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -231,20 +265,19 @@ describe("storage cp", () => {
       ],
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dst = path.join(tmp.current, "dl-empty");
       const exit = yield* storageCp(cpFlags({ src: "ss:///", dst, recursive: true })).pipe(
-        Effect.provide(layer),
         Effect.exit,
       );
       expect(Exit.isSuccess(exit)).toBe(true);
       // Empty bucket reported as "empty/" → mkdir under the destination.
-      expect(existsSync(join(dst, "empty"))).toBe(true);
-    });
+      expect(yield* fs.exists(path.join(dst, "empty"))).toBe(true);
+    }).pipe(Effect.provide(layer));
   });
 
-  it.live("recursively uploads a nested subdirectory", () => {
-    mkdirSync(join(tmp.current, "tree", "sub"), { recursive: true });
-    writeFileSync(join(tmp.current, "tree", "top.txt"), "t");
-    writeFileSync(join(tmp.current, "tree", "sub", "nested.txt"), "n");
+  it.effect("recursively uploads a nested subdirectory", () => {
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -255,19 +288,63 @@ describe("storage cp", () => {
       ],
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(tmp.current, "tree", "sub"), { recursive: true });
+      yield* fs.writeFileString(path.join(tmp.current, "tree", "top.txt"), "t");
+      yield* fs.writeFileString(path.join(tmp.current, "tree", "sub", "nested.txt"), "n");
       const exit = yield* storageCp(
-        cpFlags({ src: join(tmp.current, "tree"), dst: "ss:///private/dir/", recursive: true }),
-      ).pipe(Effect.provide(layer), Effect.exit);
+        cpFlags({
+          src: path.join(tmp.current, "tree"),
+          dst: "ss:///private/dir/",
+          recursive: true,
+        }),
+      ).pipe(Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.some((r) => r.url.includes(OBJECT("private/dir/tree/sub/nested.txt")))).toBe(
         true,
       );
-    });
+    }).pipe(Effect.provide(layer));
   });
 
-  it.live("auto-creates a bucket using its config from supabase/config.toml", () => {
-    mkdirSync(join(tmp.current, "media"), { recursive: true });
-    writeFileSync(join(tmp.current, "media", "a.png"), "x");
+  it.effect(
+    "recursively uploads a file over an existing remote file that shares a directory's name",
+    () => {
+      const { layer, requests } = setupStorage(tmp.current, {
+        toml: 'project_id = "test"\n',
+        local: true,
+        routes: [
+          {
+            method: "POST",
+            match: LIST("private"),
+            body: [
+              { name: "name", id: "ni" },
+              { name: "name", id: null },
+            ],
+          },
+          { method: "POST", match: OBJECT("private/name"), body: {} },
+        ],
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.writeFileString(path.join(tmp.current, "file.txt"), "f");
+        const exit = yield* storageCp(
+          cpFlags({
+            src: path.join(tmp.current, "file.txt"),
+            dst: "ss:///private/name",
+            recursive: true,
+          }),
+        ).pipe(Effect.exit);
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(
+          requests.filter((r) => r.method === "POST").map((r) => new URL(r.url).pathname),
+        ).toEqual([LIST("private"), OBJECT("private/name")]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("auto-creates a bucket using its config from supabase/config.toml", () => {
     const { layer, requests } = setupStorage(tmp.current, {
       toml: "[storage.buckets.media]\npublic = true\n",
       local: true,
@@ -283,138 +360,152 @@ describe("storage cp", () => {
       ],
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(tmp.current, "media"), { recursive: true });
+      yield* fs.writeFileString(path.join(tmp.current, "media", "a.png"), "x");
       const exit = yield* storageCp(
-        cpFlags({ src: join(tmp.current, "media"), dst: "ss://", recursive: true }),
-      ).pipe(Effect.provide(layer), Effect.exit);
+        cpFlags({ src: path.join(tmp.current, "media"), dst: "ss://", recursive: true }),
+      ).pipe(Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       const create = requests.find(
         (r) => r.method === "POST" && r.url.endsWith("/storage/v1/bucket"),
       );
       // The bucket is created with its configured `public` property.
-      const createBody = create?.body as { public?: boolean } | undefined;
-      expect(createBody?.public).toBe(true);
-    });
+      expect(create?.body).toMatchObject({ public: true });
+    }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with Object not found when a recursive download is empty", () => {
+  it.effect("fails with Object not found when a recursive download is empty", () => {
     const { layer } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       routes: [{ method: "POST", match: LIST("private"), body: [] }],
     });
     return Effect.gen(function* () {
+      const path = yield* Path.Path;
       const exit = yield* storageCp(
-        cpFlags({ src: "ss:///private/empty/", dst: join(tmp.current, "dl"), recursive: true }),
-      ).pipe(Effect.provide(layer), Effect.exit);
+        cpFlags({
+          src: "ss:///private/empty/",
+          dst: path.join(tmp.current, "dl"),
+          recursive: true,
+        }),
+      ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("Object not found: /private/empty/");
-    });
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("Object not found: /private/empty/");
+      }
+    }).pipe(Effect.provide(layer));
   });
 
-  it.live("runs already-queued downloads when the walk errors partway (errors.Join parity)", () => {
-    const dst = join(tmp.current, "partial");
-    const { layer } = setupStorage(tmp.current, {
-      toml: 'project_id = "test"\n',
-      local: true,
-      routes: [
-        // Root list queues a.txt (file) and discovers folder/ (recursed next).
-        {
-          method: "POST",
-          match: LIST("private"),
-          when: (b) => prefixOf(b) === "",
-          body: [
-            { name: "a.txt", id: "ai" },
-            { name: "folder", id: null },
-          ],
-        },
-        // The folder listing fails mid-walk, after a.txt is already queued.
-        {
-          method: "POST",
-          match: LIST("private"),
-          when: (b) => prefixOf(b) === "folder/",
-          status: 500,
-          body: { error: "boom" },
-        },
-        { method: "GET", match: OBJECT("private/a.txt"), rawBody: "a-content" },
-      ],
-    });
-    return Effect.gen(function* () {
-      const exit = yield* storageCp(cpFlags({ src: "ss:///private/", dst, recursive: true })).pipe(
-        Effect.provide(layer),
-        Effect.exit,
-      );
-      // The queued a.txt download runs (file written) before the walk error
-      // surfaces — the command still fails.
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(readFileSync(join(dst, "a.txt"), "utf8")).toBe("a-content");
-    });
-  });
+  it.effect(
+    "runs already-queued downloads when the walk errors partway (errors.Join parity)",
+    () => {
+      const { layer } = setupStorage(tmp.current, {
+        toml: 'project_id = "test"\n',
+        local: true,
+        routes: [
+          // Root list queues a.txt (file) and discovers folder/ (recursed next).
+          {
+            method: "POST",
+            match: LIST("private"),
+            when: (b) => prefixOf(b) === "",
+            body: [
+              { name: "a.txt", id: "ai" },
+              { name: "folder", id: null },
+            ],
+          },
+          // The folder listing fails mid-walk, after a.txt is already queued.
+          {
+            method: "POST",
+            match: LIST("private"),
+            when: (b) => prefixOf(b) === "folder/",
+            status: 500,
+            body: { error: "boom" },
+          },
+          { method: "GET", match: OBJECT("private/a.txt"), rawBody: "a-content" },
+        ],
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dst = path.join(tmp.current, "partial");
+        const exit = yield* storageCp(
+          cpFlags({ src: "ss:///private/", dst, recursive: true }),
+        ).pipe(Effect.exit);
+        // The queued a.txt download runs (file written) before the walk error
+        // surfaces — the command still fails.
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(yield* fs.readFileString(path.join(dst, "a.txt"))).toBe("a-content");
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.live("rejects copying between buckets", () => {
+  it.effect("rejects copying between buckets", () => {
     const { layer } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
     });
     return Effect.gen(function* () {
       const exit = yield* storageCp(cpFlags({ src: "ss:///a/x", dst: "ss:///b/y" })).pipe(
-        Effect.provide(layer),
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("Copying between buckets is not supported");
-    });
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("Copying between buckets is not supported");
+      }
+    }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects a local-to-local copy with a cp -r suggestion", () => {
+  it.effect("rejects a local-to-local copy with a cp -r suggestion", () => {
     const { layer } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
     });
     return Effect.gen(function* () {
-      const exit = yield* storageCp(cpFlags({ src: "./a", dst: "./b" })).pipe(
-        Effect.provide(layer),
-        Effect.exit,
-      );
+      const exit = yield* storageCp(cpFlags({ src: "./a", dst: "./b" })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const json = JSON.stringify(exit);
-      expect(json).toContain("Unsupported operation");
-      expect(json).toContain("to copy between local directories");
-    });
+      const unsupported = failureErrors(exit).find(
+        (error) => error instanceof StorageUnsupportedOperationError,
+      );
+      expect(unsupported).toBeInstanceOf(StorageUnsupportedOperationError);
+      expect(unsupported?.message).toContain("Unsupported operation");
+      expect(unsupported?.suggestion).toContain("to copy between local directories");
+    }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails on an invalid src url without any network call", () => {
+  it.effect("fails on an invalid src url without any network call", () => {
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
     });
     return Effect.gen(function* () {
-      const exit = yield* storageCp(cpFlags({ src: ":", dst: "." })).pipe(
-        Effect.provide(layer),
-        Effect.exit,
-      );
+      const exit = yield* storageCp(cpFlags({ src: ":", dst: "." })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const json = JSON.stringify(exit);
-      expect(json).toContain("failed to parse src url");
-      expect(json).toContain("missing protocol scheme");
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("failed to parse src url");
+        expect(causeText).toContain("missing protocol scheme");
+      }
       expect(requests).toHaveLength(0);
-    });
+    }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails when the recursive upload source is missing", () => {
+  it.effect("fails when the recursive upload source is missing", () => {
     const { layer } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
     });
     return Effect.gen(function* () {
+      const path = yield* Path.Path;
       const exit = yield* storageCp(
-        cpFlags({ src: join(tmp.current, "missing"), dst: "ss:///private", recursive: true }),
-      ).pipe(Effect.provide(layer), Effect.exit);
+        cpFlags({ src: path.join(tmp.current, "missing"), dst: "ss:///private", recursive: true }),
+      ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-    });
+    }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits an { uploaded, downloaded } result in json mode", () => {
-    writeFileSync(join(tmp.current, "readme.md"), "hello");
+  it.effect("emits an { uploaded, downloaded } result in json mode", () => {
     const { layer, out } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -422,85 +513,91 @@ describe("storage cp", () => {
       routes: [{ method: "POST", match: OBJECT("private/readme.md"), body: {} }],
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.writeFileString(path.join(tmp.current, "readme.md"), "hello");
       const exit = yield* storageCp(
-        cpFlags({ src: join(tmp.current, "readme.md"), dst: "ss:///private/readme.md" }),
-      ).pipe(Effect.provide(layer), Effect.exit);
+        cpFlags({ src: path.join(tmp.current, "readme.md"), dst: "ss:///private/readme.md" }),
+      ).pipe(Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       const success = out.messages.find((m) => m.type === "success");
-      const uploaded = success?.data?.["uploaded"] as Array<{ to: string }>;
-      expect(uploaded?.[0]?.to).toBe("/private/readme.md");
-      expect(existsSync(join(tmp.current, "readme.md"))).toBe(true);
-    });
+      expect(success?.data?.["uploaded"]).toMatchObject([{ to: "/private/readme.md" }]);
+      expect(yield* fs.exists(path.join(tmp.current, "readme.md"))).toBe(true);
+    }).pipe(Effect.provide(layer));
   });
 
-  it.live("targets the linked project's Storage host and flushes telemetry on upload", () => {
-    writeFileSync(join(tmp.current, "readme.md"), "hello world");
+  it.effect("targets the linked project's Storage host and flushes telemetry on upload", () => {
     const { layer, requests, telemetry, linkedCache } = setupStorage(tmp.current, {
       // No `--local`, so the linked path resolves the ref + service-role key.
+      yes: true,
       routes: [{ method: "POST", match: OBJECT("private/readme.md"), body: {} }],
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.writeFileString(path.join(tmp.current, "readme.md"), "hello world");
       const exit = yield* storageCp(
         cpFlags({
-          src: join(tmp.current, "readme.md"),
+          src: path.join(tmp.current, "readme.md"),
           dst: "ss:///private/readme.md",
-          local: false,
+          remote: true,
         }),
-      ).pipe(Effect.provide(layer), Effect.exit);
+      ).pipe(Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.some((r) => r.url.startsWith(`https://${VALID_REF}.supabase.co`))).toBe(true);
       expect(telemetry.flushed).toBe(true);
       expect(linkedCache.cached).toBe(true);
       expect(linkedCache.cachedRef).toBe(VALID_REF);
-    });
+    }).pipe(Effect.provide(layer));
   });
 
-  it.live("uploads to the project given via --project-ref, overriding VALID_REF", () => {
-    // `opts.projectRef` (the fake's own fallback) is left at its default
-    // (VALID_REF) — the flag must win over it and drive the gateway host.
-    const FLAG_REF = "flagflagflagflagflag";
-    writeFileSync(join(tmp.current, "readme.md"), "hello world");
-    const { layer, requests, linkedCache } = setupStorage(tmp.current, {
-      routes: [{ method: "POST", match: OBJECT("private/readme.md"), body: {} }],
+  it.effect("downloads from the linked project without asking for consent", () => {
+    const { layer, out } = setupStorage(tmp.current, {
+      format: "json",
+      routes: [{ method: "GET", match: OBJECT("private/readme.md"), rawBody: "downloaded-bytes" }],
     });
     return Effect.gen(function* () {
-      const exit = yield* storageCp({
-        ...cpFlags({ src: join(tmp.current, "readme.md"), dst: "ss:///private/readme.md" }),
-        local: false,
-        projectRef: Option.some(FLAG_REF),
-      }).pipe(Effect.provide(layer), Effect.exit);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dst = path.join(tmp.current, "out.md");
+      const exit = yield* storageCp(
+        cpFlags({ src: "ss:///private/readme.md", dst, remote: true }),
+      ).pipe(Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-      expect(requests.some((r) => r.url.startsWith(`https://${FLAG_REF}.supabase.co`))).toBe(true);
-      expect(requests.some((r) => r.url.includes(VALID_REF))).toBe(false);
-      expect(linkedCache.cached).toBe(true);
-      expect(linkedCache.cachedRef).toBe(FLAG_REF);
-    });
+      expect(yield* fs.readFileString(dst)).toBe("downloaded-bytes");
+      expect(out.promptConfirmCalls).toEqual([]);
+    }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects --project-ref combined with --local", () => {
-    const FLAG_REF = "flagflagflagflagflag";
-    writeFileSync(join(tmp.current, "readme.md"), "hello world");
-    const { layer, requests, linkedCache } = setupStorage(tmp.current, {
-      toml: 'project_id = "test"\n',
-      local: true,
-    });
-    return Effect.gen(function* () {
-      const exit = yield* storageCp({
-        ...cpFlags({ src: join(tmp.current, "readme.md"), dst: "ss:///private/readme.md" }),
-        local: true,
-        projectRef: Option.some(FLAG_REF),
-      }).pipe(Effect.provide(layer), Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain(
-        "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
-      );
-      expect(requests).toHaveLength(0);
-      expect(linkedCache.cached).toBe(false);
-    });
+  describeDbTargetSelection("storage cp", {
+    dbUrl: false,
+    operands: ["ss:///private/readme.md", "out.md"],
+    workdir: () => tmp.current,
+    attempt: ({ workdir, args, target }) => {
+      const ctx = setupStorage(workdir, {
+        toml: 'project_id = "test"\n[api]\nport = 65432\n',
+        branches: [storageTestBranch("feature-x")],
+        cliArgs: args,
+        commandPath: ["storage", "cp"],
+        routes: [
+          { method: "GET", match: OBJECT("private/readme.md"), rawBody: "downloaded-bytes" },
+        ],
+      });
+      return {
+        layer: ctx.layer,
+        out: ctx.out,
+        run: storageCp({
+          ...cpFlags({ src: "ss:///private/readme.md", dst: `${workdir}/out.md` }),
+          ...target,
+        }),
+        target: () => storageTargetOf(ctx.requests),
+        cachedRef: () => ctx.linkedCache.cachedRef,
+        branchLookups: () => branchLookupsOf(ctx.managementCalls),
+      };
+    },
   });
 
-  it.live("propagates a non-200 from the gateway on upload", () => {
-    writeFileSync(join(tmp.current, "readme.md"), "hello");
+  it.effect("propagates a non-200 from the gateway on upload", () => {
     const { layer } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -514,16 +611,20 @@ describe("storage cp", () => {
       ],
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.writeFileString(path.join(tmp.current, "readme.md"), "hello");
       const exit = yield* storageCp(
-        cpFlags({ src: join(tmp.current, "readme.md"), dst: "ss:///private/readme.md" }),
-      ).pipe(Effect.provide(layer), Effect.exit);
+        cpFlags({ src: path.join(tmp.current, "readme.md"), dst: "ss:///private/readme.md" }),
+      ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("Error status 503");
-    });
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("Error status 503");
+      }
+    }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits the uploaded result as a streamed event in stream-json mode", () => {
-    writeFileSync(join(tmp.current, "readme.md"), "hello");
+  it.effect("emits the uploaded result as a streamed event in stream-json mode", () => {
     const { layer, out } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -531,38 +632,41 @@ describe("storage cp", () => {
       routes: [{ method: "POST", match: OBJECT("private/readme.md"), body: {} }],
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.writeFileString(path.join(tmp.current, "readme.md"), "hello");
       const exit = yield* storageCp(
-        cpFlags({ src: join(tmp.current, "readme.md"), dst: "ss:///private/readme.md" }),
-      ).pipe(Effect.provide(layer), Effect.exit);
+        cpFlags({ src: path.join(tmp.current, "readme.md"), dst: "ss:///private/readme.md" }),
+      ).pipe(Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       const success = out.messages.find((m) => m.type === "success");
-      const uploaded = success?.data?.["uploaded"] as Array<{ to: string }>;
-      expect(uploaded?.[0]?.to).toBe("/private/readme.md");
-    });
+      expect(success?.data?.["uploaded"]).toMatchObject([{ to: "/private/readme.md" }]);
+    }).pipe(Effect.provide(layer));
   });
 
-  it.live("clamps --jobs below 1 to a single worker", () => {
-    writeFileSync(join(tmp.current, "readme.md"), "hello");
+  it.effect("clamps --jobs below 1 to a single worker", () => {
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       routes: [{ method: "POST", match: OBJECT("private/readme.md"), body: {} }],
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.writeFileString(path.join(tmp.current, "readme.md"), "hello");
       const exit = yield* storageCp(
         cpFlags({
-          src: join(tmp.current, "readme.md"),
+          src: path.join(tmp.current, "readme.md"),
           dst: "ss:///private/readme.md",
           jobs: 0,
         }),
-      ).pipe(Effect.provide(layer), Effect.exit);
+      ).pipe(Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.some((r) => r.url.includes(OBJECT("private/readme.md")))).toBe(true);
-    });
+    }).pipe(Effect.provide(layer));
   });
 
-  it.live("downloads nested objects in parallel with --jobs 2", () => {
-    const dst = join(tmp.current, "dl-parallel");
+  it.effect("downloads nested objects in parallel with --jobs 2", () => {
     const { layer } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -580,12 +684,164 @@ describe("storage cp", () => {
       ],
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dst = path.join(tmp.current, "dl-parallel");
       const exit = yield* storageCp(
         cpFlags({ src: "ss:///private/", dst, recursive: true, jobs: 2 }),
-      ).pipe(Effect.provide(layer), Effect.exit);
+      ).pipe(Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-      expect(readFileSync(join(dst, "a.txt"), "utf8")).toBe("a-content");
-      expect(readFileSync(join(dst, "b.txt"), "utf8")).toBe("b-content");
-    });
+      expect(yield* fs.readFileString(path.join(dst, "a.txt"))).toBe("a-content");
+      expect(yield* fs.readFileString(path.join(dst, "b.txt"))).toBe("b-content");
+    }).pipe(Effect.provide(layer));
   });
+  it.effect("fetches the revealed api keys and fills the cache through the real layers", () =>
+    withEnvVar(
+      "SUPABASE_AUTH_SERVICE_ROLE_KEY",
+      undefined,
+      Effect.gen(function* () {
+        const { layer, requests, managementRequests } = setupStorage(tmp.current, {
+          recordManagementApi: true,
+          routes: [{ method: "POST", match: OBJECT("private/readme.md"), body: {} }],
+        });
+        yield* Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* fs.writeFileString(path.join(tmp.current, "readme.md"), "hello world");
+          yield* storageCp(
+            cpFlags({
+              src: path.join(tmp.current, "readme.md"),
+              dst: "ss:///private/readme.md",
+              remote: true,
+              jobs: 1,
+            }),
+          );
+          expect(
+            managementRequests.map(({ method, urlWithParams }) => `${method} ${urlWithParams}`),
+          ).toEqual([REVEALED_API_KEYS, PROJECT_LOOKUP]);
+          const upload = requests.find((r) => r.url.includes(OBJECT("private/readme.md")));
+          expect(upload?.method).toBe("POST");
+          expect(upload?.url.startsWith(`https://${VALID_REF}.supabase.co`)).toBe(true);
+          expect(yield* fs.exists(path.join(tmp.current, CACHE_FILE))).toBe(true);
+          assertPermissionDrift({
+            command: "storage cp",
+            activeFlags: { remote: true, jobs: "1" },
+            requests: managementRequests,
+          });
+        }).pipe(Effect.provide(layer));
+      }),
+    ),
+  );
+});
+
+describe("stack backend", () => {
+  const tmp = useTempWorkdir("supabase-storage-cp-stack-");
+
+  it.effect("uploads through the stack's api endpoint and JWT", () => {
+    const { layer, requests } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      stackBackend: true,
+      routes: [{ method: "POST", match: OBJECT("private/readme.md"), body: {} }],
+    });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.writeFileString(path.join(tmp.current, "readme.md"), "hello world");
+      const exit = yield* storageCp(
+        cpFlags({ src: path.join(tmp.current, "readme.md"), dst: "ss:///private/readme.md" }),
+      ).pipe(Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.url.startsWith("http://127.0.0.1:59999")).toBe(true);
+      expect(requests[0]?.headers["apikey"]).toBe(
+        generateLocalJwt(STORAGE_TEST_JWT_SECRET, "service_role"),
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "fails with StackStorageCapabilityError when Storage is disabled, before any request",
+    () => {
+      const { layer, requests } = setupStorage(tmp.current, {
+        toml: 'project_id = "test"\n',
+        local: true,
+        stackBackend: true,
+        stackApi: { storageState: "disabled" },
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.writeFileString(path.join(tmp.current, "readme.md"), "hello world");
+        const exit = yield* storageCp(
+          cpFlags({ src: path.join(tmp.current, "readme.md"), dst: "ss:///private/readme.md" }),
+        ).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const capability = failureErrors(exit).find(
+          (error) => error instanceof StackStorageCapabilityError,
+        );
+        expect(capability).toBeInstanceOf(StackStorageCapabilityError);
+        expect(capability?.suggestion).toContain("--exclude storage");
+        expect(requests).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    "recursively uploads a directory through the stack, auto-creating a missing bucket",
+    () => {
+      const { layer, requests } = setupStorage(tmp.current, {
+        toml: 'project_id = "test"\n',
+        local: true,
+        stackBackend: true,
+        routes: [
+          {
+            method: "POST",
+            match: OBJECT("upload/readme.md"),
+            status: 400,
+            body: { error: "Bucket not found" },
+          },
+          { method: "POST", match: "/storage/v1/bucket", body: { name: "upload" } },
+          { method: "POST", match: OBJECT("upload/readme.md"), body: {} },
+        ],
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(path.join(tmp.current, "upload"), { recursive: true });
+        yield* fs.writeFileString(path.join(tmp.current, "upload", "readme.md"), "hello");
+        const exit = yield* storageCp(
+          cpFlags({ src: path.join(tmp.current, "upload"), dst: "ss://", recursive: true }),
+        ).pipe(Effect.exit);
+        expect(Exit.isSuccess(exit)).toBe(true);
+        const uploads = requests.filter((r) => r.url.includes(OBJECT("upload/readme.md")));
+        expect(uploads).toHaveLength(2);
+        expect(uploads[1]?.headers["x-upsert"]).toBe("true");
+        expect(
+          requests.some((r) => r.method === "POST" && r.url.endsWith("/storage/v1/bucket")),
+        ).toBe(true);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+});
+
+describeHostedConsent("storage cp", {
+  api: storageConsentApi,
+  setup: (workdir) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(`${workdir}/readme.md`, "hello world");
+    }),
+  invoke: ({ workdir }) => {
+    const storage = storageConsentServices(workdir, [
+      { method: "POST", match: OBJECT("private/readme.md"), body: {} },
+    ]);
+    return {
+      run: storageCp({
+        ...cpFlags({ src: `${workdir}/readme.md`, dst: "ss:///private/readme.md" }),
+        remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
+      }).pipe(Effect.provide(storage.layer)),
+      mutations: storage.writes,
+    };
+  },
 });

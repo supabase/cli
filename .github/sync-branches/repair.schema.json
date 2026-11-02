@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "findings"],
+  "properties": {
+    "summary": { "type": "string" },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "fixed", "reply"],
+        "properties": {
+          "id": { "type": "integer" },
+          "fixed": { "type": "boolean" },
+          "reply": { "type": "string" }
+        }
+      }
+    }
+  }
+}

@@ -1,6 +1,7 @@
 import { Data } from "effect";
 import {
   actionability,
+  causeDeclaration,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../../shared/telemetry/error-actionability.ts";
@@ -43,18 +44,14 @@ export class DbDumpOpenFileError extends Data.TaggedError("DbDumpOpenFileError")
   }
 }
 
-/**
- * The pg_dump container exited non-zero; message text
- * (`"error running container: exit " + code`) is an established output contract.
- */
+/** pg_dump exited non-zero. Message text comes from `pgDumpClientExitMessage`. */
 export class DbDumpRunError extends Data.TaggedError("DbDumpRunError")<{
   readonly message: string;
-  // An actionable hint attached to a failed dump — e.g. the IPv6
-  // transaction-pooler guidance. `Output.fail` prints it bare on stderr after
-  // the error message.
+  /** Printed on stderr after the error (IPv6 pooler guidance, native client hint). */
   readonly suggestion?: string;
+  readonly cause?: unknown;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.dbConnection;
+    return causeDeclaration(this.cause) ?? actionability.dbConnection;
   }
 }

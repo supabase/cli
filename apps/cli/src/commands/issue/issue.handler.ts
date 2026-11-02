@@ -34,7 +34,7 @@ export const issueBug = Effect.fn("issue.bug")(function* (flags: IssueBugFlags) 
       "affected-area": readIssueFlagValue(flags.area),
       "cli-version": telemetryRuntime.cliVersion,
       os: `${runtimeInfo.platform} ${runtimeInfo.arch}`,
-      "install-method": inferIssueInstallMethod(runtimeInfo),
+      "install-method": yield* inferIssueInstallMethod(runtimeInfo),
       command: readIssueFlagValue(flags.command),
       "actual-output": readIssueFlagValue(flags.actualOutput),
       "expected-behavior": readIssueFlagValue(flags.expectedBehavior),

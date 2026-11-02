@@ -1,13 +1,23 @@
-import { CliOutput } from "effect/unstable/cli";
+import { CliOutput } from "effect/cli";
+import {
+  permissionSectionForHelp,
+  renderPermissionsSection,
+} from "../../command-internal/command-permissions/help-section.ts";
 import type {
   CliErrorSuggestionContext,
   FormattedCliError,
 } from "../cli/subcommand-flag-suggestions.ts";
 import { formatCliErrorsForDisplay } from "../cli/subcommand-flag-suggestions.ts";
+import { labelSubcommands, targetHelpFor, withRemoteFlagUsage } from "./target-help.ts";
 
 function stripSingleErrorHeader(text: string): string {
   const prefix = "\nERROR\n  ";
   return text.startsWith(prefix) ? text.slice(prefix.length) : text.trimStart();
+}
+
+function insertBeforeUsage(text: string, section: string): string {
+  const at = `\n${text}`.indexOf("\nUSAGE\n");
+  return at === -1 ? text : `${text.slice(0, at)}${section}\n\n${text.slice(at)}`;
 }
 
 export function textCliOutputFormatter(context?: CliErrorSuggestionContext): CliOutput.Formatter {
@@ -17,6 +27,18 @@ export function textCliOutputFormatter(context?: CliErrorSuggestionContext): Cli
 
   return {
     ...base,
+    formatHelpDoc: (doc) => {
+      const text = base.formatHelpDoc(
+        withRemoteFlagUsage(labelSubcommands(doc, context?.rootCommand)),
+      );
+      const target = targetHelpFor(doc);
+      const withTarget =
+        target === undefined ? text : insertBeforeUsage(text, `TARGET\n  ${target.summary}`);
+      const section = permissionSectionForHelp(doc);
+      return section === undefined
+        ? withTarget
+        : `${withTarget}\n\n${renderPermissionsSection(section)}`;
+    },
     formatErrors: (errors) => {
       const formatted = formatCliErrorsForDisplay(errors, context);
       if (!formatted.changed) return base.formatErrors(errors);

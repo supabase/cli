@@ -1,21 +1,37 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { legacyProjectStateLayer } from "../../src/shared/config/legacy-project-state.layer.ts";
 
-import { BunServices } from "@effect/platform-bun";
-import { type ApiClient, makeApiClient, type SupabaseApiConfigError } from "@supabase/api/effect";
-import { Effect, FileSystem, Layer, Option, Predicate, Redacted, Sink, Stream } from "effect";
+import { BunFileSystem, BunPath, BunServices } from "@effect/platform-bun";
+import {
+  type ApiClient,
+  makeApiClient,
+  type SupabaseApiConfigError,
+  type SupabaseApiError,
+} from "@supabase/api/effect";
+import {
+  ConfigProvider,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Predicate,
+  Redacted,
+  Schema,
+  Sink,
+  Stream,
+} from "effect";
 import { PlatformError, SystemError } from "effect/PlatformError";
-import type { ChildProcess } from "effect/unstable/process";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import * as HttpClientRequestModule from "effect/unstable/http/HttpClientRequest";
-import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as UrlParams from "effect/unstable/http/UrlParams";
+import type { ChildProcess } from "effect/process";
+import { ChildProcessSpawner } from "effect/process";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as HttpClientRequestModule from "effect/http/HttpClientRequest";
+import type * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as UrlParams from "effect/http/UrlParams";
 import { afterEach, beforeEach } from "vitest";
 
+import { ConfigEnvPins } from "./config-env-pins.ts";
 import { CommandCredentials } from "../../src/auth/command-credentials.service.ts";
 import { DbExecError } from "../../src/command-internal/db-connection.errors.ts";
 import type {
@@ -41,20 +57,22 @@ import {
   LoginVerificationError,
 } from "../../src/commands/login/login.errors.ts";
 import { CommandSettings } from "../../src/config/command-settings.service.ts";
-import {
-  PGDATA_BASELINE_MARKER_NAME,
-  PGDATA_PATH,
-} from "../../src/command-internal/db-bootstrap/pgdata-snapshot.ts";
+import { PGDATA_BASELINE_MARKER_NAME } from "../../src/command-internal/db-bootstrap/pgdata-snapshot.ts";
+import { POSTGRES_DATA_DIR } from "../../src/command-internal/db-bootstrap/postgres.service.ts";
 import { projectRefLayer } from "../../src/config/project-ref.layer.ts";
+import { commandTargetLayer } from "../../src/shared/output/command-target.layer.ts";
+import { LocalDockerEngine } from "../../src/command-internal/db-bootstrap/local-db-running.ts";
 import { LinkedProjectCache } from "../../src/telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../src/telemetry/telemetry-state.service.ts";
 import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
+import { commandRuntimeLayer } from "../../src/shared/runtime/command-runtime.layer.ts";
 import type { Stdin } from "../../src/shared/runtime/stdin.service.ts";
 import { OutputFlag } from "../../src/command-internal/global-flags.ts";
 import type { Output } from "../../src/shared/output/output.service.ts";
 import type { ProcessControl } from "../../src/shared/runtime/process-control.service.ts";
 import type { RuntimeInfo } from "../../src/shared/runtime/runtime-info.service.ts";
 import type { Tty } from "../../src/shared/runtime/tty.service.ts";
+import { CliEnvNameSource } from "../../src/shared/config/cli-config-provider.layer.ts";
 import { Analytics } from "../../src/shared/telemetry/analytics.service.ts";
 import {
   mockAnalytics,
@@ -64,24 +82,37 @@ import {
   mockTty,
   processEnvLayer,
 } from "./mocks.ts";
+import { EXEC_FAILED_STATE } from "./docker-health.ts";
 
-// ---------------------------------------------------------------------------
-// Constants — Go-parity test fixtures used across every native-port integration
-// test. Centralized so a change to the project-ref schema (e.g. updated length)
-// only needs to update one constant.
-// ---------------------------------------------------------------------------
+const hostPath = Effect.runSync(Path.Path.pipe(Effect.provide(BunPath.layer)));
 
+const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
+const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const encodeJson = (value: unknown) => encodeUnknownJson(value).pipe(Effect.orDie);
+
+// Fixtures shared across every native-port integration test. Centralized so a change to the
+// project-ref schema (e.g. updated length) only needs to update one constant.
 export const VALID_REF = "abcdefghijklmnopqrst";
+
+export const unverifiedTargetBanner = (ref: string = VALID_REF): string =>
+  `Target: project ${ref}\n`;
+
 export const VALID_TOKEN = "sbp_" + "a".repeat(40);
 export const DEFAULT_API_URL = "https://api.supabase.com";
-export const DEFAULT_USER_AGENT = "SupabaseCLI/0.0.0-dev";
+const DEFAULT_USER_AGENT = "SupabaseCLI/0.0.0-dev";
 
-// ---------------------------------------------------------------------------
 // No-op layers — drop-in for tests that don't assert on telemetry / cache state.
-// ---------------------------------------------------------------------------
-
 export const mockLinkedProjectCacheLayer = Layer.succeed(LinkedProjectCache, {
   cache: () => Effect.void,
+});
+
+/**
+ * Hermetic default: the Engine probe never answers, so tests exercise their
+ * mocked container-CLI spawner instead of dialing the machine's real Docker
+ * socket. Direct-path tests provide their own definitive `LocalDockerEngine`.
+ */
+export const mockLocalDockerEngineUnavailableLayer = Layer.succeed(LocalDockerEngine, {
+  inspectContainer: () => Effect.succeed(Option.none()),
 });
 
 export const mockTelemetryStateLayer = Layer.succeed(TelemetryState, {
@@ -163,11 +194,9 @@ export function mockCommandCredentialsTracked(
       Effect.gen(function* () {
         deletedRefs.push(projectRef);
         if (opts.deleteFails === true) {
-          return yield* Effect.fail(
-            new CredentialDeleteError({
-              message: "failed to delete project credential: permission denied",
-            }),
-          );
+          return yield* new CredentialDeleteError({
+            message: "failed to delete project credential: permission denied",
+          });
         }
         return true;
       }),
@@ -186,12 +215,9 @@ export function mockCommandCredentialsTracked(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Login crypto / API mocks. The crypto mock returns a dummy ECDH handle (the
-// browser-flow integration tests never reach a real decrypt — the API mock
-// supplies the ciphertext and the crypto mock returns the decrypted token).
-// ---------------------------------------------------------------------------
-
+// The crypto mock returns a dummy ECDH handle: the browser-flow integration tests never reach a
+// real decrypt — the API mock supplies the ciphertext and the crypto mock returns the decrypted
+// token.
 export function mockLoginCrypto(
   opts: {
     readonly publicKeyHex?: string;
@@ -272,21 +298,16 @@ export function mockLoginApi(
   };
 }
 
-// ---------------------------------------------------------------------------
-// State-tracking factories — for PersistentPostRun-parity assertions
-// (telemetry must flush, linked-project cache fires after ref resolution).
-// Shape matches the inline helpers the 9 native-port tests used pre-extraction.
-// ---------------------------------------------------------------------------
-
+// State-tracking factories, for asserting telemetry flushes and the linked-project cache fires
+// after ref resolution.
 export function mockTelemetryStateTracked(): {
   readonly layer: Layer.Layer<TelemetryState>;
   readonly flushed: boolean;
   /**
-   * Number of `flush` calls — beyond the plain `flushed` boolean, this lets a
-   * test prove a command's own `Effect.ensuring` finalizer fired EXACTLY once
-   * even when its body calls an in-process helper (e.g. `resetLocalDatabase`,
-   * CLI-2062) that could, if it wrongly owned a second finalizer, double the
-   * count instead of leaving it at 1.
+   * Number of `flush` calls — beyond the plain `flushed` boolean, this lets a test prove a
+   * command's own `Effect.ensuring` finalizer fired once, even when its body calls an in-process
+   * helper (e.g. `resetLocalDatabase`) that could double the count if it wrongly owned a second
+   * finalizer.
    */
   readonly flushCount: number;
   readonly stitchedDistinctId: string | undefined;
@@ -389,16 +410,14 @@ export function mockLinkedProjectCacheTracked(): {
   };
 }
 
-// ---------------------------------------------------------------------------
-// CLI config factory — defaults match the common case (linked project, valid
-// access token, supabase.com API URL). Tests override individual fields when
-// they need to exercise alternative resolution paths.
-// ---------------------------------------------------------------------------
-
+// Defaults match the common case (linked project, valid access token, supabase.com API URL).
+// Tests override individual fields when they need to exercise alternative resolution paths.
 export function mockCommandSettings(opts: {
   readonly workdir: string;
   readonly explicitWorkdir?: boolean;
+  readonly workdirEnvValue?: string;
   readonly profile?: string;
+  readonly profileEnvValue?: Option.Option<string>;
   readonly apiUrl?: string;
   readonly projectHost?: string;
   readonly poolerHost?: string;
@@ -406,9 +425,14 @@ export function mockCommandSettings(opts: {
   readonly accessToken?: Option.Option<Redacted.Redacted<string>>;
   readonly projectId?: Option.Option<string>;
   readonly userAgent?: string;
+  readonly supabaseHome?: string;
+  readonly githubToken?: Option.Option<Redacted.Redacted<string>>;
 }): Layer.Layer<CommandSettings> {
   return Layer.succeed(CommandSettings, {
+    githubToken: opts.githubToken ?? Option.none(),
     profile: opts.profile ?? "supabase",
+    profileEnvValue: opts.profileEnvValue ?? Option.none(),
+    supabaseHome: opts.supabaseHome ?? hostPath.join(opts.workdir, ".supabase"),
     apiUrl: opts.apiUrl ?? DEFAULT_API_URL,
     projectHost: opts.projectHost ?? "supabase.co",
     poolerHost: opts.poolerHost ?? "supabase.com",
@@ -417,15 +441,13 @@ export function mockCommandSettings(opts: {
     projectId: opts.projectId ?? Option.some(VALID_REF),
     workdir: opts.workdir,
     explicitWorkdir: opts.explicitWorkdir ?? false,
+    workdirEnvValue:
+      opts.workdirEnvValue === undefined ? Option.none() : Option.some(opts.workdirEnvValue),
     userAgent: opts.userAgent ?? DEFAULT_USER_AGENT,
   });
 }
 
-// ---------------------------------------------------------------------------
-// HTTP transport primitives — exported as low-level building blocks for tests
-// that need a custom `handler` in `mockCommandPlatformApi`.
-// ---------------------------------------------------------------------------
-
+// Low-level building blocks for tests that need a custom `handler` in `mockCommandPlatformApi`.
 export function jsonResponse(
   request: HttpClientRequest.HttpClientRequest,
   status: number,
@@ -476,17 +498,12 @@ function makeHttpClientLayer(
   );
 }
 
-// ---------------------------------------------------------------------------
-// Platform API factory — hybrid surface.
-//
-// Precedence (high → low): `network: "fail"` > `handler` > `byMethod` > `response`.
-// `body` is JSON-decoded when the Uint8Array body parses; otherwise the raw
-// decoded string is stored. Falsy bodies (no request body) record `undefined`.
-// ---------------------------------------------------------------------------
-
+// Platform API factory — hybrid surface. Precedence (high → low): `network: "fail"` >
+// `handler` > `byMethod` > `response`. `body` is JSON-decoded when the Uint8Array body parses;
+// otherwise the raw decoded string is stored. Falsy bodies (no request body) record `undefined`.
 export type HttpMethod = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
 
-export interface RecordedRequest {
+interface RecordedRequest {
   readonly url: string;
   readonly method: string;
   readonly headers: Readonly<Record<string, string | undefined>>;
@@ -549,11 +566,7 @@ export function mockCommandPlatformApi(
       let body: unknown = undefined;
       if (request.body._tag === "Uint8Array") {
         const decoded = new TextDecoder().decode(request.body.body);
-        try {
-          body = JSON.parse(decoded);
-        } catch {
-          body = decoded;
-        }
+        body = yield* decodeJson(decoded).pipe(Effect.orElseSucceed(() => decoded));
       }
       const params = UrlParams.toString(request.urlParams);
       const recorded: RecordedRequest = {
@@ -567,7 +580,7 @@ export function mockCommandPlatformApi(
       requests.push(recorded);
 
       if (opts.network === "fail") {
-        return yield* Effect.fail(transportFailure(request));
+        return yield* transportFailure(request);
       }
       if (opts.handler !== undefined) {
         return yield* opts.handler(request, recorded);
@@ -589,11 +602,15 @@ export function mockCommandPlatformApi(
 
   const layer = Layer.effect(
     CommandPlatformApi,
-    makeApiClient({
-      baseUrl: opts.apiUrl ?? DEFAULT_API_URL,
-      accessToken: opts.accessToken ?? VALID_TOKEN,
-      userAgent: opts.userAgent ?? DEFAULT_USER_AGENT,
-    }),
+    // Retry backoff is covered in `@supabase/api`; stubbed failures must surface without waiting.
+    makeApiClient(
+      {
+        baseUrl: opts.apiUrl ?? DEFAULT_API_URL,
+        accessToken: opts.accessToken ?? VALID_TOKEN,
+        userAgent: opts.userAgent ?? DEFAULT_USER_AGENT,
+      },
+      { retry: { maxRetries: 0 } },
+    ),
   ).pipe(Layer.provide(httpClientLayer));
 
   const factoryLayer = Layer.succeed(CommandPlatformApiFactory, {
@@ -603,26 +620,16 @@ export function mockCommandPlatformApi(
   return { layer, httpClientLayer, requests, factoryLayer };
 }
 
-// ---------------------------------------------------------------------------
-// Direct-service mock for CommandPlatformApi.
+// Direct-service mock for CommandPlatformApi. Bypasses the real API client's input/output schema
+// validation by providing `CommandPlatformApi` via `Layer.succeed` directly. Use this when the
+// API schema is too strict for the test scenario (e.g. the `branch_id_or_ref` oneOf union rejects
+// 20-letter project refs because the UUID branch has no actual UUID pattern check) and the
+// handler logic under test does not depend on the byte-exact wire format of requests/responses.
 //
-// Bypasses the real API client's input/output schema validation by providing
-// `CommandPlatformApi` via `Layer.succeed` directly. Use this when:
-//
-//   - the API schema is too strict for the test scenario (e.g. the
-//     `branch_id_or_ref` oneOf union rejects 20-letter project refs because
-//     the UUID branch has no actual UUID pattern check), AND
-//   - the handler logic under test does not depend on the byte-exact wire
-//     format of requests/responses.
-//
-// The recorded `requests` array tracks `{ method, input }` for every call —
-// both typed `v1.*` calls and raw-execute calls (keyed by the operation's
-// `id`, e.g. `"v2GetProjectConfig"`), so a single array captures a whole
-// mocked call sequence regardless of which surface issued it.
-// Methods not present in `v1Stubs`/`raw` die at call time so missing wiring
-// shows up loud and clear instead of silently returning undefined.
-// ---------------------------------------------------------------------------
-
+// The recorded `requests` array tracks `{ method, input }` for every call — both typed `v1.*`
+// calls and raw-execute calls (keyed by the operation's `id`, e.g. `"v2GetProjectConfig"`), so a
+// single array captures a whole mocked call sequence regardless of which surface issued it.
+// Methods not present in `v1Stubs`/`raw` die at call time so missing wiring is loud and clear.
 type V1Stubs = Partial<{
   readonly [K in keyof ApiClient["v1"]]: (
     input: Parameters<ApiClient["v1"][K]>[0],
@@ -662,7 +669,7 @@ export function mockCommandPlatformApiService(
         Effect.gen(function* () {
           requests.push({ method: prop, input });
           const stub = (stubs as Record<string, unknown>)[prop] as
-            | ((i: unknown) => Effect.Effect<unknown, unknown>)
+            | ((i: unknown) => Effect.Effect<unknown, SupabaseApiError>)
             | undefined;
           if (stub === undefined) {
             return yield* Effect.die(`Unmocked CommandPlatformApi.v1.${prop}`);
@@ -672,12 +679,10 @@ export function mockCommandPlatformApiService(
     },
   });
 
-  // No typed v2 operation has stub support here: the CLI's only v2
-  // call (the effective-project-config read) deliberately bypasses the typed
-  // `v2.*` surface for `executeRaw` (ADR 0019 rule 2 — the generated client's
-  // strict schema would reject the exact forward-compatible shapes the read
-  // needs to tolerate), so any typed `v2.*` call from command code is a wiring
-  // bug.
+  // No typed v2 operation has stub support here: the CLI's only v2 call (the
+  // effective-project-config read) bypasses the typed `v2.*` surface for `executeRaw` (ADR 0019
+  // rule 2 — the generated client's strict schema would reject the forward-compatible shapes the
+  // read needs to tolerate), so any typed `v2.*` call from command code is a wiring bug.
   const v2Proxy = new Proxy({} as ApiClient["v2"], {
     get(_target, prop: string) {
       return () => Effect.die(`Unmocked CommandPlatformApi.v2.${prop}`);
@@ -695,7 +700,7 @@ export function mockCommandPlatformApiService(
         `https://api.supabase.com/mock-raw/${definition.id}`,
       );
       if (stub === "fail") {
-        return yield* Effect.fail(transportFailure(request));
+        return yield* transportFailure(request);
       }
       return jsonResponse(request, stub.status, stub.body);
     });
@@ -735,25 +740,36 @@ export function sequentialExecBatch(
     ).pipe(Effect.asVoid);
 }
 
-// ---------------------------------------------------------------------------
-// Temp workdir lifecycle — calls vitest beforeEach/afterEach internally, so
-// the helper must be invoked at module scope (or inside the surrounding
-// `describe`). Accessing `.current` outside a test throws.
-// ---------------------------------------------------------------------------
-
+// Calls vitest beforeEach/afterEach internally, so the helper must be invoked at module scope
+// (or inside the surrounding `describe`). Accessing `.current` outside a test throws.
 export function useTempWorkdir(prefix = "supabase-test-"): {
   readonly current: string;
 } {
   let root: string | undefined;
-  beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), prefix));
-  });
-  afterEach(() => {
-    if (root !== undefined) {
-      rmSync(root, { recursive: true, force: true });
-      root = undefined;
-    }
-  });
+  beforeEach(() =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      root = yield* fs.makeTempDirectory({ prefix });
+    }).pipe(
+      /* A host failure rejects the hook with the raw host error. */
+      Effect.catch((error) => Effect.die(error.cause ?? error)),
+      Effect.provide(BunFileSystem.layer),
+      Effect.runPromise,
+    ),
+  );
+  afterEach(() =>
+    Effect.gen(function* () {
+      if (root !== undefined) {
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.remove(root, { recursive: true, force: true });
+        root = undefined;
+      }
+    }).pipe(
+      Effect.catch((error) => Effect.die(error.cause ?? error)),
+      Effect.provide(BunFileSystem.layer),
+      Effect.runPromise,
+    ),
+  );
   return {
     get current() {
       if (root === undefined) {
@@ -766,10 +782,19 @@ export function useTempWorkdir(prefix = "supabase-test-"): {
   };
 }
 
+/* Sets or unsets `name` in `env` and returns the value it replaced. */
+function setEnvVar(env: NodeJS.ProcessEnv, name: string, value: string | undefined) {
+  const previous = env[name];
+  if (value === undefined) delete env[name];
+  else env[name] = value;
+  return previous;
+}
+
 /**
  * Sets `name` to `value` (or unsets it when `value` is `undefined`) for the duration of `body`,
  * restoring whatever was there before — including a surrounding
- * {@link useShadowCacheDisabled} pin, so a cache-subject test can opt back in.
+ * {@link useShadowCacheDisabled} pin, so a cache-subject test can opt back in. A set value is
+ * also pinned for the `Config` reads inside `body` (see {@link withConfigEnv}).
  */
 export const withEnvVar = <A, E, R>(
   name: string,
@@ -777,42 +802,83 @@ export const withEnvVar = <A, E, R>(
   body: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> =>
   Effect.acquireUseRelease(
-    Effect.sync(() => {
-      const previous = process.env[name];
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
-      return previous;
-    }),
-    () => body,
+    Effect.sync(() => setEnvVar(process.env, name, value)),
+    () =>
+      value === undefined
+        ? withoutConfigEnvPin(name, body)
+        : withConfigEnv({ [name]: value }, body),
     (previous) =>
       Effect.sync(() => {
-        if (previous === undefined) delete process.env[name];
-        else process.env[name] = previous;
+        setEnvVar(process.env, name, previous);
       }),
   );
 
 /**
- * Pins `SUPABASE_SHADOW_CACHE=0` for the calling file so the default-ON cache cannot
- * flip mocked-spawner suites onto the cache path. Call at module scope (or
- * inside the surrounding `describe`). Cache-subject tests opt back in with
- * {@link withEnvVar}.
+ * Pins `values` for the `Config` reads inside `body`, ahead of the ambient provider. Use it
+ * instead of {@link withEnvVar} for code that reads through `Config`: without a provided
+ * `ConfigProvider`, Effect's default one snapshots `process.env` on first use, so later
+ * `process.env` edits are invisible. Pin an empty string to shadow an ambient value. A layer
+ * inside `body` that installs its own `ConfigProvider` (`processEnvLayer`,
+ * `isolatedHomeLayer`) replaces the pin, so provide such a layer around the
+ * `withConfigEnv(...)` call instead.
  */
-export function useShadowCacheDisabled(): void {
-  const name = "SUPABASE_SHADOW_CACHE";
-  let previous: string | undefined;
-  beforeEach(() => {
-    previous = process.env[name];
-    process.env[name] = "0";
+export const withConfigEnv = <A, E, R>(
+  values: Readonly<Record<string, string>>,
+  body: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> =>
+  Effect.zip(Effect.service(ConfigEnvPins), Effect.service(CliEnvNameSource)).pipe(
+    Effect.flatMap(([pins, inheritedNames]) =>
+      body.pipe(
+        Effect.provideService(ConfigEnvPins, { ...pins, ...values }),
+        Effect.provideService(CliEnvNameSource, () => [
+          ...inheritedNames(),
+          ...Object.keys(values),
+        ]),
+        Effect.provide(
+          ConfigProvider.layerAdd(
+            ConfigProvider.fromEnvRecord(values, { preserveEmptyStrings: true }),
+            { asPrimary: true },
+          ),
+        ),
+      ),
+    ),
+  );
+
+const withoutConfigEnvPin = <A, E, R>(
+  name: string,
+  body: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> =>
+  Effect.flatMap(Effect.service(ConfigEnvPins), (pins) => {
+    const { [name]: _removed, ...rest } = pins;
+    return Effect.provideService(body, ConfigEnvPins, rest);
   });
-  afterEach(() => {
-    if (previous === undefined) delete process.env[name];
-    else process.env[name] = previous;
-    previous = undefined;
-  });
-}
 
 /**
- * Ambient isolation for tests that construct the REAL `commandSettingsLayer` /
+ * Hides every ambient env var from the `Config` reads in `body`; `process.env` is untouched.
+ * Where `loadLocalProjectContext` also reads `process.env` as its `baseEnv`, pair it with
+ * `withEnvVar(name, undefined, ...)` so neither source sees the shell value.
+ */
+export const withEmptyConfigEnv = <A, E, R>(body: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+  Effect.provideService(
+    body,
+    ConfigProvider.ConfigProvider,
+    ConfigProvider.fromEnvRecord({}, { preserveEmptyStrings: true }),
+  );
+
+/**
+ * Pins `SUPABASE_SHADOW_CACHE=0` under the layer it is merged into so the default-ON cache
+ * cannot flip mocked-spawner suites onto the cache path. Merge into the file's setup layer.
+ * A test that replaces the whole `ConfigProvider` inside it drops the pin, so such a provider
+ * must carry `SUPABASE_SHADOW_CACHE: "0"` itself. Cache-subject tests opt back in with
+ * {@link withConfigEnv} inside that layer.
+ */
+export const shadowCacheDisabledLayer = ConfigProvider.layerAdd(
+  ConfigProvider.fromEnvRecord({ SUPABASE_SHADOW_CACHE: "0" }, { preserveEmptyStrings: true }),
+  { asPrimary: true },
+);
+
+/**
+ * Ambient isolation for tests that construct the real `commandSettingsLayer` /
  * `commandCredentialsLayer` (directly or inside a command runtime layer) against
  * a real filesystem. Those layers read `<homeDir>/.supabase/profile` and
  * `<homeDir>/.supabase/access-token`, resolving `SUPABASE_HOME` /
@@ -831,16 +897,11 @@ export function isolatedHomeLayer(
   return Layer.mergeAll(mockRuntimeInfo({ homeDir }), processEnvLayer(env));
 }
 
-// ---------------------------------------------------------------------------
-// Failing filesystem — wraps the real Bun `FileSystem` and fails a chosen
-// `writeFileString` with a `PlatformError`, so cleanup-on-failure paths
-// (e.g. the pg-delta multi-file migration writer) can be exercised
-// deterministically. Every other call delegates to the real filesystem, so
-// config reads / earlier writes behave normally. Merge this AFTER
-// `BunServices.layer` (last-wins) so it overrides only `FileSystem`; `Path`
-// still comes from `BunServices`.
-// ---------------------------------------------------------------------------
-
+// Wraps the real Bun `FileSystem` and fails a chosen `writeFileString` with a `PlatformError`,
+// so cleanup-on-failure paths (e.g. the pg-delta multi-file migration writer) can be exercised
+// deterministically. Every other call delegates to the real filesystem, so config reads/earlier
+// writes behave normally. Merge this after `BunServices.layer` (last-wins) so it overrides only
+// `FileSystem`; `Path` still comes from `BunServices`.
 export function failWriteStringOnNthCallFsLayer(
   failOnCall: number,
 ): Layer.Layer<FileSystem.FileSystem> {
@@ -889,67 +950,45 @@ function failWriteStringFsLayer(
   ).pipe(Layer.provide(BunServices.layer));
 }
 
-// ---------------------------------------------------------------------------
-// Shadow-database container-CLI spawner — shared by `db diff`/`db pull`'s native
-// shadow-provisioning integration tests (CLI-1956). Hoisted here (it was a verbatim
-// ~55-line duplicate in both `diff.integration.test.ts` and `pull.integration.test.ts`)
-// per `apps/cli/CLAUDE.md`'s "Hoist Before You Duplicate" rule.
-// ---------------------------------------------------------------------------
+// Shadow-database container-CLI spawner, shared by `db diff`/`db pull`'s native
+// shadow-provisioning integration tests.
 
 /** The shadow container's fake id — used both as `docker create`'s stdout and the `dbHost` `.slice(0, 12)` derives from. */
 export const FAKE_SHADOW_CONTAINER_ID = "abc123456789shadow0".padEnd(64, "0").slice(0, 64);
 
-/** Go's `container.HealthConfig`-shaped inspect JSON for a healthy container. */
+/** Inspect JSON for a healthy container. */
 const SHADOW_HEALTHY_STATE = '{"Running":true,"Status":"running","Health":{"Status":"healthy"}}';
 
 /**
- * A real (Docker-valid) "still starting" state — NOT `Effect.never` — so
- * {@link waitForHealthyServices}'s retry loop genuinely retries on its real 1-second
- * `Schedule.spaced` backoff instead of hanging on a single probe forever. Mirrors
- * `start.integration.test.ts`'s own "never healthy" containers (same rationale: a fiber
- * interrupted mid-retry must be observed actually suspended inside the retry loop, not merely
- * past the initial `create` call).
- */
-const SHADOW_STARTING_STATE = '{"Running":true,"Status":"running","Health":{"Status":"starting"}}';
-
-/**
- * Fakes every `docker`/`podman` subprocess call the native shadow-provisioning path issues
- * (`buildLocalDbContainerInputs`'s image-cache check, `createShadowDatabase`'s
- * network-create + container create/start, `waitForHealthyServices`'s container
- * inspect, and `removeShadowDatabase`'s cleanup) — scoped-down port of
- * `start.integration.test.ts`'s own `mockContainerCliSpawner`, since both callers only ever
- * create one (shadow) container, never named.
+ * Fakes every `docker`/`podman` subprocess call the native shadow-provisioning path issues:
+ * `buildLocalDbContainerInputs`'s image-cache check, `createShadowDatabase`'s network-create +
+ * container create/start, `waitForPostgresReady`'s container inspect, and
+ * `removeShadowDatabase`'s cleanup. Both callers only ever create one (shadow) container, never
+ * named.
  *
- * `neverHealthy` (default `false`) makes every `container inspect` report `"starting"` instead
- * of `"healthy"` — for the interrupt-during-health-wait regression coverage (review:
- * PRRT_kwDOErm0O86XMrID): with the default healthy-immediately response, a forked fiber can run
- * the ENTIRE shadow-provisioning sequence to completion synchronously before a test's own
- * polling loop is even scheduled, making `Fiber.interrupt` a no-op on an already-finished fiber.
+ * `execFailedHealth` (default `false`) makes every `container inspect` report the health state of a
+ * host where Docker cannot `docker exec` a HEALTHCHECK (`EXEC_FAILED_STATE`) instead of `"healthy"`.
  *
  * `failCreate`/`failRemove` (both default `false`) make `docker create`/`docker rm` exit
- * non-zero instead — hoisted from `migration squash`'s own scoped-down copy of this mock
- * (CLI-1969 review), which needed these two extra failure knobs `db diff`/`db pull`'s own
- * scenarios never exercised. Defaulting both to `false` keeps every existing caller
- * (`pull.integration.test.ts`, `declarative.orchestrate.integration.test.ts`,
- * `diff.integration.test.ts`) byte-identical.
+ * non-zero instead.
  *
- * `dbNotRunning`/`dbInspectFailsWith` (CLI-1968) fake the SEPARATE `docker container inspect
- * supabase_db_<projectId>` probe `isLocalDbRunning` issues before `--use-pgadmin`
- * provisions anything — distinguished from the shadow's own `container inspect <64-hex-id>`
- * health probe by the target id's `supabase_db_` prefix, so both options leave the shadow's
- * own health check on its normal (healthy/never-healthy) path. `dbNotRunning` reports the
- * Go/Docker "container doesn't exist" shape (`isContainerNotFoundMessage`); mutually
- * exclusive with `dbInspectFailsWith`, which instead reports a daemon-unreachable failure
- * (`isDockerDaemonUnreachable`) with the given stderr text — enforced below (a test
- * that sets both throws immediately, rather than one option silently winning).
+ * `dbNotRunning`/`dbInspectFailsWith` fake the separate `docker container inspect
+ * supabase_db_<projectId>` probe `isLocalDbRunning` issues before `--use-pgadmin` provisions
+ * anything — distinguished from the shadow's own `container inspect <64-hex-id>` health probe by
+ * the target id's `supabase_db_` prefix, so both options leave the shadow's own health check on
+ * its normal path. `dbNotRunning` reports Docker's "container doesn't
+ * exist" shape (`isContainerNotFoundMessage`); mutually exclusive with `dbInspectFailsWith`,
+ * which instead reports a daemon-unreachable failure (`isDockerDaemonUnreachable`) with the given
+ * stderr text — enforced below (a test that sets both throws immediately, rather than one option
+ * silently winning).
  *
- * `dbInspectImage` makes the same `supabase_db_`-prefixed inspect report a `Config.Image`
- * value instead — for `ensureLocalPostgresImageCurrent`'s stale-image guard, which reads
- * that field from the same call `isLocalDbRunning` only checks the exit code of.
+ * `dbInspectImage` makes the same `supabase_db_`-prefixed inspect report a `Config.Image` value
+ * instead, for `ensureLocalPostgresImageCurrent`'s stale-image guard, which reads that field from
+ * the same call `isLocalDbRunning` only checks the exit code of.
  */
 export function mockShadowContainerCliSpawner(
   opts: {
-    readonly neverHealthy?: boolean;
+    readonly execFailedHealth?: boolean;
     readonly failCreate?: boolean;
     readonly failRemove?: boolean;
     readonly dbNotRunning?: boolean;
@@ -965,7 +1004,7 @@ export function mockShadowContainerCliSpawner(
       "mockShadowContainerCliSpawner: dbNotRunning and dbInspectFailsWith are mutually exclusive",
     );
   }
-  const neverHealthy = opts.neverHealthy ?? false;
+  const execFailedHealth = opts.execFailedHealth ?? false;
   const failCreate = opts.failCreate ?? false;
   const failRemove = opts.failRemove ?? false;
   const spawned: Array<{ readonly args: ReadonlyArray<string> }> = [];
@@ -978,15 +1017,13 @@ export function mockShadowContainerCliSpawner(
         const args = command._tag === "StandardCommand" ? command.args : [];
         spawned.push({ args });
         if (command._tag !== "StandardCommand") {
-          return yield* Effect.fail(
-            new PlatformError(
-              new SystemError({
-                _tag: "NotFound",
-                module: "ChildProcess",
-                method: "spawn",
-                description: "spawn failed",
-              }),
-            ),
+          return yield* new PlatformError(
+            new SystemError({
+              _tag: "NotFound",
+              module: "ChildProcess",
+              method: "spawn",
+              description: "spawn failed",
+            }),
           );
         }
         const isLocalDbInspect =
@@ -1014,7 +1051,7 @@ export function mockShadowContainerCliSpawner(
           });
         }
         if (isLocalDbInspect && opts.dbInspectImage !== undefined) {
-          const inspectJson = JSON.stringify([{ Config: { Image: opts.dbInspectImage } }]);
+          const inspectJson = yield* encodeJson([{ Config: { Image: opts.dbInspectImage } }]);
           return ChildProcessSpawner.makeHandle({
             pid: ChildProcessSpawner.ProcessId(7000 + spawned.length),
             stdout: Stream.fromIterable([encoder.encode(inspectJson)]),
@@ -1040,7 +1077,7 @@ export function mockShadowContainerCliSpawner(
             stdoutLines = [FAKE_SHADOW_CONTAINER_ID];
           }
         } else if (args[0] === "container" && args[1] === "inspect") {
-          stdoutLines = [neverHealthy ? SHADOW_STARTING_STATE : SHADOW_HEALTHY_STATE];
+          stdoutLines = [execFailedHealth ? EXEC_FAILED_STATE : SHADOW_HEALTHY_STATE];
         } else if (args[0] === "rm") {
           if (failRemove) {
             exitCode = 1;
@@ -1071,13 +1108,10 @@ export function mockShadowContainerCliSpawner(
   return { layer, spawned };
 }
 
-// ---------------------------------------------------------------------------
-// A minimal, stateful Docker model — the shadow BASELINE CACHE's round trip
-// (`docker stop` -> `docker cp - <id>:PGDATA` (the baseline stamp) ->
-// `docker cp <id>:PGDATA -` -> `docker start`, and the warm
-// `docker cp - <id>:<pgdata parent>` restore) really moves bytes, which
-// `mockShadowContainerCliSpawner` above deliberately does not model.
-// ---------------------------------------------------------------------------
+// A minimal, stateful Docker model — the shadow baseline cache's round trip (`docker stop` ->
+// `docker cp - <id>:PGDATA` (the baseline stamp) -> `docker cp <id>:PGDATA -` -> `docker start`,
+// and the warm `docker cp - <id>:<pgdata parent>` restore) really moves bytes, which
+// `mockShadowContainerCliSpawner` above does not model.
 
 /**
  * A real (if tiny) POSIX tar, byte for byte — `validatePgDataArchive`
@@ -1124,7 +1158,7 @@ const fakeTarEntry = (name: string, content: string, typeFlag: "0" | "5"): strin
 const FAKE_TAR_END = "\0".repeat(1024);
 
 /**
- * What the fake `docker cp <id>:PGDATA -` emits for a container the export path has NOT stamped —
+ * What the fake `docker cp <id>:PGDATA -` emits for a container the export path has not stamped —
  * a real cluster (`data/` + `data/PG_VERSION`) and nothing more. Stands in both for a hand-placed
  * bare PGDATA archive and for a snapshot taken before the platform baseline ran: it restores,
  * starts, and answers, so only the missing marker tells it apart from a usable baseline.
@@ -1136,7 +1170,7 @@ export const FAKE_UNSTAMPED_PGDATA_TAR = `${fakeTarEntry("data/", "", "5")}${fak
  * container — stands in for a real ~90MB PGDATA tar, with the same top-level `data/` member,
  * `data/PG_VERSION` cluster file, and `data/SUPABASE_BASELINE` marker a real export carries.
  *
- * `markerContent` is whatever the export ACTUALLY stamped, carried through rather than fixed: the
+ * `markerContent` is whatever the export actually stamped, carried through rather than fixed: the
  * marker binds a snapshot to its cache key, so a fake that always emitted the same marker would
  * make every key-binding assertion pass vacuously — a production regression stamping the wrong key
  * (or a fixed one) has to show up as a warm-path mismatch here too.
@@ -1166,7 +1200,7 @@ const fakeStampedMarkerContent = (stamp: string): string | undefined => {
 };
 
 /**
- * A syntactically VALID tar carrying no members at all — what a replaced or truncated cache
+ * A syntactically valid tar carrying no members at all — what a replaced or truncated cache
  * artifact looks like to `docker cp -`, which extracts it happily and lets the entrypoint `initdb`
  * a fresh cluster over the top. The pre-restore marker check is what catches it.
  */
@@ -1285,7 +1319,7 @@ export function mockDockerDaemonCliSpawner(
         else {
           container.running = false;
           // Docker destroys an `--rm` container the moment it exits, `docker stop` included —
-          // verified against Docker 29. This is exactly why the cold export path drops `--rm`.
+          // which is why the cold export path drops `--rm`.
           if (container.autoRemove) containers.delete(id);
         }
       } else if (args[0] === "rm") {
@@ -1299,7 +1333,7 @@ export function mockDockerDaemonCliSpawner(
         const container = containers.get(id);
         const received = yield* readStdin(command);
         const isSecret = containerPath === "" || containerPath === "/";
-        const isStamp = containerPath === PGDATA_PATH;
+        const isStamp = containerPath === POSTGRES_DATA_DIR;
         const failed =
           (isStamp && opts.failStamp === true) ||
           (!isSecret && !isStamp && opts.failCopyIn === true);
@@ -1333,7 +1367,7 @@ export function mockDockerDaemonCliSpawner(
         stdout =
           container === undefined
             ? ""
-            : JSON.stringify({
+            : yield* encodeJson({
                 Running: container.running,
                 Status: container.running ? "running" : "exited",
                 Health: { Status: "healthy" },
@@ -1358,7 +1392,7 @@ export function mockDockerDaemonCliSpawner(
   );
 
   /**
-   * One readable label per Docker call, so a test can assert the SEQUENCE of meaningful steps
+   * One readable label per Docker call, so a test can assert the sequence of meaningful steps
    * rather than raw argv. `cp` is split four ways because the shadow issues four different copies:
    * the pgsodium root key every shadow gets (`cp-secret`, `container-lifecycle.ts`), the baseline
    * marker stamped into PGDATA just before an export (`cp-stamp`), the baseline export (`cp-out`),
@@ -1372,7 +1406,7 @@ export function mockDockerDaemonCliSpawner(
         const dest = args[2] ?? "";
         const containerPath = dest.slice(dest.indexOf(":") + 1);
         if (containerPath === "" || containerPath === "/") return "cp-secret";
-        return containerPath === PGDATA_PATH ? "cp-stamp" : "cp-in";
+        return containerPath === POSTGRES_DATA_DIR ? "cp-stamp" : "cp-in";
       }
       if (args[2] === "-") return "cp-out";
       return "cp-secret";
@@ -1396,19 +1430,11 @@ export function mockDockerDaemonCliSpawner(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Runtime composition — bundles the entire Layer.mergeAll(...) graph that
-// every native-port integration test re-builds, including the easy-to-mis-wire
-// `projectRefLayer.pipe(Layer.provide(...))` subgraph
-// (CLAUDE.md invariant 5: "Layer.provide does not share to siblings inside
-// Layer.mergeAll" — centralising the subgraph here removes a recurring footgun).
-// ---------------------------------------------------------------------------
-
-type GoOutputValue = "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
-
-// ---------------------------------------------------------------------------
-// Analytics mock lives in `./mocks.ts` (`mockAnalytics`); this module no longer
-// ships its own copy. Use `mockAnalytics()` from the shared mocks module directly.
+// Bundles the entire Layer.mergeAll(...) graph that every native-port integration test
+// re-builds, including the easy-to-mis-wire `projectRefLayer.pipe(Layer.provide(...))` subgraph —
+// `Layer.provide` does not share to siblings inside `Layer.mergeAll`, so centralizing the
+// subgraph here removes a recurring footgun.
+type OutputFlagValue = "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
 
 export interface BuildTestRuntimeOpts {
   readonly out: { readonly layer: Layer.Layer<Output> };
@@ -1423,8 +1449,8 @@ export interface BuildTestRuntimeOpts {
   readonly tty?: Layer.Layer<Tty>;
   /**
    * `Stdin` for prompts routed through `promptYesNo` (piped-answer reads on
-   * a non-TTY, Go's `Console.ReadLine`). Defaults to a non-TTY stdin with no
-   * piped input, i.e. every bounded read times out like Go's empty 100ms scan.
+   * a non-TTY). Defaults to a non-TTY stdin with no
+   * piped input, i.e. every bounded read times out.
    */
   readonly stdin?: Layer.Layer<Stdin>;
   readonly processControl?: { readonly layer: Layer.Layer<ProcessControl> };
@@ -1432,9 +1458,12 @@ export interface BuildTestRuntimeOpts {
   readonly telemetry?: Layer.Layer<TelemetryState>;
   readonly linkedProjectCache?: Layer.Layer<LinkedProjectCache>;
   readonly analytics?: { readonly layer: Layer.Layer<Analytics> };
-  readonly goOutput?: Option.Option<GoOutputValue>;
+  readonly outputFlag?: Option.Option<OutputFlagValue>;
   /** Raw argv seen by the handler (e.g. to exercise an explicit `--yes=false`). */
   readonly cliArgs?: ReadonlyArray<string>;
+  readonly commandPath?: ReadonlyArray<string>;
+  /** Replaces the Bun `FileSystem` every service in the runtime reads and writes through. */
+  readonly fileSystem?: Layer.Layer<FileSystem.FileSystem>;
 }
 
 export function buildTestRuntime(opts: BuildTestRuntimeOpts) {
@@ -1445,8 +1474,12 @@ export function buildTestRuntime(opts: BuildTestRuntimeOpts) {
   const telemetry = opts.telemetry ?? mockTelemetryStateLayer;
   const linkedProjectCache = opts.linkedProjectCache ?? mockLinkedProjectCacheLayer;
   const analytics = (opts.analytics ?? mockAnalytics()).layer;
-  const goOutput = opts.goOutput ?? Option.none<GoOutputValue>();
+  const outputFlag = opts.outputFlag ?? Option.none<OutputFlagValue>();
   const httpClient = opts.api.httpClientLayer;
+  const platform =
+    opts.fileSystem === undefined
+      ? BunServices.layer
+      : Layer.merge(BunServices.layer, opts.fileSystem);
 
   // When the caller doesn't expose an HttpClient layer, use a stub that fails
   // loudly if any code path tries to consume it. Always wiring HttpClient at
@@ -1462,9 +1495,11 @@ export function buildTestRuntime(opts: BuildTestRuntimeOpts) {
   const topLevelFactory = Layer.succeed(CommandPlatformApiFactory, {
     make: CommandPlatformApi.pipe(Effect.provide(opts.api.layer)),
   });
+  const commandTarget = commandTargetLayer.pipe(Layer.provide(opts.out.layer));
 
   return Layer.mergeAll(
     opts.out.layer,
+    commandTarget,
     opts.api.layer,
     topLevelFactory,
     opts.cliSettings,
@@ -1481,11 +1516,16 @@ export function buildTestRuntime(opts: BuildTestRuntimeOpts) {
       Layer.provide(opts.cliSettings),
       Layer.provide(tty),
       Layer.provide(opts.out.layer),
-      Layer.provide(BunServices.layer),
+      Layer.provide(commandTarget),
+      Layer.provide(platform),
     ),
-    BunServices.layer,
-    Layer.succeed(OutputFlag, goOutput),
+    platform,
+    legacyProjectStateLayer.pipe(Layer.provide(platform)),
+    Layer.succeed(OutputFlag, outputFlag),
     Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
+    opts.commandPath === undefined
+      ? Layer.empty
+      : commandRuntimeLayer(opts.commandPath).pipe(Layer.provide(BunServices.layer)),
     linkedProjectCache,
     telemetry,
     analytics,

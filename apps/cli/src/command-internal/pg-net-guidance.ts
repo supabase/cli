@@ -21,17 +21,12 @@ export const isPgNetUnavailableError = (error: Pick<DbExecError, "code" | "messa
 const CREATE_PG_NET_EXTENSION_PATTERN = /\bcreate\s+extension\b[\s\S]*?\bpg_net\b/iu;
 
 /**
- * Whether a recorded `supabase_migrations.schema_migrations` statement installs
- * pg_net.
+ * Whether a recorded `supabase_migrations.schema_migrations` statement installs pg_net.
  *
- * Deliberately a loose, over-matching scan (no SQL parse, no schema/quoting
- * awareness) because of the direction the answer is used in: it only ever gates
- * AWAY from dropping the extension. A false positive leaves a user's pg_net
- * installed, which is harmless; a false negative would drop an extension the user's
- * OWN migrations created — and `supabase start` does not replay migrations on an
- * existing volume, so nothing would put it back. The constraint this exists to
- * enforce: the webhooks-disabled convergence drop must never remove
- * migration-owned pg_net.
+ * A loose, over-matching scan is safe here because the answer only ever gates away from
+ * dropping the extension: a false positive leaves pg_net installed (harmless), while a false
+ * negative would drop an extension the user's own migrations created, with nothing left to
+ * restore it.
  */
 export const statementInstallsPgNet = (statement: string): boolean =>
   CREATE_PG_NET_EXTENSION_PATTERN.test(statement);

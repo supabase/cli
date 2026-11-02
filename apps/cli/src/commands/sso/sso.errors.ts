@@ -6,6 +6,7 @@ import {
   planLimitGatedActionability,
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
+import type { PlanGateEntitlement } from "../../shared/output/normalize-error.ts";
 import type { SsoFileErrorReason } from "./sso.saml.ts";
 
 function ssoFileActionability(reason: SsoFileErrorReason): CliErrorActionabilityDeclaration {
@@ -25,10 +26,8 @@ function ssoFileActionability(reason: SsoFileErrorReason): CliErrorActionability
 }
 
 /**
- * The SAML feature is entitlement-gated: handlers thread the typed result of
- * `suggestUpgrade` (`upgradeSuggested`) into these errors so telemetry
- * can distinguish plan-gated failures from ordinary API failures without
- * sniffing message text.
+ * SAML is entitlement-gated: `upgradeSuggested` lets telemetry distinguish
+ * plan-gated failures from ordinary API failures without parsing message text.
  */
 const samlDisabledActionability = (
   upgradeSuggested: boolean | undefined,
@@ -42,9 +41,7 @@ const gatedNotFoundActionability = (
 ): CliErrorActionabilityDeclaration =>
   upgradeSuggested === true ? planLimitGatedActionability : actionability.invalidInput;
 
-// Shared across show / update / remove: invalid identity provider ID.
-// Message is a short, directly user-actionable string —
-// `identity provider ID %q is not a UUID` — tested in e2e.
+// Shared across show/update/remove. Message: `identity provider ID "<id>" is not a UUID`.
 export class SsoInvalidUuidError extends Data.TaggedError("SsoInvalidUuidError")<{
   readonly providerId: string;
   readonly message: string;
@@ -54,9 +51,8 @@ export class SsoInvalidUuidError extends Data.TaggedError("SsoInvalidUuidError")
   }
 }
 
-// Shared across list / show: TOML encode failure ("failed to output toml: %w")
-// — reachable when an `attribute_mapping` `default` value cannot be encoded
-// (e.g. an array with a nil element).
+// Shared across list/show. Reachable when an `attribute_mapping` `default`
+// value can't be encoded (e.g. an array with a null element).
 export class SsoTomlEncodeError extends Data.TaggedError("SsoTomlEncodeError")<{
   readonly message: string;
 }> {
@@ -65,7 +61,6 @@ export class SsoTomlEncodeError extends Data.TaggedError("SsoTomlEncodeError")<{
   }
 }
 
-// `sso list`
 export class SsoListNetworkError extends Data.TaggedError("SsoListNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
@@ -91,18 +86,21 @@ export class SsoListUnexpectedStatusError extends Data.TaggedError("SsoListUnexp
   readonly body: string;
   readonly message: string;
   readonly upgradeSuggested?: boolean;
+  readonly entitlement?: PlanGateEntitlement;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, { upgradeSuggested: this.upgradeSuggested });
   }
 }
 
-// `sso add`
 export class SsoAddNetworkError extends Data.TaggedError("SsoAddNetworkError")<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 
@@ -120,6 +118,7 @@ export class SsoAddUnexpectedStatusError extends Data.TaggedError("SsoAddUnexpec
   readonly body: string;
   readonly message: string;
   readonly upgradeSuggested?: boolean;
+  readonly entitlement?: PlanGateEntitlement;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, { upgradeSuggested: this.upgradeSuggested });
@@ -154,12 +153,8 @@ export class SsoMutexFlagError extends Data.TaggedError("SsoMutexFlagError")<{
   }
 }
 
-// pflag's `ValueRequiredError` (`errors.go:63-78`), emulated for the case the
-// Effect parser accepts but pflag rejects: a bare value-taking flag as the
-// final argv token (`sso update <id> --domains`). pflag fails `ParseFlags`
-// (cobra `command.go:919`) before `ValidateArgs`, every hook, and `RunE`, so
-// Go exits without any API call. Shared across add + update; message
-// byte-matches pflag's template.
+// Rejects a bare value-taking flag as the final argv
+// token, a case the Effect parser accepts. Shared by add + update.
 export class SsoFlagNeedsArgumentError extends Data.TaggedError("SsoFlagNeedsArgumentError")<{
   readonly message: string;
 }> {
@@ -168,15 +163,10 @@ export class SsoFlagNeedsArgumentError extends Data.TaggedError("SsoFlagNeedsArg
   }
 }
 
-// pflag's `InvalidValueError` (`errors.go:32-48`, raised when a flag's
-// `Value.Set` rejects an occurrence), emulated for values the Effect parser
-// accepts but pflag does not: a repeated flag whose later occurrence is
-// invalid (the Effect parser resolves repeats first-wins and never validates
-// the rest — `--type saml --type bogus`), and boolean literals outside Go's
-// `strconv.ParseBool` set (`--skip-url-validation=yes`). pflag fails
-// `ParseFlags` (cobra `command.go:919`) before `ValidateArgs`, every hook,
-// and `RunE`, so Go exits without any API call. Shared across add + update;
-// message byte-matches pflag's template.
+// Rejects an invalid flag value in cases the Effect
+// parser accepts: a later occurrence of a repeated flag (the parser resolves
+// repeats first-wins and never validates the rest), or a boolean literal
+// outside the accepted set. Shared by add + update.
 export class SsoInvalidFlagValueError extends Data.TaggedError("SsoInvalidFlagValueError")<{
   readonly message: string;
 }> {
@@ -185,10 +175,9 @@ export class SsoInvalidFlagValueError extends Data.TaggedError("SsoInvalidFlagVa
   }
 }
 
-// Emulates an edge case the flag parser cannot see directly: a required
-// flag's own token gets consumed as another flag's value, so the flag is
-// never marked as present and validation fails before any request is made.
-// Message text is an established output contract.
+// Fires when a required flag's own token is consumed as another flag's
+// value, so it's never marked present. The message text is a stable output
+// contract.
 export class SsoAddRequiredFlagError extends Data.TaggedError("SsoAddRequiredFlagError")<{
   readonly message: string;
 }> {
@@ -210,10 +199,8 @@ export class SsoMetadataUrlNetworkError extends Data.TaggedError("SsoMetadataUrl
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    // Fired only during preflight validation of the USER-SUPPLIED
-    // `--metadata-url` (a third-party SAML IDP endpoint), never a Supabase
-    // service — a bad URL that times out / non-200s / is too large is user
-    // input, like its `MetadataUrlInvalid` / `NonUtf8` siblings.
+    // Fires only for the user-supplied `--metadata-url` endpoint, never a
+    // Supabase service, so failures here are user input like the sibling errors.
     return actionability.provideFlags;
   }
 }
@@ -226,7 +213,6 @@ export class SsoMetadataUrlNonUtf8Error extends Data.TaggedError("SsoMetadataUrl
   }
 }
 
-// `sso show`
 export class SsoShowNetworkError extends Data.TaggedError("SsoShowNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
@@ -264,11 +250,9 @@ export class SsoShowEnvNotSupportedError extends Data.TaggedError("SsoShowEnvNot
   }
 }
 
-// `sso update`
-// Emulates an edge case the flag parser cannot see directly: a flag token
-// gets consumed as another flag's value, shifting what the parser read as a
-// flag's value into the positional list, so the arg count is rejected before
-// any hook or request. Message text is an established output contract.
+// Fires when a flag token is consumed as another flag's value, shifting a
+// value into the positional list so arg-count validation rejects it first.
+// The message text is a stable output contract.
 export class SsoUpdateArityError extends Data.TaggedError("SsoUpdateArityError")<{
   readonly message: string;
 }> {
@@ -304,6 +288,7 @@ export class SsoUpdateUnexpectedStatusError extends Data.TaggedError(
   readonly body: string;
   readonly message: string;
   readonly upgradeSuggested?: boolean;
+  readonly entitlement?: PlanGateEntitlement;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, {
@@ -333,7 +318,6 @@ export class SsoUpdateAttributeMappingFileError extends Data.TaggedError(
   }
 }
 
-// `sso remove`
 export class SsoRemoveNetworkError extends Data.TaggedError("SsoRemoveNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
@@ -361,6 +345,7 @@ export class SsoRemoveUnexpectedStatusError extends Data.TaggedError(
   readonly body: string;
   readonly message: string;
   readonly upgradeSuggested?: boolean;
+  readonly entitlement?: PlanGateEntitlement;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, { upgradeSuggested: this.upgradeSuggested });
@@ -368,9 +353,8 @@ export class SsoRemoveUnexpectedStatusError extends Data.TaggedError(
 }
 
 /**
- * Token gate: fired when the reconciled profile's token lookup finds
- * nothing — at first client use, AFTER required/mutex/workdir validation
- * (PR #5974 review round 10).
+ * Fired when the reconciled profile's token lookup finds nothing, at first
+ * use — after required/mutex/workdir validation runs.
  */
 export class SsoAccessTokenError extends Data.TaggedError("SsoAccessTokenError")<{
   readonly message: string;

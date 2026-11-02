@@ -4,9 +4,9 @@ import { CommandPlatformApi } from "../../../auth/command-platform-api.service.t
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { Tty } from "../../../shared/runtime/tty.service.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
-import { resolveParentScopedProjectRef } from "../../../command-internal/parent-project-ref.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import {
   BranchesUnpauseNetworkError,
   BranchesUnpauseUnexpectedStatusError,
@@ -29,18 +29,23 @@ export const branchesUnpause = Effect.fn("branches.unpause")(function* (
   const api = yield* CommandPlatformApi;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
-  // Force `Tty` into the handler's R channel so `promptBranchId` (which
-  // requires it) resolves. The yielded value itself is unused.
-  void (yield* Tty);
 
-  // `branches` is PARENT-scoped: after `supabase link <branch>`,
-  // `supabase/.temp/project-ref` holds the branch's own ref, and the platform
-  // 403s on that ref for every branches-management endpoint (CLI-2167 follow-up).
-  const ref = yield* resolveParentScopedProjectRef(flags.projectRef);
+  // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
+  // holds the branch's own ref, which the platform 403s on for every branches-management endpoint.
+  const ref = yield* resolveProjectTarget(
+    { remote: flags.remote, projectRef: flags.projectRef },
+    { parent: true },
+  );
+  yield* Effect.annotateCurrentSpan("project.ref", ref);
 
   yield* Effect.gen(function* () {
     const branchInput = yield* promptBranchId(flags.name, ref);
     const branchRef = yield* resolveBranchProjectRef(branchInput, ref);
+
+    yield* requireHostedMutationConsent({
+      action: `Unpause preview branch ${branchInput}`,
+      details: [`Branch project ref: ${branchRef}`],
+    });
 
     const restoring =
       output.format === "text" ? yield* output.task("Unpausing branch...") : undefined;
@@ -48,6 +53,6 @@ export const branchesUnpause = Effect.fn("branches.unpause")(function* (
       Effect.tapError(() => restoring?.fail() ?? Effect.void),
       Effect.catch(mapUnpauseError),
     );
-    yield* restoring?.clear() ?? Effect.void;
+    yield* restoring?.clear ?? Effect.void;
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });

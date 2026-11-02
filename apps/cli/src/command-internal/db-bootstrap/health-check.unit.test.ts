@@ -1,34 +1,39 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Exit, Fiber, Layer, Sink, Stream } from "effect";
+import { Deferred, Effect, Exit, Fiber, Layer, Sink, Stream, Tracer } from "effect";
 import * as PlatformError from "effect/PlatformError";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { ChildProcessSpawner } from "effect/process";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as TestClock from "effect/testing/TestClock";
 
+import {
+  EXEC_FAILED_STATE,
+  EXEC_FAILURE_OUTPUT,
+  PROBE_TIMEOUT_OUTPUT,
+  inspectedState,
+} from "../../../tests/helpers/docker-health.ts";
 import { DbConnectError } from "../db-connection.errors.ts";
 import { DbConnection, type DbSession, type PgConnInput } from "../db-connection.service.ts";
 import {
   HealthCheckTimeoutError,
+  awaitDockerHealthSettled,
+  healthCheckExecUnavailableWarning,
   waitForHealthyServices,
-  waitForShadowReady,
+  waitForPostgresReady,
+  type ExecFallbackProbe,
   type HealthCheckPostgrestGateway,
+  type WaitForHealthyServicesOptions,
 } from "./health-check.ts";
 
-/**
- * Ends a scripted `logs` script, failing the stream after the chunks before it
- * have already been emitted — the real "daemon dropped the pipe mid-dump" case.
- */
+/** Ends a scripted `logs` script, failing the stream after already-emitted chunks — the real "daemon dropped the pipe mid-dump" case. */
 const LOG_STREAM_FAILS = Symbol("log stream fails");
 
 /**
- * A spawner that answers `docker container inspect`/`docker logs` calls.
- * `inspectResponse` is called once per `(containerId, callIndex)` pair — the
- * `callIndex` (0-based, per container) lets a test script a container's
- * health across successive polling rounds. `docker logs` calls (the
- * timeout-path debug dump) succeed with whatever `logs` scripts for that
- * container — an array so a test can script chunk boundaries, optionally
- * terminated by {@link LOG_STREAM_FAILS} — and with empty output otherwise.
+ * A spawner that answers `docker container inspect`/`docker logs` calls. `inspectResponse` is
+ * called once per `(containerId, callIndex)` pair, so a test can script a container's health
+ * across successive polling rounds. `docker logs` calls succeed with whatever `logs` scripts for
+ * that container, optionally terminated by {@link LOG_STREAM_FAILS}, and empty output otherwise.
  */
 type LogChunks = ReadonlyArray<string | typeof LOG_STREAM_FAILS>;
 
@@ -43,6 +48,8 @@ function mockHealthSpawner(
   opts: {
     readonly runtime?: "docker" | "podman";
     readonly beforeInspect?: (containerId: string) => Effect.Effect<void>;
+    /** Makes every `docker container inspect` exit non-zero, as when the daemon is unreachable. */
+    readonly inspectFails?: boolean;
   } = {},
 ) {
   const counts = new Map<string, number>();
@@ -77,19 +84,18 @@ function mockHealthSpawner(
       // Mirrors a host where only one runtime is installed: `spawnContainerCli`
       // tries `docker` first and falls back to `podman` when the spawn fails.
       if (opts.runtime !== undefined && binary !== opts.runtime) {
-        return yield* Effect.fail(
-          PlatformError.systemError({
-            _tag: "NotFound",
-            module: "ChildProcess",
-            method: "spawn",
-            description: `${binary}: command not found`,
-          }),
-        );
+        return yield* PlatformError.systemError({
+          _tag: "NotFound",
+          module: "ChildProcess",
+          method: "spawn",
+          description: `${binary}: command not found`,
+        });
       }
       spawned.push(args);
 
       let stdoutChunks: LogChunks = [];
       let stderrChunks: LogChunks = [];
+      let exitCode = 0;
       if (args[0] === "container" && args[1] === "inspect") {
         const containerId = args[2] ?? "";
         if (opts.beforeInspect !== undefined) {
@@ -97,7 +103,12 @@ function mockHealthSpawner(
         }
         const callIndex = counts.get(containerId) ?? 0;
         counts.set(containerId, callIndex + 1);
-        stdoutChunks = [inspectResponse(containerId, callIndex)];
+        if (opts.inspectFails === true) {
+          exitCode = 1;
+          stderrChunks = ["Cannot connect to the Docker daemon\n"];
+        } else {
+          stdoutChunks = [inspectResponse(containerId, callIndex)];
+        }
       } else if (args[0] === "logs") {
         const script = logs[args[1] ?? ""];
         if (script !== undefined) {
@@ -111,7 +122,7 @@ function mockHealthSpawner(
       }
 
       const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
-      yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(0));
+      yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(exitCode));
       return ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(1),
         stdout: toStream(stdoutChunks),
@@ -149,10 +160,9 @@ const runningStarting = JSON.stringify({
 const notRunning = JSON.stringify({ Status: "exited", Running: false });
 
 /**
- * `waitForHealthyServices` structurally requires `HttpClient.HttpClient`
- * (only exercised on the PostgREST HTTP-HEAD branch) — every test provides
- * some `HttpClient.HttpClient`, and this one fails loudly if a
- * container-only-health-check test ever calls it unexpectedly.
+ * `waitForHealthyServices` structurally requires `HttpClient.HttpClient` (only exercised on the
+ * PostgREST HTTP-HEAD branch); this layer fails loudly if a container-only-health-check test
+ * ever calls it unexpectedly.
  */
 const unusedHttpClientLayer = Layer.succeed(
   HttpClient.HttpClient,
@@ -240,7 +250,7 @@ describe("waitForHealthyServices", () => {
           { timeoutSeconds: 2 },
         ).pipe(Effect.provide(unusedHttpClientLayer), Effect.forkChild({ startImmediately: true }));
 
-        // 2 retries after the initial attempt (Go's `WithMaxRetries(..., timeout.Seconds())`).
+        // 2 retries after the initial attempt.
         yield* TestClock.adjust("1 seconds");
         yield* TestClock.adjust("1 seconds");
         const exit = yield* Fiber.await(fiber);
@@ -255,8 +265,6 @@ describe("waitForHealthyServices", () => {
           (args) =>
             args[0] === "container" && args[1] === "inspect" && args[2] === "supabase_rest_proj",
         );
-        // The healthy container is probed exactly once, then narrowed out of
-        // the "still watching" set — the unhealthy one is probed on every round.
         expect(kongCalls).toHaveLength(1);
         expect(restCalls).toHaveLength(3);
       }),
@@ -284,6 +292,30 @@ describe("waitForHealthyServices", () => {
         ]);
         expect(error.message).toBe("supabase_rest_proj container is not running: exited");
       }),
+  );
+
+  it.effect("keeps retrying for 30 seconds when the caller passes no timeout", () =>
+    Effect.gen(function* () {
+      const mock = mockHealthSpawner(() => runningStarting);
+
+      const fiber = yield* waitForHealthyServices(mock.spawner, ["supabase_kong_proj"]).pipe(
+        Effect.provide(unusedHttpClientLayer),
+        Effect.forkChild({ startImmediately: true }),
+      );
+
+      for (let second = 0; second < 29; second++) {
+        yield* TestClock.adjust("1 seconds");
+      }
+      const pendingAfter29Seconds = fiber.pollUnsafe();
+      yield* TestClock.adjust("1 seconds");
+      const error = yield* Fiber.join(fiber).pipe(Effect.flip);
+
+      expect(pendingAfter29Seconds).toBeUndefined();
+      expect(error).toBeInstanceOf(HealthCheckTimeoutError);
+      expect(
+        mock.spawned.filter((args) => args[0] === "container" && args[1] === "inspect"),
+      ).toHaveLength(31);
+    }),
   );
 
   it.effect("dumps container logs to stderr on a genuine timeout", () =>
@@ -317,6 +349,73 @@ describe("waitForHealthyServices", () => {
         mock.spawned.some((args) => args[0] === "logs" && args[1] === "supabase_rest_proj"),
       ).toBe(true);
     }),
+  );
+
+  it.effect(
+    "fails with a hung-probe reason once the wall-clock bound passes when the first round never completes",
+    () =>
+      withSilencedStderr(
+        Effect.gen(function* () {
+          const mock = mockHealthSpawner(
+            () => runningHealthy,
+            {},
+            { beforeInspect: () => Effect.never },
+          );
+
+          const fiber = yield* waitForHealthyServices(mock.spawner, ["supabase_kong_proj"], {
+            timeoutSeconds: 1,
+          }).pipe(
+            Effect.provide(unusedHttpClientLayer),
+            Effect.forkChild({ startImmediately: true }),
+          );
+          for (let second = 0; second < 21; second++) {
+            yield* TestClock.adjust("1 seconds");
+          }
+          const pendingAt21Seconds = fiber.pollUnsafe();
+          yield* TestClock.adjust("1 seconds");
+          const error = yield* Fiber.join(fiber).pipe(Effect.flip);
+
+          const reason = "container is not ready: readiness probe hung after 22s";
+          expect(pendingAt21Seconds).toBeUndefined();
+          expect(error).toBeInstanceOf(HealthCheckTimeoutError);
+          expect(error.unhealthy).toEqual([{ containerId: "supabase_kong_proj", reason }]);
+          expect(error.message).toBe(`supabase_kong_proj ${reason}`);
+        }),
+      ),
+  );
+
+  it.effect(
+    "reports the last completed round's reason when a later round hangs past the wall-clock bound",
+    () =>
+      withSilencedStderr(
+        Effect.gen(function* () {
+          let inspects = 0;
+          const mock = mockHealthSpawner(
+            () => runningStarting,
+            {},
+            { beforeInspect: () => (++inspects > 1 ? Effect.never : Effect.void) },
+          );
+
+          const fiber = yield* waitForHealthyServices(mock.spawner, ["supabase_kong_proj"], {
+            timeoutSeconds: 1,
+          }).pipe(
+            Effect.provide(unusedHttpClientLayer),
+            Effect.forkChild({ startImmediately: true }),
+          );
+          for (let second = 0; second < 21; second++) {
+            yield* TestClock.adjust("1 seconds");
+          }
+          const pendingAt21Seconds = fiber.pollUnsafe();
+          yield* TestClock.adjust("1 seconds");
+          const error = yield* Fiber.join(fiber).pipe(Effect.flip);
+
+          expect(pendingAt21Seconds).toBeUndefined();
+          expect(error).toBeInstanceOf(HealthCheckTimeoutError);
+          expect(error.unhealthy).toEqual([
+            { containerId: "supabase_kong_proj", reason: "container is not ready: starting" },
+          ]);
+        }),
+      ),
   );
 
   describe("exec format error recovery advice", () => {
@@ -413,8 +512,6 @@ describe("waitForHealthyServices", () => {
           new Map([["supabase_inbucket_proj", "public.ecr.aws/supabase/mailpit:v1.30.2"]]),
         );
 
-        // A dropped pipe part-way through the dump must not discard a marker the
-        // scanner already matched — that is exactly when this bug class shows up.
         expect(error.suggestion).toContain(
           "docker image rm -f public.ecr.aws/supabase/mailpit:v1.30.2",
         );
@@ -436,9 +533,8 @@ describe("waitForHealthyServices", () => {
 
     it.effect("detects the marker when it arrives on the container's stderr stream", () =>
       Effect.gen(function* () {
-        // Where the container runtime actually writes it: `docker logs` demuxes
-        // the container's stderr onto its own stderr pipe, so this is the real
-        // path, not the stdout one every other scenario here scripts.
+        // `docker logs` demuxes the container's stderr onto its own stderr pipe, so this is the
+        // real path, not the stdout one every other scenario here scripts.
         const mock = mockHealthSpawner(() => notRunning, {
           supabase_inbucket_proj: { stderr: ["exec /mailpit: exec format error\n"] },
         });
@@ -552,17 +648,14 @@ describe("waitForHealthyServices", () => {
           ]),
         );
 
-        // Both containers are named against the shared image...
         expect(error.suggestion).toContain("supabase_rest_proj's image");
         expect(error.suggestion).toContain("supabase_realtime_proj's image");
-        // ...which the removal command lists once, not twice.
         expect(error.suggestion).toContain(
           "docker image rm -f public.ecr.aws/supabase/postgrest:v14.15",
         );
         expect(error.suggestion).not.toContain(
           "postgrest:v14.15 public.ecr.aws/supabase/postgrest:v14.15",
         );
-        // The healthy-logged container's own image is never suggested.
         expect(error.suggestion).not.toContain("storage-api");
       }),
     );
@@ -645,6 +738,36 @@ describe("waitForHealthyServices", () => {
         expect(error.unhealthy).toEqual([
           { containerId: "supabase_rest_proj", reason: "unexpected status 503" },
         ]);
+      }),
+    );
+
+    it.effect("records the probe count on the wait span instead of a span per HTTP probe", () =>
+      Effect.gen(function* () {
+        const spans: Array<Tracer.NativeSpan> = [];
+        const tracer = Tracer.make({
+          span: (options) => {
+            const span = new Tracer.NativeSpan(options);
+            spans.push(span);
+            return span;
+          },
+        });
+        const mock = mockHealthSpawner(() => runningHealthy);
+
+        const fiber = yield* waitForHealthyServices(mock.spawner, ["supabase_rest_proj"], {
+          timeoutSeconds: 1,
+          postgrest: postgrestGateway("sb_secret_local"),
+        }).pipe(
+          Effect.provide(httpLayer(503, () => {})),
+          Effect.withTracer(tracer),
+          Effect.withTracerEnabled(true),
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* TestClock.adjust("1 seconds");
+        yield* Fiber.await(fiber);
+
+        const wait = spans.find((span) => span.name === "HealthCheck.waitHealthyServices");
+        expect(spans.map((span) => span.name)).not.toContain("HEAD");
+        expect(wait?.attributes.get("retry.attempt_count")).toBe(2);
       }),
     );
   });
@@ -781,11 +904,9 @@ const shadowConnConfig: PgConnInput = {
 };
 
 /**
- * A `DbConnection` whose `connect` fails the first `failTimes` calls
- * (`Number.POSITIVE_INFINITY` never succeeds), recording every dialled config
- * and how many probe sessions were released. `closedSessions` is what proves
- * the readiness probe hands nothing back to the caller: the downstream code
- * opens its own connection through `connectShadowDatabase` afterwards.
+ * A `DbConnection` whose `connect` fails the first `failTimes` calls, recording every dialled
+ * config and how many probe sessions were released. `closedSessions` proves the readiness probe
+ * hands nothing back to the caller.
  */
 function mockShadowDbConnection(
   opts: { readonly failTimes?: number; readonly connectMillis?: number } = {},
@@ -808,7 +929,7 @@ function mockShadowDbConnection(
         // A dial that hangs before answering — how a real attempt burns its own connect timeout.
         if (opts.connectMillis !== undefined) yield* Effect.sleep(opts.connectMillis);
         if (attempts.length <= failTimes) {
-          return yield* Effect.fail(new DbConnectError({ message: "connection refused" }));
+          return yield* new DbConnectError({ message: "connection refused" });
         }
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
@@ -845,19 +966,18 @@ function withSilencedStderr<A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Eff
 const inspectCalls = (mock: ReturnType<typeof mockHealthSpawner>) =>
   mock.spawned.filter((args) => args[0] === "container" && args[1] === "inspect");
 
-describe("waitForShadowReady", () => {
+describe("waitForPostgresReady", () => {
   it.effect(
     "resolves on the first successful connect, while Docker still reports the healthcheck as starting",
     () =>
       Effect.gen(function* () {
-        // The shadow container's healthcheck runs on a 10s interval with no
-        // start period, so Docker cannot report `healthy` before t+10s even
-        // though Postgres accepts connections at ~3.5s — the whole point of
-        // this wait is that the health status is never consulted at all.
+        // The shadow container's healthcheck runs on a 10s interval with no start period, so
+        // Docker cannot report `healthy` before t+10s even though Postgres accepts connections
+        // at ~3.5s — this wait never consults the health status at all.
         const mock = mockHealthSpawner(() => runningStarting);
         const db = mockShadowDbConnection();
 
-        const exit = yield* waitForShadowReady(
+        const exit = yield* waitForPostgresReady(
           mock.spawner,
           SHADOW_CONTAINER_ID,
           shadowConnConfig,
@@ -879,17 +999,21 @@ describe("waitForShadowReady", () => {
       const mock = mockHealthSpawner(() => runningStarting);
       const db = mockShadowDbConnection({ failTimes: 2 });
 
-      const fiber = yield* waitForShadowReady(mock.spawner, SHADOW_CONTAINER_ID, shadowConnConfig, {
-        timeoutSeconds: 30,
-      }).pipe(Effect.provide(db.layer), Effect.forkChild({ startImmediately: true }));
+      const fiber = yield* waitForPostgresReady(
+        mock.spawner,
+        SHADOW_CONTAINER_ID,
+        shadowConnConfig,
+        {
+          timeoutSeconds: 30,
+        },
+      ).pipe(Effect.provide(db.layer), Effect.forkChild({ startImmediately: true }));
 
       yield* TestClock.adjust("1 seconds");
       yield* TestClock.adjust("1 seconds");
       const exit = yield* Fiber.await(fiber);
 
       expect(Exit.isSuccess(exit)).toBe(true);
-      // 2 refused attempts, then the 3rd that connects — a refused connect is
-      // "not ready yet", never an error in its own right.
+      // A refused connect is "not ready yet", never an error in its own right.
       expect(db.attempts).toHaveLength(3);
       expect(inspectCalls(mock)).toHaveLength(3);
       expect(db.closedSessions).toBe(1);
@@ -905,7 +1029,7 @@ describe("waitForShadowReady", () => {
 
         const error = yield* withSilencedStderr(
           Effect.gen(function* () {
-            const fiber = yield* waitForShadowReady(
+            const fiber = yield* waitForPostgresReady(
               mock.spawner,
               SHADOW_CONTAINER_ID,
               shadowConnConfig,
@@ -920,11 +1044,15 @@ describe("waitForShadowReady", () => {
 
         expect(error).toBeInstanceOf(HealthCheckTimeoutError);
         expect(error.unhealthy).toEqual([
-          { containerId: SHADOW_CONTAINER_ID, reason: "connection refused" },
+          {
+            containerId: SHADOW_CONTAINER_ID,
+            reason: "container is not ready: connection refused",
+          },
         ]);
-        expect(error.message).toBe(`${SHADOW_CONTAINER_ID} connection refused`);
-        // 1 initial attempt + `timeoutSeconds * 2` retries at 500ms (same wall
-        // time as the old 1s poll).
+        expect(error.message).toBe(
+          `${SHADOW_CONTAINER_ID} container is not ready: connection refused`,
+        );
+        // 1 initial attempt plus `timeoutSeconds * 2` retries at 500ms intervals.
         expect(db.attempts).toHaveLength(5);
         expect(
           mock.spawned.some((args) => args[0] === "logs" && args[1] === SHADOW_CONTAINER_ID),
@@ -943,7 +1071,7 @@ describe("waitForShadowReady", () => {
 
       const error = yield* withSilencedStderr(
         Effect.gen(function* () {
-          const fiber = yield* waitForShadowReady(
+          const fiber = yield* waitForPostgresReady(
             mock.spawner,
             SHADOW_CONTAINER_ID,
             shadowConnConfig,
@@ -963,9 +1091,11 @@ describe("waitForShadowReady", () => {
       // Same failure the exhausted path produces: the last completed attempt's own reason,
       // the same `<id> <reason>` message, and the same log dump.
       expect(error).toBeInstanceOf(HealthCheckTimeoutError);
-      expect(error.message).toBe(`${SHADOW_CONTAINER_ID} connection refused`);
+      expect(error.message).toBe(
+        `${SHADOW_CONTAINER_ID} container is not ready: connection refused`,
+      );
       expect(error.unhealthy).toEqual([
-        { containerId: SHADOW_CONTAINER_ID, reason: "connection refused" },
+        { containerId: SHADOW_CONTAINER_ID, reason: "container is not ready: connection refused" },
       ]);
       expect(
         mock.spawned.some((args) => args[0] === "logs" && args[1] === SHADOW_CONTAINER_ID),
@@ -983,7 +1113,7 @@ describe("waitForShadowReady", () => {
 
       const error = yield* withSilencedStderr(
         Effect.gen(function* () {
-          const fiber = yield* waitForShadowReady(
+          const fiber = yield* waitForPostgresReady(
             mock.spawner,
             SHADOW_CONTAINER_ID,
             shadowConnConfig,
@@ -1008,6 +1138,36 @@ describe("waitForShadowReady", () => {
     }),
   );
 
+  it.effect("reports a first dial that never returns as not ready, naming the wall-clock cap", () =>
+    Effect.gen(function* () {
+      const mock = mockHealthSpawner(() => runningStarting);
+      const db = mockShadowDbConnection({
+        failTimes: Number.POSITIVE_INFINITY,
+        connectMillis: 60_000,
+      });
+
+      const error = yield* withSilencedStderr(
+        Effect.gen(function* () {
+          const fiber = yield* waitForPostgresReady(
+            mock.spawner,
+            SHADOW_CONTAINER_ID,
+            shadowConnConfig,
+            { timeoutSeconds: 1 },
+          ).pipe(Effect.provide(db.layer), Effect.forkChild({ startImmediately: true }));
+
+          yield* TestClock.adjust("3 seconds");
+          return yield* Fiber.join(fiber).pipe(Effect.flip);
+        }),
+      );
+
+      const reason = "container is not ready: connection attempt hung after 3s";
+      expect(error).toBeInstanceOf(HealthCheckTimeoutError);
+      expect(error.message).toBe(`${SHADOW_CONTAINER_ID} ${reason}`);
+      expect(error.unhealthy).toEqual([{ containerId: SHADOW_CONTAINER_ID, reason }]);
+      expect(db.attempts).toHaveLength(1);
+    }),
+  );
+
   describe("exec format error recovery advice", () => {
     it.effect("names the shadow's image when its dumped logs show exec format error", () =>
       Effect.gen(function* () {
@@ -1018,7 +1178,7 @@ describe("waitForShadowReady", () => {
 
         const error = yield* withSilencedStderr(
           Effect.gen(function* () {
-            const fiber = yield* waitForShadowReady(
+            const fiber = yield* waitForPostgresReady(
               mock.spawner,
               SHADOW_CONTAINER_ID,
               shadowConnConfig,
@@ -1049,7 +1209,7 @@ describe("waitForShadowReady", () => {
 
         const error = yield* withSilencedStderr(
           Effect.gen(function* () {
-            const fiber = yield* waitForShadowReady(
+            const fiber = yield* waitForPostgresReady(
               mock.spawner,
               SHADOW_CONTAINER_ID,
               shadowConnConfig,
@@ -1073,7 +1233,7 @@ describe("waitForShadowReady", () => {
 
         const error = yield* withSilencedStderr(
           Effect.gen(function* () {
-            const fiber = yield* waitForShadowReady(
+            const fiber = yield* waitForPostgresReady(
               mock.spawner,
               SHADOW_CONTAINER_ID,
               shadowConnConfig,
@@ -1090,4 +1250,497 @@ describe("waitForShadowReady", () => {
       }),
     );
   });
+});
+
+describe("waitForHealthyServices where Docker cannot exec health checks", () => {
+  const STUDIO = "supabase_studio_proj";
+  const STORAGE = "supabase_storage_proj";
+  const GATEWAY_URL = "http://127.0.0.1:54321";
+  const STORAGE_STATUS_PATH = "/storage/v1/status";
+
+  const orderlyUnhealthy = inspectedState({
+    health: "unhealthy",
+    probes: [{ exitCode: 1, output: "pg_isready: no response" }],
+  });
+  const probeTimedOut = inspectedState({
+    health: "unhealthy",
+    probes: [{ exitCode: -1, output: PROBE_TIMEOUT_OUTPUT }],
+  });
+
+  const runningFallback = (...containerIds: ReadonlyArray<string>) =>
+    new Map<string, ExecFallbackProbe>(containerIds.map((id) => [id, { kind: "running" }]));
+  const gatewayFallback = (containerId: string, path: string) =>
+    new Map<string, ExecFallbackProbe>([
+      [
+        containerId,
+        {
+          kind: "gateway",
+          gateway: { apiExternalUrl: GATEWAY_URL, secretKey: "sb_secret_local" },
+          path,
+        },
+      ],
+    ]);
+
+  const KONG = "supabase_kong_proj";
+  const reachableFallback = (containerId: string) =>
+    new Map<string, ExecFallbackProbe>([
+      [
+        containerId,
+        {
+          kind: "gateway-reachable",
+          gateway: { apiExternalUrl: GATEWAY_URL, secretKey: "sb_secret_local" },
+        },
+      ],
+    ]);
+
+  function recordingGateway(statusByPath: Readonly<Record<string, number>> = {}) {
+    const requests: Array<{
+      readonly method: string;
+      readonly url: string;
+      readonly headers: Readonly<Record<string, string>>;
+    }> = [];
+    const layer = Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) => {
+        requests.push({
+          method: request.method,
+          url: request.url,
+          headers: { ...request.headers },
+        });
+        const status = statusByPath[new URL(request.url).pathname] ?? 200;
+        return Effect.succeed(HttpClientResponse.fromWeb(request, new Response("{}", { status })));
+      }),
+    );
+    return { layer, requests };
+  }
+
+  const settled = (
+    mock: ReturnType<typeof mockHealthSpawner>,
+    containerIds: ReadonlyArray<string>,
+    opts: WaitForHealthyServicesOptions = {},
+    http: Layer.Layer<HttpClient.HttpClient> = unusedHttpClientLayer,
+  ) =>
+    waitForHealthyServices(mock.spawner, containerIds, { timeoutSeconds: 1, ...opts }).pipe(
+      Effect.provide(http),
+    );
+
+  const timeoutFailure = (
+    mock: ReturnType<typeof mockHealthSpawner>,
+    containerIds: ReadonlyArray<string>,
+    opts: WaitForHealthyServicesOptions = {},
+    http: Layer.Layer<HttpClient.HttpClient> = unusedHttpClientLayer,
+  ) =>
+    withSilencedStderr(
+      Effect.gen(function* () {
+        const fiber = yield* settled(mock, containerIds, opts, http).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* TestClock.adjust("1 seconds");
+        return yield* Fiber.join(fiber).pipe(Effect.flip);
+      }),
+    );
+
+  it.effect("names the probe's OCI error and the exec check when no fallback is configured", () =>
+    Effect.gen(function* () {
+      const mock = mockHealthSpawner(() => EXEC_FAILED_STATE);
+
+      const error = yield* timeoutFailure(mock, [STUDIO]);
+
+      const reason = `container is not ready: unhealthy (last health check exit code -1: ${EXEC_FAILURE_OUTPUT})`;
+      expect(error).toBeInstanceOf(HealthCheckTimeoutError);
+      expect(error.unhealthy).toEqual([{ containerId: STUDIO, reason }]);
+      expect(error.message).toBe(`${STUDIO} ${reason}`);
+      expect(error.suggestion).toBe(
+        [
+          `Docker could not run the health check inside ${STUDIO} ("OCI runtime exec failed"), so it cannot report them healthy.`,
+          "This happens when Docker runs nested or sandboxed.",
+          `Check with: docker exec ${STUDIO} true`,
+        ].join("\n"),
+      );
+    }),
+  );
+
+  it.effect("names an ordinary failing probe without the exec-unavailable suggestion", () =>
+    Effect.gen(function* () {
+      const mock = mockHealthSpawner(() => orderlyUnhealthy);
+
+      const error = yield* timeoutFailure(mock, [STUDIO]);
+
+      expect(error.message).toBe(
+        `${STUDIO} container is not ready: unhealthy (last health check exit code 1: pg_isready: no response)`,
+      );
+      expect(error.suggestion).toBeUndefined();
+    }),
+  );
+
+  it.effect("still fails a probe timeout (exit -1) when a running fallback is configured", () =>
+    Effect.gen(function* () {
+      const mock = mockHealthSpawner(() => probeTimedOut);
+
+      const error = yield* timeoutFailure(mock, [STUDIO], {
+        execFallbacks: runningFallback(STUDIO),
+      });
+
+      expect(error.message).toBe(
+        `${STUDIO} container is not ready: unhealthy (last health check exit code -1: Health check exceeded timeout (2s))`,
+      );
+      expect(error.suggestion).toBeUndefined();
+    }),
+  );
+
+  it.effect("still fails a restarting container whose last probe was an exec failure", () =>
+    Effect.gen(function* () {
+      const mock = mockHealthSpawner(() =>
+        inspectedState({
+          status: "restarting",
+          health: "unhealthy",
+          probes: [{ exitCode: -1, output: EXEC_FAILURE_OUTPUT }],
+        }),
+      );
+
+      const error = yield* timeoutFailure(mock, [STUDIO], {
+        execFallbacks: runningFallback(STUDIO),
+      });
+
+      expect(error.message).toContain(`${STUDIO} container is not ready: unhealthy (last health`);
+      expect(error.suggestion).toBeUndefined();
+    }),
+  );
+
+  it.effect(
+    "accepts an exec-failed container on a running fallback and reports it as assumed",
+    () =>
+      Effect.gen(function* () {
+        const mock = mockHealthSpawner(() => EXEC_FAILED_STATE);
+
+        const result = yield* settled(mock, [STUDIO], { execFallbacks: runningFallback(STUDIO) });
+
+        expect(result).toEqual({ execUnavailable: [STUDIO], readinessAssumed: [STUDIO] });
+      }),
+  );
+
+  it.effect("verifies an exec-failed container through the gateway with an authenticated GET", () =>
+    Effect.gen(function* () {
+      const mock = mockHealthSpawner(() => EXEC_FAILED_STATE);
+      const gateway = recordingGateway();
+
+      const result = yield* settled(
+        mock,
+        [STORAGE],
+        { execFallbacks: gatewayFallback(STORAGE, STORAGE_STATUS_PATH) },
+        gateway.layer,
+      );
+
+      expect(result).toEqual({ execUnavailable: [STORAGE], readinessAssumed: [] });
+      expect(gateway.requests).toEqual([
+        {
+          method: "GET",
+          url: `${GATEWAY_URL}${STORAGE_STATUS_PATH}`,
+          headers: expect.objectContaining({ apikey: "sb_secret_local" }),
+        },
+      ]);
+    }),
+  );
+
+  for (const status of [503, 404]) {
+    it.effect(`fails with the gateway's ${status} and the exec suggestion when it is not 200`, () =>
+      Effect.gen(function* () {
+        const mock = mockHealthSpawner(() => EXEC_FAILED_STATE);
+        const gateway = recordingGateway({ [STORAGE_STATUS_PATH]: status });
+
+        const error = yield* timeoutFailure(
+          mock,
+          [STORAGE],
+          { execFallbacks: gatewayFallback(STORAGE, STORAGE_STATUS_PATH) },
+          gateway.layer,
+        );
+
+        expect(error.unhealthy).toEqual([
+          {
+            containerId: STORAGE,
+            reason: `container is not ready: ${STORAGE_STATUS_PATH}: unexpected status ${status}`,
+          },
+        ]);
+        expect(error.suggestion).toContain(`Check with: docker exec ${STORAGE} true`);
+      }),
+    );
+  }
+
+  it.effect("accepts the gateway's 404 as proof that an exec-failed Kong is up", () =>
+    Effect.gen(function* () {
+      const mock = mockHealthSpawner(() => EXEC_FAILED_STATE);
+      const gateway = recordingGateway({ "/": 404 });
+
+      const result = yield* settled(
+        mock,
+        [KONG],
+        { execFallbacks: reachableFallback(KONG) },
+        gateway.layer,
+      );
+
+      expect(result).toEqual({ execUnavailable: [KONG], readinessAssumed: [] });
+      expect(gateway.requests).toEqual([
+        {
+          method: "GET",
+          url: `${GATEWAY_URL}/`,
+          headers: expect.objectContaining({ apikey: "sb_secret_local" }),
+        },
+      ]);
+    }),
+  );
+
+  it.effect("fails an exec-failed Kong whose gateway does not answer", () =>
+    Effect.gen(function* () {
+      const mock = mockHealthSpawner(() => EXEC_FAILED_STATE);
+      const unreachable = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.fail(
+            new HttpClientError.HttpClientError({
+              reason: new HttpClientError.TransportError({
+                request,
+                cause: new Error("connect ECONNREFUSED"),
+              }),
+            }),
+          ),
+        ),
+      );
+
+      const error = yield* timeoutFailure(
+        mock,
+        [KONG],
+        { execFallbacks: reachableFallback(KONG) },
+        unreachable,
+      );
+
+      expect(error.unhealthy).toEqual([
+        {
+          containerId: KONG,
+          reason: `container is not ready: HttpClientError: Transport error (GET ${GATEWAY_URL}/)`,
+        },
+      ]);
+      expect(error.suggestion).toContain(`Check with: docker exec ${KONG} true`);
+    }),
+  );
+
+  it.effect("fails a gateway GET whose body never completes once one probe timeout elapses", () =>
+    withSilencedStderr(
+      Effect.gen(function* () {
+        const mock = mockHealthSpawner(() => EXEC_FAILED_STATE);
+        const stalledBody = Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                new Response(
+                  new ReadableStream({
+                    start: (controller) => controller.enqueue(new TextEncoder().encode("{")),
+                  }),
+                  { status: 200 },
+                ),
+              ),
+            ),
+          ),
+        );
+
+        const fiber = yield* settled(
+          mock,
+          [STORAGE],
+          { timeoutSeconds: 0, execFallbacks: gatewayFallback(STORAGE, STORAGE_STATUS_PATH) },
+          stalledBody,
+        ).pipe(Effect.forkChild({ startImmediately: true }));
+        for (let second = 0; second < 9; second++) {
+          yield* TestClock.adjust("1 seconds");
+        }
+        const pendingAtNineSeconds = fiber.pollUnsafe();
+        yield* TestClock.adjust("1 seconds");
+        const error = yield* Fiber.join(fiber).pipe(Effect.flip);
+
+        expect(pendingAtNineSeconds).toBeUndefined();
+        expect(error).toBeInstanceOf(HealthCheckTimeoutError);
+        expect(error.unhealthy).toEqual([
+          {
+            containerId: STORAGE,
+            reason: expect.stringMatching(
+              /^container is not ready: \/storage\/v1\/status: TimeoutError/u,
+            ),
+          },
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("joins the exec-format and exec-unavailable advice for different containers", () =>
+    Effect.gen(function* () {
+      const broken = "supabase_inbucket_proj";
+      const mock = mockHealthSpawner(
+        (containerId) => (containerId === broken ? notRunning : EXEC_FAILED_STATE),
+        { [broken]: ["exec /mailpit: exec format error\n"] },
+      );
+
+      const error = yield* timeoutFailure(mock, [broken, STUDIO], {
+        images: new Map([[broken, "public.ecr.aws/supabase/mailpit:v1.30.2"]]),
+      });
+
+      const suggestion = error.suggestion ?? "";
+      expect(suggestion).toContain(`${broken}'s image public.ecr.aws/supabase/mailpit:v1.30.2`);
+      expect(suggestion).toContain(
+        `architecture.\n\nDocker could not run the health check inside ${STUDIO} (`,
+      );
+      expect(suggestion).not.toContain(`inside ${broken}`);
+    }),
+  );
+
+  it.effect("does not blame exec for an ordinary failure beside an accepted exec-failed one", () =>
+    Effect.gen(function* () {
+      const mock = mockHealthSpawner((containerId) =>
+        containerId === STUDIO ? EXEC_FAILED_STATE : orderlyUnhealthy,
+      );
+
+      const error = yield* timeoutFailure(mock, [STUDIO, STORAGE], {
+        execFallbacks: runningFallback(STUDIO),
+      });
+
+      expect(error.unhealthy.map((failure) => failure.containerId)).toEqual([STORAGE]);
+      expect(error.suggestion).toBeUndefined();
+    }),
+  );
+
+  it.effect("reports nothing as exec-unavailable while Docker's health check works", () =>
+    Effect.gen(function* () {
+      const orderlyStarting = inspectedState({
+        health: "starting",
+        probes: [{ exitCode: 1, output: "pg_isready: no response" }],
+      });
+      const mock = mockHealthSpawner((_id, callIndex) =>
+        callIndex === 0 ? orderlyStarting : runningHealthy,
+      );
+
+      const fiber = yield* settled(mock, [STUDIO], {
+        execFallbacks: runningFallback(STUDIO),
+      }).pipe(Effect.forkChild({ startImmediately: true }));
+      yield* TestClock.adjust("1 seconds");
+      const result = yield* Fiber.join(fiber);
+
+      expect(result).toEqual({ execUnavailable: [], readinessAssumed: [] });
+    }),
+  );
+});
+
+describe("healthCheckExecUnavailableWarning", () => {
+  it("names every container whose readiness was not verified", () => {
+    const warning = healthCheckExecUnavailableWarning([
+      "supabase_realtime_proj",
+      "supabase_studio_proj",
+    ]);
+
+    expect(warning).toContain("WARNING:");
+    expect(warning).toContain("(OCI runtime exec failed)");
+    expect(warning).toContain(
+      "Readiness of supabase_realtime_proj, supabase_studio_proj was not verified.",
+    );
+    expect(warning.endsWith("\n")).toBe(true);
+  });
+
+  it("says readiness was checked from the host when every container was verified", () => {
+    const warning = healthCheckExecUnavailableWarning([]);
+
+    expect(warning).toContain("Readiness was checked from the host instead.");
+    expect(warning).not.toContain("was not verified");
+  });
+});
+
+describe("awaitDockerHealthSettled", () => {
+  const DB = "supabase_db_proj";
+
+  const run = (mock: ReturnType<typeof mockHealthSpawner>) =>
+    Effect.gen(function* () {
+      const fiber = yield* awaitDockerHealthSettled(mock.spawner, DB).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* TestClock.adjust("1 seconds");
+      return yield* Fiber.await(fiber);
+    });
+
+  const settlesImmediately: ReadonlyArray<readonly [string, string]> = [
+    ["Docker already reports it healthy", runningHealthy],
+    ["its health check cannot run on this host", EXEC_FAILED_STATE],
+    [
+      "an exec failure is recorded while Docker still reports starting",
+      inspectedState({
+        health: "starting",
+        probes: [{ exitCode: -1, output: EXEC_FAILURE_OUTPUT }],
+      }),
+    ],
+    ["it is no longer running", notRunning],
+    [
+      "Docker reports it unhealthy",
+      inspectedState({ health: "unhealthy", probes: [{ exitCode: 1, output: "no response" }] }),
+    ],
+    ["it has no health check", inspectedState()],
+  ];
+  for (const [scenario, state] of settlesImmediately) {
+    it.effect(`returns after a single inspect when ${scenario}`, () =>
+      Effect.gen(function* () {
+        const mock = mockHealthSpawner(() => state);
+
+        const exit = yield* run(mock);
+
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(inspectCalls(mock)).toHaveLength(1);
+      }),
+    );
+  }
+
+  it.effect("succeeds without retrying when the inspect itself fails", () =>
+    Effect.gen(function* () {
+      const mock = mockHealthSpawner(() => runningStarting, {}, { inspectFails: true });
+
+      const exit = yield* run(mock);
+
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(inspectCalls(mock)).toHaveLength(1);
+    }),
+  );
+
+  it.effect("keeps polling while Docker reports starting and returns once it settles", () =>
+    Effect.gen(function* () {
+      const mock = mockHealthSpawner((_id, callIndex) =>
+        callIndex < 2 ? runningStarting : runningHealthy,
+      );
+
+      const fiber = yield* awaitDockerHealthSettled(mock.spawner, DB).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* TestClock.adjust("1 seconds");
+      yield* TestClock.adjust("1 seconds");
+      const exit = yield* Fiber.await(fiber);
+
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(inspectCalls(mock)).toHaveLength(3);
+    }),
+  );
+
+  it.effect("gives up without failing after 15 seconds of starting, and stops polling", () =>
+    Effect.gen(function* () {
+      const mock = mockHealthSpawner(() => runningStarting);
+
+      const fiber = yield* awaitDockerHealthSettled(mock.spawner, DB).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      for (let second = 0; second < 14; second++) {
+        yield* TestClock.adjust("1 seconds");
+      }
+      const pendingAt14Seconds = fiber.pollUnsafe();
+      yield* TestClock.adjust("1 seconds");
+      const exit = yield* Fiber.await(fiber);
+      const pollsAtCap = inspectCalls(mock).length;
+      yield* TestClock.adjust("10 seconds");
+
+      expect(pendingAt14Seconds).toBeUndefined();
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(inspectCalls(mock)).toHaveLength(pollsAtCap);
+    }),
+  );
 });

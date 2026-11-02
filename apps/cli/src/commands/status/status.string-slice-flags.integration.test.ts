@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer } from "effect";
-import { CliOutput, Command } from "effect/unstable/cli";
+import { CliOutput, Command } from "effect/cli";
 
 import { normalizeCause } from "../../shared/output/normalize-error.ts";
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
@@ -16,22 +16,16 @@ import {
 } from "../../../tests/helpers/command-mocks.ts";
 import { statusCommand } from "./status.command.ts";
 
-// `--override-name` and `--exclude` are string-slice flags (CLI-2005), so
-// malformed CSV aborts flag parsing before the handler runs — before any Docker
-// interaction — with the exact `invalid argument %q for %q flag: %v` line on
-// stderr. These scenarios
-// run the whole command tree (`Command.runWith`), mirroring the network-bans/
-// network-restrictions prior art from CLI-1983.
+// `--override-name` and `--exclude` are string-slice flags, so malformed CSV aborts flag parsing
+// before the handler runs, with the exact `invalid argument "<value>" for "<flag>" flag: <reason>` line on stderr.
+// These run the whole command tree (`Command.runWith`), not just the flag parser.
 
 const tempRoot = useTempWorkdir("supabase-status-string-slice-int-");
 
-// `withGlobalFlags` must come AFTER `withSubcommands`: it only excludes each
-// global flag's context requirement from the R accumulated on the command
-// SO FAR, and `withSubcommands` unions in every subcommand's own requirements
-// (including `status`'s handler-chain reads of `DebugFlag`/
-// `ProfileFlag`/`WorkdirFlag`). Reversing the order leaves those
-// context tags in `Command.runWith`'s Environment type even though this
-// parse-failure path never reaches the handler at runtime.
+// `withGlobalFlags` must come after `withSubcommands`: it excludes each global flag's context
+// requirement only from what's already accumulated, so subcommand requirements need to be unioned
+// in first. Reversing the order would leave those context tags in `Command.runWith`'s Environment
+// type, even though this parse-failure path never reaches the handler.
 const testRoot = Command.make("supabase").pipe(
   Command.withSubcommands([statusCommand]),
   Command.withGlobalFlags(GLOBAL_FLAGS),
@@ -54,9 +48,7 @@ function setup() {
       TelemetryRuntime,
       TelemetryRuntime.of({
         configDir: `${tempRoot.current}/.supabase`,
-        tracesDir: `${tempRoot.current}/.supabase/traces`,
         consent: "granted",
-        showDebug: false,
         deviceId: "test-device-id",
         sessionId: "test-session-id",
         identity: makeTelemetryIdentity(undefined),
@@ -72,9 +64,7 @@ function setup() {
   return { layer };
 }
 
-describe("status StringSlice flags (pflag CSV parity)", () => {
-  // Every rendered line below was verified against pflag's actual output
-  // (pflag v1.0.10 → encoding/csv).
+describe("status StringSlice flags", () => {
   const cases: ReadonlyArray<{
     readonly name: string;
     readonly args: ReadonlyArray<string>;
@@ -96,7 +86,7 @@ describe("status StringSlice flags (pflag CSV parity)", () => {
   ];
 
   for (const { name, args, message } of cases) {
-    it.live(`${name} CSV fails at parse time with pflag's exact diagnostic`, () => {
+    it.effect(`${name} CSV fails at parse time with the exact diagnostic`, () => {
       const { layer } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(Command.runWith(testRoot, { version: "0.0.0-test" })(args));

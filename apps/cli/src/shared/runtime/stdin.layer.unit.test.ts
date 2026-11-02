@@ -152,6 +152,16 @@ describe("Stdin", () => {
   });
 
   describe("readLine", () => {
+    it.effect("returns each physical line untrimmed", () => {
+      const layer = withStdin(Stream.fromIterable([encoder.encode("   \n y \n\n")]));
+      return Effect.gen(function* () {
+        const { readLine } = yield* Stdin;
+        expect(yield* readLine(10_000)).toEqual(Option.some("   "));
+        expect(yield* readLine(10_000)).toEqual(Option.some(" y "));
+        expect(yield* readLine(10_000)).toEqual(Option.some(""));
+      }).pipe(Effect.provide(layer));
+    });
+
     it.effect("returns None at EOF", () => {
       const layer = withStdin(Stream.empty);
       return Effect.gen(function* () {

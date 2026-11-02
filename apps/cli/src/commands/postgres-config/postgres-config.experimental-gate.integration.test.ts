@@ -1,9 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer } from "effect";
-import { CliOutput, Command } from "effect/unstable/cli";
+import { Cause, Effect, Exit, Layer } from "effect";
+import { CliOutput, Command } from "effect/cli";
 
 import { normalizeCause } from "../../shared/output/normalize-error.ts";
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
+import { ExperimentalRequiredError } from "../../command-internal/experimental-gate.ts";
 import { GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
 import { mockOutput, mockTelemetryRuntime } from "../../../tests/helpers/mocks.ts";
 import {
@@ -15,15 +16,9 @@ import {
 } from "../../../tests/helpers/command-mocks.ts";
 import { postgresConfigCommand } from "./postgres-config.command.ts";
 
-// This suite proves the `--experimental` gate is wired into the actual
-// `.command.ts` handler pipeline (not just the shared helper in isolation),
-// and — critically — that it runs BEFORE `managementApiRuntimeLayer`
-// resolves an access token. The root `PersistentPreRunE` checks
-// `IsExperimental` before the `IsManagementAPI` login check
-// (`apps/cli-go/cmd/root.go:91-109`); `managementApiRuntimeLayer`
-// eagerly fails on a missing token as part of its own layer construction, so
-// wiring the gate anywhere except immediately before that layer is attached
-// would let a missing-token error mask the missing-`--experimental` error.
+// Proves the --experimental gate is wired into the actual command pipeline (not just the
+// shared helper in isolation), and that it runs before managementApiRuntimeLayer resolves an
+// access token — wiring it any later would let a missing-token error mask the missing-flag error.
 
 const tempRoot = useTempWorkdir("supabase-postgres-config-experimental-int-");
 
@@ -41,12 +36,10 @@ function setup() {
     out,
     api,
     cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-    // The "gate open" case builds the real `managementApiRuntimeLayer`
-    // inline inside the command; its cliSettings/credentials layers read real
-    // files under homeDir and ambient env — an ambient SUPABASE_ACCESS_TOKEN,
-    // SUPABASE_EXPERIMENTAL, or OS keyring entry on the machine running the
-    // test would make these assertions non-deterministic. Isolate both, keeping
-    // only the keyring kill-switch set.
+    // The gate-open case builds the real managementApiRuntimeLayer inline, whose
+    // cliSettings/credentials layers read real files under homeDir and ambient env — an
+    // ambient access token, SUPABASE_EXPERIMENTAL, or keyring entry would make these
+    // assertions non-deterministic.
     runtimeInfo: isolatedHomeLayer(tempRoot.current, { SUPABASE_NO_KEYRING: "1" }),
   });
   const layer = Layer.mergeAll(
@@ -54,13 +47,20 @@ function setup() {
     CliOutput.layer(textCliOutputFormatter()),
     mockTelemetryRuntime({
       configDir: `${tempRoot.current}/.supabase`,
-      tracesDir: `${tempRoot.current}/.supabase/traces`,
     }),
   );
   return { layer, api };
 }
 
-describe("postgres-config experimental gate (Go PersistentPreRunE parity)", () => {
+// The gate error is always a top-level typed failure, so ask the type directly.
+function expectGateDidNotFire(cause: Cause.Cause<unknown>): void {
+  const failures = cause.reasons.filter(Cause.isFailReason).map((reason) => reason.error);
+  // Vacuity guard: the check only means something for a typed failure.
+  expect(failures).not.toHaveLength(0);
+  expect(failures.some((error) => error instanceof ExperimentalRequiredError)).toBe(false);
+}
+
+describe("postgres-config experimental gate ", () => {
   const leaves: ReadonlyArray<{ readonly name: string; readonly args: ReadonlyArray<string> }> = [
     { name: "get", args: ["postgres-config", "get"] },
     { name: "update", args: ["postgres-config", "update"] },
@@ -68,47 +68,39 @@ describe("postgres-config experimental gate (Go PersistentPreRunE parity)", () =
   ];
 
   for (const { name, args } of leaves) {
-    it.live(`${name} fails with ExperimentalRequiredError when --experimental is unset`, () => {
+    it.effect(`${name} fails with ExperimentalRequiredError when --experimental is unset`, () => {
       const { layer, api } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(Command.runWith(testRoot, { version: "0.0.0-test" })(args));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("ExperimentalRequiredError");
+          expect(Cause.pretty(exit.cause)).toContain("ExperimentalRequiredError");
         }
-        // The gate must run before any API call (and before the eager
-        // access-token resolution inside `managementApiRuntimeLayer`) —
-        // a closed gate makes zero network requests.
+        // A closed gate makes zero network requests, before even the eager token resolution.
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
     });
 
-    it.live(`${name} does not fail with the gate error once --experimental is set`, () => {
+    it.effect(`${name} does not fail with the gate error once --experimental is set`, () => {
       const { layer, api } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
           Command.runWith(testRoot, { version: "0.0.0-test" })([...args, "--experimental"]),
         );
-        // No real access token is configured in this test environment, so the
-        // command still fails — but past the gate, at the auth-resolution step
-        // that `managementApiRuntimeLayer` performs, never with the
-        // experimental gate error once the flag is on.
+        // No real token is configured, so the command still fails — but past the gate,
+        // at managementApiRuntimeLayer's auth resolution.
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const causeText = JSON.stringify(exit.cause);
-          expect(causeText).not.toContain("ExperimentalRequiredError");
-          expect(causeText).toContain("AccessTokenRequiredError");
+          expectGateDidNotFire(exit.cause);
+          expect(Cause.pretty(exit.cause)).toContain("AccessTokenRequiredError");
         }
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
     });
   }
 
-  // pflag's `readAsCSV` error aborts cobra's `ParseFlags` BEFORE
-  // `PersistentPreRunE`'s experimental-gate check, so the parse error must
-  // win even with `--experimental` unset. The rendered line matches pflag's
-  // own diagnostic (pflag v1.0.10 `errors.go:116` wrapping `encoding/csv`) —
-  // same prior art as network-bans/network-restrictions.
+  // A malformed CSV value fails at parse time, before the experimental gate ever runs,
+  // with its own diagnostic text.
   const malformedCsvCases: ReadonlyArray<{
     readonly name: string;
     readonly args: ReadonlyArray<string>;
@@ -130,8 +122,8 @@ describe("postgres-config experimental gate (Go PersistentPreRunE parity)", () =
   ];
 
   for (const { name, args, message } of malformedCsvCases) {
-    it.live(
-      `${name}: malformed --config CSV fails at parse time with pflag's exact diagnostic, before the gate`,
+    it.effect(
+      `${name}: malformed --config CSV fails at parse time with the exact diagnostic, before the gate`,
       () => {
         const { layer, api } = setup();
         return Effect.gen(function* () {
@@ -140,7 +132,7 @@ describe("postgres-config experimental gate (Go PersistentPreRunE parity)", () =
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).not.toContain("ExperimentalRequiredError");
+            expectGateDidNotFire(exit.cause);
             expect(normalizeCause(exit.cause).message).toBe(message);
           }
           expect(api.requests).toHaveLength(0);

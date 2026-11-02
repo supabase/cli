@@ -1,16 +1,10 @@
 /**
- * Normalizes a repeated `--schema` flag into the flat list Go produces.
+ * Normalizes a repeated `--schema` flag into a flat list (shared logic lives in
+ * `string-slice-flag.ts`). Also provides `schemaToCsvField`, the CSV re-encoder used when
+ * printing a `--schema` value back into a suggested shell command.
  *
- * Go defines `--schema` as a Cobra `StringSliceVarP` on both `gen types`
- * (`apps/cli-go/cmd/gen.go:155`) and `db lint` (`apps/cli-go/cmd/db.go:506`).
- * The CSV-per-occurrence parsing itself lives in `string-slice-flag.ts`
- * (shared with every other Go `StringSliceVar` flag ported to the
- * CLI); this module re-exports it under the `--schema`-specific names and
- * adds `schemaToCsvField`, the CSV re-encoder used when forwarding
- * `--schema` back to a delegated Go subprocess.
- *
- * Shared by `gen types`, `db lint`, `db dump`, `db pull`, `db diff`, and
- * `db schema {generate,sync}`.
+ * Shared by `gen types`, `db lint`, `db dump`, `db pull`, `db diff`, and `db schema
+ * {generate,sync}`.
  */
 import { parseStringSliceFlag, StringSliceFlagParseError } from "./string-slice-flag.ts";
 
@@ -18,12 +12,10 @@ export { StringSliceFlagParseError as SchemaFlagParseError };
 
 export const parseSchemaFlags = parseStringSliceFlag;
 
-/**
- * Whether a CSV field must be quoted. Mirrors Go's `encoding/csv`
- * `Writer.fieldNeedsQuotes`: never quote the empty string; always quote `\.`;
- * quote when the field contains `,`, `"`, `\r`, or `\n`; otherwise quote when the
- * first rune is whitespace.
- */
+// Whether a CSV field must be quoted (so a printed
+// suggestion round-trips through the same CSV parsing rules `--schema` values use): never quote
+// the empty string; always quote `\.`; quote when the field contains `,`, `"`, `\r`, or `\n`;
+// otherwise quote when the first character is whitespace.
 function fieldNeedsQuotes(field: string): boolean {
   if (field === "") return false;
   if (field === "\\.") return true;
@@ -32,13 +24,10 @@ function fieldNeedsQuotes(field: string): boolean {
 }
 
 /**
- * Serializes a SINGLE parsed schema value back into one CSV field — the inverse of
- * `readAsCSVStrict` for one element. A schema parsed from `--schema '"tenant,one"'`
- * is the single value `tenant,one`; forwarding it raw to the Go binary would let
- * pflag's `StringSlice` CSV-parse it a SECOND time and split it into two schemas.
- * Re-encoding (mirroring Go's `csv.Writer`) keeps it one field so the delegated
- * child sees exactly the schema set the native path would. Used when rebuilding
- * `--schema` argv for the Go-delegated `db diff` / `db pull` paths.
+ * Serializes a single parsed schema value back into one CSV field — the inverse of
+ * `readAsCSVStrict` for one element. A schema parsed from `--schema '"tenant,one"'` is the
+ * single value `tenant,one`; printing it raw into a suggested `--schema` command would let the
+ * next CSV parse re-split it into two schemas, so this re-encodes it to keep it one field.
  */
 export function schemaToCsvField(value: string): string {
   if (!fieldNeedsQuotes(value)) return value;

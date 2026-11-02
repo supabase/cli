@@ -15,15 +15,6 @@ import {
  * `InvalidProjectRefError`.
  */
 
-/** Conflicting `db-url`/`linked`/`local` flags; message text is an established output contract. */
-export class DbAdvisorsMutuallyExclusiveFlagsError extends Data.TaggedError(
-  "DbAdvisorsMutuallyExclusiveFlagsError",
-)<{ readonly message: string }> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
 /**
  * `--linked` PreRunE: no access token; message text and the "Run supabase
  * login first." suggestion are an established output contract.
@@ -47,11 +38,9 @@ export class DbAdvisorsInvalidTokenError extends Data.TaggedError("DbAdvisorsInv
   readonly message: string;
   readonly suggestion: string;
   /**
-   * Copied from the wrapped `InvalidAccessTokenError`: an env-var token
-   * (`SUPABASE_ACCESS_TOKEN`) takes precedence over stored credentials, so
-   * `supabase login` cannot fix it — the remediation is to correct the env
-   * var. A stored (keyring/file) token, or an unknown source, is fixable by
-   * logging in again.
+   * An env-var token (`SUPABASE_ACCESS_TOKEN`) takes precedence over stored credentials, so
+   * `supabase login` cannot fix it — the remediation is to correct the env var. A stored
+   * (keyring/file) token, or an unknown source, is fixable by logging in again.
    */
   readonly source?: "env" | "stored";
 }> {
@@ -60,7 +49,7 @@ export class DbAdvisorsInvalidTokenError extends Data.TaggedError("DbAdvisorsInv
   }
 }
 
-/** `failed to begin transaction: %w`; message text is an established output contract. */
+/** `failed to begin transaction: <cause>`; message text is an established output contract. */
 export class DbAdvisorsBeginTxError extends Data.TaggedError("DbAdvisorsBeginTxError")<{
   readonly message: string;
 }> {
@@ -69,7 +58,7 @@ export class DbAdvisorsBeginTxError extends Data.TaggedError("DbAdvisorsBeginTxE
   }
 }
 
-/** `failed to prepare lint session: %w`; message text is an established output contract. */
+/** `failed to prepare lint session: <cause>`; message text is an established output contract. */
 export class DbAdvisorsSetupError extends Data.TaggedError("DbAdvisorsSetupError")<{
   readonly message: string;
 }> {
@@ -78,7 +67,7 @@ export class DbAdvisorsSetupError extends Data.TaggedError("DbAdvisorsSetupError
   }
 }
 
-/** `failed to query lints: %w`; message text is an established output contract. */
+/** `failed to query lints: <cause>`; message text is an established output contract. */
 export class DbAdvisorsQueryError extends Data.TaggedError("DbAdvisorsQueryError")<{
   readonly message: string;
 }> {
@@ -88,7 +77,7 @@ export class DbAdvisorsQueryError extends Data.TaggedError("DbAdvisorsQueryError
 }
 
 /**
- * `failed to fetch security advisors: %w`; message text is an established
+ * `failed to fetch security advisors: <cause>`; message text is an established
  * output contract. A decode error folds into the same message path as a
  * transport failure — `decode` distinguishes them for actionability so a
  * 200-response decode failure classifies as an API response problem instead
@@ -104,7 +93,7 @@ export class DbAdvisorsSecurityNetworkError extends Data.TaggedError(
   }
 }
 
-/** `unexpected security advisors status %d: %s`; message text is an established output contract. */
+/** `unexpected security advisors status <status>: <body>`; message text is an established output contract. */
 export class DbAdvisorsSecurityStatusError extends Data.TaggedError(
   "DbAdvisorsSecurityStatusError",
 )<{ readonly status: number; readonly body: string; readonly message: string }> {
@@ -114,7 +103,7 @@ export class DbAdvisorsSecurityStatusError extends Data.TaggedError(
 }
 
 /**
- * `failed to fetch performance advisors: %w`; message text is an established
+ * `failed to fetch performance advisors: <cause>`; message text is an established
  * output contract. A decode error folds into the same message path as a
  * transport failure — `decode` distinguishes them for actionability so a
  * 200-response decode failure classifies as an API response problem instead
@@ -130,7 +119,7 @@ export class DbAdvisorsPerformanceNetworkError extends Data.TaggedError(
   }
 }
 
-/** `unexpected performance advisors status %d: %s`; message text is an established output contract. */
+/** `unexpected performance advisors status <status>: <body>`; message text is an established output contract. */
 export class DbAdvisorsPerformanceStatusError extends Data.TaggedError(
   "DbAdvisorsPerformanceStatusError",
 )<{ readonly status: number; readonly body: string; readonly message: string }> {
@@ -139,7 +128,7 @@ export class DbAdvisorsPerformanceStatusError extends Data.TaggedError(
   }
 }
 
-/** `fail-on is set to %s, non-zero exit`; message text is an established output contract. */
+/** `fail-on is set to <level>, non-zero exit`; message text is an established output contract. */
 export class DbAdvisorsFailOnError extends Data.TaggedError("DbAdvisorsFailOnError")<{
   readonly message: string;
 }> {

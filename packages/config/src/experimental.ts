@@ -32,9 +32,23 @@ const inspectRule = Schema.Struct({
 }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({})));
 
 export const experimental = Schema.Struct({
+  compute: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description: "Enable the experimental compute command family.",
+      tags,
+    }),
+  ),
+  stack: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description:
+        "Use the new local stack backend for start, stop, and status, and for --local targets of the db, migration, test db, gen types, inspect, and pull command families.",
+      tags,
+    }),
+  ),
   orioledb_version: Schema.optionalKey(
-    Schema.String.annotate({
-      description: "Postgres storage engine version for OrioleDB.",
+    Schema.Literal("").annotate({
+      description:
+        "Removed: use `db.orioledb_version` instead. Only an empty value is accepted, for older generated config files.",
       tags,
     }),
   ),
@@ -78,11 +92,11 @@ export const experimental = Schema.Struct({
   pgdelta: Schema.optionalKey(
     Schema.Struct({
       enabled: Schema.Boolean.annotate({
-        default: false,
+        default: true,
         description:
-          "Use pg-delta as the schema diff engine for db diff / db pull / db remote commit. Set false to fall back to the legacy migra engine.",
+          "Use pg-delta as the schema diff engine for db diff / db pull (the default). Set false to fall back to the legacy migra engine.",
         tags,
-      }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
+      }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(true))),
       declarative_schema_path: Schema.optionalKey(
         Schema.String.annotate({
           description: "Directory under supabase/ where declarative schema files are written.",

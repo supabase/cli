@@ -14,24 +14,26 @@ export interface MigrationListRow {
 
 /**
  * Two-pointer merge of remote + local migration versions into chronological
- * rows, minus the markdown framing: non-numeric versions are skipped, and the time
- * column uses `FormatTimestampVersion`.
+ * rows: non-numeric versions are skipped, and the time column uses
+ * `formatTimestampVersion`.
  */
 export function makeMigrationListRows(
   remote: ReadonlyArray<string>,
   local: ReadonlyArray<string>,
 ): ReadonlyArray<MigrationListRow> {
-  // `loadLocalVersions` yields versions in file-name order, which reverses
-  // `ORDER BY version` whenever one version is a prefix of another
-  // (supabase/cli#6036), desynchronising the walk into duplicate half-empty rows.
+  // Local versions arrive in file-name order, which can invert `ORDER BY version`
+  // order when one version is a prefix of another (supabase/cli#6036); sorted here
+  // to keep the merge in sync.
   const sortedLocal = sortMigrationVersions(local);
   const rows: Array<MigrationListRow> = [];
   let i = 0;
   let j = 0;
   while (i < remote.length || j < sortedLocal.length) {
+    const remoteVersion = remote[i];
+    const localVersion = sortedLocal[j];
     let remoteTs = MIGRATION_VERSION_MAX;
-    if (i < remote.length) {
-      const parsed = parseMigrationVersion(remote[i]!);
+    if (remoteVersion !== undefined) {
+      const parsed = parseMigrationVersion(remoteVersion);
       if (parsed === undefined) {
         i++;
         continue;
@@ -39,23 +41,19 @@ export function makeMigrationListRows(
       remoteTs = parsed;
     }
     let localTs = MIGRATION_VERSION_MAX;
-    if (j < sortedLocal.length) {
-      const parsed = parseMigrationVersion(sortedLocal[j]!);
+    if (localVersion !== undefined) {
+      const parsed = parseMigrationVersion(localVersion);
       if (parsed === undefined) {
         j++;
         continue;
       }
       localTs = parsed;
     }
-    if (localTs < remoteTs) {
-      rows.push({
-        local: sortedLocal[j]!,
-        remote: "",
-        time: formatTimestampVersion(sortedLocal[j]!),
-      });
+    if (localVersion !== undefined && localTs < remoteTs) {
+      rows.push({ local: localVersion, remote: "", time: formatTimestampVersion(localVersion) });
       j++;
-    } else if (remoteTs < localTs) {
-      rows.push({ local: "", remote: remote[i]!, time: formatTimestampVersion(remote[i]!) });
+    } else if (remoteVersion !== undefined && remoteTs < localTs) {
+      rows.push({ local: "", remote: remoteVersion, time: formatTimestampVersion(remoteVersion) });
       i++;
     } else {
       rows.push({
@@ -71,10 +69,9 @@ export function makeMigrationListRows(
 }
 
 /**
- * Renders the merged rows as backtick-wrapped Glamour markdown cells
- * (`|`<v>`|` `|`<time>`|`): present cells are inline code spans, absent
- * cells are a single space inside backticks. AsciiStyle preserves the backticks
- * (`code.block_prefix`/`block_suffix` = "`"), so the rendered table includes them.
+ * Renders merged rows as backtick-wrapped Glamour markdown cells: present cells are
+ * inline code spans, and absent cells are a lone space inside backticks so AsciiStyle
+ * keeps the code-span formatting.
  */
 export function migrationListTableCells(
   rows: ReadonlyArray<MigrationListRow>,

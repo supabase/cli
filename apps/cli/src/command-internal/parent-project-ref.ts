@@ -1,74 +1,32 @@
 import { Effect, FileSystem, Option, Path } from "effect";
 
 import { CommandSettings } from "../config/command-settings.service.ts";
-import { ProjectRefResolver, PROJECT_REF_PATTERN } from "../config/project-ref.service.ts";
-import { readProjectRefFile, tempPaths } from "./temp-paths.ts";
+import { PROJECT_REF_PATTERN } from "../config/project-ref.service.ts";
+import { type CachedLinkedProject, readLinkSnapshotSoft } from "../shared/config/link-snapshot.ts";
 
 export type ParentRefResolution =
-  | { readonly kind: "resolved"; readonly ref: string }
+  | {
+      readonly kind: "resolved";
+      readonly ref: string;
+      /** The linked ref when it differs from the recorded parent; the parent must list it. */
+      readonly linkedRef?: string;
+    }
   | { readonly kind: "invalid" }
   | { readonly kind: "absent" };
 
-/** The subset of `<workdir>/supabase/.temp/linked-project.json` callers care
- * about: the parent project's `ref`, its `name`, and its
- * `organization_slug`/`organization_id` — all optional, present only when the
- * cache carries a usable (non-empty string) value for each. */
-export interface CachedLinkedProject {
-  readonly ref: string;
-  readonly name?: string;
-  readonly organizationSlug?: string;
-  readonly organizationId?: string;
-}
-
-function readOptionalCacheString(record: Record<string, unknown>, key: string): string | undefined {
-  const value = record[key];
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-/** Best-effort parse of `<workdir>/supabase/.temp/linked-project.json`'s `ref`
- * (and, when present, `name`/`organization_slug`/`organization_id`) fields —
- * a missing file, unreadable file, malformed JSON, or non-string/empty `ref`
- * all degrade to `None` rather than failing the caller. */
-export function parseCachedLinkedProject(content: string): Option.Option<CachedLinkedProject> {
-  try {
-    const parsed: unknown = JSON.parse(content);
-    if (isRecord(parsed)) {
-      const ref = parsed.ref;
-      if (typeof ref === "string" && ref.length > 0) {
-        const name = readOptionalCacheString(parsed, "name");
-        const organizationSlug = readOptionalCacheString(parsed, "organization_slug");
-        const organizationId = readOptionalCacheString(parsed, "organization_id");
-        return Option.some({
-          ref,
-          ...(name === undefined ? {} : { name }),
-          ...(organizationSlug === undefined ? {} : { organizationSlug }),
-          ...(organizationId === undefined ? {} : { organizationId }),
-        });
-      }
-    }
-  } catch {
-    // Malformed JSON degrades to "no candidate", same as a missing file.
-  }
-  return Option.none();
-}
-
-function parseCachedParentRef(content: string): Option.Option<string> {
-  return Option.map(parseCachedLinkedProject(content), (project) => project.ref);
-}
+/** The parent project the checkout's link records; any read failure is `None`. */
+export const readCachedLinkedProject = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  workdir: string,
+): Effect.Effect<Option.Option<CachedLinkedProject>> =>
+  readLinkSnapshotSoft(fs, path, workdir).pipe(Effect.map((snapshot) => snapshot.parent));
 
 function classifyParentCandidates(
   candidates: ReadonlyArray<Option.Option<string>>,
 ): ParentRefResolution {
-  // The FIRST PRESENT candidate decides (PR #6168 review): a present-but-
-  // malformed higher-priority candidate (a typo'd SUPABASE_PROJECT_ID) must
-  // hard-classify as invalid rather than silently falling through to a
-  // lower-priority project — otherwise a mutation could run against the
-  // previously linked project the user explicitly tried to override away
-  // from. This also restores the pre-CLI-2167 resolver's env validation.
+  // The first present candidate decides: a malformed higher-priority one stays invalid rather than
+  // falling through to a lower-priority project that a mutation could then hit by mistake.
   for (const candidate of candidates) {
     if (Option.isSome(candidate)) {
       return PROJECT_REF_PATTERN.test(candidate.value)
@@ -80,136 +38,54 @@ function classifyParentCandidates(
 }
 
 /**
- * Resolves the currently-linked PARENT project ref. Deliberately NOT
- * `ProjectRefResolver.resolveOptional`/`resolve` (which resolve the FINAL
- * linked ref): right after linking a branch, that would return the branch's
- * OWN ref, breaking any subsequent command that needs the PARENT (a second
- * `link <other-branch>`, or any `branches` subcommand — CLI-2167 follow-up).
- * Candidate order; the FIRST PRESENT candidate decides — valid resolves,
- * malformed hard-classifies as `"invalid"` (never silently skipped):
- *
- *   1. `SUPABASE_PROJECT_ID` (env, via `CommandSettings`) — UNLESS it merely
- *      RESTATES candidate 3's own value. A CI workflow commonly exports
- *      `SUPABASE_PROJECT_ID=<branch-ref>` right after `link <branch>`
- *      (mirroring what `project-ref` already holds) — that adds no parent
- *      information, so treat it exactly as absent and let the cache (the
- *      REAL parent) win instead of self-referentially "resolving" to the
- *      branch's own ref again (PR #6168 review). A genuinely different env
- *      value (a deliberate override to a DIFFERENT project) still wins
- *      outright, same as always.
- *   2. `ref` in `<workdir>/supabase/.temp/linked-project.json` — ONLY when
- *      candidate 3 below yielded a value. KEY INVARIANT: the cache alone is
- *      NOT proof of a completed link — `link`'s handler writes it via
- *      `Effect.ensuring` on BOTH success and failure (mirroring Go's
- *      `PersistentPostRun`), so a FAILED `link --project-ref B` can leave a
- *      cache entry for a `B` that was never actually linked (`getProject`
- *      returned 200 — e.g. for a paused project — but a later link step
- *      failed before `project-ref` itself was ever written). It's a
- *      telemetry artifact, not linked-state evidence; it's trusted only as
- *      PARENT RECOVERY for a link that has already actually happened, which
- *      candidate 3 is exactly the proof of (PR #6168 review).
- *   3. `<workdir>/supabase/.temp/project-ref`.
- *
- * A present-but-malformed first candidate is corrupt/stale linked state or a
- * typo'd override (`"invalid"` — callers surface an error rather than acting
- * on a lower-priority project); if no candidate exists at all, the workdir
- * was never linked (`"absent"`).
+ * The linked parent project ref, not the branch's own ref that `resolve` returns right after
+ * `link <branch>`: `SUPABASE_PROJECT_ID`, then the link's recorded parent, then the linked ref.
  */
-export const resolveLinkedParentRef = Effect.fnUntraced(function* () {
+export const resolveLinkedParentRef = Effect.fn("ParentProjectRef.resolveLinked")(function* () {
   const cliSettings = yield* CommandSettings;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const paths = tempPaths(path, cliSettings.workdir);
+  const snapshot = yield* readLinkSnapshotSoft(fs, path, cliSettings.workdir);
+  const linkedRef = snapshot.ref;
 
-  const fileRef = yield* readProjectRefFile(fs, path, cliSettings.workdir).pipe(
-    Effect.orElseSucceed(() => Option.none<string>()),
-  );
-  const cachedRef = Option.isSome(fileRef)
-    ? yield* fs.readFileString(paths.linkedProjectCache).pipe(
-        Effect.map(parseCachedParentRef),
-        Effect.orElseSucceed(() => Option.none<string>()),
-      )
+  // The recorded parent alone isn't proof a link completed — legacy `link` writes it on both
+  // success and failure — so it counts only when the linked ref confirms the link.
+  const cachedRef = Option.isSome(linkedRef)
+    ? Option.map(snapshot.parent, (parent) => parent.ref)
     : Option.none<string>();
 
-  // Dedup rule (PR #6168 review): an env candidate that merely restates the
-  // file candidate's own (valid) value carries no parent information — drop
-  // it so the cache gets a chance to win instead. Restricted to pattern-valid
-  // values so a garbage env that happens to equal a garbage file still
-  // hard-classifies as invalid below instead of sneaking past to the cache.
+  // An env ref equal to the valid linked ref adds no parent information; drop it so the recorded
+  // parent wins. Pattern-valid only, so a garbage env equal to a garbage link stays invalid.
   const envRef =
     Option.isSome(cliSettings.projectId) &&
-    Option.isSome(fileRef) &&
-    cliSettings.projectId.value === fileRef.value &&
+    Option.isSome(linkedRef) &&
+    cliSettings.projectId.value === linkedRef.value &&
     PROJECT_REF_PATTERN.test(cliSettings.projectId.value)
       ? Option.none<string>()
       : cliSettings.projectId;
 
-  return classifyParentCandidates([envRef, cachedRef, fileRef]);
+  const parent = classifyParentCandidates([envRef, cachedRef, linkedRef]);
+  if (parent.kind !== "resolved" || Option.isSome(envRef) || Option.isNone(cachedRef))
+    return parent;
+  const branchRef = Option.filter(
+    linkedRef,
+    (ref) => ref !== parent.ref && PROJECT_REF_PATTERN.test(ref),
+  );
+  return Option.isSome(branchRef) ? { ...parent, linkedRef: branchRef.value } : parent;
 });
 
-/**
- * Project-ref resolver for the PARENT-SCOPED `branches` command family. TS-only
- * divergence (CLI-2167 follow-up, no Go counterpart): after `supabase link
- * <branch>`, `supabase/.temp/project-ref` holds the BRANCH's own ref, and the
- * Management API returns 403 for branch refs on every branches-management
- * endpoint (they're parent-project-scoped). Every `branches` subcommand must
- * keep resolving the PARENT, not whatever `link` last wrote there.
- *
- * Semantics:
- *
- *   1. `flagValue` present and non-empty → delegate to
- *      `ProjectRefResolver.resolve(flagValue)` unchanged (an explicit
- *      `--project-ref` always wins, with its existing validation/error
- *      behavior reproduced exactly).
- *   2. Otherwise, run `resolveLinkedParentRef`:
- *      - `"resolved"` → return that ref. This is the fix: it prefers the
- *        cached parent (env / `linked-project.json`) over a branch ref sitting
- *        in `project-ref`.
- *      - `"invalid"` or `"absent"` → fall through to
- *        `ProjectRefResolver.resolve(Option.none())`, so the existing
- *        env/prompt/not-linked error behavior is reproduced exactly — no new
- *        error types; the error channel is identical to `resolver.resolve`.
- *
- * No-op property: when linked to a real (non-branch) project, the cache and
- * the `project-ref` file hold the same ref, so every result here is identical
- * to calling `resolver.resolve` directly today. Behavior only changes in the
- * previously-403ing state where `project-ref` holds a branch ref.
- */
-export const resolveParentScopedProjectRef = Effect.fnUntraced(function* (
-  flagValue: Option.Option<string>,
-) {
-  const resolver = yield* ProjectRefResolver;
-
-  if (Option.isSome(flagValue) && flagValue.value.length > 0) {
-    return yield* resolver.resolve(flagValue);
-  }
-
-  const parent = yield* resolveLinkedParentRef();
-  if (parent.kind === "resolved") {
-    return parent.ref;
-  }
-
-  return yield* resolver.resolve(Option.none());
-});
-
-/**
- * A value made entirely of lowercase letters (but not 20 of them, or it would
- * already have been treated as a ref) is a plausible ref typo. Appended to
- * both {@link parentNotLinkedMessage} and `link`'s own
- * branch-not-found message — shared by every command that resolves a branch
- * name/UUID under the currently-linked PARENT project (CLI-2167).
- */
+/** A hint for a value that looks like a mistyped project ref; empty otherwise. */
 export function parentRefTypoHint(value: string): string {
-  if (!/^[a-z]+$/.test(value)) return "";
-  return `\n  If you meant a project ref: refs are exactly 20 lowercase letters ("${value}" has ${value.length}).`;
+  if (/^[a-z]+$/.test(value)) {
+    return `\n  If you meant a project ref: refs are exactly 20 lowercase letters ("${value}" has ${value.length}).`;
+  }
+  if (/^[A-Za-z]{20}$/.test(value)) {
+    return `\n  If you meant a project ref: refs are exactly 20 lowercase letters (try "${value.toLowerCase()}").`;
+  }
+  return "";
 }
 
-/**
- * Shared "no project is linked to search for branches" message, produced when
- * {@link resolveLinkedParentRef} reports `"absent"` for a non-ref-shaped
- * `--project-ref`/positional value. Used by both `link` and `config diff`
- * (Hoist Before You Duplicate — ≥2 commands across families).
- */
+/** The branch-name lookup error when no project is linked, shared by `link` and `config diff`. */
 export function parentNotLinkedMessage(value: string): string {
   return (
     `Cannot resolve "${value}": it is not a project ref (refs are exactly 20 lowercase letters, ` +
@@ -220,12 +96,7 @@ export function parentNotLinkedMessage(value: string): string {
   );
 }
 
-/**
- * Shared "the linked project ref is invalid" message, produced when
- * {@link resolveLinkedParentRef} reports `"invalid"` for a non-ref-shaped
- * `--project-ref`/positional value. Used by both `link` and `config diff`
- * (Hoist Before You Duplicate — ≥2 commands across families).
- */
+/** The branch-name lookup error for an invalid linked ref, shared by `link` and `config diff`. */
 export function parentRefInvalidMessage(value: string): string {
   return `Cannot resolve branch "${value}": the linked project ref is invalid (checked SUPABASE_PROJECT_ID, supabase/.temp/linked-project.json, supabase/.temp/project-ref). Relink the parent project first: supabase link --project-ref <parent-ref>`;
 }

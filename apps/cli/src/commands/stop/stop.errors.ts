@@ -19,11 +19,7 @@ export class StopWorkdirError extends Data.TaggedError("StopWorkdirError")<{
   }
 }
 
-/**
- * `--project-id` and `--all` were both set. Matches the established
- * mutually-exclusive-flags message shape already
- * used for `gen types`'s mutually-exclusive flag groups (`types.handler.ts`).
- */
+/** `--project-id` and `--all` were both set. */
 export class StopMutuallyExclusiveError extends Data.TaggedError("StopMutuallyExclusiveError")<{
   readonly message: string;
 }> {
@@ -41,11 +37,7 @@ export class StopConfigLoadError extends Data.TaggedError("StopConfigLoadError")
   }
 }
 
-/**
- * Listing containers to stop failed. `stop`-specific wrapper over
- * `DockerLifecycleListError` (see `docker-lifecycle.ts`) so this command's
- * errors are all in one file with a `Stop*` tag, matching the plan's error list.
- */
+/** Listing containers to stop failed; wraps `DockerLifecycleListError` (see `docker-lifecycle.ts`). */
 export class StopListError extends Data.TaggedError("StopListError")<{
   readonly message: string;
 }> {

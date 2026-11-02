@@ -1,10 +1,10 @@
 import { makeApiClient } from "@supabase/api/effect";
 import { Effect, Layer, Option, Redacted } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 
 import { CLI_VERSION } from "../shared/cli/version.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
-import { DebugLogger } from "../command-internal/debug-logger.service.ts";
+import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 import { IdentityStitch } from "../command-internal/identity-stitch.ts";
 import { validateAccessToken } from "./access-token.ts";
 import { CommandCredentials } from "./command-credentials.service.ts";
@@ -18,11 +18,9 @@ export const makeCommandPlatformApi = Effect.gen(function* () {
   const cliSettings = yield* CommandSettings;
   const credentials = yield* CommandCredentials;
   const debugLogger = yield* DebugLogger;
-  // Every Management API response is passed through the per-command identity
-  // stitcher for session identity stitching. Consume the single per-command
-  // stitcher service rather than building one here, so the typed client shares
-  // the one `stitchAttempted` guard with the raw advisor GETs and the
-  // linked-project cache; otherwise each transport would re-alias/re-persist.
+  // Every Management API response goes through the per-command identity stitcher. Consuming
+  // the shared service, rather than building one here, keeps its `stitchAttempted` guard shared
+  // with the raw advisor GETs and the linked-project cache.
   const { stitch: stitchIdentityFromResponse } = yield* IdentityStitch;
 
   const transformClient = (client: HttpClient.HttpClient) => {
@@ -41,9 +39,9 @@ export const makeCommandPlatformApi = Effect.gen(function* () {
   const resolveAccessToken = Effect.gen(function* () {
     if (Option.isSome(configuredToken)) {
       yield* debugLogger.debug("Using access token from env var...");
-      // credentials.getAccessToken already validates the keyring/file paths;
-      // validate the env token here too so a malformed SUPABASE_ACCESS_TOKEN
-      // fails with the invalid-token error rather than being sent to the API.
+      // credentials.getAccessToken already validates the keyring/file paths; validate the env
+      // token here too so a malformed SUPABASE_ACCESS_TOKEN fails with the invalid-token error
+      // rather than being sent to the API.
       yield* validateAccessToken(Redacted.value(configuredToken.value), "env");
       return configuredToken;
     }
@@ -52,13 +50,13 @@ export const makeCommandPlatformApi = Effect.gen(function* () {
 
   const authGateToken = yield* resolveAccessToken;
   if (Option.isNone(authGateToken)) {
-    return yield* Effect.fail(new AccessTokenRequiredError({ message: MISSING_TOKEN_MESSAGE }));
+    return yield* new AccessTokenRequiredError({ message: MISSING_TOKEN_MESSAGE });
   }
   yield* debugLogger.debug(`Supabase CLI ${CLI_VERSION}`);
   yield* debugLogger.debug(`Using profile: ${cliSettings.profile} (${cliSettings.projectHost})`);
   const storedToken = yield* resolveAccessToken;
   if (Option.isNone(storedToken)) {
-    return yield* Effect.fail(new AccessTokenRequiredError({ message: MISSING_TOKEN_MESSAGE }));
+    return yield* new AccessTokenRequiredError({ message: MISSING_TOKEN_MESSAGE });
   }
 
   return yield* makeApiClient(
@@ -71,6 +69,6 @@ export const makeCommandPlatformApi = Effect.gen(function* () {
       transformClient,
     },
   );
-});
+}).pipe(Effect.withSpan("CommandPlatformApi.build"));
 
 export const commandPlatformApiLayer = Layer.effect(CommandPlatformApi, makeCommandPlatformApi);

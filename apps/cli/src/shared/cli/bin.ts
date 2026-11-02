@@ -22,10 +22,8 @@ if (!candidates) throw new Error(`Unsupported architecture: ${os.arch()} on ${pr
 const ext = process.platform === "win32" ? ".exe" : "";
 const require = createRequire(import.meta.url);
 
-// `SUPABASE_CLI_BINARY_OVERRIDE` lets tests and local dev point the shim at a
-// specific compiled binary on disk, bypassing the optional-dependency lookup.
-// This is the entrypoint the e2e harness uses to exercise the real shim +
-// compiled binary handoff without publishing platform packages.
+// `SUPABASE_CLI_BINARY_OVERRIDE` lets tests and local dev point the shim at a specific compiled
+// binary on disk, bypassing the optional-dependency lookup.
 let binPath = process.env["SUPABASE_CLI_BINARY_OVERRIDE"];
 
 if (!binPath) {
@@ -46,11 +44,9 @@ if (!binPath) {
   );
 }
 
-// The compiled binary owns signal semantics, so the shim never dies to a
-// signal's default action while the child runs: a group signal (terminal
-// Ctrl-C) already reaches the child directly, and a signal sent to the shim
-// PID alone (a supervisor's kill) is forwarded so cancellation still lands.
-// Either way the shim just waits and mirrors the child's exit.
+// The compiled binary owns signal semantics: a group signal (terminal Ctrl-C) already reaches
+// the child directly, and a signal sent to the shim PID alone (a supervisor's kill) is forwarded
+// so cancellation still lands. Either way the shim just waits and mirrors the child's exit.
 const child = spawn(binPath, process.argv.slice(2), { stdio: "inherit" });
 const forwardedSignals: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
 const forwarders = new Map<NodeJS.Signals, () => void>();

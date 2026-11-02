@@ -1,37 +1,40 @@
 # `supabase bootstrap [template]`
 
-`bootstrap` is a meta-orchestrator: it chains a workdir prompt → template fetch/download →
-blank `init` → ensure-login → `projects create` → `projects api-keys` → `link` services →
+Target: account, consent default Yes — see [Command target](../../../docs/command-target.md)
+
+`bootstrap` is a meta-orchestrator: it chains a workdir prompt → hosted-mutation consent →
+template fetch/download → blank `init` → ensure-login → `projects create` → `projects api-keys` → `link` services →
 health poll → write `.env` → `db push` → start suggestion. Every step is native TypeScript,
 including the migration push (`dbPushCore`, shared with the standalone `supabase db push`
 command — see Notes).
 
 ## Files Read
 
-| Path                                                               | Format     | When                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| ------------------------------------------------------------------ | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `~/.supabase/access-token`                                         | plain text | ensure-login token miss (env unset and keyring unavailable)                                                                                                                                                                                                                                                                                                                                                                  |
-| `<workdir>/.env.example`                                           | dotenv     | optional; merged into the generated `.env`                                                                                                                                                                                                                                                                                                                                                                                   |
-| `<workdir>/supabase/{.env.<env>.local,.env.local,.env.<env>,.env}` | dotenv     | step I (`loadProjectEnv`), before config.toml validation and again inside `checkDbToml`; `<env>` is `SUPABASE_ENV` (default `development`), `.env.local` is skipped when `SUPABASE_ENV=test`; first of the 4 files (in this order) to set a key wins, and this `supabase/` directory tier beats the workdir-root tier below — feeds config.toml `env(VAR)` expansion and the push step's `SUPABASE_YES` auto-confirm default |
-| `<workdir>/{.env.<env>.local,.env.local,.env.<env>,.env}`          | dotenv     | same read as above; lower-precedence fallback tier, only consulted for a key none of the `supabase/` directory's 4 files above already set                                                                                                                                                                                                                                                                                   |
-| `<workdir>/supabase/config.toml`                                   | TOML       | native push step (embedded defaults used when absent)                                                                                                                                                                                                                                                                                                                                                                        |
-| `<workdir>/supabase/.temp/pooler-url`                              | plain text | native push step's connection resolution, only when the direct `db.<ref>.<projectHost>:5432` host is unreachable (IPv4-only network) — `resolveLinkedConn` falls back through the saved pooler URL `link.LinkServices` wrote in the earlier link-services step                                                                                                                                                               |
-| `<workdir>/supabase/migrations/`                                   | directory  | native push step, when `[db.migrations].enabled` (default true)                                                                                                                                                                                                                                                                                                                                                              |
-| `<workdir>/supabase/migrations/*.sql`                              | SQL        | native push step, for each pending migration applied                                                                                                                                                                                                                                                                                                                                                                         |
-| seed files from `[db.seed].sql_paths`                              | SQL        | native push step (`--include-seed` is always set; gated on `[db.seed].enabled`)                                                                                                                                                                                                                                                                                                                                              |
-| `<workdir>/supabase/roles.sql`                                     | SQL        | native push step (`--include-roles` is always set; existence check + apply)                                                                                                                                                                                                                                                                                                                                                  |
+| Path                                                               | Format     | When                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ------------------------------------------------------------------ | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `~/.supabase/access-token`                                         | plain text | ensure-login token miss (env unset and keyring unavailable)                                                                                                                                                                                                                                                                                                                                                                        |
+| `<workdir>/.env.example`                                           | dotenv     | optional; merged into the generated `.env`                                                                                                                                                                                                                                                                                                                                                                                         |
+| `<workdir>/supabase/{.env.<env>.local,.env.local,.env.<env>,.env}` | dotenv     | step I (`loadProjectEnvValues`), before config.toml validation and again inside `checkDbToml`; `<env>` is `SUPABASE_ENV` (default `development`), `.env.local` is skipped when `SUPABASE_ENV=test`; first of the 4 files (in this order) to set a key wins, and this `supabase/` directory tier beats the workdir-root tier below — feeds config.toml `env(VAR)` expansion and the push step's `SUPABASE_YES` auto-confirm default |
+| `<workdir>/{.env.<env>.local,.env.local,.env.<env>,.env}`          | dotenv     | same read as above; lower-precedence fallback tier, only consulted for a key none of the `supabase/` directory's 4 files above already set                                                                                                                                                                                                                                                                                         |
+| `<workdir>/supabase/config.toml`                                   | TOML       | native push step (embedded defaults used when absent)                                                                                                                                                                                                                                                                                                                                                                              |
+| `<workdir>/supabase/.temp/pooler-url`                              | plain text | native push step's connection resolution, only when the direct `db.<ref>.<projectHost>:5432` host is unreachable (IPv4-only network) — `resolveLinkedConn` falls back through the saved pooler URL `link.LinkServices` wrote in the earlier link-services step                                                                                                                                                                     |
+| `<workdir>/supabase/migrations/`                                   | directory  | native push step, when `[db.migrations].enabled` (default true)                                                                                                                                                                                                                                                                                                                                                                    |
+| `<workdir>/supabase/migrations/*.sql`                              | SQL        | native push step, for each pending migration applied                                                                                                                                                                                                                                                                                                                                                                               |
+| seed files from `[db.seed].sql_paths`                              | SQL        | native push step (`--include-seed` is always set; gated on `[db.seed].enabled`)                                                                                                                                                                                                                                                                                                                                                    |
+| `<workdir>/supabase/roles.sql`                                     | SQL        | native push step (`--include-roles` is always set; existence check + apply)                                                                                                                                                                                                                                                                                                                                                        |
+| `PGSSL*` PEM, `pg_service.conf`                                    | PEM, libpq | native push step, remote project, when set; see `db push`                                                                                                                                                                                                                                                                                                                                                                          |
 
 ## Files Written
 
-| Path                                                                                                  | Format     | When                                                                                                                                                                |
-| ----------------------------------------------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`                                                                      | TOML       | blank/`scratch` path only (via `initProject`)                                                                                                                       |
-| `<workdir>/<template files>`                                                                          | varies     | template path only (GitHub download)                                                                                                                                |
-| `<workdir>/supabase/.temp/project-ref`                                                                | plain text | always (mandatory; fails the command on write error)                                                                                                                |
-| `<workdir>/supabase/.temp/{pooler-url,rest-version,gotrue-version,storage-version,storage-migration}` | plain text | best-effort, from `link.LinkServices`                                                                                                                               |
-| `<workdir>/.env`                                                                                      | dotenv     | best-effort (write failure prints a warning and continues)                                                                                                          |
-| `<workdir>/supabase/.temp/linked-project.json`                                                        | JSON       | PersistentPostRun linked-project cache (`Effect.ensuring`); resolves against the bootstrap workdir (the prompted/`--workdir`/env target), not `cliSettings.workdir` |
-| `~/.supabase/telemetry.json`                                                                          | JSON       | PersistentPostRun telemetry flush (`Effect.ensuring`)                                                                                                               |
+| Path                                                                                                  | Format     | When                                                                                                                                                       |
+| ----------------------------------------------------------------------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`                                                                      | TOML       | blank/`scratch` path only (via `initProject`)                                                                                                              |
+| `<workdir>/<template files>`                                                                          | varies     | template path only (GitHub download)                                                                                                                       |
+| `<workdir>/supabase/.temp/project-ref`                                                                | plain text | always (mandatory; fails the command on write error)                                                                                                       |
+| `<workdir>/supabase/.temp/{pooler-url,rest-version,gotrue-version,storage-version,storage-migration}` | plain text | best-effort, from `link.LinkServices`                                                                                                                      |
+| `<workdir>/.env`                                                                                      | dotenv     | best-effort (write failure prints a warning and continues)                                                                                                 |
+| `<workdir>/supabase/.temp/linked-project.json`                                                        | JSON       | post-run linked-project cache (`Effect.ensuring`); resolves against the bootstrap workdir (the prompted/`--workdir`/env target), not `cliSettings.workdir` |
+| `~/.supabase/telemetry.json`                                                                          | JSON       | post-run telemetry flush (`Effect.ensuring`)                                                                                                               |
 
 **Process side effect:** `process.chdir(<workdir>)` prints
 `Using workdir <workdir>\n` to stderr (`workdir` bolded on a TTY). The original cwd is restored
@@ -41,16 +44,17 @@ staying in effect.
 
 ## API Routes
 
-| Method          | Path                                                                                      | Auth                           | Notes                                                                                        |
-| --------------- | ----------------------------------------------------------------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------- |
-| `GET`           | `api.github.com/repos/supabase-community/supabase-samples/contents/samples.json?ref=main` | optional `Bearer GITHUB_TOKEN` | base64 `content` → `{samples:[…]}`                                                           |
-| `GET`           | `api.github.com/repos/<owner>/<repo>/contents/<path>?ref=<ref>` + raw `download_url`      | optional `Bearer GITHUB_TOKEN` | template download (BFS, concurrency 5)                                                       |
-| `GET`           | `/v1/organizations`                                                                       | Bearer                         | interactive org picker (create core)                                                         |
-| `POST`          | `/v1/projects`                                                                            | Bearer                         | `{name, organization_slug, db_pass, region?, desired_instance_size?, template_url?}` → `201` |
-| `GET`           | `/v1/projects/{ref}/api-keys`                                                             | Bearer                         | retried with exponential backoff (no `reveal`)                                               |
-| `GET`           | `/v1/projects/{ref}` + storage/pooler config + tenant version probes                      | Bearer / service key           | `link.LinkServices` (best-effort)                                                            |
-| `GET`           | `/v1/projects/{ref}/health?services=db`                                                   | Bearer                         | retried with exponential backoff                                                             |
-| login endpoints | —                                                                                         | —                              | ensure-login browser flow (token miss)                                                       |
+| Method          | Path                                                                                                     | Auth                              | Notes                                                                                |
+| --------------- | -------------------------------------------------------------------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------ |
+| `GET`           | `api.github.com/repos/supabase-community/supabase-samples/contents/samples.json?ref=main`                | optional `Bearer GITHUB_TOKEN`    | base64 `content` → `{samples:[…]}`                                                   |
+| `GET`           | `api.github.com/repos/<owner>/<repo>/contents/<path>?ref=<ref>` + raw `download_url`                     | optional `Bearer GITHUB_TOKEN`    | template download (BFS, concurrency 5)                                               |
+| `GET`           | `/v1/organizations`                                                                                      | Bearer                            | organization listing, always made before the org prompt (bootstrap passes no org ID) |
+| `POST`          | `/v1/projects`                                                                                           | Bearer                            | `{name, organization_slug, db_pass, region, template_url?}` → `201`                  |
+| `GET`           | `/v1/projects/{ref}/api-keys`                                                                            | Bearer                            | retried with exponential backoff (no `reveal`)                                       |
+| `GET`           | `/v1/projects/{ref}/config/storage`, `/v1/projects/{ref}/config/database/pooler` + tenant version probes | Bearer / anon key (tenant probes) | `link.LinkServices` (best-effort)                                                    |
+| `GET`           | `/v1/projects/{ref}`                                                                                     | Bearer                            | linked-project cache fill (`Effect.ensuring`, best-effort)                           |
+| `GET`           | `/v1/projects/{ref}/health?services=db`                                                                  | Bearer                            | retried with exponential backoff                                                     |
+| login endpoints | —                                                                                                        | —                                 | ensure-login browser flow (token miss)                                               |
 
 The native push step fires **no Management API routes of its own**. Its connection is resolved
 separately from (not reused from) the naive one written to `.env` above: `resolveLinkedConn`
@@ -61,29 +65,32 @@ neither branch ever reaches the temp-login-role/Management-API path a passwordle
 
 ## Environment Variables
 
-| Variable                | Purpose                                                                                              | Required? |
-| ----------------------- | ---------------------------------------------------------------------------------------------------- | --------- |
-| `SUPABASE_WORKDIR`      | target dir (`--workdir` flag → env → prompt → cwd)                                                   | no        |
-| `SUPABASE_DB_PASSWORD`  | DB password (`-p` flag → env → prompt/generate)                                                      | no        |
-| `GITHUB_TOKEN`          | raise the GitHub API rate limit for template fetch                                                   | no        |
-| `SUPABASE_ACCESS_TOKEN` | auth bypass for ensure-login                                                                         | no        |
-| `SUPABASE_PROFILE`      | profile name/path (env → `~/.supabase/profile` → `supabase`)                                         | no        |
-| `SUPABASE_YES`          | auto-confirm the native push step's prompts, read project-`.env`-aware like the standalone `db push` | no        |
+| Variable                      | Purpose                                                                                                                                                                                                                | Required? |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `SUPABASE_WORKDIR`            | target dir (`--workdir` flag → env → prompt → cwd)                                                                                                                                                                     | no        |
+| `SUPABASE_DB_PASSWORD`        | DB password (`-p` flag → env → prompt/generate)                                                                                                                                                                        | no        |
+| `GITHUB_TOKEN`                | raise the GitHub API rate limit for template fetch                                                                                                                                                                     | no        |
+| `SUPABASE_ACCESS_TOKEN`       | auth bypass for ensure-login                                                                                                                                                                                           | no        |
+| `SUPABASE_PROFILE`            | profile name/path (env → `~/.supabase/profile` → `supabase`)                                                                                                                                                           | no        |
+| `SUPABASE_YES`                | shell value confirms the hosted-mutation consent and the overwrite prompt; a `SUPABASE_YES` in the project `supabase/.env` does not confirm the consent                                                                | no        |
+| `SUPABASE_EXPERIMENTAL_STACK` | blank/`scratch` path only; when `1`, persists `[experimental] stack = true` and omits Docker-era default ports. Empty is unset; non-boolean values fail closed                                                         | no        |
+| `PG*` libpq                   | native push step, remote-project TLS, timeout, service; see `db push`. An invalid value fails the push step, after project create, link, health poll, and `.env` write; the IPv6-error fallback takes none (see Notes) | no        |
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                                                                                                                                                                                                                          |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `0`  | success                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `1`  | invalid template arg; overwrite declined (`context canceled`); template list/download failure; login failure; create failure; api-keys exhausted; health unhealthy / error status; native push failure (missing local/remote migrations, cancelled confirmation, connect/apply failure); any network failure. The `.env` derive/write is **non-fatal** (prints `Failed to create .env file: <err>` and continues). |
+| Code | Condition                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `1`  | invalid template arg; overwrite declined (`context canceled`); template list/download failure; login failure; create failure; api-keys exhausted; health unhealthy / error status; hosted-mutation consent declined, or required but unavailable (JSON, piped stdin or agent run without `--yes`/shell `SUPABASE_YES`); native push failure (missing local/remote migrations, connect/apply failure); invalid `SUPABASE_EXPERIMENTAL_STACK` on the blank path; any network failure. The `.env` derive/write is **non-fatal** (prints `Failed to create .env file: <err>` and continues). |
 
 ## Telemetry
 
 - `cli_command_executed` — once (via `withCommandTelemetry`).
 - `cli_login_completed` — once, **only** on the browser-login path (token miss).
 - **No `cli_project_linked`** — bootstrap only links services (not a full `link` run), so it
-  deliberately skips the project-linked telemetry, status check, and the `linked-project.json`
-  temp write that the standalone `link` command performs.
+  deliberately skips the project-linked telemetry and the status check that the standalone `link`
+  command performs. Its `linked-project.json` comes only from the post-run cache fill (see Files
+  Written), not from a link step.
 - `create` fires no custom event.
 - The native push step (`dbPushCore`) fires **no telemetry of its own** — it is the bare
   handler function, not `db push`'s own `push.command.ts` wrapper (the thing that fires
@@ -95,9 +102,9 @@ neither branch ever reaches the temp-login-role/Management-API path a passwordle
 ### `--output-format text`
 
 stderr progress: `Using workdir …`, `Created a new project at …`, `Linking project…`,
-`Checking project health…`, the native push step's own progress (`Connecting to remote
-database…`, `Applying migration …`, `Seeding…`, skip/up-to-date notices, confirmation prompts —
-byte-identical to the standalone `db push`, see its own `SIDE_EFFECTS.md`), and the final
+`Checking project health…`, the native push step's own progress (`Applying migration …`, `Seeding…`,
+skip/up-to-date notices, as in the standalone `db push`, see its own `SIDE_EFFECTS.md`; it asks
+no confirmation of its own), and the final
 `To start your app:` suggestion (Aqua command lines). `Downloading: <url>` goes to stdout (text
 mode only). The `create` sub-step also echoes the new project per `-o`
 (`pretty|json|yaml|toml|env`); bootstrap adds no `-o` output of its own. The push step's own
@@ -120,11 +127,32 @@ suppressed; a single structured result is emitted for the whole command:
 }
 ```
 
+## Stack mode
+
+When the new project directory resolves to stack project-state mode (`SUPABASE_EXPERIMENTAL_STACK`
+or its `config.toml`), bootstrap writes `supabase/.link.json` (project ref, name and organization from the create
+response, active branch ref, normalized pooler URL when available), under the project lease
+`supabase/.supabase.lock.lease` that `link` and `unlink` hold, instead of the `supabase/.temp/`
+link files, and the push connection reads the pooler URL from that document. The organization and
+project `groupIdentify` calls fire from bootstrap, since the linked-project cache fill is a no-op
+in this mode. The mode comes from the new project directory and applies to every post-scaffold
+step, including the cache finalizer; an invalid `SUPABASE_EXPERIMENTAL_STACK` fails bootstrap
+before any project is created. A lease that stays busy fails bootstrap with `LockResolutionError`
+reason `lease-busy` and exit code `1`, with no link written. `supabase/.gitignore` gains the lease
+and staged-write entries (`.supabase.lock.lease`, `.supabase.lock.*.tmp`) whenever bootstrap takes
+the project lease. See `link`'s `SIDE_EFFECTS.md` for the format.
+
 ## Notes
 
+- **Hosted-mutation consent.** After the template is chosen and before anything is written, it asks once:
+  `Create a new Supabase project from the "<template>" template?`. Declining stops the command
+  with nothing written. The one confirmation also covers the push into the new project
+  (migrations, roles, seed, vault), so the native push step asks nothing further and every
+  retry reuses it.
 - **Native migration push, sharing `db push`'s own core (CLI-1953).** The push step calls
   `dbPushCore` — the same handler `db push`'s own command extracts its business logic into
-  — directly with `{ includeAll: false, includeRoles: true, includeSeed: true, dryRun: false }`.
+  — directly with `{ includeAll: false, includeRoles: true, includeSeed: true, includeVault: true,
+dryRun: false }` and the consent above as its `preapproved` proof.
   Bootstrap never re-resolves the project ref for push: the earlier `create` step already
   resolved it, and it's reused as-is (passed as a plain value, never re-derived via
   `ProjectRefResolver`, which keys off `CommandSettings.workdir`, stale after this handler's
@@ -151,13 +179,14 @@ suppressed; a single structured result is emitted for the whole command:
   its best-effort direct-host config rather than aborting — falling back to the same direct-host
   shape already computed for `.env` (step K's `dbConfig`) so the retry-wrapped push below still
   gets real reconnect attempts across the backoff window instead of failing bootstrap immediately.
+  That fallback config takes no `PG*` libpq setting, so it neither applies nor validates them.
 - **Password**: bootstrap never forwards a password to its internal push call on a separate
   channel — it always reuses the create-resolved password (`created.dbPassword`). There is no
   flag-vs-env distinction to preserve once the call is in-process (unlike the former subprocess
   delegation, CLI-1617, which had to route the resolved password across process boundaries).
-- **Retry**: the native push step is wrapped in the same `bootstrapRetryNotify()` +
+- **Retry**: the native push step is wrapped in the same `bootstrapRetryNotify` +
   `Effect.retry(retry)` policy as the api-keys and health-poll steps. A retried attempt re-runs
-  the whole push (connect, list pending migrations/seeds/roles, prompt, apply).
+  the whole push (connect, list pending migrations/seeds/roles, apply).
 - The api-keys, health, and push retries use the same backoff policy:
   exponential backoff, 3s initial interval, multiplier 1.5, 60s max interval (capped before
   jitter), ±50% jitter (randomization factor 0.5), 15m max-elapsed cap, and 8 retries (9 total

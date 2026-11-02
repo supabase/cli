@@ -1,18 +1,18 @@
-import { Effect, Exit } from "effect";
+import { Result } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { formatCnameCause, parseFirstCname } from "./domains.cname.ts";
 
 describe("parseFirstCname", () => {
   it("returns the data of the first CNAME answer", () => {
-    const result = Effect.runSync(
+    const result = Result.getOrThrow(
       parseFirstCname({ Answer: [{ type: 5, data: "foo.supabase.co." }] }, "foo.example.com"),
     );
     expect(result).toBe("foo.supabase.co.");
   });
 
   it("skips non-CNAME answers and returns the first CNAME", () => {
-    const result = Effect.runSync(
+    const result = Result.getOrThrow(
       parseFirstCname(
         {
           Answer: [
@@ -27,15 +27,13 @@ describe("parseFirstCname", () => {
   });
 
   it("ignores a CNAME answer whose data is not a string", () => {
-    const exit = Effect.runSyncExit(
-      parseFirstCname({ Answer: [{ type: 5, data: 123 }] }, "foo.example.com"),
-    );
-    expect(Exit.isFailure(exit)).toBe(true);
+    const result = parseFirstCname({ Answer: [{ type: 5, data: 123 }] }, "foo.example.com");
+    expect(Result.isFailure(result)).toBe(true);
   });
 
   it("fails with a non-transport locate failure when no CNAME answer is present", () => {
-    const failure = Effect.runSync(
-      Effect.flip(parseFirstCname({ Answer: [{ type: 1, data: "1.2.3.4" }] }, "host.example.com")),
+    const failure = Result.getOrThrow(
+      Result.flip(parseFirstCname({ Answer: [{ type: 1, data: "1.2.3.4" }] }, "host.example.com")),
     );
     expect(failure.transport).toBe(false);
     expect(failure.detail).toContain(
@@ -44,13 +42,11 @@ describe("parseFirstCname", () => {
   });
 
   it("treats a payload without an Answer array as no records", () => {
-    const exit = Effect.runSyncExit(parseFirstCname({}, "host.example.com"));
-    expect(Exit.isFailure(exit)).toBe(true);
+    expect(Result.isFailure(parseFirstCname({}, "host.example.com"))).toBe(true);
   });
 
   it("treats a non-object payload as no records", () => {
-    const exit = Effect.runSyncExit(parseFirstCname("not-json", "host.example.com"));
-    expect(Exit.isFailure(exit)).toBe(true);
+    expect(Result.isFailure(parseFirstCname("not-json", "host.example.com"))).toBe(true);
   });
 });
 

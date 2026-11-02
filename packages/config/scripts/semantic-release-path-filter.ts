@@ -1,33 +1,29 @@
 /**
  * An in-repo replacement for the unmaintained `semantic-release-monorepo`
- * wrapper (CLI-2233). This repo runs `@supabase/config`'s release from the
- * monorepo root's git history: without filtering, a `fix:` commit anywhere
- * in `apps/cli` (or any other workspace) would be analyzed as if it touched
- * `packages/config/` and falsely trigger a config release.
+ * wrapper. This repo runs `@supabase/config`'s release from the monorepo
+ * root's git history: without filtering, a `fix:` commit anywhere else in the
+ * repo would be analyzed as if it touched `packages/config/` and falsely
+ * trigger a release.
  *
- * {@link filterCommitsToPackage} narrows `context.commits` down to the ones
- * whose diff actually touches a path under {@link PACKAGE_PATH_PREFIX};
- * {@link analyzeCommits}/{@link generateNotes} apply that filter and then
- * delegate to the real `@semantic-release/commit-analyzer` and
- * `@semantic-release/release-notes-generator` plugins, so this package still
- * gets the standard Angular commit-analysis and changelog rendering — just
- * scoped to its own history.
+ * {@link filterCommitsToPackage} narrows `context.commits` to the ones whose
+ * diff touches a path under {@link PACKAGE_PATH_PREFIX}; {@link analyzeCommits}/
+ * {@link generateNotes} apply that filter and delegate to the real
+ * commit-analyzer/release-notes-generator plugins, so this package still gets
+ * standard Angular commit analysis, just scoped to its own history.
  */
 
+import { Data, Effect } from "effect";
 import process from "node:process";
 
 import type { AnalyzeCommitsContext, GenerateNotesContext } from "semantic-release";
 
 /**
  * `@semantic-release/commit-analyzer` and `@semantic-release/release-notes-generator`
- * ship no `.d.ts` of their own (only `semantic-release` itself does), and
- * TypeScript refuses a `declare module` augmentation for a specifier that
- * already resolves to a real, untyped file (TS2665) from anywhere but a
- * genuinely global, import/export-free `.d.ts` — not an option for a
- * single-file plugin. `require()`'s return type is an explicit `any` (not an
- * implicit one, so this doesn't trip `noImplicitAny`), and its result is
- * narrowed into these two locally declared structural interfaces via typed
- * `const` bindings immediately below — no `any`/`as` leaks past that point.
+ * ship no `.d.ts` of their own, and TypeScript refuses a `declare module`
+ * augmentation for an already-resolved untyped specifier (TS2665) from anywhere
+ * but a global, import/export-free `.d.ts` — not an option here. `require()`'s
+ * return is an explicit `any`, narrowed into these two structural interfaces via
+ * typed `const` bindings below, so no `any`/`as` leaks past this point.
  */
 type PluginConfig = Record<string, unknown>;
 
@@ -50,102 +46,131 @@ const releaseNotesGenerator: ReleaseNotesGeneratorPlugin = require("@semantic-re
 
 export const PACKAGE_PATH_PREFIX = "packages/config/";
 
+class GitDiffTreeStdinError extends Data.TaggedError("GitDiffTreeStdinError")<{
+  readonly cause: unknown;
+}> {}
+
 /**
- * Resolves which of `commits` touch a path under {@link PACKAGE_PATH_PREFIX},
- * using ONE batched `git diff-tree --stdin -r --root --name-only -z`
- * subprocess rather than one per commit — the first release analyzes the
- * repo's entire history (thousands of commits).
- *
- * Output format (verified empirically against this repo, including a merge
- * commit): with `-z`, every element — each echoed input hash and each of its
- * changed paths (repo-root-relative) — is NUL-terminated, with no other
- * separators. `-z` matters for correctness, not just parsing convenience:
- * without it, `core.quotePath` (default true) C-quotes any path with
- * non-ASCII or special bytes (`"packages/config/caf\303\251.ts"`), which
- * would silently fail the prefix match and drop a genuinely releasable
- * commit. A merge commit prints nothing at all here (no hash, no paths)
- * because `-m` is deliberately omitted: this trunk is squash-merged, so a
- * merge commit carries no analyzable change of its own, and dropping it out
- * of the result is intended, not a parsing gap. A root commit would print
- * nothing too — `--root` closes that gap by diffing it against the empty
- * tree (merge behavior is unaffected).
+ * Resolves which of `commits` touch a path under {@link PACKAGE_PATH_PREFIX}
+ * using one batched `git diff-tree --stdin -r --root --name-only -z`
+ * subprocess, since the first release analyzes the repo's entire history. With
+ * `-z`, every echoed hash and changed path is NUL-terminated with no other
+ * separators, avoiding `core.quotePath`'s C-quoting of non-ASCII paths (which
+ * would silently break the prefix match). A merge commit prints nothing since
+ * `-m` is omitted for this squash-merged trunk, so it's correctly excluded
+ * rather than mis-parsed; `--root` makes a root commit diff against the empty
+ * tree instead of also printing nothing.
  */
-export async function filterCommitsToPackage<T extends { hash: string }>(
+export function filterCommitsToPackage<T extends { hash: string }>(
   commits: readonly T[],
   cwd: string,
 ): Promise<T[]> {
-  if (commits.length === 0) {
-    return [];
-  }
-
-  const hashes = commits.map((commit) => commit.hash);
-  // `git diff-tree --stdin` echoes each commit's FULL object ID, and the
-  // header recognition below matches echoed elements against the input set —
-  // an abbreviated input hash would never match its own echo, silently
-  // dropping that commit's paths (a missed release, not an error). Refuse
-  // anything but full OIDs up front. (semantic-release always supplies full
-  // hashes; this guards other callers.)
-  const invalidHashes = hashes.filter((hash) => !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(hash));
-  if (invalidHashes.length > 0) {
-    throw new Error(
-      `filterCommitsToPackage requires full lowercase hex object IDs; got: ${invalidHashes
-        .slice(0, 3)
-        .join(", ")}${invalidHashes.length > 3 ? ", …" : ""}`,
-    );
-  }
-  const knownHashes = new Set(hashes);
-
-  const proc = Bun.spawn(["git", "diff-tree", "--stdin", "-r", "--root", "--name-only", "-z"], {
-    cwd,
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  // Start draining stdout/stderr before writing stdin: Bun buffers subprocess
-  // output eagerly so this can't deadlock today, but the classic full-pipe
-  // deadlock (git blocked writing stdout while we're blocked writing stdin)
-  // is one runtime port away — don't rely on the buffering behavior.
-  const stdoutText = new Response(proc.stdout).text();
-  const stderrText = new Response(proc.stderr).text();
-  await proc.stdin.write(`${hashes.join("\n")}\n`);
-  await proc.stdin.end();
-
-  const [exitCode, stdout, stderr] = await Promise.all([proc.exited, stdoutText, stderrText]);
-  if (exitCode !== 0) {
-    throw new Error(`git diff-tree --stdin failed with exit code ${exitCode}: ${stderr.trim()}`);
-  }
-
-  const touchedHashes = new Set<string>();
-  let currentHash: string | null = null;
-  for (const element of stdout.split("\0")) {
-    if (element.length === 0) {
-      continue;
-    }
-    if (knownHashes.has(element)) {
-      currentHash = element;
-      continue;
-    }
-    if (currentHash !== null && element.startsWith(PACKAGE_PATH_PREFIX)) {
-      touchedHashes.add(currentHash);
-    }
-  }
-
-  return commits.filter((commit) => touchedHashes.has(commit.hash));
+  return Effect.runPromise(filterCommitsToPackageEffect(commits, cwd));
 }
 
-async function withFilteredCommits<C extends AnalyzeCommitsContext | GenerateNotesContext, R>(
+function filterCommitsToPackageEffect<T extends { hash: string }>(
+  commits: readonly T[],
+  cwd: string,
+) {
+  return Effect.gen(function* () {
+    if (commits.length === 0) {
+      return [];
+    }
+
+    const hashes = commits.map((commit) => commit.hash);
+    // `git diff-tree --stdin` echoes each commit's full object ID, and the header
+    // recognition below matches echoed elements against the input set; an
+    // abbreviated hash would never match its own echo, silently dropping that
+    // commit's paths. Refuse anything but full OIDs up front — semantic-release
+    // always supplies them, this guards other callers.
+    const invalidHashes = hashes.filter((hash) => !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(hash));
+    if (invalidHashes.length > 0) {
+      return yield* Effect.die(
+        new Error(
+          `filterCommitsToPackage requires full lowercase hex object IDs; got: ${invalidHashes
+            .slice(0, 3)
+            .join(", ")}${invalidHashes.length > 3 ? ", …" : ""}`,
+        ),
+      );
+    }
+    const knownHashes = new Set(hashes);
+
+    const proc = Bun.spawn(["git", "diff-tree", "--stdin", "-r", "--root", "--name-only", "-z"], {
+      cwd,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // Starts draining stdout/stderr before writing stdin: Bun buffers subprocess
+    // output eagerly so this can't deadlock today, but a future runtime change
+    // could reintroduce the classic full-pipe deadlock, so don't rely on that.
+    const stdoutText = new Response(proc.stdout).text();
+    const stderrText = new Response(proc.stderr).text();
+    yield* Effect.tryPromise({
+      try: () => Promise.resolve(proc.stdin.write(`${hashes.join("\n")}\n`)),
+      catch: (cause) => new GitDiffTreeStdinError({ cause }),
+    }).pipe(
+      Effect.andThen(
+        Effect.tryPromise({
+          try: () => Promise.resolve(proc.stdin.end()),
+          catch: (cause) => new GitDiffTreeStdinError({ cause }),
+        }),
+      ),
+      Effect.catchTag("GitDiffTreeStdinError", ({ cause: error }) =>
+        error instanceof Error && "code" in error && error.code === "EPIPE"
+          ? Effect.void
+          : Effect.die(error),
+      ),
+    );
+
+    const [exitCode, stdout, stderr] = yield* Effect.promise(() =>
+      Promise.all([proc.exited, stdoutText, stderrText]),
+    );
+    if (exitCode !== 0) {
+      return yield* Effect.die(
+        new Error(`git diff-tree --stdin failed with exit code ${exitCode}: ${stderr.trim()}`),
+      );
+    }
+
+    const touchedHashes = new Set<string>();
+    let currentHash: string | null = null;
+    for (const element of stdout.split("\0")) {
+      if (element.length === 0) {
+        continue;
+      }
+      if (knownHashes.has(element)) {
+        currentHash = element;
+        continue;
+      }
+      if (currentHash !== null && element.startsWith(PACKAGE_PATH_PREFIX)) {
+        touchedHashes.add(currentHash);
+      }
+    }
+
+    return commits.filter((commit) => touchedHashes.has(commit.hash));
+  });
+}
+
+function withFilteredCommits<C extends AnalyzeCommitsContext | GenerateNotesContext, R>(
   context: C,
   step: string,
   delegate: (filteredContext: C) => Promise<R>,
 ): Promise<R> {
-  const filtered = await filterCommitsToPackage(context.commits, context.cwd ?? process.cwd());
-  context.logger.log(
-    `${step}: ${filtered.length} of ${context.commits.length} commits touch ${PACKAGE_PATH_PREFIX}`,
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      const filtered = yield* filterCommitsToPackageEffect(
+        context.commits,
+        context.cwd ?? process.cwd(),
+      );
+      context.logger.log(
+        `${step}: ${filtered.length} of ${context.commits.length} commits touch ${PACKAGE_PATH_PREFIX}`,
+      );
+      return yield* Effect.promise(() => delegate({ ...context, commits: filtered }));
+    }),
   );
-  return delegate({ ...context, commits: filtered });
 }
 
-export async function analyzeCommits(
+export function analyzeCommits(
   pluginConfig: PluginConfig,
   context: AnalyzeCommitsContext,
 ): Promise<string | null> {
@@ -154,7 +179,7 @@ export async function analyzeCommits(
   );
 }
 
-export async function generateNotes(
+export function generateNotes(
   pluginConfig: PluginConfig,
   context: GenerateNotesContext,
 ): Promise<string> {

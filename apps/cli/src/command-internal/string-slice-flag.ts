@@ -6,17 +6,14 @@ import {
 } from "../shared/telemetry/error-actionability.ts";
 
 /**
- * Parses a pflag `StringSliceVar` flag: CSV-splits each occurrence via
- * `encoding/csv` and accumulates across repeats, matching `readAsCSV` in
- * `github.com/spf13/pflag/string_slice.go`'s `stringSliceValue.Set`. A naive
- * `.split(",")` diverges on quoted/embedded commas (`'"a,b",c'`). Effect V4
- * CLI has no CSV/list primitive, so every Go `StringSliceVar` flag ported to
- * the CLI needs this (e.g. `--domains`, `--config`).
+ * Parses a repeatable string-slice flag: CSV-splits each occurrence
+ * and accumulates across repeats. A naive `.split(",")`
+ * diverges on quoted/embedded commas (e.g. `'"a,b",c'`).
  *
- * Whitespace is NOT trimmed and empty fields are NOT dropped: Go's csv.Reader
- * returns raw field values; pflag appends them directly to the slice.
+ * Whitespace is not trimmed and empty fields are not dropped.
  */
-import { Flag } from "effect/unstable/cli";
+import { Data } from "effect";
+import { Flag } from "effect/cli";
 
 const QUOTE = 0x22; // "
 const COMMA = 0x2c; // ,
@@ -25,28 +22,26 @@ const CR = 0x0d; // \r
 
 const EMPTY = new Uint8Array(0);
 
-/** Go `encoding/csv` `lengthNL`: number of bytes for the trailing `\n`. */
+/** Number of bytes for the trailing `\n`, if any. */
 const lengthNL = (b: Uint8Array): number => (b.length > 0 && b[b.length - 1] === LF ? 1 : 0);
 
 /**
  * Thrown by `parseStringSliceFlag` when a value is not valid CSV.
  *
- * `message` reproduces Go's error string byte-for-byte:
- * - `csv.ParseError.Error()` for malformed CSV (with the
- * `record on line %d; ` prefix when the record starts on an earlier
- * physical line than the error — `encoding/csv/reader.go`), or
- * - the literal `EOF` when the value contains only blank lines (pflag's
- * `readAsCSV` propagates `csv.Reader.Read`'s `io.EOF` unchanged).
+ * `message` is either a `parse error on line N, column N: <detail>` string
+ * (with a `record on line N; ` prefix when the record started on an earlier
+ * line), or the literal `EOF` when the value is only blank lines.
  */
-export class StringSliceFlagParseError extends Error {
-  static readonly [ErrorActionabilityFingerprintId] = "StringSliceFlagParseError";
+export class StringSliceFlagParseError extends Data.Error<{
   readonly value: string;
+  readonly message: string;
+}> {
+  static readonly [ErrorActionabilityFingerprintId] = "StringSliceFlagParseError";
+  override readonly name = "StringSliceFlagParseError";
   private constructor(value: string, message: string) {
-    super(message);
-    this.name = "StringSliceFlagParseError";
-    this.value = value;
+    super({ value, message });
   }
-  /** Mirrors Go `csv.ParseError.Error()`. Line/column are 1-based; column is a byte offset within the physical line. */
+  /** Line/column are 1-based; column is a byte offset within the physical line. */
   static parse(
     value: string,
     startLine: number,
@@ -60,7 +55,7 @@ export class StringSliceFlagParseError extends Error {
       startLine !== line ? `record on line ${startLine}; ${location}` : location,
     );
   }
-  /** Mirrors pflag propagating `io.EOF` (value is nothing but blank lines). */
+  /** Value is nothing but blank lines. */
   static eof(value: string): StringSliceFlagParseError {
     return new StringSliceFlagParseError(value, "EOF");
   }
@@ -71,45 +66,21 @@ export class StringSliceFlagParseError extends Error {
 }
 
 /**
- * Parses one CSV record from `val`, a byte-faithful port of a single
- * `csv.Reader.Read()` with `NewReader` defaults (comma delimiter, no
- * comments, `LazyQuotes`/`TrimLeadingSpace` off) — the exact call pflag's
- * `readAsCSV` makes (`string_slice.go`). Ported from `readRecord`/`readLine`
- * in `encoding/csv/reader.go`; verified against the real Go CLI,
- * including multiline and multibyte values.
- *
- * Semantics that only show up with `\r`/`\n` in the value (all Go-observed):
- * - **Only the first record is read.** An unquoted newline ends the record
- * and everything after it is silently dropped (`1.2.3.4\n5.6.7.8` →
- * `["1.2.3.4"]`), because pflag calls `Read()` once.
- * - Blank lines before the record are skipped; a value that is *only* blank
- * lines makes `Read()` return `io.EOF`, which pflag surfaces as the error
- * `EOF`.
- * - `\r\n` is normalized to `\n` (so a quoted multiline field keeps `\n`,
- * not `\r\n`); a lone `\r` is kept, except a trailing `\r` at EOF, which
- * is dropped.
- * - Parse errors report 1-based physical line numbers and 1-based **byte**
- * columns within that line, with a `record on line N; ` prefix when the
- * record started on an earlier line.
- *
- * **Throws `StringSliceFlagParseError`** on the malformed-CSV
- * conditions `csv.Reader` rejects:
- * - Quoted field with no closing quote (`"tenant`) → "extraneous or missing \" in quoted-field" (column = one past the last byte, Go hits EOF)
- * - Extra non-comma bytes after a closing quote (`"a"b`) → "extraneous or missing \" in quoted-field" (column = the closing quote)
- * - A bare `"` inside an unquoted field (`a"b`) → "bare \" in non-quoted-field" (column = the bare quote)
+ * Parses one CSV record from `val`. Only the first record is read — an unquoted
+ * newline ends it and the rest is dropped. Blank lines before the record are
+ * skipped; blank-only input throws `EOF`. `\r\n` normalizes to `\n`, and
+ * parse errors report 1-based line/byte-column positions.
  */
 function readAsCSVStrict(val: string): string[] {
   if (val === "") return [];
-  // Go's csv.Reader works on bytes; ASCII delimiters (`"`, `,`, `\r`, `\n`)
-  // never appear inside multibyte UTF-8 sequences, so byte scanning is exact
-  // and columns come out in bytes for free.
+  // ASCII delimiters never appear inside multibyte UTF-8 sequences, so byte
+  // scanning is exact and columns come out in bytes for free.
   const input = new TextEncoder().encode(val);
   let offset = 0;
   let numLine = 0;
 
-  // Port of `readLine`: returns one line INCLUDING its trailing `\n`, with
-  // `\r\n` normalized to `\n` and a trailing `\r` before EOF dropped.
-  // Returns null for `io.EOF` (nothing left to read).
+  // Returns one line including its trailing `\n`, with `\r\n` normalized to
+  // `\n` and a trailing `\r` before EOF dropped. Returns null at EOF.
   const readLine = (): Uint8Array | null => {
     if (offset >= input.length) return null;
     const nl = input.indexOf(LF, offset);
@@ -120,14 +91,14 @@ function readAsCSVStrict(val: string): string[] {
     } else {
       line = input.subarray(offset);
       offset = input.length;
-      // For backwards compatibility, Go drops a trailing \r before EOF.
+      // A trailing \r before EOF is dropped.
       if (line.length > 0 && line[line.length - 1] === CR) {
         line = line.subarray(0, line.length - 1);
       }
     }
     numLine++;
-    // Normalize \r\n to \n on all input lines. Mutating is safe: `input` is
-    // our own copy and these bytes are never re-read.
+    // Normalize \r\n to \n. Mutating is safe: `input` is our own copy and
+    // these bytes are never re-read.
     const n = line.length;
     if (n >= 2 && line[n - 2] === CR && line[n - 1] === LF) {
       line[n - 2] = LF;
@@ -136,8 +107,8 @@ function readAsCSVStrict(val: string): string[] {
     return line;
   };
 
-  // Read the record's first line, skipping past blank lines (Go's
-  // `readRecord` empty-line loop). EOF here is pflag's `EOF` error.
+  // Read the record's first line, skipping past blank lines. EOF here
+  // throws the `EOF` error.
   let line: Uint8Array;
   for (;;) {
     const next = readLine();
@@ -147,7 +118,6 @@ function readAsCSVStrict(val: string): string[] {
     break;
   }
 
-  // Port of `readRecord`'s parseField loop (LazyQuotes/TrimLeadingSpace off).
   const recLine = numLine; // Starting line for record
   const pos = { line: numLine, col: 1 };
   const recordBuffer: number[] = [];
@@ -204,13 +174,11 @@ function readAsCSVStrict(val: string): string[] {
             fieldIndexes.push(recordBuffer.length);
             continue parseField;
           } else if (lengthNL(line) === line.length) {
-            // `"\n` sequence (end of line — pflag reads ONE record, so any
-            // remaining input is dropped).
+            // `"\n` sequence: end of line; remaining input is dropped (only one record is read).
             fieldIndexes.push(recordBuffer.length);
             break parseField;
           } else {
-            // `"*` sequence (invalid non-escaped quote). Go reports the byte
-            // position of the closing quote itself (`pos.col - quoteLen`).
+            // `"*` sequence: invalid non-escaped quote; reports the byte position of the closing quote.
             throw StringSliceFlagParseError.parse(
               val,
               recLine,
@@ -220,8 +188,8 @@ function readAsCSVStrict(val: string): string[] {
             );
           }
         } else if (line.length > 0) {
-          // Hit end of line (copy all data so far, INCLUDING the `\n` — this
-          // is how a quoted multiline field keeps its newline).
+          // Hit end of line: copy all data so far, including the `\n`, since a
+          // quoted multiline field keeps its newline.
           append(line);
           pos.col += line.length;
           const next = readLine();
@@ -245,7 +213,6 @@ function readAsCSVStrict(val: string): string[] {
     }
   }
 
-  // Create the field strings out of the accumulated record bytes.
   const record = new Uint8Array(recordBuffer);
   const decoder = new TextDecoder();
   const fields: string[] = [];
@@ -258,18 +225,12 @@ function readAsCSVStrict(val: string): string[] {
 }
 
 /**
- * CSV-parses and flattens all raw occurrences of a repeated pflag `StringSlice` flag.
+ * CSV-parses and flattens all raw occurrences of a repeated `StringSlice`
+ * flag. Throws `StringSliceFlagParseError` on the first malformed value,
+ * failing the command before it runs.
  *
- * **Throws `StringSliceFlagParseError`** on the first malformed value, matching
- * Go's pflag parse-time behaviour where a bad value fails the command before it
- * runs (Go: `invalid argument "..." for "--<flag>" flag: parse error ...`).
- *
- * Valid behaviour:
- * - `"tenant,one"` → `["tenant,one"]` (quoted comma stays one field)
- * - `public,private` → `["public", "private"]`
- * - no trimming, `""` escapes a literal quote inside a quoted field
- * - empty string → no field; a value with an unquoted newline keeps only
- * the first line's record (pflag reads a single CSV record)
+ * Quoted commas stay in one field (`"tenant,one"` → `["tenant,one"]`);
+ * whitespace is not trimmed; an unquoted newline keeps only the first line.
  */
 export function parseStringSliceFlag(rawValues: ReadonlyArray<string>): ReadonlyArray<string> {
   const values: string[] = [];
@@ -282,26 +243,12 @@ export function parseStringSliceFlag(rawValues: ReadonlyArray<string>): Readonly
 }
 
 /**
- * Builds a flag that ports a pflag `StringSliceVar`/`StringSliceVarP`:
- * repeatable, CSV-split per occurrence, accumulated across repeats.
+ * Builds a repeatable CSV-split flag, including its `invalid argument "<value>" for "<flag>" flag: <reason>`
+ * diagnostic.
  *
- * On malformed CSV it fails at parse time — matching pflag's
- * `readAsCSV` error aborting flag parsing before the `--experimental` gate,
- * telemetry, and the handler — with
- * pflag's exact diagnostic: `invalid argument %q for %q flag: %v`.
- * The full established message is emitted as the failure's `expected` text so the
- * renderer's pflag passthrough (`formatInvalidValueMessage`) prints it
- * verbatim, byte-matching the established stderr line. `JSON.stringify` mirrors
- * `%q` for the ASCII/printable-Unicode values these flags carry —
- * including `\n`/`\r` escapes in multiline values (same precedent as
- * `sso.format.ts`).
- *
- * `options.alias` ports the `StringSliceVarP` shorthand (e.g. `start`'s
- * `-x`). pflag then frames the diagnostic with BOTH spellings — `invalid
- * argument %q for "-x, --exclude" flag: ...` (branches on
- * `flag.Shorthand`) — regardless of which one the user typed, so the alias
- * must be registered here (not piped on afterwards) for the framing to
- * stay byte-identical.
+ * `options.alias` must be registered here, not piped on afterwards: the
+ * diagnostic frames both spellings (`-x, --exclude`), so the alias must be
+ * present when the error message is built.
  */
 export function stringSliceFlag(
   name: string,
@@ -309,14 +256,14 @@ export function stringSliceFlag(
   options?: { readonly alias?: string },
 ) {
   const alias = options?.alias;
-  const pflagName = alias === undefined ? `--${name}` : `-${alias}, --${name}`;
-  const base = Flag.string(name).pipe(Flag.withDescription(description), Flag.atLeast(0));
+  const flagLabel = alias === undefined ? `--${name}` : `-${alias}, --${name}`;
+  const base = Flag.String(name).pipe(Flag.withDescription(description), Flag.atLeast(0));
   return (alias === undefined ? base : base.pipe(Flag.withAlias(alias))).pipe(
     Flag.mapTryCatch(
       (rawValues) => parseStringSliceFlag(rawValues),
       (err) =>
         err instanceof StringSliceFlagParseError
-          ? `invalid argument ${JSON.stringify(err.value)} for "${pflagName}" flag: ${err.message}`
+          ? `invalid argument ${JSON.stringify(err.value)} for "${flagLabel}" flag: ${err.message}`
           : err instanceof Error
             ? err.message
             : String(err),

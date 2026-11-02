@@ -2,7 +2,12 @@ import type { ConfigChangeSet } from "@supabase/config";
 import { describe, expect, test } from "vitest";
 
 import { configApiScope, configScopeLine } from "../config.format.ts";
-import { configDiffSummaryMessage, renderConfigDiffText } from "./diff.format.ts";
+import {
+  CONFIG_DIFF_PAYLOAD_VERSION,
+  configDiffPayload,
+  configDiffSummaryMessage,
+  renderConfigDiffText,
+} from "./diff.format.ts";
 
 const EMPTY_CHANGE_SET: ConfigChangeSet = {
   changes: [],
@@ -14,10 +19,6 @@ const EMPTY_CHANGE_SET: ConfigChangeSet = {
 
 describe("configApiScope", () => {
   test("lists record blocks the response carried, dropping non-records and empty records", () => {
-    // An EMPTY block record is how a permission-truncated response most
-    // plausibly reports a block it could not read — claiming it was
-    // "compared" while all its keys render (not returned) would be false,
-    // and with --exit-code that is a permanently red CI no file edit fixes.
     expect(
       configApiScope({
         api: { max_rows: 5 },
@@ -57,10 +58,6 @@ describe("configScopeLine", () => {
 
 describe("configDiffSummaryMessage", () => {
   test("a missing block's caveat travels with the summary message, not just the text renderer", () => {
-    // Mirrors the hazard documented above: a partial API response (e.g. a
-    // scoped token returning `auth: {}`) must not report an unqualified "No
-    // config differences found." in machine `.message` — an agent echoing
-    // just `.message` would otherwise wrongly claim a full comparison.
     expect(
       configDiffSummaryMessage(EMPTY_CHANGE_SET, { present: ["api"], missing: ["auth"] }),
     ).toBe(
@@ -98,11 +95,8 @@ describe("configDiffSummaryMessage", () => {
 });
 
 describe("renderConfigDiffText", () => {
-  // Pins the exact byte shape once the per-change loop moved to
-  // `configRenderChangeLines` (`../config.format.ts`, shared with
-  // `config push`): one blank line between change blocks, one blank line
-  // between the last change block and the counts line, no blank line before
-  // the `Note:` lines.
+  // `configRenderChangeLines` (../config.format.ts) is shared with `config push`; its blank-line
+  // spacing between change blocks, the counts line, and the `Note:` lines must match here exactly.
   test("byte-identical after the per-change renderer moved to config.format.ts", () => {
     const changeSet: ConfigChangeSet = {
       changes: [
@@ -135,6 +129,36 @@ describe("renderConfigDiffText", () => {
     );
   });
 
+  test("a declared email provider disable appends its warning after the Note lines", () => {
+    const changeSet: ConfigChangeSet = {
+      changes: [
+        {
+          path: ["auth", "email", "enable_signup"],
+          class: "update",
+          declared: true,
+          local: false,
+          remote: true,
+        },
+      ],
+      masked: [["auth", "external", "github", "secret"]],
+      unmanaged: [["auth", "oauth_server", "enabled"]],
+      counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
+      absencePolicy: "absent-is-hands-off",
+    };
+    const text = renderConfigDiffText(changeSet, { present: ["auth"], missing: [] });
+    expect(text.endsWith("\n")).toBe(true);
+    expect(text.trimEnd().split("\n")).toEqual([
+      "auth.email.enable_signup [update]",
+      "  local:  false",
+      "  remote: true",
+      "",
+      "1 difference found (1 update, 0 remote-only, 0 local-only).",
+      "Note: 1 credential value not compared (masked by the API): auth.external.github.secret",
+      "Note: 1 declared property is not part of the current comparison and was not compared: auth.oauth_server.enabled",
+      expect.stringMatching(/^Warning: auth\.email\.enabled = false turns off the email provider/),
+    ]);
+  });
+
   test("no differences renders the empty-state line with no leading blank", () => {
     expect(
       renderConfigDiffText(
@@ -148,5 +172,54 @@ describe("renderConfigDiffText", () => {
         { present: ["api"], missing: [] },
       ),
     ).toBe("No config differences found.\n");
+  });
+});
+
+describe("configDiffPayload", () => {
+  test("a provider disable change adds no warning field to the machine payload", () => {
+    const changeSet: ConfigChangeSet = {
+      changes: [
+        {
+          path: ["auth", "email", "enable_signup"],
+          class: "update",
+          declared: true,
+          local: false,
+          remote: true,
+        },
+      ],
+      masked: [],
+      unmanaged: [],
+      counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
+      absencePolicy: "absent-is-hands-off",
+    };
+    expect(
+      configDiffPayload(
+        changeSet,
+        { present: ["auth"], missing: [] },
+        {
+          projectRef: "abcdefghijklmnopqrst",
+          branch: undefined,
+          appliedRemote: undefined,
+          configSchema: "https://supabase.com/schemas/config/v1.json",
+        },
+      ),
+    ).toEqual({
+      schema_version: CONFIG_DIFF_PAYLOAD_VERSION,
+      config_schema: "https://supabase.com/schemas/config/v1.json",
+      target: { project_ref: "abcdefghijklmnopqrst", local_scope: "base" },
+      scope: { present: ["auth"], missing: [] },
+      changes: [
+        {
+          path: ["auth", "email", "enable_signup"],
+          class: "update",
+          declared: true,
+          local: false,
+          remote: true,
+        },
+      ],
+      masked: [],
+      unmanaged: [],
+      counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
+    });
   });
 });

@@ -1,4 +1,4 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { vanitySubdomainsActivateCommand } from "./activate/activate.command.ts";
 import { vanitySubdomainsCheckAvailabilityCommand } from "./check-availability/check-availability.command.ts";
 import { vanitySubdomainsDeleteCommand } from "./delete/delete.command.ts";

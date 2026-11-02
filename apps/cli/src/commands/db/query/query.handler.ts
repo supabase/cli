@@ -1,29 +1,44 @@
-import { Effect, FileSystem, Option, Path, Redacted } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import { operationDefinitions } from "@supabase/api/effect";
+import { DateTime, Effect, FileSystem, Option, Path, Predicate, Ref, Schema } from "effect";
+import * as HttpClientError from "effect/http/HttpClientError";
 
+import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { CommandCredentials } from "../../../auth/command-credentials.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { TelemetryOutputFormat } from "../../../telemetry/telemetry-output-format.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
+import type {
+  ResolvedDbConfig,
+  ResolvedDbConnection,
+} from "../../../command-internal/db-config.types.ts";
+import {
+  sanitizeErrorBody,
+  unexpectedStatusMessage,
+} from "../../../command-internal/http-errors.ts";
+import { DbConnection, type DbSession } from "../../../command-internal/db-connection.service.ts";
 import { AgentFlag, DnsResolverFlag, OutputFlag } from "../../../command-internal/global-flags.ts";
+import {
+  hostedMutationPreapproval,
+  requireTargetMutationConsent,
+} from "../../../command-internal/hosted-consent/hosted-consent.ts";
+import { resolveTarget } from "../../../command-internal/target/resolve-target.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Random } from "../../../shared/runtime/random.service.ts";
 import { Stdin } from "../../../shared/runtime/stdin.service.ts";
 import { AiTool } from "../../../shared/telemetry/ai-tool.service.ts";
 import type { DbQueryFlags } from "./query.command.ts";
 import { RLS_CHECK_SQL, buildRlsAdvisory } from "./query.advisory.ts";
+import { findReadOnlyViolation, READ_ONLY_STATEMENT_KEYWORDS } from "./query.read-only.ts";
 import {
   DbQueryExecError,
   DbQueryLoginRequiredError,
-  DbQueryMutuallyExclusiveFlagsError,
   DbQueryNoSqlError,
   DbQueryNoStdinSqlError,
   DbQueryReadFileError,
+  DbQueryReadOnlyStatementError,
+  DbQuerySqlSourceConflictError,
   DbQueryUnexpectedStatusError,
 } from "./query.errors.ts";
 import {
@@ -35,9 +50,9 @@ import {
   orderedKeys,
   renderJson,
   renderTablewriter,
-  resolveAgentMode,
   toCsv,
 } from "./query.format.ts";
+import { resolveAgentMode } from "../../../command-internal/agent-mode.ts";
 
 /** The output formats `db query` selects: `json|table|csv`. */
 type ResolvedFormat = "json" | "table" | "csv";
@@ -48,19 +63,49 @@ const MISSING_TOKEN_MESSAGE =
 
 const BOUNDARY_BYTES = 16;
 
+const SQL_PREVIEW_LENGTH = 120;
+
+const sqlPreview = (sql: string): string => {
+  const oneLine = sql.replaceAll(/\s+/gu, " ").trim();
+  return oneLine.length > SQL_PREVIEW_LENGTH
+    ? `${oneLine.slice(0, SQL_PREVIEW_LENGTH)}...`
+    : oneLine;
+};
+
+const decodeJsonBody = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+const isRowObject = (element: unknown): element is { readonly [key: string]: unknown } | null =>
+  element === null || Predicate.isObject(element);
+
+const toExecError = (cause: { readonly message: string }) =>
+  new DbQueryExecError({ message: cause.message });
+
+const READ_ONLY_LOCK_TIMEOUT = "5s";
+
+// `queryRaw` runs every statement on one dedicated connection, so BEGIN/ROLLBACK issued through
+// it bracket the user's statement. The lock timeout keeps a read from queuing behind heavy locks.
+const inReadOnlyTransaction = <A, E, R>(session: DbSession, body: Effect.Effect<A, E, R>) =>
+  Effect.acquireUseRelease(
+    session.queryRaw("BEGIN READ ONLY").pipe(Effect.mapError(toExecError)),
+    () =>
+      session
+        .queryRaw(`SET LOCAL lock_timeout = '${READ_ONLY_LOCK_TIMEOUT}'`)
+        .pipe(Effect.mapError(toExecError), Effect.andThen(body)),
+    () => session.queryRaw("ROLLBACK").pipe(Effect.ignore),
+  );
+
+type QueryRoute =
+  | { readonly kind: "linked"; readonly ref: string }
+  | { readonly kind: "direct"; readonly connection: ResolvedDbConnection };
+
 export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
   const output = yield* Output;
   const telemetryState = yield* TelemetryState;
   const telemetryOutputFormat = yield* TelemetryOutputFormat;
   const linkedProjectCache = yield* LinkedProjectCache;
-  // The project ref is resolved during the linked pre-run, before DB
-  // resolution and before SQL resolution. The linked-project cache is
-  // refreshed unconditionally afterward, so it must refresh even when a
-  // later step (DB resolution, missing `--file`, no-stdin SQL) fails.
-  // Captured in the linked preflight; the finalizer on the whole handler
-  // body reads it. Declared at handler scope so it is visible to both the
-  // preflight and the `.pipe` finalizer.
-  let linkedRefForCache: string | undefined;
+  // Set only when the linked preflight resolves a ref, so the `Effect.ensuring` finalizer at the
+  // end of this handler can refresh the linked-project cache even if a later step fails.
+  const linkedRefForCache = yield* Ref.make<string | undefined>(undefined);
   const stdin = yield* Stdin;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -73,24 +118,19 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
   const dbConn = yield* DbConnection;
   const dnsResolver = yield* DnsResolverFlag;
 
-  // Emit the resolved payload (json/table/csv) to stdout in every output
-  // format — there is no `--output-format` for `db query`, so there is no
-  // machine envelope. The CSV and table writers ignore agent mode / the
-  // advisory; only JSON carries the agent envelope.
+  // Writes the resolved payload (json/table/csv) to stdout. There's no `--output-format` for
+  // `db query`, so CSV/table ignore agent mode and only JSON carries the agent envelope.
   const emit = (
     format: ResolvedFormat,
     cols: ReadonlyArray<string>,
     data: ReadonlyArray<ReadonlyArray<unknown>>,
     agentMode: boolean,
     advisory: Option.Option<Advisory>,
-    // The linked path passes `formatLinkedValue` (JSON-decoded float
-    // cells → `%v`/`%g`-style formatting); the local path passes an OID-aware
-    // formatter (`float4`/`float8` → `%g`, ints plain). JSON output re-marshals
-    // the raw values either way.
+    // `formatLinkedValue` for the linked path, an OID-aware formatter for local; only used for
+    // table/CSV cells since JSON output re-marshals the raw values.
     formatCell?: (value: unknown, columnIndex: number) => string,
-    // Local-path column OIDs: lets JSON output coerce int8/bigint string cells
-    // to bare numbers (established int64 scan). Omitted on the linked path
-    // (raw JSON values).
+    // Local-path column OIDs, used to coerce int8/bigint JSON cells to bare numbers; omitted on
+    // the linked path (already raw JSON values).
     fieldTypeIds?: ReadonlyArray<number>,
   ) =>
     Effect.gen(function* () {
@@ -100,16 +140,13 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
       if (format === "csv") {
         return yield* output.raw(toCsv(cols, data, formatCell));
       }
-      // The established JSON encoding fails on NaN/±Inf (empty stdout, exit
-      // 1); mirror that instead of letting `JSON.stringify` emit `null`.
-      // Checked before any output.
+      // The established JSON encoding fails on NaN/±Inf (empty stdout, exit 1); mirror that
+      // instead of letting `JSON.stringify` silently emit `null`.
       const nonFinite = findNonFiniteJsonValue(data);
       if (nonFinite !== undefined) {
-        return yield* Effect.fail(
-          new DbQueryExecError({
-            message: `failed to encode JSON: json: unsupported value: ${nonFinite}`,
-          }),
-        );
+        return yield* new DbQueryExecError({
+          message: `failed to encode JSON: json: unsupported value: ${nonFinite}`,
+        });
       }
       const jsonData = fieldTypeIds === undefined ? data : coerceLocalJsonRows(data, fieldTypeIds);
       const boundary = agentMode ? yield* random.randomHex(BOUNDARY_BYTES) : "";
@@ -117,7 +154,7 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
       if (output.format === "stream-json" && Option.getOrUndefined(outputFlag) !== "json") {
         const compactRendered = rendered.trimEnd().replaceAll("\n", "");
         yield* output.raw(
-          `{"type":"result","data":${compactRendered},"timestamp":${JSON.stringify(new Date().toISOString())}}\n`,
+          `{"type":"result","data":${compactRendered},"timestamp":"${DateTime.formatIso(yield* DateTime.now)}"}\n`,
         );
         return;
       }
@@ -125,33 +162,40 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
     });
 
   const runLocal = (
-    target: { readonly conn: PgConnInput; readonly isLocal: boolean },
+    target: Pick<ResolvedDbConfig, "conn" | "isLocal" | "exposedSchemas">,
     sql: string,
     format: ResolvedFormat,
     agentMode: boolean,
+    readOnly: boolean,
   ) => {
     const { conn, isLocal } = target;
     return Effect.scoped(
       Effect.gen(function* () {
-        yield* output.raw(`Connecting to ${isLocal ? "local" : "remote"} database...\n`, "stderr");
         const session = yield* dbConn.connect(conn, { isLocal, dnsResolver });
 
-        const result = yield* session
-          .queryRaw(sql)
-          .pipe(Effect.mapError((cause) => new DbQueryExecError({ message: cause.message })));
+        const execute = session.queryRaw(sql).pipe(Effect.mapError(toExecError));
+        const result = yield* readOnly ? inReadOnlyTransaction(session, execute) : execute;
 
+        yield* Effect.annotateCurrentSpan({
+          "query.row_count": result.rows.length,
+          "query.column_count": result.fields.length,
+        });
         // DDL/DML statements expose no columns → print the command tag.
         if (result.fields.length === 0) {
           return yield* output.raw(`${result.commandTag}\n`);
         }
 
         // Agent mode runs a best-effort RLS advisory check (only rendered in JSON).
-        const advisory = agentMode
-          ? yield* session.queryRaw(RLS_CHECK_SQL).pipe(
-              Effect.map((rls) => buildRlsAdvisory(rls.rows.map((row) => String(row[0] ?? "")))),
-              Effect.orElseSucceed(() => Option.none<Advisory>()),
-            )
-          : Option.none<Advisory>();
+        const schemas = target.exposedSchemas;
+        const advisory =
+          agentMode && schemas !== undefined && schemas.length > 0
+            ? yield* session.query(RLS_CHECK_SQL, [schemas]).pipe(
+                Effect.map((rows) =>
+                  buildRlsAdvisory(rows.map((row) => String(row["table_name"] ?? ""))),
+                ),
+                Effect.orElseSucceed(() => Option.none<Advisory>()),
+              )
+            : Option.none<Advisory>();
 
         yield* emit(
           format,
@@ -171,59 +215,53 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
     format: ResolvedFormat,
     agentMode: boolean,
     ref: string,
-    token: Redacted.Redacted<string>,
+    readOnly: boolean,
   ) =>
     Effect.gen(function* () {
-      const cliSettings = yield* CommandSettings;
-      const httpClient = yield* HttpClient.HttpClient;
+      const apiFactory = yield* CommandPlatformApiFactory;
+      const api = yield* apiFactory.make;
 
-      const request = HttpClientRequest.post(
-        `${cliSettings.apiUrl}/v1/projects/${ref}/database/query`,
-      ).pipe(
-        HttpClientRequest.setHeader("Authorization", `Bearer ${Redacted.value(token)}`),
-        HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
-        HttpClientRequest.bodyJsonUnsafe({ query: sql }),
-      );
-      const { status, body } = yield* Effect.gen(function* () {
-        const response = yield* httpClient.execute(request);
-        const text = yield* response.text;
-        return { status: response.status, body: text };
-      }).pipe(
+      // `v1RunAQuery` declares no response body, so `executeRaw` keeps the row JSON text intact
+      // (column order, number formatting) for rendering.
+      const response = yield* api
+        .executeRaw(
+          operationDefinitions.v1RunAQuery,
+          { ref, query: sql, ...(readOnly ? { read_only: true } : {}) },
+          { retry: { requestTimeoutMs: Number.POSITIVE_INFINITY } },
+        )
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new DbQueryExecError({
+                message: `failed to execute query: ${cause}`,
+                transport: HttpClientError.isHttpClientError(cause),
+              }),
+          ),
+        );
+      const body = yield* response.text.pipe(
         Effect.mapError(
           (cause) =>
-            new DbQueryExecError({
-              message: `failed to execute query: ${cause}`,
-              transport: true,
-            }),
+            new DbQueryExecError({ message: `failed to execute query: ${cause}`, transport: true }),
         ),
       );
-      if (status !== 201) {
-        return yield* Effect.fail(
-          new DbQueryUnexpectedStatusError({
-            status,
-            message: `unexpected status ${status}: ${body}`,
-          }),
-        );
+      if (response.status !== 201) {
+        return yield* new DbQueryUnexpectedStatusError({
+          status: response.status,
+          message: unexpectedStatusMessage(response.status, sanitizeErrorBody(body)),
+        });
       }
 
-      // The API returns a JSON array of row objects for SELECT, or a plain
-      // command tag for DDL/DML. Anything that is not a JSON array of objects
-      // is printed verbatim (the array-of-maps decode fails → raw body).
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(body);
-      } catch {
+      // The API returns a JSON array of row objects for SELECT, or a plain command tag for
+      // DDL/DML; anything else is printed verbatim.
+      const decoded = yield* decodeJsonBody(body).pipe(Effect.option);
+      if (Option.isNone(decoded)) {
         return yield* output.raw(`${body}\n`);
       }
-      const isRowArray =
-        Array.isArray(parsed) &&
-        parsed.every(
-          (element) => element === null || (typeof element === "object" && !Array.isArray(element)),
-        );
-      if (!isRowArray) {
+      const rows = decoded.value;
+      if (!Array.isArray(rows) || !rows.every(isRowObject)) {
         return yield* output.raw(`${body}\n`);
       }
-      const rows = parsed as ReadonlyArray<Record<string, unknown> | null>;
+      yield* Effect.annotateCurrentSpan("query.row_count", rows.length);
       if (rows.length === 0) {
         return yield* emit(format, [], [], agentMode, Option.none());
       }
@@ -234,109 +272,48 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
     });
 
   yield* Effect.gen(function* () {
-    // 0. Mutually-exclusive db-url/linked/local group, checked before
-    //    resolving any SQL. "Set" means explicitly set: an Option is set
-    //    when `Some`, a boolean when explicitly `true`.
-    const exclusive: Array<string> = [];
-    if (Option.isSome(flags.dbUrl)) exclusive.push("db-url");
-    if (Option.isSome(flags.linked)) exclusive.push("linked");
-    if (Option.isSome(flags.local)) exclusive.push("local");
-    if (exclusive.length > 1) {
-      return yield* Effect.fail(
-        new DbQueryMutuallyExclusiveFlagsError({
-          message: `if any flags in the group [db-url linked local] are set none of the others can be; [${exclusive.join(" ")}] were all set`,
-        }),
-      );
-    }
-
-    // `--project-ref` never implies `--linked` and must not be silently
-    // discarded on a non-linked target — see push.handler.ts's identical guard
-    // for the full TS-only rationale.
-    if (Option.isSome(flags.projectRef) && Option.isNone(flags.linked)) {
-      return yield* Effect.fail(
-        new DbQueryMutuallyExclusiveFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-        }),
-      );
-    }
-
-    // PreRun parity: for --linked, the access token is checked and the
-    // project ref is loaded BEFORE SQL is resolved, so a missing `--file` or
-    // a blocking stdin pipe must not mask the expected login / not-linked
-    // error. Run that preflight here, before resolving SQL.
-    let linkedAuth: { readonly token: Redacted.Redacted<string>; readonly ref: string } | undefined;
-    if (Option.isSome(flags.linked)) {
-      const credentials = yield* CommandCredentials;
-      const projectRef = yield* ProjectRefResolver;
-      // The DB config is resolved FIRST, and only then is the token checked —
-      // otherwise an unlinked-project / invalid-config / IPv6 / pooler /
-      // login-role failure is masked behind a generic "supabase login" error.
-      //
-      // 1. `loadProjectRef` (flag → env → ref file): the HARD, non-prompting
-      //    loader `db query --linked`'s preflight uses. It validates the ref
-      //    format and fails when absent — and, crucially, surfaces
-      //    `failed to load project ref` on a real (non-not-exist) ref-file
-      //    read error rather than masking it as not-linked (the soft
-      //    `resolveOptional` swallows that to None).
-      const ref = yield* projectRef.loadProjectRef(flags.projectRef);
-      // Record the ref now, so the linked-project cache finalizer fires even
-      // if the DB resolution or token check below fails.
-      linkedRefForCache = ref;
-      // 2. Loads + validates the remote-merged config and resolves the live
-      //    DB connection (TCP probe, pooler fallback, temp login-role mint),
-      //    any of which can fail early. The token is read lazily here only
-      //    when a login role must be minted, so this stays before the
-      //    token-only check. The linked query itself uses the Management
-      //    API, so the resolved connection is discarded — this runs purely
-      //    for pre-run failures.
-      yield* resolver.resolve({
-        dbUrl: Option.none(),
-        connType: "linked",
-        dnsResolver,
-        linkedProjectRef: flags.projectRef,
+    // Checked before the target resolves: `--file` would silently override the positional SQL,
+    // which is how `-f x.sql --remote <branch>` would otherwise target the linked project.
+    if (Option.isSome(flags.file) && Option.isSome(flags.sql)) {
+      const bareRemote = Option.exists(flags.remote, (remote) => remote._tag === "Linked");
+      return yield* new DbQuerySqlSourceConflictError({
+        message: "Pass SQL as an argument or with --file, not both.",
+        ...(bareRemote
+          ? { suggestion: "To select a branch or project with --remote, write --remote=<value>." }
+          : {}),
       });
-      // 3. Token check: a token is still required for the Management API
-      //    query even when config resolved without minting a login role
-      //    (e.g. a direct `DB_PASSWORD` was set), so keep this — but after
-      //    the config/ref resolution above. The RESOLVED token (env →
-      //    keyring → file alike) is validated against `sbp_...` and fails
-      //    before any API request. `credentials.getAccessToken` already
-      //    applies that env-precedence + `sbp_` validation on every source,
-      //    so route through it rather than accepting the env
-      //    `SUPABASE_ACCESS_TOKEN` on presence alone — an invalid env token
-      //    must fail here, not surface an `unexpected status` from
-      //    `/database/query`.
-      const tokenOpt = yield* credentials.getAccessToken;
-      if (Option.isNone(tokenOpt)) {
-        return yield* Effect.fail(
-          new DbQueryLoginRequiredError({
+    }
+    const target = yield* resolveTarget(flags);
+    // Recorded now so the cache finalizer still fires if a later step fails.
+    if (target.kind === "linked") yield* Ref.set(linkedRefForCache, target.ref);
+
+    // Resolved before `--file`/stdin are read, so a bad `--db-url`, an invalid merged config, a
+    // connection failure or a missing login surfaces ahead of a missing-file error. A linked query
+    // goes through the Management API and never opens a database connection.
+    const route: QueryRoute = yield* Effect.gen(function* () {
+      if (target.kind === "linked") {
+        const credentials = yield* CommandCredentials;
+        // Routed through `credentials.getAccessToken`, which validates the `sbp_...` shape, rather
+        // than trusting env presence alone and surfacing a confusing status error later.
+        const tokenOpt = yield* credentials.getAccessToken;
+        if (Option.isNone(tokenOpt)) {
+          return yield* new DbQueryLoginRequiredError({
             message: MISSING_TOKEN_MESSAGE,
             suggestion: "Run supabase login first.",
-          }),
-        );
+          });
+        }
+        return { kind: "linked", ref: target.ref } satisfies QueryRoute;
       }
-      linkedAuth = { token: tokenOpt.value, ref };
-    }
+      const connection = yield* resolver.resolveConnection({
+        target,
+        dnsResolver,
+        password: Option.none(),
+        networkBanRemoval: yield* hostedMutationPreapproval,
+      });
+      return { kind: "direct", connection } satisfies QueryRoute;
+    });
 
-    // PreRun parity (non-linked): the `--db-url` connection string and local
-    // config are resolved BEFORE SQL is resolved. So resolve the direct
-    // connection target here — before reading `--file`/stdin — so a bad
-    // `--db-url` or config error surfaces ahead of a missing-file error or a
-    // blocking stdin read. The actual socket connect still happens later in
-    // `runLocal`.
-    const localTarget =
-      linkedAuth === undefined
-        ? yield* resolver.resolve({
-            dbUrl: flags.dbUrl,
-            // This branch is the non-linked path (linkedAuth handles `--linked`),
-            // so the target is `--db-url` or local.
-            connType: Option.isSome(flags.dbUrl) ? "db-url" : "local",
-            dnsResolver,
-          })
-        : undefined;
-
-    // 1. Resolve SQL: --file > positional arg > piped stdin.
+    // 1. Resolve SQL: --file or the positional arg (never both), else piped stdin.
     const sql = yield* Effect.gen(function* () {
       if (Option.isSome(flags.file)) {
         // A relative `--file` path resolves against the workdir, not the
@@ -357,26 +334,18 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
       if (!stdin.isTTY) {
         const piped = yield* stdin.readPipedText;
         if (Option.isNone(piped)) {
-          return yield* Effect.fail(
-            new DbQueryNoStdinSqlError({ message: "no SQL provided via stdin" }),
-          );
+          return yield* new DbQueryNoStdinSqlError({ message: "no SQL provided via stdin" });
         }
         return piped.value;
       }
-      return yield* Effect.fail(
-        new DbQueryNoSqlError({
-          message: "no SQL query provided. Pass SQL as an argument, via --file, or pipe to stdin",
-        }),
-      );
+      return yield* new DbQueryNoSqlError({
+        message: "no SQL query provided. Pass SQL as an argument, via --file, or pipe to stdin",
+      });
     });
 
-    // 2. Agent mode + the resolved payload format: an explicit `-o
-    //    json|table|csv` always wins; otherwise default to JSON for agents
-    //    and a table for humans. The global `-o` choice is a union (see
-    //    `query.command.ts`), while TS `--output-format json|stream-json`
-    //    must also resolve to JSON here, so values outside `db query`'s own
-    //    `json|table|csv` enum (`pretty|yaml|toml|env`) fall through to the
-    //    agent/machine default rather than erroring.
+    // 2. Resolve the payload format: an explicit `-o json|table|csv` always wins; otherwise
+    //    default to JSON for agents, table for humans. Any other `-o` value (from the global
+    //    union, e.g. `pretty|yaml|toml|env`) falls through to that default rather than erroring.
     const agentMode = resolveAgentMode(agentFlag, aiTool.name);
     const explicit = Option.getOrUndefined(outputFlag);
     const format: ResolvedFormat =
@@ -390,32 +359,54 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
               ? "json"
               : "table";
 
-    // Mirrors the resolved local `-o` (json|table|csv) onto the global the
-    // telemetry event reads. Without this the instrumentation reports
-    // `table`/human-default as `text`.
+    // Mirrors the resolved format onto the global telemetry reads, or instrumentation would
+    // report the table/human default as `text`.
     yield* telemetryOutputFormat.set(format);
+    yield* Effect.annotateCurrentSpan({
+      "db.conn_type": target.kind,
+      "query.format": format,
+      "query.agent_mode": agentMode,
+      "query.read_only": flags.readOnly,
+    });
 
-    // 3. Linked → Management API (raw HTTP); local / --db-url → direct connection.
-    // The --linked token/ref preflight already ran above.
-    if (linkedAuth !== undefined) {
-      return yield* runLinked(sql, format, agentMode, linkedAuth.ref, linkedAuth.token);
+    // `--read-only` skips consent only because the statement cannot write, so anything but a read
+    // statement is refused before anything connects or prompts.
+    if (flags.readOnly) {
+      const violation = findReadOnlyViolation(sql);
+      if (violation !== undefined) {
+        return yield* new DbQueryReadOnlyStatementError({
+          message: `--read-only only allows ${READ_ONLY_STATEMENT_KEYWORDS.join(", ")} statements (found: ${violation})`,
+          suggestion:
+            "Drop --read-only to run this statement; a hosted database then asks you to confirm the write.",
+        });
+      }
     }
-    if (localTarget === undefined) {
-      // Unreachable: the non-linked branch always resolves a target above.
-      return yield* Effect.die(new Error("db query: connection target was not resolved"));
+
+    // 3. A hosted statement may write, so it needs consent unless `--read-only` confines it.
+    if (!flags.readOnly) {
+      yield* requireTargetMutationConsent(route.kind === "direct" ? route.connection : target, {
+        action: "Run a SQL statement",
+        readOnlyAlternative: true,
+        details: [`sql: ${sqlPreview(sql)}`],
+      });
     }
-    return yield* runLocal(localTarget, sql, format, agentMode);
+
+    // 4. Linked queries go through the Management API; local/--db-url connect directly.
+    if (route.kind === "linked") {
+      return yield* runLinked(sql, format, agentMode, route.ref, flags.readOnly).pipe(
+        Effect.withSpan("db.query.runLinked"),
+      );
+    }
+    return yield* runLocal(route.connection, sql, format, agentMode, flags.readOnly).pipe(
+      Effect.withSpan("db.query.runLocal"),
+    );
   }).pipe(
-    // Once a project ref is resolved, write the linked-project cache
-    // (`GET /v1/projects/{ref}` → `supabase/.temp/linked-project.json`)
-    // whether the query succeeds or fails — and even when it fails before
-    // `runLinked` (DB resolution, missing `--file`, no-stdin SQL). The cache
-    // layer no-ops when the file already exists, the token is missing, or
-    // the GET is non-200. Only the linked path sets `linkedRefForCache`, so
-    // `--local` / `--db-url` never trigger this.
+    // Writes the linked-project cache whenever a ref was resolved, whether the query succeeds or
+    // fails — `linkedRefForCache` is only set on the linked path, so `--local`/`--db-url` never
+    // trigger this.
     Effect.ensuring(
-      Effect.suspend(() =>
-        linkedRefForCache !== undefined ? linkedProjectCache.cache(linkedRefForCache) : Effect.void,
+      Effect.flatMap(Ref.get(linkedRefForCache), (ref) =>
+        ref !== undefined ? linkedProjectCache.cache(ref) : Effect.void,
       ),
     ),
     Effect.ensuring(telemetryState.flush),
