@@ -3,7 +3,17 @@ import type { Report, ReportSeverity } from "../../../../output/report.types.ts"
 
 // Detects btree drift for the database default collation (PG15+) and named collations.
 // Other access methods are out of scope; amcheck verifies only btree.
-const SQL = `WITH key_collations AS (
+// pg_database records the default collation's version from PG15; PG15 itself only reports
+// the current version through pg_database_collation_actual_version().
+function collationDriftSql(serverVersionNum: number): string {
+  const [dbStored, dbCurrent] =
+    serverVersionNum >= 150000
+      ? [
+          "(SELECT datcollversion FROM pg_database WHERE datname = current_database())",
+          "(SELECT pg_database_collation_actual_version(oid) FROM pg_database WHERE datname = current_database())",
+        ]
+      : ["NULL::text", "NULL::text"];
+  return `WITH key_collations AS (
   SELECT DISTINCT
     ix.indexrelid,
     ix.indrelid,
@@ -19,11 +29,13 @@ drifted AS (
   SELECT
     kc.*,
     CASE WHEN kc.colloid = 'pg_catalog.default'::regcollation
-      -- to_jsonb keeps the query valid before PG15, where the column does not exist.
-      THEN (SELECT to_jsonb(d) ->> 'datcollversion' FROM pg_database d WHERE d.datname = current_database())
+      THEN ${dbStored}
       ELSE c.collversion
     END AS stored_version,
-    pg_collation_actual_version(kc.colloid) AS current_version,
+    CASE WHEN kc.colloid = 'pg_catalog.default'::regcollation
+      THEN ${dbCurrent}
+      ELSE pg_collation_actual_version(kc.colloid)
+    END AS current_version,
     CASE WHEN kc.colloid = 'pg_catalog.default'::regcollation
       THEN 'default'
       -- Schema-qualified: the generated ALTER COLLATION must not depend on search_path.
@@ -68,6 +80,7 @@ WHERE am.amname = 'btree'
 -- Constraint-backing indexes first: a wrong sort order there can let
 -- duplicate rows past a unique check, not merely return wrong results.
 ORDER BY dr.is_primary DESC, dr.is_unique DESC, pg_relation_size(i.oid) DESC, name`;
+}
 
 interface DriftRow {
   readonly database: string;
@@ -249,6 +262,6 @@ export function buildCollationDriftReport(rawRows: ReadonlyArray<Record<string, 
  */
 export const collationDriftSpec: InspectReportSpec = {
   name: "collation-drift",
-  sql: SQL,
+  sql: collationDriftSql,
   report: buildCollationDriftReport,
 };

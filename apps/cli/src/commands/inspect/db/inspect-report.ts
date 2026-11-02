@@ -14,10 +14,10 @@ import {
   type InspectConnectionFlags,
 } from "./inspect-query.ts";
 
-/** A report-producing `inspect db` subcommand: its SQL and a pure rows-to-`Report` mapping. */
+/** A report-producing `inspect db` subcommand: its version-specific SQL and a pure rows-to-`Report` mapping. */
 export interface InspectReportSpec {
   readonly name: string;
-  readonly sql: string;
+  readonly sql: (serverVersionNum: number) => string;
   readonly report: (rows: ReadonlyArray<Record<string, unknown>>) => Report;
 }
 
@@ -62,7 +62,11 @@ const runInspectReport = Effect.fnUntraced(function* (
         "stderr",
       );
       const session = yield* dbConn.connect(cfg.conn, { isLocal: cfg.isLocal, dnsResolver });
-      return yield* session.query(spec.sql, []);
+      const [version] = yield* session.query(
+        "SELECT current_setting('server_version_num')::int AS server_version_num",
+        [],
+      );
+      return yield* session.query(spec.sql(Number(version?.["server_version_num"])), []);
     }),
   );
 
