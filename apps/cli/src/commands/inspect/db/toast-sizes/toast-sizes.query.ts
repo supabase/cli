@@ -7,6 +7,7 @@ import {
 } from "../inspect-query.ts";
 import { INTERNAL_SCHEMAS, likeEscapeSchema } from "../inspect-schemas.ts";
 
+// Ordinary tables only; materialized views and partitioned parents are out of scope.
 const SQL = `
 SELECT
   FORMAT('%I.%I', n.nspname, main.relname)                            AS name,

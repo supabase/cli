@@ -1,6 +1,6 @@
 # db-toast-sizes
 
-This command displays TOAST table sizes and dead chunk counts for every user table that has a TOAST relation. When a column value exceeds ~2 kB (TEXT, JSONB, bytea), Postgres stores it out-of-line in a companion TOAST table. Autovacuum runs on the TOAST table independently from the main heap, so it can accumulate dead chunks even when the parent table looks healthy by its own dead-tuple count.
+This command displays TOAST table sizes and dead chunk counts for every ordinary user table that has a TOAST relation (materialized views and partitioned parents are not listed). When a column value exceeds ~2 kB (TEXT, JSONB, bytea), Postgres stores it out-of-line in a companion TOAST table. Autovacuum runs on the TOAST table independently from the main heap, so it can accumulate dead chunks even when the parent table looks healthy by its own dead-tuple count.
 
 A table that appears fine by `vacuum-stats` or `bloat` alone can still have significant TOAST bloat that wastes disk space and slows reads. High `TOAST Dead %` values indicate that autovacuum is not keeping up with the TOAST table and a manual `VACUUM` may be needed.
 

@@ -67,6 +67,7 @@ Each subcommand runs one read-only `SELECT` (the embedded `<name>.sql`). The
 | bloat                | bloat.sql                | yes (`$1`)                  |
 | vacuum-stats         | vacuum_stats.sql         | yes (`$1`)                  |
 | table-stats          | table_stats.sql          | yes (`$1`)                  |
+| toast-sizes          | toast_sizes.sql          | yes (`$1`)                  |
 | replication-slots    | replication_slots.sql    | no                          |
 | locks                | locks.sql                | no                          |
 | blocking             | blocking.sql             | no                          |
@@ -75,7 +76,6 @@ Each subcommand runs one read-only `SELECT` (the embedded `<name>.sql`). The
 | long-running-queries | long_running_queries.sql | no                          |
 | role-stats           | role_stats.sql           | no                          |
 | traffic-profile      | traffic_profile.sql      | no                          |
-| toast-sizes          | toast-sizes.query.ts     | yes (`$1`)                  |
 
 Deprecated aliases run an active subcommand's query: `cache-hit`→db-stats;
 `index-usage`/`index-sizes`/`unused-indexes`/`seq-scans`/`table-record-counts`→index-stats;
