@@ -1,97 +1,74 @@
-import { basename } from "node:path";
-import { Effect, type FileSystem, type Path } from "effect";
+import { Crypto, Effect, type FileSystem, Option, type Path } from "effect";
+import type { RuntimeInfo } from "../runtime/runtime-info.service.ts";
 import type { LoadedCliConfig } from "@supabase/config/effect";
-import { loadCliConfig } from "@supabase/config/effect";
-import { normalizeProjectId } from "./functions-docker.ts";
+import { CliConfigValues, type ResolvedCliConfig } from "../../config/cli-config-values.service.ts";
+
+type FunctionsLoadedConfig = Pick<LoadedCliConfig, "config" | "document">;
 
 /**
- * Everything the native `functions` Docker paths (`deploy`/`download`/`serve`)
- * need from project config resolution. In the
- * CLI this also runs the same `Config.Validate`/dotenv pipeline
- * `start`/`stop`/`status` already go through — see {@link FunctionsGoConfigCompat}.
- * Callers that omit the hook keep the plain `loadCliConfig` behavior.
+ * Config resolution context shared by the `functions` Docker paths
+ * (`deploy`, `download`, `serve`), produced by the injected
+ * {@link FunctionsLocalConfigLoader}.
  */
 interface FunctionsCliConfigContext {
-  readonly loaded: LoadedCliConfig | null;
-  /** Go's post-`loadNestedEnv` merged env (ambient-wins). `undefined` when the hook is not injected. */
-  readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
-  /** Go's `Config.ProjectId`, sanitized, after `Config.Validate` in the CLI. */
+  readonly loaded: FunctionsLoadedConfig;
+  readonly resolvedConfig: ResolvedCliConfig;
+  /** The config file's path; `undefined` when the project has none. */
+  readonly configPath: string | undefined;
+  /** Merged env with ambient values winning. */
+  readonly projectEnvValues: Readonly<Record<string, string>>;
+  /** Sanitized project id, resolved after config validation. */
   readonly projectId: string;
   readonly denoVersion: number | undefined;
 }
 
 /**
- * Go-parity hook, injected so this shared module never imports the command
- * tree's validation/dotenv machinery directly — same rationale as
- * `download.ts`'s `styleEmphasis`/`styleAqua`. `undefined` disables the hook.
- *
- * A single method (not one hook per step) so the command-tree implementation can
- * delegate its dotenv/config-load work to `local-project-context.ts`'s
- * `loadLocalProjectContext` end to end — the same pipeline `start`/
- * `stop`/`status` already share — rather than re-implementing it here.
+ * Hook that lets the shared `functions` modules run the command tree's config/dotenv
+ * validation pipeline without importing that machinery directly.
  */
-export interface FunctionsGoConfigCompat {
+export interface FunctionsLocalConfigLoader {
   readonly load: (input: {
     readonly projectRoot: string;
     readonly projectRef: string | undefined;
   }) => Effect.Effect<
     {
-      readonly loaded: LoadedCliConfig | null;
+      readonly loaded: FunctionsLoadedConfig;
+      readonly resolvedConfig: ResolvedCliConfig;
+      readonly configPath: string | undefined;
       readonly projectEnvValues: Readonly<Record<string, string>>;
       readonly projectId: string;
       readonly denoVersion: number;
     },
     Error,
-    FileSystem.FileSystem | Path.Path
+    FileSystem.FileSystem | Path.Path | RuntimeInfo | Crypto.Crypto | CliConfigValues
   >;
 }
 
 /**
- * Go: `flags.LoadConfig` (`internal/utils/flags/config_path.go:10-14` ->
- * `pkg/config/config.go:579-611,878`) — loads dotenv, decodes config.toml
- * (merging template defaults + env even when the file is absent), and ends in
- * `Config.Validate`, unconditionally, before any Docker/API work. Only the
- * CLI (`goConfigCompat` set) runs that Go-parity dotenv/validate
- * pipeline; callers without the hook keep the plain `loadCliConfig` behavior.
+ * Loads project config for a `functions` command, running `localConfigLoader`'s
+ * dotenv/config-validate pipeline before any Docker/API work.
  */
-export const loadFunctionsCliConfig = Effect.fnUntraced(function* (input: {
+export const loadFunctionsCliConfig = Effect.fn("FunctionsConfig.load")(function* (input: {
   readonly projectRoot: string;
   readonly projectRef: string | undefined;
-  readonly goConfigCompat: FunctionsGoConfigCompat | undefined;
+  readonly localConfigLoader: FunctionsLocalConfigLoader;
 }) {
-  if (input.goConfigCompat === undefined) {
-    const loaded = yield* loadCliConfig(
-      input.projectRoot,
-      input.projectRef === undefined ? {} : { projectRef: input.projectRef },
-    );
-    return {
-      loaded,
-      projectEnvValues: undefined,
-      // `input.projectRef` is a definite string for every current caller
-      // (`deploy`/`download` always resolve one first); the `basename`
-      // fallback only matters if this ever runs with `projectRef`
-      // `undefined` and no `project_id` in the file — matching Go's `Eject`
-      // basename default (`pkg/config/config.go:561-570`) and the compat
-      // branch's own `resolveLocalProjectId` fallback below.
-      // Sanitized like the compat branch's (`sanitizeProjectId`, run
-      // inside its validate pipeline): this id feeds `dockerProjectLabels`'
-      // raw label values as well as `localDockerId`'s (self-sanitizing)
-      // resource names, and an unsanitized `project_id = "My Project"` would
-      // label the container `My Project` while its network/volume are named
-      // `..._My_Project` — breaking label-based cleanup filters.
-      projectId: normalizeProjectId(
-        loaded?.config.project_id ?? input.projectRef ?? basename(input.projectRoot),
-      ),
-      denoVersion: loaded?.config.edge_runtime.deno_version,
-    } satisfies FunctionsCliConfigContext;
-  }
+  const values = yield* CliConfigValues;
+  // Loaded first so a config failure reaches the caller as its own typed error, not as the
+  // validation hook's message-only wrapper; the hook's own load reuses this memoised resolved config.
+  yield* values.load({
+    workdir: input.projectRoot,
+    projectRef: Option.fromNullishOr(input.projectRef),
+  });
 
-  const context = yield* input.goConfigCompat.load({
+  const context = yield* input.localConfigLoader.load({
     projectRoot: input.projectRoot,
     projectRef: input.projectRef,
   });
   return {
     loaded: context.loaded,
+    resolvedConfig: context.resolvedConfig,
+    configPath: context.configPath,
     projectEnvValues: context.projectEnvValues,
     projectId: context.projectId,
     denoVersion: context.denoVersion,

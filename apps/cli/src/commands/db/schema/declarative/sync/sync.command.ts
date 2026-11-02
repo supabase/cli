@@ -1,47 +1,47 @@
 import { Effect } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose } from "../../../../../command-internal/command-permissions/model.ts";
+import { withCliConfigFlags } from "../../../../../config/cli-config-flags.ts";
 import { withJsonErrorHandling } from "../../../../../shared/output/json-error-handling.ts";
 import { parseSchemaFlags } from "../../../../../command-internal/schema-flags.ts";
 import { withCommandTelemetry } from "../../../../../telemetry/command-telemetry.ts";
 import { dbSchemaDeclarativeSharedBase } from "../declarative.shared.ts";
 import { dbSchemaDeclarativeSync } from "./sync.handler.ts";
 import { dbSchemaDeclarativeSyncRuntimeLayer } from "./sync.layers.ts";
+import { cliConfigValuesLayer } from "../../../../../config/cli-config-values.layer.ts";
+import { withTargetPolicy } from "../../../../../command-internal/target/target-policy.ts";
 
 const config = {
-  schema: Flag.string("schema").pipe(
+  schema: Flag.String("schema").pipe(
     Flag.withAlias("s"),
     Flag.withDescription("Comma separated list of schema to include."),
     Flag.atLeast(0),
-    // Go registers `--schema` as a cobra `StringSliceVarP`
-    // (`apps/cli-go/cmd/db_schema_declarative.go:484`, deleted in CLI-1970;
-    // last present at commit 7b469f5b3), which CSV-splits each
-    // occurrence so `-s public,auth` includes the two schemas separately. Mirror
-    // the `gen types` / `db lint` parsing so quoted commas are handled the same way.
+    // CSV-splits each occurrence so `-s public,auth` includes the two schemas separately, same
+    // as `gen types`/`db lint`'s quoted-comma parsing.
     Flag.mapTryCatch(
       (rawValues) => parseSchemaFlags(rawValues),
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
-  file: Flag.string("file").pipe(
+  file: Flag.String("file").pipe(
     Flag.withAlias("f"),
     Flag.withDescription("Saves schema diff to a new migration file."),
     Flag.optional,
   ),
-  name: Flag.string("name").pipe(
+  name: Flag.String("name").pipe(
     Flag.withDescription("Name for the generated migration file."),
     Flag.optional,
   ),
-  // cobra's `MarkFlagsMutuallyExclusive("apply", "no-apply")` keys off `flag.Changed`,
-  // not the value (`cmd/db_schema_declarative.go:561`), so model presence with `Option`
-  // so `--apply=false --no-apply` still trips the conflict. The apply decision below
-  // reads the resolved value via `Option.getOrElse`.
-  apply: Flag.boolean("apply").pipe(
+  // Mutually exclusive with `--no-apply`, keyed off presence not value, so model with `Option`
+  // so `--apply=false --no-apply` still trips the conflict.
+  apply: Flag.Boolean("apply").pipe(
     Flag.withDescription("Apply the generated migration to the local database without prompting."),
     Flag.optional,
   ),
-  noApply: Flag.boolean("no-apply").pipe(
+  noApply: Flag.Boolean("no-apply").pipe(
     Flag.withDescription(
       "Generate the migration file without prompting or applying it to the local database.",
     ),
@@ -61,6 +61,20 @@ export const dbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
     "Compares the supabase/migrations baseline with the complete declarative schema tree and writes the difference as migration files. When a legacy export omits known implicit extensions, interactive sync can add declarations and re-plan before writing. Use --no-apply for non-interactive generation without changing the local database; --apply or global --yes applies locally and updates local migration history.",
   ),
   Command.withShortDescription("Generate a new migration from declarative schema"),
+  withPermissions(
+    compose({
+      operations: [],
+      noApiEffectFlags: [
+        "schema",
+        "file",
+        "name",
+        "apply",
+        "no-apply",
+        "no-cache",
+        "strict-coverage",
+      ],
+    }),
+  ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       // `--no-cache` is shared on the parent group; read the resolved value there.
@@ -81,10 +95,8 @@ export const dbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
             apply: merged.apply,
             "no-apply": merged.noApply,
           },
-          // Go registers `--schema`/`-s` (StringSliceVarP) and `--file`/`-f`
-          // (StringVarP) (`cmd/db_schema_declarative.go:484-485`); telemetry reports
-          // changed flags by canonical `flag.Name` via `pflag.Visit`, so map the
-          // shorthands so `sync -s public -f out.sql` logs `schema`/`file`.
+          // Telemetry reports changed flags by canonical name, so map the shorthands: `sync
+          // -s public -f out.sql` must log `schema`/`file`.
           aliases: { s: "schema", f: "file" },
         }),
         withJsonErrorHandling,
@@ -92,4 +104,7 @@ export const dbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
     }),
   ),
   Command.provide(dbSchemaDeclarativeSyncRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

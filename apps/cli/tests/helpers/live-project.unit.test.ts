@@ -1,19 +1,24 @@
-import { Effect } from "effect";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
+import { Data, Effect, Exit } from "effect";
+import * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import {
   cleanupErrors,
   isTransientLiveError,
   isTransientStorageStatus,
   resolvePoolerDatabaseUrl,
+  resolvePoolerDomain,
   retryLiveEffect,
   selectPrimaryPoolerConfig,
   supportedRegion,
   type PoolerConfig,
 } from "./live-project.ts";
+
+class TemporarilyUnavailable extends Data.TaggedError("TemporarilyUnavailable")<{
+  readonly message: string;
+}> {}
 
 function statusError(status: number): HttpClientError.HttpClientError {
   const request = HttpClientRequest.get("https://api.supabase.com/v1/projects/test");
@@ -42,37 +47,37 @@ function poolerConfig(overrides: Partial<PoolerConfig> = {}): PoolerConfig {
 }
 
 describe("live project lifecycle", () => {
-  it("fails invalid regions before provisioning", async () => {
-    await expect(
-      Effect.runPromise(Effect.flip(supportedRegion("not-a-region"))),
-    ).resolves.toMatchObject({
-      message: expect.stringContaining("Unsupported SUPABASE_LIVE_REGION"),
-    });
-    await expect(Effect.runPromise(supportedRegion("us-east-1"))).resolves.toBe("us-east-1");
-  });
+  it.effect("fails invalid regions before provisioning", () =>
+    Effect.gen(function* () {
+      expect(yield* Effect.flip(supportedRegion("not-a-region"))).toMatchObject({
+        message: expect.stringContaining("Unsupported SUPABASE_LIVE_REGION"),
+      });
+      expect(yield* supportedRegion("us-east-1")).toBe("us-east-1");
+    }),
+  );
 
-  it("retries transient failures until the management operation succeeds", async () => {
-    let attempts = 0;
-    const result = await Effect.runPromise(
-      retryLiveEffect(
+  it.live("retries transient failures until the management operation succeeds", () =>
+    Effect.gen(function* () {
+      let attempts = 0;
+      const result = yield* retryLiveEffect(
         "project readiness",
         Effect.suspend(() =>
           Effect.sync(() => {
             attempts += 1;
             return attempts < 3
-              ? Effect.fail(new Error("temporarily unavailable"))
+              ? Effect.fail(new TemporarilyUnavailable({ message: "temporarily unavailable" }))
               : Effect.succeed("ACTIVE_HEALTHY");
           }).pipe(Effect.flatten),
         ),
         { interval: "1 millis", timeout: "100 millis" },
-      ),
-    );
+      );
 
-    expect(result).toBe("ACTIVE_HEALTHY");
-    expect(attempts).toBe(3);
-  });
+      expect(result).toBe("ACTIVE_HEALTHY");
+      expect(attempts).toBe(3);
+    }),
+  );
 
-  it("fails a poll when its wall-clock deadline expires", async () => {
+  it("fails a poll when its wall-clock deadline expires", () => {
     const result = Effect.runPromise(
       retryLiveEffect("project keys", Effect.never, {
         interval: "1 millis",
@@ -80,7 +85,7 @@ describe("live project lifecycle", () => {
       }),
     );
 
-    await expect(result).rejects.toThrow("project keys timed out");
+    return expect(result).rejects.toThrow("project keys timed out");
   });
 
   it("preserves both target and cleanup failures", () => {
@@ -98,30 +103,28 @@ describe("live project lifecycle", () => {
     ]);
   });
 
-  it("retries transient API statuses but fails authorization errors immediately", async () => {
-    expect(isTransientLiveError(statusError(404))).toBe(true);
-    expect(isTransientLiveError(statusError(503))).toBe(true);
-    expect(isTransientLiveError(statusError(401))).toBe(false);
-    expect(isTransientLiveError(statusError(403))).toBe(false);
+  it.live("retries transient API statuses but fails authorization errors immediately", () =>
+    Effect.gen(function* () {
+      expect(isTransientLiveError(statusError(404))).toBe(true);
+      expect(isTransientLiveError(statusError(503))).toBe(true);
+      expect(isTransientLiveError(statusError(401))).toBe(false);
+      expect(isTransientLiveError(statusError(403))).toBe(false);
 
-    let attempts = 0;
-    const transient = statusError(503);
-    const result = await Effect.runPromise(
-      retryLiveEffect(
+      let attempts = 0;
+      const transient = statusError(503);
+      const result = yield* retryLiveEffect(
         "storage bucket",
         Effect.suspend(() => {
           attempts += 1;
           return attempts < 3 ? Effect.fail(transient) : Effect.succeed("created");
         }),
         { interval: "1 millis", timeout: "100 millis", shouldRetry: isTransientLiveError },
-      ),
-    );
-    expect(result).toBe("created");
-    expect(attempts).toBe(3);
+      );
+      expect(result).toBe("created");
+      expect(attempts).toBe(3);
 
-    attempts = 0;
-    await expect(
-      Effect.runPromise(
+      attempts = 0;
+      const exit = yield* Effect.exit(
         retryLiveEffect(
           "project readiness",
           Effect.suspend(() => {
@@ -134,10 +137,11 @@ describe("live project lifecycle", () => {
             shouldRetry: isTransientLiveError,
           },
         ),
-      ),
-    ).rejects.toThrow();
-    expect(attempts).toBe(1);
-  });
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(attempts).toBe(1);
+    }),
+  );
 
   it("classifies storage responses for retry without retrying terminal client errors", () => {
     expect(isTransientStorageStatus(408)).toBe(true);
@@ -153,6 +157,25 @@ describe("live project lifecycle", () => {
     const primary = poolerConfig();
 
     expect(selectPrimaryPoolerConfig([replica, primary])).toBe(primary);
+  });
+
+  it("derives the profile's pooler domain from a pooler database url", () => {
+    expect(
+      resolvePoolerDomain(
+        "postgresql://postgres.ref:pw@aws-0-us-east-1.pooler.supabase.com:5432/postgres",
+      ),
+    ).toBe("supabase.com");
+    expect(
+      resolvePoolerDomain(
+        "postgresql://postgres.ref:pw@aws-0-eu-central-1.pooler.supabase.green:5432/postgres",
+      ),
+    ).toBe("supabase.green");
+  });
+
+  it("fails rather than leaving the pooler domain assertion disabled", () => {
+    expect(() =>
+      resolvePoolerDomain("postgresql://postgres.ref:pw@localhost:5432/postgres"),
+    ).toThrow(/pooler domain from localhost/);
   });
 
   it("translates transaction pooler port and encodes the password", () => {

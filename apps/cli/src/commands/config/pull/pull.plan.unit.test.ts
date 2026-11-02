@@ -54,6 +54,7 @@ describe("planConfigPull", () => {
       changeSet: changeSet([c]),
       destination: ROOT,
       rootDocument: {},
+      sourceDocument: {},
       projectRef: "ref",
     });
     expect(plan.writes).toEqual([{ change: c, documentPath: path, value: 1000 }]);
@@ -73,6 +74,7 @@ describe("planConfigPull", () => {
       changeSet: changeSet([c]),
       destination: ROOT,
       rootDocument: {},
+      sourceDocument: {},
       projectRef: "ref",
     });
     expect(plan.writes).toEqual([
@@ -88,6 +90,7 @@ describe("planConfigPull", () => {
       changeSet: changeSet([c]),
       destination: ROOT,
       rootDocument: {},
+      sourceDocument: {},
       projectRef: "ref",
     });
     expect(plan.writes).toEqual([]);
@@ -108,6 +111,7 @@ describe("planConfigPull", () => {
       changeSet: changeSet([c]),
       destination: ROOT,
       rootDocument: {},
+      sourceDocument: {},
       projectRef: "ref",
     });
     expect(plan.writes).toEqual([]);
@@ -127,6 +131,7 @@ describe("planConfigPull", () => {
       changeSet: changeSet([c]),
       destination: ROOT,
       rootDocument: {},
+      sourceDocument: {},
       projectRef: "ref",
     });
     expect(plan.writes).toEqual([]);
@@ -146,6 +151,7 @@ describe("planConfigPull", () => {
       changeSet: changeSet([c]),
       destination: ROOT,
       rootDocument: {},
+      sourceDocument: {},
       projectRef: "ref",
     });
     expect(plan.skipped).toEqual([{ change: c, reason: "unwritable" }]);
@@ -164,6 +170,7 @@ describe("planConfigPull", () => {
       changeSet: changeSet([c]),
       destination: ROOT,
       rootDocument: {},
+      sourceDocument: {},
       projectRef: "ref",
     });
     expect(plan.writes).toEqual([]);
@@ -183,6 +190,7 @@ describe("planConfigPull", () => {
       changeSet: changeSet([c]),
       destination: ROOT,
       rootDocument: {},
+      sourceDocument: {},
       projectRef: "ref",
     });
     expect(plan.writes).toEqual([]);
@@ -202,6 +210,7 @@ describe("planConfigPull", () => {
       changeSet: changeSet([c]),
       destination: ROOT,
       rootDocument: {},
+      sourceDocument: {},
       projectRef: "ref",
     });
     expect(plan.writes).toEqual([]);
@@ -221,6 +230,7 @@ describe("planConfigPull", () => {
       changeSet: changeSet([c]),
       destination: ROOT,
       rootDocument: {},
+      sourceDocument: {},
       projectRef: "ref",
     });
     expect(plan.writes).toEqual([{ change: c, documentPath: path, value: "see env(FOO) docs" }]);
@@ -240,6 +250,7 @@ describe("planConfigPull", () => {
       changeSet: changeSet([c]),
       destination: ROOT,
       rootDocument: {},
+      sourceDocument: {},
       projectRef: "ref",
     });
     expect(plan.writes).toEqual([]);
@@ -253,6 +264,7 @@ describe("planConfigPull", () => {
       changeSet: changeSet([c]),
       destination: REMOTE,
       rootDocument: {},
+      sourceDocument: {},
       projectRef: "ref",
     });
     expect(plan.writes).toEqual([
@@ -274,6 +286,7 @@ describe("planConfigPull", () => {
       changeSet: changeSet([c]),
       destination: ROOT,
       rootDocument: {},
+      sourceDocument: {},
       projectRef: "ref",
     });
     expect(rootPlan.warnings).toEqual([{ kind: "dual_scope", path }]);
@@ -282,6 +295,7 @@ describe("planConfigPull", () => {
       changeSet: changeSet([c]),
       destination: REMOTE,
       rootDocument: {},
+      sourceDocument: {},
       projectRef: "ref",
     });
     expect(remotePlan.warnings.some((warning) => warning.kind === "dual_scope")).toBe(false);
@@ -294,6 +308,7 @@ describe("planConfigPull", () => {
       changeSet: changeSet([c]),
       destination: ROOT,
       rootDocument: {},
+      sourceDocument: {},
       projectRef: "ref",
     });
     expect(plan.warnings).toEqual([]);
@@ -307,6 +322,7 @@ describe("planConfigPull", () => {
       changeSet: changeSet([c]),
       destination: REMOTE,
       rootDocument,
+      sourceDocument: {},
       projectRef: "ref",
     });
     expect(plan.warnings).toEqual([{ kind: "duplicates_root", path }]);
@@ -319,6 +335,7 @@ describe("planConfigPull", () => {
       changeSet: changeSet([c]),
       destination: REMOTE,
       rootDocument: {},
+      sourceDocument: {},
       projectRef: "ref",
     });
     expect(plan.warnings).toEqual([]);
@@ -338,6 +355,7 @@ describe("planConfigPull", () => {
       changeSet: changeSet([c]),
       destination: REMOTE,
       rootDocument,
+      sourceDocument: {},
       projectRef: "ref",
     });
     expect(plan.warnings).toEqual([{ kind: "array_drift", path }]);
@@ -357,6 +375,7 @@ describe("planConfigPull", () => {
       changeSet: changeSet([c]),
       destination: REMOTE,
       rootDocument,
+      sourceDocument: {},
       projectRef: "ref",
     });
     expect(plan.warnings.some((warning) => warning.kind === "array_drift")).toBe(false);
@@ -374,6 +393,7 @@ describe("planConfigPull", () => {
       changeSet: cs,
       destination: ROOT,
       rootDocument: {},
+      sourceDocument: {},
       projectRef: "ref",
     });
     expect(plan.writes).toEqual([]);
@@ -386,6 +406,7 @@ describe("planConfigPull", () => {
       changeSet: changeSet([]),
       destination: CREATED_REMOTE,
       rootDocument: {},
+      sourceDocument: {},
       projectRef: "ref",
     });
     expect(plan.createdTable).toEqual(["remotes", "staging"]);
@@ -396,6 +417,7 @@ describe("planConfigPull", () => {
       changeSet: changeSet([]),
       destination: REMOTE,
       rootDocument: {},
+      sourceDocument: {},
       projectRef: "ref",
     });
     expect(remotePlan.createdTable).toBeUndefined();
@@ -404,9 +426,141 @@ describe("planConfigPull", () => {
       changeSet: changeSet([]),
       destination: ROOT,
       rootDocument: {},
+      sourceDocument: {},
       projectRef: "ref",
     });
     expect(rootPlan.createdTable).toBeUndefined();
+  });
+});
+
+describe.each(["email", "sms"] as const)(
+  "planConfigPull spells auth.%s.enable_signup the way the destination file does",
+  (provider) => {
+    const path = ["auth", provider, "enable_signup"];
+    const section = (fields: Record<string, unknown>) => ({ auth: { [provider]: fields } });
+
+    test.each<{
+      name: string;
+      destination: ConfigPullDestination;
+      sourceDocument: Record<string, unknown>;
+      key: "enabled" | "enable_signup";
+    }>([
+      {
+        name: "the root declares enabled",
+        destination: ROOT,
+        sourceDocument: section({ enabled: true }),
+        key: "enabled",
+      },
+      {
+        name: "the root declares only the deprecated enable_signup",
+        destination: ROOT,
+        sourceDocument: section({ enable_signup: true }),
+        key: "enable_signup",
+      },
+      {
+        name: "the root declares both",
+        destination: ROOT,
+        sourceDocument: section({ enabled: true, enable_signup: true }),
+        key: "enabled",
+      },
+      {
+        name: "the root section declares neither",
+        destination: ROOT,
+        sourceDocument: section({ enable_confirmations: false }),
+        key: "enabled",
+      },
+      {
+        name: "the root has no such section",
+        destination: ROOT,
+        sourceDocument: {},
+        key: "enabled",
+      },
+      {
+        name: "only a remote block declares the deprecated enable_signup",
+        destination: ROOT,
+        sourceDocument: { remotes: { staging: section({ enable_signup: true }) } },
+        key: "enabled",
+      },
+      {
+        name: "the remote block declares only the deprecated enable_signup",
+        destination: REMOTE,
+        sourceDocument: { remotes: { staging: section({ enable_signup: true }) } },
+        key: "enable_signup",
+      },
+      {
+        name: "the remote block declares enabled while the root declares enable_signup",
+        destination: REMOTE,
+        sourceDocument: {
+          ...section({ enable_signup: true }),
+          remotes: { staging: section({ enabled: true }) },
+        },
+        key: "enabled",
+      },
+      {
+        name: "the remote block declares both",
+        destination: REMOTE,
+        sourceDocument: {
+          remotes: { staging: section({ enabled: true, enable_signup: true }) },
+        },
+        key: "enabled",
+      },
+      {
+        name: "the remote block declares nothing while the root declares enable_signup",
+        destination: REMOTE,
+        sourceDocument: { ...section({ enable_signup: true }), remotes: { staging: {} } },
+        key: "enabled",
+      },
+      {
+        name: "only a different remote block declares the deprecated enable_signup",
+        destination: REMOTE,
+        sourceDocument: { remotes: { production: section({ enable_signup: true }) } },
+        key: "enabled",
+      },
+      {
+        name: "the remote block is new",
+        destination: CREATED_REMOTE,
+        sourceDocument: section({ enable_signup: true }),
+        key: "enabled",
+      },
+    ])("writes $key when $name", ({ destination, sourceDocument, key }) => {
+      const c = change({ path, class: "update", local: true, remote: false, declared: true });
+      const plan = planConfigPull({
+        changeSet: changeSet([c]),
+        destination,
+        rootDocument: {},
+        sourceDocument,
+        projectRef: "ref",
+      });
+      const prefix = destination.kind === "remote" ? ["remotes", destination.label] : [];
+      expect(plan.writes).toEqual([
+        { change: c, documentPath: [...prefix, "auth", provider, key], value: false },
+      ]);
+      expect(plan.writes[0]?.change.path).toEqual(path);
+    });
+  },
+);
+
+describe("planConfigPull leaves other auth paths on their canonical spelling", () => {
+  test.each([
+    { name: "auth.enable_signup", path: ["auth", "enable_signup"] },
+    { name: "auth.email.otp_length", path: ["auth", "email", "otp_length"] },
+  ])("writes $name at its own path in the root and in a remote block", ({ path }) => {
+    const c = change({ path, class: "update", local: 1, remote: 2, declared: true });
+    const sourceDocument = {
+      auth: { email: { enabled: true }, sms: { enabled: true } },
+      remotes: { staging: { auth: { email: { enabled: true } } } },
+    };
+    for (const destination of [ROOT, REMOTE]) {
+      const plan = planConfigPull({
+        changeSet: changeSet([c]),
+        destination,
+        rootDocument: {},
+        sourceDocument,
+        projectRef: "ref",
+      });
+      const prefix = destination.kind === "remote" ? ["remotes", destination.label] : [];
+      expect(plan.writes).toEqual([{ change: c, documentPath: [...prefix, ...path], value: 2 }]);
+    }
   });
 });
 
@@ -421,38 +575,34 @@ describe("expandConfigPullChangeSet", () => {
     ]);
     const result = expandConfigPullChangeSet({
       initialChangeSet,
-      baseConfig: {} as EffectiveConfig,
+      baseConfig: {},
       baseDocument: {},
       valueOrigins: undefined,
-      remote: {} as ProjectConfig,
+      remote: {},
     });
     expect(result.changeSet).toEqual(initialChangeSet);
     expect(result.residual).toEqual(initialChangeSet);
   });
 
   test("absorbs a sibling ADR 0021 gates as unmanaged, once the gate itself is projected (CLI-2064 live-bug repro)", () => {
-    // Mirrors the live dogfooding bug exactly: `[auth.sms.twilio]` disabled
-    // locally with empty credential placeholders, remote has it enabled with
-    // real credentials. Round 1 only sees `enabled` (the sids are gated out
-    // as unmanaged pre-write); the fixpoint's round 2 must absorb both sids
-    // once projecting `enabled: true` un-gates them.
-    const baseConfig = {
+    // [auth.sms.twilio] is disabled locally with empty placeholders; remote has it enabled with
+    // real credentials. Round 1 only sees `enabled` (the sids are unmanaged pre-write); round 2
+    // must absorb both once `enabled: true` un-gates them.
+    const baseConfig: EffectiveConfig = {
       auth: { sms: { twilio: { enabled: false, account_sid: "", message_service_sid: "" } } },
-    } as unknown as EffectiveConfig;
+    };
     const baseDocument = {
       auth: { sms: { twilio: { enabled: false, account_sid: "", message_service_sid: "" } } },
     };
-    const remote = {
+    const remote: ProjectConfig = {
       auth: {
         sms: { twilio: { enabled: true, account_sid: "AC_REAL", message_service_sid: "MG_REAL" } },
       },
-    } as unknown as ProjectConfig;
+    };
     const initialChangeSet = diffProjectConfig({
       local: { config: baseConfig, document: baseDocument },
       remote,
     });
-    // Sanity on the PRE-fixpoint diff — this is the bug: only `enabled` is a
-    // change, the sids are excluded as unmanaged.
     expect(initialChangeSet.changes.map((c) => c.path)).toEqual([
       ["auth", "sms", "twilio", "enabled"],
     ]);
@@ -479,23 +629,20 @@ describe("expandConfigPullChangeSet", () => {
         "auth.sms.twilio.message_service_sid",
       ]),
     );
-    // The fixpoint's own residual (what the caller's planner-defect/unpushable
-    // check consumes) shows NOTHING left drifting — every absorbed write
-    // actually converges once applied.
+    // The residual (what the planner-defect/unpushable check consumes) shows nothing left
+    // drifting: every absorbed write converges once applied.
     expect(result.residual.changes).toEqual([]);
     expect(result.residual.unmanaged).toEqual([]);
   });
 
   test("generalizes to a second, independent registry family (`auth.captcha`)", () => {
-    // A different `DISABLED_SENTINEL_PRUNES` family — confirms the fixpoint
-    // isn't special-cased to SMS providers.
-    const baseConfig = {
+    const baseConfig: EffectiveConfig = {
       auth: { captcha: { enabled: false, provider: "hcaptcha" } },
-    } as unknown as EffectiveConfig;
+    };
     const baseDocument = { auth: { captcha: { enabled: false, provider: "hcaptcha" } } };
-    const remote = {
+    const remote: ProjectConfig = {
       auth: { captcha: { enabled: true, provider: "turnstile" } },
-    } as unknown as ProjectConfig;
+    };
     const initialChangeSet = diffProjectConfig({
       local: { config: baseConfig, document: baseDocument },
       remote,
@@ -520,11 +667,11 @@ describe("expandConfigPullChangeSet", () => {
   });
 
   test("never re-projects a change that can't be written (env-sourced), so it doesn't loop forever chasing it", () => {
-    const baseConfig = {
+    const baseConfig: EffectiveConfig = {
       auth: {
         sms: { twilio: { enabled: false, account_sid: "", message_service_sid: "MG_SAME" } },
       },
-    } as unknown as EffectiveConfig;
+    };
     const baseDocument = {
       auth: {
         sms: {
@@ -543,11 +690,11 @@ describe("expandConfigPullChangeSet", () => {
         envVariables: ["MY_VAR"],
       },
     ];
-    const remote = {
+    const remote: ProjectConfig = {
       auth: {
         sms: { twilio: { enabled: true, account_sid: "AC_REAL", message_service_sid: "MG_SAME" } },
       },
-    } as unknown as ProjectConfig;
+    };
     const initialChangeSet = diffProjectConfig({
       local: { config: baseConfig, document: baseDocument, valueOrigins },
       remote,
@@ -565,9 +712,6 @@ describe("expandConfigPullChangeSet", () => {
       (c) => c.path.join(".") === "auth.sms.twilio.account_sid",
     );
     expect(accountSidChange?.envVariables).toEqual(["MY_VAR"]);
-    // Never projected (it's env-sourced, so `pull.plan.ts`'s own skip rule
-    // would never write it either) — it stays a residual, expected, not the
-    // "planner defect" the caller's own check would otherwise raise.
     expect(result.residual.changes.map((c) => c.path.join("."))).toEqual([
       "auth.sms.twilio.account_sid",
     ]);
@@ -689,11 +833,9 @@ describe("dropConfigPullUnvalidatableFamilies", () => {
     ]);
 
     expect(result.writes).toEqual([unrelatedWrite]);
-    // The dropped family's own `dual_scope`/`unpushable` warnings are gone —
-    // both described a write that no longer landed. The unrelated
-    // `duplicates_root` warning (a DIFFERENT path) and the path-less
-    // `uncommitted_changes` warning both survive untouched, and the new
-    // `would_invalidate` warning is appended last.
+    // The dropped family's dual_scope/unpushable warnings are gone; the unrelated
+    // duplicates_root warning (a different path) and the path-less uncommitted_changes warning
+    // survive untouched, with the new would_invalidate warning appended last.
     expect(result.warnings).toEqual([
       { kind: "duplicates_root", path: ["api", "max_rows"] },
       { kind: "uncommitted_changes" },

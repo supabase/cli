@@ -1,11 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, PlatformError, Sink, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { Deferred, Effect, Exit, PlatformError, Sink, Stream, Tracer } from "effect";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   containerCliExitCode,
   containerRuntimeNotFoundMessage,
   describeContainerCliFailure,
+  dockerSupportsHealthStartInterval,
   dockerSupportsVolumePruneAllFlag,
   isContainerNotFoundMessage,
   spawnContainerCli,
@@ -17,6 +18,11 @@ function mockSpawner(
     readonly bothMissing?: boolean;
     readonly exitCode?: number;
     readonly stdout?: string;
+    readonly apiVersions?: {
+      readonly clientDefault?: string;
+      readonly client: string;
+      readonly server: string;
+    };
   } = {},
 ) {
   const spawned: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> = [];
@@ -28,15 +34,24 @@ function mockSpawner(
       spawned.push({ command: cmd, args });
 
       if ((opts.dockerMissing && cmd === "docker") || opts.bothMissing === true) {
-        return yield* Effect.fail(
-          PlatformError.systemError({
-            _tag: "NotFound",
-            module: "ChildProcess",
-            method: "spawn",
-            description: `${cmd} not found`,
-          }),
-        );
+        return yield* PlatformError.systemError({
+          _tag: "NotFound",
+          module: "ChildProcess",
+          method: "spawn",
+          description: `${cmd} not found`,
+        });
       }
+
+      const stdout =
+        opts.apiVersions !== undefined && args[0] === "version"
+          ? (args[args.indexOf("--format") + 1] ?? "")
+              .replaceAll(
+                "{{.Client.DefaultAPIVersion}}",
+                opts.apiVersions.clientDefault ?? opts.apiVersions.client,
+              )
+              .replaceAll("{{.Client.APIVersion}}", opts.apiVersions.client)
+              .replaceAll("{{.Server.APIVersion}}", opts.apiVersions.server)
+          : opts.stdout;
 
       const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
       yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(opts.exitCode ?? 0));
@@ -44,8 +59,8 @@ function mockSpawner(
       return ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(1),
         stdout:
-          opts.stdout !== undefined
-            ? Stream.fromIterable([new TextEncoder().encode(opts.stdout)])
+          stdout !== undefined
+            ? Stream.fromIterable([new TextEncoder().encode(stdout)])
             : Stream.empty,
         stderr: Stream.empty,
         all: Stream.empty,
@@ -127,30 +142,178 @@ describe("containerCliExitCode", () => {
   });
 });
 
+describe("container CLI process spans", () => {
+  const recordedAttributes = (args: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      const spans: Array<Tracer.NativeSpan> = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+      yield* containerCliExitCode(mockSpawner().spawner, args).pipe(
+        Effect.withTracer(tracer),
+        Effect.withTracerEnabled(true),
+      );
+      return Object.fromEntries(spans.find((span) => span.name === "ContainerCli.run")!.attributes);
+    });
+
+  it.live("records the docker verb but no free-form arguments", () =>
+    recordedAttributes(["container", "inspect", "supabase_db_secret-project"]).pipe(
+      Effect.map((attributes) => {
+        expect(attributes).toEqual({
+          "process.executable.name": "docker",
+          "process.arg_count": 3,
+          "process.subcommand": "container inspect",
+          "process.exit_code": 0,
+        });
+      }),
+    ),
+  );
+
+  it.live("labels an unknown leading argument as other", () =>
+    recordedAttributes(["--context", "my-private-context", "ps"]).pipe(
+      Effect.map((attributes) => {
+        expect(attributes["process.subcommand"]).toBe("other");
+      }),
+    ),
+  );
+
+  it.live("records a missing docker as a failed attempt, not a failed span, on podman hosts", () =>
+    Effect.gen(function* () {
+      const spans: Array<Tracer.NativeSpan> = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+      const mock = mockSpawner({ dockerMissing: true });
+
+      yield* containerCliExitCode(mock.spawner, ["ps"]).pipe(
+        Effect.andThen(spawnContainerCli(mock.spawner, ["ps"]).pipe(Effect.scoped)),
+        Effect.withTracer(tracer),
+        Effect.withTracerEnabled(true),
+      );
+
+      const docker = spans.filter(
+        (span) => span.attributes.get("process.executable.name") === "docker",
+      );
+      expect(docker.map((span) => span.name)).toEqual(["ContainerCli.run", "ContainerCli.spawn"]);
+      expect(docker.map((span) => span.attributes.get("process.attempt_failed"))).toEqual([
+        true,
+        true,
+      ]);
+      expect(
+        spans.map((span) => span.status._tag === "Ended" && Exit.isSuccess(span.status.exit)),
+      ).toEqual([true, true, true, true]);
+    }),
+  );
+
+  it.live("fails the podman span when neither runtime can be spawned", () =>
+    Effect.gen(function* () {
+      const spans: Array<Tracer.NativeSpan> = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+
+      yield* containerCliExitCode(mockSpawner({ bothMissing: true }).spawner, ["ps"]).pipe(
+        Effect.ignore,
+        Effect.withTracer(tracer),
+        Effect.withTracerEnabled(true),
+      );
+
+      const podman = spans.find(
+        (span) => span.attributes.get("process.executable.name") === "podman",
+      );
+      expect(podman?.status._tag === "Ended" && Exit.isFailure(podman.status.exit)).toBe(true);
+    }),
+  );
+});
+
+describe("dockerSupportsHealthStartInterval", () => {
+  it.live.each([
+    { name: "both ends at the 1.44 minimum", client: "1.44", server: "1.44" },
+    { name: "a new client against a newer daemon", client: "1.47", server: "1.56" },
+    { name: "a three-part API version", client: "1.44.0", server: "1.44.0" },
+  ])("returns true for $name", ({ client, server }) => {
+    const mock = mockSpawner({ apiVersions: { client, server } });
+    return dockerSupportsHealthStartInterval(mock.spawner).pipe(
+      Effect.map((supported) => {
+        expect(supported).toBe(true);
+      }),
+    );
+  });
+
+  it.live.each([
+    {
+      name: "a client below API 1.44",
+      options: { apiVersions: { client: "1.43", server: "1.56" } },
+    },
+    {
+      name: "an old client with DOCKER_API_VERSION forced up",
+      options: { apiVersions: { clientDefault: "1.43", client: "1.44", server: "1.56" } },
+    },
+    {
+      name: "a daemon below API 1.44",
+      options: { apiVersions: { client: "1.56", server: "1.43" } },
+    },
+    {
+      name: "a docker shim printing Podman's own version",
+      options: { apiVersions: { client: "6.1.3", server: "6.1.3" } },
+    },
+    {
+      name: "a shim whose major starts with a 1",
+      options: { apiVersions: { client: "10.1.0", server: "10.1.0" } },
+    },
+    { name: "fewer than three versions", options: { stdout: "1.56 1.56" } },
+    {
+      name: "the version command exiting non-zero",
+      options: { exitCode: 1, stdout: "1.56 1.56 1.56" },
+    },
+    { name: "docker not being installed", options: { dockerMissing: true } },
+  ])("returns false for $name", ({ options }) => {
+    const mock = mockSpawner(options);
+    return dockerSupportsHealthStartInterval(mock.spawner).pipe(
+      Effect.map((supported) => {
+        expect(supported).toBe(false);
+      }),
+    );
+  });
+});
+
 describe("dockerSupportsVolumePruneAllFlag", () => {
-  it.live("returns true when the daemon reports an API version at or above 1.42", () => {
-    const mock = mockSpawner({ stdout: "1.42" });
-    return dockerSupportsVolumePruneAllFlag(mock.spawner).pipe(
-      Effect.map((supportsAll) => {
-        expect(supportsAll).toBe(true);
-        expect(mock.spawned).toEqual([
-          { command: "docker", args: ["version", "--format", "{{.Server.APIVersion}}"] },
-        ]);
-      }),
-    );
-  });
+  it.live(
+    "returns true when the client and daemon both report an API version at or above 1.42",
+    () => {
+      const mock = mockSpawner({ apiVersions: { client: "1.42", server: "1.51" } });
+      return dockerSupportsVolumePruneAllFlag(mock.spawner).pipe(
+        Effect.map((supportsAll) => {
+          expect(supportsAll).toBe(true);
+          expect(mock.spawned).toEqual([
+            {
+              command: "docker",
+              args: [
+                "version",
+                "--format",
+                "{{.Client.DefaultAPIVersion}} {{.Client.APIVersion}} {{.Server.APIVersion}}",
+              ],
+            },
+          ]);
+        }),
+      );
+    },
+  );
 
-  it.live("returns true for a version comfortably above 1.42", () => {
-    const mock = mockSpawner({ stdout: "1.51" });
-    return dockerSupportsVolumePruneAllFlag(mock.spawner).pipe(
-      Effect.map((supportsAll) => {
-        expect(supportsAll).toBe(true);
-      }),
-    );
-  });
-
-  it.live("returns false when the daemon reports an API version below 1.42", () => {
-    const mock = mockSpawner({ stdout: "1.41" });
+  it.live("returns false for an old client against a new daemon", () => {
+    const mock = mockSpawner({ apiVersions: { client: "1.41", server: "1.44" } });
     return dockerSupportsVolumePruneAllFlag(mock.spawner).pipe(
       Effect.map((supportsAll) => {
         expect(supportsAll).toBe(false);
@@ -158,10 +321,20 @@ describe("dockerSupportsVolumePruneAllFlag", () => {
     );
   });
 
-  it.live("compares version components numerically, not lexicographically", () => {
-    // A naive string compare would misorder "1.9" as greater than "1.42" — this
-    // guards the numeric, component-by-component comparison instead.
-    const mock = mockSpawner({ stdout: "1.9" });
+  it.live.each([
+    {
+      name: "a new client against an old daemon",
+      options: { apiVersions: { client: "1.44", server: "1.41" } },
+    },
+    {
+      name: "versions that only compare above 1.42 lexicographically",
+      options: { apiVersions: { client: "1.9", server: "1.9" } },
+    },
+    { name: "a single version", options: { stdout: "1.51" } },
+    { name: "more than three versions", options: { stdout: "1.51 1.51 1.51 1.51" } },
+    { name: "empty output", options: { stdout: "" } },
+  ])("returns false for $name", ({ options }) => {
+    const mock = mockSpawner(options);
     return dockerSupportsVolumePruneAllFlag(mock.spawner).pipe(
       Effect.map((supportsAll) => {
         expect(supportsAll).toBe(false);
@@ -170,16 +343,7 @@ describe("dockerSupportsVolumePruneAllFlag", () => {
   });
 
   it.live("returns false when the version command exits non-zero", () => {
-    const mock = mockSpawner({ exitCode: 1, stdout: "1.51" });
-    return dockerSupportsVolumePruneAllFlag(mock.spawner).pipe(
-      Effect.map((supportsAll) => {
-        expect(supportsAll).toBe(false);
-      }),
-    );
-  });
-
-  it.live("returns false when the reported version is empty", () => {
-    const mock = mockSpawner({ stdout: "" });
+    const mock = mockSpawner({ exitCode: 1, apiVersions: { client: "1.51", server: "1.51" } });
     return dockerSupportsVolumePruneAllFlag(mock.spawner).pipe(
       Effect.map((supportsAll) => {
         expect(supportsAll).toBe(false);

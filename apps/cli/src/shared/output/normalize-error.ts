@@ -1,14 +1,23 @@
 import { Cause, Option } from "effect";
-import { CliError } from "effect/unstable/cli";
+import { CliError } from "effect/cli";
+import { unwrapNativeFailure } from "../telemetry/error-actionability.ts";
 import { formatInvalidValueMessage } from "../cli/invalid-value-message.ts";
+import { stripControlSequences } from "./strip-control-sequences.ts";
 import type { CliErrorSuggestionContext } from "../cli/subcommand-flag-suggestions.ts";
 import { formatCliErrorsForDisplay } from "../cli/subcommand-flag-suggestions.ts";
+
+/** The plan-gate signal machine-mode errors carry, mirroring the Management API's `entitlement_required` body. */
+export type PlanGateEntitlement = {
+  readonly feature: string;
+  readonly upgrade_url: string;
+};
 
 type NormalizedCliError = {
   readonly code: string;
   readonly message: string;
   readonly detail?: string;
   readonly suggestion?: string;
+  readonly entitlement?: PlanGateEntitlement;
 };
 
 type ErrorRecord = Record<string, unknown>;
@@ -21,15 +30,33 @@ const readString = (value: ErrorRecord, key: string): string | undefined => {
   return typeof field === "string" && field.trim().length > 0 ? field.trim() : undefined;
 };
 
-// Unlike `readString`, does not trim or reject empty strings. Use this for
-// fields that carry raw user input (e.g. `CliError.InvalidValue#value`),
-// where an empty string or meaningful surrounding whitespace is a legitimate
-// value the user typed (`supabase --output-format ''`) and must be preserved
-// and reported verbatim rather than normalized away.
+// Unlike `readString`, does not trim or reject empty strings: some fields
+// carry raw user input (e.g. `CliError.InvalidValue#value`) where an empty
+// string or meaningful whitespace is a legitimate value that must be
+// reported verbatim.
 const readRawString = (value: ErrorRecord, key: string): string | undefined => {
   const field = value[key];
   return typeof field === "string" ? field : undefined;
 };
+
+const readEntitlement = (error: ErrorRecord): PlanGateEntitlement | undefined => {
+  const entitlement = error["entitlement"];
+  if (!isErrorRecord(entitlement)) return undefined;
+  const feature = readString(entitlement, "feature");
+  const upgradeUrl = readString(entitlement, "upgrade_url");
+  return feature && upgradeUrl ? { feature, upgrade_url: upgradeUrl } : undefined;
+};
+
+/** A config parse failure's reason and position, without the source text it quotes, which can hold secrets. */
+export function configParseCauseMessage(cause: unknown): string {
+  const text = cause instanceof Error ? cause.message : String(cause);
+  const reason = (stripControlSequences(text).split("\n\n")[0] ?? "").trimEnd();
+  /* Only smol-toml's error carries a `codeblock`; Bun sets `line`/`column` on every `Error`. */
+  if (isErrorRecord(cause) && typeof cause["codeblock"] === "string") {
+    return `${reason} (line ${String(cause["line"])}, column ${String(cause["column"])})`;
+  }
+  return cause instanceof SyntaxError ? reason.replace(/"[\s\S]*"/u, '"<redacted>"') : reason;
+}
 
 const mappedError = (
   error: ErrorRecord,
@@ -38,11 +65,10 @@ const mappedError = (
   const tag = readString(error, "_tag");
   switch (tag) {
     case "MissingOption": {
-      // Mirror Go Cobra's `required flag(s) "X" not set` wording. Effect CLI's
-      // default `Missing required flag: --X` differs and would break scripts
-      // that parse the Go CLI's stderr. We still cannot suppress Effect CLI's
-      // pre-error help dump (Cobra doesn't show it on parse error) — that
-      // would require a forked CLI parser. Match what we can.
+      // Matches the CLI's established `required flag(s) "X" not set` wording
+      // (not Effect CLI's default `Missing required flag: --X`) so scripts
+      // parsing stderr keep working. The pre-error help dump above it can't
+      // be suppressed without forking the parser.
       const option = readString(error, "option");
       return {
         code: tag,
@@ -52,20 +78,13 @@ const mappedError = (
       };
     }
     case "InvalidValue": {
-      // `CliError.InvalidValue` for a `GlobalFlag.setting` flag (e.g.
-      // `--output-format`, or the `--output`/`-o`, `--dns-resolver`,
-      // `--agent`) never reaches `CliOutput.Formatter` — `Command.runWith`
-      // validates those flags in a step that runs outside the `ShowHelp`
-      // path, so the failure lands here instead. Apply the same
-      // doubled-"Expected"-prefix workaround `subcommand-flag-suggestions.ts`
-      // applies for the `ShowHelp`-formatted case (see CLI-1898), so every
-      // `InvalidValue` failure — whichever path it takes — renders the same
-      // way.
+      // A global-flag `InvalidValue` (`--output-format`, `--output`/`-o`,
+      // `--dns-resolver`, `--agent`) bypasses `CliOutput.Formatter` and lands
+      // here; apply the same doubled-"Expected"-prefix fix as the `ShowHelp` path.
       const option = readString(error, "option");
-      // Raw read: `value` is the exact argv token the user typed and can
-      // legitimately be `""` or carry surrounding whitespace — `readString`
-      // would trim it or drop it entirely, either masking the bug this case
-      // exists to fix or misreporting what the user actually typed.
+      // Raw read: `value` is the exact argv token typed by the user and may
+      // legitimately be `""` or carry whitespace; `readString` would trim or
+      // drop it, masking the bug this case exists to fix.
       const value = readRawString(error, "value");
       const expected = readString(error, "expected");
       const kind = readString(error, "kind");
@@ -80,18 +99,24 @@ const mappedError = (
       }
       return undefined;
     }
+    case "CliConfigParseError": {
+      const path = readString(error, "path");
+      return path === undefined
+        ? undefined
+        : {
+            code: tag,
+            message: `failed to parse ${path}: ${configParseCauseMessage(error["cause"])}`,
+          };
+    }
     case "UnknownSubcommand":
       return {
         code: "UnknownSubcommand",
         message: readString(error, "message") ?? "Unknown subcommand",
       };
     case "ShowHelp": {
-      // Effect CLI wraps parse errors in a ShowHelp envelope (`CliError.ts`)
-      // whose `errors` array holds the underlying causes. If exactly one of
-      // those is a known recoverable type with a Go-parity mapping, unwrap
-      // and surface that instead of the generic "Help requested" envelope
-      // message — otherwise the user sees a useless top-line above the real
-      // problem.
+      // `ShowHelp` wraps parse errors; if exactly one inner error has a known
+      // mapping here, surface that instead of the generic "Help requested"
+      // envelope message.
       const errors = error["errors"];
       if (!Array.isArray(errors) || errors.length === 0) return undefined;
 
@@ -103,21 +128,9 @@ const mappedError = (
         }
       }
 
-      // No Go-parity-specific single-error mapping applies (either more than
-      // one simultaneous error, e.g. a child flag placed before its
-      // subcommand — `UnrecognizedOption` plus the `UnknownSubcommand` its
-      // misplaced value gets parsed as — or a lone error with no known
-      // mapping: UnrecognizedOption, DuplicateOption, MissingArgument,
-      // UnknownSubcommand, UserError, or an InvalidValue that doesn't hit
-      // CLI-1898's doubled-"Expected"-prefix bug). Surface every inner
-      // error's own message — reusing the same `formatCliErrorsForDisplay`
-      // the text/json formatters use, so a subcommand-flag hint (e.g. "Hint:
-      // --foo is available on `branches create`. Pass it after the
-      // subcommand") survives — rather than falling through to ShowHelp's
-      // useless "Help requested" envelope message: since CLI-1901 (`run.ts`'s
-      // `withoutParseErrorHelpDump`) stopped the vendored library from also
-      // `Console.error`-ing this same text, this is now the ONLY place any
-      // of it reaches the user, for one error or many.
+      // No known single-error mapping applies. Reuse
+      // `formatCliErrorsForDisplay` so subcommand-flag hints survive, rather
+      // than falling through to the generic "Help requested" envelope message.
       if (errors.every(CliError.isCliError)) {
         const formatted = formatCliErrorsForDisplay(errors, context);
         if (formatted.errors.length > 0) {
@@ -129,9 +142,9 @@ const mappedError = (
         }
       }
 
-      // Defensive fallback for a single inner value that carries a usable
-      // `_tag`/`message` pair but isn't a real `CliError` instance (e.g. a
-      // hand-rolled test double) — real `ShowHelp.errors` entries always are.
+      // Defensive fallback for an inner value with a usable `_tag`/`message`
+      // pair but not a real `CliError` instance (e.g. a hand-rolled test
+      // double); real `ShowHelp.errors` entries always are.
       if (errors.length === 1) {
         const inner = errors[0];
         if (isErrorRecord(inner)) {
@@ -149,6 +162,7 @@ export function normalizeCliError(
   error: unknown,
   context?: CliErrorSuggestionContext,
 ): NormalizedCliError {
+  error = unwrapNativeFailure(error);
   if (isErrorRecord(error)) {
     const mapped = mappedError(error, context);
     if (mapped) {
@@ -158,18 +172,17 @@ export function normalizeCliError(
     const code = readString(error, "_tag") ?? "UnknownError";
     const message = readString(error, "message") ?? readString(error, "detail") ?? code;
     const detail = readString(error, "detail");
-    // Raw read: some producers' suggestion text is meaningful leading/trailing
-    // whitespace, not incidental — e.g. `suggestLegacyBundle`'s Go-parity
-    // string (`shared/functions/download.ts`) starts with `\n` to reproduce
-    // Go's blank separator line before the hint (`cmd/root.go:301-302`,
-    // `Fprintln(os.Stderr, CmdSuggestion)`). `readString` would trim exactly
-    // that away.
+    // Raw read: some producers' suggestion text carries meaningful leading
+    // whitespace (e.g. `suggestUseApiRetry`'s leading `\n` for a blank
+    // separator line); `readString` would trim exactly that away.
     const suggestion = readRawString(error, "suggestion");
+    const entitlement = readEntitlement(error);
     return {
       code,
       message,
       ...(detail && detail !== message ? { detail } : {}),
       ...(suggestion !== undefined && suggestion.length > 0 ? { suggestion } : {}),
+      ...(entitlement === undefined ? {} : { entitlement }),
     };
   }
 

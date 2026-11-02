@@ -1,32 +1,23 @@
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose, withCondition } from "../../../command-internal/command-permissions/model.ts";
+import { dbConfig } from "../../../command-internal/db-config.layer.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { parseSchemaFlags } from "../../../command-internal/schema-flags.ts";
 import { dbLint } from "./lint.handler.ts";
 import { dbLintRuntimeLayer } from "./lint.layers.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { targetFlags } from "../../../command-internal/target/target-flags.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
-  dbUrl: Flag.string("db-url").pipe(
-    Flag.withDescription(
-      "Lints the database specified by the connection string (must be percent-encoded).",
-    ),
-    Flag.optional,
-  ),
-  linked: Flag.boolean("linked").pipe(
-    Flag.withDescription("Lints the linked project for schema errors."),
-    Flag.withDefault(false),
-  ),
-  local: Flag.boolean("local").pipe(
-    Flag.withDescription("Lints the local database for schema errors."),
-    Flag.withDefault(false),
-  ),
-  // TS-only override of the linked project ref — see push.command.ts.
-  projectRef: Flag.string("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
-  schema: Flag.string("schema").pipe(
+  ...targetFlags({ subject: "database", dbUrl: true }),
+  schema: Flag.String("schema").pipe(
     Flag.withAlias("s"),
     Flag.withDescription("Comma separated list of schema to include."),
     Flag.atLeast(0),
@@ -35,11 +26,11 @@ const config = {
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
-  level: Flag.choice("level", ["warning", "error"] as const).pipe(
+  level: Flag.Literals("level", ["warning", "error"] as const).pipe(
     Flag.withDescription("Error level to emit."),
     Flag.optional,
   ),
-  failOn: Flag.choice("fail-on", ["none", "warning", "error"] as const).pipe(
+  failOn: Flag.Literals("fail-on", ["none", "warning", "error"] as const).pipe(
     Flag.withDescription("Error level to exit with non-zero status."),
     Flag.optional,
   ),
@@ -48,32 +39,38 @@ const config = {
 export type DbLintFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const dbLintCommand = Command.make("lint", config).pipe(
-  Command.withDescription("Checks local database for typing error."),
-  Command.withShortDescription("Checks local database for typing error"),
+  Command.withDescription("Checks a database for typing error."),
+  Command.withShortDescription("Checks a database for typing error"),
+  withPermissions(
+    compose(
+      { operations: [], noApiEffectFlags: ["schema", "level", "fail-on"] },
+      dbConfig,
+      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      branchResolution,
+    ),
+  ),
   Command.withHandler((flags) =>
     dbLint(flags).pipe(
       withCommandTelemetry({
         flags: {
-          "db-url": flags.dbUrl,
-          linked: flags.linked,
-          local: flags.local,
-          "project-ref": flags.projectRef,
           schema: flags.schema,
           level: flags.level,
           "fail-on": flags.failOn,
         },
-        // level/fail-on are Flag.choice and are auto-detected as safe via
-        // `config` below. --schema stays redacted: it's a string-slice flag,
-        // not a choice. --project-ref has no established telemetry-safety
-        // baseline either, so it stays redacted too.
+        // level/fail-on are auto-detected as safe (Flag.Literals); --schema stays redacted (no
+        // established safelist).
         config,
-        // Telemetry reports flags under their canonical name even for the
-        // `-s` shorthand; map it so `db lint -s public` records the schema
-        // flag in telemetry.
         aliases: { s: "schema" },
       }),
       withJsonErrorHandling,
     ),
   ),
   Command.provide(dbLintRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
+  withTargetPolicy({
+    group: "selectable",
+    consent: "none",
+    consentExemptReason: "its transaction is always rolled back",
+  }),
 );

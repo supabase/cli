@@ -1,4 +1,10 @@
-import type { CliError, Command, HelpDoc } from "effect/unstable/cli";
+import { Option, Predicate } from "effect";
+import type { CliError, Command, HelpDoc, Param } from "effect/cli";
+import { unwrapParam, unwrapToSingleParam } from "../../command-internal/param-introspection.ts";
+import { REMOTE_FLAG_NAME } from "../../command-internal/target/remote-vocabulary.ts";
+import { isRemoteFlag } from "../../command-internal/target/target-flags.ts";
+import { readTargetPolicy } from "../../command-internal/target/target-policy.ts";
+import { commandInternals } from "../../docs/docs-introspection.ts";
 import { formatInvalidValueMessage } from "./invalid-value-message.ts";
 
 export interface CliErrorSuggestionContext {
@@ -26,21 +32,65 @@ interface CommandWithHelpDoc extends Command.Command.Any {
   readonly buildHelpDoc: (path: ReadonlyArray<string>) => HelpDoc.HelpDoc;
 }
 
+/** `"optional-value"` is a switch when bare and takes a value only through `=` (`--remote`). */
+type FlagArity = "switch" | "value" | "optional-value";
+
+interface CommandFlag {
+  readonly name: string;
+  readonly aliases: ReadonlyArray<string>;
+  readonly arity: FlagArity;
+}
+
 interface MatchingCommand {
   readonly command: Command.Command.Any;
   readonly commandPath: ReadonlyArray<string>;
-  readonly flag: HelpDoc.FlagDoc;
+  readonly flag: CommandFlag;
 }
 
 function hasHelpDoc(command: Command.Command.Any): command is CommandWithHelpDoc {
   return "buildHelpDoc" in command && typeof command.buildHelpDoc === "function";
 }
 
-function helpDocFor(
+export function helpDocFor(
   command: Command.Command.Any,
   commandPath: ReadonlyArray<string>,
 ): HelpDoc.HelpDoc | undefined {
   return hasHelpDoc(command) ? command.buildHelpDoc(commandPath) : undefined;
+}
+
+/**
+ * The operands a command takes, leaving out a hidden positional: it still parses but is never
+ * offered or counted.
+ */
+export function visibleOperandsOf(
+  command: Command.Command.Any,
+): ReadonlyArray<{ readonly name: string; readonly variadic: boolean }> {
+  return commandInternals(command).config.arguments.flatMap((param) => {
+    const unwrapped = unwrapParam(param);
+    return unwrapped === undefined || unwrapped.single.hidden
+      ? []
+      : [{ name: unwrapped.single.name, variadic: unwrapped.isVariadic }];
+  });
+}
+
+const flagArityOf = (single: Param.Single<Param.ParamKind, unknown>): FlagArity => {
+  if (single.primitiveType._tag !== "Boolean") return "value";
+  return isRemoteFlag(single) ? "optional-value" : "switch";
+};
+
+/** Every flag the command parses, hidden aliases included: parsing consumes their values too. */
+function commandFlagsFor(command: Command.Command.Any): ReadonlyArray<CommandFlag> {
+  return commandInternals(command).config.flags.flatMap((param) => {
+    const single = unwrapToSingleParam(param);
+    if (single === undefined) return [];
+    return [
+      {
+        name: single.name,
+        aliases: single.aliases.map((alias) => (alias.length === 1 ? `-${alias}` : `--${alias}`)),
+        arity: flagArityOf(single),
+      },
+    ];
+  });
 }
 
 function findCommand(
@@ -63,10 +113,9 @@ function findCommand(
 }
 
 /**
- * The longest command-path prefix argv's positionals resolve to in the tree,
- * cobra-`Find`-style: segments descend while they match a subcommand and stop
- * at the first that doesn't (an operand). Includes the root's own name, the
- * shape `isValueTakingFlagTokenFor` expects.
+ * The longest command-path prefix argv's positionals resolve to in the tree: segments descend
+ * while they match a subcommand and stop at the first that doesn't (an operand). Includes the
+ * root's own name, the shape `isValueTakingFlagTokenFor` expects.
  */
 export function resolvedCommandPathForArgv(
   rootCommand: Command.Command.Any,
@@ -100,11 +149,8 @@ function collectDescendants(
         if (child.unlisted) continue;
 
         const childPath = [...path, child.name];
-        const helpDoc = helpDocFor(child, childPath);
-        if (helpDoc) {
-          for (const flag of helpDoc.flags) {
-            matches.push({ command: child, commandPath: childPath, flag });
-          }
+        for (const flag of commandFlagsFor(child)) {
+          matches.push({ command: child, commandPath: childPath, flag });
         }
         visit(child, childPath);
       }
@@ -126,25 +172,18 @@ function normalizeOption(option: string): string {
   return withoutValue;
 }
 
-function flagMatchesOption(flag: HelpDoc.FlagDoc, option: string): boolean {
+function flagMatchesOption(flag: CommandFlag, option: string): boolean {
   const optionName = normalizeOption(option);
   if (flag.name === optionName) return true;
-  if (flag.type === "boolean" && optionName === `no-${flag.name}`) return true;
+  if (flag.arity !== "value" && optionName === `no-${flag.name}`) return true;
   return flag.aliases.includes(option);
 }
 
 /**
- * Every argv token (e.g. `-t`, alongside the canonical `--type`) that also
- * resolves to `option` for the command at `commandPath`, by walking the
- * command tree the same way `buildSubcommandFlagHint` does. Returns `[]` if
- * `commandPath` doesn't resolve to a real command or that command has no
- * flag named `option` — callers should treat that as "no aliases", not an
- * error, since a synthetic/test command path is a legitimate input.
- *
- * Used by `run.ts`'s `isMissingFlagTokenPresent` to recognize a required
- * flag supplied by its short alias but missing its value (Go/pflag still
- * shows usage for that case — see CLI-1901) instead of misclassifying it as
- * genuinely absent (Go: `SilenceUsage`-suppressed, no usage shown).
+ * Every argv token (e.g. `-t`, alongside the canonical `--type`) that also resolves to `option`
+ * for the command at `commandPath`. Returns `[]` if `commandPath` doesn't resolve to a real
+ * command or that command has no flag named `option` — callers should treat that as "no
+ * aliases", not an error, since a synthetic/test command path is a legitimate input.
  */
 export function flagAliasesFor(
   rootCommand: Command.Command.Any,
@@ -153,45 +192,27 @@ export function flagAliasesFor(
 ): ReadonlyArray<string> {
   const command = findCommand(rootCommand, commandPath.slice(1));
   if (!command) return [];
-  const flag = helpDocFor(command, commandPath)?.flags.find(
-    (candidate) => candidate.name === option,
-  );
+  const flag = commandFlagsFor(command).find((candidate) => candidate.name === option);
   return flag?.aliases ?? [];
 }
 
 /**
- * Builds a lookup for whether an argv token (a canonical `--name` or one of
- * its aliases, e.g. `-t`) at `commandPath` belongs to a *value-taking* flag
- * (any flag whose `HelpDoc.FlagDoc.type !== "boolean"`) on the command
- * resolved the same way `flagAliasesFor` does. Returns a function that
- * answers `false` for every token when `commandPath` doesn't resolve to a
- * real command, mirroring `flagAliasesFor`'s "no aliases" fallback.
- *
- * Used by `run.ts`'s `isMissingFlagTokenPresent` to recognize when a
- * DIFFERENT flag's value-consumption ate the very token being scanned for.
- * Go/pflag's `parseLongArg` (`flag.go`) unconditionally consumes the next
- * argv entry as a value-taking flag's value, even when that entry itself
- * looks like another flag — e.g. `sso add --project-ref --type` hands the
- * literal string `--type` to `--project-ref`, so `--type` is never seen as
- * its own occurrence and its `MissingOption` failure gets Go's
- * `SilenceUsage` treatment (no usage shown). The vendored `effect` CLI
- * library's own parser does NOT replicate that (`internal/parser.ts`'s
- * `consumeFlagValueWithTokens` only consumes a following token when it's
- * lexed as a plain `Value`, never a flag-shaped token), so without this
- * lookup the raw argv scan in `isMissingFlagTokenPresent` would find the
- * literal `--type` token and wrongly conclude the flag is present but
- * missing its value — reintroducing the usage dump CLI-1901 suppresses.
+ * Builds a lookup for whether an argv token (a canonical `--name` or an alias) at `commandPath`
+ * belongs to a flag that takes the next token as its value, hidden deprecated aliases included
+ * and `--remote` excluded (its value comes only through `=`). Answers `false` for every token
+ * when `commandPath` doesn't resolve to a real command. Used by `run.ts`'s
+ * `isMissingFlagTokenPresent` to detect when the token would have been consumed as a preceding
+ * flag's value instead of treating it as its own occurrence.
  */
 export function isValueTakingFlagTokenFor(
   rootCommand: Command.Command.Any,
   commandPath: ReadonlyArray<string>,
 ): (token: string) => boolean {
   const command = findCommand(rootCommand, commandPath.slice(1));
-  const flags = command && helpDocFor(command, commandPath)?.flags;
-  if (!flags) return () => false;
+  if (!command) return () => false;
   const valueTakingTokens = new Set<string>();
-  for (const flag of flags) {
-    if (flag.type === "boolean") continue;
+  for (const flag of commandFlagsFor(command)) {
+    if (flag.arity !== "value") continue;
     valueTakingTokens.add(`--${flag.name}`);
     for (const alias of flag.aliases) valueTakingTokens.add(alias);
   }
@@ -241,9 +262,16 @@ function formatCommandList(matches: ReadonlyArray<MatchingCommand>): string {
   return `${commands.slice(0, -1).join(", ")}, and ${commands[commands.length - 1]}`;
 }
 
-function formatFlagUsage(option: string, flag: HelpDoc.FlagDoc): string {
+function formatFlagUsage(option: string, flag: CommandFlag): string {
   const flagToken = optionToken(option);
-  return flag.type === "boolean" ? flagToken : `${flagToken} <value>`;
+  switch (flag.arity) {
+    case "switch":
+      return flagToken;
+    case "optional-value":
+      return `${flagToken}[=<value>]`;
+    case "value":
+      return `${flagToken} <value>`;
+  }
 }
 
 function findValueAfterOption(args: ReadonlyArray<string>, option: string): string | undefined {
@@ -260,6 +288,35 @@ function findValueAfterOption(args: ReadonlyArray<string>, option: string): stri
     if (arg.startsWith(`${flagToken}=`)) return undefined;
   }
   return undefined;
+}
+
+/** What to say when `--remote` goes to `link` or a local-only command, which take no such flag. */
+function remoteFlagMisuseMessage(
+  rootCommand: Command.Command.Any,
+  commandPath: ReadonlyArray<string>,
+): string | undefined {
+  const command = findCommand(rootCommand, commandPath.slice(1));
+  if (command === undefined) return undefined;
+  const usage = `supabase ${commandPath.slice(1).join(" ")}`;
+  if (command.name === "link" && commandPath.length === 2) {
+    return `${usage} takes the project ref or branch as its argument: ${usage} <ref-or-branch>`;
+  }
+  return Option.exists(readTargetPolicy(command), (policy) => policy.group === "local-only")
+    ? `${usage} is local only; --remote doesn't apply.`
+    : undefined;
+}
+
+/** Whether `error` is `--remote` given to a command with no such flag and its own message. */
+export function isRemoteFlagMisuse(
+  error: CliError.CliError,
+  rootCommand: Command.Command.Any,
+): error is CliError.UnrecognizedOption {
+  return (
+    Predicate.isTagged(error, "UnrecognizedOption") &&
+    normalizeOption(error.option) === REMOTE_FLAG_NAME &&
+    error.command !== undefined &&
+    remoteFlagMisuseMessage(rootCommand, error.command) !== undefined
+  );
 }
 
 function buildSubcommandFlagHint(
@@ -286,7 +343,7 @@ function buildSubcommandFlagHint(
     ? `, for example:\n    ${attempted.commandPath.join(" ")} ${formatFlagUsage(error.option, attempted.flag)}`
     : ".";
   const consumedValue =
-    attempted && attempted.flag.type !== "boolean"
+    attempted && attempted.flag.arity === "value"
       ? findValueAfterOption(context.args, error.option)
       : undefined;
 
@@ -305,7 +362,18 @@ export function formatCliErrorsForDisplay(
   let changed = false;
 
   for (const error of errors) {
-    if (error._tag === "UnrecognizedOption" && context) {
+    if (context && isRemoteFlagMisuse(error, context.rootCommand) && error.command) {
+      changed = true;
+      formatted.push({
+        _tag: error._tag,
+        message: remoteFlagMisuseMessage(context.rootCommand, error.command) ?? error.message,
+        source: error,
+        changed: true,
+      });
+      continue;
+    }
+
+    if (Predicate.isTagged(error, "UnrecognizedOption") && context) {
       const hint = buildSubcommandFlagHint(error, context);
       if (hint) {
         if (hint.consumedValue) suppressedUnknownSubcommands.add(hint.consumedValue);
@@ -320,12 +388,15 @@ export function formatCliErrorsForDisplay(
       }
     }
 
-    if (error._tag === "UnknownSubcommand" && suppressedUnknownSubcommands.has(error.subcommand)) {
+    if (
+      Predicate.isTagged(error, "UnknownSubcommand") &&
+      suppressedUnknownSubcommands.has(error.subcommand)
+    ) {
       changed = true;
       continue;
     }
 
-    if (error._tag === "InvalidValue") {
+    if (Predicate.isTagged(error, "InvalidValue")) {
       const message = formatInvalidValueMessage(error);
       if (message !== undefined) {
         changed = true;

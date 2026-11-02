@@ -1,15 +1,12 @@
 import type { PgConnInput } from "./db-connection.service.ts";
 
 /**
- * Pure pg_dump environment builders, ported 1:1 from `pkg/migration/dump.go`.
- * No Effect or service dependencies, so the schema/role/config lists and the
- * `os.Expand` dry-run expansion stay unit-testable in isolation. Shared by `db
- * dump`, `db pull`'s initial-migra schema dump, and (CLI-1969) `migration
- * squash`'s before/after/full dumps — the third consumer is why this module
- * lives in `command-internal/` rather than `commands/db/shared/`.
+ * Pure pg_dump environment builders — no Effect or service dependencies, so the schema/role/
+ * config lists and the dry-run expansion stay unit-testable in isolation. Shared by `db dump`,
+ * `db pull`'s initial-migra schema dump, and `migration squash`'s before/after/full dumps.
  */
 
-/** `migration.InternalSchemas`. Used by schema dumps. */
+/** Schemas excluded from a schema dump. */
 export const INTERNAL_SCHEMAS: ReadonlyArray<string> = [
   "information_schema",
   "pg_*", // Wildcard pattern follows pg_dump
@@ -44,7 +41,7 @@ export const INTERNAL_SCHEMAS: ReadonlyArray<string> = [
   "vault",
 ];
 
-/** `migration.excludedSchemas`. Used by data dumps. */
+/** Schemas excluded from a data dump. */
 export const EXCLUDED_SCHEMAS: ReadonlyArray<string> = [
   "information_schema",
   "pg_*", // Wildcard pattern follows pg_dump
@@ -79,7 +76,7 @@ export const EXCLUDED_SCHEMAS: ReadonlyArray<string> = [
   "_supavisor",
 ];
 
-/** `migration.reservedRoles`. Used by role dumps. */
+/** Roles preserved verbatim by a role dump. */
 export const RESERVED_ROLES: ReadonlyArray<string> = [
   "anon",
   "authenticated",
@@ -97,7 +94,7 @@ export const RESERVED_ROLES: ReadonlyArray<string> = [
   "pgtle_admin",
 ];
 
-/** `migration.allowedConfigs`. Used by role dumps. */
+/** Config settings preserved verbatim by a role dump. */
 export const ALLOWED_CONFIGS: ReadonlyArray<string> = [
   // Ref: https://github.com/supabase/postgres/blob/develop/ansible/files/postgresql_config/supautils.conf.j2#L10
   "pgaudit.*",
@@ -112,24 +109,44 @@ export interface DumpOptions {
   readonly schema: ReadonlyArray<string>;
   readonly keepComments: boolean;
   readonly excludeTable: ReadonlyArray<string>;
-  /** `WithColumnInsert(!useCopy)` — true means emit `--column-inserts`. */
+  /** `true` emits `--column-inserts` instead of `COPY` statements. */
   readonly columnInsert: boolean;
+  /** `true` forwards the conn's TLS settings to `pg_dump`. */
+  readonly remote?: boolean;
 }
 
-/** `migration.toEnv`. */
-export function toDumpEnv(conn: PgConnInput): Record<string, string> {
-  return {
+const TLS_DEMANDING_SSLMODES = new Set(["require", "verify-ca", "verify-full"]);
+
+export function toDumpEnv(conn: PgConnInput, remote = false): Record<string, string> {
+  const env: Record<string, string> = {
     PGHOST: conn.host,
     PGPORT: String(conn.port),
     PGUSER: conn.user,
     PGPASSWORD: conn.password,
     PGDATABASE: conn.database,
   };
+  if (!remote) return env;
+  /* libpq's `system` root cert implies and only allows `verify-full`. */
+  const sslmode =
+    conn.sslrootcert === "system" && conn.sslmode !== "disable" ? "verify-full" : conn.sslmode;
+  if (sslmode !== undefined) env["PGSSLMODE"] = sslmode;
+  if (conn.connectTimeoutSeconds !== undefined)
+    env["PGCONNECT_TIMEOUT"] = String(conn.connectTimeoutSeconds);
+  if (sslmode === "disable") return env;
+  /* Under `prefer`, libpq falls back to plaintext when the root cert does not match. */
+  if (conn.sslrootcert !== undefined && TLS_DEMANDING_SSLMODES.has(sslmode ?? ""))
+    env["PGSSLROOTCERT"] = conn.sslrootcert;
+  /* libpq takes no key passphrase from the env, so an encrypted key would stop `pg_dump`. */
+  if (conn.sslcert !== undefined && conn.sslkey !== undefined && conn.sslpassword === undefined) {
+    env["PGSSLCERT"] = conn.sslcert;
+    env["PGSSLKEY"] = conn.sslkey;
+  }
+  return env;
 }
 
-/** `migration.DumpSchema` env assembly. */
+/** Env assembly for a schema-only dump. */
 export function buildSchemaDumpEnv(conn: PgConnInput, opt: DumpOptions): Record<string, string> {
-  const env = toDumpEnv(conn);
+  const env = toDumpEnv(conn, opt.remote);
   if (opt.schema.length > 0) {
     // Must append flag because empty string results in error.
     env["EXTRA_FLAGS"] = `--schema=${opt.schema.join("|")}`;
@@ -142,9 +159,9 @@ export function buildSchemaDumpEnv(conn: PgConnInput, opt: DumpOptions): Record<
   return env;
 }
 
-/** `migration.DumpData` env assembly. */
+/** Env assembly for a data-only dump. */
 export function buildDataDumpEnv(conn: PgConnInput, opt: DumpOptions): Record<string, string> {
-  const env = toDumpEnv(conn);
+  const env = toDumpEnv(conn, opt.remote);
   if (opt.schema.length > 0) {
     env["INCLUDED_SCHEMAS"] = opt.schema.join("|");
   } else {
@@ -166,15 +183,15 @@ export function buildDataDumpEnv(conn: PgConnInput, opt: DumpOptions): Record<st
   return env;
 }
 
-/** `migration.quoteUpperCase`. */
+/** Double-quotes each dot-separated identifier segment (e.g. `public.foo` → `"public"."foo"`). */
 export function quoteUpperCase(table: string): string {
   const escaped = table.replaceAll(".", `"."`);
   return `"${escaped}"`;
 }
 
-/** `migration.DumpRole` env assembly. */
+/** Env assembly for a role dump. */
 export function buildRoleDumpEnv(conn: PgConnInput, opt: DumpOptions): Record<string, string> {
-  const env = toDumpEnv(conn);
+  const env = toDumpEnv(conn, opt.remote);
   env["RESERVED_ROLES"] = RESERVED_ROLES.join("|");
   env["ALLOWED_CONFIGS"] = ALLOWED_CONFIGS.join("|");
   if (!opt.keepComments) {
@@ -186,21 +203,16 @@ export function buildRoleDumpEnv(conn: PgConnInput, opt: DumpOptions): Record<st
 const isAlphaNum = (c: string): boolean =>
   c === "_" || (c >= "0" && c <= "9") || (c >= "a" && c <= "z") || (c >= "A" && c <= "Z");
 
-// `os.isShellSpecialVar`: `*#$@!?-` and the single digits 0-9.
+// Shell special variable names: `*#$@!?-` and the single digits 0-9.
 const isShellSpecialVar = (c: string): boolean => "*#$@!?-0123456789".includes(c);
 
-/**
- * Port of `os.getShellName` (`src/os/env.go`): returns the variable name
- * referenced by `$`-syntax at the start of `s`, plus the number of bytes
- * consumed.
- */
+/** Returns the variable name referenced by `$`-syntax at the start of `s`, plus the number of characters consumed. */
 function getShellName(s: string): { name: string; width: number } {
   if (s.length === 0) return { name: "", width: 0 };
   if (s[0] === "{") {
     if (s.length > 2 && isShellSpecialVar(s[1]!) && s[2] === "}") {
       return { name: s.slice(1, 2), width: 3 };
     }
-    // Scan to the closing brace, copying the var name.
     for (let i = 1; i < s.length; i++) {
       if (s[i] === "}") {
         if (i === 1) return { name: "", width: 2 }; // bad syntax: `${}`
@@ -218,15 +230,14 @@ function getShellName(s: string): { name: string; width: number } {
 }
 
 /**
- * Port of `dump.noExec` expansion: expands
- * `$VAR` / `${VAR}` references in `script` from `env`, ignoring bash default
- * syntax (`${VAR:-x}` resolves `VAR` only) and escaping double quotes in the
- * substituted values. Used to render the `--dry-run` script byte-for-byte.
+ * Expands `$VAR`/`${VAR}` references in `script` from `env`, ignoring bash default syntax
+ * (`${VAR:-x}` resolves `VAR` only) and escaping double quotes in substituted values. Used to
+ * render the `--dry-run` script exactly as it will run.
  */
 export function expandScript(script: string, env: Record<string, string>): string {
   const mapping = (key: string): string => {
-    // Bash variable expansion is unsupported (golang/go#47187): only the name
-    // before the first ":" is honored.
+    // Only the name before the first ":" is honored; bash default-value syntax
+    // (`${VAR:-x}`) is not otherwise supported.
     const name = key.split(":")[0] ?? "";
     const value = env[name] ?? "";
     return value.replaceAll('"', '\\"');

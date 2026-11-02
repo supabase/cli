@@ -7,7 +7,7 @@ describe("renderSecretsListTable", () => {
     expect(renderSecretsListTable([])).toBe("\n  \n   NAME | DIGEST \n  ------|--------\n\n");
   });
 
-  it("aligns NAME and DIGEST columns for a two-row input (Go byte-parity)", () => {
+  it("aligns NAME and DIGEST columns for a two-row input", () => {
     expect(
       renderSecretsListTable([
         { name: "MY_SECRET", value: "digest123" },

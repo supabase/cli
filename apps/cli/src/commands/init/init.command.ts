@@ -1,37 +1,40 @@
 import { Layer } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
+import { cliConfigProviderLayer } from "../../shared/config/cli-config-provider.layer.ts";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import { stdinLayer } from "../../shared/runtime/stdin.layer.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { init } from "./init.handler.ts";
+import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
 
 const config = {
-  interactive: Flag.boolean("interactive").pipe(
+  interactive: Flag.Boolean("interactive").pipe(
     Flag.withDescription("Enables interactive mode to configure IDE settings."),
     Flag.withAlias("i"),
     Flag.withDefault(false),
   ),
-  useOrioledb: Flag.boolean("use-orioledb").pipe(
+  useOrioledb: Flag.Boolean("use-orioledb").pipe(
     Flag.withDescription("Use OrioleDB storage engine for Postgres."),
     Flag.withDefault(false),
   ),
-  force: Flag.boolean("force").pipe(
+  force: Flag.Boolean("force").pipe(
     Flag.withDescription("Overwrite existing supabase/config.toml."),
     Flag.withDefault(false),
   ),
-  withVscodeWorkspace: Flag.boolean("with-vscode-workspace").pipe(
+  withVscodeWorkspace: Flag.Boolean("with-vscode-workspace").pipe(
     Flag.withDescription("Generate VS Code workspace."),
     Flag.withHidden,
     Flag.withDefault(false),
   ),
-  withVscodeSettings: Flag.boolean("with-vscode-settings").pipe(
+  withVscodeSettings: Flag.Boolean("with-vscode-settings").pipe(
     Flag.withDescription("Generate VS Code settings for Deno."),
     Flag.withHidden,
     Flag.withDefault(false),
   ),
-  withIntellijSettings: Flag.boolean("with-intellij-settings").pipe(
+  withIntellijSettings: Flag.Boolean("with-intellij-settings").pipe(
     Flag.withDescription("Generate IntelliJ IDEA settings for Deno."),
     Flag.withHidden,
     Flag.withDefault(false),
@@ -43,12 +46,27 @@ export type InitFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const initCommand = Command.make("init", config).pipe(
   Command.withDescription("Initialize a local project."),
   Command.withShortDescription("Initialize a local project"),
+  withPermissions({
+    operations: [],
+    noApiEffectFlags: [
+      "interactive",
+      "use-orioledb",
+      "force",
+      "with-vscode-workspace",
+      "with-vscode-settings",
+      "with-intellij-settings",
+    ],
+  }),
   Command.withHandler((flags) =>
     init(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   // `stdinLayer` satisfies `promptYesNo`'s `Stdin` requirement (via the
   // shared `initProject` IDE prompts). The prompts are gated on a TTY stdin, so
   // init never actually reads a piped line at runtime — the layer is here for
-  // the effect's type requirements only.
-  Command.provide(Layer.mergeAll(commandRuntimeLayer(["init"]), stdinLayer)),
+  // the effect's type requirements only. `cliConfigProviderLayer` satisfies
+  // experimental-stack env reads so ConfigProvider does not leak to the root.
+  Command.provide(
+    Layer.mergeAll(commandRuntimeLayer(["init"]), stdinLayer, cliConfigProviderLayer),
+  ),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

@@ -1,9 +1,8 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { unusedStackServices } from "../../tests/helpers/unused-stack.ts";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { CliConfigSchema, type CliConfig } from "@supabase/config";
+import { stringify as stringifyToml } from "smol-toml";
 import { Effect, Exit, FileSystem, Layer, Path, Schema } from "effect";
 
 import { withEnvVar, mockCommandSettings } from "../../tests/helpers/command-mocks.ts";
@@ -11,49 +10,52 @@ import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.
 import { readDbToml } from "./db-config.toml-read.ts";
 import { resolveStorageCredentials } from "./storage-credentials.ts";
 import { resolveLocalConfigValues } from "./local-config-values.ts";
+import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
+import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
+
+const stringifyJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 /**
- * Cross-caller parity coverage: for a table of Go-parity misconfigurations, drives BOTH real
+ * Cross-caller parity coverage: for a table of shared misconfigurations, drives both real
  * pipelines — D (`readDbToml`, Effect/raw-TOML) and L (`resolveLocalConfigValues`,
- * `@supabase/config`-decoded) — and asserts they fail with the SAME shared error-message
- * substring, since both now route through the single `validateResolvedConfig`. The two
- * pipelines don't need byte-identical exception wrapping, just the same core Go-parity message
- * text (`.toContain(...)` on both sides with the same expected string). A third caller — the
- * storage-credentials resolver (S, `resolveStorageCredentials`) — shares the `api.port`
- * and `api.tls` presence branches through the exported helpers; its own describe block below
- * drives that pipeline.
+ * `@supabase/config`-decoded) — and asserts they fail with the same error-message substring,
+ * since both route through the single `validateResolvedConfig`. A third caller, the
+ * storage-credentials resolver (S), shares the `api.port`/`api.tls` presence branches and the
+ * `auth.jwt_secret`/`auth.service_role_key` resolution; its own describe block below drives
+ * that pipeline.
  *
  * D's harness replicates the `withConfig`/`read`/`failsWith` pattern from
- * `db-config.toml-read.unit.test.ts` (file-local there, not exported — faithfully
- * reproduced here rather than imported). L's harness replicates the `baseConfig`/`WORKDIR`
- * pattern from `local-config-values.unit.test.ts` (same reasoning).
+ * `db-config.toml-read.unit.test.ts` (file-local there, not exported). L's harness replicates
+ * the `baseConfig`/`WORKDIR` pattern from `local-config-values.unit.test.ts`.
  */
 
-function withConfig(content: string) {
-  const dir = mkdtempSync(join(tmpdir(), "config-validate-parity-"));
-  mkdirSync(join(dir, "supabase"), { recursive: true });
-  writeFileSync(join(dir, "supabase", "config.toml"), content);
-  return dir;
-}
+const withConfig = (content: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dir = yield* fs.makeTempDirectoryScoped({ prefix: "config-validate-parity-" });
+    yield* fs.makeDirectory(path.join(dir, "supabase"), { recursive: true });
+    yield* fs.writeFileString(path.join(dir, "supabase", "config.toml"), content);
+    return dir;
+  }).pipe(Effect.provide(BunServices.layer));
 
 const readD = (workdir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     return yield* readDbToml(fs, path, workdir);
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(Layer.merge(BunServices.layer, cliConfigValuesTestLayer)));
 
 /** Drives D's real pipeline and asserts the failure message contains `message`. */
 function failsWithD(tomlLines: ReadonlyArray<string>, message: string) {
   return Effect.gen(function* () {
-    const dir = withConfig(tomlLines.join("\n"));
+    const dir = yield* withConfig(tomlLines.join("\n"));
     const exit = yield* readD(dir).pipe(Effect.exit);
     expect(Exit.isFailure(exit), `D: expected failure containing: ${message}`).toBe(true);
     if (Exit.isFailure(exit)) {
-      expect(JSON.stringify(exit.cause)).toContain(message);
+      expect(stringifyJson(exit.cause)).toContain(message);
     }
-    rmSync(dir, { recursive: true, force: true });
-  });
+  }).pipe(Effect.scoped);
 }
 
 const decodeConfig = Schema.decodeUnknownSync(CliConfigSchema);
@@ -69,10 +71,13 @@ function failsWithL(
   message: string,
   document?: Readonly<Record<string, unknown>>,
 ) {
-  const config = baseConfig(overrides);
-  expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document)).toThrow(
-    message,
-  );
+  return Effect.gen(function* () {
+    const config = baseConfig(overrides);
+    const error = yield* Effect.flip(
+      resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, document),
+    );
+    expect(error.message).toContain(message);
+  }).pipe(Effect.provide(BunServices.layer));
 }
 
 interface ParityScenario {
@@ -215,9 +220,8 @@ const scenarios: ReadonlyArray<ParityScenario> = [
         },
       },
     },
-    // D's assertion goes through `JSON.stringify(exit.cause)`, which backslash-escapes the
-    // message's embedded double quotes — trim the substring to the quote-free prefix, same
-    // convention D's own suite uses for this message.
+    // D's assertion runs the message through `JSON.stringify`, which backslash-escapes double
+    // quotes; trim to the quote-free prefix.
     message: "auth.hook.custom_access_token.secrets must be formatted as",
   },
   {
@@ -268,10 +272,8 @@ const scenarios: ReadonlyArray<ParityScenario> = [
   },
   {
     name: "auth.email.smtp present table missing a required field",
-    // Both pipelines read every smtp field straight off the raw TOML/document rather than a
-    // schema-decoded, always-defaulted value (this section's presence-based `enabled`
-    // default) — L needs the raw `document` (5th param) for this, matching D's raw
-    // smol-toml document.
+    // Both pipelines read every smtp field straight off the raw TOML/document, not a
+    // schema-decoded, always-defaulted value — L needs the raw `document` (5th param) for this.
     toml: ["[auth.email.smtp]", 'user = "u"'],
     overrides: { auth: { enabled: true, site_url: "http://localhost:3000" } },
     document: { auth: { email: { smtp: { user: "u" } } } },
@@ -285,51 +287,64 @@ const scenarios: ReadonlyArray<ParityScenario> = [
   },
   {
     name: "experimental.webhooks present without enabled = true",
-    // Both pipelines read webhooks presence from the raw document rather than the always-defaulted
-    // decoded `enabled` — L needs the raw `document` (5th param) for this,
-    // matching D's raw smol-toml document. D previously never populated `webhooksPresent`/
-    // `webhooksEnabled` on its `ExperimentalInput` at all, so this branch was D-unreachable
-    // (review: PRRT_kwDOErm0O86WE42i) — now shared like every other scenario in this table.
+    // Both pipelines read webhooks presence from the raw document rather than the
+    // always-defaulted decoded `enabled` — L needs the raw `document` (5th param) for this.
     toml: ["[experimental.webhooks]", "enabled = false"],
     overrides: { experimental: { webhooks: { enabled: false } } },
     document: { experimental: { webhooks: { enabled: false } } },
     message:
       "Webhooks cannot be deactivated. [experimental.webhooks] enabled can either be true or left undefined",
   },
+  {
+    name: "custom auth.external provider enabled without client_id",
+    toml: ["[auth.external.my_oidc]", "enabled = true"],
+    overrides: {},
+    document: { auth: { external: { my_oidc: { enabled: true } } } },
+    message: "Missing required field in config: auth.external.my_oidc.client_id",
+  },
+  {
+    name: "custom auth.external provider enabled without secret",
+    toml: ["[auth.external.my_oidc]", "enabled = true", 'client_id = "cid"'],
+    overrides: {},
+    document: { auth: { external: { my_oidc: { enabled: true, client_id: "cid" } } } },
+    message: "Missing required field in config: auth.external.my_oidc.secret",
+  },
 ];
 
-// Explicitly SKIPPED (only one caller runs the branch, or the branch isn't exercised the same
-// way by both — see the module header in `config-validate.ts` for the full explicitly
-// out-of-scope list):
-// - `remotes[*].project_id`, `auth.sms`, `auth.external` — D-only, never part of the shared
-// validator (`ConfigValidationInput` has no fields for these at all).
+// Explicitly skipped (only one caller runs the branch, or the branch isn't exercised the same
+// way by both — see the module header in `config-validate.ts` for the full out-of-scope list):
+// - `remotes[*].project_id` — D-only, never part of the shared validator
+// (`ConfigValidationInput` has no field for it).
 // - `project_id`, `studio`, `local_smtp` — L-only, D has no equivalent sections. `api.tls`
-// presence is D-skipped for the same reason but IS shared with S via
+// presence is D-skipped for the same reason but is shared with S via
 // `validateApiTlsPresence` — see the S block below.
 describe("validateResolvedConfig cross-caller parity (D vs L)", () => {
   for (const scenario of scenarios) {
     it.effect(`${scenario.name}: D and L fail with the same message`, () =>
       Effect.gen(function* () {
         yield* failsWithD(scenario.toml, scenario.message);
-        failsWithL(scenario.overrides, scenario.message, scenario.document);
+        yield* failsWithL(scenario.overrides, scenario.message, scenario.document);
       }),
     );
   }
 });
 
-// The `api.port` branch is L-only in the D-vs-L table above (D has no api section), but it is
-// now ALSO shared with the storage-credentials resolver (S) through `validateApiPort`
-// (#6467 review). Drive S's real pipeline and L against the same zero-port config and assert
-// the identical message, so the shared branch cannot drift for either caller.
-describe("shared api validation branches, cross-caller parity (S vs L)", () => {
+// The `api.port` branch is L-only in the table above (D has no api section) but is shared with
+// the storage-credentials resolver (S) through `validateApiPort`, as are the `auth.jwt_secret`
+// length rule and `encrypted:` decryption. Drive S and L against the same misconfiguration and
+// assert the identical message, so the shared branches cannot drift.
+describe("shared api + auth validation branches, cross-caller parity (S vs L)", () => {
   /** Drives S's real pipeline (`resolveStorageCredentials`, local branch) to failure. */
-  const failsWithS = (config: CliConfig, message: string) =>
+  const failsWithS = (overrides: Record<string, unknown>, message: string) =>
     Effect.gen(function* () {
-      const dir = withConfig("");
-      const exit = yield* resolveStorageCredentials({ projectRef: "", config }).pipe(
+      const dir = yield* withConfig(stringifyToml({ project_id: "test", ...overrides }));
+      const exit = yield* resolveStorageCredentials({ projectRef: "" }).pipe(
         Effect.provide(
           Layer.mergeAll(
+            unusedStackServices,
+            cliConfigValuesTestLayer,
             BunServices.layer,
+            runtimeInfoLayer,
             mockCommandSettings({ workdir: dir }),
             // Local-path parity only — the remote branch (and with it the
             // platform API) is never reached.
@@ -342,13 +357,13 @@ describe("shared api validation branches, cross-caller parity (S vs L)", () => {
       );
       expect(Exit.isFailure(exit), `S: expected failure containing: ${message}`).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(message);
+        expect(stringifyJson(exit.cause)).toContain(message);
       }
-      rmSync(dir, { recursive: true, force: true });
-    });
+    }).pipe(Effect.scoped);
 
-  // Ambient SUPABASE_API_* values would override the config under test, so pin
-  // every participating key to unset for the duration of each scenario.
+  // Ambient SUPABASE_API_* / SUPABASE_AUTH_* values would override the config
+  // under test, so pin every participating key to unset for the duration of
+  // each scenario.
   const isolated = <A, E, R>(body: Effect.Effect<A, E, R>) =>
     [
       "SUPABASE_API_PORT",
@@ -356,14 +371,16 @@ describe("shared api validation branches, cross-caller parity (S vs L)", () => {
       "SUPABASE_API_TLS_ENABLED",
       "SUPABASE_API_TLS_CERT_PATH",
       "SUPABASE_API_TLS_KEY_PATH",
+      "SUPABASE_AUTH_JWT_SECRET",
+      "SUPABASE_AUTH_SERVICE_ROLE_KEY",
     ].reduce((inner, name) => withEnvVar(name, undefined, inner), body);
 
   it.effect("api.port = 0 with the API enabled: S and L fail with the same message", () =>
     isolated(
       Effect.gen(function* () {
         const message = "Missing required field in config: api.port";
-        failsWithL({ api: { port: 0 } }, message);
-        yield* failsWithS(baseConfig({ api: { port: 0 } }), message);
+        yield* failsWithL({ api: { port: 0 } }, message);
+        yield* failsWithS({ api: { port: 0 } }, message);
       }),
     ),
   );
@@ -372,12 +389,28 @@ describe("shared api validation branches, cross-caller parity (S vs L)", () => {
     isolated(
       Effect.gen(function* () {
         const message = "Missing required field in config: api.tls.key_path";
-        failsWithL({ api: { tls: { enabled: true, cert_path: "kong.crt" } } }, message);
-        yield* failsWithS(
-          baseConfig({ api: { tls: { enabled: true, cert_path: "kong.crt" } } }),
-          message,
-        );
+        yield* failsWithL({ api: { tls: { enabled: true, cert_path: "kong.crt" } } }, message);
+        yield* failsWithS({ api: { tls: { enabled: true, cert_path: "kong.crt" } } }, message);
       }),
+    ),
+  );
+
+  it.effect("auth.jwt_secret shorter than 16 characters: S and L fail with the same message", () =>
+    isolated(
+      Effect.gen(function* () {
+        const message = "Invalid config for auth.jwt_secret. Must be at least 16 characters";
+        yield* failsWithL({ auth: { jwt_secret: "short" } }, message);
+        yield* failsWithS({ auth: { jwt_secret: "short" } }, message);
+      }),
+    ),
+  );
+
+  it.effect("undecryptable encrypted: auth.service_role_key fails S at resolvedConfig load", () =>
+    isolated(
+      failsWithS(
+        { auth: { service_role_key: "encrypted:not-a-real-ciphertext" } },
+        "failed to parse config",
+      ),
     ),
   );
 });

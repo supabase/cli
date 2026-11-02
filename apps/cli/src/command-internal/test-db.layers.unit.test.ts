@@ -1,19 +1,10 @@
 /**
- * Layer-exposure test for `testDbRuntimeLayer`.
- *
- * Verifies that `IdentityStitch` is exposed at the top level of the
- * runtime layer so that `withCommandTelemetry` can read
- * `stitchedDistinctId()` via `Effect.serviceOption(IdentityStitch)` and
- * attribute the `cli_command_executed` event to the gotrue id.
- *
- * The bug this guards against: `Layer.provide(A, B)` satisfies A's dep on B
- * but does NOT expose B to sibling layers inside a `Layer.mergeAll`. If
- * `identityStitchLayer` is only provided to the child `dbConfig` layer
- * and NOT added to the top-level `Layer.mergeAll`, then
- * `serviceOption(IdentityStitch)` returns `None` and `test db --linked`'s
- * `cli_command_executed` is mis-attributed to the device id.
- *
- * Mirrors `db/lint/lint.layers.unit.test.ts`.
+ * Verifies `IdentityStitch` is exposed at the top level of
+ * `testDbRuntimeLayer`, not just provided to the child `dbConfig` layer —
+ * see `CLAUDE.md`'s "Layer.provide does not share to siblings" invariant.
+ * Otherwise `withCommandTelemetry` can't read `stitchedDistinctId()` and
+ * `test db --linked`'s `cli_command_executed` is mis-attributed to the
+ * device id.
  */
 
 import { describe, expect, it } from "@effect/vitest";
@@ -29,10 +20,10 @@ import {
 } from "../../tests/helpers/mocks.ts";
 import {
   isolatedHomeLayer,
-  mockCommandSettings,
   mockTelemetryStateLayer,
   useTempWorkdir,
 } from "../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
 
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import {
@@ -48,6 +39,7 @@ import { DbConnection } from "./db-connection.service.ts";
 import { IdentityStitch } from "./identity-stitch.ts";
 
 import { testDbRuntimeLayer } from "./test-db.layers.ts";
+import { commandTargetLayer } from "../shared/output/command-target.layer.ts";
 
 const tempRoot = useTempWorkdir("supabase-test-db-layers-");
 
@@ -77,7 +69,7 @@ function ambientStubs() {
       connect: () => Effect.die("db-connection not needed for layer-exposure test"),
     }),
     Layer.succeed(DbConfigResolver, {
-      resolve: () => Effect.die("db-config-resolver not needed for layer-exposure test"),
+      resolveConnection: () => Effect.die("resolveConnection is not used by this test"),
       resolvePoolerFallback: () =>
         Effect.die("db-config-resolver not needed for layer-exposure test"),
     }),
@@ -85,17 +77,16 @@ function ambientStubs() {
 
   return Layer.mergeAll(
     BunServices.layer,
-    // The runtime layer under test builds the REAL commandSettingsLayer against
-    // the real filesystem — see isolatedHomeLayer's docs.
     isolatedHomeLayer(tempRoot.current),
     mockTty(),
     mockProcessControl().layer,
     analytics.layer,
     mockTelemetryRuntime(),
     out.layer,
+    commandTargetLayer.pipe(Layer.provide(out.layer)),
     flagLayers,
-    mockCommandSettings({ workdir: "/tmp/test-db-layers-test" }),
     mockTelemetryStateLayer,
+    cliConfigValuesTestLayer,
     heavyServiceStubs,
   );
 }
@@ -107,7 +98,9 @@ describe("testDbRuntimeLayer — IdentityStitch exposure", () => {
       return Effect.gen(function* () {
         const stitch = yield* Effect.serviceOption(IdentityStitch);
         expect(Option.isSome(stitch)).toBe(true);
-      }).pipe(Effect.provide(testDbRuntimeLayer(["test", "db"])), Effect.provide(ambientStubs()));
+      }).pipe(
+        Effect.provide(testDbRuntimeLayer(["test", "db"]).pipe(Layer.provideMerge(ambientStubs()))),
+      );
     },
   );
 });

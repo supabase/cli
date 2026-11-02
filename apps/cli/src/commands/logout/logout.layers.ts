@@ -8,17 +8,12 @@ import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.
 import { stdinLayer } from "../../shared/runtime/stdin.layer.ts";
 
 /**
- * Lean runtime for `logout`. Like `unlink`, it must NOT use
- * `managementApiRuntimeLayer` — that layer eagerly builds the platform-API
- * client, which fails with "Access token not provided" when logging out without
- * a token. It provides only what the handler + instrumentation consume.
+ * Lean runtime for `logout`; it must not use `managementApiRuntimeLayer`, which eagerly builds
+ * the platform-API client and fails with "Access token not provided" when logging out without
+ * a token.
  *
- * `commandSettingsLayer` is provided to `commandCredentialsLayer` and also exposed
- * at the top level (`Layer.provide` does not share to siblings inside a merge —
- * CLAUDE.md invariant 5). `Analytics`, `Output`, `Stdio`, `Tty`, `FileSystem`,
- * `Path`, `TelemetryRuntime`, and `YesFlag` come from the root layer;
- * `stdinLayer` (the shared piped-stdin reader for the logout confirm) builds its
- * `Stdin` from the root `Tty`, like the migration runtimes.
+ * `commandSettingsLayer` is provided to `commandCredentialsLayer` and also exposed at the top
+ * level, since `Layer.provide` doesn't share to siblings inside a merge.
  */
 const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 const credentials = commandCredentialsLayer.pipe(

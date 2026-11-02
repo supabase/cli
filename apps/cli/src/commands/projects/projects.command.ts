@@ -1,4 +1,4 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { projectsListCommand } from "./list/list.command.ts";
 import { projectsCreateCommand } from "./create/create.command.ts";
 import { projectsApiKeysCommand } from "./api-keys/api-keys.command.ts";

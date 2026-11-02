@@ -1,31 +1,27 @@
 import { Effect } from "effect";
-import { Argument, Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Argument, Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 
-import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
 import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-runtime.layer.ts";
-import {
-  StorageLinkedFlagDef,
-  StorageLocalFlagDef,
-  StorageProjectRefFlagDef,
-  assertStorageTargetsExclusive,
-} from "../storage.flags.ts";
+import { STORAGE_PERMISSIONS, storageTargetFlags } from "../storage.flags.ts";
 import { storageMv } from "./mv.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
-  src: Argument.string("src").pipe(Argument.withDescription("Source path to move from.")),
-  dst: Argument.string("dst").pipe(Argument.withDescription("Destination path to move to.")),
-  recursive: Flag.boolean("recursive").pipe(
+  src: Argument.String("src").pipe(Argument.withDescription("Source path to move from.")),
+  dst: Argument.String("dst").pipe(Argument.withDescription("Destination path to move to.")),
+  recursive: Flag.Boolean("recursive").pipe(
     Flag.withAlias("r"),
     Flag.withDescription("Recursively move a directory."),
     Flag.withDefault(false),
   ),
-  linked: StorageLinkedFlagDef,
-  local: StorageLocalFlagDef,
-  projectRef: StorageProjectRefFlagDef,
+  ...storageTargetFlags,
 } as const;
 
 export type StorageMvFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -39,26 +35,18 @@ export const storageMvCommand = Command.make("mv", config).pipe(
       description: "Recursively move a directory within storage",
     },
   ]),
+  withPermissions(STORAGE_PERMISSIONS),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
-      // Gate before the mutex check below — order matters; see
-      // requireExperimental's doc comment for why.
       yield* requireExperimental;
-      const cliArgs = yield* CliArgs;
-      yield* assertStorageTargetsExclusive(cliArgs.args);
       const telemetryFlags = {
         recursive: flags.recursive,
-        linked: flags.linked,
-        local: flags.local,
-        "project-ref": flags.projectRef,
       };
-      return yield* storageMv(flags).pipe(
-        // TS-only flag with no Go telemetry-safety baseline; Go's nearest
-        // --project-ref registrations (cmd/pgdelta_catalog.go:44 and most
-        // others) are unmarked, so it stays redacted.
-        withCommandTelemetry({ flags: telemetryFlags }),
-      );
+      return yield* storageMv(flags).pipe(withCommandTelemetry({ flags: telemetryFlags }));
     }).pipe(withJsonErrorHandling),
   ),
   Command.provide(storageGatewayRuntimeLayer(["storage", "mv"])),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
+  withTargetPolicy({ group: "selectable", consent: "no" }),
 );

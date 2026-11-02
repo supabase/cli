@@ -1,7 +1,7 @@
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { NodeServices } from "@effect/platform-node";
+import { Effect, FileSystem, Schema } from "effect";
 import { describe, expect, test } from "vitest";
 
 import { openApiOperationIdMap, operationDefinitions } from "./generated/contracts.ts";
@@ -25,8 +25,12 @@ interface SnapshotOperation {
   readonly operationId: string;
 }
 
-const openApiJsonPath = join(dirname(fileURLToPath(import.meta.url)), "generated/openapi.json");
-const rawOpenApiJson = readFileSync(openApiJsonPath, "utf8");
+const openApiJsonPath = fileURLToPath(new URL("./generated/openapi.json", import.meta.url));
+const readOpenApiJson = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  return new TextDecoder("utf-8", { ignoreBOM: true }).decode(yield* fs.readFile(openApiJsonPath));
+}).pipe(Effect.provide(NodeServices.layer));
+const rawOpenApiJson = await Effect.runPromise(readOpenApiJson);
 const openApiDocument = JSON.parse(rawOpenApiJson) as OpenApiDocumentShape;
 
 function extractSnapshotOperations(
@@ -169,16 +173,19 @@ describe("generated client drift against the committed openapi.json snapshot", (
     expect(versionsFromSnapshot).toContain("v2");
   });
 
-  // A byte-for-byte `JSON.stringify(parsed, null, 2) + "\n"` reproduction of
-  // the committed file does not hold: oxfmt collapses short arrays (e.g.
-  // `"tags": ["Environments"]`) onto a single line after generation, so a
-  // naive re-stringify diverges purely on formatting, not content. This
-  // instead checks that the committed bytes parse deterministically and keep
-  // the single trailing newline `scripts/generate.ts` writes.
-  test("parses the committed snapshot deterministically and keeps a single trailing newline", () => {
-    const reparsed = JSON.parse(readFileSync(openApiJsonPath, "utf8")) as OpenApiDocumentShape;
-    expect(reparsed).toEqual(openApiDocument);
-    expect(rawOpenApiJson.endsWith("\n")).toBe(true);
-    expect(rawOpenApiJson.endsWith("\n\n")).toBe(false);
-  });
+  // A byte-for-byte `JSON.stringify(parsed, null, 2) + "\n"` reproduction of the
+  // committed file doesn't hold, since oxfmt collapses short arrays onto one line
+  // after generation. This instead checks that the bytes parse deterministically
+  // and keep a single trailing newline.
+  test("parses the committed snapshot deterministically and keeps a single trailing newline", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const reparsed = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+          yield* readOpenApiJson,
+        );
+        expect(reparsed).toEqual(openApiDocument);
+        expect(rawOpenApiJson.endsWith("\n")).toBe(true);
+        expect(rawOpenApiJson.endsWith("\n\n")).toBe(false);
+      }),
+    ));
 });

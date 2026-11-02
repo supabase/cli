@@ -1,13 +1,11 @@
 /**
- * Contribution gate: enforces the Supabase CLI contribution workflow across all
- * OPEN pull requests opened by external contributors.
+ * Contribution gate: enforces the Supabase CLI contribution workflow across
+ * every open pull request opened by external contributors.
  *
- * A PR passes only when it links to an OPEN GitHub issue that carries the
- * `open-for-contribution` label. Maintainers (recognised by their effective
- * repository permission, so private org members count too — not just the
- * `author_association` GitHub exposes for public members) and bots are exempt
- * (they work from Linear tickets or automation). PRs that do not follow the
- * process are commented on and closed.
+ * A PR passes only when it links to an open GitHub issue that carries the
+ * `open-for-contribution` label. Maintainers (recognized by their effective
+ * repository permission, so private org members count too) and bots are
+ * exempt. PRs that don't follow the process are commented on and closed.
  *
  * Two modes, both driven from `main()`:
  *   - single-PR (default): reacts to one PR on `pull_request_target`
@@ -16,13 +14,10 @@
  *     open PR, for on-demand `workflow_dispatch` runs. Set `DRY_RUN=true` to
  *     log decisions without commenting/closing.
  *
- * In both modes the workflow checks out the base branch, so this only ever
- * executes trusted repository code — it never runs a fork's code.
+ * The workflow checks out the base branch in both modes, so this only ever
+ * executes trusted repository code.
  *
  * Run in CI as: `bun .github/scripts/contribution-gate.ts`.
- * The pure `evaluateGate` decision and the `evaluateAllOpenPrs` orchestrator
- * (I/O injected) are unit-tested in `contribution-gate.test.ts`; `main()` wires
- * up the real GitHub I/O.
  */
 
 export const GATE_LABEL = "open-for-contribution";
@@ -30,25 +25,19 @@ export const GATE_LABEL = "open-for-contribution";
 /**
  * Author associations treated as internal (exempt from the gate).
  *
- * NOTE: `author_association` only reports `MEMBER` when a user's organization
- * membership is *public*. A private org member (or a team member who keeps
- * their membership private) is reported as `CONTRIBUTOR`/`NONE`, so this set
- * alone is not enough to identify internal maintainers — see
- * `isInternalAuthor`, which also consults the author's effective repository
- * permission.
+ * `author_association` only reports `MEMBER` for a *public* org membership; a
+ * private member is reported as `CONTRIBUTOR`/`NONE`, so this set alone can't
+ * identify every internal maintainer — see `isInternalAuthor`.
  */
 export const INTERNAL_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 
 /**
- * Effective repository permissions that mark an author as internal. A user who
- * can push to the repository (directly, or via a team/org grant that
- * `author_association` does not surface) is a trusted maintainer, not an
- * external contributor. The legacy REST `permission` field collapses the
- * `maintain` role to `write`, so `admin`/`write` covers every push-capable
- * role.
+ * Effective repository permissions that mark an author as internal: anyone
+ * who can push, directly or via a team/org grant `author_association` won't
+ * surface. The legacy REST `permission` field collapses `maintain` into
+ * `write`, so `admin`/`write` covers every push-capable role.
  *
- * Exported for `resolve.ts`, which requires the same write-permission bar to
- * authorize a `/ai-review` command.
+ * Exported for `resolve.ts`, which uses the same bar to authorize `/ai-review`.
  */
 export const WRITE_PERMISSIONS = new Set(["admin", "write"]);
 
@@ -147,9 +136,8 @@ export function evaluateGate(input: GateInput): GateResult {
     return { pass: true, reason: "internal" };
   }
 
-  // Only issues in THIS repository count. A cross-repository closing keyword
-  // (e.g. `Closes attacker/repo#1`) links an issue the contributor controls,
-  // so it must never satisfy the gate.
+  // Only issues in this repository count; a cross-repository closing keyword
+  // (e.g. `Closes attacker/repo#1`) links an issue the contributor controls.
   const repo = input.repository.toLowerCase();
   const repoIssues = input.linkedIssues.filter((issue) => issue.repository.toLowerCase() === repo);
 
@@ -233,8 +221,6 @@ export async function evaluateAllOpenPrs(io: GateIo, repository: string): Promis
   }
   return entries;
 }
-
-// --- GitHub I/O (only runs when executed directly) ---
 
 interface GraphQLIssueNode {
   number: number;
@@ -358,16 +344,11 @@ async function fetchOpenPullRequests(
 }
 
 /**
- * Resolve an author's effective permission on the repository. Reflects access
- * granted directly or through a team/org membership, so it recognises private
- * org members that `author_association` reports only as `CONTRIBUTOR`. This
- * endpoint needs just `Metadata: read` (covered by the workflow's
- * `contents: read`).
- *
- * A 404 means the author is not a collaborator at all — the common case for
- * external fork contributors, who are exactly who the gate targets — so it maps
- * to `undefined` (external) rather than throwing. Other failures still throw so
- * a transient API error aborts the run without wrongly closing PRs.
+ * Resolves an author's effective permission on the repository, recognizing
+ * private org members that `author_association` reports only as
+ * `CONTRIBUTOR`. A 404 means the author isn't a collaborator at all — the
+ * common case for external fork contributors — so it maps to `undefined`
+ * rather than throwing; other failures still throw.
  */
 export async function fetchAuthorPermission(
   token: string,
@@ -426,9 +407,8 @@ async function runSinglePr(
   const authorLogin = process.env.PR_AUTHOR_LOGIN ?? "";
   const isBot = (process.env.PR_AUTHOR_TYPE ?? "User") === "Bot";
 
-  // Resolve maintainer status from the effective repository permission unless a
-  // cheaper signal already settles it. `author_association` only exposes public
-  // org membership, so a private member must be confirmed via permission.
+  // `author_association` only exposes public org membership, so a private
+  // member must be confirmed via the effective repository permission.
   let permission: string | undefined;
   let isInternal = isBot || INTERNAL_ASSOCIATIONS.has(authorAssociation);
   if (!isInternal) {

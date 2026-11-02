@@ -7,7 +7,9 @@
  * `level` / `message` have no `omitempty` and are always present.
  */
 
-import { encodeGoJsonIndented } from "../../../command-internal/go-json.ts";
+import { Predicate } from "effect";
+
+import { encodeHtmlSafeJsonIndented } from "../../../command-internal/html-safe-json.ts";
 import { makeLevelEnum } from "../../../command-internal/fail-on.ts";
 
 /** Lowest severity first. */
@@ -55,7 +57,7 @@ export interface LintResult {
 function requireLintString(value: unknown, field: string): string {
   if (value === undefined || value === null) return "";
   if (typeof value !== "string") {
-    throw new TypeError(`cannot unmarshal lint ${field} into string`);
+    throw new TypeError(`invalid lint ${field}: expected a string`);
   }
   return value;
 }
@@ -63,34 +65,29 @@ function requireLintString(value: unknown, field: string): string {
 function normalizeStatement(value: unknown): LintStatement | undefined {
   // absent/null → omitted; present non-object (string/number/array) → throw.
   if (value === undefined || value === null) return undefined;
-  if (typeof value !== "object" || Array.isArray(value)) {
-    throw new TypeError("cannot unmarshal lint statement into lint.Statement");
+  if (!Predicate.isObject(value)) {
+    throw new TypeError("invalid lint statement: expected an object");
   }
-  const record = value as Record<string, unknown>;
   return {
-    lineNumber: requireLintString(record["lineNumber"], "statement.lineNumber"),
-    text: requireLintString(record["text"], "statement.text"),
+    lineNumber: requireLintString(value["lineNumber"], "statement.lineNumber"),
+    text: requireLintString(value["text"], "statement.text"),
   };
 }
 
 function normalizeQuery(value: unknown): LintQuery | undefined {
   if (value === undefined || value === null) return undefined;
-  if (typeof value !== "object" || Array.isArray(value)) {
-    throw new TypeError("cannot unmarshal lint query into lint.Query");
+  if (!Predicate.isObject(value)) {
+    throw new TypeError("invalid lint query: expected an object");
   }
-  const record = value as Record<string, unknown>;
   return {
-    position: requireLintString(record["position"], "query.position"),
-    text: requireLintString(record["text"], "query.text"),
+    position: requireLintString(value["position"], "query.position"),
+    text: requireLintString(value["text"], "query.text"),
   };
 }
 
 /** Builds an `Issue` in the established output-contract order, dropping empty `omitempty` fields. */
 function normalizeIssue(value: unknown): LintIssue {
-  const record = (typeof value === "object" && value !== null ? value : {}) as Record<
-    string,
-    unknown
-  >;
+  const record: { readonly [key: string]: unknown } = Predicate.isObject(value) ? value : {};
   const issue: {
     level: string;
     message: string;
@@ -122,50 +119,40 @@ function normalizeIssue(value: unknown): LintIssue {
 }
 
 /**
- * Parses the `plpgsql_check_function(... format:='json')` payload for one
- * function and overrides `function` with `<schema>.<proname>`.
- *
- * Throws on malformed JSON; the handler maps that to `DbLintMalformedJsonError`.
- *
- * Structurally strict: a top-level `null` decodes to the zero value, but any
- * other non-object (array / string / number), a present-but-not-array
- * `issues`, or a non-object issue entry throws — rather than being silently
- * coerced to an empty result, which would report a malformed payload as "no
- * lint errors". Missing/unknown fields stay tolerated.
+ * Parses the `plpgsql_check_function(... format:='json')` payload for one function and
+ * overrides `function` with `<schema>.<proname>`. Throws on malformed JSON (mapped to
+ * `DbLintMalformedJsonError` by the handler): a top-level `null` decodes to the zero
+ * value, but any other non-object, a present-but-not-array `issues`, or a non-object
+ * issue entry throws instead of being silently coerced to an empty ("no lint errors")
+ * result.
  */
 export function parseLintResult(jsonText: string, functionName: string): LintResult {
   const parsed: unknown = JSON.parse(jsonText);
-  // A top-level `null` leaves the result at its zero value (no error).
   if (parsed === null) {
     return { function: functionName, issues: [] };
   }
-  // A top-level array / string / number throws.
-  if (typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new TypeError("cannot unmarshal payload into lint.Result");
+  if (!Predicate.isObject(parsed)) {
+    throw new TypeError("invalid lint result: expected an object");
   }
-  const record = parsed as Record<string, unknown>;
-  // `issues` missing/null → zero value; present-but-not-array → throw.
-  const issuesField = record["issues"];
+  const issuesField = parsed["issues"];
   let issuesRaw: ReadonlyArray<unknown>;
   if (issuesField === undefined || issuesField === null) {
     issuesRaw = [];
   } else if (Array.isArray(issuesField)) {
     issuesRaw = issuesField;
   } else {
-    throw new TypeError("cannot unmarshal issues into []lint.Issue");
+    throw new TypeError("invalid lint issues: expected an array");
   }
-  // Each entry decodes into an issue; a scalar/array entry fails. A null entry
-  // decodes to the zero-value issue (all fields empty strings) and is included
-  // in the slice — normalizeIssue handles null via its record fallback.
+  // A null entry decodes to a zero-value issue (handled by `normalizeIssue`'s
+  // fallback), not skipped.
   for (const entry of issuesRaw) {
-    if (entry !== null && (typeof entry !== "object" || Array.isArray(entry))) {
-      throw new TypeError("cannot unmarshal issue into lint.Issue");
+    if (entry !== null && !Predicate.isObject(entry)) {
+      throw new TypeError("invalid lint issue: expected an object");
     }
   }
-  // `function` is a string field, so a present non-string value throws BEFORE
-  // the code overrides it with `<schema>.<name>`. Validate the type, then
-  // discard it for the override.
-  requireLintString(record["function"], "function");
+  // Validates `function`'s type (throwing if non-string) before discarding it for
+  // the override below.
+  requireLintString(parsed["function"], "function");
   return { function: functionName, issues: issuesRaw.map(normalizeIssue) };
 }
 
@@ -192,5 +179,5 @@ export function filterLintResult(
  * straight to the order-preserving encoder.
  */
 export function encodeLintResults(results: ReadonlyArray<LintResult>): string {
-  return encodeGoJsonIndented(results);
+  return encodeHtmlSafeJsonIndented(results);
 }

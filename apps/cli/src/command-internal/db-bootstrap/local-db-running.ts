@@ -1,15 +1,24 @@
-import { Data, Effect, type FileSystem, Option, type Path, Stream } from "effect";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import http from "node:http";
+
+import { Context, Crypto, Data, Effect, FileSystem, Layer, Option, Path } from "effect";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import {
   actionability,
+  causeDeclaration,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
-import { isContainerNotFoundMessage, spawnContainerCli } from "../container-cli.ts";
-import { readDbToml } from "../db-config.toml-read.ts";
-import { resolveLocalProjectId, localDbContainerId } from "../docker-ids.ts";
+import { CliConfigKeys } from "../../config/cli-config-keys.ts";
+import { CliConfigValues } from "../../config/cli-config-values.service.ts";
+import { collectText, isContainerNotFoundMessage, spawnContainerCli } from "../container-cli.ts";
+import { localDbContainerId } from "../docker-ids.ts";
+import { sanitizeProjectId } from "../../shared/config/project-id.ts";
 import { SUGGEST_DOCKER_INSTALL, isDockerDaemonUnreachable } from "../docker-suggest.ts";
+import { redactHttpUrl } from "../../auth/http-debug.layer.ts";
+import { DebugLogger } from "../../shared/output/debug-logger.service.ts";
+import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
+import { resolveDockerDaemonEndpoint } from "../hostname.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
@@ -18,85 +27,341 @@ export class LocalDbRunningError extends Data.TaggedError("LocalDbRunningError")
   readonly message: string;
   /** Classified at the container-runtime boundary; never inferred from `message` by telemetry. */
   readonly daemonDown?: boolean;
-  /** Set when the failure is a daemon-connection error, mirroring `utils.CmdSuggestion`. */
+  /** Set when the failure is a daemon-connection error. */
   readonly suggestion?: string;
+  readonly cause?: unknown;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     if (this.daemonDown === true) {
       return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
     }
-    return actionability.startStack;
+    return causeDeclaration(this.cause) ?? actionability.startStack;
   }
 }
 
-const decodeChunks = (chunks: ReadonlyArray<Uint8Array>): string => {
-  const total = chunks.reduce((size, chunk) => size + chunk.length, 0);
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.length;
+/** Whether the local db container exists and, when it does, its Docker `State`. */
+export type LocalDbState =
+  | { readonly exists: false }
+  | { readonly exists: true; readonly running: boolean; readonly status: string };
+
+/**
+ * Direct Engine-API access to the locally addressable Docker daemon, so {@link localDbState} does
+ * not depend on a spawnable, responsive `docker` CLI binary (issue #6110). `inspectContainer`:
+ * `Option.some({ exists: false })` — an Engine-identified 404; `Option.some({ exists: true, … })` —
+ * an Engine-identified 200 with a valid inspect payload; `Option.none()` — anything else
+ * (non-addressable endpoint, transport failure, silent socket, the 5s wall-clock bound expiring,
+ * non-Engine responder, abnormal status, malformed body), telling the caller to fall back to the
+ * container CLI, which preserves the established wording, daemon-down classification, and Podman
+ * fallback.
+ */
+export class LocalDockerEngine extends Context.Service<
+  LocalDockerEngine,
+  {
+    readonly inspectContainer: (containerId: string) => Effect.Effect<Option.Option<LocalDbState>>;
   }
-  return new TextDecoder().decode(bytes);
+>()("supabase/cli/LocalDockerEngine") {}
+
+/**
+ * The local socket path for a `unix://`/`npipe://` daemon endpoint
+ * (`npipe:////./pipe/X` -> `\\.\pipe\X`), as `node:http`'s `socketPath`
+ * accepts it. Every other scheme returns `undefined` — tcp/ssh/fd endpoints
+ * may need TLS material or transports only the `docker` CLI carries, so
+ * callers keep shelling out. Exported for tests (npipe is Windows-only).
+ */
+export function dockerEndpointSocketPath(endpoint: string): string | undefined {
+  if (endpoint.startsWith("unix://")) {
+    const socketPath = endpoint.slice("unix://".length);
+    return socketPath.length > 0 ? socketPath : undefined;
+  }
+  if (endpoint.startsWith("npipe://")) {
+    const pipePath = endpoint.slice("npipe://".length);
+    return pipePath.length > 0 ? pipePath.replaceAll("/", "\\") : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * How the endpoint is named in {@link localDockerEngineLayer}'s decline line:
+ * by its scheme alone.
+ *
+ * That is the whole reason the probe declined — `tcp`, `ssh` and `fd` are not
+ * local sockets — and it is the one part of a `DOCKER_HOST` that cannot carry
+ * a credential. The rest can: `ssh://user:secret@host` is a supported spelling,
+ * and once a password holds an unencoded `@`, `/`, `?` or `#` there is no
+ * telling it apart from an ordinary host and path, so none of it is printed.
+ */
+function describeEndpoint(endpoint: string | undefined): string {
+  if (endpoint === undefined) {
+    return "unresolved context";
+  }
+  // Anchored on `://`, so a value with no scheme cannot report its own first
+  // segment as one — that segment is the username in `user:secret@host`.
+  const scheme = /^[a-zA-Z][a-zA-Z0-9+.-]*(?=:\/\/)/.exec(endpoint);
+  if (scheme === null) {
+    return "no scheme";
+  }
+  const name = scheme[0].toLowerCase();
+  // A socket scheme only reaches the decline branch with nothing after it, so
+  // naming it alone would read as a contradiction.
+  return name === "unix" || name === "npipe" ? `${name}, no socket path` : name;
+}
+
+/**
+ * Socket-inactivity deadline: a connected-but-silent endpoint degrades to the
+ * container-CLI fallback instead of parking the command (#6110's hang shape).
+ */
+const ENGINE_PROBE_TIMEOUT_MS = 2000;
+
+/**
+ * Absolute wall-clock deadline for one probe. The socket timeout above is
+ * inactivity-based, so a peer trickling bytes could evade it; past this bound
+ * the probe is interrupted (aborting the request) and falls back.
+ */
+const ENGINE_PROBE_DEADLINE_MS = 5000;
+
+/**
+ * Body bound (an inspect payload is a few KB); past it the probe stops
+ * reading and falls back.
+ */
+const ENGINE_MAX_RESPONSE_BYTES = 64 * 1024;
+
+/**
+ * Docker sets `Api-Version`/`Server: Docker/<v>` on every response, 404s
+ * included (Podman's compat API sends `Api-Version` too). A 200/404 without
+ * them is some other service on the socket, not an answer — fall back.
+ */
+const isEngineResponse = (response: http.IncomingMessage): boolean =>
+  response.headers["api-version"] !== undefined ||
+  String(response.headers["server"] ?? "").startsWith("Docker/");
+
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** A missing or garbled `State` counts as running, so only an explicit `Running: false` differs. */
+const existingDbState = (inspect: Readonly<Record<string, unknown>>): LocalDbState => {
+  const state = isRecord(inspect["State"]) ? inspect["State"] : {};
+  return {
+    exists: true,
+    running: state["Running"] !== false,
+    status: typeof state["Status"] === "string" ? state["Status"] : "",
+  };
+};
+
+const parseInspectStdout = (stdout: string): LocalDbState => {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    parsed = undefined;
+  }
+  const first: unknown = Array.isArray(parsed) ? parsed[0] : undefined;
+  return existingDbState(isRecord(first) ? first : {});
 };
 
 /**
- * Port of Go's `utils.AssertSupabaseDbIsRunning` (`internal/utils/misc.go:144`):
- * inspect the local Postgres container. Resolves `true` when it exists (the
- * stack is up) and `false` when the container-CLI reports a missing container —
- * Docker's "No such container"/"No such object" or Podman's own "no container with
- * name or ID ... found" wording, via the shared `isContainerNotFoundMessage`
- * matcher (`../container-cli.ts`) — Go's `ErrNotRunning`. Any other inspect
- * failure (e.g. the Docker daemon is
- * unreachable) fails with {@link LocalDbRunningError} instead of being
- * treated as "not running", matching Go, which returns the wrapped inspect
- * error rather than silently treating the database as stopped.
- *
- * Shared by `db start` (`commands/db/start/start.handler.ts`) and `db reset`
- * (`commands/db/reset/reset.handler.ts`) — hoisted out of the `db __db-bootstrap`
- * Go seam by CLI-1954, since this check was already a native TS `docker container
- * inspect`, not a Go subprocess call. CLI-1955 later removed the rest of that seam
- * too (`db reset`'s container-recreate + storage-health-gate primitives are now
- * native — `recreate-local-database.ts`/`await-storage-ready.ts`), so the seam
- * itself no longer exists at all.
- *
- * `resolveDbToml` mirrors the seam's own best-effort read: the caller has
- * already run Go's `LoadConfig` validation before reaching this check, so here
- * we only want the resolved `projectId` and tolerate falling back to the
- * workdir basename on an unreadable `.env` rather than re-throwing.
+ * `GET /containers/<id>/json` over a local socket / named pipe. Total: every
+ * terminal state settles exactly once, and anything that is not an
+ * Engine-identified 200/404 settles `Option.none()`. `agent: false` keeps the
+ * one-shot connection out of the process-global pool, so nothing outlives the
+ * probe.
  */
-export function isLocalDbRunning(
+const inspectContainerOverSocket = (
+  socketPath: string,
+  containerId: string,
+): Effect.Effect<Option.Option<LocalDbState>> =>
+  Effect.callback((resume, signal) => {
+    let settled = false;
+    const settle = (result: Option.Option<LocalDbState>) => {
+      if (settled) return;
+      settled = true;
+      resume(Effect.succeed(result));
+    };
+    const settleNone = () => {
+      settle(Option.none());
+    };
+
+    let request: http.ClientRequest;
+    try {
+      request = http.request(
+        {
+          socketPath,
+          method: "GET",
+          path: `/containers/${encodeURIComponent(containerId)}/json`,
+          // HTTP/1.1 requires a Host header; "docker" is what Docker's SDKs send.
+          headers: { Host: "docker" },
+          agent: false,
+          timeout: ENGINE_PROBE_TIMEOUT_MS,
+          signal,
+        },
+        (response) => {
+          const chunks: Array<Buffer> = [];
+          let size = 0;
+          response.on("data", (chunk: Buffer) => {
+            size += chunk.length;
+            if (size > ENGINE_MAX_RESPONSE_BYTES) {
+              response.destroy();
+              settleNone();
+              return;
+            }
+            chunks.push(chunk);
+          });
+          response.on("error", settleNone);
+          // A dropped connection can surface as `close` without `end` (no
+          // `error` guaranteed); the latch no-ops the ordinary post-`end` close.
+          response.on("close", settleNone);
+          response.on("end", () => {
+            if (!isEngineResponse(response)) {
+              settleNone();
+              return;
+            }
+            const status = response.statusCode ?? 0;
+            if (status === 404) {
+              settle(Option.some({ exists: false }));
+              return;
+            }
+            if (status !== 200) {
+              settleNone();
+              return;
+            }
+            // A 200 must carry a JSON-object inspect payload to count as "present".
+            let payload: unknown;
+            try {
+              payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+            } catch {
+              payload = undefined;
+            }
+            if (!isRecord(payload)) {
+              settleNone();
+              return;
+            }
+            settle(Option.some(existingDbState(payload)));
+          });
+        },
+      );
+      request.on("error", settleNone);
+      // Node leaves the in-flight socket alive on `timeout` — destroy it. Also
+      // the universal backstop; deliberately no `request.on("close")`: under
+      // Bun that fires mid-response, between `data` and `end`.
+      request.on("timeout", () => {
+        request.destroy();
+        settleNone();
+      });
+      request.end();
+    } catch {
+      // A transport that cannot even be constructed is a transport failure too.
+      settleNone();
+      return;
+    }
+
+    return Effect.sync(() => {
+      settled = true;
+      request.destroy();
+    });
+  });
+
+/**
+ * Production {@link LocalDockerEngine}: resolves the endpoint the way the
+ * `docker` CLI itself would (`DOCKER_HOST` -> context store -> platform
+ * default), inside `Effect.suspend` so every execution sees the current
+ * environment. With `DebugLogger` provided (the db families provide it), the
+ * probe's socket and fallback decisions surface under `--debug` — otherwise
+ * this is the one HTTP call the debug side channel cannot see. An endpoint it
+ * cannot address is named by {@link describeEndpoint}, never printed.
+ */
+export const localDockerEngineLayer: Layer.Layer<
+  LocalDockerEngine,
+  never,
+  Crypto.Crypto | FileSystem.FileSystem | Path.Path | RuntimeInfo
+> = Layer.effect(
+  LocalDockerEngine,
+  Effect.gen(function* () {
+    const runtime = yield* RuntimeInfo;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const crypto = yield* Crypto.Crypto;
+    const resolveEndpoint = resolveDockerDaemonEndpoint().pipe(
+      Effect.provideService(RuntimeInfo, runtime),
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(Crypto.Crypto, crypto),
+      Effect.orElseSucceed(() => Option.none<string>()),
+    );
+    const debugLogger = yield* Effect.serviceOption(DebugLogger);
+    const debug = (line: string) =>
+      Option.isSome(debugLogger) ? debugLogger.value.debug(line) : Effect.void;
+    const httpLine = (url: string) =>
+      Option.isSome(debugLogger) ? debugLogger.value.http("GET", redactHttpUrl(url)) : Effect.void;
+    return LocalDockerEngine.of({
+      inspectContainer: (containerId) =>
+        Effect.gen(function* () {
+          const endpoint = yield* resolveEndpoint;
+          const endpointValue = Option.getOrUndefined(endpoint);
+          const socketPath =
+            endpointValue === undefined ? undefined : dockerEndpointSocketPath(endpointValue);
+          if (socketPath === undefined) {
+            return yield* debug(
+              `local db engine probe: endpoint not directly addressable (${describeEndpoint(endpointValue)}) — using the container CLI`,
+            ).pipe(Effect.as(Option.none<LocalDbState>()));
+          }
+          return yield* httpLine(`${endpointValue}/containers/${containerId}/json`).pipe(
+            Effect.andThen(inspectContainerOverSocket(socketPath, containerId)),
+            Effect.timeoutOrElse({
+              duration: ENGINE_PROBE_DEADLINE_MS,
+              orElse: () => Effect.succeed(Option.none<LocalDbState>()),
+            }),
+            Effect.tap((answer) =>
+              Option.isNone(answer)
+                ? debug(
+                    "local db engine probe: no definitive Engine answer — falling back to the container CLI",
+                  )
+                : Effect.void,
+            ),
+          );
+        }),
+    });
+  }),
+);
+
+/**
+ * Resolves the local Postgres container's {@link LocalDbState}: `exists: false` when it
+ * definitively does not exist, and fails with {@link LocalDbRunningError} on any other inspect
+ * failure (e.g. an unreachable daemon) rather than treating it as "not running".
+ *
+ * Asks the Engine API first ({@link LocalDockerEngine}) so a stalled `docker` binary can't block
+ * the probe, and falls back to the container-CLI spawn (Podman fallback, daemon-down
+ * classification) only when the Engine gives no definitive answer. The project id is a
+ * best-effort read of the resolved config unless the caller passes its already-resolved id: an
+ * unreadable config falls back to the workdir basename.
+ */
+export function localDbState(
   spawner: Spawner,
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
-  configuredProjectId: string | undefined,
-): Effect.Effect<boolean, LocalDbRunningError> {
+  resolvedProjectId?: string,
+): Effect.Effect<LocalDbState, LocalDbRunningError, LocalDockerEngine | CliConfigValues> {
   return Effect.scoped(
     Effect.gen(function* () {
-      // `warnOnUnresolvedEnv: false` — this doc comment's own `resolveDbToml` note:
-      // the caller has already run Go's `LoadConfig` validation (and, if the config
-      // has an OrioleDB project with an unresolved S3 `env(VAR)`, already printed
-      // Go's single `assertEnvLoaded` WARN) before reaching this probe. Re-printing
-      // it here would diverge from Go's exactly-once `flags.LoadConfig` call.
-      const tomlProjectId = yield* readDbToml(fs, path, workdir, undefined, {
-        validate: false,
-        warnOnUnresolvedEnv: false,
-      }).pipe(
-        Effect.map((toml) => toml.projectId),
-        Effect.orElseSucceed(() => Option.none<string>()),
-      );
-      const projectId = resolveLocalProjectId(
-        configuredProjectId,
-        Option.getOrUndefined(tomlProjectId),
-        workdir,
-      );
+      const values = yield* CliConfigValues;
+      const projectId =
+        resolvedProjectId ??
+        (yield* values.load({ workdir, projectRef: Option.none() }).pipe(
+          Effect.flatMap((resolvedConfig) => resolvedConfig.get(CliConfigKeys.projectId)),
+          Effect.map(({ value }) => value),
+          Effect.orElseSucceed(() => sanitizeProjectId(path.basename(workdir))),
+        ));
       const containerId = localDbContainerId(projectId);
-      // Discard stdout (the inspect JSON) so the unconsumed pipe can never
-      // deadlock; only the exit code + stderr matter.
+      // Engine probe first; `Option.none()` falls through to the CLI spawn below.
+      const engine = yield* LocalDockerEngine;
+      const engineAnswer = yield* engine.inspectContainer(containerId);
+      yield* Effect.annotateCurrentSpan(
+        "probe.method",
+        Option.isSome(engineAnswer) ? "engine" : "cli",
+      );
+      if (Option.isSome(engineAnswer)) return engineAnswer.value;
       const child = yield* spawnContainerCli(spawner, ["container", "inspect", containerId], {
         stdin: "ignore",
-        stdout: "ignore",
+        stdout: "pipe",
         stderr: "pipe",
         extendEnv: true,
       }).pipe(
@@ -108,11 +373,10 @@ export function isLocalDbRunning(
             }),
         ),
       );
-      const stderrChunks: Array<Uint8Array> = [];
-      yield* Stream.runForEach(child.stderr, (chunk) =>
-        Effect.sync(() => {
-          stderrChunks.push(chunk);
-        }),
+      // Drained concurrently: a full, unread pipe would stall the child.
+      const [stdout, stderrText] = yield* Effect.all(
+        [collectText(child.stdout), collectText(child.stderr)],
+        { concurrency: "unbounded" },
       ).pipe(
         Effect.mapError(() => new LocalDbRunningError({ message: "failed to inspect service" })),
       );
@@ -120,19 +384,11 @@ export function isLocalDbRunning(
         Effect.map(Number),
         Effect.mapError(() => new LocalDbRunningError({ message: "failed to inspect service" })),
       );
-      if (inspectExit === 0) return true; // container exists ⇒ running
+      if (inspectExit === 0) return parseInspectStdout(stdout);
 
-      const stderr = decodeChunks(stderrChunks).trim();
-      // Only a missing container means "not running". Any other inspect
-      // failure propagates, matching Go's `AssertSupabaseDbIsRunning`. Uses the
-      // shared, Podman-aware matcher (`isContainerNotFoundMessage`) rather than a
-      // Docker-only substring check, since `spawnContainerCli` above falls back to Podman
-      // on Docker-less hosts, and Podman's inspect-miss wording ("no container with name
-      // or ID ... found: no such container") differs from Docker's.
+      const stderr = stderrText.trim();
       if (!isContainerNotFoundMessage(stderr)) {
-        // Go's `AssertServiceIsRunning` sets `CmdSuggestion = suggestDockerInstall`
-        // on a daemon-connection failure (`misc.go:148-154`), so a down daemon
-        // still surfaces the actionable Docker Desktop hint, not just raw stderr.
+        // Surface the Docker install hint instead of raw stderr when the daemon is unreachable.
         const daemonDown = isDockerDaemonUnreachable(stderr);
         return yield* Effect.fail(
           new LocalDbRunningError({
@@ -145,7 +401,31 @@ export function isLocalDbRunning(
           }),
         );
       }
-      return false;
+      return { exists: false } satisfies LocalDbState;
     }),
+  ).pipe(
+    Effect.tap((state) =>
+      Effect.annotateCurrentSpan({
+        "db.exists": state.exists,
+        ...(state.exists && { "db.running": state.running, "db.status": state.status }),
+      }),
+    ),
+    Effect.withSpan("LocalDb.state"),
+  );
+}
+
+/**
+ * Answers whether the local Postgres container exists, whatever state it is in. Callers that
+ * need to know it is running use {@link localDbState}.
+ */
+export function isLocalDbRunning(
+  spawner: Spawner,
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  workdir: string,
+  resolvedProjectId?: string,
+): Effect.Effect<boolean, LocalDbRunningError, LocalDockerEngine | CliConfigValues> {
+  return localDbState(spawner, fs, path, workdir, resolvedProjectId).pipe(
+    Effect.map((state) => state.exists),
   );
 }

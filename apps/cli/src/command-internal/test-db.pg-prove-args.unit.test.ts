@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { Option } from "effect";
 
-import { buildPgProveArgs } from "./test-db.pg-prove-args.ts";
+import { buildPgProveArgs, pgProveMajor } from "./test-db.pg-prove-args.ts";
 
 describe("buildPgProveArgs", () => {
   test("defaults to <workdir>/supabase/tests when no paths are given", () => {
@@ -21,6 +21,9 @@ describe("buildPgProveArgs", () => {
       "/work/supabase/tests",
     ]);
     expect(result.binds).toEqual(["/work/supabase/tests:/work/supabase/tests:ro"]);
+    expect(result.mounts).toEqual([
+      { source: "/work/supabase/tests", target: "/work/supabase/tests", readOnly: true },
+    ]);
     expect(Option.getOrNull(result.workingDir)).toBe("/work/supabase/tests");
   });
 
@@ -36,9 +39,6 @@ describe("buildPgProveArgs", () => {
   });
 
   test("mounts the containing directory (not the lone file) for a single file path", () => {
-    // CLI-1139: mounting only the file leaves sibling `\ir` includes absent in
-    // the container. Mount the parent directory so they resolve; the file path is
-    // still what pg_prove runs.
     const result = buildPgProveArgs({
       paths: ["/abs/dir/a_test.sql"],
       cwd: "/cwd",
@@ -57,7 +57,6 @@ describe("buildPgProveArgs", () => {
       workdir: "/work",
       debug: false,
     });
-    // A single bind for the shared directory; both files still run.
     expect(result.binds).toEqual(["/abs/dir:/abs/dir:ro"]);
     expect(result.cmd).toContain("/abs/dir/a_test.sql");
     expect(result.cmd).toContain("/abs/dir/b_test.sql");
@@ -71,7 +70,6 @@ describe("buildPgProveArgs", () => {
       debug: false,
     });
     expect(result.binds).toEqual(["/abs/dir:/abs/dir:ro"]);
-    // workingDir is derived from the first path (a directory → itself).
     expect(Option.getOrNull(result.workingDir)).toBe("/abs/dir");
   });
 
@@ -82,15 +80,8 @@ describe("buildPgProveArgs", () => {
       workdir: "/work",
       debug: false,
     });
-    expect(result.binds).toEqual([
-      // First path is a file → its containing directory is mounted.
-      "/abs:/abs:ro",
-      // Second path is a directory → mounted as-is.
-      "/abs/second/dir:/abs/second/dir:ro",
-    ]);
-    // workingDir is derived from the first path only (a file → its parent).
+    expect(result.binds).toEqual(["/abs:/abs:ro", "/abs/second/dir:/abs/second/dir:ro"]);
     expect(Option.getOrNull(result.workingDir)).toBe("/abs");
-    // `hostPaths` reports what pg_prove searches — the files/dirs, not their mounts.
     expect(result.hostPaths).toEqual(["/abs/first_test.sql", "/abs/second/dir"]);
   });
 
@@ -102,5 +93,14 @@ describe("buildPgProveArgs", () => {
       debug: true,
     });
     expect(result.cmd.at(-1)).toBe("--verbose");
+  });
+});
+
+describe("pgProveMajor", () => {
+  test("maps stock aliases and OrioleDB builds to a catalog pg_prove major, rejecting others", () => {
+    expect(pgProveMajor("15")).toBe(15);
+    expect(pgProveMajor("17")).toBe(17);
+    expect(pgProveMajor("17.11.0.002-orioledb")).toBe(17);
+    expect(pgProveMajor("14")).toBeUndefined();
   });
 });

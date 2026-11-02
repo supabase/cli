@@ -8,29 +8,12 @@ import {
 import { resolveExperimental } from "./global-flags.ts";
 
 /**
- * The Effect-CLI replacement for Go's root-level experimental gate
- * (`apps/cli-go/cmd/root.go:91-96`):
- *
- * ```go
- * if IsExperimental(cmd) && !viper.GetBool("EXPERIMENTAL") {
- *   return errors.New("must set the --experimental flag to run this command")
- * }
- * ```
- *
- * `IsExperimental` is true for the commands registered in the `experimental`
- * slice and their direct children (`root.go:56-74`), which includes `storageCmd`.
- * Go enforces this in `PersistentPreRunE`, which cobra runs BEFORE
- * `ValidateFlagGroups()` (mutual-exclusivity checks) and `RunE`/`PersistentPostRun`
- * (`cobra@v1.10.2/command.go:985,1010,1014`) — so a closed gate must NOT run
- * mutual-exclusivity checks, emit `cli_command_executed`, or write the
- * telemetry/linked-project files. (Cobra's positional-argument count/type
- * validation, `ValidateArgs`, runs even earlier, at `command.go:968` — the gate
- * does not preempt that.) Each native experimental leaf therefore calls this in
- * its `.command.ts` before any mutual-exclusivity check and before
- * `withCommandTelemetry`.
- *
- * The message byte-matches Go's `errors.New(...)`; the value is resolved with the
- * `SUPABASE_EXPERIMENTAL` viper fallback (see {@link resolveExperimental}).
+ * Gates access to experimental commands and their children. Must run before any
+ * mutual-exclusivity check, `withCommandTelemetry`, and any telemetry/linked-project file write —
+ * a closed gate must produce none of those side effects. Each native experimental leaf calls
+ * {@link requireExperimental} first in its `.command.ts` for this reason. The message text and
+ * the `SUPABASE_EXPERIMENTAL` env fallback (see {@link resolveExperimental}) are established
+ * behavior and must not change casually.
  */
 export class ExperimentalRequiredError extends Data.TaggedError("ExperimentalRequiredError")<{
   readonly message: string;

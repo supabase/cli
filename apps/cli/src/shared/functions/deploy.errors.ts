@@ -33,14 +33,6 @@ export class NoFunctionsToDeployError extends Data.TaggedError("NoFunctionsToDep
   }
 }
 
-export class FunctionDeployCancelledError extends Data.TaggedError("FunctionDeployCancelledError")<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.cancelled;
-  }
-}
-
 export class FunctionImportNotDirectoryError extends Data.TaggedError(
   "FunctionImportNotDirectoryError",
 )<{
@@ -49,4 +41,13 @@ export class FunctionImportNotDirectoryError extends Data.TaggedError(
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidConfig;
   }
+}
+
+export class FunctionDeployError extends Data.Error<{
+  readonly message: string;
+  readonly suggestion?: string;
+}> {}
+
+export class FunctionImportMapSyntaxError extends Data.Error<{ readonly message: string }> {
+  override readonly name = "SyntaxError";
 }

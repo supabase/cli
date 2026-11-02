@@ -1,0 +1,13 @@
+{
+  // Type-check-only overlay for the `@supabase/pg-topo` pin from `tsconfig.json` (see the note
+  // there). The pin cannot live in `tsconfig.json` alone for type-checking purposes because Bun
+  // honours `paths` at runtime too, and would then load a declaration file instead of the
+  // implementation.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // `paths` replaces the base map wholesale, so the inherited pin is repeated here.
+    "paths": {
+      "@supabase/pg-topo": ["./node_modules/@supabase/pg-topo/dist/index.d.ts"]
+    }
+  }
+}

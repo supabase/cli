@@ -1,11 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer } from "effect";
+import { Cause, Effect, Exit, Layer } from "effect";
 
 import { mockOutput, mockStdin, mockTty } from "../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import {
   mockCommandCredentialsTracked,
   mockTelemetryStateTracked,
+  withConfigEnv,
 } from "../../../tests/helpers/command-mocks.ts";
 import { YesFlag } from "../../command-internal/global-flags.ts";
 import { logout } from "./logout.handler.ts";
@@ -46,7 +47,7 @@ function setupLogout(opts: SetupOpts = {}) {
 }
 
 describe("logout integration", () => {
-  it.live("confirms then deletes the token + all project credentials", () => {
+  it.effect("confirms then deletes the token + all project credentials", () => {
     const { layer, out, credentials } = setupLogout({ confirm: true });
     return Effect.gen(function* () {
       yield* logout();
@@ -57,13 +58,11 @@ describe("logout integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--yes skips the prompt and logs out", () => {
+  it.effect("--yes skips the prompt and logs out", () => {
     const { layer, out, credentials } = setupLogout({ yes: true });
     return Effect.gen(function* () {
       yield* logout();
       expect(credentials.deletedAll).toBe(true);
-      // The `viper.GetBool("YES")` branch still echoes the accepted prompt to
-      // stderr (`console.go:70-72`) — `--yes` runs must not be silent (CLI-1974).
       expect(out.stderrText).toContain(
         "Do you want to log out? This will remove the access token from your system. [y/N] y\n",
       );
@@ -73,36 +72,31 @@ describe("logout integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("declining the prompt cancels with a failure and does not sweep credentials", () => {
+  it.effect("declining the prompt cancels with a failure and does not sweep credentials", () => {
     const { layer, credentials } = setupLogout({ confirm: false });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(logout());
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LogoutCancelledError");
+        expect(Cause.pretty(exit.cause)).toContain("LogoutCancelledError");
       }
       expect(credentials.deletedAll).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("empty non-interactive stdin takes Go's default (false) and cancels", () => {
-    // `PromptYesNo(..., false)` scans stdin and falls back to the default when
-    // the scan is empty (`logout.go:16`, `console.go:64-82`). With no piped input
-    // logout cancels — without hanging on the clack confirm.
+  it.effect("empty non-interactive stdin takes the default (false) and cancels", () => {
     const { layer, credentials } = setupLogout({ stdinIsTty: false });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(logout());
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LogoutCancelledError");
+        expect(Cause.pretty(exit.cause)).toContain("LogoutCancelledError");
       }
       expect(credentials.deletedAll).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("honors a piped 'y' on non-interactive stdin and logs out", () => {
-    // Regression: Go scans piped stdin before defaulting (`console.go:74-82`), so
-    // `printf 'y\n' | supabase logout` deletes the token even on a non-terminal.
+  it.effect("honors a piped 'y' on non-interactive stdin and logs out", () => {
     const { layer, credentials } = setupLogout({ stdinIsTty: false, pipedAnswers: ["y"] });
     return Effect.gen(function* () {
       yield* logout();
@@ -110,29 +104,18 @@ describe("logout integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("honors SUPABASE_YES and logs out even when a piped 'n' is present", () => {
-    // Go reads `viper.GetBool("YES")` (incl. the SUPABASE_YES env var) BEFORE
-    // scanning stdin (`console.go:71`), so `SUPABASE_YES=1 printf 'n\n' | supabase
-    // logout` auto-confirms and deletes rather than consuming the piped `n`. The
-    // handler resolves `yes` via resolveYes, not the raw --yes flag.
-    const prev = process.env["SUPABASE_YES"];
-    process.env["SUPABASE_YES"] = "1";
+  it.effect("honors SUPABASE_YES and logs out even when a piped 'n' is present", () => {
     const { layer, credentials } = setupLogout({ stdinIsTty: false, pipedAnswers: ["n"] });
-    return Effect.gen(function* () {
-      yield* logout();
-      expect(credentials.deletedAll).toBe(true);
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_YES"];
-          else process.env["SUPABASE_YES"] = prev;
-        }),
-      ),
-      Effect.provide(layer),
+    return withConfigEnv(
+      { SUPABASE_YES: "1" },
+      Effect.gen(function* () {
+        yield* logout();
+        expect(credentials.deletedAll).toBe(true);
+      }).pipe(Effect.provide(layer)),
     );
   });
 
-  it.live("not logged in: prints to stderr, exits 0, and does not sweep credentials", () => {
+  it.effect("not logged in: prints to stderr, exits 0, and does not sweep credentials", () => {
     const { layer, out, credentials } = setupLogout({
       yes: true,
       deleteOutcome: "notLoggedIn",
@@ -145,19 +128,19 @@ describe("logout integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("delete failure propagates as a failure", () => {
+  it.effect("delete failure propagates as a failure", () => {
     const { layer, credentials } = setupLogout({ yes: true, deleteOutcome: "deleteError" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(logout());
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("DeleteTokenError");
+        expect(Cause.pretty(exit.cause)).toContain("DeleteTokenError");
       }
       expect(credentials.deletedAll).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("resets the telemetry identity on successful logout", () => {
+  it.effect("resets the telemetry identity on successful logout", () => {
     const { layer, telemetry } = setupLogout({ confirm: true });
     return Effect.gen(function* () {
       yield* logout();
@@ -165,7 +148,7 @@ describe("logout integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("resets the telemetry identity even when not logged in", () => {
+  it.effect("resets the telemetry identity even when not logged in", () => {
     const { layer, telemetry } = setupLogout({ confirm: true, deleteOutcome: "notLoggedIn" });
     return Effect.gen(function* () {
       yield* logout();
@@ -173,7 +156,7 @@ describe("logout integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry state on success", () => {
+  it.effect("flushes telemetry state on success", () => {
     const { layer, telemetry } = setupLogout({ yes: true });
     return Effect.gen(function* () {
       yield* logout();
@@ -181,7 +164,7 @@ describe("logout integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry state on cancel", () => {
+  it.effect("flushes telemetry state on cancel", () => {
     const { layer, telemetry } = setupLogout({ confirm: false });
     return Effect.gen(function* () {
       yield* Effect.exit(logout());
@@ -190,7 +173,7 @@ describe("logout integration", () => {
   });
 
   for (const format of ["json", "stream-json"] as const) {
-    it.live(`${format} with --yes emits a single success result`, () => {
+    it.effect(`${format} with --yes emits a single success result`, () => {
       const { layer, out } = setupLogout({ format, yes: true });
       return Effect.gen(function* () {
         yield* logout();
@@ -202,7 +185,7 @@ describe("logout integration", () => {
   }
 
   for (const format of ["json", "stream-json"] as const) {
-    it.live(`${format} not-logged-in emits the not-logged-in message as the result`, () => {
+    it.effect(`${format} not-logged-in emits the not-logged-in message as the result`, () => {
       const { layer, out, credentials } = setupLogout({
         format,
         yes: true,
@@ -217,13 +200,13 @@ describe("logout integration", () => {
     });
   }
 
-  it.live("json mode without --yes fails cleanly at the confirm prompt", () => {
+  it.effect("json mode without --yes fails cleanly at the confirm prompt", () => {
     const { layer } = setupLogout({ format: "json", yes: false, promptConfirmFail: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(logout());
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("NonInteractiveError");
+        expect(Cause.pretty(exit.cause)).toContain("NonInteractiveError");
       }
     }).pipe(Effect.provide(layer));
   });

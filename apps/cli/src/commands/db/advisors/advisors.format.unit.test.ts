@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  apiResponseToAdvisorLints,
+  apiLintsToAdvisorLints,
   encodeAdvisorLints,
   filterAdvisorLints,
   ADVISORS_LEVEL_ENUM,
@@ -24,7 +24,7 @@ const lint = (over: Partial<AdvisorLint>): AdvisorLint => ({
   cacheKey: over.cacheKey ?? "",
 });
 
-describe("ADVISORS_LEVEL_ENUM (Go toEnum, exact case-insensitive)", () => {
+describe("ADVISORS_LEVEL_ENUM", () => {
   it("maps info/warn/error in both cases", () => {
     expect(ADVISORS_LEVEL_ENUM.toEnum("info")).toBe(0);
     expect(ADVISORS_LEVEL_ENUM.toEnum("INFO")).toBe(0);
@@ -46,7 +46,7 @@ describe("matchesAdvisorType", () => {
   });
 });
 
-describe("filterAdvisorLints (maps Go TestFilterLints)", () => {
+describe("filterAdvisorLints", () => {
   const lints: ReadonlyArray<AdvisorLint> = [
     lint({ name: "rls_disabled", level: "ERROR", categories: ["SECURITY"] }),
     lint({ name: "unindexed_fk", level: "INFO", categories: ["PERFORMANCE"] }),
@@ -107,201 +107,43 @@ describe("scanAdvisorLintRow", () => {
   });
 });
 
-describe("apiResponseToAdvisorLints (maps Go TestApiResponseToLints)", () => {
-  it("coerces API fields to strings and projects metadata to the known fields", () => {
-    const lints = apiResponseToAdvisorLints({
-      lints: [
-        {
-          name: "rls_disabled_in_public",
-          title: "RLS disabled in public",
-          level: "ERROR",
-          facing: "EXTERNAL",
-          categories: ["SECURITY"],
-          description: "Tables without RLS",
-          detail: "Table public.users",
-          remediation: "https://supabase.com/docs",
-          cache_key: "test_key",
-          metadata: { schema: "public", entity: "public.users", type: "table", unknown: "x" },
-        },
-      ],
-    });
-    expect(lints).toHaveLength(1);
-    expect(lints[0]?.name).toBe("rls_disabled_in_public");
-    expect(lints[0]?.level).toBe("ERROR");
-    expect(lints[0]?.categories).toEqual(["SECURITY"]);
-    // Unknown metadata fields are dropped; known fields are kept in struct order.
-    expect(Object.keys(lints[0]?.metadata as Record<string, unknown>)).toEqual([
+describe("apiLintsToAdvisorLints", () => {
+  const apiLint = {
+    name: "rls_disabled_in_public",
+    title: "RLS disabled in public",
+    level: "ERROR",
+    facing: "EXTERNAL",
+    categories: ["SECURITY"],
+    description: "Tables without RLS",
+    detail: "Table public.users",
+    remediation: "https://supabase.com/docs",
+    cache_key: "test_key",
+  };
+
+  it("orders metadata keys by the output contract and omits absent fields", () => {
+    const [mapped] = apiLintsToAdvisorLints([
+      {
+        ...apiLint,
+        metadata: { type: "table", schema: "public", fkey_columns: [1, 2], entity: "public.users" },
+      },
+    ]);
+    expect(Object.keys(mapped?.metadata as Record<string, unknown>)).toEqual([
       "entity",
+      "fkey_columns",
       "schema",
       "type",
     ]);
+    expect(mapped?.cacheKey).toBe("test_key");
   });
 
-  it("accepts an unknown advisor name (closed-enum divergence guard)", () => {
-    const lints = apiResponseToAdvisorLints({
-      lints: [{ name: "some_brand_new_advisor", level: "WARN", categories: ["SECURITY"] }],
-    });
-    expect(lints[0]?.name).toBe("some_brand_new_advisor");
-  });
-
-  it("returns an empty array for Go zero-value shapes (null, missing/null lints)", () => {
-    // A top-level null or an absent/null `lints` decodes to the zero value,
-    // yielding no lints (No issues found).
-    expect(apiResponseToAdvisorLints(null)).toEqual([]);
-    expect(apiResponseToAdvisorLints({})).toEqual([]);
-    expect(apiResponseToAdvisorLints({ lints: null })).toEqual([]);
-  });
-
-  it("null lints element becomes zero-value lint (Go encoding/json nil-slice decode parity)", () => {
-    // A null slice element decodes to the zero-value struct, not a throw. The
-    // zero lint has empty strings and null categories.
-    const result = apiResponseToAdvisorLints({
-      lints: [
-        null,
-        {
-          name: "rls_disabled",
-          level: "ERROR",
-          facing: "EXTERNAL",
-          categories: ["SECURITY"],
-          cache_key: "ck",
-        },
-      ],
-    });
-    // null → zero-value lint (not an error)
-    expect(result).toHaveLength(2);
-    expect(result[0]).toEqual({
-      name: "",
-      title: "",
-      level: "",
-      facing: "",
-      categories: null,
-      description: "",
-      detail: "",
-      remediation: "",
-      cacheKey: "",
-    });
-    // valid sibling is preserved
-    expect(result[1]?.name).toBe("rls_disabled");
-    expect(result[1]?.level).toBe("ERROR");
-  });
-
-  it("null categories element becomes empty string (Go encoding/json []string null-element parity)", () => {
-    // A null element inside a string array decodes to the zero string "", not
-    // a throw.
-    const result = apiResponseToAdvisorLints({
-      lints: [{ name: "x", categories: [null, "SECURITY"] }],
-    });
-    expect(result[0]?.categories).toEqual(["", "SECURITY"]);
-  });
-
-  it("throws on structural shapes Go's typed decode rejects", () => {
-    // A type mismatch on a container field throws → non-zero failure (not "No
-    // issues found"). The previous tolerant parser wrongly coerced these to
-    // []. Keep the string-enum tolerance (above), but reject wrong-typed
-    // containers.
-    expect(() => apiResponseToAdvisorLints("nope")).toThrow();
-    expect(() => apiResponseToAdvisorLints([])).toThrow();
-    expect(() => apiResponseToAdvisorLints({ lints: "nope" })).toThrow();
-    expect(() => apiResponseToAdvisorLints({ lints: ["not-an-object"] })).toThrow();
-    expect(() =>
-      apiResponseToAdvisorLints({ lints: [{ name: "x", categories: "SECURITY" }] }),
-    ).toThrow();
-    expect(() => apiResponseToAdvisorLints({ lints: [{ name: "x", metadata: "nope" }] })).toThrow();
-    expect(() =>
-      apiResponseToAdvisorLints({
-        lints: [{ name: "x", metadata: { fkey_columns: "nope" } }],
-      }),
-    ).toThrow();
-  });
-
-  it("throws on scalar fields with the wrong JSON type (Go UnmarshalTypeError)", () => {
-    // The typed decode rejects a non-string for a string field and a
-    // non-string array element — even though it tolerates any string VALUE.
-    // The previous parser coerced 123 -> "123" via String().
-    expect(() => apiResponseToAdvisorLints({ lints: [{ name: 123 }] })).toThrow();
-    expect(() => apiResponseToAdvisorLints({ lints: [{ name: "x", level: true }] })).toThrow();
-    expect(() => apiResponseToAdvisorLints({ lints: [{ name: "x", categories: [1] }] })).toThrow();
-    expect(() =>
-      apiResponseToAdvisorLints({ lints: [{ name: "x", metadata: { schema: 5 } }] }),
-    ).toThrow();
-  });
-
-  it("treats absent scalar fields as the empty-string zero value (Go json)", () => {
-    // A missing field decodes to "" with no error; only present-but-wrong-type fails.
-    // `categories` absent → encoded as `null` (no omitempty on the field).
-    const lints = apiResponseToAdvisorLints({ lints: [{ name: "only_name" }] });
-    expect(lints[0]).toEqual({
-      name: "only_name",
-      title: "",
-      level: "",
-      facing: "",
-      categories: null,
-      description: "",
-      detail: "",
-      remediation: "",
-      cacheKey: "",
-    });
-  });
-
-  it("collapses null and empty categories to null (Go nil-slice parity)", () => {
-    // null categories → "categories": null
-    const fromNull = apiResponseToAdvisorLints({
-      lints: [{ name: "x", categories: null }],
-    });
-    expect(fromNull[0]?.categories).toBeNull();
-    // empty [] → "categories": null
-    const fromEmpty = apiResponseToAdvisorLints({
-      lints: [{ name: "x", categories: [] }],
-    });
-    expect(fromEmpty[0]?.categories).toBeNull();
-    // populated → array preserved
-    const fromPopulated = apiResponseToAdvisorLints({
-      lints: [{ name: "x", categories: ["SECURITY"] }],
-    });
-    expect(fromPopulated[0]?.categories).toEqual(["SECURITY"]);
-  });
-
-  it("normalizes null fkey_columns elements to 0 (Go encoding/json float32 zero value)", () => {
-    // A null array element decodes to the zero value (0), not a throw.
-    const result = apiResponseToAdvisorLints({
-      lints: [{ name: "x", metadata: { fkey_columns: [null, 2] } }],
-    });
-    const meta = result[0]?.metadata as Record<string, unknown>;
-    expect(meta?.["fkey_columns"]).toEqual([0, 2]);
-  });
-
-  it("normalizes a fully-null fkey_columns array to all zeros", () => {
-    const result = apiResponseToAdvisorLints({
-      lints: [{ name: "x", metadata: { fkey_columns: [null, null] } }],
-    });
-    const meta = result[0]?.metadata as Record<string, unknown>;
-    expect(meta?.["fkey_columns"]).toEqual([0, 0]);
-  });
-
-  it("still throws on non-number, non-null fkey_columns elements (Go UnmarshalTypeError)", () => {
-    expect(() =>
-      apiResponseToAdvisorLints({
-        lints: [{ name: "x", metadata: { fkey_columns: [1, "x"] } }],
-      }),
-    ).toThrow("cannot unmarshal advisor metadata.fkey_columns element into float32");
-
-    expect(() =>
-      apiResponseToAdvisorLints({
-        lints: [{ name: "x", metadata: { fkey_columns: [1, true] } }],
-      }),
-    ).toThrow();
-  });
-
-  it("still throws on a non-array fkey_columns (Go UnmarshalTypeError)", () => {
-    expect(() =>
-      apiResponseToAdvisorLints({
-        lints: [{ name: "x", metadata: { fkey_columns: "nope" } }],
-      }),
-    ).toThrow("cannot unmarshal advisor metadata.fkey_columns into []float32");
+  it("collapses empty categories to null and omits metadata when absent", () => {
+    const [mapped] = apiLintsToAdvisorLints([{ ...apiLint, categories: [] }]);
+    expect(mapped?.categories).toBeNull();
+    expect("metadata" in (mapped ?? {})).toBe(false);
   });
 });
 
-describe("encodeAdvisorLints (Go outputAndCheck byte parity)", () => {
+describe("encodeAdvisorLints", () => {
   it("emits struct-order keys, jsonb metadata, cache_key last, trailing newline", () => {
     const lints: ReadonlyArray<AdvisorLint> = [
       lint({
@@ -350,10 +192,7 @@ describe("encodeAdvisorLints (Go outputAndCheck byte parity)", () => {
     expect(out).toContain('"cache_key": ""');
   });
 
-  it("emits categories:null (key present, null value) when categories is null — Go nil []string parity", () => {
-    // No omitempty on `categories`; a null value encodes as
-    // `"categories": null`, not omitted. Verify the key is present AND the
-    // value is the literal `null` (not `[]` or absent).
+  it("emits categories:null (key present, null value) when categories is null", () => {
     const lintWithNullCategories: AdvisorLint = {
       name: "n",
       title: "",

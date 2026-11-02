@@ -2,18 +2,16 @@ import { Data } from "effect";
 
 import {
   actionability,
+  causeDeclaration,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../../../shared/telemetry/error-actionability.ts";
 import type { DeclarativeLoadCompatibilityFinding } from "./declarative.flow.ts";
 
 /**
- * Declarative commands were invoked without `--experimental` and without
- * `[experimental.pgdelta] enabled = true`. Byte-matches Go's gate error
- * `"declarative commands require --experimental flag or pg-delta enabled in config"`
- * plus the `utils.CmdSuggestion`
- * (`apps/cli-go/cmd/db_schema_declarative.go:63-69`, deleted in CLI-1970;
- * last present at commit 7b469f5b3).
+ * Declarative commands were invoked without `--experimental` while config sets
+ * `[experimental.pgdelta] enabled = false`; message text and suggestion are an established
+ * output contract.
  */
 export class DeclarativeNotEnabledError extends Data.TaggedError("DeclarativeNotEnabledError")<{
   readonly message: string;
@@ -24,12 +22,7 @@ export class DeclarativeNotEnabledError extends Data.TaggedError("DeclarativeNot
   }
 }
 
-/**
- * A target could not be resolved in non-interactive mode. Byte-matches Go's
- * `"in non-interactive mode, specify a target: --local, --linked, or --db-url"`
- * (generate, `:200`) and the sync variants that require `db schema declarative
- * generate` first (`:311`, `:318`).
- */
+/** `sync` found no declarative schema and cannot offer to generate one without a terminal. */
 export class DeclarativeNonInteractiveError extends Data.TaggedError(
   "DeclarativeNonInteractiveError",
 )<{
@@ -40,14 +33,7 @@ export class DeclarativeNonInteractiveError extends Data.TaggedError(
   }
 }
 
-/**
- * A mutually-exclusive flag group was violated. Reproduces cobra's
- * `MarkFlagsMutuallyExclusive` `ValidateFlagGroups` error byte-for-byte:
- *  - `generate`: `db-url`/`linked`/`local` (`apps/cli-go/cmd/db_schema_declarative.go:570`)
- *  - `sync`: `apply`/`no-apply` (`apps/cli-go/cmd/db_schema_declarative.go:561`)
- * (both deleted in CLI-1970; last present at commit 7b469f5b3). Both fail
- * before any side effects run, matching cobra's pre-RunE validation.
- */
+/** `sync`'s `--apply` and `--no-apply` were both set; fails before any side effects run. */
 export class DeclarativeMutuallyExclusiveFlagsError extends Data.TaggedError(
   "DeclarativeMutuallyExclusiveFlagsError",
 )<{
@@ -59,22 +45,8 @@ export class DeclarativeMutuallyExclusiveFlagsError extends Data.TaggedError(
 }
 
 /**
- * The interactive custom-database-URL prompt was empty or unparseable. Byte-matches
- * Go's `"database URL cannot be empty"` (`:281`) and
- * `"failed to parse connection string: " + err` (`:285`).
- */
-export class DeclarativeInvalidDbUrlError extends Data.TaggedError("DeclarativeInvalidDbUrlError")<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
-/**
- * `db schema declarative generate` ran but produced no declarative files (sync's
- * post-generate guard). Byte-matches Go's
- * `"declarative schema generation did not produce any files"` (`:326`).
+ * `db schema declarative generate` ran but produced no declarative files (sync's post-generate
+ * guard); message text is an established output contract.
  */
 export class DeclarativeNoFilesGeneratedError extends Data.TaggedError(
   "DeclarativeNoFilesGeneratedError",
@@ -86,12 +58,7 @@ export class DeclarativeNoFilesGeneratedError extends Data.TaggedError(
   }
 }
 
-/**
- * Diffing declarative schema to migrations failed. Wraps
- * `declarative.DiffDeclarativeToMigrations` errors
- * (`apps/cli-go/internal/db/declarative/declarative.go`). A debug bundle is
- * written before this surfaces.
- */
+/** Diffing declarative schema to migrations failed. A debug bundle is written before this surfaces. */
 export class DeclarativeDiffError extends Data.TaggedError("DeclarativeDiffError")<{
   readonly message: string;
 }> {
@@ -106,10 +73,8 @@ export class DeclarativeCompatibilityError extends Data.TaggedError(
 )<{
   readonly message: string;
   /**
-   * Recovery commands, printed bare on stderr by `Output.fail` INSTEAD of the
-   * generic "Try rerunning the command with --debug" footer. A compatibility
-   * gate is a deliberate refusal, not a crash, so it must never suggest
-   * troubleshooting flags (same mechanism as {@link DeclarativeApplyError}).
+   * Recovery commands, printed bare on stderr by `Output.fail` instead of the generic
+   * "Try rerunning the command with --debug" footer, since this is a refusal, not a crash.
    */
   readonly suggestion?: string;
   /** Structured only for a known implicit-extension failure during shadow load. */
@@ -121,11 +86,8 @@ export class DeclarativeCompatibilityError extends Data.TaggedError(
 }
 
 /**
- * Applying the generated migration to the local database failed. Wraps Go's
- * `applyMigrationToLocal` error; in interactive mode the handler offers a
- * reset+reapply before this surfaces
- * (`apps/cli-go/cmd/db_schema_declarative.go:397-435`, deleted in CLI-1970;
- * last present at commit 7b469f5b3).
+ * Applying the generated migration to the local database failed; in interactive mode the handler
+ * offers a reset+reapply before this surfaces.
  */
 export class DeclarativeApplyError extends Data.TaggedError("DeclarativeApplyError")<{
   readonly message: string;
@@ -135,36 +97,30 @@ export class DeclarativeApplyError extends Data.TaggedError("DeclarativeApplyErr
    */
   readonly connect?: boolean;
   /**
-   * Forwarded from the underlying typed failure this wraps (e.g. a
-   * `KongReloadError`'s recovery hint, or a health-timeout architecture
-   * hint) when the local-reset recovery path fails — the wrap must not drop it
-   * (review CLI-1958).
+   * Forwarded from the underlying typed failure this wraps (e.g. a `KongReloadError`'s recovery
+   * hint) when the local-reset recovery path fails, so the wrap doesn't drop it.
    */
   readonly suggestion?: string;
+  readonly cause?: unknown;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     if (this.connect === true) {
-      return { ...actionability.dbConnection, fingerprint_suffix: "connect" };
+      const declared = causeDeclaration(this.cause);
+      return declared === undefined
+        ? { ...actionability.dbConnection, fingerprint_suffix: "connect" }
+        : { ...declared, fingerprint_suffix: declared.fingerprint_suffix ?? "connect" };
     }
     return actionability.dbFinding;
   }
 }
 
 /**
- * Duck-types an optional `suggestion: string` off an arbitrary typed failure —
- * used when wrapping a lower-level error (e.g. `resetLocalDatabase`'s
- * `KongReloadError`) into a {@link DeclarativeApplyError} so its
- * recovery hint isn't silently dropped by the wrap.
+ * Duck-types an optional `suggestion: string` off an arbitrary typed failure, used when wrapping
+ * a lower-level error (e.g. `resetLocalDatabase`'s `KongReloadError`) into a
+ * {@link DeclarativeApplyError} so its recovery hint isn't silently dropped by the wrap.
  */
 export function readErrorSuggestion(error: unknown): string | undefined {
   if (typeof error !== "object" || error === null || !("suggestion" in error)) return undefined;
-  const { suggestion } = error as { suggestion: unknown };
+  const { suggestion } = error;
   return typeof suggestion === "string" ? suggestion : undefined;
 }
-
-/**
- * Materializing the declarative export on disk failed. Byte-matches Go's
- * `WriteDeclarativeSchemas` errors (`declarative.go:239`):
- * `"failed to clean declarative schema directory: " + err` and
- * `"unsafe declarative export path: " + path`.
- */

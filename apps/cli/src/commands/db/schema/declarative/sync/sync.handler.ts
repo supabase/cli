@@ -1,4 +1,4 @@
-import { Cause, Clock, Effect, Exit, FileSystem, Option, Path, Result } from "effect";
+import { Clock, DateTime, Effect, FileSystem, Option, Path, Result } from "effect";
 
 import {
   DnsResolverFlag,
@@ -8,30 +8,28 @@ import {
 import { promptYesNo } from "../../../../../command-internal/prompt-yes-no.ts";
 import { Output } from "../../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../../shared/runtime/tty.service.ts";
+import { CliConfigValues } from "../../../../../config/cli-config-values.service.ts";
 import { CommandSettings } from "../../../../../config/command-settings.service.ts";
 import { resetLocalDatabase } from "../../../../../command-internal/db-bootstrap/reset-local-database.ts";
+import { stackLocalDatabaseConn } from "../../../../../command-internal/stack-local-database.ts";
+import { currentStackBackend } from "../../../../../command-internal/stack-backend.ts";
 import { bold, red, yellow } from "../../../../../command-internal/colors.ts";
 import { DbConnection } from "../../../../../command-internal/db-connection.service.ts";
 import { getHostname } from "../../../../../command-internal/hostname.ts";
 import {
-  loadProjectEnv,
+  loadProjectEnvValues,
   readDbToml,
   resolveDeclarativeDir,
 } from "../../../../../command-internal/db-config.toml-read.ts";
 import { makeDir } from "../../../../../command-internal/make-dir.ts";
 import { applyMigrationFile } from "../../../../../command-internal/migration-apply.ts";
 import { ENABLE_LOCAL_WEBHOOKS_SUGGESTION } from "../../../../../command-internal/pg-net-guidance.ts";
-import { readProjectRefFile } from "../../../../../command-internal/temp-paths.ts";
-import { LinkedProjectCache } from "../../../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../../../telemetry/telemetry-state.service.ts";
 import { listLocalMigrations } from "../../../../../command-internal/migration-list.ts";
-import { pgDeltaTempPath } from "../../../../../command-internal/pgdelta.paths.ts";
-import {
-  isPgDeltaDebugEnabled,
-  resolvePgDeltaProjectId,
-} from "../../../../../command-internal/pgdelta.ts";
+import { pgdeltaScratchDir } from "../../../../../command-internal/scratch-paths.ts";
+import { isPgDeltaDebugEnabled } from "../../../../../command-internal/pgdelta.ts";
 import { writePgDeltaMigrations } from "../../../shared/pgdelta-migrations.write.ts";
-import { localEndpoint, resolveSmartTargetEndpoint } from "../declarative.smart-target.ts";
+import { prepareLocalTargetEndpoint } from "../declarative.smart-target.ts";
 import {
   type DebugBundle,
   collectMigrationsList,
@@ -49,7 +47,6 @@ import {
 } from "../declarative.errors.ts";
 import {
   classifyDeclarativeCompatibilityGap,
-  currentShellPlatform,
   formatDeclarativeGapEvidence,
   formatDeclarativeUpgradeGate,
   formatStagedExportAdoption,
@@ -57,6 +54,7 @@ import {
   resolveDeclarativeMigrationName,
   resolveDeclarativeSyncApplyDecision,
 } from "../declarative.flow.ts";
+import { currentShellPlatform } from "../../../../../command-internal/shell-quote.ts";
 import { warnFormerDeclarativeDefault } from "../declarative.former-default.ts";
 import { appendExtensionDeclarations } from "../declarative.extension-repair.ts";
 import { requirePgDelta } from "../declarative.gate.ts";
@@ -76,9 +74,9 @@ import type { DbSchemaDeclarativeSyncFlags } from "./sync.command.ts";
 
 const DEFAULT_SYNC_NAME = "declarative_sync";
 
-/** Go's `GetCurrentTimestamp`: UTC `YYYYMMDDHHmmss`. */
+/** UTC timestamp format `YYYYMMDDHHmmss`. */
 const formatTimestamp = (millis: number): string =>
-  new Date(millis).toISOString().replace(/\D/g, "").slice(0, 14);
+  DateTime.formatIso(DateTime.makeUnsafe(millis)).replace(/\D/g, "").slice(0, 14);
 
 export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(function* (
   flags: DbSchemaDeclarativeSyncFlags,
@@ -88,31 +86,16 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const cliSettings = yield* CommandSettings;
+  const configValues = yield* CliConfigValues;
   const telemetryState = yield* TelemetryState;
-  // Go's `dbDeclarativeCmd.PersistentPreRunE` calls `flags.LoadConfig` — which runs
-  // `loadNestedEnv` and `os.Setenv`s each project-.env key — BEFORE reading
-  // `viper.GetBool("EXPERIMENTAL")` for the gate below (`apps/cli-go/cmd/
-  // db_schema_declarative.go:73-78`, `pkg/config/config.go:789`). Load the project env
-  // first and resolve against it, as `db reset` does for its own experimental gate, so a
-  // `SUPABASE_EXPERIMENTAL` set only in `supabase/.env` opens the gate too.
-  const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
+  // The project env is loaded and resolved before the gate below, so a `SUPABASE_EXPERIMENTAL`
+  // set only in `supabase/.env` opens the gate too.
+  const projectEnv = yield* loadProjectEnvValues(fs, path, cliSettings.workdir);
   const experimental = yield* resolveExperimentalWithProjectEnv(projectEnv);
-  // `--yes` OR `SUPABASE_YES` (shell env or project `.env`): Go's prompts here
-  // read `viper.GetBool("YES")` after `loadNestedEnv`, so the env var must
-  // auto-confirm too, not just the flag (CLI-1974).
+  // `--yes` or `SUPABASE_YES` (shell env or project `.env`) must auto-confirm the prompts below.
   const yes = yield* resolveYesWithProjectEnv(projectEnv);
   const dnsResolver = yield* DnsResolverFlag;
   const seam = yield* DeclarativeSeam;
-  const linkedProjectCache = yield* LinkedProjectCache;
-
-  // Go's sync bootstrap delegates to `runDeclarativeGenerate`, whose
-  // `flags.LoadProjectRef` (called inside the `hasMigrationFiles` branch) sets the
-  // global `flags.ProjectRef`; root `ensureProjectGroupsCached` then writes the
-  // linked-project cache/groups on success or failure (`cmd/root.go:176,214-218`).
-  // Captured in the bootstrap branch below; the finalizer on the whole handler body
-  // reads it. Declared at handler scope so it is visible to both the body and the
-  // `.pipe` finalizer.
-  let linkedProjectRef: string | undefined;
 
   yield* Effect.gen(function* () {
     const toml = yield* readDbToml(fs, path, cliSettings.workdir);
@@ -124,47 +107,32 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
       configPath: path.join("supabase", "config.toml"),
     });
 
-    // cobra `MarkFlagsMutuallyExclusive("apply", "no-apply")`
-    // (`apps/cli-go/cmd/db_schema_declarative.go:561`, deleted in CLI-1970;
-    // last present at commit 7b469f5b3) runs via
-    // `ValidateFlagGroups()`, which cobra invokes AFTER `PersistentPreRunE` (the
-    // gate above) — see requirePgDelta's doc comment for the full ordering.
-    // Reject the conflict here rather than letting `--no-apply` silently win in
-    // the apply-decision helper.
+    // Mutually-exclusive apply/no-apply group, checked after the gate above. Reject the conflict
+    // here rather than letting `--no-apply` silently win in the apply-decision helper.
     const exclusive: Array<string> = [];
     if (Option.isSome(flags.apply)) exclusive.push("apply");
     if (Option.isSome(flags.noApply)) exclusive.push("no-apply");
     if (exclusive.length > 1) {
-      return yield* Effect.fail(
-        new DeclarativeMutuallyExclusiveFlagsError({
-          message: `if any flags in the group [apply no-apply] are set none of the others can be; [${exclusive.join(" ")}] were all set`,
-        }),
-      );
+      return yield* new DeclarativeMutuallyExclusiveFlagsError({
+        message: `if any flags in the group [apply no-apply] are set none of the others can be; [${exclusive.join(" ")}] were all set`,
+      });
     }
 
-    // Go's `utils.GetDeclarativeDir()` — the config value verbatim (already
-    // `supabase/`-prefixed when relative) or the relative `supabase/schemas`
-    // default. Printed verbatim in the bootstrap's written-to line below, exactly
-    // as Go prints it (Go chdirs into the workdir, so its paths stay relative).
+    // The config value verbatim (already `supabase/`-prefixed when relative) or the relative
+    // `supabase/schemas` default; printed verbatim in the bootstrap's written-to line below.
     const declarativeDirRel = resolveDeclarativeDir(path, toml.pgDelta);
-    // `path.resolve` (not `path.join`) so an absolute `declarative_schema_path` is
-    // used as-is, matching Go's `config.resolve` (which only prefixes the workdir onto
-    // a relative path). `path.join(workdir, abs)` would mangle the absolute path.
+    // `path.resolve` (not `path.join`) so an absolute `declarative_schema_path` is used as-is;
+    // `path.join(workdir, abs)` would mangle an absolute path.
     const declarativeDir = path.resolve(cliSettings.workdir, declarativeDirRel);
     const stagedDirRel = resolveStagedDeclarativeDir(declarativeDirRel);
     // Repair prompts name the file they would edit by its full configured path —
     // a bare `extension.sql` is ambiguous in a tree with nested schema folders.
     const extensionSqlRel = path.join(declarativeDirRel, "extension.sql");
     const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
-    const tempDir = pgDeltaTempPath(path, cliSettings.workdir);
+    const tempDir = yield* pgdeltaScratchDir(cliSettings.workdir);
     const run: DeclarativeRunContext = {
       pgDelta: {
-        // `resolvePgDeltaProjectId` mirrors Go's `Config.ProjectId` singleton
-        // (`SUPABASE_PROJECT_ID` env → config.toml's `project_id` → sanitized workdir
-        // basename) — NOT `cliSettings.projectId` alone, which is env-only and resolves to
-        // `""` for a project relying on config.toml's `project_id` or the workdir-basename
-        // default, mounting the WRONG `supabase_edge_runtime_` Deno-cache volume.
-        projectId: resolvePgDeltaProjectId(cliSettings.projectId, toml, cliSettings.workdir),
+        projectId: toml.projectId,
         cwd: cliSettings.workdir,
         denoVersion: toml.denoVersion,
         projectEnv: toml.projectEnv,
@@ -174,28 +142,34 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
       declarativeDirDisplay: declarativeDirRel,
       schema: flags.schema,
       noCache: flags.noCache,
-      debug: isPgDeltaDebugEnabled(),
+      debug: yield* isPgDeltaDebugEnabled,
       strictCoverage: flags.strictCoverage,
       dnsResolver,
     };
-    const ensureLocalPostgresImageCurrent = seam.ensureLocalPostgresImageCurrent();
+    const ensureLocalPostgresImageCurrent = seam.ensureLocalPostgresImageCurrent;
+    const promptLocalReset = promptYesNo(
+      output,
+      yes,
+      "Reset local database to match migrations first? (local data will be lost)",
+      false,
+    );
     yield* warnFormerDeclarativeDefault(fs, path, cliSettings.workdir, toml.pgDelta);
     const declarativeFilesExist = yield* declarativeDirHasFiles(fs, declarativeDir);
+    yield* Effect.annotateCurrentSpan({
+      "declarative.bootstrap": !declarativeFilesExist,
+      "schema.count": flags.schema.length,
+    });
 
-    // Go's `saveApplyDebugBundle`: warn (rather than masking the apply error) and
-    // treat the bundle path as empty when the debug directory cannot be created, so
-    // an apply failure still surfaces without claiming a bundle was saved
-    // (`apps/cli-go/cmd/db_schema_declarative.go:447-461`, deleted in
-    // CLI-1970; last present at commit 7b469f5b3).
+    // Warns (rather than masking the apply error) and treats the bundle path as empty when the
+    // debug directory cannot be created, so an apply failure still surfaces without claiming a
+    // bundle was saved.
     const saveApplyDebugBundle = (bundle: DebugBundle) =>
       saveDebugBundle(fs, path, cliSettings.workdir, tempDir, migrationsDir, bundle).pipe(
-        Effect.matchEffect({
-          onFailure: (error) =>
-            output
-              .raw(`Warning: failed to save debug artifacts: ${error.message}\n`, "stderr")
-              .pipe(Effect.as("")),
-          onSuccess: Effect.succeed,
-        }),
+        Effect.catch((error) =>
+          output
+            .raw(`Warning: failed to save debug artifacts: ${error.message}\n`, "stderr")
+            .pipe(Effect.as("")),
+        ),
       );
 
     // Step 1: declarative files must exist; in a TTY, offer to generate them.
@@ -203,64 +177,24 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
       const noFiles = new DeclarativeNonInteractiveError({
         message: "no declarative schema found. Run supabase db schema declarative generate first",
       });
-      if (!tty.stdinIsTty && !yes) return yield* Effect.fail(noFiles);
-      // Go asks via Console.PromptYesNo (db_schema_declarative.go:381, default
-      // true): --yes/SUPABASE_YES auto-confirms WITH the `<label> [Y/n] y`
-      // stderr echo (console.go:70-72) — routed through `promptYesNo`
-      // so the echo is not skipped (CLI-1974).
+      if (!tty.stdinIsTty && !yes) return yield* noFiles;
+      // `--yes`/`SUPABASE_YES` auto-confirms, but still echoes the `<label> [Y/n] y` stderr line
+      // via `promptYesNo` rather than skipping it.
       const ok = yield* promptYesNo(
         output,
         yes,
         "No declarative schema found. Generate a new one ?",
         true,
       );
-      if (!ok) return yield* Effect.fail(noFiles);
-      // Go delegates to the full smart-generate flow (`runDeclarativeGenerate`,
-      // db_schema_declarative.go:321): with migrations present it offers the
-      // local / linked / custom target choice + local-reset prompt, so a linked
-      // workdir can bootstrap from the remote rather than silently using local.
-      // Smart-mode presence probe only: Go's delegated `runDeclarativeGenerate` uses
-      // `hasMigrationFiles`, which returns `false` on ANY `ListLocalMigrations` error
-      // (`db_schema_declarative.go:164-169`), flowing into the no-migrations local
-      // generate. Swallow read errors here so an unreadable/file migrations path
-      // doesn't abort the bootstrap; the diff path below keeps the hard list behavior.
+      if (!ok) return yield* noFiles;
+      // The presence probe swallows read errors rather than aborting the bootstrap; the diff
+      // path further down keeps the hard list behavior.
       const hasMigrations =
         (yield* listLocalMigrations(fs, path, migrationsDir).pipe(
-          Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
+          Effect.orElseSucceed((): ReadonlyArray<string> => []),
         )).length > 0;
-      // Go calls `flags.LoadProjectRef` only inside `runDeclarativeGenerate`'s
-      // `hasMigrationFiles` branch (`db_schema_declarative.go:219-224`), which sets
-      // the global `flags.ProjectRef` so the post-run cache fires regardless of the
-      // chosen target. Resolve the ref the same way (config `project_id` →
-      // `.temp/project-ref`), only when migrations exist, and record it for the
-      // finalizer so a linked-workdir bootstrap caches like Go.
-      let linkedRef = Option.none<string>();
-      if (hasMigrations) {
-        // Smart prompt only decides whether to OFFER the linked choice — Go guards
-        // `LoadProjectRef` with `if err == nil` (`db_schema_declarative.go:222-224`),
-        // ignoring read errors and continuing with local/custom. Swallow a broken
-        // `.temp/project-ref` here; `linkedProjectRef` then stays unset so the post-run
-        // cache correctly does not fire (Go leaves `flags.ProjectRef` empty on error).
-        linkedRef = Option.isSome(cliSettings.projectId)
-          ? cliSettings.projectId
-          : yield* readProjectRefFile(fs, path, cliSettings.workdir).pipe(
-              Effect.orElseSucceed(() => Option.none<string>()),
-            );
-        if (Option.isSome(linkedRef)) {
-          linkedProjectRef = linkedRef.value;
-        }
-      }
-      // sync has no target flags (Go passes its target-less `cmd` into generate),
-      // so reset stays interactive (the prompt fires under the local choice).
-      const target = yield* resolveSmartTargetEndpoint(
-        { dbUrl: Option.none(), linked: Option.none(), password: Option.none(), reset: false },
-        { port: toml.port, password: toml.password },
-        hasMigrations,
-        fs,
-        path,
-        cliSettings.workdir,
-        linkedRef,
-        ensureLocalPostgresImageCurrent,
+      const target = yield* prepareLocalTargetEndpoint(
+        hasMigrations ? promptLocalReset : Effect.succeed(false),
       );
       const generated = yield* generateDeclarativeOutput(run, target);
       const written = yield* writeDeclarativeSchemas(fs, path, declarativeDir, generated);
@@ -268,23 +202,18 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
       // files go straight into the plan below — warn before diffing against them.
       yield* warnPreservedUnmanagedDeclarativeFiles(declarativeDirRel, written);
       if (!(yield* declarativeDirHasFiles(fs, declarativeDir))) {
-        return yield* Effect.fail(
-          new DeclarativeNoFilesGeneratedError({
-            message: "declarative schema generation did not produce any files",
-          }),
-        );
+        return yield* new DeclarativeNoFilesGeneratedError({
+          message: "declarative schema generation did not produce any files",
+        });
       }
-      // Go's delegated `declarative.Generate` prints the written-to line to stderr
-      // after the write and the catalog warm (`declarative.go:133→138-155→156`), on
-      // both the interactive-accept and --yes/SUPABASE_YES bootstrap paths, and
-      // regardless of --no-cache (the warm is skipped, the line is not). It prints
-      // `utils.GetDeclarativeDir()` — the relative dir above, never a resolved
-      // absolute path, because Go chdirs into the workdir (CLI-1980).
+      // Printed on both the interactive-accept and --yes/SUPABASE_YES bootstrap paths, and
+      // regardless of `--no-cache` (only the catalog warm is skipped). Uses the relative dir
+      // above, never a resolved absolute path.
       yield* output.raw(declarativeSchemaWrittenLine(declarativeDirRel), "stderr");
     }
 
     // Step 2: diff migrations state vs declarative; on error, save a debug bundle.
-    const stageNextExport = Effect.fnUntraced(function* () {
+    const stageNextExport = Effect.fn("db.schema.declarative.sync.stageNextExport")(function* () {
       const stagedDir = path.resolve(cliSettings.workdir, stagedDirRel);
       // Reject the active directory itself AND anything nested under it: a
       // staged export inside the declarative tree would be loaded recursively
@@ -295,11 +224,9 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
         stagedRelative === "" ||
         (!stagedRelative.startsWith("..") && !path.isAbsolute(stagedRelative))
       ) {
-        return yield* Effect.fail(
-          new DeclarativeCompatibilityError({
-            message: `${stagedDirRel} is inside the active declarative schema directory; choose a different staging directory.`,
-          }),
-        );
+        return yield* new DeclarativeCompatibilityError({
+          message: `${stagedDirRel} is inside the active declarative schema directory; choose a different staging directory.`,
+        });
       }
       const stagedExists = yield* fs.exists(stagedDir).pipe(Effect.orElseSucceed(() => false));
       if (stagedExists) {
@@ -308,45 +235,24 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
           fs.exists(path.join(stagedDir, ".pgdelta-export.json")),
         ]);
         if (entries.length > 0 && !hasManifest) {
-          return yield* Effect.fail(
-            new DeclarativeCompatibilityError({
-              message: `${stagedDirRel} already contains files without a pg-delta export manifest. Move or remove that directory, then run sync again so the staged export cannot preserve unrelated SQL.`,
-            }),
-          );
+          return yield* new DeclarativeCompatibilityError({
+            message: `${stagedDirRel} already contains files without a pg-delta export manifest. Move or remove that directory, then run sync again so the staged export cannot preserve unrelated SQL.`,
+          });
         }
       }
-      yield* ensureLocalPostgresImageCurrent;
-      yield* seam.ensureLocalDatabaseStarted();
-      // The staged export snapshots the RUNNING local database verbatim — not a
-      // shadow built from migrations, which is what the failed plan compared. Say
-      // so, and offer the same reset the smart-target local path offers, so stale
-      // Studio-made drift does not silently become the staged declarative tree.
-      // This path is only reachable interactively (both prompts above gate on a
-      // TTY without --yes), so the prompt always really asks.
-      yield* output.raw(
-        `Exporting from the running local database (not the migrations state). Review ${stagedDirRel} before adopting it.\n`,
-        "stderr",
-      );
-      const shouldReset = yield* promptYesNo(
-        output,
-        yes,
-        "Reset local database to match migrations first? (local data will be lost)",
-        false,
-      );
-      if (shouldReset) {
-        yield* resetLocalDatabase().pipe(
-          Effect.mapError(
-            (error) =>
-              new DeclarativeApplyError({
-                message: `database reset failed: ${error.message}`,
-                suggestion: readErrorSuggestion(error),
-              }),
-          ),
-        );
-      }
+      // The staged export snapshots the running local database verbatim, not a shadow built from
+      // migrations (what the failed plan compared), so offer a reset first; stale Studio-made
+      // drift would otherwise silently become the staged tree.
       const generated = yield* generateDeclarativeOutput(
         { ...run, declarativeDir: stagedDir },
-        localEndpoint({ port: toml.port, password: toml.password }, dnsResolver),
+        yield* prepareLocalTargetEndpoint(
+          output
+            .raw(
+              `Exporting from the running local database (not the migrations state). Review ${stagedDirRel} before adopting it.\n`,
+              "stderr",
+            )
+            .pipe(Effect.andThen(promptLocalReset)),
+        ),
       );
       const written = yield* writeDeclarativeSchemas(fs, path, stagedDir, generated);
       yield* warnPreservedUnmanagedDeclarativeFiles(stagedDirRel, written);
@@ -377,8 +283,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
                   migrations,
                 }).pipe(
                   Effect.matchEffect({
-                    // Go prints nothing when SaveDebugBundle errors on the diff path
-                    // (`db_schema_declarative.go:337-340`: `if saveErr == nil`).
+                    // Prints nothing when the debug bundle itself fails to save.
                     onFailure: () => Effect.void,
                     onSuccess: (debugDir) => output.raw(debugBundleMessage(debugDir), "stderr"),
                   }),
@@ -389,33 +294,26 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
 
     const planWithLoadRecovery = Effect.fnUntraced(function* () {
       while (true) {
-        const attempt = yield* planDeclarativeSync().pipe(
-          Effect.match({
-            onFailure: (error) => ({ error }),
-            onSuccess: (result) => ({ result }),
-          }),
-        );
-        if ("result" in attempt) return Option.some(attempt.result);
-        const error = attempt.error;
+        const attempt = yield* planDeclarativeSync().pipe(Effect.result);
+        if (Result.isSuccess(attempt)) return Option.some(attempt.success);
+        const error = attempt.failure;
         if (!(error instanceof DeclarativeCompatibilityError) || error.loadFindings === undefined) {
-          return yield* Effect.fail(error);
+          return yield* error;
         }
 
         const missingExtensions = [
           ...new Set(error.loadFindings.map((finding) => finding.extension)),
         ].sort();
         if (missingExtensions.includes("pg_net") && !toml.webhooksEnabled) {
-          return yield* Effect.fail(
-            new DeclarativeCompatibilityError({
-              message: [
-                "The declarative schema uses pg_net, but Database Webhooks are not enabled in the local project config.",
-                "",
-                ENABLE_LOCAL_WEBHOOKS_SUGGESTION,
-              ].join("\n"),
-            }),
-          );
+          return yield* new DeclarativeCompatibilityError({
+            message: [
+              "The declarative schema uses pg_net, but Database Webhooks are not enabled in the local project config.",
+              "",
+              ENABLE_LOCAL_WEBHOOKS_SUGGESTION,
+            ].join("\n"),
+          });
         }
-        if (!tty.stdinIsTty || yes) return yield* Effect.fail(error);
+        if (!tty.stdinIsTty || yes) return yield* error;
 
         yield* output.raw(`${yellow(error.message)}\n`, "stderr");
         const choice = yield* output.promptSelect("How would you like to continue?", [
@@ -457,15 +355,13 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
         !toml.webhooksEnabled &&
         result.removals.extensions.includes("pg_net")
       ) {
-        return yield* Effect.fail(
-          new DeclarativeCompatibilityError({
-            message: [
-              "The migrations state includes pg_net, but Database Webhooks are not enabled in the local project config.",
-              "",
-              ENABLE_LOCAL_WEBHOOKS_SUGGESTION,
-            ].join("\n"),
-          }),
-        );
+        return yield* new DeclarativeCompatibilityError({
+          message: [
+            "The migrations state includes pg_net, but Database Webhooks are not enabled in the local project config.",
+            "",
+            ENABLE_LOCAL_WEBHOOKS_SUGGESTION,
+          ].join("\n"),
+        });
       }
       const compatibility = classifyDeclarativeCompatibilityGap({
         manifestPresent: result.manifestPresent,
@@ -487,12 +383,10 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
         },
       });
       if (!tty.stdinIsTty || yes) {
-        return yield* Effect.fail(
-          new DeclarativeCompatibilityError({
-            message: gate.message,
-            suggestion: gate.suggestion,
-          }),
-        );
+        return yield* new DeclarativeCompatibilityError({
+          message: gate.message,
+          suggestion: gate.suggestion,
+        });
       }
       yield* output.raw(`${yellow(gate.message)}\n`, "stderr");
 
@@ -541,6 +435,10 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
       result = replanned.value;
     }
 
+    yield* Effect.annotateCurrentSpan({
+      "diff.empty": result.diffSQL.trim().length < 2,
+      "diff.drop_statement_count": result.dropWarnings.length,
+    });
     // Step 3: empty diff.
     if (result.diffSQL.trim().length < 2) {
       yield* output.raw("No schema changes found\n", "stderr");
@@ -595,8 +493,8 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
 
     // Step 7: apply decision.
     const decision = resolveDeclarativeSyncApplyDecision({
-      // The mutex check above gates on presence (Go `flag.Changed`); the decision
-      // itself reads the resolved boolean value (Go's `BoolVar` default is false).
+      // The mutex check above gates on presence; the decision itself reads the resolved boolean
+      // value (default false).
       apply: Option.getOrElse(flags.apply, () => false),
       noApply: Option.getOrElse(flags.noApply, () => false),
       yes,
@@ -610,30 +508,49 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
           : yield* output.promptConfirm("Apply this migration to local database?", {
               defaultValue: true,
             });
+    yield* Effect.annotateCurrentSpan({
+      "migration.count": migrationPaths.length,
+      "declarative.apply": shouldApply,
+    });
     if (!shouldApply) return;
 
     // Step 8: apply the migration to the local database (native).
     yield* ensureLocalPostgresImageCurrent;
-    const applyExit = yield* applyMigrationToLocal(
-      { port: toml.port, password: toml.password, dnsResolver },
+    const backend = yield* currentStackBackend;
+    const applyTarget =
+      backend.kind === "stack"
+        ? yield* stackLocalDatabaseConn.pipe(
+            Effect.mapError(
+              (error) =>
+                new DeclarativeApplyError({ message: error.message, connect: true, cause: error }),
+            ),
+          )
+        : {
+            host: yield* getHostname(
+              yield* configValues.load({ workdir: cliSettings.workdir, projectRef: Option.none() }),
+            ),
+            port: toml.port,
+            password: toml.password,
+          };
+    // A Ctrl-C or defect during the apply is not a migration-apply failure — propagate it
+    // unchanged instead of synthesizing a fake `DeclarativeApplyError`.
+    const applyResult = yield* applyMigrationToLocal(
+      {
+        host: applyTarget.host,
+        port: applyTarget.port,
+        password: applyTarget.password,
+        dnsResolver,
+      },
       migrationPaths,
-    ).pipe(Effect.exit);
+    ).pipe(Effect.result);
 
-    if (Exit.isSuccess(applyExit)) {
+    if (Result.isSuccess(applyResult)) {
       yield* output.raw("Migration applied successfully.\n", "stderr");
       return;
     }
 
-    // A Ctrl-C or defect during the apply is not a migration-apply failure —
-    // propagate it unchanged instead of synthesizing a fake
-    // `DeclarativeApplyError` (review CLI-1958).
-    const applyFailure = Cause.findFail(applyExit.cause);
-    if (Result.isFailure(applyFailure)) {
-      return yield* Effect.failCause(applyFailure.failure);
-    }
-
     // Apply failed: print, save a debug bundle, and (in a TTY) offer reset+reapply.
-    const applyError = applyFailure.success.error;
+    const applyError = applyResult.failure;
     yield* output.raw(`${red(`Migration failed to apply: ${applyError.message}`)}\n`, "stderr");
     const ts = formatDebugId(yield* Clock.currentTimeMillis);
     const migrations = yield* collectMigrationsList(fs, path, migrationsDir);
@@ -652,26 +569,16 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
         { defaultValue: false },
       );
       if (shouldReset) {
-        // Go runs reset in-process (`cmd/db_schema_declarative.go:414-423`).
-        // `resetLocalDatabase` now runs the same way — in-process, sharing this
-        // command's own context — rather than shelling out to a second `supabase-go`
-        // child (CLI-2062): it resolves `NetworkIdFlag` itself, so no
-        // argv-forwarding is needed to stay on a custom network.
-        const resetExit = yield* resetLocalDatabase().pipe(Effect.exit);
-        if (Exit.isFailure(resetExit)) {
-          // A Ctrl-C or defect during the recovery reset must cancel the command,
-          // not get rewritten into a synthetic "unknown error" apply failure —
-          // propagate it unchanged (review CLI-1958).
-          const resetFailure = Cause.findFail(resetExit.cause);
-          if (Result.isFailure(resetFailure)) {
-            return yield* Effect.failCause(resetFailure.failure);
-          }
-          // Go returns `resetErr` here, surfacing the failure that actually blocked
-          // recovery — not the original apply error — and prints it exactly once (no
-          // extra "database reset failed:" wrapper). Build the reset error from the
-          // real typed failure and use that one value for the message, suggestion,
-          // debug bundle, and return.
-          const rawResetFailure = resetFailure.success.error;
+        // `resetLocalDatabase` runs in-process, sharing this command's own context: it resolves
+        // `NetworkIdFlag` itself, so no argv-forwarding is needed to stay on a custom network.
+        // A Ctrl-C or defect during the recovery reset must cancel the command, not get
+        // rewritten into a synthetic "unknown error" apply failure.
+        const resetResult = yield* resetLocalDatabase().pipe(Effect.result);
+        if (Result.isFailure(resetResult)) {
+          // Surfaces the failure that actually blocked recovery, not the original apply error,
+          // printed exactly once (no extra "database reset failed:" wrapper) — build it from the
+          // real typed failure and reuse that one value for message, suggestion, and bundle.
+          const rawResetFailure = resetResult.failure;
           const resetError = new DeclarativeApplyError({
             message: rawResetFailure.message,
             suggestion: readErrorSuggestion(rawResetFailure),
@@ -688,9 +595,8 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
             error: resetError.message,
             migrations,
           });
-          // Go guards each saved-path line with `len(debugDir) > 0`
-          // (`db_schema_declarative.go:413-419`), so a bundle that failed to save
-          // does not print a path that does not exist.
+          // Guards each saved-path line so a bundle that failed to save doesn't print a path
+          // that doesn't exist.
           if (debugDir.length > 0) {
             yield* output.raw(`\nDebug information saved to ${bold(debugDir)}\n`, "stderr");
           }
@@ -698,32 +604,17 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
             yield* output.raw(`Debug information saved to ${bold(resetDebugDir)}\n`, "stderr");
           }
           yield* output.raw(debugBundleMessage(""), "stderr");
-          return yield* Effect.fail(resetError);
+          return yield* resetError;
         }
         yield* output.raw("Database reset and all migrations applied successfully.\n", "stderr");
         return;
       }
     }
-    // Go: `if len(debugDir) > 0 { PrintDebugBundleMessage(debugDir) }`
-    // (`db_schema_declarative.go:428-431`).
     if (debugDir.length > 0) {
       yield* output.raw(debugBundleMessage(debugDir), "stderr");
     }
-    return yield* Effect.fail(applyError);
-  }).pipe(
-    // Mirror Go's `ensureProjectGroupsCached` PersistentPostRun (`cmd/root.go:176,
-    // 214-218`): when the bootstrap path resolved a linked ref, write the
-    // linked-project cache (`GET /v1/projects/{ref}` → `supabase/.temp/
-    // linked-project.json`) whether sync succeeds or fails. The cache layer no-ops
-    // when the file exists / no token / non-200. Only the linked bootstrap sets
-    // `linkedProjectRef`, so non-linked syncs never trigger this.
-    Effect.ensuring(
-      Effect.suspend(() =>
-        linkedProjectRef !== undefined ? linkedProjectCache.cache(linkedProjectRef) : Effect.void,
-      ),
-    ),
-    Effect.ensuring(telemetryState.flush),
-  );
+    return yield* applyError;
+  }).pipe(Effect.ensuring(telemetryState.flush));
 });
 
 const declarativeDirHasFiles = Effect.fnUntraced(function* (
@@ -732,46 +623,44 @@ const declarativeDirHasFiles = Effect.fnUntraced(function* (
 ) {
   const exists = yield* fs.exists(dir).pipe(Effect.orElseSucceed(() => false));
   if (!exists) return false;
-  const entries = yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed(() => [] as string[]));
+  const entries = yield* fs
+    .readDirectory(dir)
+    .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
   return entries.length > 0;
 });
 
-/** Connects once and applies the ordered migration files (Go's `applyMigrationToLocal`). */
-const applyMigrationToLocal = (
-  local: { port: number; password: string; dnsResolver: "native" | "https" },
+/** Connects once and applies the ordered migration files. */
+const applyMigrationToLocal = Effect.fn("db.schema.declarative.sync.apply")(function* (
+  local: { host: string; port: number; password: string; dnsResolver: "native" | "https" },
   migrationPaths: ReadonlyArray<string>,
-) =>
-  Effect.gen(function* () {
-    const dbConnection = yield* DbConnection;
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const session = yield* dbConnection
-      .connect(
-        {
-          // Go's applyMigrationToLocal connects with utils.Config.Hostname
-          // (`apps/cli-go/cmd/db_schema_declarative.go:463`, deleted in
-          // CLI-1970; last present at commit 7b469f5b3), honoring
-          // SUPABASE_SERVICES_HOSTNAME / tcp DOCKER_HOST — not a hardcoded loopback.
-          host: getHostname(),
-          port: local.port,
-          user: "postgres",
-          password: local.password,
-          database: "postgres",
-        },
-        { isLocal: true, dnsResolver: local.dnsResolver },
-      )
-      .pipe(
-        Effect.mapError(
-          (error) => new DeclarativeApplyError({ message: error.message, connect: true }),
-        ),
-      );
-    for (const migrationPath of migrationPaths) {
-      yield* applyMigrationFile(
-        session,
-        fs,
-        path,
-        migrationPath,
-        (message) => new DeclarativeApplyError({ message }),
-      );
-    }
-  }).pipe(Effect.scoped);
+) {
+  yield* Effect.annotateCurrentSpan({ "migration.count": migrationPaths.length });
+  const dbConnection = yield* DbConnection;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const session = yield* dbConnection
+    .connect(
+      {
+        host: local.host,
+        port: local.port,
+        user: "postgres",
+        password: local.password,
+        database: "postgres",
+      },
+      { isLocal: true, dnsResolver: local.dnsResolver },
+    )
+    .pipe(
+      Effect.mapError(
+        (error) => new DeclarativeApplyError({ message: error.message, connect: true }),
+      ),
+    );
+  for (const migrationPath of migrationPaths) {
+    yield* applyMigrationFile(
+      session,
+      fs,
+      path,
+      migrationPath,
+      (message) => new DeclarativeApplyError({ message }),
+    );
+  }
+}, Effect.scoped);

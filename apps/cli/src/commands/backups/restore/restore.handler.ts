@@ -1,10 +1,12 @@
 import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
+import { encodeSortedJson } from "../../../command-internal/output.encoders.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
   BackupRestoreNetworkError,
@@ -22,18 +24,21 @@ const mapRestoreError = mapHttpError({
 
 export const backupsRestore = Effect.fn("backups.restore")(function* (flags: BackupsRestoreFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
-  const ref = yield* resolver.resolve(flags.projectRef);
+  const ref = yield* resolveProjectTarget(flags);
   const recoveryTimeTargetUnix = Option.getOrElse(flags.timestamp, () => 0);
 
-  // Cache + telemetry flush whether the main call succeeds or fails.
   yield* Effect.gen(function* () {
-    // Spinner only in human-facing text mode — see list.handler.ts.
+    yield* requireHostedMutationConsent({
+      action: Option.isSome(flags.timestamp)
+        ? `Restore the database to Unix timestamp ${flags.timestamp.value} (PITR)`
+        : "Start a PITR restore without a recovery time target",
+    });
+
     const restoring =
       output.format === "text" ? yield* output.task("Initiating PITR restore...") : undefined;
     yield* api.v1
@@ -42,26 +47,25 @@ export const backupsRestore = Effect.fn("backups.restore")(function* (flags: Bac
         Effect.tapError(() => restoring?.fail() ?? Effect.void),
         Effect.catch(mapRestoreError),
       );
-    yield* restoring?.clear() ?? Effect.void;
+    yield* restoring?.clear ?? Effect.void;
 
-    const goFmt = Option.getOrUndefined(goOutputFlag);
+    const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
-    // Go ignores --output entirely (restore.go:22) and always writes the text line to stderr.
-    // We mirror that for every Go --output value except `json`, where we provide a TS-only
-    // structured payload (Go has no JSON for restore — adding one is non-breaking).
-    if (goFmt === "json") {
-      yield* output.raw(
-        JSON.stringify({ message: "Started PITR restore", project_ref: ref }, null, 2) + "\n",
-      );
+    // --output is ignored for restore except `json`, a TS-only structured payload; every other
+    // value (including unset) writes the text line to stderr.
+    if (outputFlagFormat === "json") {
+      yield* output.raw(encodeSortedJson({ message: "Started PITR restore", project_ref: ref }));
       return;
     }
 
-    if (goFmt === undefined && (output.format === "json" || output.format === "stream-json")) {
+    if (
+      outputFlagFormat === undefined &&
+      (output.format === "json" || output.format === "stream-json")
+    ) {
       yield* output.success("Started PITR restore", { project_ref: ref });
       return;
     }
 
-    // pretty/yaml/toml/env (Go-compat) + TS text mode → byte-identical text line on stderr.
     yield* output.raw(`Started PITR restore: ${ref}\n`, "stderr");
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });

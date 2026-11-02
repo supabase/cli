@@ -2,18 +2,17 @@ import type { V1ListAllSecretsOutput } from "@supabase/api/effect";
 import { Effect } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
-import { resolveYes } from "../../../command-internal/global-flags.ts";
-import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
-import { CONTEXT_CANCELED_MESSAGE } from "../../../shared/output/errors.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { mapHttpError } from "../../../command-internal/http-errors.ts";
+import { mapHttpError, sanitizeInlineName } from "../../../command-internal/http-errors.ts";
 import {
   SecretsListNetworkError,
   SecretsListUnexpectedStatusError,
-  SecretsUnsetCancelledError,
+  SecretsNoArgumentsError,
+  SecretsUnsetInputError,
   SecretsUnsetNetworkError,
   SecretsUnsetUnexpectedStatusError,
 } from "../secrets.errors.ts";
@@ -21,7 +20,7 @@ import type { SecretsUnsetFlags } from "./unset.command.ts";
 
 type Secrets = typeof V1ListAllSecretsOutput.Type;
 
-// The empty-args path lists secrets first, so it shares the LIST error pair
+// The `--all` path lists secrets first, so it shares the LIST error pair
 // with the `list` handler.
 const mapListErrorForUnset = mapHttpError({
   networkError: SecretsListNetworkError,
@@ -40,20 +39,28 @@ const mapUnsetError = mapHttpError({
 export const secretsUnset = Effect.fn("secrets.unset")(function* (flags: SecretsUnsetFlags) {
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
-  // `--yes` OR `SUPABASE_YES` (mirrors viper's AutomaticEnv, root.go:318-320).
-  const yes = yield* resolveYes;
 
-  const ref = yield* resolver.resolve(flags.projectRef);
+  if (flags.all && flags.names.length > 0) {
+    return yield* new SecretsUnsetInputError({
+      message: "Pass secret names or --all, not both. Nothing was unset.",
+    });
+  }
+  if (!flags.all && flags.names.length === 0) {
+    return yield* new SecretsNoArgumentsError({
+      message: "No secret names given. Nothing was unset.",
+      suggestion:
+        "Pass the names to unset, or --all to unset every secret (add --dry-run to preview).",
+    });
+  }
+
+  const ref = yield* resolveProjectTarget(flags);
 
   yield* Effect.gen(function* () {
     let names: ReadonlyArray<string> = flags.names;
 
-    if (names.length === 0) {
-      // Fetches the full list and filters out SUPABASE_-prefixed entries.
-      // Reuse the LIST error pair here.
+    if (flags.all) {
       const all: Secrets = yield* api.v1
         .listAllSecrets({ ref })
         .pipe(Effect.catch(mapListErrorForUnset));
@@ -61,24 +68,45 @@ export const secretsUnset = Effect.fn("secrets.unset")(function* (flags: Secrets
     }
 
     if (names.length === 0) {
-      yield* output.raw("You have not set any function secrets, nothing to do.\n", "stderr");
+      const message = "You have not set any function secrets, nothing to do.";
+      if (output.format === "text") {
+        yield* output.raw(`${message}\n`, "stderr");
+        return;
+      }
+      yield* output.success(message, {
+        project_ref: ref,
+        count: 0,
+        names,
+        dry_run: flags.dryRun,
+      });
       return;
     }
 
-    const label = `Do you want to unset these function secrets?\n • ${names.join("\n • ")}\n\n`;
+    yield* Effect.annotateCurrentSpan({
+      "secret.count": names.length,
+      "secret.dry_run": flags.dryRun,
+    });
 
-    // `PromptYesNo(msg, true)` (`console.go:64-82`): `--yes`/`SUPABASE_YES`
-    // auto-confirms with the `<label> [Y/n] y` stderr echo; a non-TTY stdin
-    // still prints the label and scans one piped line (100ms), so `echo n |
-    // supabase secrets unset` declines instead of hardcoding the Yes default
-    // (CLI-1974).
-    const confirmed = yield* promptYesNo(output, yes, label, true);
-
-    if (!confirmed) {
-      return yield* Effect.fail(
-        new SecretsUnsetCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
-      );
+    if (flags.dryRun) {
+      if (output.format === "text") {
+        yield* output.raw(
+          `Would unset these function secrets from project ${ref}:\n • ${names.join("\n • ")}\n`,
+        );
+        return;
+      }
+      yield* output.success("Dry run: no secrets were unset.", {
+        project_ref: ref,
+        count: names.length,
+        names,
+        dry_run: true,
+      });
+      return;
     }
+
+    yield* requireHostedMutationConsent({
+      action: `Unset ${names.length} ${names.length === 1 ? "secret" : "secrets"}`,
+      details: ["Secrets to unset:", ...names.map((name) => ` • ${sanitizeInlineName(name)}`)],
+    });
 
     const unsetting =
       output.format === "text" ? yield* output.task("Unsetting secrets...") : undefined;
@@ -86,12 +114,14 @@ export const secretsUnset = Effect.fn("secrets.unset")(function* (flags: Secrets
       Effect.tapError(() => unsetting?.fail() ?? Effect.void),
       Effect.catch(mapUnsetError),
     );
-    yield* unsetting?.clear() ?? Effect.void;
+    yield* unsetting?.clear ?? Effect.void;
 
     if (output.format === "json" || output.format === "stream-json") {
       yield* output.success("Finished supabase secrets unset.", {
         project_ref: ref,
         count: names.length,
+        names,
+        dry_run: false,
       });
       return;
     }

@@ -1,3 +1,6 @@
+import { orioledbVersions, postgresMajor } from "@supabase/stack/internal/artifacts";
+import { postgresVersionCompare } from "../../command-internal/db-bootstrap/postgres.service.ts";
+
 const CONFIG_TEMPLATE_RAW = `# For detailed configuration reference documentation, visit:
 # https://supabase.com/docs/guides/local-development/cli/config
 # A string used to distinguish different Supabase projects on the same host. Defaults to the
@@ -13,7 +16,7 @@ port = 54321
 schemas = ["public", "graphql_public"]
 # Extra schemas to add to the search_path of every request.
 extra_search_path = ["public", "extensions"]
-# The maximum number of rows returns from a view, table, or stored procedure. Limits payload size
+# The maximum number of rows returned from a view, table, or stored procedure. Limits payload size
 # for accidental or malicious requests.
 max_rows = 1000
 # Controls whether new tables, views, sequences and functions created in the \`public\` schema by
@@ -39,6 +42,8 @@ health_timeout = "2m"
 # The database major version to use. This has to be the same as your remote database's. Run \`SHOW
 # server_version;\` on the remote database to check.
 major_version = 17
+# OrioleDB version to use as the Postgres storage engine. Leave empty to use the default engine.
+orioledb_version = "__ORIOLEDB_VERSION__"
 
 [db.pooler]
 enabled = false
@@ -171,7 +176,7 @@ enable_refresh_token_rotation = true
 # Allows refresh tokens to be reused after expiry, up to the specified interval in seconds.
 # Requires enable_refresh_token_rotation = true.
 refresh_token_reuse_interval = 10
-# Allow/disallow new user signups to your project.
+# Allow/disallow new user signups to your project. Existing users can still sign in.
 enable_signup = true
 # Allow/disallow anonymous sign-ins to your project.
 enable_anonymous_sign_ins = false
@@ -216,8 +221,9 @@ web3 = 30
 # secret = ""
 
 [auth.email]
-# Allow/disallow new user signups via email to your project.
-enable_signup = true
+# Allow/disallow the email provider. When false, users can't sign up or sign in with email.
+# To block new signups only, set enable_signup = false under [auth] instead.
+enabled = true
 # If enabled, a user will be required to confirm any email change on both the old, and new email
 # addresses. If disabled, only the new email is required to confirm.
 double_confirm_changes = true
@@ -254,8 +260,9 @@ otp_expiry = 3600
 # content_path = "./supabase/templates/password_changed_notification.html"
 
 [auth.sms]
-# Allow/disallow new user signups via SMS to your project.
-enable_signup = false
+# Allow/disallow the phone provider. When false, users can't sign up or sign in with SMS.
+# To block new signups only, set enable_signup = false under [auth] instead.
+enabled = false
 # If enabled, users need to confirm their phone number before signing in.
 enable_confirmations = false
 # Template for sending OTP to users
@@ -264,8 +271,9 @@ template = "Your code is {{ .Code }}"
 max_frequency = "5s"
 
 # Use pre-defined map of phone number to OTP for testing.
+# Keys are the phone number with country code and without the + prefix.
 # [auth.sms.test_otp]
-# 4152127777 = "123456"
+# 14152127777 = "123456"
 
 # Configure logged in session timeouts.
 # [auth.sessions]
@@ -317,7 +325,7 @@ max_frequency = "5s"
 
 # Use an external OAuth provider. The full list of providers are: \`apple\`, \`azure\`, \`bitbucket\`,
 # \`discord\`, \`facebook\`, \`github\`, \`gitlab\`, \`google\`, \`keycloak\`, \`linkedin_oidc\`, \`notion\`, \`twitch\`,
-# \`twitter\`, \`x\`, \`slack\`, \`spotify\`, \`workos\`, \`zoom\`.
+# \`twitter\`, \`x\`, \`slack_oidc\`, \`spotify\`, \`workos\`, \`zoom\`.
 [auth.external.apple]
 enabled = false
 client_id = ""
@@ -333,10 +341,14 @@ skip_nonce_check = false
 # If enabled, it will allow the user to successfully authenticate when the provider does not return an email address.
 email_optional = false
 
-# Allow Solana wallet holders to sign in to your project via the Sign in with Solana (SIWS, EIP-4361) standard.
+# Allow Solana wallet holders to sign in to your project via the Sign in with Solana (SIWS) standard.
 # You can configure "web3" rate limit in the [auth.rate_limit] section and set up [auth.captcha] if self-hosting.
 [auth.web3.solana]
 enabled = false
+
+# Allow Ethereum wallet holders to sign in to your project via the Sign in with Ethereum (SIWE, EIP-4361) standard.
+# [auth.web3.ethereum]
+# enabled = true
 
 # Use Firebase Auth as a third-party provider alongside Supabase Auth.
 [auth.third_party.firebase]
@@ -392,8 +404,6 @@ backend = "postgres"
 
 # Experimental features may be deprecated any time
 [experimental]
-# Configures Postgres storage engine to use OrioleDB (S3)
-orioledb_version = "__ORIOLEDB_VERSION__"
 # Configures S3 bucket URL, eg. <bucket_name>.s3-<region>.amazonaws.com
 s3_host = "env(S3_HOST)"
 # Configures S3 bucket region, eg. us-east-1
@@ -403,7 +413,7 @@ s3_access_key = "env(S3_ACCESS_KEY)"
 # Configures AWS_SECRET_ACCESS_KEY for S3 bucket
 s3_secret_key = "env(S3_SECRET_KEY)"
 
-# pg-delta is the schema diff engine for db diff / db pull / db remote commit.
+# pg-delta is the schema diff engine for db diff / db pull.
 # Set enabled = false to fall back to the legacy migra engine.
 [experimental.pgdelta]
 enabled = true
@@ -464,11 +474,63 @@ export const INTELLIJ_DENO_TEMPLATE = `<?xml version="1.0" encoding="UTF-8"?>
 </project>
 `;
 
-const ORIOLE_DB_VERSION = "15.1.0.150";
+/** The catalog's newest OrioleDB 17 build, which both stack and Compose projects can run. */
+const initOrioledbVersion = (): string =>
+  orioledbVersions()
+    .filter((version) => postgresMajor(version) === "17")
+    .toSorted(postgresVersionCompare)
+    .at(-1) ?? "";
 
-export function renderCliConfigTemplate(projectId: string, useOrioledb: boolean): string {
-  return CONFIG_TEMPLATE_RAW.replace("__PROJECT_ID__", projectId).replace(
-    "__ORIOLEDB_VERSION__",
-    useOrioledb ? ORIOLE_DB_VERSION : "",
+const EXPERIMENTAL_STACK_INIT_FLAG = `# Use the new local stack backend for start, stop, and status, and for --local targets of db, migration, test db, gen types, inspect, and pull.
+stack = true
+`;
+
+// Default ports omitted so the stack is not pinned to Docker-era values.
+const STACK_INIT_OMITTED_PORT_BLOCKS = [
+  `# Port to use for the API URL.
+port = 54321
+`,
+  `# Port to use for the local database URL.
+port = 54322
+`,
+  `# Port used by db diff command to initialize the shadow database.
+shadow_port = 54320
+`,
+  `# Port to use for the local connection pooler.
+port = 54329
+`,
+  `# Port to use for Supabase Studio.
+port = 54323
+`,
+  `# Port to use for the email testing server web interface.
+port = 54324
+`,
+  `# Port to attach the Chrome inspector for debugging edge functions.
+inspector_port = 8083
+`,
+  `port = 54327
+`,
+] as const;
+
+function applyExperimentalStackInitTemplate(source: string): string {
+  let next = source.replace("[experimental]\n", `[experimental]\n${EXPERIMENTAL_STACK_INIT_FLAG}`);
+  for (const block of STACK_INIT_OMITTED_PORT_BLOCKS) {
+    next = next.replace(block, "");
+  }
+  return next.replace(
+    /^(openai_api_key|s3_host|s3_region|s3_access_key|s3_secret_key) = /gm,
+    "# $&",
   );
+}
+
+export function renderCliConfigTemplate(
+  projectId: string,
+  useOrioledb: boolean,
+  experimentalStack = false,
+): string {
+  const rendered = CONFIG_TEMPLATE_RAW.replace("__PROJECT_ID__", projectId).replace(
+    "__ORIOLEDB_VERSION__",
+    useOrioledb ? initOrioledbVersion() : "",
+  );
+  return experimentalStack ? applyExperimentalStackInitTemplate(rendered) : rendered;
 }

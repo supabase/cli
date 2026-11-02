@@ -24,6 +24,7 @@ function makePr(overrides: Partial<PrDetails> = {}): PrDetails {
     authorLogin: PR_AUTHOR,
     headRepoFullName: REPO,
     baseRepoFullName: REPO,
+    headSha: "a".repeat(40),
     ...overrides,
   };
 }
@@ -361,8 +362,6 @@ describe("resolveDecision: issue_comment authorization", () => {
       io,
     );
     expect(result.shouldRun).toBe(true);
-    // The effective permission is always resolved (only the write-permission
-    // requirement short-circuits for OWNER), so the lookup still happens.
     expect(permissionLookups).toEqual(["maintainer"]);
     expect(reactions).toEqual([555]);
   });

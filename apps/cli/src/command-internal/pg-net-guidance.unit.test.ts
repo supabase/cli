@@ -13,11 +13,9 @@ describe("isPgNetUnavailableError", () => {
         message: "function net.http_post(url => text) does not exist",
       }),
     ).toBe(true);
-    // Right message, wrong SQLSTATE — a client-side echo, not a server verdict.
     expect(isPgNetUnavailableError({ code: "42P01", message: 'schema "net" does not exist' })).toBe(
       false,
     );
-    // Right SQLSTATE, unrelated object.
     expect(
       isPgNetUnavailableError({ code: "3F000", message: 'schema "audit" does not exist' }),
     ).toBe(false);
@@ -25,11 +23,6 @@ describe("isPgNetUnavailableError", () => {
   });
 });
 
-/**
- * This predicate only ever gates AWAY from dropping pg_net, so it must be
- * generous: every plausible spelling of an install counts, and no false negative
- * is acceptable.
- */
 describe("statementInstallsPgNet", () => {
   it.each([
     "create extension pg_net",

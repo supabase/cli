@@ -1,27 +1,7 @@
 /**
- * Native, byte-for-byte reproductions of cobra v1.10.2's static shell
- * completion script templates.
- *
- * cobra's `bash`/`zsh`/`fish`/`powershell` completion scripts are 100%
- * generic string templates — they do NOT bake in the command tree. Every
- * tab press, the generated script shells back out to the running
- * `supabase` binary's hidden `__complete`/`__completeNoDesc` command (see
- * `cli/complete.ts`) to get live candidates. The
- * only variables in the whole template are the program name (always the
- * literal `"supabase"` — cobra derives it from `Use: "supabase"` in
- * `apps/cli-go/cmd/root.go`, a compile-time constant, not `os.Argv[0]`),
- * which hidden command the script calls back into (`__complete` by
- * default, `__completeNoDesc` when generated with `--no-descriptions`),
- * the six `ShellCompDirective` bit values, and the two activeHelp
- * constants.
- *
- * Transcribed directly from the cobra v1.10.2 source (verified byte-exact
- * via a scripted round-trip against `fmt.Sprintf` semantics):
- *   - bash_completionsV2.go   (genBashComp)
- *   - zsh_completions.go      (genZshComp)
- *   - fish_completions.go     (genFishComp)
- *   - powershell_completions.go (genPowerShellComp)
- *   - completions.go          (ShellCompDirective / ShellCompRequestCmd constants)
+ * Static shell completion script templates,
+ * which shell back out to `supabase`'s hidden `__complete`/`__completeNoDesc` command for live
+ * candidates rather than baking in the command tree.
  */
 
 const PROGRAM_NAME = "supabase";
@@ -30,7 +10,7 @@ const SHELL_COMP_REQUEST_CMD = "__complete";
 const SHELL_COMP_NO_DESC_REQUEST_CMD = "__completeNoDesc";
 type CompletionRequestCmd = typeof SHELL_COMP_REQUEST_CMD | typeof SHELL_COMP_NO_DESC_REQUEST_CMD;
 
-/** `ShellCompDirective` bit values (`spf13/cobra@v1.10.2/completions.go:56-96`). */
+/** Bit values for the `ShellCompDirective` protocol. */
 const SHELL_COMP_DIRECTIVE_ERROR = 1;
 const SHELL_COMP_DIRECTIVE_NO_SPACE = 2;
 const SHELL_COMP_DIRECTIVE_NO_FILE_COMP = 4;
@@ -38,16 +18,11 @@ const SHELL_COMP_DIRECTIVE_FILTER_FILE_EXT = 8;
 const SHELL_COMP_DIRECTIVE_FILTER_DIRS = 16;
 const SHELL_COMP_DIRECTIVE_KEEP_ORDER = 32;
 
-/** `activeHelpMarker` (`spf13/cobra@v1.10.2/active_help.go:23`). */
 const ACTIVE_HELP_MARKER = "_activeHelp_ ";
-/** `activeHelpEnvVar("supabase")` (`spf13/cobra@v1.10.2/active_help.go:58`). */
 const ACTIVE_HELP_ENV_VAR = "SUPABASE_ACTIVE_HELP";
 
-/**
- * Transcribed from `genBashComp` (`spf13/cobra@v1.10.2/bash_completionsV2.go:31-467`).
- * Backing both `GenBashCompletionV2(w, true)` and `GenBashCompletionV2(w, false)` —
- * cobra funnels both through the same template; only the `compCmd` token differs.
- */
+// Both the descriptions and no-descriptions variants share this template; only the
+// `compCmd` token differs.
 function genBashCompletionScript(programName: string, compCmd: CompletionRequestCmd): string {
   return `# bash completion V2 for ${programName.padEnd(36)} -*- shell-script -*-
 
@@ -82,7 +57,7 @@ __${programName}_get_completion_results() {
 
     if [[ -z \${cur} && \${lastChar} != = ]]; then
         # If the last parameter is complete (there is a space following it)
-        # We add an extra empty parameter so we can indicate this to the go method.
+        # We add an extra empty parameter so we can indicate this to the completion program.
         __${programName}_debug "Adding extra empty parameter"
         requestComp="\${requestComp} ''"
     fi
@@ -120,7 +95,7 @@ __${programName}_process_completion_results() {
 
     if (((directive & shellCompDirectiveError) != 0)); then
         # Error code.  No completion.
-        __${programName}_debug "Received error from custom completion go code"
+        __${programName}_debug "Received error from custom completion code"
         return
     else
         if (((directive & shellCompDirectiveNoSpace) != 0)); then
@@ -290,7 +265,6 @@ __${programName}_handle_completion_types() {
         # Type: menu-complete/menu-complete-backward and insert-completions
         # If the user requested inserting one completion at a time, or all
         # completions at once on the command-line we must remove the descriptions.
-        # https://github.com/spf13/cobra/issues/1508
 
         # If there are no completions, we don't need to do anything
         (( \${#completions[@]} == 0 )) && return 0
@@ -478,12 +452,7 @@ fi
 `;
 }
 
-/**
- * Transcribed from `genZshComp` (`spf13/cobra@v1.10.2/zsh_completions.go:87-308`).
- * `GenZshCompletion` and `GenZshCompletionNoDesc` both call this exact function —
- * verified there is no other divergence between the desc/no-desc variants beyond
- * the `compCmd` token.
- */
+// Both zsh completion variants share this template; only the `compCmd` token differs.
 function genZshCompletionScript(programName: string, compCmd: CompletionRequestCmd): string {
   return `#compdef ${programName}
 compdef _${programName} ${programName}
@@ -536,7 +505,7 @@ _${programName}()
     requestComp="\${words[1]} ${compCmd} \${words[2,-1]}"
     if [ "\${lastChar}" = "" ]; then
         # If the last parameter is complete (there is a space following it)
-        # We add an extra empty parameter so we can indicate this to the go completion code.
+        # We add an extra empty parameter so we can indicate this to the completion program.
         __${programName}_debug "Adding extra empty parameter"
         requestComp="\${requestComp} \\"\\""
     fi
@@ -700,11 +669,8 @@ fi
 `;
 }
 
-/**
- * Transcribed from `genFishComp` (`spf13/cobra@v1.10.2/fish_completions.go:25-273`).
- * cobra emits the header comment via a separate `fmt.Sprintf` call before the main
- * template; reproduced here as a plain string concatenation of the two pieces.
- */
+// The header line and the rest of the script come from separate templates upstream;
+// concatenated here to match.
 function genFishCompletionScript(programName: string, compCmd: CompletionRequestCmd): string {
   return (
     `# fish completion for ${programName.padEnd(36)} -*- shell-script -*-\n` +
@@ -735,7 +701,6 @@ function __${programName}_perform_completion
 
     # Some programs may output extra empty lines after the directive.
     # Let's ignore them or else it will break completion.
-    # Ref: https://github.com/spf13/cobra/issues/1279
     for line in $results[-1..1]
         if test (string trim -- $line) = ""
             # Found an empty line, remove it
@@ -946,16 +911,8 @@ complete -k -c ${programName} -n '__${programName}_requires_order_preservation &
   );
 }
 
-/**
- * Transcribed from `genPowerShellComp` (`spf13/cobra@v1.10.2/powershell_completions.go:28-311`).
- * `GenPowerShellCompletion` (no desc) and `GenPowerShellCompletionWithDesc` both call
- * this exact function — verified there is no other divergence between the desc/no-desc
- * variants beyond the `compCmd` token. cobra's source builds this template by
- * concatenating raw-string segments with a handful of interpreted (`"..."`)
- * segments so it can embed literal PowerShell backticks (Go raw strings cannot
- * contain a backtick); reproduced here as one TS template literal with those
- * backticks escaped directly, which TS supports natively.
- */
+// Only the `compCmd` token differs between the desc/no-desc variants. Kept as one template
+// literal since TS can escape backticks directly.
 function genPowerShellCompletionScript(programName: string, compCmd: CompletionRequestCmd): string {
   return `# powershell completion for ${programName.padEnd(36)} -*- shell-script -*-
 
@@ -1027,7 +984,7 @@ filter __${programName}_escapeStringWithSpecialChars {
 
     if ( $WordToComplete -eq "" -And ( -Not $IsEqualFlag )) {
         # If the last parameter is complete (there is a space following it)
-        # We add an extra empty parameter so we can indicate this to the go method.
+        # We add an extra empty parameter so we can indicate this to the completion program.
         __${programName}_debug "Adding extra empty parameter"
         # PowerShell 7.2+ changed the way how the arguments are passed to executables,
         # so for pre-7.2 or when Legacy argument passing is enabled we need to use
@@ -1064,7 +1021,7 @@ filter __${programName}_escapeStringWithSpecialChars {
 
     if (($Directive -band $ShellCompDirectiveError) -ne 0 ) {
         # Error code.  No completion.
-        __${programName}_debug "Received error from custom completion go code"
+        __${programName}_debug "Received error from custom completion code"
         return
     }
 
@@ -1232,11 +1189,7 @@ Register-ArgumentCompleter -CommandName '${programName}' -ScriptBlock \${__${pro
 
 export type CompletionShell = "bash" | "zsh" | "fish" | "powershell";
 
-/**
- * Generates the exact script cobra v1.10.2's `supabase completion <shell>`
- * would have produced, without shelling out to (or otherwise depending on)
- * the Go binary.
- */
+/** Generates the shell completion script for `shell`. */
 export function generateCompletionScript(
   shell: CompletionShell,
   options: { readonly noDescriptions: boolean },

@@ -1,13 +1,16 @@
-import { Cause, Data } from "effect";
-import { CliError } from "effect/unstable/cli";
+import { Cause, Data, PlatformError } from "effect";
+import { CliError } from "effect/cli";
 import { describe, expect, it } from "vitest";
 import { SupabaseApiInputError, markSupabaseApiInputErrorAsUserInput } from "@supabase/api/effect";
 import { BootstrapHealthError } from "../../commands/bootstrap/bootstrap.errors.ts";
 import {
   actionability,
+  CliErrorCategory,
   type CliErrorActionabilityDeclaration,
+  CliErrorKind,
   classifyCliCauseActionability,
   classifyCliErrorActionability,
+  CliSuggestionType,
   ErrorActionabilityFingerprintId,
   ErrorActionabilityId,
   statusCodeActionability,
@@ -29,7 +32,7 @@ class DeclaredStatusError extends Data.TaggedError("DeclaredStatusError")<{
   }
 }
 
-class PlainDeclaredError extends Error {
+class PlainDeclaredError extends Data.Error<{ readonly message: string }> {
   static readonly [ErrorActionabilityFingerprintId] = "PlainDeclaredError";
 
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -37,7 +40,44 @@ class PlainDeclaredError extends Error {
   }
 }
 
+class CancelledDefect extends Data.TaggedError("CancelledDefect") {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.cancelled;
+  }
+}
+
 class UndeclaredError extends Data.TaggedError("UndeclaredError")<{ readonly message: string }> {}
+
+class RuntimeCrashError extends Data.TaggedError("RuntimeCrashError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.runtimeCrash;
+  }
+}
+
+class ResourceLimitError extends Data.TaggedError("ResourceLimitError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.resourceLimit;
+  }
+}
+
+// `resource_limit` is only valid paired with `user_actionable`; this pairing
+// must be rejected so it does not silently count against `internal_bug`.
+class MisclassifiedResourceLimitError extends Data.TaggedError("MisclassifiedResourceLimitError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return {
+      error_kind: CliErrorKind.InternalBug,
+      error_category: CliErrorCategory.ResourceLimit,
+      has_suggestion: false,
+      suggestion_type: CliSuggestionType.None,
+    } as unknown as CliErrorActionabilityDeclaration;
+  }
+}
 
 function externalError(
   _tag: string,
@@ -56,9 +96,10 @@ describe("classifyCliErrorActionability", () => {
       suggestion_type: "login",
       suggested_command: "supabase login",
     });
-    expect(classifyCliErrorActionability(new PlainDeclaredError("private")).error_fingerprint).toBe(
-      "error:PlainDeclaredError",
-    );
+    expect(
+      classifyCliErrorActionability(new PlainDeclaredError({ message: "private" }))
+        .error_fingerprint,
+    ).toBe("error:PlainDeclaredError");
   });
 
   it("preserves native Error subclass identifiers after minification", () => {
@@ -107,7 +148,7 @@ describe("classifyCliErrorActionability", () => {
   });
 
   it("rejects malformed declarations and arbitrary remediation text", () => {
-    class InvalidDeclaration extends Error {
+    class InvalidDeclaration extends Data.Error {
       get [ErrorActionabilityId]() {
         return {
           error_kind: "user_actionable",
@@ -125,7 +166,7 @@ describe("classifyCliErrorActionability", () => {
 
   it("handles hostile declarations and unknown failures safely", () => {
     const secret = "customer-project-ref";
-    class HostileError extends Error {
+    class HostileError extends Data.Error {
       get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
         throw new Error(secret);
       }
@@ -201,6 +242,36 @@ describe("classifyCliErrorActionability", () => {
       ).error_category,
     ).toBe("network");
   });
+  it("keeps a supervised runtime's own crash as an internal bug", () => {
+    // `runtime_crash` is a newer pairing than `panic`/`impossible_state`;
+    // `sanitizeKindCategory` must accept it, or the classification silently
+    // degrades to `unknown` and the failure stops counting as ours.
+    expect(classifyCliErrorActionability(new RuntimeCrashError({ message: "private" }))).toEqual({
+      error_kind: "internal_bug",
+      error_category: "runtime_crash",
+      error_fingerprint: "tag:RuntimeCrashError",
+      has_suggestion: true,
+      suggestion_type: "rerun_debug",
+    });
+  });
+
+  it("accepts user_actionable paired with resource_limit", () => {
+    expect(classifyCliErrorActionability(new ResourceLimitError({ message: "private" }))).toEqual({
+      error_kind: "user_actionable",
+      error_category: "resource_limit",
+      error_fingerprint: "tag:ResourceLimitError",
+      has_suggestion: true,
+      suggestion_type: "update_config",
+    });
+  });
+
+  it("rejects resource_limit paired with internal_bug rather than counting it as our bug", () => {
+    const result = classifyCliErrorActionability(
+      new MisclassifiedResourceLimitError({ message: "private" }),
+    );
+    expect(result.error_kind).toBe("unknown");
+    expect(result.error_category).toBe("unknown");
+  });
 });
 
 describe("classifyCliCauseActionability", () => {
@@ -230,6 +301,87 @@ describe("classifyCliCauseActionability", () => {
       error_category: "panic",
       error_fingerprint: "error:TypeError",
     });
+  });
+
+  it("classifies the typed failure when a cancellation defect accompanies it", () => {
+    const cause = Cause.combine(
+      Cause.fail(new DeclaredError({ message: "recoverable" })),
+      Cause.die(new CancelledDefect()),
+    );
+    expect(classifyCliCauseActionability(cause).error_category).toBe("auth");
+    expect(classifyCliCauseActionability(Cause.die(new CancelledDefect())).error_category).toBe(
+      "cancelled",
+    );
+  });
+
+  const platformDefectWith = (field: "_tag" | "module" | "method", value: string) => {
+    const reason = new PlatformError.SystemError({
+      _tag: "Busy",
+      module: "FileSystem",
+      method: "readFile",
+    });
+    Object.defineProperty(reason, field, { value });
+    return new PlatformError.PlatformError(reason);
+  };
+
+  it("names an unclassified defect by its source-owned tag, errno code, or platform operation, never instance data", () => {
+    const secret = "privateToken";
+    class NamespaceDefect extends Data.TaggedError("Namespace.NamespaceError")<{
+      readonly message: string;
+    }> {}
+    const cases: ReadonlyArray<readonly [unknown, string]> = [
+      [new UndeclaredError({ message: secret }), "error:Defect:UndeclaredError"],
+      [new NamespaceDefect({ message: secret }), "error:Defect:Namespace.NamespaceError"],
+      [Object.assign(new Error(secret), { code: "ENOENT" }), "error:Defect:Error:ENOENT"],
+      [Object.assign(new Error(secret), { code: "EAI_AGAIN" }), "error:Defect:Error:EAI_AGAIN"],
+      [new Error(secret), "error:Defect:Error"],
+      [Object.assign(new Error(secret), { name: secret, _tag: secret }), "error:Defect:Error"],
+      [
+        Object.assign(new Error(secret), { code: `E${secret.toUpperCase()}` }),
+        "error:Defect:Error",
+      ],
+      [{ _tag: secret }, "error:Defect:object"],
+      [
+        Object.defineProperty(new Error(secret), "code", {
+          get: () => {
+            throw new Error(secret);
+          },
+        }),
+        "error:Defect:Error",
+      ],
+      [secret, "error:Defect:string"],
+      [
+        new PlatformError.PlatformError(
+          new PlatformError.SystemError({
+            _tag: "Busy",
+            module: "FileSystem",
+            method: "readFile",
+            pathOrDescriptor: secret,
+            description: secret,
+          }),
+        ),
+        "error:Defect:PlatformError:Busy:FileSystem.readFile",
+      ],
+      [
+        new PlatformError.PlatformError(
+          new PlatformError.SystemError({ _tag: "WouldBlock", module: "Stdin", method: "read" }),
+        ),
+        "error:Defect:PlatformError:WouldBlock:Stdin.read",
+      ],
+      [platformDefectWith("_tag", secret), "error:Defect:PlatformError"],
+      [platformDefectWith("module", secret), "error:Defect:PlatformError"],
+      [platformDefectWith("method", "a b"), "error:Defect:PlatformError"],
+    ];
+
+    for (const [defect, fingerprint] of cases) {
+      const result = classifyCliCauseActionability(Cause.die(defect));
+      expect(result).toMatchObject({
+        error_kind: "internal_bug",
+        error_category: "panic",
+        error_fingerprint: fingerprint,
+      });
+      expect(JSON.stringify(result)).not.toContain(secret);
+    }
   });
 
   it("does not leak details from cause chains", () => {

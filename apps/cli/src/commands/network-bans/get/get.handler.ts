@@ -1,12 +1,12 @@
 import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeGoJson, encodeYaml } from "../../../command-internal/go-output.encoders.ts";
+import { encodeSortedJson, encodeYaml } from "../../../command-internal/output.encoders.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import { encodeBannedIpsToml } from "../network-bans.encoders.ts";
 import {
@@ -27,12 +27,11 @@ export const networkBansGet = Effect.fn("network-bans.get")(function* (flags: Ne
   const output = yield* Output;
   const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
-    const ref = yield* resolver.resolve(flags.projectRef);
+    const ref = yield* resolveProjectTarget(flags);
 
     yield* Effect.gen(function* () {
       const fetching =
@@ -41,39 +40,39 @@ export const networkBansGet = Effect.fn("network-bans.get")(function* (flags: Ne
         Effect.tapError(() => fetching?.fail() ?? Effect.void),
         Effect.catch(mapGetError),
       );
-      yield* fetching?.clear() ?? Effect.void;
+      yield* fetching?.clear ?? Effect.void;
 
-      const goOutput = Option.getOrUndefined(outputFlag);
+      const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
-      // TS-native machine-readable modes skip the stderr heading for clean output.
-      // Go --output takes priority (CLAUDE.md item 6), so this only fires when the
-      // legacy flag is unset.
-      if (goOutput === undefined && (output.format === "json" || output.format === "stream-json")) {
+      // Skips the stderr heading for json/stream-json output, but only when -o/--output
+      // is unset, since that flag takes priority.
+      if (
+        outputFlagFormat === undefined &&
+        (output.format === "json" || output.format === "stream-json")
+      ) {
         yield* output.success("", response);
         return;
       }
 
-      // Prints `DB banned IPs:` to stderr unconditionally before the format
-      // switch, including for `--output env` (which then errors).
+      // Emitted here so --output env still prints this heading before erroring below.
       yield* output.raw("DB banned IPs:\n", "stderr");
 
-      if (goOutput === "env") {
+      if (outputFlagFormat === "env") {
         return yield* new NetworkBansEnvNotSupportedError({
           message: "--output env flag is not supported",
         });
       }
-      if (goOutput === "yaml") {
+      if (outputFlagFormat === "yaml") {
         yield* output.raw(encodeYaml(response.banned_ipv4_addresses));
         return;
       }
-      if (goOutput === "toml") {
+      if (outputFlagFormat === "toml") {
         yield* output.raw(encodeBannedIpsToml(response.banned_ipv4_addresses));
         return;
       }
 
-      // Default and `--output {json,pretty}`. Go aliases `pretty` → `json` in
-      // `get.go:21-23` and falls through to `EncodeOutput(format, ips)`.
-      yield* output.raw(encodeGoJson(response.banned_ipv4_addresses));
+      // Default output, and `--output pretty`, which aliases to json.
+      yield* output.raw(encodeSortedJson(response.banned_ipv4_addresses));
     }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

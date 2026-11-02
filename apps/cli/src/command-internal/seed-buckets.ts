@@ -1,21 +1,24 @@
 import { type CliConfig, CliConfigSchema } from "@supabase/config/effect";
-import { loadCliConfig, type InternalLoadCliConfigOptions } from "@supabase/config/internal";
-import { Effect, FileSystem, Path, Schema } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { BunPath } from "@effect/platform-bun";
+import { Effect, FileSystem, Option, Path, Schema } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
 import { Output } from "../shared/output/output.service.ts";
 import { resolveYesWithProjectEnv } from "./global-flags.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { bold, yellow } from "./colors.ts";
-import { loadProjectEnv } from "./db-config.toml-read.ts";
-import { shouldSearchAncestors } from "./workdir-search.ts";
+import { describeConfigLoadFailure, loadResolvedConfigContext } from "./resolved-config-context.ts";
+import { isConfigValueFailure } from "./config-value-passthrough.ts";
+import { loadCliProjectEnvFiles } from "../shared/config/cli-config-env.ts";
 import { promptYesNo } from "./prompt-yes-no.ts";
 import {
   resolveStorageCredentials,
-  storageGatewayFetch,
-  validateLocalApiOverrides,
+  validateLocalStorageConfig,
+  withStorageGatewayFetch,
+  type StorageCredentials,
 } from "./storage-credentials.ts";
+import { currentStackBackend } from "./stack-backend.ts";
+import { withStackStorageGuidance } from "./stack-storage.ts";
 import { parseFileSizeLimit, resolveBucketProps } from "./storage-bucket-config.ts";
 import {
   type StorageGateway,
@@ -29,31 +32,31 @@ import {
   isVectorBucketsFeatureNotEnabled,
 } from "../commands/seed/buckets/buckets.classify.ts";
 import { SeedConfigLoadError } from "../commands/seed/buckets/buckets.errors.ts";
+import { describeConfigParseError } from "./workdir-project.ts";
 import { bucketObjectKey } from "../commands/seed/buckets/buckets.upload.ts";
+
+// Re-exported so `stack start` can report a project-context config-load failure with the
+// same tag `seedBucketsRun` itself fails with, without importing across command boundaries.
+export { SeedConfigLoadError };
 
 const CONFIG_PATH = "supabase/config.toml";
 const UPLOAD_CONCURRENCY = 5;
 
-/**
- * Well-known OS metadata files (macOS Finder, Windows Explorer) that must
- * never be uploaded as seeded objects — see CLI-1950. Go has no equivalent
- * skip; this is an intentional TS-only improvement over Go's current (also
- * buggy) behavior.
- */
+/** Whether `[storage.buckets]` or `[storage.vector.buckets]` declares anything to seed. */
+export const hasConfiguredBuckets = (config: CliConfig): boolean =>
+  Object.keys(config.storage.buckets ?? {}).length > 0 ||
+  Object.keys(config.storage.vector.buckets).length > 0;
+
+// OS metadata files (macOS Finder, Windows Explorer) that must never be uploaded as seeded
+// objects.
 const osJunkFileNames = new Set([".DS_Store", "Thumbs.db", "desktop.ini"]);
 
-/**
- * Mirrors `ValidateBucketName` regex.
- * Used to validate `[storage.buckets]` names before any Storage API call, matching
- * Go's config-load-time check. Vector and analytics names are
- * NOT validated here — Go only validates `[storage.buckets]`.
- */
+// Validates `[storage.buckets]` names before any Storage API call; vector and analytics
+// bucket names are not validated here.
 const BUCKET_NAME_PATTERN = /^(?:[0-9A-Za-z_]|!|-|\.|\*|'|\(|\)| |&|\$|@|=|;|:|\+|,|\?)*$/;
 
-/**
- * Verbatim Go regex literal — used in the error message so it
- * is byte-identical to Go's output. Do NOT derive from `BUCKET_NAME_PATTERN.source`.
- */
+// Kept as a literal string (not derived from `BUCKET_NAME_PATTERN.source`) to keep the error
+// message's regex text stable.
 const BUCKET_NAME_PATTERN_SOURCE = "^(\\w|!|-|\\.|\\*|'|\\(|\\)| |&|\\$|@|=|;|:|\\+|,|\\?)*$";
 
 const validateBucketName = Effect.fnUntraced(function* (name: string) {
@@ -96,128 +99,124 @@ function emptySummary(): SeedSummary {
   };
 }
 
-/**
- * Embedded-default project config, decoded from an empty object — the same
- * `decodeUnknownSync(CliConfigSchema)({})` the loader uses internally
- * (`packages/config/src/io.ts:54-56`). `seed buckets` never aborts on a
- * missing `config.toml`: it reads the package-global `utils.Config`, initialized
- * to embedded defaults, and `config.Load` no-ops on a missing file. So "no
- * config file" behaves like the embedded-default config.
- */
+// Embedded-default config, decoded from an empty object — the same decoding the loader
+// uses internally. A missing `config.toml` behaves like this default rather than aborting.
 const decodeDefaultCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
 
 /**
- * Core of `seed buckets`: load config (merging `[remotes.<ref>]` for a non-empty
- * `projectRef`), validate bucket config, then upsert/seed buckets + objects against
- * the Storage service gateway. Hoisted to `command-internal/` so both the `seed
- * buckets` command and `db reset --local` can reuse the exact local-seed path Go
- * invokes via `buckets.Run(ctx, "", false, fsys)`.
+ * Core of `seed buckets`, shared by the `seed buckets` command and `db reset --local`: loads
+ * config (merging `[remotes.<ref>]` for a non-empty `projectRef`), validates bucket config,
+ * then upserts buckets + objects against the Storage service gateway.
  *
- * `emitSummary` controls whether the machine-readable summary is written to stdout:
- * the `seed buckets` command emits it; `db reset` does NOT (it emits its own
- * result), matching Go where reset's `buckets.Run` prints nothing to stdout.
- *
- * `interactive` controls whether overwrite/prune confirmations may prompt. `db
- * reset` reuses this core with `interactive: false` so it never blocks on input —
- * Go forces it via `buckets.Run(ctx, "", false, fsys)`. Defaults to `true`.
- *
- * The caller owns project-ref resolution, the linked-project cache write, and the
- * telemetry flush (Go's PersistentPostRun) — this core does none of those.
+ * `emitSummary` gates the stdout summary; `interactive` (default `true`) gates overwrite/prune
+ * prompts. The caller owns project-ref resolution, cache writes, and telemetry.
  */
-export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
+export const seedBucketsRun = Effect.fnUntraced(function* <
+  EA = never,
+  RA = never,
+  EC = never,
+  RC = never,
+>(opts: {
   readonly projectRef: string;
   readonly emitSummary: boolean;
   readonly interactive?: boolean;
   /**
-   * Pre-resolved auto-confirm value. `db reset` resolves `yes` with the nested project
-   * `.env` loaded (`loadNestedEnv` runs before `buckets.Run`), so pass it through here —
-   * the internal fallback below only loads whatever THIS command's own project would
-   * supply. When omitted (the standalone `seed buckets` command), fall back to
-   * `resolveYesWithProjectEnv`, loading the project env ourselves — `seed buckets`
-   * defaults to `--local` (`seedFlags.Bool("local", true, ...)`),
-   * and root's `ParseDatabaseConfig` calls `LoadConfig` — loading the project `.env` files —
-   * before `buckets.Run`'s overwrite/prune prompts, so a `SUPABASE_YES`
-   * set only in `supabase/.env` must auto-confirm here too.
+   * Pre-resolved auto-confirm value. `db reset` passes its own value (resolved with the
+   * nested project `.env` already loaded) since the internal fallback below only loads
+   * whatever the standalone `seed buckets` command's own project would supply. When omitted,
+   * falls back to `resolveYesWithProjectEnv`, loading the project env itself.
    */
   readonly yes?: boolean;
   /**
-   * Skips this function's own `loadCliConfig` reload in favor of a config
-   * the caller already resolved (and may have folded env overrides into —
-   * see `start.handler.ts`'s `effectiveLocalStorageConfig`). `buckets.Run`
-   * never reloads config itself: it reads the single process-wide `utils.Config`
-   * populated once by `Config.Load()` at CLI startup, so any `SUPABASE_*`
-   * override already in effect for the rest of that process (e.g. an
-   * env-overridden `api.port`/`api.tls.enabled` that actually brought Kong up
-   * differently) is automatically visible here too. `start` is a long-running
-   * process that resolves its own config/env once up front and must reuse
-   * that SAME resolution for bucket seeding to match — an independent reload
-   * from disk would silently drop any override that exists only in the
-   * shell/dotenv, not literally in config.toml. Only `start` passes this;
-   * the standalone `seed buckets` command's own single load already IS the
-   * one-shot `Config.Load()` for that process, so it keeps reloading below.
+   * Skips this function's own resolved config load in favor of a config the caller already
+   * resolved through its own nested-env walk, so a fresh reload here can't drop an override
+   * that exists only in the shell/dotenv, not in `config.toml`.
    */
   readonly resolvedConfig?: {
     readonly config: CliConfig;
     readonly document: Record<string, unknown> | undefined;
   };
   /**
-   * Already-resolved nested project dotenv map, when the caller's own config
-   * resolution walked it (`db reset`'s context, `start`) — same passthrough
-   * idea as `resolvedConfig` above. When omitted (the standalone command),
-   * loaded once below and shared by the `SUPABASE_YES` fallback and the
-   * storage credentials `SUPABASE_API_*` fold.
+   * Already-resolved nested project dotenv map, when the caller's own config resolution
+   * walked it (`db reset`, `start`) — same passthrough idea as `resolvedConfig`. When
+   * omitted, loaded once below and shared by the `SUPABASE_YES` fallback and the storage
+   * credentials `SUPABASE_API_*` fold.
    */
   readonly projectEnvValues?: Readonly<Record<string, string>>;
+  /**
+   * Pre-resolved Storage credentials from an already-open stack handle, bypassing
+   * {@link resolveStorageCredentials}.
+   */
+  readonly credentials?: StorageCredentials;
+  /** Explicit project root for config/env loading and `objects_path` resolution. */
+  readonly workdir?: string;
+  /**
+   * When true, overwrite/prune decisions resolve from consent alone and no prompt runs, so the
+   * caller cannot consume a line of its parent's stdin. `start` sets this: it has already
+   * decided (prune only on explicit `--yes`/`SUPABASE_YES`), and a bounded read on fd 0 there
+   * would swallow the next line of a `curl … | bash` script. Declined prunes say so instead.
+   */
+  readonly promptless?: boolean;
+  /** Announces the local Storage endpoint as the run's target once its URL is known. */
+  readonly announceLocalEndpoint?: (baseUrl: string) => Effect.Effect<void, EA, RA>;
+  /**
+   * Asks for consent to the hosted plan's writes before the first one. One answer covers every
+   * bucket overwrite and prune, so no per-bucket prompt follows it.
+   */
+  readonly confirmHostedWrites?: (details: ReadonlyArray<string>) => Effect.Effect<unknown, EC, RC>;
 }) {
   const output = yield* Output;
   const cliSettings = yield* CommandSettings;
+  const workdir = opts.workdir ?? cliSettings.workdir;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const projectEnvValues =
-    opts.projectEnvValues ?? (yield* loadProjectEnv(fs, path, cliSettings.workdir));
-  // `--yes` OR `SUPABASE_YES`.
-  const yes = opts.yes ?? (yield* resolveYesWithProjectEnv(projectEnvValues));
+  const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
   const { projectRef, emitSummary } = opts;
   const interactive = opts.interactive ?? true;
+  const promptless = opts.promptless ?? false;
 
-  // Load config.toml, passing projectRef so `[remotes.*]` overrides are merged for
-  // --linked. A parse failure aborts before any network call. Skipped entirely
-  // when the caller already supplied `resolvedConfig` — see that option's doc
-  // comment above.
-  const loadOptions: InternalLoadCliConfigOptions =
-    projectRef !== ""
-      ? { projectRef, goViperCompat: true, search: shouldSearchAncestors(cliSettings) }
-      : { goViperCompat: true, search: shouldSearchAncestors(cliSettings) };
-  const loaded =
+  // Skipped when the caller already supplied `resolvedConfig`. A missing config file behaves as
+  // the embedded defaults, not an early exit: local + no-config falls into the no-op
+  // short-circuit below, while `--linked` + no-config still falls through to the remote path so
+  // auth/project/API failures surface.
+  const context =
     opts.resolvedConfig !== undefined
-      ? null
-      : yield* loadCliConfig(cliSettings.workdir, loadOptions).pipe(
+      ? undefined
+      : yield* loadResolvedConfigContext(
+          workdir,
+          projectRef === "" ? Option.none() : Option.some(projectRef),
+        ).pipe(
           Effect.catchTag(
             "CliConfigParseError",
             (cause) =>
               new SeedConfigLoadError({
-                message: `failed to parse supabase/config.toml: ${String(cause.cause)}`,
+                message: describeConfigParseError(workdir, cause),
               }),
           ),
+          Effect.mapError((cause) =>
+            cause instanceof SeedConfigLoadError || isConfigValueFailure(cause)
+              ? cause
+              : new SeedConfigLoadError({ message: describeConfigLoadFailure(cause) }),
+          ),
         );
-  // A missing config file is NOT an early exit: Go uses embedded defaults and
-  // still gates the no-op on `len(projectRef) == 0`. So local + no-config falls
-  // into the no-op short-circuit; `--linked` + no-config falls through to the
-  // remote path so auth/project/API failures surface. `resolvedConfig` (when
-  // given) always wins over a `null` `loaded` — see that option's doc comment.
-  // The standalone `seed buckets` command now rejects an explicit-but-project-less
-  // workdir in its own handler (`buckets.handler.ts`,
-  // `requireExplicitWorkdirProject`) before ever reaching this function, so
-  // this fallback is reached only for a DEFAULTED workdir, or a `resolvedConfig`
-  // caller (`start`/`db reset`, which never load config here at all).
-  const config =
-    opts.resolvedConfig?.config ?? (loaded === null ? decodeDefaultCliConfig({}) : loaded.config);
-  const document = opts.resolvedConfig?.document ?? (loaded === null ? undefined : loaded.document);
+  const projectEnvValues =
+    opts.projectEnvValues ??
+    context?.projectEnvValues ??
+    (yield* loadCliProjectEnvFiles(workdir).pipe(
+      Effect.map((loaded) => loaded.values),
+      Effect.mapError((cause) => new SeedConfigLoadError({ message: cause.message })),
+    ));
+  // `--yes` OR `SUPABASE_YES`.
+  const yes = opts.yes ?? (yield* resolveYesWithProjectEnv(projectEnvValues));
+  const config = opts.resolvedConfig?.config ?? context?.config ?? decodeDefaultCliConfig({});
+  const document = opts.resolvedConfig?.document ?? context?.document;
 
-  // Go prints this from inside config load whenever a
-  // `[remotes.*]` block matched the linked ref. stderr in all output modes.
-  if (loaded !== null && loaded.appliedRemote !== undefined) {
-    yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
+  // Printed whenever a `[remotes.*]` block matched the linked ref; stderr in all output modes.
+  const appliedRemote = Option.getOrUndefined(
+    context?.resolvedConfig.appliedRemote ?? Option.none(),
+  );
+  if (appliedRemote !== undefined) {
+    yield* output.raw(`Loading config override: [remotes.${appliedRemote}]\n`, "stderr");
   }
   const bucketsConfig = config.storage.buckets ?? {};
   const bucketNames = Object.keys(bucketsConfig);
@@ -225,12 +224,8 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
   const vectorBucketNames = Object.keys(config.storage.vector.buckets);
   const hasVectorBuckets = vectorBucketNames.length > 0;
 
-  // Config-load-time validations run BEFORE the no-op short-circuit: Go decodes the
-  // whole config (storage.FileSizeLimit, bucket sizes) and runs ValidateBucketName
-  // during config.Load — before `buckets.Run` can take its no-op path — so an
-  // invalid value fails even when there's nothing to seed.
-  //
-  // Bucket names (`ValidateBucketName`).
+  // Config-load-time validations run before the no-op short-circuit, so an invalid value
+  // fails even when there's nothing to seed.
   for (const name of bucketNames) {
     yield* validateBucketName(name);
   }
@@ -248,14 +243,15 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
   }
 
   // Short-circuit: nothing to seed (ref present → never short-circuits).
-  if (projectRef === "" && bucketNames.length === 0 && !hasVectorBuckets) {
-    // The `SUPABASE_API_*` override decode belongs to config load, which runs
-    // before the no-op path — a malformed override or invalid `api.port` fails
-    // even with nothing to seed, same as the bucket-name/size validations
-    // above, including the TLS cert/key pairing rule. Validate-only: the
-    // seeding path re-resolves the same fold through
-    // `resolveStorageCredentials`.
-    yield* validateLocalApiOverrides(config.api, projectEnvValues);
+  if (projectRef === "" && !hasConfiguredBuckets(config)) {
+    // Config validation (SUPABASE_API_*/SUPABASE_AUTH_* overrides, TLS cert/key pairing)
+    // still runs here even with nothing to seed; it's validate-only — the seeding path
+    // re-resolves these values through `resolveStorageCredentials`. The stack backend never
+    // consults these legacy-only inputs, so it skips this validation entirely.
+    const backend = yield* currentStackBackend;
+    if (backend.kind !== "stack") {
+      yield* validateLocalStorageConfig();
+    }
     if (emitSummary && output.format !== "text") {
       yield* output.success("", { ...emptySummary() });
     }
@@ -263,16 +259,14 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
   }
 
   // Build the Storage service-gateway client (local or remote).
-  const credentials = yield* resolveStorageCredentials({
-    projectRef,
-    config,
-    projectEnvValues,
-  });
+  const credentials = opts.credentials ?? (yield* resolveStorageCredentials({ projectRef }));
+  if (projectRef === "" && opts.announceLocalEndpoint !== undefined) {
+    yield* opts.announceLocalEndpoint(credentials.baseUrl);
+  }
 
-  // All gateway operations run with an explicit non-DoH fetch (CA-trusting for
-  // local + https, plain `globalThis.fetch` otherwise). The api-keys lookup inside
-  // `resolveStorageCredentials` runs BEFORE this scope, so it still honors
-  // `--dns-resolver https`, matching `tenant.GetApiKeys`.
+  // Gateway operations use plain `globalThis.fetch` instead of the DoH fetch, with the Kong CA in
+  // `FetchHttpClient.RequestInit` for local + https; the api-keys lookup in
+  // `resolveStorageCredentials` runs before this scope, so it still honors `--dns-resolver https`.
   const gatewayOps = Effect.gen(function* () {
     const gateway = yield* makeStorageGateway({
       baseUrl: credentials.baseUrl,
@@ -282,15 +276,36 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
 
     const summary = emptySummary();
 
-    yield* upsertBuckets(output, yes, interactive, gateway, bucketPropsByName, summary);
+    const existingBuckets = yield* gateway.listBuckets;
+
+    // A hosted run never prompts per item: one consent covers every overwrite and prune.
+    const confirmHostedWrites = projectRef === "" ? undefined : opts.confirmHostedWrites;
+    if (confirmHostedWrites !== undefined) {
+      const details = yield* planHostedWrites(gateway, config, bucketPropsByName, existingBuckets);
+      if (details.length > 0) yield* confirmHostedWrites(details);
+    }
+    const approved = confirmHostedWrites !== undefined || yes;
+    const skipPrompts = confirmHostedWrites !== undefined || promptless;
+
+    yield* upsertBuckets(
+      output,
+      approved,
+      interactive,
+      skipPrompts,
+      gateway,
+      existingBuckets,
+      bucketPropsByName,
+      summary,
+    );
 
     // Upsert analytics buckets (remote --linked only).
     if (config.storage.analytics.enabled && projectRef !== "") {
       yield* output.raw("Updating analytics buckets...\n", "stderr");
       yield* upsertAnalyticsBuckets(
         output,
-        yes,
+        approved,
         interactive,
+        skipPrompts,
         gateway,
         Object.keys(config.storage.analytics.buckets),
         summary,
@@ -302,8 +317,9 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
       yield* output.raw("Updating vector buckets...\n", "stderr");
       yield* upsertVectorBuckets(
         output,
-        yes,
+        approved,
         interactive,
+        skipPrompts,
         gateway,
         vectorBucketNames,
         summary,
@@ -311,16 +327,16 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
     }
 
     // Upload objects for each bucket with a configured objects_path.
-    yield* uploadObjects(fs, path, output, gateway, cliSettings.workdir, bucketsConfig, summary);
+    yield* uploadObjects(fs, { path, posixPath }, output, gateway, workdir, bucketsConfig, summary);
 
-    // Machine-readable summary (Go has none; text mode emits nothing extra).
+    // Machine-readable summary; text mode emits nothing extra.
     if (emitSummary && output.format !== "text") {
       yield* output.success("", { ...summary });
     }
   });
 
-  yield* gatewayOps.pipe(
-    Effect.provideService(FetchHttpClient.Fetch, storageGatewayFetch(credentials.localKongCa)),
+  yield* withStackStorageGuidance({ local: projectRef === "" }, gatewayOps).pipe(
+    withStorageGatewayFetch(credentials.localKongCa),
   );
 });
 
@@ -336,9 +352,7 @@ type BucketsConfig = Readonly<
   >
 >;
 
-// Parse a `file_size_limit` string to bytes, mapping a parse failure to a
-// config-load error (Go rejects an invalid `sizeInBytes` during `config.Load`,
-// before NewStorageAPI).
+// Parses a `file_size_limit` string to bytes, mapping a parse failure to a config-load error.
 const parseFileSizeLimitOrFail = (value: string) =>
   Effect.try({
     try: () => parseFileSizeLimit(value),
@@ -362,30 +376,33 @@ const computeBucketProps = (
       }),
   });
 
-// Port of `pkg/storage/batch.go:UpsertBuckets`. `propsByName` is precomputed and
-// size-validated before this runs (Go parses sizes at config-load, before any
-// Storage call).
+type ExistingBucket = { readonly id: string; readonly name: string };
+
+// `propsByName` is precomputed and size-validated before this runs.
 const upsertBuckets = Effect.fnUntraced(function* (
   output: typeof Output.Service,
   yes: boolean,
   interactive: boolean,
+  promptless: boolean,
   gateway: StorageGateway,
+  existing: ReadonlyArray<ExistingBucket>,
   propsByName: ReadonlyMap<string, UpsertBucketProps>,
   summary: SeedSummary,
 ) {
-  const existing = yield* gateway.listBuckets();
   const byName = new Map(existing.map((b) => [b.name, b.id]));
 
   for (const [name, props] of propsByName) {
     const bucketId = byName.get(name);
     if (bucketId !== undefined) {
-      const overwrite = yield* promptYesNo(
-        output,
-        yes,
-        `Bucket ${bold(bucketId)} already exists. Do you want to overwrite its properties?`,
-        true,
-        interactive,
-      );
+      const overwrite = promptless
+        ? true
+        : yield* promptYesNo(
+            output,
+            yes,
+            `Bucket ${bold(bucketId)} already exists. Do you want to overwrite its properties?`,
+            true,
+            interactive,
+          );
       if (!overwrite) {
         summary.buckets_skipped.push(bucketId);
         continue;
@@ -401,16 +418,16 @@ const upsertBuckets = Effect.fnUntraced(function* (
   }
 });
 
-// Port of `pkg/storage/vector.go:UpsertVectorBuckets`.
 const upsertVectorBuckets = Effect.fnUntraced(function* (
   output: typeof Output.Service,
   yes: boolean,
   interactive: boolean,
+  promptless: boolean,
   gateway: StorageGateway,
   configuredNames: ReadonlyArray<string>,
   summary: SeedSummary,
 ) {
-  const existing = yield* gateway.listVectorBuckets();
+  const existing = yield* gateway.listVectorBuckets;
   const existingSet = new Set(existing);
   const configuredSet = new Set(configuredNames);
   const toDelete = existing.filter((name) => !configuredSet.has(name));
@@ -426,14 +443,22 @@ const upsertVectorBuckets = Effect.fnUntraced(function* (
   }
 
   for (const name of toDelete) {
-    const prune = yield* promptYesNo(
-      output,
-      yes,
-      `Bucket ${bold(name)} not found in ${bold(CONFIG_PATH)}. Do you want to prune it?`,
-      false,
-      interactive,
-    );
+    const prune = promptless
+      ? yes
+      : yield* promptYesNo(
+          output,
+          yes,
+          `Bucket ${bold(name)} not found in ${bold(CONFIG_PATH)}. Do you want to prune it?`,
+          false,
+          interactive,
+        );
     if (!prune) {
+      if (promptless) {
+        yield* output.raw(
+          `Keeping vector bucket ${bold(name)}: not declared in ${bold(CONFIG_PATH)}. Run ${bold("supabase seed buckets")} to prune.\n`,
+          "stderr",
+        );
+      }
       continue;
     }
     yield* output.raw(`Pruning vector bucket: ${name}\n`, "stderr");
@@ -442,16 +467,16 @@ const upsertVectorBuckets = Effect.fnUntraced(function* (
   }
 });
 
-// Port of `pkg/storage/analytics.go:UpsertAnalyticsBuckets`.
 const upsertAnalyticsBuckets = Effect.fnUntraced(function* (
   output: typeof Output.Service,
   yes: boolean,
   interactive: boolean,
+  promptless: boolean,
   gateway: StorageGateway,
   configuredNames: ReadonlyArray<string>,
   summary: SeedSummary,
 ) {
-  const existing = yield* gateway.listAnalyticsBuckets();
+  const existing = yield* gateway.listAnalyticsBuckets;
   const existingSet = new Set(existing);
   const configuredSet = new Set(configuredNames);
   const toDelete = existing.filter((name) => !configuredSet.has(name));
@@ -467,14 +492,22 @@ const upsertAnalyticsBuckets = Effect.fnUntraced(function* (
   }
 
   for (const name of toDelete) {
-    const prune = yield* promptYesNo(
-      output,
-      yes,
-      `Bucket ${bold(name)} not found in ${bold(CONFIG_PATH)}. Do you want to prune it?`,
-      false,
-      interactive,
-    );
+    const prune = promptless
+      ? yes
+      : yield* promptYesNo(
+          output,
+          yes,
+          `Bucket ${bold(name)} not found in ${bold(CONFIG_PATH)}. Do you want to prune it?`,
+          false,
+          interactive,
+        );
     if (!prune) {
+      if (promptless) {
+        yield* output.raw(
+          `Keeping analytics bucket ${bold(name)}: not declared in ${bold(CONFIG_PATH)}. Run ${bold("supabase seed buckets")} to prune.\n`,
+          "stderr",
+        );
+      }
       continue;
     }
     yield* output.raw(`Pruning analytics bucket: ${name}\n`, "stderr");
@@ -483,10 +516,74 @@ const upsertAnalyticsBuckets = Effect.fnUntraced(function* (
   }
 });
 
+const joinNames = (names: ReadonlyArray<string>): string => names.join(", ");
+
 /**
- * Vector graceful-skip: on `FeatureNotEnabled` /
- * local-unavailable errors, print the matching WARNING and continue (object
- * upload still runs). Any other error propagates.
+ * The hosted writes `seedBucketsRun` is about to make, as consent detail lines; empty when it
+ * would write nothing. Reads the remote bucket lists but changes nothing.
+ */
+const planHostedWrites = Effect.fnUntraced(function* (
+  gateway: StorageGateway,
+  config: CliConfig,
+  propsByName: ReadonlyMap<string, UpsertBucketProps>,
+  existingBuckets: ReadonlyArray<ExistingBucket>,
+) {
+  const details: Array<string> = [];
+  const existing = new Set(existingBuckets.map((bucket) => bucket.name));
+  const configured = [...propsByName.keys()];
+  const create = configured.filter((name) => !existing.has(name));
+  const overwrite = configured.filter((name) => existing.has(name));
+  if (create.length > 0) details.push(`Create buckets: ${joinNames(create)}`);
+  if (overwrite.length > 0)
+    details.push(`Overwrite the properties of buckets: ${joinNames(overwrite)}`);
+
+  const withObjects = Object.entries(config.storage.buckets ?? {})
+    .filter(([, bucket]) => bucket.objects_path.length > 0)
+    .map(([name]) => name);
+  if (withObjects.length > 0) {
+    details.push(
+      `Upload objects, overwriting existing ones, to buckets: ${joinNames(withObjects)}`,
+    );
+  }
+
+  if (config.storage.analytics.enabled) {
+    const declared = Object.keys(config.storage.analytics.buckets);
+    const present = new Set(yield* gateway.listAnalyticsBuckets);
+    const created = declared.filter((name) => !present.has(name));
+    const pruned = [...present].filter((name) => !declared.includes(name));
+    if (created.length > 0) details.push(`Create analytics buckets: ${joinNames(created)}`);
+    if (pruned.length > 0) {
+      details.push(`Delete analytics buckets not declared in ${CONFIG_PATH}: ${joinNames(pruned)}`);
+    }
+  }
+
+  const declaredVector = Object.keys(config.storage.vector.buckets);
+  if (config.storage.vector.enabled && declaredVector.length > 0) {
+    const listed = yield* gateway.listVectorBuckets.pipe(
+      Effect.map(Option.some),
+      Effect.catch((error) =>
+        isVectorBucketsFeatureNotEnabled(error.message) ||
+        isLocalVectorBucketsUnavailable(error.message)
+          ? Effect.succeed(Option.none<ReadonlyArray<string>>())
+          : Effect.fail(error),
+      ),
+    );
+    if (Option.isSome(listed)) {
+      const present = new Set(listed.value);
+      const created = declaredVector.filter((name) => !present.has(name));
+      const pruned = listed.value.filter((name) => !declaredVector.includes(name));
+      if (created.length > 0) details.push(`Create vector buckets: ${joinNames(created)}`);
+      if (pruned.length > 0) {
+        details.push(`Delete vector buckets not declared in ${CONFIG_PATH}: ${joinNames(pruned)}`);
+      }
+    }
+  }
+  return details;
+});
+
+/**
+ * On `FeatureNotEnabled` or local-unavailable errors, prints the matching warning and
+ * continues (object upload still runs); any other error propagates.
  */
 const handleVectorError = Effect.fnUntraced(function* (
   output: typeof Output.Service,
@@ -509,13 +606,12 @@ const handleVectorError = Effect.fnUntraced(function* (
     summary.vector_skipped = true;
     return;
   }
-  return yield* Effect.fail(error);
+  return yield* error;
 });
 
-// Port of `pkg/storage/batch.go:UpsertObjects` (+ object walk in objects.go).
 const uploadObjects = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
-  path: Path.Path,
+  { path, posixPath }: { readonly path: Path.Path; readonly posixPath: Path.Path },
   output: typeof Output.Service,
   gateway: StorageGateway,
   workdir: string,
@@ -527,10 +623,9 @@ const uploadObjects = Effect.fnUntraced(function* (
     if (objectsPath.length === 0) {
       continue;
     }
-    // Go resolves a relative bucket objects_path against SupabaseDirPath at
-    // config-resolve time; absolute paths are
-    // left untouched. `displayRoot` (workdir-relative) drives the `Uploading:`
-    // stderr and the destination key so both stay byte-identical to Go.
+    // A relative `objects_path` resolves against the `supabase/` dir; absolute paths are
+    // left untouched. `displayRoot` (workdir-relative) drives the `Uploading:` stderr line
+    // and the destination key.
     const displayRoot = path.isAbsolute(objectsPath)
       ? objectsPath
       : path.join("supabase", objectsPath);
@@ -542,16 +637,13 @@ const uploadObjects = Effect.fnUntraced(function* (
       files,
       (file) =>
         Effect.gen(function* () {
-          const dstPath = bucketObjectKey(name, displayRoot, file.displayPath);
+          const dstPath = bucketObjectKey({ path, posixPath }, name, displayRoot, file.displayPath);
           yield* output.raw(`Uploading: ${file.displayPath} => ${dstPath}\n`, "stderr");
-          // Content-type is byte-driven: Go sniffs the first 512 bytes with
-          // http.DetectContentType, refining only a generic text/plain by
-          // extension.
+          // Content type is sniffed from the first 512 bytes, refining only a generic
+          // text/plain by file extension.
           const sniff = yield* readSniffBytes(fs, file.absPath);
-          // Go's seed upload always sets Cache-Control max-age=3600 and x-upsert
-          // (Overwrite) true (`pkg/storage/batch.go`).
           yield* gateway.uploadObject(dstPath, file.absPath, {
-            contentType: contentTypeForUpload(sniff, file.absPath),
+            contentType: contentTypeForUpload(path, sniff, file.absPath),
             cacheControl: "max-age=3600",
             overwrite: true,
           });
@@ -563,16 +655,12 @@ const uploadObjects = Effect.fnUntraced(function* (
 });
 
 /**
- * Collect uploadable files under `absRoot`, lexically ordered, mirroring Go's
- * `fs.WalkDir` + `isUploadableEntry`.
+ * Collects uploadable files under `absRoot`, lexically ordered.
  *
- * Parity details:
- * - The **root** is resolved with a following stat (`fs.Stat`), so a
- * symlinked `objects_path` is followed; a missing/dangling root fails.
- * - **Nested** entries use no-follow detection: real directories are descended;
- * symlinks are NOT descended — `isUploadableEntry` OPENS the symlink
- * target then stats the handle, uploading only a regular file and skipping
- * dangling symlinks / symlinks-to-directories / unreadable targets.
+ * The root is resolved with a following stat, so a symlinked `objects_path` is followed; a
+ * missing/dangling root fails. Nested entries use no-follow detection: symlinks are opened
+ * and their target stat'd, uploading only a regular file and skipping dangling symlinks,
+ * symlinks-to-directories, and unreadable targets.
  */
 const collectFiles = (
   fs: FileSystem.FileSystem,
@@ -614,23 +702,22 @@ const collectDir = (
         yield* output.raw(`Skipping OS metadata file: ${displayChild}\n`, "stderr");
         continue;
       }
-      // `readLink` succeeds only on a symlink — our no-follow detector (Effect's
-      // `stat` follows symlinks and has no `lstat`).
+      // `readLink` succeeds only on a symlink; Effect's `stat` always follows symlinks and
+      // has no `lstat`.
       const isSymlink = yield* fs.readLink(absChild).pipe(
         Effect.as(true),
-        Effect.catch(() => Effect.succeed(false)),
+        Effect.orElseSucceed(() => false),
       );
       if (isSymlink) {
-        // `isUploadableEntry` OPENS the target then stats the
-        // handle; it uploads only a regular file. `stat` alone would queue an
-        // unreadable target and abort later at upload, so mirror that: open + stat.
+        // Opens the target then stats the handle, so an unreadable target is caught now
+        // rather than queued and failing later at upload.
         const targetType = yield* Effect.scoped(
           Effect.gen(function* () {
             const handle = yield* fs.open(absChild, { flag: "r" });
             const targetInfo = yield* handle.stat;
             return targetInfo.type;
           }),
-        ).pipe(Effect.catch(() => Effect.succeed("Unknown" as const)));
+        ).pipe(Effect.orElseSucceed(() => "Unknown" as const));
         if (targetType === "File") {
           collected.push({ absPath: absChild, displayPath: displayChild });
         } else {

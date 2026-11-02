@@ -10,10 +10,11 @@ export class DockerRunError extends Data.TaggedError("DockerRunError")<{
   readonly message: string;
   /**
    * Structured discriminant set at the docker boundary: `spawn` when the
-   * container runtime could not be executed, `inspect` when image inspection
+   * container runtime could not be executed, `config` when image registry
+   * configuration could not be resolved, `inspect` when image inspection
    * failed, and `pull` when every registry candidate failed.
    */
-  readonly reason: "spawn" | "inspect" | "pull";
+  readonly reason: "spawn" | "config" | "inspect" | "pull";
   /**
    * Whether runtime output indicates the daemon itself is unreachable,
    * detected where docker's output is produced so consumers never inspect
@@ -25,8 +26,13 @@ export class DockerRunError extends Data.TaggedError("DockerRunError")<{
     if (this.reason === "spawn" || this.daemonDown) {
       return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
     }
-    return this.reason === "pull"
-      ? { ...actionability.externalNetwork, fingerprint_suffix: "registry_pull" }
-      : { ...actionability.invalidConfig, fingerprint_suffix: "image_inspect" };
+    switch (this.reason) {
+      case "pull":
+        return { ...actionability.externalNetwork, fingerprint_suffix: "registry_pull" };
+      case "config":
+        return { ...actionability.invalidConfig, fingerprint_suffix: "invalid_config" };
+      default:
+        return { ...actionability.invalidConfig, fingerprint_suffix: "image_inspect" };
+    }
   }
 }

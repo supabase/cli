@@ -1,0 +1,87 @@
+import { Layer } from "effect";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { machineErrorContextLayer } from "../../../../shared/output/machine-error-context.layer.ts";
+import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
+import { stringSliceFlag } from "../../../../command-internal/string-slice-flag.ts";
+import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
+import { frozenFlag } from "../stack.flags.ts";
+import { stackStart } from "./start.handler.ts";
+import { STACK_START_EXCLUDABLE_CAPABILITIES } from "./start.options.ts";
+import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
+import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
+
+const excludeFlag = stringSliceFlag(
+  "exclude",
+  `Capabilities to leave disabled. [${STACK_START_EXCLUDABLE_CAPABILITIES.join(", ")}]`,
+  { alias: "x" },
+);
+
+const config = {
+  exclude: excludeFlag,
+  stack: Flag.String("stack").pipe(Flag.withDescription("Name this stack."), Flag.optional),
+  stackId: Flag.String("stack-id").pipe(
+    Flag.withDescription("Open an existing stack by id or unique id prefix."),
+    Flag.optional,
+  ),
+  runtime: Flag.Literals("runtime", ["auto", "docker", "podman", "native"] as const).pipe(
+    Flag.withDescription(
+      "Runtime to use for a new stack. auto selects Docker, then Podman, then native, based on what is available.",
+    ),
+    Flag.withDefault("auto" as const),
+  ),
+  preparation: Flag.Literals("preparation", ["background", "on-demand"] as const).pipe(
+    Flag.withDescription("Artifact preparation policy."),
+    Flag.withDefault("background" as const),
+  ),
+  frozen: frozenFlag,
+  eager: Flag.Boolean("eager").pipe(
+    Flag.withDescription(
+      "Activate all enabled capabilities before returning and disable automatic idle stops.",
+    ),
+    Flag.withDefault(false),
+  ),
+} as const;
+
+export type StackStartFlags = CliCommand.Command.Config.Infer<typeof config>;
+
+export const stackStartCommand = Command.make("start", config).pipe(
+  Command.withDescription(
+    "Create or resume a managed local Supabase stack using supabase/config.toml when present. " +
+      "Without a config file, default settings are used and no file is created. " +
+      "For a new stack, auto selects Docker when its engine is reachable, then Podman, then native on supported platforms; the choice is persisted for that stack. " +
+      "Explicit runtime choices are honored. Values support explicit env(NAME) references and automatic SUPABASE_* overrides.",
+  ),
+  Command.withShortDescription("Start a managed local stack"),
+  Command.withExamples([
+    {
+      command: "supabase stack start",
+      description: "Start the current project stack",
+    },
+    {
+      command: "supabase stack start --stack feature-a --runtime docker",
+      description: "Start a named Docker stack",
+    },
+  ]),
+  withPermissions({
+    operations: [],
+    noApiEffectFlags: ["exclude", "stack", "stack-id", "runtime", "preparation", "frozen", "eager"],
+  }),
+  Command.withHandler((flags) =>
+    stackStart(flags).pipe(
+      withCommandTelemetry({ flags, config, aliases: { x: "exclude" } }),
+      withJsonErrorHandling,
+    ),
+  ),
+  // `stackStart`'s bucket-seeding path satisfies `promptYesNo`'s `Stdin` requirement here even
+  // though it always passes `yes: true`/`interactive: false` and never reaches the prompt.
+  // `machineErrorContextLayer` carries the structured incompatible-change payload onto the
+  // JSON/stream-json error envelope.
+  Command.provide(Layer.mergeAll(stdinLayer, machineErrorContextLayer)),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
+);

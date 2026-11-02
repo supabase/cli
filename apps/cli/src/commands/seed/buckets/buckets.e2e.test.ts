@@ -1,80 +1,88 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, FileSystem, Path } from "effect";
 
-import { runSupabase } from "../../../../tests/helpers/cli.ts";
+import { runSupabaseEffect } from "../../../../tests/helpers/cli.ts";
 
 const E2E_TIMEOUT_MS = 30_000;
 
-/**
- * Golden-path e2e: exercises the real compiled-binary boundary for the two
- * network-free paths of `seed buckets`:
- *  - an empty `[storage]` config is a no-op (exit 0, no stdout);
- *  - `--local --linked` is rejected by the mutually-exclusive flag check.
- * Bucket/object seeding parity is covered by the integration + unit suites.
- */
+const makeProjectDir = Effect.fnUntraced(function* (prefix: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const projectDir = yield* fs.makeTempDirectoryScoped({ prefix });
+  yield* fs.makeDirectory(path.join(projectDir, "supabase"), { recursive: true });
+  yield* fs.writeFileString(
+    path.join(projectDir, "supabase", "config.toml"),
+    'project_id = "test"\n',
+  );
+  return projectDir;
+});
+
+/** Network-free golden paths only; the integration and unit suites cover seeding itself. */
 describe("supabase seed buckets", () => {
-  let projectDir: string;
-
-  beforeAll(() => {
-    projectDir = mkdtempSync(join(tmpdir(), "supabase-seed-buckets-e2e-"));
-    mkdirSync(join(projectDir, "supabase"), { recursive: true });
-    writeFileSync(join(projectDir, "supabase", "config.toml"), 'project_id = "test"\n');
-  });
-
-  afterAll(() => {
-    rmSync(projectDir, { recursive: true, force: true });
-  });
-
-  test(
+  it.live(
     "is a no-op with exit 0 when no buckets are configured",
-    { timeout: E2E_TIMEOUT_MS },
-    async () => {
-      const { exitCode, stdout } = await runSupabase(["seed", "buckets"], {
-        cwd: projectDir,
-      });
-      expect(exitCode).toBe(0);
-      expect(stdout.trim()).toBe("");
-    },
+    () =>
+      Effect.gen(function* () {
+        const projectDir = yield* makeProjectDir("supabase-seed-buckets-e2e-noop-");
+        const { exitCode, stdout } = yield* runSupabaseEffect(["seed", "buckets"], {
+          cwd: projectDir,
+        });
+        expect(exitCode).toBe(0);
+        expect(stdout.trim()).toBe("");
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    E2E_TIMEOUT_MS,
   );
 
-  test("rejects passing both --local and --linked", { timeout: E2E_TIMEOUT_MS }, async () => {
-    const { exitCode, stdout, stderr } = await runSupabase(
-      ["seed", "buckets", "--local", "--linked"],
-      { cwd: projectDir },
-    );
-    expect(exitCode).toBe(1);
-    expect(`${stdout}${stderr}`).toContain(
-      "if any flags in the group [local linked] are set none of the others can be",
-    );
-  });
-
-  // Go registers --linked/--local on seedCmd.PersistentFlags() (seed.go:27-29),
-  // so they're accepted BEFORE the subcommand too. These two cases exercise the
-  // real parser boundary, which the in-process suites bypass.
-  test(
-    "accepts --local before the subcommand (Go PersistentFlags)",
-    { timeout: E2E_TIMEOUT_MS },
-    async () => {
-      const { exitCode, stdout, stderr } = await runSupabase(["seed", "--local", "buckets"], {
-        cwd: projectDir,
-      });
-      // Parsed (no "Unrecognized flag") and routed to the local no-op path.
-      expect(`${stdout}${stderr}`).not.toContain("Unrecognized flag");
-      expect(exitCode).toBe(0);
-      expect(stdout.trim()).toBe("");
-    },
+  it.live(
+    "rejects passing both --local and --remote",
+    () =>
+      Effect.gen(function* () {
+        const projectDir = yield* makeProjectDir("supabase-seed-buckets-e2e-both-");
+        const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
+          ["seed", "buckets", "--local", "--remote"],
+          { cwd: projectDir },
+        );
+        expect(exitCode).toBe(1);
+        expect(`${stdout}${stderr}`).toContain(
+          "Only one of --remote, --linked and --local can be set; got --remote and --local.",
+        );
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    E2E_TIMEOUT_MS,
   );
 
-  test("rejects --local --linked before the subcommand", { timeout: E2E_TIMEOUT_MS }, async () => {
-    const { exitCode, stdout, stderr } = await runSupabase(
-      ["seed", "--local", "--linked", "buckets"],
-      { cwd: projectDir },
-    );
-    expect(exitCode).toBe(1);
-    expect(`${stdout}${stderr}`).toContain(
-      "if any flags in the group [local linked] are set none of the others can be",
-    );
-  });
+  // Selector flags are accepted before the subcommand token too; these two
+  // cases exercise the real parser boundary, which the in-process suites bypass.
+  it.live(
+    "accepts the deprecated --local before the subcommand and warns it is not needed",
+    () =>
+      Effect.gen(function* () {
+        const projectDir = yield* makeProjectDir("supabase-seed-buckets-e2e-prelocal-");
+        const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
+          ["seed", "--local", "buckets"],
+          { cwd: projectDir },
+        );
+        expect(`${stdout}${stderr}`).not.toContain("Unrecognized flag");
+        expect(`${stdout}${stderr}`).toContain("--local isn't needed");
+        expect(exitCode).toBe(0);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    E2E_TIMEOUT_MS,
+  );
+
+  it.live(
+    "rejects --local --remote before the subcommand",
+    () =>
+      Effect.gen(function* () {
+        const projectDir = yield* makeProjectDir("supabase-seed-buckets-e2e-preboth-");
+        const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
+          ["seed", "--local", "--remote", "buckets"],
+          { cwd: projectDir },
+        );
+        expect(exitCode).toBe(1);
+        expect(`${stdout}${stderr}`).toContain(
+          "Only one of --remote, --linked and --local can be set; got --remote and --local.",
+        );
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    E2E_TIMEOUT_MS,
+  );
 });

@@ -75,12 +75,10 @@ export function resolveAuthSecrets(input: {
     }
     const remoteState = remoteStateFor(remoteAuthAttributes, apiKey);
 
-    // The secret's parent container gates it: it must be present in `local`
-    // with `enabled !== false`. Exact because `fromConfigDocument` has
-    // already applied every gate a push would apply — the raw-presence
-    // mask, the disabled-sentinel prune, and SMS-provider precedence. An
-    // undetermined container state (absent, or `enabled` not a boolean)
-    // gates the secret too — never coerced into "eligible".
+    // The secret's parent container gates it: it must be present in `local` with `enabled !==
+    // false`. `fromConfigDocument` has already applied every relevant gate (raw-presence mask,
+    // disabled-sentinel prune, SMS-provider precedence), so an undetermined container state
+    // (absent, or `enabled` not a boolean) gates the secret too, never coerced into "eligible".
     const parentPath = path.slice(0, -1);
     if (containerEnabled(local, parentPath) !== true) {
       decisions.push({ path, apiKey, status: "gated", remoteState });

@@ -1,25 +1,33 @@
 import { Layer } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
+import { stdinLayer } from "../../shared/runtime/stdin.layer.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
+import { commandCredentialsLayer } from "../../auth/command-credentials.layer.ts";
+import { commandPlatformApiFactoryLayer } from "../../auth/command-platform-api-factory.layer.ts";
 import { httpClientLayer } from "../../auth/http-debug.layer.ts";
 import { commandSettingsLayer } from "../../config/command-settings.layer.ts";
-import { dbConnectionLayer } from "../../command-internal/db-connection.layer.ts";
+import { withCliConfigFlags } from "../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
+import { dbConnectionLayer } from "../../command-internal/db-connection.sql-pg.layer.ts";
 import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
 import { dockerRunLayer } from "../../command-internal/docker-run.layer.ts";
+import { identityStitchLayer } from "../../command-internal/identity-stitch.ts";
+import { stackApiLayer } from "../../command-internal/stack-api.ts";
 import { stringSliceFlag } from "../../command-internal/string-slice-flag.ts";
 import { telemetryStateLayer } from "../../telemetry/telemetry-state.layer.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { START_EXCLUDABLE_KEYS } from "./start.exclude.ts";
 import { start } from "./start.handler.ts";
+import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
 
-// `--exclude`/`-x` is a pflag-style string-slice flag, which CSV-splits each
-// occurrence (`--exclude gotrue,realtime` -> two values) and accumulates
-// across repeats — matching `status`'s own `--exclude`/`--override-name` handling.
-// Malformed CSV fails at parse time with pflag's exact diagnostic (CLI-2005); the
-// shorthand makes pflag frame it as `"-x, --exclude"` (see `stringSliceFlag`).
+/**
+ * A string-slice flag: CSV-splits each occurrence (`--exclude gotrue,realtime` -> two
+ * values) and accumulates across repeats, matching `status`'s own `--exclude` handling.
+ */
 export const startExcludeFlag = stringSliceFlag(
   "exclude",
   `Names of containers to not start. [${START_EXCLUDABLE_KEYS.join(",")}]`,
@@ -28,11 +36,11 @@ export const startExcludeFlag = stringSliceFlag(
 
 const config = {
   exclude: startExcludeFlag,
-  ignoreHealthCheck: Flag.boolean("ignore-health-check").pipe(
+  ignoreHealthCheck: Flag.Boolean("ignore-health-check").pipe(
     Flag.withDescription("Ignore unhealthy services and exit 0"),
     Flag.withDefault(false),
   ),
-  preview: Flag.boolean("preview").pipe(
+  preview: Flag.Boolean("preview").pipe(
     Flag.withDescription("Connect to feature preview branch"),
     Flag.withDefault(false),
     Flag.withHidden,
@@ -41,38 +49,57 @@ const config = {
 
 export type StartFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-// `start` makes no Management API calls and talks directly to Docker, so it
-// deliberately avoids `managementApiRuntimeLayer` —
-// it provides only the services the handler + instrumentation consume, mirroring
-// `stop`/`status`'s runtime shape. `ChildProcessSpawner`/`ProcessControl`/`RuntimeInfo`
-// are not listed here: they come from `BunServices`/`processControlLayer`/
-// `runtimeInfoLayer` in the root runtime (`shared/cli/run.ts`), the same way
-// `stop`/`status` rely on the former. `HttpClient.HttpClient` is NOT provided by the
-// root runtime — `BunServices.layer` never supplies it, and `httpTransportClientLayer` is a
-// different service tag entirely — so it's composed here via `httpClientLayer`,
-// the same `FetchHttpClient`-backed layer `db reset`/`seed buckets` use, needed for the
-// health-check probes (`waitForHealthyServices`) and `seedBucketsRun`.
-// `dockerRunLayer`/`dbConnectionLayer` ARE listed here — the fresh-volume
-// `SetupLocalDatabase` equivalent (`start.handler.ts`'s `startSetupLocalDatabase`
-// call) needs both: the PG15+ one-shot migrate jobs run through `DockerRun`, and
-// the schema/globals/API-privileges SQL runs over a direct `DbConnection` session.
+// `start` talks directly to Docker and makes no Management API calls, so it composes its own
+// runtime instead of `managementApiRuntimeLayer`. `httpClientLayer` is included explicitly
+// because the root runtime doesn't supply `HttpClient.HttpClient`;
+// `dockerRunLayer`/`dbConnectionLayer` back the fresh-volume database setup (one-shot migrate
+// jobs plus direct-connection schema SQL).
 const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 const httpClient = httpClientLayer.pipe(Layer.provide(debugLoggerLayer));
+const credentials = commandCredentialsLayer.pipe(
+  Layer.provide(cliSettings),
+  Layer.provide(debugLoggerLayer),
+);
+
+// Exposed because the shared `resolveStorageCredentials` statically requires the (lazy)
+// Management-API factory for its hosted branch, even though `start` always passes
+// `projectRef: ""` and never reaches it. Mirrors `db reset`'s wiring; laziness keeps the
+// local path from ever resolving an access token.
+const platformApiFactory = commandPlatformApiFactoryLayer.pipe(
+  Layer.provide(credentials),
+  Layer.provide(cliSettings),
+  Layer.provide(debugLoggerLayer),
+  Layer.provide(identityStitchLayer),
+);
 
 const startRuntimeLayer = Layer.mergeAll(
   cliSettings,
+  debugLoggerLayer,
   telemetryStateLayer,
   commandRuntimeLayer(["start"]),
   dockerRunLayer,
   dbConnectionLayer,
   httpClient,
+  platformApiFactory,
+  // Shared bucket seeding requires StackApi even when legacy routing is selected.
+  stackApiLayer,
+  // `stdinLayer` satisfies `promptYesNo`'s `Stdin` requirement (seed-buckets runs with
+  // `promptless`), so `start` never reads a piped line at runtime — type requirements only.
+  stdinLayer,
 );
 
 export const startCommand = Command.make("start", config).pipe(
   Command.withDescription("Start containers for Supabase local development."),
   Command.withShortDescription("Start local Supabase stack"),
+  withPermissions({
+    operations: [],
+    noApiEffectFlags: ["exclude", "ignore-health-check", "preview"],
+  }),
   Command.withHandler((flags) =>
     start(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(startRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

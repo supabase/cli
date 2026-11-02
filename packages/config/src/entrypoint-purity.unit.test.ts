@@ -1,21 +1,24 @@
 import { describe, expect, test } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { BunServices } from "@effect/platform-bun";
+import { Data, Effect, Exit, FileSystem, Path, type Scope } from "effect";
 import { fileURLToPath } from "node:url";
 import * as defaultEntrypoint from "./index.ts";
 import * as effectEntrypoint from "./effect.ts";
 import * as internalEntrypoint from "./internal.ts";
 
-// `src/index.ts` is the entrypoint Studio (a browser bundle) imports
-// directly. It must stay bundlable with no Node/Bun runtime underneath it —
-// no `@effect/platform-*` package, no `node:`/`bun:` builtin. Bare `effect`
-// itself is fine to import: its `FileSystem`/`Path` Context.Tag references
-// are inert data until a platform `Layer` actually provides them, which only
-// `src/bun.ts`/`src/node.ts` (via `@supabase/config/io`) and `src/effect.ts`
-// do. This test statically walks the entrypoint's real relative import graph
-// so a future edit that reintroduces a platform/IO dependency into that graph
-// fails here instead of silently breaking browser bundling downstream.
+// `src/index.ts` is the entrypoint Studio (a browser bundle) imports directly. It must stay
+// bundlable with no Node/Bun runtime underneath it — no `@effect/platform-*` package, no
+// `node:`/`bun:` builtin. Bare `effect` itself is fine: its `FileSystem`/`Path` tags are inert
+// until a platform `Layer` provides them. This test walks the entrypoint's real import graph so
+// a future edit reintroducing a platform/IO dependency fails here instead of breaking bundling.
+
+function runPlatform<A, E>(
+  effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Scope.Scope>,
+): Promise<A> {
+  return Effect.runPromise(effect.pipe(Effect.scoped, Effect.provide(BunServices.layer)));
+}
+
+const { dirname, join } = await runPlatform(Effect.service(Path.Path));
 
 const srcDir = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(srcDir, "..");
@@ -31,7 +34,11 @@ interface TypesBunDefaultExport {
   readonly default: string;
 }
 
-const packageJson = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as {
+const packageJson = JSON.parse(
+  await runPlatform(
+    FileSystem.FileSystem.use((fs) => fs.readFileString(join(packageRoot, "package.json"))),
+  ),
+) as {
   readonly exports: {
     readonly ".": TypesBunDefaultExport;
     readonly "./internal": TypesBunDefaultExport;
@@ -53,42 +60,27 @@ const allowedBareSpecifier = (specifier: string): boolean =>
   specifier === "smol-toml" ||
   specifier === "dedent";
 
-// This package's tests always run under Bun (`bun --bun vitest`, per
-// `AGENTS.md`) — fail loudly here rather than letting a plain-node vitest
+// This package's tests always run under Bun — fail loudly rather than let a plain-node vitest
 // run silently pass with an empty/broken walk.
 if (typeof Bun === "undefined") {
   throw new Error("this test requires the Bun runtime");
 }
 
-// `Bun.Transpiler`'s import scanner replaces this file's previous hand-rolled
-// comment-stripping/type-blanking/regex extraction, which had two reproduced
-// false negatives: a template-literal dynamic import (``import(`./io.ts`)``)
-// — the old specifier regex only matched quote characters — and a
-// semicolon-less `export type Foo = number` statement swallowing the very
-// next (real) import into its blanked-out range. `scanImports` is Bun's own
-// TS/JSX-aware parser: it excludes type-only import/export statements,
-// keeps a mixed inline-`type` specifier alive, and reports dynamic
-// `import()`/`require()` calls (as `"dynamic-import"`/`"require-call"`)
-// alongside ordinary `import ... from` statements — all verified against
-// the fixtures in the `describe("extractSpecifiers", ...)` block below.
+// Uses Bun's own TS/JSX-aware import scanner rather than a hand-rolled comment-stripping regex,
+// which had false negatives on a template-literal dynamic import and a semicolon-less type
+// alias swallowing the next real import. `scanImports` excludes type-only imports, keeps a
+// mixed inline-`type` specifier alive, and reports dynamic `import()`/`require()` calls — all
+// verified by the `extractSpecifiers` fixtures below.
 const transpiler = new Bun.Transpiler({ loader: "ts" });
 
 function extractSpecifiers(rawSource: string): string[] {
   return transpiler.scanImports(rawSource).map((entry) => entry.path);
 }
 
-// `scanImports` only reports a dynamic `import()`/`require()` call when its
-// argument is a literal string or a template literal with no `${...}`
-// interpolation (verified below) — a non-literal argument (a bare
-// identifier, or an interpolated template literal) is silently omitted from
-// its result instead of erroring. The walker can't know what such a call
-// might resolve to at runtime, so rather than silently under-reporting the
-// graph, this scans the same (comment-stripped, type-erased) transpiled
-// source for any `import(`/`require(` call whose argument isn't a static
-// string/template literal, and treats a match as a hard failure. Consulting
-// the pre-transpiled comment-free/type-erased source (rather than re-running
-// our own comment stripper) keeps this check honest about only ever seeing
-// what the transpiler itself considers live code.
+// `scanImports` silently omits a dynamic `import()`/`require()` call whose argument isn't a
+// static string/template literal, since it can't know what such a call might resolve to. Rather
+// than under-reporting the graph, this scans the same transpiled source for any such call and
+// treats a match as a hard failure.
 const dynamicImportOrRequireCall = /\b(?:import|require)\s*\(\s*([\s\S]*?)\)/g;
 
 function isStaticSpecifierArgument(argument: string): boolean {
@@ -114,14 +106,19 @@ function findUnresolvableDynamicSpecifiers(rawSource: string): string[] {
   return unresolvable;
 }
 
-function readSourceOrThrow(file: string): string {
-  try {
-    return readFileSync(file, "utf8");
-  } catch {
-    throw new Error(
-      `purity walker could not resolve ${file} (imported somewhere in the pure graph)`,
-    );
-  }
+class PurityWalkerError extends Data.TaggedError("PurityWalkerError")<{
+  readonly message: string;
+}> {}
+
+function readSource(file: string) {
+  return FileSystem.FileSystem.use((fs) => fs.readFileString(file)).pipe(
+    Effect.mapError(
+      () =>
+        new PurityWalkerError({
+          message: `purity walker could not resolve ${file} (imported somewhere in the pure graph)`,
+        }),
+    ),
+  );
 }
 
 interface ImportGraph {
@@ -129,7 +126,7 @@ interface ImportGraph {
   readonly bareSpecifiers: ReadonlySet<string>;
 }
 
-function collectImportGraph(entryFile: string): ImportGraph {
+const collectImportGraph = Effect.fnUntraced(function* (entryFile: string) {
   const visitedFiles = new Set<string>();
   const bareSpecifiers = new Set<string>();
   const queue = [entryFile];
@@ -141,16 +138,17 @@ function collectImportGraph(entryFile: string): ImportGraph {
     }
     visitedFiles.add(file);
 
-    const source = readSourceOrThrow(file);
+    const source = yield* readSource(file);
 
     const unresolvable = findUnresolvableDynamicSpecifiers(source);
     if (unresolvable.length > 0) {
-      throw new Error(
-        `purity walker found a dynamic import()/require() in ${file} whose argument is not a ` +
+      return yield* new PurityWalkerError({
+        message:
+          `purity walker found a dynamic import()/require() in ${file} whose argument is not a ` +
           `static string/template literal, so Bun's scanImports() cannot resolve it to a ` +
           `specifier: ${unresolvable.join(", ")}. Rewrite it as a static specifier so the walker ` +
           `can verify what it pulls into the bundle.`,
-      );
+      });
     }
 
     for (const specifier of extractSpecifiers(source)) {
@@ -162,8 +160,8 @@ function collectImportGraph(entryFile: string): ImportGraph {
     }
   }
 
-  return { visitedFiles, bareSpecifiers };
-}
+  return { visitedFiles, bareSpecifiers } satisfies ImportGraph;
+});
 
 describe("extractSpecifiers", () => {
   test("extracts a dynamic import() specifier", () => {
@@ -268,33 +266,35 @@ describe("findUnresolvableDynamicSpecifiers", () => {
 describe("collectImportGraph", () => {
   test("throws a named error when a specifier cannot be resolved on disk", () => {
     const missingFile = join(srcDir, "__does-not-exist__.ts");
-    expect(() => collectImportGraph(missingFile)).toThrow(
+    return expect(runPlatform(collectImportGraph(missingFile))).rejects.toThrow(
       `purity walker could not resolve ${missingFile} (imported somewhere in the pure graph)`,
     );
   });
 
-  test("throws when a file contains an unresolvable dynamic import()/require() argument", () => {
-    const cwd = mkdtempSync(join(tmpdir(), "supabase-purity-walker-"));
-    try {
-      const entryFile = join(cwd, "entry.ts");
-      writeFileSync(entryFile, `const p = "./foo.ts";\nawait import(p);\n`);
+  test("throws when a file contains an unresolvable dynamic import()/require() argument", () =>
+    runPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-purity-walker-" });
+        const entryFile = join(cwd, "entry.ts");
+        yield* fs.writeFileString(entryFile, `const p = "./foo.ts";\nawait import(p);\n`);
 
-      expect(() => collectImportGraph(entryFile)).toThrow(/cannot resolve it to a specifier/);
-    } finally {
-      rmSync(cwd, { recursive: true, force: true });
-    }
-  });
+        const error = yield* Effect.flip(collectImportGraph(entryFile));
+        expect(error.message).toMatch(/cannot resolve it to a specifier/);
+      }),
+    ));
 });
 
-const { visitedFiles, bareSpecifiers } = collectImportGraph(join(srcDir, "index.ts"));
+const { visitedFiles, bareSpecifiers } = await runPlatform(
+  collectImportGraph(join(srcDir, "index.ts")),
+);
 
-// The real, post-partition pure runtime graph (CLI-2231): computed by running
-// the walker above and hardcoded here so both additions AND removals are a
-// deliberate, loud review event rather than silently passing or silently
-// failing on an unrelated assertion.
+// The real, post-partition pure runtime graph: computed by running the walker above and
+// hardcoded here so both additions and removals are a deliberate, loud review event.
 const expectedPureGraphFiles = [
   "index.ts",
   "base.ts",
+  "json-schema-document.ts",
   "errors.ts",
   "config-document.ts",
   "config-diff.ts",
@@ -302,6 +302,7 @@ const expectedPureGraphFiles = [
   "sparse.ts",
   "schema-metadata.ts",
   "lib/env.ts",
+  "lib/provider-signup.ts",
   "lib/resolve.ts",
   "lib/schema.ts",
   "lib/secret-paths.ts",
@@ -326,6 +327,7 @@ const expectedPureGraphFiles = [
   "auth/third_party.ts",
   "auth/web3.ts",
   "db.ts",
+  "db-migration-checks.ts",
   "edge_runtime.ts",
   "experimental.ts",
   "functions.ts",
@@ -333,7 +335,8 @@ const expectedPureGraphFiles = [
   "realtime.ts",
   "storage.ts",
   "studio.ts",
-  "workers.ts",
+  "compute.ts",
+  "local.ts",
 ]
   .map((relativePath) => join(srcDir, relativePath))
   .sort();
@@ -357,14 +360,10 @@ describe("src/index.ts stays browser-safe", () => {
   });
 });
 
-// CLI-2234 group 8c: `src/io-browser.ts` (the `browser` condition target for
-// `@supabase/config/io`) must stay just as bundler-safe as `index.ts` itself
-// — it only adds inert, throw-when-invoked stubs plus a type-only import from
-// `promise-facade.ts` (erased at the specifier-scan level, same as every
-// other `import type`/`export type` statement this walker already ignores)
-// on top of `export * from "./index.ts"`. Reuses the exact same walker and
-// browser-safe bare-specifier allowlist as the `index.ts` suite above.
-const ioBrowserGraph = collectImportGraph(join(srcDir, "io-browser.ts"));
+// `src/io-browser.ts` (the `browser` condition target for `@supabase/config/io`) must stay just
+// as bundler-safe as `index.ts` itself — it only adds inert, throw-when-invoked stubs on top of
+// `export * from "./index.ts"`. Reuses the same walker and allowlist as the `index.ts` suite.
+const ioBrowserGraph = await runPlatform(collectImportGraph(join(srcDir, "io-browser.ts")));
 const expectedIoBrowserGraphFiles = [
   join(srcDir, "io-browser.ts"),
   ...expectedPureGraphFiles,
@@ -394,6 +393,7 @@ describe("src/index.ts export surface", () => {
       [
         "CLI_CONFIG_SCHEMA_URL",
         "CliConfigParseError",
+        "CliConfigRemovedKeyError",
         "CliConfigSchema",
         "CliProjectEnvParseError",
         "DuplicateRemoteProjectIdError",
@@ -433,6 +433,7 @@ describe("src/effect.ts is a superset of src/index.ts", () => {
       [
         "CLI_CONFIG_SCHEMA_URL",
         "CliConfigParseError",
+        "CliConfigRemovedKeyError",
         "CliConfigSchema",
         "CliConfigStore",
         "CliProjectEnvParseError",
@@ -473,13 +474,13 @@ describe("src/effect.ts is a superset of src/index.ts", () => {
         "toProjectConfig",
         "toProjectConfigJsonSchema",
         "unmappedApiFields",
+        "validateCliConfig",
       ]
     `);
   });
 
-  // `resolveCliConfigValue`/`resolveCliConfigSubtree` are the one deliberate
-  // exception (see `effect.ts`'s doc comment): `./effect`'s Effect-typed
-  // variant intentionally shadows `./index.ts`'s plain sync variant, since
+  // `resolveCliConfigValue`/`resolveCliConfigSubtree` are the one exception (see `effect.ts`'s
+  // doc comment): `./effect`'s Effect-typed variant shadows `./index.ts`'s plain sync one, since
   // explicit named exports win over a star re-export of the same name.
   const deliberatelyShadowedKeys = new Set(["resolveCliConfigValue", "resolveCliConfigSubtree"]);
 
@@ -515,11 +516,19 @@ describe("src/internal.ts export surface", () => {
       [
         "AUTH_HOOK_NAMES",
         "CliConfigWriteError",
+        "DEFAULT_MIGRATION_CHECK_SEVERITY",
         "ENV_CAPTURE_REGEX",
+        "MIGRATION_CHECK_RULES",
+        "PROVIDER_SIGNUP_ALIASES",
         "applyConfigEdits",
         "decodeCliConfigDocumentForValidationEffect",
+        "decodeMergedCliConfig",
         "dualScopeProjectConfigPaths",
         "loadCliConfig",
+        "mapMigrationCheckRules",
+        "mergeParsedCliConfig",
+        "parseCliConfigDocument",
+        "parseCliConfigDocumentFile",
         "projectConfigApiBlockKeys",
         "projectConfigMappingRows",
         "remoteNameForProjectRef",
@@ -532,11 +541,9 @@ describe("src/internal.ts export surface", () => {
     `);
   });
 
-  // `./internal`'s `resolveCliConfigValue`/`resolveCliConfigSubtree`/
-  // `loadCliConfig` are the SAME runtime functions `./effect` exports
-  // (only the accepted options TYPE differs — internal.ts's is the wider,
-  // `goViperCompat`-capable one), so unlike the deliberate shadowing between
-  // `.` and `./effect` above, there is no shadowing to assert here.
+  // `./internal`'s `resolveCliConfigValue`/`resolveCliConfigSubtree`/`loadCliConfig` are the
+  // same runtime functions `./effect` exports (only the accepted options type differs), so
+  // unlike the shadowing between `.` and `./effect` above, there is no shadowing to assert here.
   test("resolveCliConfigValue, resolveCliConfigSubtree, and loadCliConfig are identical to effect.ts's bindings", () => {
     for (const key of [
       "resolveCliConfigValue",
@@ -556,14 +563,10 @@ describe("package.json exports map", () => {
     expect(Object.keys(ioExports)).toEqual(["bun", "node", "browser", "default"]);
   });
 
-  // `.`/`./effect`/`./internal` lead with `bun` (CLI-2234): `tsc` under this
-  // repo's `customConditions: ["bun"]` must resolve straight to `src/*.ts`
-  // (self-typed, no separate `.d.ts` needed) instead of `dist/*.d.ts`, which
-  // requires `bun` to win the exports-map lookup ahead of `types` — see
-  // `apps/cli/tsconfig.json`'s `customConditions`. `types` only needs to
-  // precede `default` (the dist JS the `types` `.d.ts` describes), not be
-  // first outright, so a plain `nodenext` consumer (no `bun` condition
-  // requested) still resolves `types` -> `dist/*.d.ts` correctly.
+  // `.`/`./effect`/`./internal` lead with `bun`: `tsc` under this repo's `customConditions:
+  // ["bun"]` must resolve straight to `src/*.ts` instead of `dist/*.d.ts`, which requires `bun`
+  // to win the exports-map lookup ahead of `types`. `types` only needs to precede `default`, not
+  // be first outright, so a plain `nodenext` consumer still resolves `types` -> `dist/*.d.ts`.
   test("'types' precedes 'default' in every conditional export object (CLI-2234)", () => {
     const conditionObjects = [
       packageJson.exports["."],
@@ -591,19 +594,29 @@ describe("package.json exports map", () => {
     );
   });
 
-  // The `types`/`default` conditions of `.`/`./effect`/`./internal`/`./io`
-  // (node, browser, default) all point at `dist/` build outputs, which only
-  // exist after `pnpm run build` — intentionally NOT checked here so this
-  // test stays build-independent. `scripts/build.ts`'s tree-shake/Node-consumer
-  // smoke test owns dist correctness instead (CLI-2232).
-  test("the ./io bun condition target exists on disk (its only src target)", () => {
-    expect(() => readFileSync(join(packageRoot, packageJson.exports["./io"].bun))).not.toThrow();
-  });
+  // The `types`/`default` conditions all point at `dist/` build outputs, which only exist after
+  // `pnpm run build` — intentionally not checked here so this test stays build-independent.
+  // `scripts/build.ts`'s tree-shake/Node-consumer smoke test owns dist correctness instead.
+  test("the ./io bun condition target exists on disk (its only src target)", () =>
+    runPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const read = yield* Effect.exit(
+          fs.readFile(join(packageRoot, packageJson.exports["./io"].bun)),
+        );
+        expect(Exit.isSuccess(read)).toBe(true);
+      }),
+    ));
 
-  test("the '.', './effect', and './internal' bun condition targets exist on disk", () => {
-    for (const key of [".", "./effect", "./internal"] as const) {
-      const target = packageJson.exports[key].bun;
-      expect(() => readFileSync(join(packageRoot, target))).not.toThrow();
-    }
-  });
+  test("the '.', './effect', and './internal' bun condition targets exist on disk", () =>
+    runPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        for (const key of [".", "./effect", "./internal"] as const) {
+          const target = packageJson.exports[key].bun;
+          const read = yield* Effect.exit(fs.readFile(join(packageRoot, target)));
+          expect(Exit.isSuccess(read)).toBe(true);
+        }
+      }),
+    ));
 });

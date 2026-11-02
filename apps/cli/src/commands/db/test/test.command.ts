@@ -1,5 +1,8 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { dbConfig } from "../../../command-internal/db-config.layer.ts";
 import {
   TEST_DB_DESCRIPTION,
   TEST_DB_SHORT,
@@ -7,27 +10,20 @@ import {
   testDbConfig,
 } from "../../../command-internal/test-db.command-handler.ts";
 import { testDbRuntimeLayer } from "../../../command-internal/test-db.layers.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
-/**
- * `db test` is a hidden alias for `test db` (registered hidden by the
- * parent, `../db.command.ts`'s `dbTestCommand.pipe(Command.unlisted)`).
- *
- * `db test` and `test db` share one implementation, registered as two
- * separate commands with identical flags and Short text. The native TS port
- * mirrors that: both this file and `../../test/db/db.command.ts` import the
- * shared config/handler/runtime-layer from `command-internal/legacy-test-db.*`
- * instead of either command owning the implementation directly —
- * `commands/<family>/` files may not import another family's
- * internals (`code-structure.unit.test.ts`), so the implementation lives
- * outside `commands/` entirely.
- */
+/** Hidden alias of `test db`; the shared implementation lives in `command-internal/`. */
 export const dbTestCommand = Command.make("test", testDbConfig).pipe(
   Command.withDescription(TEST_DB_DESCRIPTION),
   Command.withShortDescription(TEST_DB_SHORT),
+  withPermissions(compose(dbConfig, branchResolution)),
   Command.withHandler(runTestDbCommand),
-  // `["db", "test"]`, not `["test", "db"]`: the `cli_command_executed`
-  // telemetry records the actual invoked command path, which differs by
-  // entry point even though the handler is identical — see
-  // `testDbRuntimeLayer`'s doc comment.
+  // `cli_command_executed` records the invoked path, so this entry point passes `["db", "test"]`.
   Command.provide(testDbRuntimeLayer(["db", "test"])),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(testDbConfig),
+  withTargetPolicy({ group: "selectable", consent: "no" }),
 );

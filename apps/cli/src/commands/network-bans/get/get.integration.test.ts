@@ -1,19 +1,29 @@
 import { type V1ListAllNetworkBansOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Schema } from "effect";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
   buildTestRuntime,
+  jsonResponse,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { networkBansGet } from "./get.handler.ts";
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const SAMPLE_BANS: typeof V1ListAllNetworkBansOutput.Type = {
   banned_ipv4_addresses: ["192.168.0.1", "192.168.0.2"],
@@ -21,7 +31,7 @@ const SAMPLE_BANS: typeof V1ListAllNetworkBansOutput.Type = {
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   response?: typeof V1ListAllNetworkBansOutput.Type;
   status?: number;
   network?: "fail";
@@ -40,7 +50,7 @@ function setup(opts: SetupOpts = {}) {
     out,
     api,
     cliSettings,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api };
 }
@@ -65,11 +75,11 @@ function setupTracked(opts: SetupOpts = {}) {
 }
 
 describe("network-bans get integration", () => {
-  it.live("writes the stderr heading and JSON array bytes in text mode", () => {
+  it.effect("writes the stderr heading and JSON array bytes in text mode", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* networkBansGet({ projectRef: Option.none() });
-      expect(out.stderrText).toBe("DB banned IPs:\n");
+      yield* networkBansGet({ remote: Option.none(), projectRef: Option.none() });
+      expect(out.stderrText).toBe(unverifiedTargetBanner() + "DB banned IPs:\n");
       expect(out.stdoutText).toBe(
         `[
   "192.168.0.1",
@@ -80,30 +90,30 @@ describe("network-bans get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits TOML bytes for --output toml", () => {
-    const { layer, out } = setup({ goOutput: "toml" });
+  it.effect("emits TOML bytes for --output toml", () => {
+    const { layer, out } = setup({ outputFlag: "toml" });
     return Effect.gen(function* () {
-      yield* networkBansGet({ projectRef: Option.none() });
-      expect(out.stderrText).toBe("DB banned IPs:\n");
+      yield* networkBansGet({ remote: Option.none(), projectRef: Option.none() });
+      expect(out.stderrText).toBe(unverifiedTargetBanner() + "DB banned IPs:\n");
       expect(out.stdoutText).toBe('banned_ips = ["192.168.0.1", "192.168.0.2"]\n');
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits YAML bytes for --output yaml", () => {
-    const { layer, out } = setup({ goOutput: "yaml" });
+  it.effect("emits YAML bytes for --output yaml", () => {
+    const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
-      yield* networkBansGet({ projectRef: Option.none() });
-      expect(out.stderrText).toBe("DB banned IPs:\n");
+      yield* networkBansGet({ remote: Option.none(), projectRef: Option.none() });
+      expect(out.stderrText).toBe(unverifiedTargetBanner() + "DB banned IPs:\n");
       expect(out.stdoutText).toContain("192.168.0.1");
       expect(out.stdoutText).toContain("192.168.0.2");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-compatible JSON bytes for --output json", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+  it.effect("emits JSON bytes for --output json", () => {
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
-      yield* networkBansGet({ projectRef: Option.none() });
-      expect(out.stderrText).toBe("DB banned IPs:\n");
+      yield* networkBansGet({ remote: Option.none(), projectRef: Option.none() });
+      expect(out.stderrText).toBe(unverifiedTargetBanner() + "DB banned IPs:\n");
       expect(out.stdoutText).toBe(
         `[
   "192.168.0.1",
@@ -114,11 +124,11 @@ describe("network-bans get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("treats --output pretty as a JSON alias matching Go's get.go switch", () => {
-    const { layer, out } = setup({ goOutput: "pretty" });
+  it.effect("treats --output pretty as a JSON alias", () => {
+    const { layer, out } = setup({ outputFlag: "pretty" });
     return Effect.gen(function* () {
-      yield* networkBansGet({ projectRef: Option.none() });
-      expect(out.stderrText).toBe("DB banned IPs:\n");
+      yield* networkBansGet({ remote: Option.none(), projectRef: Option.none() });
+      expect(out.stderrText).toBe(unverifiedTargetBanner() + "DB banned IPs:\n");
       expect(out.stdoutText).toBe(
         `[
   "192.168.0.1",
@@ -129,38 +139,40 @@ describe("network-bans get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with the env-not-supported error for --output env", () => {
-    const { layer, out } = setup({ goOutput: "env" });
+  it.effect("fails with the env-not-supported error for --output env", () => {
+    const { layer, out } = setup({ outputFlag: "env" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(networkBansGet({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        networkBansGet({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(out.stderrText).toBe("DB banned IPs:\n");
+      expect(out.stderrText).toBe(unverifiedTargetBanner() + "DB banned IPs:\n");
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
-        expect(errJson).toContain("NetworkBansEnvNotSupportedError");
-        expect(errJson).toContain("--output env flag is not supported");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("NetworkBansEnvNotSupportedError");
+        expect(causeText).toContain("--output env flag is not supported");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a structured JSON success payload via --output-format=json", () => {
+  it.effect("emits a structured JSON success payload via --output-format=json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
-      yield* networkBansGet({ projectRef: Option.none() });
+      yield* networkBansGet({ remote: Option.none(), projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       expect(success?.data).toMatchObject({
         banned_ipv4_addresses: ["192.168.0.1", "192.168.0.2"],
       });
       // TS-native machine-readable modes skip the stderr heading.
-      expect(out.stderrText).toBe("");
+      expect(out.stderrText).toBe(unverifiedTargetBanner());
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a result event via --output-format=stream-json", () => {
+  it.effect("emits a result event via --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
-      yield* networkBansGet({ projectRef: Option.none() });
+      yield* networkBansGet({ remote: Option.none(), projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       expect(success?.data).toMatchObject({
@@ -169,82 +181,163 @@ describe("network-bans get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output wins over TS --output-format when both are set", () => {
-    const { layer, out } = setup({ format: "json", goOutput: "toml" });
+  it.effect("--output wins over --output-format when both are set", () => {
+    const { layer, out } = setup({ format: "json", outputFlag: "toml" });
     return Effect.gen(function* () {
-      yield* networkBansGet({ projectRef: Option.none() });
-      expect(out.stderrText).toBe("DB banned IPs:\n");
+      yield* networkBansGet({ remote: Option.none(), projectRef: Option.none() });
+      expect(out.stderrText).toBe(unverifiedTargetBanner() + "DB banned IPs:\n");
       expect(out.stdoutText).toBe('banned_ips = ["192.168.0.1", "192.168.0.2"]\n');
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("posts to the /network-bans/retrieve endpoint with the resolved ref", () => {
+  it.effect("posts to the /network-bans/retrieve endpoint with the resolved ref", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* networkBansGet({ projectRef: Option.none() });
+      yield* networkBansGet({ remote: Option.none(), projectRef: Option.none() });
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.method).toBe("POST");
       expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/network-bans/retrieve`);
+      assertPermissionDrift({ command: "network-bans get", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("uses --project-ref flag value over CommandSettings.projectId", () => {
+  it.effect("lists the picker's projects, the bans and fills the real linked-project cache", () => {
+    const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+    const api = mockCommandPlatformApi({
+      handler: (request) => {
+        if (request.url === "https://api.supabase.com/v1/projects") {
+          return Effect.succeed(jsonResponse(request, 200, [projectResponse(VALID_REF)]));
+        }
+        if (request.url === `https://api.supabase.com/v1/projects/${VALID_REF}`) {
+          return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
+        }
+        return Effect.succeed(jsonResponse(request, 201, SAMPLE_BANS));
+      },
+    });
+    const cliSettings = mockCommandSettings({
+      workdir: tempRoot.current,
+      projectId: Option.none(),
+    });
+    const layer = buildTestRuntime({
+      out,
+      api,
+      cliSettings,
+      tty: mockTty({ stdinIsTty: true }),
+      linkedProjectCache: realLinkedProjectCache({
+        httpClient: api.httpClientLayer,
+        cliSettings,
+      }),
+    });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      expect(yield* fs.exists(cachePath)).toBe(false);
+      yield* networkBansGet({ remote: Option.none(), projectRef: Option.none() });
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        "GET https://api.supabase.com/v1/projects",
+        `POST https://api.supabase.com/v1/projects/${VALID_REF}/network-bans/retrieve`,
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+      ]);
+      expect(out.stdoutText).toBe('[\n  "192.168.0.1",\n  "192.168.0.2"\n]\n');
+      expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({
+        command: "network-bans get",
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("rejects an empty --project-ref before the picker or any request", () => {
+    const out = mockOutput();
+    const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_BANS } });
+    const layer = buildTestRuntime({
+      out,
+      api,
+      cliSettings: mockCommandSettings({ workdir: tempRoot.current, projectId: Option.none() }),
+      tty: mockTty({ stdinIsTty: true }),
+    });
+    return Effect.gen(function* () {
+      const error = yield* networkBansGet({
+        remote: Option.none(),
+        projectRef: Option.some(""),
+      }).pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "TargetEmptyValueError", flag: "--project-ref" });
+      expect(out.promptSelectCalls).toHaveLength(0);
+      expect(api.requests).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("uses the --remote=<ref> value over CommandSettings.projectId", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* networkBansGet({ projectRef: Option.some(flagRef) });
+      yield* networkBansGet({
+        remote: Option.some({ _tag: "Ref", ref: flagRef }),
+        projectRef: Option.none(),
+      });
       expect(api.requests[0]?.url).toContain(`/v1/projects/${flagRef}/`);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with NetworkBansGetUnexpectedStatusError on HTTP 503", () => {
+  it.effect("fails with NetworkBansGetUnexpectedStatusError on HTTP 503", () => {
     const { layer } = setup({ status: 503 });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(networkBansGet({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        networkBansGet({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
-        expect(errJson).toContain("NetworkBansGetUnexpectedStatusError");
-        expect(errJson).toContain("unexpected list bans status 503");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("NetworkBansGetUnexpectedStatusError");
+        expect(causeText).toContain("unexpected list bans status 503");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports a network error when the API transport fails", () => {
+  it.effect("reports a network error when the API transport fails", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(networkBansGet({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        networkBansGet({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
-        expect(errJson).toContain("NetworkBansGetNetworkError");
-        expect(errJson).toContain("failed to list network bans:");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("NetworkBansGetNetworkError");
+        expect(causeText).toContain("failed to list network bans:");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
+  it.effect("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
     const { layer, out } = setup({ format: "json", status: 503 });
     return Effect.gen(function* () {
-      yield* networkBansGet({ projectRef: Option.none() }).pipe(withJsonErrorHandling);
+      yield* networkBansGet({ remote: Option.none(), projectRef: Option.none() }).pipe(
+        withJsonErrorHandling,
+      );
       expect(out.messages.some((m) => m.type === "fail")).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry and writes linked-project cache on success", () => {
+  it.effect("flushes telemetry and writes linked-project cache on success", () => {
     const { layer, telemetry, cache } = setupTracked();
     return Effect.gen(function* () {
-      yield* networkBansGet({ projectRef: Option.none() });
+      yield* networkBansGet({ remote: Option.none(), projectRef: Option.none() });
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry even on API failure", () => {
+  it.effect("flushes telemetry even on API failure", () => {
     const { layer, telemetry, cache } = setupTracked({ status: 500 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        networkBansGet({ projectRef: Option.none() }).pipe(Effect.provide(layer)),
+        networkBansGet({ remote: Option.none(), projectRef: Option.none() }).pipe(
+          Effect.provide(layer),
+        ),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(telemetry.flushed).toBe(true);
@@ -252,5 +345,10 @@ describe("network-bans get integration", () => {
       // ref resolution succeeded, once ref is known.
       expect(cache.cached).toBe(true);
     });
+  });
+
+  describeHostedTargetSelection("network-bans get", {
+    respond: (request) => Effect.succeed(jsonResponse(request, 201, SAMPLE_BANS)),
+    run: (flags) => networkBansGet(flags),
   });
 });

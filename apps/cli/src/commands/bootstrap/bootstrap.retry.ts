@@ -1,27 +1,20 @@
-import { Duration, Effect, Random, Schedule } from "effect";
+import { Duration, Effect, Random, Ref, Schedule } from "effect";
 
 import { DebugFlag } from "../../command-internal/global-flags.ts";
 import { Output } from "../../shared/output/output.service.ts";
 
-/**
- * `maxRetries` from the established `utils.NewBackoffPolicy`.
- * `backoff.WithMaxRetries(b, 8)` performs 8 retries -> 9 total attempts, matching
- * `Effect.retry({ schedule, times: 8 })`.
- */
+/** 8 retries (9 total attempts) via `Effect.retry({ schedule, times: 8 })`. */
 export const BOOTSTRAP_MAX_RETRIES = 8;
 
 const MAX_INTERVAL = Duration.seconds(60);
 
 /**
- * Go-parity backoff for the api-keys and health retry loops
- * (`utils.NewBackoffPolicy` -> `cenkalti/backoff` `NewExponentialBackOff`):
+ * Backoff for the api-keys and health retry loops:
  *
  *  - 3s initial interval, multiplier `1.5`
- *  - `MaxInterval` capped at 60s (applied to the base interval **before** jitter,
- *    matching cenkalti's order — so an individual delay can reach ~90s)
- *  - `RandomizationFactor` `0.5` -> each delay is jittered into `[0.5x, 1.5x]`
- *  - `MaxElapsedTime` 15m (intersected via `during`; in practice the 8-retry cap
- *    always trips first, but reproduced for completeness)
+ *  - Capped at 60s before jitter is applied, so an individual delay can reach ~90s
+ *  - Jittered into `[0.5x, 1.5x]` of the (possibly capped) interval
+ *  - Bounded to 15 minutes total elapsed time, though the 8-retry cap always trips first
  */
 export const bootstrapBackoff = Schedule.exponential("3 seconds", 1.5).pipe(
   Schedule.modifyDelay(({ duration }) => Effect.succeed(Duration.min(duration, MAX_INTERVAL))),
@@ -34,23 +27,21 @@ export const bootstrapBackoff = Schedule.exponential("3 seconds", 1.5).pipe(
 );
 
 /**
- * Reproduces the established `utils.NewErrorCallback`: after each failed
- * attempt it prints `<err>\nRetry (n/8): ` to a logger that starts as the
- * debug logger (discarded unless `--debug`) and switches to stderr once
- * `failureCount*3 > maxRetries` (i.e. from the 3rd failure on). Notify fires only for
- * attempts that will be retried, never the final exhausted one.
+ * After each failed attempt, prints `<err>\nRetry (n/8): ` to the debug logger (discarded unless
+ * `--debug`) for the first two failures, then to stderr from the third on. Never fires for the
+ * final, exhausted attempt.
  *
- * Returns a fresh wrapper with its own failure counter per call, mirroring Go's
- * per-`RetryNotify` `NewErrorCallback()` + `policy.Reset()`.
+ * Yields a fresh wrapper with its own failure counter per evaluation.
  */
-export const bootstrapRetryNotify = () => {
-  let failureCount = 0;
+export const bootstrapRetryNotify = Effect.gen(function* () {
+  const failures = yield* Ref.make(0);
   return <A, E, R>(operation: Effect.Effect<A, E, R>) =>
     operation.pipe(
       Effect.tapError((error) =>
         Effect.gen(function* () {
-          failureCount += 1;
-          // No notify on the final attempt (cenkalti returns `Stop` before notifying).
+          const failureCount = yield* Ref.updateAndGet(failures, (count) => count + 1);
+          yield* Effect.annotateCurrentSpan("retry.failure_count", failureCount);
+          // No notify on the final, exhausted attempt.
           if (failureCount > BOOTSTRAP_MAX_RETRIES) return;
           const toStderr = failureCount * 3 > BOOTSTRAP_MAX_RETRIES;
           const debug = yield* DebugFlag;
@@ -65,12 +56,11 @@ export const bootstrapRetryNotify = () => {
         }),
       ),
     );
-};
+});
 
 function stringifyError(error: unknown): string {
   if (typeof error === "object" && error !== null && "message" in error) {
-    const message = (error as { message: unknown }).message;
-    if (typeof message === "string") return message;
+    if (typeof error.message === "string") return error.message;
   }
   return String(error);
 }

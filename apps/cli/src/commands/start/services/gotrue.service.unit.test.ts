@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { assert, describe, expect, test } from "vitest";
 
 import {
   buildGotrueContainerSpec,
@@ -10,10 +10,6 @@ import {
   type GotrueSigningKey,
   type GotrueWebauthnInput,
 } from "./gotrue.service.ts";
-
-afterEach(() => {
-  vi.unstubAllEnvs();
-});
 
 // Every field not asserted by a specific subtest below reflects the
 // default config's own values.
@@ -211,8 +207,6 @@ describe("buildGotrueEnv", () => {
     });
   });
 
-  // Exercised through GOTRUE_SMS_TEST_OTP since `formatMapForEnvConfig`
-  // is only ever called from inside `buildGotrueEnv`.
   describe("GOTRUE_SMS_TEST_OTP / formatMapForEnvConfig parity", () => {
     test("formatMapForEnvConfig produces key:value pairs with no trailing comma", () => {
       expect(formatMapForEnvConfig({})).toBe("");
@@ -297,7 +291,7 @@ describe("buildGotrueEnv", () => {
       expect(env["GOTRUE_EXTERNAL_KEYCLOAK_SKIP_NONCE_CHECK"]).toBe("true");
     });
 
-    test("emits full env for a configured-but-disabled provider (Go has no `if config.Enabled` gate)", () => {
+    test("emits full env for a configured-but-disabled provider (no `config.Enabled` gate)", () => {
       const env = buildGotrueEnv({
         ...baseEnvInput,
         externalProviders: {
@@ -376,7 +370,7 @@ describe("buildGotrueEnv", () => {
       expect(env["GOTRUE_SESSIONS_INACTIVITY_TIMEOUT"]).toBeUndefined();
     });
 
-    test("reformats a configured duration into Go's canonical Duration.String() form", () => {
+    test("reformats a configured duration into its canonical duration form", () => {
       const env = buildGotrueEnv({
         ...baseEnvInput,
         sessions: { timebox: "1h", inactivity_timeout: "90s" },
@@ -385,7 +379,7 @@ describe("buildGotrueEnv", () => {
       expect(env["GOTRUE_SESSIONS_INACTIVITY_TIMEOUT"]).toBe("1m30s");
     });
 
-    test("omits a configured but zero-valued duration, matching Go's `> 0` guard", () => {
+    test("omits a configured but zero-valued duration", () => {
       const env = buildGotrueEnv({
         ...baseEnvInput,
         sessions: { timebox: "0s" },
@@ -518,9 +512,6 @@ describe("buildGotrueEnv", () => {
       expect(env["GOTRUE_MAILER_SUBJECTS_CONFIRMATION"]).toBe("Confirm your signup");
     });
 
-    // The email template's subject is optional; the gate is strictly
-    // `subject !== undefined`, not on string length — an explicit blank
-    // subject is still emitted, distinct from an absent one below.
     test("still emits an explicit empty subject, distinct from an absent one", () => {
       const env = buildGotrueEnv({
         ...baseEnvInput,
@@ -642,9 +633,11 @@ describe("buildGotrueEnv", () => {
   });
 
   describe("JWT signing keys", () => {
-    test("defaults to Go's hardcoded ES256 signing key when unset", () => {
+    test("defaults to the hardcoded ES256 signing key when unset", () => {
       const env = buildGotrueEnv(baseEnvInput);
-      const keys = JSON.parse(env["GOTRUE_JWT_KEYS"] as string);
+      const jwtKeys = env["GOTRUE_JWT_KEYS"];
+      assert(jwtKeys !== undefined);
+      const keys = JSON.parse(jwtKeys);
       expect(keys).toEqual([
         {
           kty: "EC",
@@ -669,9 +662,9 @@ describe("buildGotrueEnv", () => {
         ...baseEnvInput,
         signingKeys: [rsaKey],
       });
-      expect(JSON.parse(env["GOTRUE_JWT_KEYS"] as string)).toEqual([
-        { kty: "RSA", alg: "RS256", n: "modulus", e: "AQAB" },
-      ]);
+      const jwtKeys = env["GOTRUE_JWT_KEYS"];
+      assert(jwtKeys !== undefined);
+      expect(JSON.parse(jwtKeys)).toEqual([{ kty: "RSA", alg: "RS256", n: "modulus", e: "AQAB" }]);
     });
   });
 });
@@ -679,6 +672,7 @@ describe("buildGotrueEnv", () => {
 describe("buildGotrueContainerSpec", () => {
   test("assembles the full container spec, deriving dbHost/dbPassword from projectId/dbUrl", () => {
     const spec = buildGotrueContainerSpec({
+      slim: false,
       image: "supabase/gotrue:v2.180.0",
       projectId: "proj",
       networkId: "supabase_network_proj",
@@ -709,15 +703,14 @@ describe("buildGotrueContainerSpec", () => {
     expect(spec.networkAliases).toEqual(["auth"]);
     expect(spec.labels).toEqual({});
 
-    // dbHost/dbPassword flow from projectId/dbUrl into the env's connection string.
     expect(spec.env["GOTRUE_DB_DATABASE_URL"]).toBe(
       "postgresql://supabase_auth_admin:secret@supabase_db_proj:5432/postgres",
     );
   });
 
   test("uses BusyBox wget flags on a slim auth image", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
     const spec = buildGotrueContainerSpec({
+      slim: true,
       image: "ghcr.io/supabase/cli/auth:v2.196.0",
       projectId: "proj",
       networkId: "supabase_network_proj",

@@ -7,18 +7,18 @@ import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.serv
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
+import { encodeSortedJson } from "../../../command-internal/output.encoders.ts";
 import { resolveLinkedParentRef } from "../../../command-internal/parent-project-ref.ts";
 import {
-  type GoType,
-  encodeGoToml,
-  encodeGoYaml,
-  goBool,
-  goSlice,
-  goString,
-  goStruct,
-  goTomlListWrapper,
-} from "../../../command-internal/go-struct-output.encoders.ts";
+  type OutputShape,
+  encodeStructToml,
+  encodeStructYaml,
+  shapeBool,
+  shapeSlice,
+  shapeString,
+  shapeStruct,
+  shapeTomlListWrapper,
+} from "../../../command-internal/struct-output.encoders.ts";
 import { sanitizeErrorBody } from "../../../command-internal/http-errors.ts";
 import {
   ProjectsEnvNotSupportedError,
@@ -37,51 +37,48 @@ import type { ProjectsListFlags } from "./list.command.ts";
  * response (fields inlined first, in declaration order) plus the
  * CLI-added `Linked bool`.
  */
-const GO_LINKED_PROJECT: GoType = goStruct([
-  ["created_at", goString],
+const LINKED_PROJECT_SHAPE: OutputShape = shapeStruct([
+  ["created_at", shapeString],
   [
     "database",
-    goStruct([
-      ["host", goString],
-      ["postgres_engine", goString],
-      ["release_channel", goString],
-      ["version", goString],
+    shapeStruct([
+      ["host", shapeString],
+      ["postgres_engine", shapeString],
+      ["release_channel", shapeString],
+      ["version", shapeString],
     ]),
   ],
-  ["id", goString],
-  ["name", goString],
-  ["organization_id", goString],
-  ["organization_slug", goString],
-  ["ref", goString],
-  ["region", goString],
-  ["status", goString],
-  ["linked", goBool],
+  ["id", shapeString],
+  ["name", shapeString],
+  ["organization_id", shapeString],
+  ["organization_slug", shapeString],
+  ["ref", shapeString],
+  ["region", shapeString],
+  ["status", shapeString],
+  ["linked", shapeBool],
 ]);
 
-const GO_PROJECTS_LIST = goSlice(GO_LINKED_PROJECT);
+const PROJECTS_LIST_SHAPE = shapeSlice(LINKED_PROJECT_SHAPE);
 
-const GO_PROJECTS_TOML_WRAPPER = goTomlListWrapper("projects", GO_LINKED_PROJECT);
+const PROJECTS_TOML_WRAPPER_SHAPE = shapeTomlListWrapper("projects", LINKED_PROJECT_SHAPE);
 
 export const projectsList = Effect.fn("projects.list")(function* (_flags: ProjectsListFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
   const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
-  // The linked ref is loaded purely as a marker — a not-linked error is
-  // ignored, no prompt fires. `resolveOptional` never fails or prompts.
+  // Loaded purely as a marker for the "linked" column; `resolveOptional` never fails or prompts.
   const linkedRef = yield* resolver.resolveOptional(Option.none());
 
   yield* Effect.gen(function* () {
     const fetching =
       output.format === "text" ? yield* output.task("Fetching projects...") : undefined;
 
-    // `executeRaw` returns the undecoded response: the generated
-    // `V1ProjectWithDatabaseResponse.ref` schema enforces `isMinLength(20)` +
-    // `^[a-z]+$`, which the cli-e2e replay fixtures (literal `__PROJECT_REF__`)
-    // cannot satisfy. Auth / URL / headers are still handled by the API client.
+    // `executeRaw` skips response decoding so projects are emitted as the API returned them,
+    // including fields the generated schema does not declare.
     const response = yield* api.executeRaw(operationDefinitions.v1ListAllProjects, {}).pipe(
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
       Effect.mapError(
@@ -120,24 +117,16 @@ export const projectsList = Effect.fn("projects.list")(function* (_flags: Projec
         decode: true,
       });
     }
-    yield* fetching?.clear() ?? Effect.void;
+    yield* fetching?.clear ?? Effect.void;
 
-    // Established behavior: prints the not-linked message to stderr when no
-    // ref resolves, then renders the table anyway. "supabase link" is
-    // colored via `Aqua` — plain on a non-TTY — and uses no backticks,
-    // unlike the resolver's hard-fail message.
+    // Prints the not-linked message to stderr but still renders the table below.
     if (Option.isNone(linkedRef)) {
       yield* output.raw("Cannot find project ref. Have you run supabase link?\n", "stderr");
     }
 
-    // CLI-2167 follow-up: after `link <branch>`, `linkedRef` is the BRANCH's
-    // own ref, which never matches a row here (this endpoint only returns
-    // real projects), so the "you are here" marker silently vanished. An
-    // exact match always wins outright; only when it misses do we fall back
-    // to the PARENT chain (env → `linked-project.json` → `project-ref` file)
-    // and mark that ref's row instead. `linkedRef` itself (used below for the
-    // stderr message and the linked-project-cache write) is untouched — only
-    // the marker comparison changes. TS-only QoL, no Go counterpart.
+    // `markerRef` decides which row shows as linked, since a linked branch's own ref never
+    // matches a project row here. An exact match on `linkedRef` wins outright; only when it
+    // misses do we fall back to the parent chain (env → linked-project.json → project-ref file).
     let markerRef = linkedRef;
     if (Option.isSome(linkedRef)) {
       const hasExactMatch = parsed.some(
@@ -154,35 +143,33 @@ export const projectsList = Effect.fn("projects.list")(function* (_flags: Projec
       linked: Option.isSome(markerRef) && readProjectField(project, "id") === markerRef.value,
     }));
 
-    const goFmt = Option.getOrUndefined(goOutputFlag);
+    const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
-    if (goFmt === "env") {
+    if (outputFlagFormat === "env") {
       return yield* new ProjectsEnvNotSupportedError({
         message: "--output env flag is not supported",
       });
     }
-    if (goFmt === "json") {
-      yield* output.raw(encodeGoJson(projects));
+    if (outputFlagFormat === "json") {
+      yield* output.raw(encodeSortedJson(projects));
       return;
     }
-    if (goFmt === "yaml") {
-      yield* output.raw(encodeGoYaml(projects, GO_PROJECTS_LIST));
+    if (outputFlagFormat === "yaml") {
+      yield* output.raw(encodeStructYaml(projects, PROJECTS_LIST_SHAPE));
       return;
     }
-    if (goFmt === "toml") {
-      // The list is built with `append`, so an empty list stays a nil slice
-      // and BurntSushi emits nothing for the wrapper.
+    if (outputFlagFormat === "toml") {
+      // Passing `undefined` (not an empty array) omits the wrapper entirely when there are no
+      // projects.
       yield* output.raw(
-        encodeGoToml(
+        encodeStructToml(
           { projects: projects.length > 0 ? projects : undefined },
-          GO_PROJECTS_TOML_WRAPPER,
+          PROJECTS_TOML_WRAPPER_SHAPE,
         ),
       );
       return;
     }
 
-    // goFmt is undefined or "pretty" — defer to TS --output-format for
-    // JSON/stream-json, otherwise render the Glamour-styled table.
     if (output.format === "json" || output.format === "stream-json") {
       yield* output.success("", { projects });
       return;

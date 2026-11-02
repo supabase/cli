@@ -1,18 +1,13 @@
 import { Effect, Layer, PlatformError, Sink, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { ChildProcessSpawner } from "effect/process";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 /**
  * A minimal `docker`/`podman` CLI spawner mock + default happy-path route for
- * `resetLocalDatabase`'s real, native container-recreate flow — used
- * wherever a test now drives a REAL in-process local reset instead of a
- * subprocess/seam stub (CLI-2062: `db schema declarative`'s smart-target/sync
- * recovery reset). Mirrors `commands/db/reset/reset.integration.test.ts`'s own
- * `mockContainerCliSpawner`/`defaultLocalResetRoute` (that file predates this
- * hoist and keeps its own copy, adapted for its container-REMOVE-then-recreate
- * assertions) — same shape here, hoisted for the two `db schema declarative`
- * callers so they don't each duplicate it again.
+ * `resetLocalDatabase`'s real, native container-recreate flow — used wherever a test drives an
+ * in-process local reset instead of a subprocess/seam stub. Shared by the two `db schema
+ * declarative` callers (smart-target/sync recovery reset) so they don't each duplicate it.
  */
 
 export interface SpawnRecord {
@@ -37,14 +32,12 @@ export function mockContainerCliSpawner(route: (args: ReadonlyArray<string>) => 
         spawned.push({ args });
 
         if (command._tag !== "StandardCommand") {
-          return yield* Effect.fail(
-            PlatformError.systemError({
-              _tag: "NotFound",
-              module: "ChildProcess",
-              method: "spawn",
-              description: "spawn failed",
-            }),
-          );
+          return yield* PlatformError.systemError({
+            _tag: "NotFound",
+            module: "ChildProcess",
+            method: "spawn",
+            description: "spawn failed",
+          });
         }
 
         const result = route(args);

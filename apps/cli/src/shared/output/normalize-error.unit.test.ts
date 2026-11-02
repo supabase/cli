@@ -1,14 +1,15 @@
 import { describe, expect, test } from "vitest";
 import { Cause } from "effect";
-import { CliError, Command } from "effect/unstable/cli";
+import { CliError, Command } from "effect/cli";
 import { CliConfigParseError, CliProjectEnvParseError } from "@supabase/config";
 import { branchesCommand } from "../../commands/branches/branches.command.ts";
 import { networkRestrictionsCommand } from "../../commands/network-restrictions/network-restrictions.command.ts";
+import { ssoCommand } from "../../commands/sso/sso.command.ts";
 import { CliProjectHomeNotDirectoryError } from "../config/cli-project-home.service.ts";
 import { formatCliError, normalizeCause, normalizeCliError } from "./normalize-error.ts";
 
 const testRoot = Command.make("supabase").pipe(
-  Command.withSubcommands([branchesCommand, networkRestrictionsCommand]),
+  Command.withSubcommands([branchesCommand, networkRestrictionsCommand, ssoCommand]),
 );
 
 describe("normalizeCliError", () => {
@@ -26,24 +27,30 @@ describe("normalizeCliError", () => {
     });
   });
 
-  // Pinning tests for CLI-2235: `@supabase/config`'s tagged errors carry no
-  // `message`/`detail` field, so `normalizeCliError`'s generic fallback
-  // surfaces the bare `_tag` verbatim as both the JSON `code` and the
-  // displayed `message` — this is the exact string a script matching on
-  // `--output-format json` error output, or a user reading stderr, sees. A
-  // future rename of these tags (as happened with the
-  // ProjectConfigParseError -> CliConfigParseError rename) must fail a test,
-  // not sail through silently.
-  test("CliConfigParseError falls back to its bare tag as both code and message", () => {
+  test("CliConfigParseError keeps its tag as code and names the file and cause in its message", () => {
     const error = new CliConfigParseError({
       path: "supabase/config.toml",
       format: "toml",
-      cause: new Error("unexpected token"),
+      cause: new Error("unexpected \u001b[2Jtoken\n"),
     });
 
     expect(normalizeCliError(error)).toEqual({
       code: "CliConfigParseError",
-      message: "CliConfigParseError",
+      message: "failed to parse supabase/config.toml: unexpected token",
+    });
+  });
+
+  test("CliConfigParseError hides the token a JSON parse error quotes", () => {
+    const error = new CliConfigParseError({
+      path: "supabase/config.json",
+      format: "json",
+      cause: new SyntaxError('JSON Parse error: Unexpected identifier "sk_live_123"'),
+    });
+
+    expect(normalizeCliError(error)).toEqual({
+      code: "CliConfigParseError",
+      message:
+        'failed to parse supabase/config.json: JSON Parse error: Unexpected identifier "<redacted>"',
     });
   });
 
@@ -70,7 +77,7 @@ describe("normalizeCliError", () => {
     });
   });
 
-  test("MissingOption renders Go Cobra's `required flag(s) X not set` wording", () => {
+  test("MissingOption renders the `required flag(s) X not set` wording", () => {
     const error = { _tag: "MissingOption", option: "type" };
     expect(normalizeCliError(error)).toEqual({
       code: "MissingOption",
@@ -86,12 +93,7 @@ describe("normalizeCliError", () => {
     });
   });
 
-  test("InvalidValue collapses the doubled 'Expected: Expected' prefix (e.g. a bad GlobalFlag.setting value)", () => {
-    // Regression test for CLI-1898: `--output-format`/`--dns-resolver`/`--agent`/
-    // `--output` are `GlobalFlag.setting` flags backed by `Flag.choice`.
-    // `Command.runWith` validates their values in a step that runs outside the
-    // `ShowHelp` path, so a bad value never reaches `CliOutput.Formatter` (and
-    // `subcommand-flag-suggestions.ts`'s fix) — it surfaces here instead.
+  test("InvalidValue collapses the doubled 'Expected: Expected' prefix (e.g. a bad GlobalFlag.Setting value)", () => {
     const error = new CliError.InvalidValue({
       option: "output-format",
       value: "bogus",
@@ -107,11 +109,6 @@ describe("normalizeCliError", () => {
   });
 
   test("InvalidValue preserves an empty invalid value (e.g. `--output-format ''`)", () => {
-    // Regression test for a Codex review finding on CLI-1898: `value` is raw
-    // user input read straight off argv, so `''` is a legitimate way to
-    // trigger this failure. Reading it through the trim-and-reject-empty
-    // `readString` helper would fail the guard and leak the original
-    // doubled "Expected: Expected" message instead of fixing it.
     const error = new CliError.InvalidValue({
       option: "output-format",
       value: "",
@@ -127,8 +124,6 @@ describe("normalizeCliError", () => {
   });
 
   test("InvalidValue preserves surrounding whitespace in the invalid value (e.g. `--output-format ' json'`)", () => {
-    // Regression test for the same Codex finding: trimming `value` would
-    // report a different string than what the user actually typed.
     const error = new CliError.InvalidValue({
       option: "output-format",
       value: " json",
@@ -143,29 +138,26 @@ describe("normalizeCliError", () => {
     });
   });
 
-  test("InvalidValue passes a complete pflag-format diagnostic through verbatim (Go stderr parity, CLI-1983)", () => {
-    // Flags that byte-match Go pflag's parse-time diagnostics
-    // (`stringSliceFlag`'s malformed-CSV failure, `migration down
-    // --last`) emit the COMPLETE Go message as `expected`. Wrapping it in
-    // Effect's `Invalid value for flag ...: Expected: ...` template would
-    // double-frame it — Go prints the bare pflag line.
-    const pflagMessage =
+  test("InvalidValue passes a complete `invalid argument` diagnostic through verbatim", () => {
+    // This flag's diagnostic is emitted as a complete message in `expected`;
+    // wrapping it in the generic "Invalid value..." template would double-frame it.
+    const invalidValueMessage =
       'invalid argument "\\"1.2.3.4" for "--db-unban-ip" flag: parse error on line 1, column 9: extraneous or missing " in quoted-field';
     const error = new CliError.InvalidValue({
       option: "db-unban-ip",
       value: '"1.2.3.4',
-      expected: pflagMessage,
+      expected: invalidValueMessage,
       kind: "flag",
     });
 
     expect(normalizeCliError(error)).toEqual({
       code: "InvalidValue",
-      message: pflagMessage,
+      message: invalidValueMessage,
     });
   });
 
-  test("ShowHelp envelope unwraps a single InvalidValue carrying a pflag-format diagnostic verbatim", () => {
-    const pflagMessage =
+  test("ShowHelp envelope unwraps a single InvalidValue carrying an `invalid argument` diagnostic verbatim", () => {
+    const invalidValueMessage =
       'invalid argument "\\"1.2.3.0/24" for "--db-allow-cidr" flag: parse error on line 1, column 12: extraneous or missing " in quoted-field';
     const error = {
       _tag: "ShowHelp",
@@ -174,7 +166,7 @@ describe("normalizeCliError", () => {
         new CliError.InvalidValue({
           option: "db-allow-cidr",
           value: '"1.2.3.0/24',
-          expected: pflagMessage,
+          expected: invalidValueMessage,
           kind: "flag",
         }),
       ],
@@ -182,7 +174,7 @@ describe("normalizeCliError", () => {
 
     expect(normalizeCliError(error)).toEqual({
       code: "InvalidValue",
-      message: pflagMessage,
+      message: invalidValueMessage,
     });
   });
 
@@ -201,24 +193,19 @@ describe("normalizeCliError", () => {
     });
   });
 
-  test("InvalidValue surfaces a complete pflag-style 'expected' message verbatim (Go flag-parse parity)", () => {
-    // Flags that reproduce Go's flag-parse rejections (e.g.
-    // `storage cp --jobs=-1` via `Flag.mapTryCatch`) put pflag's entire
-    // `invalid argument %q for %q flag: %v` string in `expected`. Wrapping it
-    // in Effect's `Invalid value for flag --jobs: …` template would break
-    // byte-parity with the Go CLI's stderr.
+  test("InvalidValue surfaces a complete `invalid argument` 'expected' message verbatim", () => {
+    // This flag's diagnostic already includes its own "invalid argument ..."
+    // message in `expected`; wrapping it in the generic template would double it.
     const error = new CliError.InvalidValue({
       option: "jobs",
       value: "-1",
-      expected:
-        'invalid argument "-1" for "-j, --jobs" flag: strconv.ParseUint: parsing "-1": invalid syntax',
+      expected: 'invalid argument "-1" for "-j, --jobs" flag: expected an unsigned integer',
       kind: "flag",
     });
 
     expect(normalizeCliError(error)).toEqual({
       code: "InvalidValue",
-      message:
-        'invalid argument "-1" for "-j, --jobs" flag: strconv.ParseUint: parsing "-1": invalid syntax',
+      message: 'invalid argument "-1" for "-j, --jobs" flag: expected an unsigned integer',
     });
   });
 
@@ -242,9 +229,7 @@ describe("normalizeCliError", () => {
     });
   });
 
-  test("ShowHelp envelope unwraps a single MissingOption to Cobra wording", () => {
-    // Effect CLI raises `ShowHelp` containing the parse error in its `errors`
-    // array. We unwrap to surface the actionable message instead of "Help requested".
+  test("ShowHelp envelope unwraps a single MissingOption to the required-flag wording", () => {
     const error = {
       _tag: "ShowHelp",
       commandPath: ["sso", "add"],
@@ -256,15 +241,7 @@ describe("normalizeCliError", () => {
     });
   });
 
-  // CLI-1901: before this fix, the vendored `effect` CLI library's own
-  // `showHelp()` also printed this same message (via `Console.error`) as a
-  // duplicate of whatever `normalizeCause` rendered here — so a tag with no
-  // Go-parity-specific mapping (e.g. UnrecognizedOption) still had SOME
-  // informative text visible, just twice. Now that CLI-1901's `run.ts` fix
-  // suppresses the library's own duplicate print entirely, this generic
-  // fallback is the ONLY place the message reaches the user — it must not
-  // regress to the useless "Help requested" envelope message.
-  test("ShowHelp envelope unwraps a single UnrecognizedOption to its own message (no Go-parity mapping exists yet)", () => {
+  test("ShowHelp envelope unwraps a single UnrecognizedOption to its own message (no mapping exists yet)", () => {
     const error = {
       _tag: "ShowHelp",
       commandPath: ["branches"],
@@ -282,14 +259,6 @@ describe("normalizeCliError", () => {
     });
   });
 
-  // Regression test for a Codex review finding on CLI-1901: `run.ts`'s
-  // `withoutParseErrorHelpDump` suppresses the vendored library's own
-  // `Console.error` render, which used to be the only place a subcommand-flag
-  // placement hint (`buildSubcommandFlagHint` /
-  // `subcommand-flag-suggestions.ts`) reached the user. When a
-  // `CliErrorSuggestionContext` is supplied, this fallback must reuse
-  // `formatCliErrorsForDisplay` — the same helper the text/json formatters
-  // use — so that hint still survives through the single-render path.
   test("ShowHelp envelope unwraps a single UnrecognizedOption and preserves its subcommand-flag hint when a suggestion context is supplied", () => {
     const error = {
       _tag: "ShowHelp",
@@ -317,29 +286,22 @@ describe("normalizeCliError", () => {
     );
   });
 
-  // Regression test for a second Codex review finding on CLI-1901: a child
-  // flag placed before its subcommand, WITH a value (e.g. `network-restrictions
-  // --project-ref <ref> get`), makes Effect raise TWO simultaneous errors —
-  // `UnrecognizedOption` for the flag, plus `UnknownSubcommand` for the
-  // flag's own value being misread as the subcommand name. Before this fix,
-  // `mappedError`'s ShowHelp unwrap only ever looked at `errors.length === 1`,
-  // so a real two-error ShowHelp fell straight through to the generic
-  // "Help requested" envelope message — losing the hint (and the specific
-  // error) entirely now that CLI-1901 also suppresses the vendored library's
-  // own duplicate render for this case.
+  // A child flag placed before its subcommand with a value produces two
+  // simultaneous errors: `UnrecognizedOption` for the flag, and
+  // `UnknownSubcommand` for the flag's value being misread as the subcommand.
   test("ShowHelp envelope unwraps multiple simultaneous errors and preserves the subcommand-flag hint (child flag with a value, before its subcommand)", () => {
     const error = {
       _tag: "ShowHelp",
-      commandPath: ["network-restrictions"],
+      commandPath: ["sso"],
       errors: [
         new CliError.UnrecognizedOption({
-          option: "--project-ref",
-          command: ["supabase", "network-restrictions"],
+          option: "--attribute-mapping-file",
+          command: ["supabase", "sso"],
           suggestions: [],
         }),
         new CliError.UnknownSubcommand({
-          subcommand: "jacraenyzrorgjhsdvvf",
-          parent: ["supabase", "network-restrictions"],
+          subcommand: "mapping.json",
+          parent: ["supabase", "sso"],
           suggestions: [],
         }),
       ],
@@ -347,22 +309,19 @@ describe("normalizeCliError", () => {
 
     const result = normalizeCliError(error, {
       rootCommand: testRoot,
-      args: ["network-restrictions", "--project-ref", "jacraenyzrorgjhsdvvf", "get"],
+      args: ["sso", "--attribute-mapping-file", "mapping.json", "add"],
     });
 
     expect(result.code).toBe("UnrecognizedOption");
     expect(result.message).toContain(
-      "Unrecognized flag: --project-ref in command supabase network-restrictions",
+      "Unrecognized flag: --attribute-mapping-file in command supabase sso",
     );
     expect(result.message).toContain(
-      "Hint: --project-ref is available on `supabase network-restrictions get` and `supabase network-restrictions update`.",
+      "Hint: --attribute-mapping-file is available on `supabase sso add` and `supabase sso update`.",
     );
     expect(result.message).not.toContain("Help requested");
   });
 
-  // A genuine, unrelated multi-error case (no shared hint to collapse them
-  // into one) must still surface every error's own message, not just the
-  // first — and must not crash trying to pick a single `code`.
   test("ShowHelp envelope unwraps multiple unrelated simultaneous errors into a joined message", () => {
     const error = {
       _tag: "ShowHelp",
@@ -388,12 +347,6 @@ describe("normalizeCliError", () => {
     expect(result.message).toContain("Unrecognized flag: --bogus-two in command supabase branches");
   });
 
-  // The same fallback also covers an InvalidValue that does NOT have the
-  // CLI-1898 doubled-"Expected"-prefix bug (e.g. a custom `Flag.mapTryCatch`
-  // validator like `sso add --domains`, whose `expected` text is already
-  // clean) — `mappedError`'s own InvalidValue case returns `undefined` for
-  // those (nothing to fix), so this generic fallback is what surfaces the
-  // message, not CLI-1898's specific rebuild.
   test("ShowHelp envelope unwraps a single InvalidValue with an already-clean expected message (not the CLI-1898 doubled-prefix bug)", () => {
     const error = {
       _tag: "ShowHelp",
@@ -414,10 +367,6 @@ describe("normalizeCliError", () => {
     });
   });
 
-  // If the single inner error has a `_tag` but no usable `message` (neither a
-  // string via its own getter nor otherwise), the fallback must not surface a
-  // blank/garbage message — it should fall through to ShowHelp's own generic
-  // handling, same as the pre-existing multiple-errors case below.
   test("ShowHelp envelope with a single inner error carrying no message falls back to generic", () => {
     const error = {
       _tag: "ShowHelp",
@@ -437,8 +386,7 @@ describe("normalizeCliError", () => {
         { _tag: "MissingOption", option: "project-ref" },
       ],
     };
-    // Should fall through to generic — message comes from ShowHelp itself,
-    // which doesn't include one in our test fixture.
+    // Fixture omits ShowHelp's own message, so only `code` is asserted here.
     const result = normalizeCliError(error);
     expect(result.code).toBe("ShowHelp");
   });

@@ -1,14 +1,9 @@
 name: Apply release notes
 
-# Approval-based publish. When a member of the supabase/cli team approves a
-# release-notes PR (head ref `release-notes/v<VERSION>`), this workflow pushes
-# the proposed notes to the GitHub Release body for the corresponding tag,
-# comments the release URL on the PR, and closes the PR without merging. The
-# release-notes PR targets `develop` (not `main`) so an accidental merge can
-# never rewrite `main`'s history; the file is not meant to land on any branch.
-#
-# Mirrors the fast-forward job in release.yml, which already gates on a
-# `pull_request_review` + `approved` event.
+# Approval-based publish: when a supabase/cli team member approves a release-notes PR (head ref
+# `release-notes/v<VERSION>`), this pushes the notes to the GitHub Release body for that tag,
+# comments the release URL on the PR, and closes it without merging. The PR targets `develop`
+# (not `main`) so an accidental merge can never rewrite `main`'s history.
 
 on:
   pull_request_review:
@@ -32,14 +27,14 @@ jobs:
     outputs:
       authorized: ${{ steps.check.outputs.authorized }}
     steps:
-      # App token: needs `orgs/.../teams/.../memberships` read (the org-installed
-      # App has it), repo write to edit the release, and PR write to comment
-      # and close. Matches release.yml's fast-forward step.
+      # The token reads the approver's team membership and comments on the pull request.
       - id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.GH_APP_CLIENT_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-members: read
+          permission-pull-requests: write
 
       - name: Authorize approver against supabase/cli team
         id: check
@@ -47,9 +42,8 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           APPROVER: ${{ github.event.review.user.login }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-        # Fail closed: any response other than an active membership means the
-        # approval is ignored. We post a comment so the reviewer sees why their
-        # approval didn't apply, then exit 0 so the workflow isn't flagged red.
+        # Fail closed: any state other than active membership is ignored. Exit 0 (after
+        # commenting why) so the workflow isn't flagged red.
         run: |
           set -euo pipefail
           status=$(gh api \
@@ -73,15 +67,19 @@ jobs:
       contents: write
       pull-requests: write
     steps:
+      # The token edits the GitHub release, deletes the branch, and comments on and closes the
+      # pull request. The script below runs from the pull request's own checkout, so the token
+      # must not be able to change workflow files.
       - id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.GH_APP_CLIENT_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
 
-      # Checkout the PR head so any reviewer edits made in the GitHub UI before
-      # approval are captured. apply-release-notes.ts reads from the working
-      # tree.
+      # Checkout the PR head so reviewer edits made before approval are captured;
+      # apply-release-notes.ts reads from the working tree.
       - uses: useblacksmith/checkout@6fd481652155169ed4d2f25ebaf97464f685175f # v1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
@@ -98,17 +96,16 @@ jobs:
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           APPROVER: ${{ github.event.review.user.login }}
-        # The branch is named `release-notes/v<VERSION>`, so the tag is just
-        # the basename. apply-release-notes.ts validates the file's existence.
+        # The branch is named `release-notes/v<VERSION>`, so the tag is just the basename.
         run: |
           set -euo pipefail
           tag="${HEAD_REF##release-notes/}"
-          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(beta|alpha)\.[0-9]+)?$ ]]; then
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(beta|alpha|next)\.[0-9]+)?$ ]]; then
             echo "Unexpected head ref '$HEAD_REF'; cannot derive tag." >&2
             exit 1
           fi
           echo "==> Applying notes for $tag"
-          pnpm exec bun apps/cli/scripts/apply-release-notes.ts --tag "$tag"
+          bun apps/cli/scripts/apply-release-notes.ts --tag "$tag"
           release_url="https://github.com/${{ github.repository }}/releases/tag/${tag}"
           gh pr comment "$PR_NUMBER" --repo "${{ github.repository }}" --body \
             "Applied to [${tag}](${release_url}) after approval by @${APPROVER}."

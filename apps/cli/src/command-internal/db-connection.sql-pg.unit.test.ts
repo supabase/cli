@@ -1,11 +1,14 @@
 import { EventEmitter } from "node:events";
-import { Effect, Exit } from "effect";
-import { SqlError, SqlSyntaxError, UnknownError } from "effect/unstable/sql/SqlError";
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, Exit, Fiber } from "effect";
+import { TestClock } from "effect/testing";
+import { SqlError, SqlSyntaxError, UnknownError } from "effect/sql/SqlError";
 import type * as Pg from "pg";
-import { describe, expect, it } from "vitest";
 
 import { ErrorActionabilityId } from "../shared/telemetry/error-actionability.ts";
 import { SUGGEST_LOCAL_STACK } from "./connect-errors.ts";
+import { DbExecError } from "./db-connection.errors.ts";
 import {
   acquireProbedPool,
   batchFailureError,
@@ -21,8 +24,12 @@ import {
   mergedConnectionOptions,
   sslConfigsFor,
   sslOptionFor,
+  tlsExplicitlyRequested,
+  toConnectError,
   toExecError,
 } from "./db-connection.sql-pg.layer.ts";
+import { parseConnectionString } from "./db-config.parse.ts";
+import type { PgConnInput } from "./db-connection.service.ts";
 
 describe("buildConnectionUrl", () => {
   const base = {
@@ -72,7 +79,7 @@ describe("buildConnectionUrl", () => {
     );
   });
 
-  it("forwards runtimeParams as -c flags in the options startup param (Go RuntimeParams)", () => {
+  it("forwards runtimeParams as -c flags in the options startup param", () => {
     const url = buildConnectionUrl(
       {
         user: "postgres",
@@ -131,14 +138,12 @@ describe("sslOptionFor", () => {
     expect(sslOptionFor(undefined, false, undefined)).toEqual({ rejectUnauthorized: false });
   });
 
-  it("treats prefer/require as TLS without verification (their pgconn primary)", () => {
+  it("treats prefer/require as TLS without verification (their primary mode)", () => {
     expect(sslOptionFor("prefer", false, undefined)).toEqual({ rejectUnauthorized: false });
     expect(sslOptionFor("require", false, undefined)).toEqual({ rejectUnauthorized: false });
   });
 
   it("uses plaintext for sslmode=disable and sslmode=allow on a remote connection", () => {
-    // pgconn's `allow` fallback list is `{nil, tlsConfig}` — a non-TLS primary —
-    // so an `allow` DSN to a plaintext-only endpoint must connect without TLS.
     expect(sslOptionFor("disable", false, undefined)).toBe(false);
     expect(sslOptionFor("allow", false, undefined)).toBe(false);
   });
@@ -149,9 +154,7 @@ describe("sslOptionFor", () => {
     });
   });
 
-  it("verifies the CA chain but skips hostname for verify-ca (pgconn parity)", () => {
-    // pgconn's verify-ca verifies the chain but not the hostname, so Node must
-    // keep rejectUnauthorized but disable the identity check.
+  it("verifies the CA chain but skips hostname for verify-ca", () => {
     const ssl = sslOptionFor("verify-ca", false, undefined);
     expect(ssl).toMatchObject({ rejectUnauthorized: true });
     if (typeof ssl === "object" && ssl !== null) {
@@ -160,9 +163,8 @@ describe("sslOptionFor", () => {
     }
   });
 
-  it("attaches the client cert (cert/key/passphrase) to every TLS mode (pgconn parity)", () => {
+  it("attaches the client cert (cert/key/passphrase) to every TLS mode", () => {
     const clientCert = { cert: "CERT", key: "KEY", passphrase: "pw" };
-    // verify-full / verify-ca / require|prefer all carry the client certificate.
     expect(sslOptionFor("verify-full", false, undefined, undefined, clientCert)).toMatchObject({
       cert: "CERT",
       key: "KEY",
@@ -172,7 +174,6 @@ describe("sslOptionFor", () => {
       cert: "CERT",
       key: "KEY",
     });
-    // Plaintext modes carry no client cert.
     expect(sslOptionFor("disable", false, undefined, undefined, clientCert)).toBe(false);
   });
 
@@ -183,9 +184,7 @@ describe("sslOptionFor", () => {
     });
   });
 
-  it("carries the servername for non-verifying TLS modes too (Go enables sslsni by default)", () => {
-    // Go keeps the original hostname as the TLS ServerName for every TLS mode
-    // when DoH swaps in a resolved IP, so require/prefer must send SNI as well.
+  it("carries the servername for non-verifying TLS modes too", () => {
     expect(sslOptionFor("require", false, "db.example.com")).toEqual({
       rejectUnauthorized: false,
       servername: "db.example.com",
@@ -207,7 +206,7 @@ describe("sslOptionFor", () => {
   });
 });
 
-describe("sslConfigsFor (pgconn fallback list)", () => {
+describe("sslConfigsFor (fallback list)", () => {
   it("local connections try a single plaintext (no-TLS) config", () => {
     expect(sslConfigsFor(undefined, true, undefined)).toEqual([false]);
   });
@@ -216,17 +215,18 @@ describe("sslConfigsFor (pgconn fallback list)", () => {
     expect(sslConfigsFor("disable", false, undefined)).toEqual([false]);
   });
 
-  it("allow is plaintext primary with a TLS fallback ({nil, tlsConfig})", () => {
+  it("allow is plaintext primary with a TLS fallback (plaintext first, then TLS)", () => {
     expect(sslConfigsFor("allow", false, undefined)).toEqual([
       false,
       { rejectUnauthorized: false },
     ]);
   });
 
+  it("allow keeps its TLS fallback for a target classified local", () => {
+    expect(sslConfigsFor("allow", true, undefined)).toEqual([false, { rejectUnauthorized: false }]);
+  });
+
   it("prefer and unset are TLS only (ConnectByUrl strips the plaintext fallback)", () => {
-    // pgconn's raw list is `{tlsConfig, nil}`, but Go's ConnectByUrl removes the
-    // plaintext fallback when the primary is TLS, so a default remote connection
-    // fails rather than downgrading to plaintext.
     expect(sslConfigsFor("prefer", false, undefined)).toEqual([{ rejectUnauthorized: false }]);
     expect(sslConfigsFor(undefined, false, undefined)).toEqual([{ rejectUnauthorized: false }]);
   });
@@ -241,14 +241,12 @@ describe("sslConfigsFor (pgconn fallback list)", () => {
 
   it("loads sslrootcert into the verifying modes and promotes require → verify-ca", () => {
     const ca = "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----";
-    // require + a root cert behaves like verify-ca (chain verified, hostname skipped).
     const required = sslConfigsFor("require", false, undefined, ca);
     expect(required).toHaveLength(1);
     expect(required[0]).toMatchObject({ rejectUnauthorized: true, ca });
     expect((required[0] as { checkServerIdentity?: unknown }).checkServerIdentity).toBeTypeOf(
       "function",
     );
-    // verify-full keeps full verification but pins the CA.
     expect(sslConfigsFor("verify-full", false, undefined, ca)).toEqual([
       { rejectUnauthorized: true, ca },
     ]);
@@ -256,21 +254,79 @@ describe("sslConfigsFor (pgconn fallback list)", () => {
 
   it("does not attach a CA to non-verifying modes", () => {
     const ca = "ca-bundle";
-    // prefer stays unverified even with a root cert (pgconn: InsecureSkipVerify).
     expect(sslConfigsFor("prefer", false, undefined, ca)).toEqual([{ rejectUnauthorized: false }]);
   });
 
   it("forces a single plaintext attempt for a unix-socket host regardless of sslmode", () => {
-    // pgconn skips TLS for a unix NetworkAddress, so a socket DSN connects in
-    // plaintext even though the host is not the local services hostname (isLocal=false).
     expect(sslConfigsFor("require", false, undefined, undefined, "/var/run/postgresql")).toEqual([
       false,
     ]);
     expect(sslConfigsFor("verify-full", false, undefined, "ca", "/tmp/.s.PGSQL")).toEqual([false]);
-    // A non-socket host still follows the normal sslmode fallback list.
     expect(sslConfigsFor("require", false, undefined, undefined, "db.example.com")).toEqual([
       { rejectUnauthorized: false },
     ]);
+  });
+});
+
+describe("tlsExplicitlyRequested (CLI-2366: --db-url TLS against a local target)", () => {
+  const base: PgConnInput = {
+    host: "127.0.0.1",
+    port: 54322,
+    user: "postgres",
+    password: "postgres",
+    database: "postgres",
+  };
+
+  it("is false when the DSN set neither sslmode nor a root cert", () => {
+    expect(tlsExplicitlyRequested(base)).toBe(false);
+  });
+
+  it("is true for require/verify-ca/verify-full, the modes sslConfigsFor cannot fall back from", () => {
+    expect(tlsExplicitlyRequested({ ...base, sslmode: "require" })).toBe(true);
+    expect(tlsExplicitlyRequested({ ...base, sslmode: "verify-ca" })).toBe(true);
+    expect(tlsExplicitlyRequested({ ...base, sslmode: "verify-full" })).toBe(true);
+  });
+
+  it("is false for prefer, allow and disable, none of which name a verification intent", () => {
+    expect(tlsExplicitlyRequested({ ...base, sslmode: "prefer" })).toBe(false);
+    expect(tlsExplicitlyRequested({ ...base, sslmode: "allow" })).toBe(false);
+    expect(tlsExplicitlyRequested({ ...base, sslmode: "disable" })).toBe(false);
+  });
+
+  it.effect("leaves a loopback DSN plaintext when PGSSLMODE filled sslmode the URL never set", () =>
+    Effect.gen(function* () {
+      // The real trigger: `sslmode` is also filled from `PGSSLMODE` and libpq service files, so an
+      // ambient `PGSSLMODE=prefer` must not make a bare loopback `--db-url` demand TLS.
+      const conn = yield* parseConnectionString(
+        "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+        (name) => (name === "PGSSLMODE" ? "prefer" : undefined),
+      );
+      expect(conn?.sslmode).toBe("prefer");
+      expect(tlsExplicitlyRequested(conn!)).toBe(false);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("still demands TLS when PGSSLMODE asks for verification", () =>
+    Effect.gen(function* () {
+      const conn = yield* parseConnectionString(
+        "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+        (name) => (name === "PGSSLMODE" ? "verify-full" : undefined),
+      );
+      expect(conn?.sslmode).toBe("verify-full");
+      expect(tlsExplicitlyRequested(conn!)).toBe(true);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it("is true when a root cert (file path or inline PEM) is set", () => {
+    expect(tlsExplicitlyRequested({ ...base, sslrootcert: "/tmp/ca.pem" })).toBe(true);
+    expect(
+      tlsExplicitlyRequested({ ...base, sslrootcertInline: "-----BEGIN CERTIFICATE-----" }),
+    ).toBe(true);
+  });
+
+  it("ignores an empty sslrootcert/sslrootcertInline string", () => {
+    expect(tlsExplicitlyRequested({ ...base, sslrootcert: "" })).toBe(false);
+    expect(tlsExplicitlyRequested({ ...base, sslrootcertInline: "" })).toBe(false);
   });
 });
 
@@ -338,8 +394,6 @@ describe("buildPoolConfig", () => {
   const base = { user: "postgres", password: "pw", port: 5432, database: "postgres", host: "h" };
 
   it("disables idle reaping (idleTimeoutMillis 0) and pins one connection (max 1) for a remote config", () => {
-    // The `db pull` bug: `PgClient.make` left idleTimeoutMillis unset (node-postgres
-    // default 10s), reaping the stepped-down connection during a long idle.
     const c = buildPoolConfig(
       { ...base },
       "db.example.com",
@@ -351,7 +405,6 @@ describe("buildPoolConfig", () => {
     expect(c.idleTimeoutMillis).toBe(0);
     expect(c.max).toBe(1);
     expect(c.application_name).toBe("@effect/sql-pg");
-    // carries the raw client config fields through
     expect(c).toMatchObject({ host: "db.example.com", connectionTimeoutMillis: 10_000 });
   });
 
@@ -369,9 +422,6 @@ describe("buildPoolConfig", () => {
   });
 
   it("installs the step-down verify hook only when required", () => {
-    // Every NEW physical connection (initial + silent redials) runs the step-down
-    // before pg-pool hands it to a checkout, mirroring Go's per-connection
-    // AfterConnect.
     const remote = buildPoolConfig({ ...base }, "db.example.com", 5432, false, 10, true);
     expect(remote.verify).toBe(poolStepDownVerify);
     const local = buildPoolConfig({ ...base }, "127.0.0.1", 54322, false, 2, false);
@@ -380,33 +430,39 @@ describe("buildPoolConfig", () => {
 });
 
 describe("poolStepDownVerify", () => {
-  it("runs SET SESSION ROLE postgres and reports success to the pool", async () => {
-    const queries: Array<string> = [];
-    const client = { query: (sql: string) => (queries.push(sql), Promise.resolve()) };
-    const done = await new Promise<Error | undefined>((resolve) => {
-      poolStepDownVerify(client, resolve);
-    });
-    expect(queries).toEqual(["SET SESSION ROLE postgres"]);
-    expect(done).toBeUndefined();
-  });
+  it.effect("runs SET SESSION ROLE postgres and reports success to the pool", () =>
+    Effect.gen(function* () {
+      const queries: Array<string> = [];
+      const client = { query: (sql: string) => (queries.push(sql), Promise.resolve()) };
+      const done = yield* Effect.callback<Error | undefined>((resume) => {
+        poolStepDownVerify(client, (error) => resume(Effect.succeed(error)));
+      });
+      expect(queries).toEqual(["SET SESSION ROLE postgres"]);
+      expect(done).toBeUndefined();
+    }),
+  );
 
-  it("propagates a failing step-down to the pool callback so the checkout fails (Go AfterConnect parity)", async () => {
-    const failure = new Error("permission denied to set role");
-    const client = { query: () => Promise.reject(failure) };
-    const done = await new Promise<Error | undefined>((resolve) => {
-      poolStepDownVerify(client, resolve);
-    });
-    expect(done).toBe(failure);
-  });
+  it.effect("propagates a failing step-down to the pool callback so the checkout fails", () =>
+    Effect.gen(function* () {
+      const failure = new Error("permission denied to set role");
+      const client = { query: () => Promise.reject(failure) };
+      const done = yield* Effect.callback<Error | undefined>((resume) => {
+        poolStepDownVerify(client, (error) => resume(Effect.succeed(error)));
+      });
+      expect(done).toBe(failure);
+    }),
+  );
 
-  it("wraps a non-Error rejection into an Error for the pool callback", async () => {
-    const client = { query: () => Promise.reject("boom") };
-    const done = await new Promise<Error | undefined>((resolve) => {
-      poolStepDownVerify(client, resolve);
-    });
-    expect(done).toBeInstanceOf(Error);
-    expect(String(done)).toContain("boom");
-  });
+  it.effect("wraps a non-Error rejection into an Error for the pool callback", () =>
+    Effect.gen(function* () {
+      const client = { query: () => Promise.reject("boom") };
+      const done = yield* Effect.callback<Error | undefined>((resume) => {
+        poolStepDownVerify(client, (error) => resume(Effect.succeed(error)));
+      });
+      expect(done).toBeInstanceOf(Error);
+      expect(String(done)).toContain("boom");
+    }),
+  );
 });
 
 describe("installPoolErrorSwallow", () => {
@@ -419,8 +475,7 @@ describe("installPoolErrorSwallow", () => {
 });
 
 describe("acquireProbedPool", () => {
-  // Tiny fake at the driver boundary: records query/end calls. Standing in for a
-  // real `pg.Pool` proves the pool is always `.end()`ed — the leak this fixes.
+  // Tiny fake at the driver boundary recording query/end calls, standing in for a real `pg.Pool`.
   function makeFakePool(query: () => Promise<unknown>) {
     const calls = { query: 0, end: 0 };
     const pool = {
@@ -437,42 +492,45 @@ describe("acquireProbedPool", () => {
     return { pool, calls };
   }
 
-  it("ends the pool when the connect probe rejects", async () => {
-    const fake = makeFakePool(() => Promise.reject(new Error("ECONNREFUSED")));
-    const exit = await Effect.runPromiseExit(
-      acquireProbedPool(() => fake.pool, 2).pipe(Effect.scoped),
-    );
-    expect(Exit.isFailure(exit)).toBe(true);
-    expect(fake.calls.query).toBe(1);
-    // The finalizer, installed the moment the pool exists, closes it on failure.
-    expect(fake.calls.end).toBe(1);
-  });
+  it.effect("ends the pool when the connect probe rejects", () =>
+    Effect.gen(function* () {
+      const fake = makeFakePool(() => Promise.reject(new Error("ECONNREFUSED")));
+      const exit = yield* acquireProbedPool(() => fake.pool, 2).pipe(Effect.scoped, Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(fake.calls.query).toBe(1);
+      expect(fake.calls.end).toBe(1);
+    }),
+  );
 
-  it("ends the pool when the connect probe times out (black-holed host)", async () => {
-    // A never-resolving probe models a black-holed host: `timeoutOrElse` fires and
-    // the already-installed finalizer still closes the pool + its in-flight dial.
-    const fake = makeFakePool(() => new Promise<unknown>(() => {}));
-    const exit = await Effect.runPromiseExit(
-      acquireProbedPool(() => fake.pool, 0.05).pipe(Effect.scoped),
-    );
-    expect(Exit.isFailure(exit)).toBe(true);
-    expect(fake.calls.end).toBe(1);
-  });
+  it.effect("ends the pool when the connect probe times out (black-holed host)", () =>
+    Effect.gen(function* () {
+      const context = yield* Effect.context<never>();
+      const signal = yield* Effect.abortSignal;
+      const fake = makeFakePool(() => Effect.runPromiseWith(context)(Effect.never, { signal }));
+      const fiber = yield* acquireProbedPool(() => fake.pool, 0.05).pipe(
+        Effect.scoped,
+        Effect.exit,
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("50 millis");
+      const exit = yield* Fiber.join(fiber);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(fake.calls.end).toBe(1);
+    }),
+  );
 
-  it("keeps the pool open until the scope closes on a successful probe", async () => {
-    const fake = makeFakePool(() => Promise.resolve({ rows: [{ "?column?": 1 }] }));
-    const observed = await Effect.runPromise(
-      Effect.gen(function* () {
+  it.effect("keeps the pool open until the scope closes on a successful probe", () =>
+    Effect.gen(function* () {
+      const fake = makeFakePool(() => Promise.resolve({ rows: [{ "?column?": 1 }] }));
+      const observed = yield* Effect.gen(function* () {
         const pool = yield* acquireProbedPool(() => fake.pool, 2);
-        // While the scope is open the pool is live and not yet ended.
         return { isSamePool: pool === fake.pool, endWhileOpen: fake.calls.end };
-      }).pipe(Effect.scoped),
-    );
-    expect(observed.isSamePool).toBe(true);
-    expect(observed.endWhileOpen).toBe(0);
-    // Closing the scope ends the pool exactly once.
-    expect(fake.calls.end).toBe(1);
-  });
+      }).pipe(Effect.scoped);
+      expect(observed.isSamePool).toBe(true);
+      expect(observed.endWhileOpen).toBe(0);
+      expect(fake.calls.end).toBe(1);
+    }),
+  );
 });
 
 describe("isUnixSocketHost", () => {
@@ -483,15 +541,14 @@ describe("isUnixSocketHost", () => {
     expect(isUnixSocketHost("::1")).toBe(false);
   });
 
-  it("treats an uppercase Windows drive path as a socket, lowercase as TCP (pgconn parity)", () => {
-    // pgconn's isAbsolutePath accepts `A-Z:\…` (uppercase drive only); `c:\…` is TCP.
+  it("treats an uppercase Windows drive path as a socket, lowercase as TCP", () => {
     expect(isUnixSocketHost("C:\\pgsql")).toBe(true);
     expect(isUnixSocketHost("c:\\pgsql")).toBe(false);
     expect(isUnixSocketHost("C:")).toBe(false);
   });
 });
 
-describe("isTerminalConnectError (pgconn fallback termination)", () => {
+describe("isTerminalConnectError (fallback termination)", () => {
   it("terminates on auth/catalog/privilege SQLSTATEs carried on the error cause", () => {
     // The pg driver attaches the SQLSTATE as `code`; @effect/sql wraps it in `cause`.
     expect(isTerminalConnectError({ cause: { code: "28P01" } }, false)).toBe(true);
@@ -499,7 +556,7 @@ describe("isTerminalConnectError (pgconn fallback termination)", () => {
     expect(isTerminalConnectError({ code: "42501" }, false)).toBe(true);
   });
 
-  it("gates 28000 on the attempt having used TLS (pgconn fc.TLSConfig != nil)", () => {
+  it("gates 28000 on the attempt having used TLS (a TLS attempt is required)", () => {
     expect(isTerminalConnectError({ code: "28000" }, true)).toBe(true);
     expect(isTerminalConnectError({ code: "28000" }, false)).toBe(false);
   });
@@ -532,7 +589,7 @@ describe("toExecError (pg server-error extraction)", () => {
       }),
     });
 
-  it("renders pgconn's PgError message and carries code, detail, and position", () => {
+  it("renders the server error message and carries code, detail, and position", () => {
     const error = toExecError(
       sqlErrorChain({
         message: 'type "ltree" does not exist',
@@ -548,7 +605,7 @@ describe("toExecError (pg server-error extraction)", () => {
     expect(error.position).toBe(25);
   });
 
-  it("omits detail and position when the server sent none (Go's non-empty gates)", () => {
+  it("omits detail and position when the server sent none", () => {
     const error = toExecError(
       sqlErrorChain({
         message: 'syntax error at or near "BOOM"',
@@ -575,6 +632,31 @@ describe("toExecError (pg server-error extraction)", () => {
     expect(error.code).toBe("ECONNRESET");
     expect(error.detail).toBeUndefined();
     expect(error.position).toBeUndefined();
+  });
+});
+
+describe("toConnectError (ipv6Unreachable classification)", () => {
+  const cfg: PgConnInput = {
+    host: "db.project-ref.supabase.co",
+    port: 5432,
+    user: "postgres",
+    password: "pw",
+    database: "postgres",
+  };
+
+  it.each([
+    ["ENOTFOUND", { code: "ENOTFOUND" }],
+    ["EHOSTUNREACH with an IPv6 address", { code: "EHOSTUNREACH", address: "2600:1f18::1" }],
+    ["EADDRNOTAVAIL with an IPv6 address", { code: "EADDRNOTAVAIL", address: "2600:1f18::1" }],
+    ["ENETUNREACH with an IPv6 address", { code: "ENETUNREACH", address: "2600:1f18::1" }],
+  ])("sets ipv6Unreachable for a %s driver error", (_description, driverError) => {
+    const error = toConnectError(cfg, false, driverError);
+    expect(error.ipv6Unreachable).toBe(true);
+  });
+
+  it("does not set ipv6Unreachable for a refused connection", () => {
+    const error = toConnectError(cfg, false, { code: "ECONNREFUSED" });
+    expect(error.ipv6Unreachable).toBeUndefined();
   });
 });
 
@@ -709,9 +791,21 @@ describe("batchFailureError", () => {
     expect("suggestion" in remote).toBe(false);
   });
 
+  it("adds the --remote pointer to the local-stack hint on a linked checkout", () => {
+    const error = batchFailureError(
+      new Error("socket died"),
+      { completed: 0, outcome: "unsent" },
+      true,
+      true,
+    );
+
+    expect(error).toMatchObject({
+      suggestion: `${SUGGEST_LOCAL_STACK}\nTo use the linked project instead, pass --remote.`,
+    });
+  });
+
   it("keeps a partially written batch on the statement path, blaming statement 0", () => {
-    // A poisoned batch is corked, so the server acknowledged nothing and `completed`
-    // is always 0 — the failure can only be reported against the batch's first statement.
+    // A poisoned batch is corked, so `completed` stays 0 and statement 0 is blamed.
     const error = batchFailureError(
       new Error("serialization blew up"),
       {
@@ -762,7 +856,10 @@ describe("shouldDiscardBatchClient", () => {
   it("returns a client to the pool once its batch was written, error or not", () => {
     expect(shouldDiscardBatchClient({ outcome: "submitted" }, Exit.succeed(undefined))).toBe(false);
     expect(
-      shouldDiscardBatchClient({ outcome: "submitted" }, Exit.fail(new Error("server said no"))),
+      shouldDiscardBatchClient(
+        { outcome: "submitted" },
+        Exit.fail(new DbExecError({ message: "server said no" })),
+      ),
     ).toBe(false);
   });
 

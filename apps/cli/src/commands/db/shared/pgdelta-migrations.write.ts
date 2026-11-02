@@ -1,4 +1,4 @@
-import { Data, Effect, type FileSystem, type Path } from "effect";
+import { Array as Arr, Data, Effect, Predicate, type FileSystem, type Path } from "effect";
 
 import {
   actionability,
@@ -32,35 +32,22 @@ export class PgDeltaMigrationWriteError extends Data.TaggedError("PgDeltaMigrati
 
 /**
  * Bounds the base-timestamp bump retry so a directory already full of same-second
- * migrations can't spin forever. Mirrors Go's `maxVersionCollisionAttempts`.
+ * migrations can't spin forever.
  */
 const MAX_VERSION_COLLISION_ATTEMPTS = 60;
 
+function quoteJson(value: unknown): string {
+  return JSON.stringify(value);
+}
+
 /**
- * Port of Go's `WritePgDeltaMigrations` (`apps/cli-go/internal/db/diff/pgdelta_migrations.go`).
- *
- * Writes one ordered migration file per plan unit. A single-unit plan (the common
- * case) keeps the exact `<ts>_<name>.sql` filename; multi-unit plans append the
- * unit name and give each file a strictly increasing timestamp (real time
- * arithmetic on the base millis, never string increment) so their execution order
- * and migration-history order stay stable.
- *
- * Before writing anything the FULL set of generated versions is collision-checked
- * against the migrations directory: if any version is already used, the base is
- * advanced by one second and every version recomputed, so the set stays strictly
- * ascending AND unique against pre-existing migrations regardless of their names.
- * The base only ever moves forward — never backdated below the caller's wall clock,
- * since backdating could sort a new file before pre-existing migrations. The
- * resulting ≤N−1s future-dating is inherent to second-granularity versions and
- * acceptable once uniqueness is enforced.
- *
- * Each file is written with the exclusive `"wx"` flag so a race between the
- * collision check and the write can still never silently overwrite an existing
- * migration. If any open/write fails mid-loop, every file already written by THIS
- * invocation is best-effort removed before the error surfaces (a removal failure
- * never masks the original error).
+ * Writes one migration file per plan unit, giving multi-unit plans strictly increasing
+ * timestamps so execution and history order stay stable. The full version set is
+ * collision-checked against the migrations directory up front, advancing the base timestamp
+ * forward only (never backdated) until unique. Each file opens with the exclusive `"wx"`
+ * flag against overwrite races; a failed write removes every file this call already wrote.
  */
-export const writePgDeltaMigrations = (
+export const writePgDeltaMigrations = Effect.fn("PgDeltaMigrations.write")(function* (
   fs: FileSystem.FileSystem,
   pathSvc: Path.Path,
   opts: {
@@ -74,123 +61,118 @@ export const writePgDeltaMigrations = (
       readonly transactionMode: MigrationTransactionMode;
     }>;
   },
-): Effect.Effect<Array<WrittenMigration>, PgDeltaMigrationWriteError> =>
-  Effect.gen(function* () {
-    const { workdir, name, files } = opts;
-    for (const file of files) {
-      if (file.transactionMode !== "transactional" && file.transactionMode !== "none") {
-        return yield* Effect.fail(
-          new PgDeltaMigrationWriteError({
-            message: `unknown pg-delta transaction mode ${JSON.stringify(file.transactionMode)}`,
-          }),
-        );
-      }
+): Effect.fn.Return<Array<WrittenMigration>, PgDeltaMigrationWriteError> {
+  const { workdir, name, files } = opts;
+  yield* Effect.annotateCurrentSpan({ "file.count": files.length });
+  for (const file of files) {
+    if (file.transactionMode !== "transactional" && file.transactionMode !== "none") {
+      return yield* new PgDeltaMigrationWriteError({
+        message: `unknown pg-delta transaction mode ${quoteJson(file.transactionMode)}`,
+      });
     }
-    const single = files.length === 1;
-    const migrationsDir = pathSvc.join(workdir, "supabase", "migrations");
-    const migrationEntries = yield* fs.readDirectory(migrationsDir).pipe(
-      Effect.catchTag("PlatformError", (error) =>
-        error.reason._tag === "NotFound"
-          ? Effect.succeed([] as ReadonlyArray<string>)
-          : Effect.fail(
-              new PgDeltaMigrationWriteError({
-                message: `failed to read migration directory: ${error.message}`,
-              }),
-            ),
+  }
+  const single = files.length === 1;
+  const migrationsDir = pathSvc.join(workdir, "supabase", "migrations");
+  const migrationEntries = yield* fs.readDirectory(migrationsDir).pipe(
+    Effect.catchReason(
+      "PlatformError",
+      "NotFound",
+      () => Effect.succeed<ReadonlyArray<string>>([]),
+      (_, error) =>
+        Effect.fail(
+          new PgDeltaMigrationWriteError({
+            message: `failed to read migration directory: ${error.message}`,
+          }),
+        ),
+    ),
+  );
+  const usedVersions = new Set<string>();
+  for (const entry of migrationEntries) {
+    const match = /^([0-9]+)_(.+)$/u.exec(entry);
+    if (match?.[1] === undefined) continue;
+    if (entry.endsWith(".sql")) {
+      usedVersions.add(match[1]);
+      continue;
+    }
+    const stat = yield* fs.stat(pathSvc.join(migrationsDir, entry)).pipe(
+      Effect.mapError(
+        (cause) =>
+          new PgDeltaMigrationWriteError({
+            message: `failed to inspect migration directory entry: ${cause.message}`,
+          }),
       ),
     );
-    const usedVersions = new Set<string>();
-    for (const entry of migrationEntries) {
-      const match = /^([0-9]+)_(.+)$/u.exec(entry);
-      if (match?.[1] === undefined) continue;
-      if (entry.endsWith(".sql")) {
-        usedVersions.add(match[1]);
-        continue;
-      }
-      const stat = yield* fs.stat(pathSvc.join(migrationsDir, entry)).pipe(
-        Effect.mapError(
-          (cause) =>
-            new PgDeltaMigrationWriteError({
-              message: `failed to inspect migration directory entry: ${cause.message}`,
-            }),
-        ),
-      );
-      if (stat.type === "Directory") {
-        // Nested names such as `snapshots/remote` are stored under a
-        // `<version>_snapshots/` directory, whose prefix still owns the version.
-        usedVersions.add(match[1]);
-      }
+    if (stat.type === "Directory") {
+      // Nested names such as `snapshots/remote` are stored under a
+      // `<version>_snapshots/` directory, whose prefix still owns the version.
+      usedVersions.add(match[1]);
     }
-    const buildSet = (baseMillis: number): Array<WrittenMigration> =>
-      files.map((file, i) => {
-        const version = formatMigrationTimestamp(baseMillis + i * 1000);
-        const unitName = single
-          ? name
-          : file.suffix !== undefined && file.suffix !== null
-            ? `${name}${file.suffix}`
-            : `${name}_${file.name}`;
-        return { path: getMigrationPath(pathSvc, workdir, version, unitName), version };
-      });
+  }
+  const buildSet = (baseMillis: number): Array<WrittenMigration> =>
+    files.map((file, i) => {
+      const version = formatMigrationTimestamp(baseMillis + i * 1000);
+      const unitName = single
+        ? name
+        : file.suffix !== undefined && file.suffix !== null
+          ? `${name}${file.suffix}`
+          : `${name}_${file.name}`;
+      return { path: getMigrationPath(pathSvc, workdir, version, unitName), version };
+    });
 
-    let baseMillis = opts.baseMillis;
-    let set = buildSet(baseMillis);
-    for (let attempt = 0; ; attempt++) {
-      let collision = set.some((w) => usedVersions.has(w.version));
-      if (!collision) {
-        for (const w of set) {
-          const exists = yield* fs.exists(w.path).pipe(
-            Effect.mapError(
-              (cause) =>
-                new PgDeltaMigrationWriteError({
-                  message: `failed to check migration file: ${cause.message}`,
-                }),
-            ),
-          );
-          if (exists) {
-            collision = true;
-            break;
-          }
-        }
-      }
-      if (!collision) break;
-      if (attempt + 1 >= MAX_VERSION_COLLISION_ATTEMPTS) {
-        return yield* Effect.fail(
-          new PgDeltaMigrationWriteError({
-            message: `failed to find a unique migration version after ${MAX_VERSION_COLLISION_ATTEMPTS} attempts`,
-          }),
-        );
-      }
-      baseMillis += 1000;
-      set = buildSet(baseMillis);
-    }
-
-    const written: Array<WrittenMigration> = [];
-    const writeAll = Effect.gen(function* () {
-      for (let i = 0; i < files.length; i++) {
-        const w = set[i]!;
-        const file = files[i]!;
-        yield* makeDir(fs, pathSvc.dirname(w.path)).pipe(
-          Effect.mapError((cause) => new PgDeltaMigrationWriteError({ message: cause.message })),
-        );
-        yield* fs.writeFileString(w.path, `${file.sql}\n`, { flag: "wx" }).pipe(
+  let baseMillis = opts.baseMillis;
+  let set = buildSet(baseMillis);
+  for (let attempt = 0; ; attempt++) {
+    let collision = set.some((w) => usedVersions.has(w.version));
+    if (!collision) {
+      for (const w of set) {
+        const exists = yield* fs.exists(w.path).pipe(
           Effect.mapError(
             (cause) =>
               new PgDeltaMigrationWriteError({
-                message:
-                  cause.reason._tag === "AlreadyExists"
-                    ? `failed to open migration file: ${cause.message}`
-                    : `failed to write migration file: ${cause.message}`,
+                message: `failed to check migration file: ${cause.message}`,
               }),
           ),
         );
-        written.push(w);
+        if (exists) {
+          collision = true;
+          break;
+        }
       }
-      return written;
-    });
+    }
+    if (!collision) break;
+    if (attempt + 1 >= MAX_VERSION_COLLISION_ATTEMPTS) {
+      return yield* new PgDeltaMigrationWriteError({
+        message: `failed to find a unique migration version after ${MAX_VERSION_COLLISION_ATTEMPTS} attempts`,
+      });
+    }
+    baseMillis += 1000;
+    set = buildSet(baseMillis);
+  }
 
-    return yield* writeAll.pipe(
-      Effect.tapError(() =>
-        Effect.forEach(written, (w) => fs.remove(w.path).pipe(Effect.ignore), { discard: true }),
-      ),
-    );
+  const written: Array<WrittenMigration> = [];
+  const writeAll = Effect.gen(function* () {
+    for (const [w, file] of Arr.zip(set, files)) {
+      yield* makeDir(fs, pathSvc.dirname(w.path)).pipe(
+        Effect.mapError((cause) => new PgDeltaMigrationWriteError({ message: cause.message })),
+      );
+      yield* fs.writeFileString(w.path, `${file.sql}\n`, { flag: "wx" }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new PgDeltaMigrationWriteError({
+              message: Predicate.isTagged(cause.reason, "AlreadyExists")
+                ? `failed to open migration file: ${cause.message}`
+                : `failed to write migration file: ${cause.message}`,
+            }),
+        ),
+      );
+      written.push(w);
+    }
+    return written;
   });
+
+  return yield* writeAll.pipe(
+    Effect.tapError(() =>
+      Effect.forEach(written, (w) => fs.remove(w.path).pipe(Effect.ignore), { discard: true }),
+    ),
+  );
+});

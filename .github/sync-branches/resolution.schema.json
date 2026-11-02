@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "summary", "files", "deletedFiles", "decisions"],
+  "properties": {
+    "status": { "enum": ["resolved", "unresolved"] },
+    "summary": { "type": "string" },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "resolution"],
+        "properties": {
+          "path": { "type": "string" },
+          "resolution": { "type": "string" }
+        }
+      }
+    },
+    "deletedFiles": { "type": "array", "items": { "type": "string" } },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["question", "chosen"],
+        "properties": {
+          "question": { "type": "string" },
+          "chosen": { "type": "string" }
+        }
+      }
+    }
+  }
+}

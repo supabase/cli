@@ -1,22 +1,15 @@
 import { Schema, SchemaAST } from "effect";
 
-// Go's `LoadEnvHook` matcher (`apps/cli-go/pkg/config/decode_hooks.go:11`) is
-// `^env\((.*)\)$` — permissive on the captured name's case/content, and
-// reused verbatim for secrets (`secret.go:99`) and the unset-var warning
-// (`config.go:1195`). Matching that exactly (not an uppercase-only
-// restriction) so e.g. `project_id = "env(project_id)"` substitutes the same
-// way it does in the Go CLI.
+// Matches `env(...)` references case-insensitively on the captured name — e.g.
+// `env(project_id)` is a valid reference, not just SCREAMING_SNAKE_CASE names.
 export const ENV_PATTERN = "^env\\((.*)\\)$";
 export const ENV_CAPTURE_REGEX = /^env\((.*)\)$/;
-// Pre-PR-#5765 strict matcher: SCREAMING_SNAKE_CASE names only. Selected when
-// `goViperCompat` is off so non-Go-parity surfaces (next/, packages/stack, the
-// functions manifest) keep the narrower matching they had before PR #5765
-// widened env() resolution to Go's case-agnostic `^env\((.*)\)$`.
+// Stricter matcher used when `cliCompat` is off: only SCREAMING_SNAKE_CASE names match.
 export const ENV_CAPTURE_REGEX_STRICT = /^env\(([A-Z_][A-Z0-9_]*)\)$/;
-const envRegex = new RegExp(ENV_PATTERN);
+const envRegex = new RegExp(ENV_PATTERN, "u");
 
-export function isEnvReference(value: string, goViperCompat: boolean): boolean {
-  return (goViperCompat ? ENV_CAPTURE_REGEX : ENV_CAPTURE_REGEX_STRICT).test(value);
+export function isEnvReference(value: string, cliCompat: boolean): boolean {
+  return (cliCompat ? ENV_CAPTURE_REGEX : ENV_CAPTURE_REGEX_STRICT).test(value);
 }
 
 interface EnvAnnotations extends Schema.Annotations.Documentation<string> {
@@ -45,47 +38,12 @@ export const secret = (annotations?: SecretAnnotations) =>
     "x-secret": true,
   });
 
-// ---------------------------------------------------------------------------
-// Pre-decode env() interpolation with schema-aware type coercion
-// ---------------------------------------------------------------------------
-//
-// TOML/JSON parsers turn `port = "env(SUPABASE_ANALYTICS_PORT)"` into a string
-// at `analytics.port`, but the schema declares `port: Schema.Number`. Without
-// pre-decode handling the strict decoder rejects the string and crashes
-// `supabase db start` (CLI-1489).
-//
-// `interpolateEnvReferencesAgainstSchema` walks the parsed document and the
-// schema AST in parallel:
-//   - For string leaves matching `env(VAR)`: substitute `env[VAR]` if set, or
-//     preserve the literal verbatim if unset (matches Go's
-//     `apps/cli-go/pkg/config/decode_hooks.go:14-21`).
-//   - After substitution, if the schema at that path expects Number or Boolean
-//     and the value is still a string, coerce it. This mirrors Go's
-//     mapstructure chain where `LoadEnvHook` returns a string and subsequent
-//     hooks convert it to the target type.
-//   - Number/boolean coercion is only attempted on strings produced by env()
-//     substitution. Pre-existing string literals at non-string paths are left
-//     untouched — they'll surface as schema errors at decode time with their
-//     original value, preserving error clarity.
-//   - Array coercion is the one exception: if the schema at that path expects
-//     a homogeneous string array, ANY string leaf (substituted or a plain
-//     literal) is split on `,` — mirroring Go's `StringToSliceHookFunc(",")`
-//     (`apps/cli-go/pkg/config/config.go:775-784`), which is wired
-//     unconditionally into the decode hook chain regardless of where the
-//     string came from (e.g. `additional_redirect_urls = "http://a,http://b"`
-//     decodes fine in Go today, not just via `env(...)`).
-
 type ExpectedType = "number" | "boolean" | "string" | "array" | "unknown";
 
-// Go decodes an env()-substituted boolean via mapstructure's weakly-typed
-// `decodeBool`, which runs `strconv.ParseBool` on the string — a wider
-// acceptance set than the literal `"true"`/`"false"` this module used to
-// require. Mirrors `parseGoBool`'s `GO_BOOL_TRUE`/`GO_BOOL_FALSE`
-// (`apps/cli/src/command-internal/db-config.toml-read.ts:615-616`);
-// duplicated here (not imported) so `packages/config` doesn't depend on
-// `apps/cli`.
-const GO_BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
-const GO_BOOL_FALSE = new Set(["0", "f", "F", "FALSE", "false", "False", ""]);
+// Accepted boolean string forms (`1`/`t`/`T`/`TRUE`/`true`/`True`, `0`/`f`/`F`/`FALSE`/`false`/`False`); duplicated rather than
+// imported so `packages/config` has no dependency on `apps/cli`.
+const BOOL_TRUE_LITERALS = new Set(["1", "t", "T", "TRUE", "true", "True"]);
+const BOOL_FALSE_LITERALS = new Set(["0", "f", "F", "FALSE", "false", "False", ""]);
 
 // Unwrap Suspend (lazy AST refs from recursive schemas). Other transformation
 // wrappers expose the target type via `.ast` directly, so no additional
@@ -97,12 +55,9 @@ function unwrapAst(ast: SchemaAST.AST): SchemaAST.AST {
   return ast;
 }
 
-// A homogeneous `Schema.Array(Schema.String)` compiles to an `Arrays` AST
-// node with no fixed tuple `elements` and a single `rest` spread type. Only
-// this shape (not a fixed string tuple, and not a mixed-type array) is
-// eligible for Go's `StringToSliceHookFunc(",")` coercion below — mirroring
-// that Go itself only wires the hook for `[]string`-kind targets
-// (`apps/cli-go/pkg/config/config.go:775-784`), not fixed-arity tuples.
+// A homogeneous `Schema.Array(Schema.String)` compiles to an `Arrays` AST node with no fixed
+// tuple `elements` and a single `rest` spread type; only this shape (not a fixed tuple or a
+// mixed-type array) is eligible for the comma-split coercion below.
 function isHomogeneousStringArray(node: SchemaAST.AST): boolean {
   if (node._tag !== "Arrays" || node.elements.length !== 0 || node.rest.length !== 1) {
     return false;
@@ -123,11 +78,8 @@ function leafExpectedType(ast: SchemaAST.AST): ExpectedType {
     case "Arrays":
       return isHomogeneousStringArray(node) ? "array" : "unknown";
     case "Union": {
-      // Walk Union branches in declared order; first concrete primitive wins.
-      // For unions like `Schema.Union(Schema.Number, Schema.Null)` this picks
-      // the meaningful side. If the union mixes Number and String we err on
-      // the side of the first match — the schema decode will still validate
-      // membership after coercion.
+      // Walks branches in declared order; the first concrete primitive wins (e.g. `Number` in
+      // `Schema.Union(Schema.Number, Schema.Null)`). Schema decode still validates afterward.
       for (const variant of node.types) {
         const t = leafExpectedType(variant);
         if (t !== "unknown") {
@@ -200,15 +152,12 @@ function coerceLeaf(value: unknown, expected: ExpectedType): unknown {
     return value;
   }
   if (expected === "boolean") {
-    if (GO_BOOL_TRUE.has(value)) return true;
-    if (GO_BOOL_FALSE.has(value)) return false;
+    if (BOOL_TRUE_LITERALS.has(value)) return true;
+    if (BOOL_FALSE_LITERALS.has(value)) return false;
     return value;
   }
   if (expected === "array") {
-    // Go's `mapstructure.StringToSliceHookFunc(",")` (wired in
-    // `apps/cli-go/pkg/config/config.go:775-784`): an empty string decodes to
-    // an empty slice, otherwise the string is split on the separator with no
-    // further trimming of the resulting elements.
+    // An empty string decodes to an empty array; otherwise split on `,` with no trimming.
     return value === "" ? [] : value.split(",");
   }
   return value;
@@ -217,18 +166,16 @@ function coerceLeaf(value: unknown, expected: ExpectedType): unknown {
 function substituteEnvLeaf(
   value: string,
   env: Readonly<Record<string, string>>,
-  goViperCompat: boolean,
+  cliCompat: boolean,
 ): { readonly value: string; readonly resolved: boolean; readonly envName?: string } {
-  const match = (goViperCompat ? ENV_CAPTURE_REGEX : ENV_CAPTURE_REGEX_STRICT).exec(value);
+  const match = (cliCompat ? ENV_CAPTURE_REGEX : ENV_CAPTURE_REGEX_STRICT).exec(value);
   if (match === null) {
     return { value, resolved: false };
   }
   const envName = match[1];
-  const resolved = envName === undefined ? undefined : env[envName];
-  // Go's LoadEnvHook only substitutes when the env var is non-empty
-  // (`apps/cli-go/pkg/config/decode_hooks.go:19-24`: `len(env) > 0`), so a
-  // key that's present but empty (e.g. a dotenv `KEY=` line) preserves the
-  // `env(KEY)` literal exactly like an unset key, rather than substituting "".
+  const resolved = envName !== undefined && Object.hasOwn(env, envName) ? env[envName] : undefined;
+  // A present-but-empty var (e.g. a dotenv `KEY=` line) preserves the `env(KEY)` literal, same
+  // as an unset key, instead of substituting an empty string.
   if (envName === undefined || resolved === undefined || resolved === "") {
     return { value, resolved: false };
   }
@@ -256,12 +203,17 @@ function walk(
   document: unknown,
   env: Readonly<Record<string, string>>,
   ast: SchemaAST.AST | null,
-  goViperCompat: boolean,
+  cliCompat: boolean,
   path: ReadonlyArray<string>,
   onResolvedEnv:
     | ((path: ReadonlyArray<string>, envNames: ReadonlyArray<string>) => void)
     | undefined,
+  skip: ((path: ReadonlyArray<string>) => boolean) | undefined,
 ): unknown {
+  if (skip?.(path) === true) {
+    return document;
+  }
+
   if (Array.isArray(document)) {
     // Element-level resolutions are reported once, at the array's own path —
     // one array literal may draw on several env vars, so the names collect.
@@ -278,7 +230,7 @@ function walk(
           };
     const result = document.map((item, index) => {
       const child = ast === null ? null : descendAst(ast, String(index));
-      return walk(item, env, child, goViperCompat, [...path, String(index)], onResolvedArrayEnv);
+      return walk(item, env, child, cliCompat, [...path, String(index)], onResolvedArrayEnv, skip);
     });
     if (envNames.length > 0) {
       onResolvedEnv?.(path, envNames);
@@ -287,12 +239,12 @@ function walk(
   }
 
   if (typeof document === "object" && document !== null) {
-    const result: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(document)) {
-      const child = ast === null ? null : descendAst(ast, key);
-      result[key] = walk(value, env, child, goViperCompat, [...path, key], onResolvedEnv);
-    }
-    return result;
+    return Object.fromEntries(
+      Object.entries(document).map(([key, value]) => {
+        const child = ast === null ? null : descendAst(ast, key);
+        return [key, walk(value, env, child, cliCompat, [...path, key], onResolvedEnv, skip)];
+      }),
+    );
   }
 
   if (typeof document === "string") {
@@ -303,33 +255,22 @@ function walk(
       return document;
     }
 
-    const interpolation = substituteEnvLeaf(document, env, goViperCompat);
+    const interpolation = substituteEnvLeaf(document, env, cliCompat);
     const substituted = interpolation.value;
     if (interpolation.resolved && interpolation.envName !== undefined) {
       onResolvedEnv?.(path, [interpolation.envName]);
     }
     const expected = ast === null ? "unknown" : leafExpectedType(ast);
 
-    // Go's `StringToSliceHookFunc(",")` (`apps/cli-go/pkg/config/config.go:
-    // 775-784`) is wired unconditionally into `v.UnmarshalExact`'s decode
-    // hook chain, so it splits ANY string being decoded into a `[]string`
-    // field — a plain TOML literal (`additional_redirect_urls = "a,b"`) just
-    // as much as an `env()`-substituted one. Unlike the number/boolean
-    // coercion below (scoped to substituted values only, since TOML already
-    // decodes literal numbers/booleans to their native type), array coercion
-    // must also apply to literal strings that never went through
-    // `substituteEnvLeaf`. Gated by `goViperCompat`: when off, the string is
-    // left unsplit — literal and substituted alike — so an array-typed field
-    // fed a string fails decode instead of silently coercing, matching
-    // pre-PR-#5765 behavior.
+    // Unlike number/boolean coercion, array coercion also applies to literal strings that never
+    // went through env() substitution (e.g. plain TOML `"a,b"`). Gated by `cliCompat`: off
+    // leaves strings unsplit, so an array-typed field fed a string fails decode instead of coercing.
     if (expected === "array") {
-      return goViperCompat ? coerceLeaf(substituted, expected) : substituted;
+      return cliCompat ? coerceLeaf(substituted, expected) : substituted;
     }
 
-    // Substitute env() then coerce based on the schema's expected type at this
-    // path. Only the substituted form is fed to coercion — literal strings at
-    // non-string paths are left untouched so the decoder can report them with
-    // their original value.
+    // Only the substituted form is fed to coercion; literal strings at non-string paths are
+    // left untouched so the decoder reports them with their original value.
     if (substituted === document) {
       return document;
     }
@@ -343,40 +284,31 @@ function walk(
 }
 
 /**
- * Pre-decode env() substitution + schema-aware coercion.
- *
- * Walks the raw parsed document and the schema AST in parallel. For every
- * string leaf matching `env(VAR)`:
- *   1. Substitutes `env[VAR]` if set AND non-empty, else preserves the
- *      literal verbatim (Go-parity with
- *      `apps/cli-go/pkg/config/decode_hooks.go:14-21`, which gates on
- *      `len(env) > 0` — a set-but-empty var, e.g. a dotenv `KEY=` line,
- *      leaves the `env(KEY)` literal untouched just like an unset one).
- *   2. If the schema at that path expects Number or Boolean, coerces the
- *      substituted string to the expected primitive — mirroring Go's
- *      mapstructure chain where `LoadEnvHook` returns a string that the next
- *      hook converts to the target type.
- *
- * Returns a new structure; does not mutate the input.
+ * Substitutes `env(VAR)` references against `env` and coerces the result to the schema's
+ * expected primitive type at each path. A set-but-empty variable leaves the literal untouched,
+ * same as an unset one. Returns a new structure; does not mutate the input.
  */
 export function interpolateEnvReferencesAgainstSchema(
   document: unknown,
   env: Readonly<Record<string, string>>,
   schema: { readonly ast: SchemaAST.AST },
   options?: {
-    readonly goViperCompat?: boolean;
+    readonly cliCompat?: boolean;
     /** Fires per resolved leaf with the substituting env vars' names (array
      * leaves report once at the array path, collecting every element's
      * variable — one array literal may draw on several). */
     readonly onResolvedEnv?: (path: ReadonlyArray<string>, envNames: ReadonlyArray<string>) => void;
+    /** A leaf or array at a path this returns true for is kept verbatim, already resolved. */
+    readonly skip?: (path: ReadonlyArray<string>) => boolean;
   },
 ): unknown {
   return walk(
     document,
     env,
     schema.ast,
-    options?.goViperCompat ?? false,
+    options?.cliCompat ?? false,
     [],
     options?.onResolvedEnv,
+    options?.skip,
   );
 }

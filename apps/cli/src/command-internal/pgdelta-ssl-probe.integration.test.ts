@@ -1,63 +1,61 @@
-import { createServer } from "node:net";
+import { createServer, type Server } from "node:net";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer } from "effect";
+import { Data, Effect, Exit } from "effect";
 
-import { DebugFlag } from "./global-flags.ts";
 import { pgDeltaSslProbeLayer } from "./pgdelta-ssl-probe.layer.ts";
 import { PgDeltaSslProbe, PgDeltaSslProbeError } from "./pgdelta-ssl-probe.service.ts";
 
-async function withClosingServer<T>(run: (port: number) => Promise<T>): Promise<T> {
-  const server = createServer((socket) => {
-    socket.destroy();
-  });
+class FixtureError extends Data.TaggedError("FixtureError")<{
+  readonly message: string;
+}> {}
 
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => resolve());
-  });
-
-  const address = server.address();
-  if (address === null || typeof address === "string") {
-    server.close();
-    throw new Error("failed to bind closing server");
-  }
-
-  try {
-    return await run(address.port);
-  } finally {
-    await new Promise<void>((resolve, reject) =>
-      server.close((error) => (error ? reject(error) : resolve())),
-    );
-  }
-}
+const closingServer = Effect.acquireRelease(
+  Effect.callback<{ readonly server: Server; readonly port: number }, FixtureError>((resume) => {
+    const server = createServer((socket) => {
+      socket.destroy();
+    });
+    const onError = (cause: Error) =>
+      resume(Effect.fail(new FixtureError({ message: cause.message })));
+    server.once("error", onError);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", onError);
+      const address = server.address();
+      if (address === null || typeof address === "string") {
+        server.close();
+        resume(Effect.fail(new FixtureError({ message: "failed to bind closing server" })));
+      } else {
+        resume(Effect.succeed({ server, port: address.port }));
+      }
+    });
+    return Effect.sync(() => {
+      server.off("error", onError);
+      server.close();
+    });
+  }),
+  ({ server }) =>
+    Effect.callback<void>((resume) => {
+      server.close((error) => resume(error ? Effect.die(error) : Effect.void));
+    }),
+);
 
 describe("pgDeltaSslProbeLayer", () => {
   it.live("fails promptly when the server disconnects before an SSL response byte", () =>
-    Effect.tryPromise({
-      try: () =>
-        withClosingServer((port) =>
-          Effect.runPromise(
-            Effect.gen(function* () {
-              const probe = yield* PgDeltaSslProbe;
-              const exit = yield* probe.requireSslForHost("127.0.0.1", port).pipe(
-                Effect.timeoutOrElse({
-                  duration: "1 second",
-                  orElse: () => Effect.fail(new Error("probe did not settle after socket close")),
-                }),
-                Effect.exit,
-              );
+    Effect.gen(function* () {
+      const { port } = yield* closingServer;
+      const probe = yield* PgDeltaSslProbe;
+      const exit = yield* probe.requireSslForHost("127.0.0.1", port).pipe(
+        Effect.timeoutOrElse({
+          duration: "1 second",
+          orElse: () =>
+            Effect.fail(new FixtureError({ message: "probe did not settle after socket close" })),
+        }),
+        Effect.exit,
+      );
 
-              expect(Exit.isFailure(exit)).toBe(true);
-              if (Exit.isFailure(exit)) {
-                expect(String(exit.cause)).toContain(PgDeltaSslProbeError.name);
-              }
-            }).pipe(
-              Effect.provide(pgDeltaSslProbeLayer),
-              Effect.provide(Layer.succeed(DebugFlag, false)),
-            ),
-          ),
-        ),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain(PgDeltaSslProbeError.name);
+      }
+    }).pipe(Effect.provide(pgDeltaSslProbeLayer)),
   );
 });

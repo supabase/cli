@@ -2,10 +2,11 @@ import { isIP } from "node:net";
 import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import {
@@ -28,15 +29,12 @@ export const networkBansRemove = Effect.fn("network-bans.remove")(function* (
   const output = yield* Output;
   const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
-    // Go resolves the project ref in `PersistentPreRunE` (`cmd/root.go:108-114`),
-    // before `RunE`'s `--db-unban-ip` validation (`internal/bans/update/update.go:12-25`)
-    // ever runs — so a bad ref must surface before a bad IP, not after.
-    const ref = yield* resolver.resolve(flags.projectRef);
+    // Resolves before validating --db-unban-ip, so a bad ref surfaces before a bad IP.
+    const ref = yield* resolveProjectTarget(flags);
 
     yield* Effect.gen(function* () {
       for (const ip of flags.dbUnbanIp) {
@@ -44,6 +42,15 @@ export const networkBansRemove = Effect.fn("network-bans.remove")(function* (
           return yield* new NetworkBansInvalidIpError({ input: ip });
         }
       }
+
+      yield* requireHostedMutationConsent({
+        action: "Remove network bans",
+        details: [
+          flags.dbUnbanIp.length === 0
+            ? "Unban: this machine's IP address"
+            : `Unban: ${flags.dbUnbanIp.join(", ")}`,
+        ],
+      });
 
       yield* api.v1
         .deleteNetworkBans({
@@ -53,10 +60,8 @@ export const networkBansRemove = Effect.fn("network-bans.remove")(function* (
         })
         .pipe(Effect.catch(mapRemoveError));
 
-      // Always prints the success line to stdout regardless of `--output`.
-      // The TS-native `--output-format json/stream-json` modes emit a
-      // structured success event instead, but only when `--output` is unset
-      // (CLAUDE.md item 6).
+      // Always prints to stdout regardless of --output; --output-format json/stream-json
+      // emit a structured event instead, but only when --output is unset.
       if (
         Option.isNone(outputFlag) &&
         (output.format === "json" || output.format === "stream-json")

@@ -1,16 +1,23 @@
-import { Argument, Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Argument, Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
+import { projectRefPicker } from "../../../config/project-ref.layer.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
+import { upgradeSuggestion } from "../../../command-internal/upgrade-suggest.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { stringSliceFlag } from "../../../command-internal/string-slice-flag.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { SSO_NAME_ID_FORMATS } from "../sso.saml.ts";
 import { ssoUpdate } from "./update.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
-// Go declares all three domain flags with pflag's `StringSliceVar`
-// (`cmd/sso.go:170-172`); malformed CSV fails at parse time with pflag's
-// exact diagnostic (CLI-2005, see `stringSliceFlag`).
+// All three domain flags are CSV string-slice flags; malformed CSV reports
+// a diagnostic (see `stringSliceFlag`).
 export const ssoUpdateDomainsFlag = stringSliceFlag(
   "domains",
   "Replace domains with this comma separated list of email domains.",
@@ -27,53 +34,49 @@ export const ssoUpdateRemoveDomainsFlag = stringSliceFlag(
 );
 
 const config = {
-  projectRef: Flag.string("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
   domains: ssoUpdateDomainsFlag,
   addDomains: ssoUpdateAddDomainsFlag,
   removeDomains: ssoUpdateRemoveDomainsFlag,
-  metadataFile: Flag.string("metadata-file").pipe(
+  metadataFile: Flag.String("metadata-file").pipe(
     Flag.withDescription(
       "File containing a SAML 2.0 Metadata XML document describing the identity provider.",
     ),
     Flag.optional,
   ),
-  metadataUrl: Flag.string("metadata-url").pipe(
+  metadataUrl: Flag.String("metadata-url").pipe(
     Flag.withDescription(
       "URL pointing to a SAML 2.0 Metadata XML document describing the identity provider.",
     ),
     Flag.optional,
   ),
-  skipUrlValidation: Flag.boolean("skip-url-validation").pipe(
+  skipUrlValidation: Flag.Boolean("skip-url-validation").pipe(
     Flag.withDescription(
       "Skip local validation of the SAML 2.0 Metadata URL (HTTPS requirement, live GET probe, and UTF-8 body decode). Use in air-gapped CI where the IDP is not reachable from the build agent.",
     ),
     Flag.withDefault(false),
   ),
-  attributeMappingFile: Flag.string("attribute-mapping-file").pipe(
+  attributeMappingFile: Flag.String("attribute-mapping-file").pipe(
     Flag.withDescription(
       "File containing a JSON mapping between SAML attributes to custom JWT claims.",
     ),
     Flag.optional,
   ),
-  nameIdFormat: Flag.choice("name-id-format", SSO_NAME_ID_FORMATS).pipe(
+  nameIdFormat: Flag.Literals("name-id-format", SSO_NAME_ID_FORMATS).pipe(
     Flag.withDescription(
       "URI reference representing the classification of string-based identifier information.",
     ),
     Flag.optional,
   ),
-  providerId: Argument.string("provider-id").pipe(
+  providerId: Argument.String("provider-id").pipe(
     Argument.withDescription("The ID of the SSO identity provider to update."),
   ),
 };
 export type SsoUpdateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const ssoUpdateCommand = Command.make("update", config).pipe(
-  // This description includes the `of a already added` grammar slip
-  // verbatim and intentionally — it is an established output string; do not
-  // "fix" the grammar here.
+  // The `of a already added` grammar slip is part of the established output
+  // string — don't fix it here.
   Command.withDescription(
     "Update the configuration settings of a already added SSO identity provider.",
   ),
@@ -81,15 +84,37 @@ export const ssoUpdateCommand = Command.make("update", config).pipe(
   Command.withExamples([
     {
       command:
-        "supabase sso update b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8 --project-ref mwjylndxudmiehsxhmmz --add-domains example.com",
+        "supabase sso update b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8 --add-domains example.com --remote=mwjylndxudmiehsxhmmz",
       description: "Update an SSO provider's domains",
     },
   ]),
-  Command.withHandler((flags) =>
-    ssoUpdate(flags).pipe(
-      withCommandTelemetry({ flags, safeFlags: ["project-ref"], config }),
-      withJsonErrorHandling,
+  withPermissions(
+    compose(
+      {
+        operations: [
+          { operationId: "v1-get-a-sso-provider", kind: "required" },
+          { operationId: "v1-update-a-sso-provider", kind: "required" },
+        ],
+        noApiEffectFlags: [
+          "domains",
+          "add-domains",
+          "remove-domains",
+          "metadata-file",
+          "metadata-url",
+          "skip-url-validation",
+          "attribute-mapping-file",
+          "name-id-format",
+        ],
+      },
+      upgradeSuggestion,
+      projectRefPicker,
+      linkedProjectCache,
+      branchResolution,
     ),
   ),
+  Command.withHandler((flags) =>
+    ssoUpdate(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
+  ),
   Command.provide(managementApiRuntimeLayer(["sso", "update"])),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

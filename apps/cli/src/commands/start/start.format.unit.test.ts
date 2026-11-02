@@ -10,25 +10,25 @@ import {
 } from "./start.format.ts";
 
 describe("startAlreadyRunningMessage", () => {
-  it("matches Go's exact stderr line, with a single trailing newline", () => {
+  it("emits the exact stderr line, with a single trailing newline", () => {
     expect(stripAnsi(startAlreadyRunningMessage())).toBe("supabase start is already running.\n");
   });
 });
 
 describe("START_STARTING_CONTAINERS_MESSAGE", () => {
-  it("matches Go's exact stderr line, with a single trailing newline", () => {
+  it("emits the exact stderr line, with a single trailing newline", () => {
     expect(START_STARTING_CONTAINERS_MESSAGE).toBe("Starting containers...\n");
   });
 });
 
 describe("START_WAITING_FOR_HEALTH_CHECKS_MESSAGE", () => {
-  it("matches Go's exact stderr line, with a single trailing newline", () => {
+  it("emits the exact stderr line, with a single trailing newline", () => {
     expect(START_WAITING_FOR_HEALTH_CHECKS_MESSAGE).toBe("Waiting for health checks...\n");
   });
 });
 
 describe("startCompletedMessage", () => {
-  it("matches Go's exact stderr line, with two trailing newlines", () => {
+  it("emits the exact stderr line, with two trailing newlines", () => {
     expect(stripAnsi(startCompletedMessage())).toBe(
       "Started supabase local development setup.\n\n",
     );
@@ -36,7 +36,7 @@ describe("startCompletedMessage", () => {
 });
 
 describe("startSecurityNotice", () => {
-  it("matches Go's exact 4-line notice plus a trailing blank line", () => {
+  it("emits the exact 4-line notice plus a trailing blank line", () => {
     expect(stripAnsi(startSecurityNotice())).toBe(
       "Local dev security notice\n" +
         "All services bind to 0.0.0.0 (network-accessible, not just localhost)\n" +
@@ -46,7 +46,7 @@ describe("startSecurityNotice", () => {
     );
   });
 
-  it("ends with exactly one blank line, matching Go's bare fmt.Fprintln(os.Stderr)", () => {
+  it("ends with exactly one blank line", () => {
     const notice = stripAnsi(startSecurityNotice());
     const lines = notice.split("\n");
     // 4 content lines + 1 trailing blank line from the bare Fprintln + the

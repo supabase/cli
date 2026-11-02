@@ -1,25 +1,15 @@
 import { Data } from "effect";
 import {
   actionability,
+  causeDeclaration,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../../shared/telemetry/error-actionability.ts";
 
 /**
- * Conflicting database-target flags (`db-url`/`linked`/`local`); message text
- * is an established output contract.
- */
-export class DbDiffTargetFlagsError extends Data.TaggedError("DbDiffTargetFlagsError")<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
-/**
- * Conflicting diff-engine flags (`use-migra`/`use-pgadmin`/`use-pg-schema`/
- * `use-pg-delta`); message text is an established output contract.
+ * Conflicting diff-engine flags (`use-migra`/`use-pgadmin`/`use-pg-delta`); message text is
+ * an established output contract. `use-pg-schema` is rejected unconditionally before this
+ * check runs, so it can never appear in a real conflict.
  */
 export class DbDiffEngineConflictError extends Data.TaggedError("DbDiffEngineConflictError")<{
   readonly message: string;
@@ -30,22 +20,11 @@ export class DbDiffEngineConflictError extends Data.TaggedError("DbDiffEngineCon
 }
 
 /**
- * Only one of `--from` / `--to` was set in explicit diff mode; message text is
- * an established output contract.
+ * Explicit diff mode got only one of `--from` / `--to`, a non-postgres URL or keyword connection
+ * string for one of them, `--remote`, which it doesn't take, or a `--project-ref` that names a URL
+ * or has no `remote` side to apply to; message text is an established output contract.
  */
 export class DbDiffExplicitFlagsError extends Data.TaggedError("DbDiffExplicitFlagsError")<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
-/**
- * An explicit `--from`/`--to` ref was neither `local`/`linked`/`migrations` nor a
- * postgres URL; message text is an established output contract.
- */
-export class DbDiffUnknownTargetError extends Data.TaggedError("DbDiffUnknownTargetError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -74,30 +53,26 @@ export class DbDiffDbNotRunningError extends Data.TaggedError("DbDiffDbNotRunnin
   readonly message: string;
   readonly daemonDown?: boolean;
   readonly suggestion?: string;
+  readonly cause?: unknown;
 }> {
   // Must stay character-identical to `LocalDbRunningError`'s classification
-  // (`legacy-db-bootstrap`'s equivalent local-db-not-running check) — the two are
-  // deliberately duplicated for this command's own `AssertSupabaseDbIsRunning`
-  // parity target, not shared, so keep them in sync by hand.
+  // (`legacy-db-bootstrap`'s equivalent local-db-not-running check). The two are kept in sync by
+  // hand rather than shared, since they serve separate parity targets.
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return this.daemonDown === true
-      ? { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" }
-      : actionability.startStack; // same preset `reset-local-database.ts` uses
+    if (this.daemonDown === true)
+      return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
+    return causeDeclaration(this.cause) ?? actionability.startStack; // same preset `reset-local-database.ts` uses
   }
 }
 
 /**
- * Classic "assertNever" exhaustiveness helper: with every literal of
- * `DbDiffPgAdminError["reason"]` handled by its own `case` below, `reason`
- * narrows to `never` by the time it reaches this call — so a FUTURE reason added
- * to the union without a matching `case` is a compile error here (its residual
- * type inside `default:` would no longer be `never`), not a silently-absorbed
- * classification. The parameter is intentionally unused at runtime: the drift
- * guard (`error-actionability-coverage.unit.test.ts`) evaluates every getter
- * against a field-less probe (`Object.create(prototype)`, no constructor args),
- * so `this.reason` is genuinely runtime-`undefined` there, bypassing the type
- * system entirely — this must still degrade to a valid declaration rather than
- * `undefined`/a crash, so it returns the SAME fallback as the "differ" case.
+ * Exhaustiveness helper: with every literal of `DbDiffPgAdminError["reason"]` handled by its own
+ * `case` below, `reason` narrows to `never` here — so a new reason added to the union without a
+ * matching `case` is a compile error, not a silently-absorbed classification.
+ *
+ * The drift guard (`error-actionability-coverage.unit.test.ts`) evaluates every getter against a
+ * field-less probe, so `this.reason` is genuinely `undefined` at runtime here; this must still
+ * return a valid declaration rather than crash, so it falls back to the "differ" case's value.
  */
 function pgAdminUnreachableReason(_reason: never): CliErrorActionabilityDeclaration {
   return actionability.dbFinding;
@@ -114,6 +89,7 @@ export class DbDiffPgAdminError extends Data.TaggedError("DbDiffPgAdminError")<{
     | "differ"
     | "invalid_output"
     | "docker_daemon"
+    | "config"
     | "registry_pull"
     | "image_inspect";
 }> {
@@ -123,6 +99,8 @@ export class DbDiffPgAdminError extends Data.TaggedError("DbDiffPgAdminError")<{
         return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
       case "registry_pull":
         return { ...actionability.externalNetwork, fingerprint_suffix: "registry_pull" };
+      case "config":
+        return { ...actionability.invalidConfig, fingerprint_suffix: "invalid_config" };
       // Malformed pinned-differ wire output is an internal contract violation, not a
       // user input mistake — same classification as pg-delta's own malformed-output
       // failures (`PgDeltaEngineError` with `reason: "output_parse"`).

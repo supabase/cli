@@ -60,7 +60,7 @@ export const mfa = Schema.Struct({
       tags,
       links: [links.phone],
     }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultPhoneVerifyEnabled))),
-    otp_length: Schema.Number.annotate({
+    otp_length: Schema.Finite.annotate({
       default: defaultPhoneOtpLength,
       description: "The length of the OTP code.",
       tags,
@@ -93,7 +93,7 @@ export const mfa = Schema.Struct({
       links: [links.mfa],
     }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultWebAuthnVerifyEnabled))),
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultWebAuthn }))),
-  max_enrolled_factors: Schema.Number.annotate({
+  max_enrolled_factors: Schema.Finite.annotate({
     default: defaultMaxEnrolledFactors,
     description: "The maximum number of MFA factors a user can enroll in.",
     tags,

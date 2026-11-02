@@ -1,42 +1,48 @@
+import { scratchDir } from "../../command-internal/scratch-paths.ts";
+import { usesStackState } from "../../command-internal/stack-backend.ts";
+import { BunPath } from "@effect/platform-bun";
 import { operationDefinitions, SupabaseApiInputError, type ApiClient } from "@supabase/api/effect";
 import { randomUUID } from "node:crypto";
-import { mkdir, open, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Effect, FileSystem, Option } from "effect";
-import * as HttpBody from "effect/unstable/http/HttpBody";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { Effect, FileSystem, Option, Path, type PlatformError, Schema } from "effect";
+import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClientError from "effect/http/HttpClientError";
+import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { Output } from "../output/output.service.ts";
+import { block } from "../../command-internal/command-permissions/model.ts";
 import {
-  cobraMutuallyExclusiveErrorMessage,
+  mutuallyExclusiveFlagsMessage,
   explicitBooleanLongFlag,
   lastExplicitLongFlagValue,
   hasExplicitLongFlag,
-} from "../cli/cobra-flag-groups.ts";
+} from "../cli/flag-groups.ts";
 import { describeContainerCliFailure } from "../../command-internal/container-cli.ts";
-import { viperEnvStringWithProjectFallback } from "../../command-internal/viper-env.ts";
+import { bitbucketCloneDir } from "../../command-internal/bitbucket-pipeline.ts";
+import { supabaseEnvStringWithProjectFallback } from "../../command-internal/supabase-env.ts";
 import {
   buildFunctionsDockerRunArgs,
   edgeRuntimeCacheVolume,
   ensureDockerNamedVolume,
   ensureDockerNetwork,
   isDockerRunning,
+  nativePlatformFailure,
   resolveDockerNetworkMode,
   resolveEdgeRuntimeVersion,
   resolveFunctionsDockerImage,
   runChildProcess,
 } from "./functions-docker.ts";
-import { loadFunctionsCliConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
+import { loadFunctionsCliConfig, type FunctionsLocalConfigLoader } from "./functions-config.ts";
 import {
   edgeRuntimeImage,
-  FUNCTIONS_BUNDLER_MUTEX_GROUP,
+  FUNCTIONS_DOWNLOAD_BUNDLER_MUTEX_GROUP,
   invalidFunctionSlugDetail,
   validateFunctionSlugMessage,
 } from "./functions.shared.ts";
+import { slimImagesEnabled } from "../services/slim-images.ts";
 import {
   ConflictingFunctionDownloadFlagsError,
   FunctionDownloadNotFoundError,
+  FunctionEszipDownloadError,
   InvalidFunctionDownloadResponseError,
   InvalidFunctionSlugError,
   UnsafeFunctionDownloadPathError,
@@ -44,18 +50,23 @@ import {
 import { FunctionsApiStatusError, FunctionsApiTransportError } from "./functions-api.errors.ts";
 
 const legacyEntrypointPath = "file:///src/index.ts";
-// Go: `utils.DockerDenoDir`/`utils.DockerEszipDir` (`internal/utils/deno.go:34-35`)
-// — fixed container-side paths for the docker-unbundle path, unrelated to
+// Fixed container-side paths for the docker-unbundle path, unrelated to
 // deploy's `toDockerPath` host-mirroring scheme.
 const DOCKER_DENO_DIR = "/home/deno";
 const DOCKER_ESZIP_DIR = "/root/eszips";
 
 export interface DownloadFunctionsOptions {
   readonly functionName: Option.Option<string>;
-  readonly projectRef: Option.Option<string>;
   readonly useApi: boolean;
   readonly useDocker: boolean;
-  readonly legacyBundle: boolean;
+}
+
+export interface DownloadFunctionsResult {
+  readonly projectRef: string;
+  /** Downloaded slugs, in download order. Empty when the project has none. */
+  readonly slugs: ReadonlyArray<string>;
+  /** `true` when the remote project has no functions at all. */
+  readonly empty: boolean;
 }
 
 interface DownloadRuntimeDependencies {
@@ -68,89 +79,42 @@ interface DownloadDockerRuntimeDependencies extends DownloadRuntimeDependencies 
   readonly rawArgs: ReadonlyArray<string>;
   /**
    * Optional shell-specific styling hook for the `Downloading function:`
-   * progress line — mirrors `deploy.ts`'s `DeployFunctionsDependencies.styleEmphasis`.
-   * Defaults to identity (plain text); the CLI injects Go's bold
-   * styling here so this shared module stays free of CLI-specific
-   * rendering. Go: `utils.Bold(slug)` (`downloadOne`, `download.go:219`).
+   * progress line. Defaults to identity (plain text); the CLI injects bold
+   * styling here so this shared module stays free of CLI-specific rendering.
    */
   readonly styleEmphasis?: (text: string) => string;
   /**
-   * Optional shell-specific styling hook for the `--legacy-bundle` command
-   * suggested inside {@link suggestLegacyBundle} — same isolation rationale
-   * as {@link styleEmphasis}, just a different Go colour. Go:
-   * `utils.Aqua("supabase functions download --legacy-bundle "+slug)`
-   * (`suggestLegacyBundle`, `download.go:315`).
+   * Optional shell-specific styling hook for the command suggested inside
+   * {@link suggestUseApiRetry} — same isolation rationale as {@link styleEmphasis}.
    */
   readonly styleAqua?: (text: string) => string;
   /**
    * Optional shell-specific styling hook for the `WARNING:` token on the
    * "Docker is not running" fallback line — same isolation rationale as
-   * {@link styleEmphasis}. Go: `utils.Yellow("WARNING:")` (`download.go:146`).
+   * {@link styleEmphasis}.
    */
   readonly styleWarning?: (text: string) => string;
 }
 
-/**
- * What {@link resolveEdgeRuntimeImage} needs to resolve the Docker
- * edge-runtime image tag — split out so it's declared once instead of
- * duplicated across `DownloadFunctionsDependencies`'s fields.
- */
+/** What {@link resolveEdgeRuntimeImage} needs to resolve the Docker edge-runtime image tag. */
 interface EdgeRuntimeImageDependencies {
   readonly projectRoot: string;
   /**
-   * `undefined` for library callers; the CLI injects
-   * `functionsGoConfigCompat` so this file never imports the command tree
-   * directly — see {@link FunctionsGoConfigCompat}.
+   * The CLI injects this so this file never imports the command tree directly —
+   * see {@link FunctionsLocalConfigLoader}.
    */
-  readonly goConfigCompat: FunctionsGoConfigCompat | undefined;
+  readonly localConfigLoader: FunctionsLocalConfigLoader;
   /**
-   * Fallback edge-runtime image tag used when the project config doesn't pin
-   * `edge_runtime.deno_version` to `1` (which forces the older
-   * `DENO1_EDGE_RUNTIME_VERSION`) — mirrors `deploy.ts`'s own
-   * `edgeRuntimeVersion` dependency, read via
-   * `resolveEdgeRuntimeVersionPin` by the shell-specific handler.
+   * Fallback edge-runtime image tag used when the project config doesn't
+   * pin `edge_runtime.deno_version` to `1`. Mirrors `deploy.ts`'s own
+   * `edgeRuntimeVersion` dependency.
    */
   readonly edgeRuntimeVersion: string;
 }
 
-export interface DownloadFunctionsDependencies<
-  ResolveError,
-  ResolveRequirements,
-  ProxyError,
-  ProxyRequirements,
->
+export interface DownloadFunctionsDependencies<ResolveError, ResolveRequirements>
   extends DownloadDockerRuntimeDependencies, EdgeRuntimeImageDependencies {
-  readonly resolveProjectRef: (
-    projectRef: Option.Option<string>,
-  ) => Effect.Effect<string, ResolveError, ResolveRequirements>;
-  /**
-   * `captureOutput` is `true` whenever `output.format !== "text"`: the Go
-   * child's raw stdout must not reach the terminal (it would corrupt the
-   * JSON/NDJSON envelope, CLI-1546's "stdout is payload-only in machine
-   * mode" invariant), so the dependency must capture/discard it (e.g. via
-   * `GoProxy.execCapture`) instead of inheriting stdio. Only invoked
-   * for `--legacy-bundle` today — `--use-docker` now runs natively (CLI-1963).
-   */
-  readonly proxyDownload: (
-    flags: DownloadFunctionsOptions,
-    projectRef: string,
-    captureOutput: boolean,
-  ) => Effect.Effect<void, ProxyError, ProxyRequirements>;
-}
-
-// `--legacy-bundle` is the only case `downloadFunctions()` still delegates to
-// the Go binary for (CLI-1963) — `functionName` is the one remaining piece of
-// user input the delegating branch needs to forward.
-export function makeGoProxyLegacyBundleArgs(
-  functionName: Option.Option<string>,
-  projectRef: string,
-): ReadonlyArray<string> {
-  const args: string[] = ["functions", "download"];
-  if (Option.isSome(functionName)) {
-    args.push(functionName.value);
-  }
-  args.push("--project-ref", projectRef, "--legacy-bundle");
-  return args;
+  readonly resolveProjectRef: Effect.Effect<string, ResolveError, ResolveRequirements>;
 }
 
 interface DownloadMetadata {
@@ -176,15 +140,20 @@ function getObjectProperty(value: unknown, key: string): unknown {
   return typeof value === "object" && value !== null ? Reflect.get(value, key) : undefined;
 }
 
-function isContainedPath(root: string, candidate: string): boolean {
-  const relativeCandidate = relative(root, candidate);
+function isContainedPath(path: Path.Path, root: string, candidate: string): boolean {
+  const relativeCandidate = path.relative(root, candidate);
   return (
     relativeCandidate === "" ||
-    (!isAbsolute(relativeCandidate) &&
+    (!path.isAbsolute(relativeCandidate) &&
       relativeCandidate !== ".." &&
-      !relativeCandidate.startsWith(`..${sep}`))
+      !relativeCandidate.startsWith(`..${path.sep}`))
   );
 }
+
+const hostErrorMessage = (error: PlatformError.PlatformError, pathname: string) =>
+  nativePlatformFailure(error, pathname).cause.message;
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 function validateSlug(slug: string): Effect.Effect<void, InvalidFunctionSlugError> {
   if (validateFunctionSlugMessage(slug) === undefined) {
@@ -195,17 +164,11 @@ function validateSlug(slug: string): Effect.Effect<void, InvalidFunctionSlugErro
 }
 
 /**
- * Go parity (`downloadAll`, `apps/cli-go/internal/functions/download/download.go:172-188`,
- * CLI-1891): the Management API's function list is untrusted — a malicious or
- * compromised response (or a MITM) could return a slug containing `..` or `/`
- * segments, which every downloader below joins into a filesystem path
- * (the docker-unbundle temp eszip path, and the server-side path's functions
- * directory) before any validation of its own. This is the single point of
- * entry that must reject it, rather than relying on each downstream
- * path-construction site to defend itself — same rule Go's own comment states.
- * Distinct from {@link validateSlug} (used for the user-supplied `<Function
- * name>` argument), which fails with a plain `InvalidFunctionSlugError` and no
- * "failed to download function" prefix or suggestion.
+ * The Management API's function list is untrusted: a malicious or
+ * compromised response could return a slug containing `..`/`/` segments,
+ * which every downloader below joins into a filesystem path unvalidated.
+ * This is the single point of entry that must reject it — distinct from
+ * {@link validateSlug} (the user-supplied `<Function name>` argument).
  */
 function validateRemoteSlug(
   slug: string,
@@ -217,7 +180,6 @@ function validateRemoteSlug(
 
   return Effect.fail(
     Object.assign(new Error(`failed to download function ${slug}: ${invalidFunctionSlugDetail}`), {
-      // Go: `utils.Aqua(f.Slug)` (`download.go:185`).
       suggestion: `The Supabase API returned an unexpected function slug (${styleAqua(slug)}). Retry the command, and if this keeps happening, verify your network connection is not being intercepted before contacting Supabase support.`,
     }),
   );
@@ -231,16 +193,13 @@ function validateDownloadFlags(
   const changed = [
     hasExplicitLongFlag(rawArgs, downloadCommandPath, "use-api") ? "use-api" : undefined,
     hasExplicitLongFlag(rawArgs, downloadCommandPath, "use-docker") ? "use-docker" : undefined,
-    hasExplicitLongFlag(rawArgs, downloadCommandPath, "legacy-bundle")
-      ? "legacy-bundle"
-      : undefined,
   ].filter((flag): flag is string => flag !== undefined);
 
   return changed.length <= 1
     ? Effect.void
     : Effect.fail(
         new ConflictingFunctionDownloadFlagsError({
-          message: cobraMutuallyExclusiveErrorMessage(FUNCTIONS_BUNDLER_MUTEX_GROUP, changed),
+          message: mutuallyExclusiveFlagsMessage(FUNCTIONS_DOWNLOAD_BUNDLER_MUTEX_GROUP, changed),
         }),
       );
 }
@@ -452,7 +411,7 @@ function readContentDispositionParam(
     new RegExp(`(?:^|;)\\s*${paramPattern}=([^;]*)`, "i"),
   );
   if (assignmentMatch === null) {
-    return Effect.succeed(undefined);
+    return Effect.undefined;
   }
   const token = assignmentMatch[1]?.trim() ?? "";
   if (token.length > 0 && !token.startsWith('"') && !/\s/.test(token)) {
@@ -502,7 +461,7 @@ function readFormFieldName(
 ): Effect.Effect<string | undefined, InvalidFunctionDownloadResponseError> {
   const contentDisposition = headers["content-disposition"];
   if (contentDisposition === undefined) {
-    return Effect.succeed(undefined);
+    return Effect.undefined;
   }
   return readContentDispositionParam(contentDisposition, "name");
 }
@@ -573,7 +532,7 @@ function decodeMultipartForm(
           try: () => parseDownloadMetadata(rawMetadata),
           catch: (cause) =>
             new InvalidFunctionDownloadResponseError({
-              message: `failed to unmarshal metadata: ${cause instanceof Error ? cause.message : String(cause)}`,
+              message: `failed to parse metadata: ${cause instanceof Error ? cause.message : String(cause)}`,
             }),
         });
       }
@@ -605,6 +564,7 @@ function resolveEntrypointPath(
 }
 
 function resolveDownloadDestination(
+  { path, posixPath }: { readonly path: Path.Path; readonly posixPath: Path.Path },
   functionsRoot: string,
   functionDir: string,
   entrypointPath: string,
@@ -613,15 +573,15 @@ function resolveDownloadDestination(
   const normalizedEntrypoint = entrypointPath.replaceAll("\\", "/");
   const normalizedPartPath = partPath.replaceAll("\\", "/");
   const relativePath =
-    posix.isAbsolute(normalizedEntrypoint) === posix.isAbsolute(normalizedPartPath)
-      ? posix.relative(normalizedEntrypoint, normalizedPartPath)
-      : posix.join("..", normalizedPartPath);
-  const entrypointName = posix.basename(normalizedEntrypoint);
+    posixPath.isAbsolute(normalizedEntrypoint) === posixPath.isAbsolute(normalizedPartPath)
+      ? posixPath.relative(normalizedEntrypoint, normalizedPartPath)
+      : posixPath.join("..", normalizedPartPath);
+  const entrypointName = posixPath.basename(normalizedEntrypoint);
   const destination =
     relativePath.length === 0
-      ? resolve(functionDir, entrypointName)
-      : resolve(functionDir, entrypointName, ...relativePath.split("/"));
-  if (isContainedPath(resolve(functionsRoot), destination)) {
+      ? path.resolve(functionDir, entrypointName)
+      : path.resolve(functionDir, entrypointName, ...relativePath.split("/"));
+  if (isContainedPath(path, path.resolve(functionsRoot), destination)) {
     return Effect.succeed(destination);
   }
 
@@ -633,8 +593,8 @@ function resolveDownloadDestination(
   );
 }
 
-function ensureContainedPath(root: string, candidate: string, sourcePath: string) {
-  if (isContainedPath(root, candidate)) {
+function ensureContainedPath(path: Path.Path, root: string, candidate: string, sourcePath: string) {
+  if (isContainedPath(path, root, candidate)) {
     return Effect.void;
   }
 
@@ -652,34 +612,47 @@ function writeFileWithoutFollowingSymlinks(
   sourcePath: string,
 ) {
   return Effect.gen(function* () {
-    const tempDestination = join(dirname(destination), `.supabase-download-${randomUUID()}.tmp`);
-    const file = yield* Effect.tryPromise({
-      try: () => open(tempDestination, "wx"),
-      catch: (cause) =>
-        new UnsafeFunctionDownloadPathError({
-          message: `failed to create temporary Function file while extracting ${sourcePath}: ${cause instanceof Error ? cause.message : String(cause)}`,
-        }),
-    });
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const tempDestination = path.join(
+      path.dirname(destination),
+      `.supabase-download-${randomUUID()}.tmp`,
+    );
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const file = yield* fs.open(tempDestination, { flag: "wx" }).pipe(
+          Effect.mapError(
+            (error) =>
+              new UnsafeFunctionDownloadPathError({
+                message: `failed to create temporary Function file while extracting ${sourcePath}: ${hostErrorMessage(error, tempDestination)}`,
+              }),
+          ),
+        );
 
-    yield* Effect.tryPromise({
-      try: () => file.writeFile(body),
-      catch: (cause) =>
-        new UnsafeFunctionDownloadPathError({
-          message: `failed to write Function file: ${sourcePath}: ${cause instanceof Error ? cause.message : String(cause)}`,
-        }),
-    }).pipe(Effect.ensuring(Effect.promise(() => file.close()).pipe(Effect.ignore)));
+        if (body.byteLength > 0) {
+          yield* file.writeAll(body).pipe(
+            Effect.mapError(
+              (error) =>
+                new UnsafeFunctionDownloadPathError({
+                  message: `failed to write Function file: ${sourcePath}: ${hostErrorMessage(error, tempDestination)}`,
+                }),
+            ),
+          );
+        }
+      }),
+    );
 
-    yield* Effect.tryPromise({
-      try: () => rename(tempDestination, destination),
-      catch: (cause) =>
-        new UnsafeFunctionDownloadPathError({
-          message: `failed to move Function file into place: ${sourcePath}: ${cause instanceof Error ? cause.message : String(cause)}`,
-        }),
-    }).pipe(
-      Effect.catch((error) =>
-        Effect.promise(() => rm(tempDestination, { force: true })).pipe(
-          Effect.ignore,
-          Effect.andThen(() => Effect.fail(error)),
+    yield* fs.rename(tempDestination, destination).pipe(
+      Effect.mapError(
+        (error) =>
+          new UnsafeFunctionDownloadPathError({
+            message: `failed to move Function file into place: ${sourcePath}: ${hostErrorMessage(error, destination)}`,
+          }),
+      ),
+      Effect.tapError(() =>
+        fs.remove(tempDestination, { force: true }).pipe(
+          Effect.mapError((error) => nativePlatformFailure(error, tempDestination).cause),
+          Effect.orDie,
         ),
       ),
     );
@@ -695,63 +668,46 @@ const listRemoteFunctionSlugs = Effect.fnUntraced(function* (api: ApiClient, pro
 
   const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
   if (response.status !== 200) {
-    return yield* Effect.fail(
-      new FunctionsApiStatusError({
-        status: response.status,
-        message: `unexpected list functions status ${response.status}: ${body}`,
-      }),
-    );
+    return yield* new FunctionsApiStatusError({
+      status: response.status,
+      message: `unexpected list functions status ${response.status}: ${body}`,
+    });
   }
 
-  return yield* Effect.try({
-    try: () => {
-      const parsed = JSON.parse(body);
-      if (!Array.isArray(parsed)) {
-        throw new Error("expected functions list response to be an array");
-      }
-      // Go: `FunctionResponse.Slug` (`apps/cli-go/pkg/api/types.gen.go:6465`)
-      // is a required, non-pointer `string` — a list entry with a missing or
-      // `null` "slug" decodes to the zero value `""` rather than erroring
-      // (`encoding/json`'s documented null-into-non-pointer no-op), and that
-      // empty slug then fails loudly downstream (`validateRemoteSlug`,
-      // matching Go's own per-item `ValidateFunctionSlug` in `downloadAll`,
-      // `download.go:182-188`) instead of silently vanishing from the list.
-      // Coercing here (rather than filtering the entry out, as before)
-      // preserves that "always surface an unexpected API response, never
-      // silently download fewer functions than requested" invariant — the
-      // exact CLI-1891 threat model `validateRemoteSlug` exists for (review
-      // round on CLI-1963's `functions download` port).
-      //
-      // A "slug" present but typed as something other than string/null is a
-      // different case: Go's generated client decodes the *entire* array in
-      // one `json.Unmarshal` call (`ParseV1ListAllFunctionsResponse`,
-      // `apps/cli-go/pkg/api/client.gen.go:22186-22208`), and a type mismatch
-      // on any single element fails that whole call — confirmed empirically
-      // (`json.Unmarshal([]byte(`+"`"+`[{"slug":"ok"},{"slug":123}]`+"`"+`), &dest)`
-      // returns a `*json.UnmarshalTypeError`; `dest` is partially populated in
-      // memory, but `ParseV1ListAllFunctionsResponse` returns before ever
-      // assigning `response.JSON200`, discarding it), so `V1ListAllFunctionsWithResponse`
-      // returns an error and `downloadAll` fails with "failed to list
-      // functions: ..." before downloading anything — not after downloading
-      // the earlier, well-formed entries. Throwing here (rather than
-      // coercing to `""` like the missing/null case above) preserves that
-      // same fail-before-any-download ordering.
-      return parsed.map((value) => {
-        const slug = getObjectProperty(value, "slug");
-        if (slug === null || slug === undefined) {
-          return "";
-        }
-        if (typeof slug !== "string") {
-          throw new Error(`expected function slug to be a string, got ${typeof slug}`);
-        }
-        return slug;
+  const parsed = yield* decodeJson(body).pipe(
+    Effect.mapError(
+      (error) =>
+        new InvalidFunctionDownloadResponseError({
+          message: `failed to read functions list: ${error.message}`,
+        }),
+    ),
+  );
+  if (!Array.isArray(parsed)) {
+    return yield* new InvalidFunctionDownloadResponseError({
+      message: "failed to read functions list: expected functions list response to be an array",
+    });
+  }
+  // A missing/null "slug" coerces to "" here (rather than being filtered
+  // out) so it fails loudly downstream via `validateRemoteSlug`, instead
+  // of silently vanishing from the list.
+  //
+  // A "slug" typed as something other than string/null fails here,
+  // failing the whole list call before any function is downloaded —
+  // never after some entries have already been fetched.
+  const slugs: Array<string> = [];
+  for (const value of parsed) {
+    const slug = getObjectProperty(value, "slug");
+    if (slug === null || slug === undefined) {
+      slugs.push("");
+    } else if (typeof slug === "string") {
+      slugs.push(slug);
+    } else {
+      return yield* new InvalidFunctionDownloadResponseError({
+        message: `failed to read functions list: expected function slug to be a string, got ${typeof slug}`,
       });
-    },
-    catch: (cause) =>
-      new InvalidFunctionDownloadResponseError({
-        message: `failed to read functions list: ${cause instanceof Error ? cause.message : String(cause)}`,
-      }),
-  });
+    }
+  }
+  return slugs;
 });
 
 const getRemoteFunction = Effect.fnUntraced(function* (
@@ -771,33 +727,28 @@ const getRemoteFunction = Effect.fnUntraced(function* (
     case 200:
       break;
     case 404:
-      return yield* Effect.fail(
-        new FunctionDownloadNotFoundError({
-          message: `Function ${slug} does not exist on the Supabase project.`,
-        }),
-      );
+      return yield* new FunctionDownloadNotFoundError({
+        message: `Function ${slug} does not exist on the Supabase project.`,
+      });
     default:
-      return yield* Effect.fail(
-        new FunctionsApiStatusError({
-          status: response.status,
-          message: `Failed to download Function ${slug} on the Supabase project: ${body}`,
-        }),
-      );
+      return yield* new FunctionsApiStatusError({
+        status: response.status,
+        message: `Failed to download Function ${slug} on the Supabase project: ${body}`,
+      });
   }
 
-  return yield* Effect.try({
-    try: () => {
-      const parsed = JSON.parse(body);
-      const entrypointPath = getObjectProperty(parsed, "entrypoint_path");
-      return typeof entrypointPath === "string" && entrypointPath.length > 0
-        ? { entrypoint_path: entrypointPath }
-        : { entrypoint_path: legacyEntrypointPath };
-    },
-    catch: (cause) =>
-      new InvalidFunctionDownloadResponseError({
-        message: `failed to get function metadata: ${cause instanceof Error ? cause.message : String(cause)}`,
-      }),
-  });
+  const parsed = yield* decodeJson(body).pipe(
+    Effect.mapError(
+      (error) =>
+        new InvalidFunctionDownloadResponseError({
+          message: `failed to get function metadata: ${error.message}`,
+        }),
+    ),
+  );
+  const entrypointPath = getObjectProperty(parsed, "entrypoint_path");
+  return typeof entrypointPath === "string" && entrypointPath.length > 0
+    ? { entrypoint_path: entrypointPath }
+    : { entrypoint_path: legacyEntrypointPath };
 });
 
 const downloadBody = Effect.fnUntraced(function* (
@@ -812,7 +763,7 @@ const downloadBody = Effect.fnUntraced(function* (
         ref: projectRef,
         function_slug: slug,
       },
-      { Accept: "multipart/form-data" },
+      { headers: { Accept: "multipart/form-data" } },
     )
     .pipe(Effect.mapError((error) => mapTransportError("failed to download function", error)));
 
@@ -821,37 +772,18 @@ const downloadBody = Effect.fnUntraced(function* (
   }
 
   const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-  return yield* Effect.fail(
-    new FunctionsApiStatusError({
-      status: response.status,
-      message: `Error status ${response.status}: ${body}`,
-      notFoundIsInvalidInput: true,
-    }),
-  );
+  return yield* new FunctionsApiStatusError({
+    status: response.status,
+    message: `Error status ${response.status}: ${body}`,
+    notFoundIsInvalidInput: true,
+  });
 });
 
-// Go: `downloadOne` (`apps/cli-go/internal/functions/download/download.go:218-245`)
-// sends this request with no `Accept` header set at all (contrast
-// `downloadBody` above, which requests `multipart/form-data` for the
-// server-side path). This operation's generated contract marks its response
-// `kind: "json"` (`packages/api/src/generated/contracts.ts`), so
-// `executeRaw` would otherwise default to `Accept: application/json` here
-// (`buildRequest`'s unconditional `acceptJson` for json-kind operations,
-// `packages/api/src/internal/client.ts`) and risk a negotiated JSON response
-// instead of the raw eszip body — overriding to `*/*` (no preference) is the
-// closest equivalent this API surface has to Go sending no header at all.
-// Go explicitly decodes a brotli `Content-Encoding` itself because Go's
-// `http.Transport` only auto-decodes `gzip`; this TS CLI's transport
-// (`effect/unstable/http`'s `FetchHttpClient`, backed by the platform
-// `fetch`) already transparently decodes `br` per the Fetch spec — while
-// still reporting `Content-Encoding: br` on the exposed `Response.headers`
-// (confirmed empirically: a `fetch()` against a real `Content-Encoding: br`
-// response returns already-decompressed bytes from `arrayBuffer()`).
-// Re-running `brotliDecompressSync` here would therefore throw on
-// already-decoded bytes, so this reads the body as-is and does not
-// re-implement Go's manual decode step. Error prefix ("failed to get
-// function body") is deliberately distinct from `downloadBody`'s ("failed to
-// download function") — the two Go call sites use different wording.
+// Overrides `Accept: */*` so `executeRaw` doesn't default to
+// `Accept: application/json` for this json-kind operation and risk a
+// negotiated JSON response instead of the raw eszip body. The HTTP transport
+// already transparently decodes `Content-Encoding: br`, so this reads the
+// body as-is with no manual decompression step.
 const downloadEszipBody = Effect.fnUntraced(function* (
   api: ApiClient,
   projectRef: string,
@@ -864,96 +796,81 @@ const downloadEszipBody = Effect.fnUntraced(function* (
         ref: projectRef,
         function_slug: slug,
       },
-      { Accept: "*/*" },
+      { headers: { Accept: "*/*" } },
     )
     .pipe(Effect.mapError((error) => mapTransportError("failed to get function body", error)));
 
   if (response.status !== 200) {
     const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-    return yield* Effect.fail(new Error(`Error status ${response.status}: ${body}`));
+    return yield* new FunctionEszipDownloadError({
+      message: `Error status ${response.status}: ${body}`,
+    });
   }
 
   return new Uint8Array(
     yield* response.arrayBuffer.pipe(
       Effect.mapError(
         (cause) =>
-          new Error(
-            `failed to download file: ${cause instanceof Error ? cause.message : String(cause)}`,
-          ),
+          new FunctionEszipDownloadError({
+            message: `failed to download file: ${cause instanceof Error ? cause.message : String(cause)}`,
+          }),
       ),
     ),
   );
 });
 
-function suggestLegacyBundle(
+function suggestUseApiRetry(
   slug: string,
   styleAqua: (text: string) => string = (text) => text,
 ): string {
-  // Go: `suggestLegacyBundle` (`download.go:314-316`) — verbatim, including
-  // the source's own "trying running" wording and its leading newline. Go
-  // wraps only the suggested command itself in `utils.Aqua`, not the whole
-  // sentence — `styleAqua` mirrors that scope exactly.
-  return `\nIf your function is deployed using CLI < 1.120.0, trying running ${styleAqua(`supabase functions download --legacy-bundle ${slug}`)} instead.`;
+  // Preserves the established leading newline.
+  return `\nRetry with ${styleAqua(`supabase functions download --use-api ${slug}`)} to unbundle server-side. If that also fails and the Function was deployed with a CLI older than 1.120.0, redeploy it with the current CLI.`;
 }
 
 function suggestDenoV2(styleEmphasis: (text: string) => string = (text) => text): string {
-  // Go: `suggestDenoV2` (`download.go:306-312`), verbatim including its
-  // trailing newline. Go bolds `utils.ConfigPath` via `utils.Bold` — the
-  // same hook `styleEmphasis` already covers for the slug above
-  // (`downloadOne`, `download.go:219`).
+  // Preserves the established trailing newline; `styleEmphasis` covers the
+  // config path the same way it covers the slug above.
   return `Please use deno v2 in ${styleEmphasis("supabase/config.toml")} to download this Function:\n\n[edge_runtime]\ndeno_version = 2\n`;
 }
 
 /**
- * Attaches Go's `suggestLegacyBundle` hint to any Docker-extraction failure —
- * matches `downloadWithDockerUnbundle`'s `CmdSuggestion +=
- * suggestLegacyBundle(slug)` (`download.go:211-214`), which runs whenever
- * `extractOne` fails for *any* reason (network/volume creation, container
- * create/start, log streaming, container inspect), not just a non-zero exit
- * code. `ensureDockerNetwork`/`ensureDockerNamedVolume` already prefix their
- * own "failed to create docker network/volume: ..." context on the failures
- * they raise themselves (`functions-docker.ts`), so this only normalizes
- * (never re-prefixes) whatever `describeContainerCliFailure` reports.
+ * Attaches the `--use-api` retry hint to any Docker-extraction failure —
+ * network/volume creation, container create/start, log streaming, or a
+ * non-zero exit code alike. Only normalizes (never re-prefixes) whatever
+ * {@link describeContainerCliFailure} reports, since
+ * `ensureDockerNetwork`/`ensureDockerNamedVolume` prefix their own context.
  */
-function withLegacyBundleSuggestion(slug: string, styleAqua?: (text: string) => string) {
+function withUseApiRetrySuggestion(slug: string, styleAqua?: (text: string) => string) {
   return (cause: unknown): Error =>
     Object.assign(new Error(describeContainerCliFailure(cause)), {
-      suggestion: suggestLegacyBundle(slug, styleAqua),
+      suggestion: suggestUseApiRetry(slug, styleAqua),
     });
 }
 
 /**
- * Same as {@link withLegacyBundleSuggestion}, plus a `step` prefix — for
- * `runChildProcess` itself, whose own failure (a spawn error, or the
- * `PlatformError` `functions-docker.ts`'s hoisted `collectByteStream` erases
- * to `unknown`) carries no context of its own about which command was
- * running, unlike `ensureDockerNetwork`/`ensureDockerNamedVolume`'s
- * self-describing errors.
+ * Same as {@link withUseApiRetrySuggestion}, plus a `step` prefix: unlike
+ * `ensureDockerNetwork`/`ensureDockerNamedVolume`'s self-describing errors,
+ * `runChildProcess`'s own failure carries no context about which command
+ * was running.
  */
 function withDockerStepFailure(step: string, slug: string, styleAqua?: (text: string) => string) {
   return (cause: unknown): Error =>
     Object.assign(new Error(`${step}: ${describeContainerCliFailure(cause)}`), {
-      suggestion: suggestLegacyBundle(slug, styleAqua),
+      suggestion: suggestUseApiRetry(slug, styleAqua),
     });
 }
 
-// Go: `Config.EdgeRuntime.Image` (`extractOne`, `download.go:271`) resolves
-// from `edge_runtime.deno_version` — `1` pins the older
-// `DENO1_EDGE_RUNTIME_VERSION`, anything else (including unset) uses the
-// project's configured/default tag (`resolveEdgeRuntimeVersion`, shared with
-// `deploy.ts`). Resolved once per invocation by the caller
-// (`downloadFunctions`), not once per slug — Go's `Config` is likewise loaded
-// once, before any per-function work. `loadFunctionsCliConfig` (CLI
-// path only) runs the same `Config.Validate`/dotenv/env-override pipeline
-// `start`/`stop`/`status` already go through — see `functions-config.ts`.
-const resolveEdgeRuntimeImage = Effect.fnUntraced(function* (
+// `deno_version = 1` pins the older `DENO1_EDGE_RUNTIME_VERSION`; anything
+// else (including unset) uses the project's configured/default tag.
+// Resolved once per invocation by the caller, not once per slug.
+const resolveEdgeRuntimeImage = Effect.fn("functions.download.resolveEdgeRuntimeImage")(function* (
   dependencies: EdgeRuntimeImageDependencies,
   projectRef: string,
 ) {
   const context = yield* loadFunctionsCliConfig({
     projectRoot: dependencies.projectRoot,
     projectRef,
-    goConfigCompat: dependencies.goConfigCompat,
+    localConfigLoader: dependencies.localConfigLoader,
   });
   const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersion(
     context.denoVersion,
@@ -962,12 +879,10 @@ const resolveEdgeRuntimeImage = Effect.fnUntraced(function* (
   return {
     projectId: context.projectId,
     denoVersion: context.denoVersion,
-    // `edgeRuntimeImage` applies the tag VERBATIM (Go's `replaceImageTag`) —
-    // a `.temp/edge-runtime-version` pin flows through unmodified, `v` prefix
-    // or not (see the helper's doc in `functions.shared.ts`). Registry
-    // mapping + pull-with-retry happens per-container, right before
-    // `ensureDockerNetwork`, matching Go's `DockerStart` (see the caller).
-    rawImage: edgeRuntimeImage(edgeRuntimeVersion),
+    // `edgeRuntimeImage` applies the tag verbatim; a `.temp/edge-runtime-version`
+    // pin flows through unmodified. Registry mapping + pull-with-retry happens
+    // per-container, right before `ensureDockerNetwork` (see the caller).
+    rawImage: edgeRuntimeImage(edgeRuntimeVersion, yield* slimImagesEnabled),
     projectEnvValues: context.projectEnvValues,
   };
 });
@@ -977,31 +892,24 @@ interface EdgeRuntimeImage {
   readonly denoVersion: number | undefined;
   /** Not yet registry-mapped/pull-resolved — see {@link resolveFunctionsDockerImage}. */
   readonly rawImage: string;
-  readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
+  readonly projectEnvValues: Readonly<Record<string, string>>;
 }
 
 /**
- * `EdgeRuntimeImage` plus the pull-resolved reference, once per invocation
- * (not once per slug — see {@link downloadFunctions}'s own resolve site):
- * the image is identical for every function being downloaded, so resolving
- * it inside the per-slug loop would multiply both the cache-check subprocess
- * count and, on a registry outage, the retry-backoff sleep (up to ~36s) by
- * the function count. Go's own `DockerStart` DOES run per-container (once
- * per `extractOne`), but its image-cache check is an in-process Engine API
- * call, not a fork+exec — the per-slug cost that justifies hoisting here has
- * no Go equivalent to stay faithful to.
+ * `EdgeRuntimeImage` plus the pull-resolved reference, resolved once per
+ * invocation (not once per slug — see {@link downloadFunctions}'s own
+ * resolve site): the image is identical for every function, so resolving it
+ * per-slug would multiply both the cache-check subprocess count and, on a
+ * registry outage, the retry-backoff sleep (up to ~36s) by the function count.
  */
 interface PulledEdgeRuntimeImage extends EdgeRuntimeImage {
   readonly image: string;
 }
 
-// Go: `downloadWithDockerUnbundle`/`extractOne`
-// (`download.go:198-282`) — downloads the function body as an eszip, writes
-// it to a temp file, then runs the edge-runtime image's `unbundle`
-// subcommand against it, mounting the *shared* `supabase/functions`
-// directory (not the slug's own subdirectory — `download_test.go:267-271`
-// asserts this explicitly).
-const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
+// Downloads the function body as an eszip, writes it to a temp file, then
+// runs the edge-runtime image's `unbundle` subcommand against it, mounting
+// the shared `supabase/functions` directory (not the slug's own subdirectory).
+const downloadWithDockerUnbundle = Effect.fn("functions.download.dockerUnbundle")(function* (
   dependencies: DownloadDockerRuntimeDependencies,
   edgeRuntimeImage: PulledEdgeRuntimeImage,
   projectRef: string,
@@ -1011,78 +919,85 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
   const styleEmphasis = dependencies.styleEmphasis ?? ((text: string) => text);
   const styleAqua = dependencies.styleAqua ?? ((text: string) => text);
 
-  // Go: `downloadOne` (`download.go:219`) — lowercase "function", distinct
-  // from the server-side path's "Downloading Function:" (capital F,
-  // `downloadWithServerSideUnbundle`, `download.go:329`). Both Go call sites
-  // bold the slug (`utils.Bold`); this path is new in CLI-1963, so it picks
-  // up the styling hook now. `downloadSingle`'s server-side path below has
-  // the identical gap, but predates this PR (#5527) — left as-is here.
+  // Lowercase "function", distinct from the server-side path's "Downloading
+  // Function:" (capital F) below — an established text difference, not a typo.
   yield* output.raw(`Downloading function: ${styleEmphasis(slug)}\n`, "stderr");
 
   const eszip = yield* downloadEszipBody(dependencies.api, projectRef, slug);
 
-  const tempDir = join(dependencies.projectRoot, "supabase", ".temp");
-  yield* Effect.tryPromise({
-    try: () => mkdir(tempDir, { recursive: true }),
-    catch: (cause) =>
-      new Error(`failed to mkdir: ${cause instanceof Error ? cause.message : String(cause)}`),
-  });
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
+  const scratch = yield* scratchDir(dependencies.projectRoot);
+  yield* fs.makeDirectory(scratch, { recursive: true }).pipe(
+    Effect.mapError(
+      (error) =>
+        new FunctionEszipDownloadError({
+          message: `failed to mkdir: ${hostErrorMessage(error, scratch)}`,
+        }),
+    ),
+  );
+  // `$SUPABASE_HOME/tmp` is shared by every project, so stack state gives each run its own
+  // directory; legacy state keeps the fixed `supabase/.temp/output_<slug>.eszip`.
+  const ownsTempDir = yield* usesStackState;
+  const eszipPrefix = `.supabase-eszip-${slug}-`;
+  const tempDir = ownsTempDir
+    ? yield* fs.makeTempDirectory({ directory: scratch, prefix: eszipPrefix }).pipe(
+        Effect.mapError(
+          (error) =>
+            new FunctionEszipDownloadError({
+              message: `failed to mkdir: ${hostErrorMessage(error, path.join(scratch, eszipPrefix))}`,
+            }),
+        ),
+      )
+    : scratch;
   const eszipFileName = `output_${slug}.eszip`;
-  const eszipPath = join(tempDir, eszipFileName);
-  yield* Effect.tryPromise({
-    try: () => writeFile(eszipPath, eszip),
-    catch: (cause) =>
-      new Error(
-        `failed to download file: ${cause instanceof Error ? cause.message : String(cause)}`,
-      ),
-  });
-
-  // Go: the `defer fsys.Remove(eszipPath)` cleanup is registered right after
-  // the write and covers the whole of `extractOne`, including the container
-  // run — it fires on every return path, success or failure
-  // (`download.go:203-209`). `Effect.ensuring` below is the equivalent: it
-  // wraps every step from here on so a failure resolving the network/volume,
-  // spawning Docker, or a non-zero container exit all still clean up the
-  // temp eszip, matching Go instead of only doing so on the happy path.
+  const eszipPath = path.join(tempDir, eszipFileName);
+  // `Effect.ensuring` below wraps every step from here on so a failure
+  // resolving the network/volume, spawning Docker, or a non-zero container
+  // exit all still clean up the temp eszip file, not just the happy path.
   //
-  // Go gates this on `viper.GetBool("DEBUG")` (`download.go:203`), which
-  // resolves an explicit `--debug=false` to `false` (cleanup runs) — a plain
-  // presence check would get that backwards, so this reads the last explicit
-  // occurrence's boolean value instead (`explicitBooleanLongFlag`), falling
-  // back to `false` (cleanup runs) when `--debug` never appears. `SUPABASE_DEBUG`
-  // env-var fallback is a separate, pre-existing gap shared with every other
-  // presence-only `--debug` read this file family used to have
-  // (e.g. `deploy.ts`) and the CLI's debug logger itself, none of which
-  // currently honor it either — left open rather than fixed piecemeal here.
+  // An explicit `--debug=false` must still run cleanup, so this reads the
+  // flag's last explicit boolean value rather than a plain presence check,
+  // falling back to `false` (cleanup runs) when `--debug` never appears.
   const debugEnabled = explicitBooleanLongFlag(dependencies.rawArgs, "debug") ?? false;
   const cleanupEszip = debugEnabled
     ? Effect.void
-    : Effect.tryPromise({
-        try: () => rm(eszipPath, { force: true }),
-        catch: (cause) => (cause instanceof Error ? cause.message : String(cause)),
-      }).pipe(Effect.catch((message) => output.raw(`${message}\n`, "stderr")));
+    : fs
+        .remove(ownsTempDir ? tempDir : eszipPath, { force: true, recursive: ownsTempDir })
+        .pipe(
+          Effect.catch((error) => output.raw(`${hostErrorMessage(error, eszipPath)}\n`, "stderr")),
+        );
+
+  yield* fs.writeFile(eszipPath, eszip).pipe(
+    Effect.mapError(
+      (error) =>
+        new FunctionEszipDownloadError({
+          message: `failed to download file: ${hostErrorMessage(error, eszipPath)}`,
+        }),
+    ),
+    // Only a run-owned directory is removed here; legacy leaves the fixed file in place.
+    Effect.tapError(() => (ownsTempDir ? cleanupEszip : Effect.void)),
+  );
 
   const { projectId, denoVersion, image, projectEnvValues } = edgeRuntimeImage;
-  const functionsDir = resolve(dependencies.projectRoot, "supabase", "functions");
-  const hostEszipPath = resolve(eszipPath);
+  const functionsDir = path.resolve(dependencies.projectRoot, "supabase", "functions");
+  const hostEszipPath = path.resolve(eszipPath);
   const cacheVolume = edgeRuntimeCacheVolume(projectId);
-  const dockerEszipPath = posix.join(DOCKER_ESZIP_DIR, eszipFileName);
-  const dockerOutputPath = posix.join(DOCKER_DENO_DIR, slug);
+  const dockerEszipPath = posixPath.join(DOCKER_ESZIP_DIR, eszipFileName);
+  const dockerOutputPath = posixPath.join(DOCKER_DENO_DIR, slug);
+  const hasBitbucketCloneDir = Option.isSome(yield* bitbucketCloneDir(projectEnvValues));
 
-  // Go: `viper.GetString("network-id")` else `NetId` (`docker.go:379-383`) —
-  // `--network-id` is a persistent root flag (`cmd/root.go:328`), not
-  // registered on `functions download` itself. `lastExplicitLongFlagValue`
-  // preserves the "explicitly cleared" vs "never touched" distinction
-  // `resolveDockerNetworkMode` needs to decide whether `SUPABASE_NETWORK_ID`
-  // applies — see that function's own doc comment. `SUPABASE_NETWORK_ID`
-  // (env or project dotenv) is CLI-only — same Go-viper-parity gate
-  // as `projectEnvValues` itself (`undefined` for library callers).
+  // `--network-id` is a persistent root flag, not registered on `functions
+  // download` itself. `lastExplicitLongFlagValue` preserves the "explicitly
+  // cleared" vs "never touched" distinction `resolveDockerNetworkMode` needs
+  // — see that function's own doc comment.
   const networkMode = resolveDockerNetworkMode({
     explicit: lastExplicitLongFlagValue(dependencies.rawArgs, [], "network-id"),
-    envOverride:
-      projectEnvValues === undefined
-        ? undefined
-        : viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
+    envNetworkId: yield* supabaseEnvStringWithProjectFallback(
+      "SUPABASE_NETWORK_ID",
+      projectEnvValues,
+    ),
     projectId,
   });
 
@@ -1090,21 +1005,19 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
     // `image` is already pull-resolved once for the whole invocation — see
     // `downloadFunctions`'s own resolve site — not re-resolved per slug.
     yield* ensureDockerNetwork(networkMode, projectId).pipe(
-      Effect.mapError(withLegacyBundleSuggestion(slug, styleAqua)),
+      Effect.mapError(withUseApiRetrySuggestion(slug, styleAqua)),
     );
-    yield* ensureDockerNamedVolume(cacheVolume.name, projectId).pipe(
-      Effect.mapError(withLegacyBundleSuggestion(slug, styleAqua)),
+    yield* ensureDockerNamedVolume(cacheVolume.name, projectId, projectEnvValues).pipe(
+      Effect.mapError(withUseApiRetrySuggestion(slug, styleAqua)),
     );
 
-    // Bind order matches `extractOne` (`download.go:260-266`) exactly. Go's
-    // `DockerStart` drops the named-volume bind entirely on Bitbucket
-    // (`internal/utils/docker.go:400-405`) rather than just skipping its
-    // explicit creation — `docker run -v <name>:...` would otherwise still
-    // implicitly create the named volume, which Bitbucket's restricted Docker
-    // environment doesn't allow, same carve-out as `deploy.ts`'s
+    // On Bitbucket, the named-volume bind is dropped entirely (not just its
+    // explicit creation skipped): `docker run -v <name>:...` would otherwise
+    // still implicitly create the volume, which Bitbucket's restricted
+    // Docker environment doesn't allow — same carve-out as `deploy.ts`'s
     // `buildDockerBinds`.
     const binds = [
-      ...(process.env["BITBUCKET_CLONE_DIR"] === undefined ? [cacheVolume.bind] : []),
+      ...(hasBitbucketCloneDir ? [] : [cacheVolume.bind]),
       `${hostEszipPath}:${dockerEszipPath}:ro`,
       `${functionsDir}:${DOCKER_DENO_DIR}:rw`,
     ];
@@ -1116,14 +1029,10 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
       containerArgs: ["unbundle", "--eszip", dockerEszipPath, "--output", dockerOutputPath],
     };
 
-    // Go pipes the container's stdout/stderr straight to `os.Stdout`/`getErrorLogger()`
-    // while the container runs (`DockerRunOnceWithConfig`, copied live via the
-    // log stream) — `runChildProcess`'s `onStdout`/`onStderr` tee each chunk
-    // to `output.raw` as it arrives instead of buffering the whole run.
-    // Go pipes the container's stdout straight to `os.Stdout`
-    // (`download.go:279`); machine-output modes must keep stdout
-    // payload-only (CLI-1546), so this mirrors `deploy.ts`'s own
-    // `bundleFunctionWithDocker` routing.
+    // Each chunk tees to `output.raw` live instead of buffering the whole
+    // run. Container stdout routes to real stdout only in text mode —
+    // machine-output modes must keep stdout payload-only — mirroring
+    // `deploy.ts`'s own Docker routing.
     const result = yield* runChildProcess("docker", buildFunctionsDockerRunArgs(spec), {
       stdout: "pipe",
       stderr: "pipe",
@@ -1136,44 +1045,38 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
     );
 
     if (result.exitCode !== 0) {
-      // Go's `getErrorLogger` (deno-v1 only) sets `CmdSuggestion =
-      // suggestDenoV2()` (assignment) as soon as a full stderr line reads
-      // "invalid eszip v2" (case-insensitive), then `downloadWithDockerUnbundle`
-      // appends `suggestLegacyBundle` (`+=`) once extraction has failed
-      // (`download.go:213,284-304`). Go's own implementation races these two
-      // goroutines (the pipe writer is never closed) — this resolves that
-      // race deterministically to the common (non-race) ordering instead of
-      // reproducing the nondeterminism. The line match is exact (not a
-      // substring) to match Go's `strings.EqualFold(line, "invalid eszip v2")`.
+      // Detects a full stderr line reading "invalid eszip v2"
+      // (case-insensitive, exact match not substring) to append the deno-v2
+      // suggestion ahead of the legacy-bundle one — deno-v1 containers only.
       const invalidEszipV2 =
         denoVersion === 1 &&
         result.stderr
           .split(/\r?\n/)
           .some((line) => line.trim().toLowerCase() === "invalid eszip v2");
       const suggestion =
-        (invalidEszipV2 ? suggestDenoV2(styleEmphasis) : "") + suggestLegacyBundle(slug, styleAqua);
+        (invalidEszipV2 ? suggestDenoV2(styleEmphasis) : "") + suggestUseApiRetry(slug, styleAqua);
       return yield* Effect.fail(
         Object.assign(new Error(`error running container: exit ${result.exitCode}`), {
           suggestion,
         }),
       );
     }
-    // Go: `downloadWithDockerUnbundle` has no final "Downloaded Function ..."
-    // print, unlike `RunLegacy`/`downloadWithServerSideUnbundle` — its only
-    // stdout/stderr text is "Downloading function: ..." above plus whatever
-    // the `unbundle` container itself wrote.
+    // No final "Downloaded Function ..." print here, unlike the server-side
+    // path below — only "Downloading function: ..." plus the container's own output.
     return slug;
   });
 
   return yield* extract.pipe(Effect.ensuring(cleanupEszip));
 });
 
-const downloadSingle = Effect.fnUntraced(function* (
+const downloadSingle = Effect.fn("functions.download.single")(function* (
   dependencies: DownloadRuntimeDependencies,
   projectRef: string,
   slug: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
   const output = yield* Output;
 
   if (output.format === "text") {
@@ -1187,8 +1090,8 @@ const downloadSingle = Effect.fnUntraced(function* (
     : yield* getRemoteFunction(dependencies.api, projectRef, slug);
   const entrypointPath = resolveEntrypointPath(metadata, remoteFunction);
   const projectRoot = dependencies.projectRoot;
-  const functionsRoot = join(projectRoot, "supabase", "functions");
-  const functionDir = join(functionsRoot, slug);
+  const functionsRoot = path.join(projectRoot, "supabase", "functions");
+  const functionDir = path.join(functionsRoot, slug);
   const realProjectRoot = yield* fs.realPath(projectRoot);
   const makeContainedDirectory = Effect.fnUntraced(function* (
     root: string,
@@ -1197,13 +1100,13 @@ const downloadSingle = Effect.fnUntraced(function* (
   ) {
     let existingParent = directory;
     while (!(yield* fs.exists(existingParent))) {
-      existingParent = dirname(existingParent);
+      existingParent = path.dirname(existingParent);
     }
     const realExistingParent = yield* fs.realPath(existingParent);
-    yield* ensureContainedPath(root, realExistingParent, sourcePath);
+    yield* ensureContainedPath(path, root, realExistingParent, sourcePath);
     yield* fs.makeDirectory(directory, { recursive: true });
     const realDirectory = yield* fs.realPath(directory);
-    yield* ensureContainedPath(root, realDirectory, sourcePath);
+    yield* ensureContainedPath(path, root, realDirectory, sourcePath);
   });
 
   yield* makeContainedDirectory(realProjectRoot, functionsRoot, functionsRoot);
@@ -1215,15 +1118,16 @@ const downloadSingle = Effect.fnUntraced(function* (
     }
 
     const destination = yield* resolveDownloadDestination(
+      { path, posixPath },
       functionsRoot,
       functionDir,
       entrypointPath,
       file.path,
     );
-    const parent = dirname(destination);
+    const parent = path.dirname(destination);
     yield* makeContainedDirectory(realFunctionsRoot, parent, file.path);
     yield* writeFileWithoutFollowingSymlinks(destination, file.body, file.path);
-    yield* ensureContainedPath(realFunctionsRoot, yield* fs.realPath(destination), file.path);
+    yield* ensureContainedPath(path, realFunctionsRoot, yield* fs.realPath(destination), file.path);
     if (output.format === "text") {
       yield* output.raw(`Extracting file: ${destination}\n`, "stderr");
     }
@@ -1236,165 +1140,121 @@ const downloadSingle = Effect.fnUntraced(function* (
   return slug;
 });
 
-export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError, ProxyRequirements>(
+/**
+ * Mutates `error` in place via `Object.assign` and returns the same object,
+ * so every caller's `_tag`/`instanceof` check on this loop's heterogeneous
+ * error classes stays unchanged. Field name matches the established
+ * `MigrationFetchWriteError.writtenSoFar` precedent, read by
+ * `pull.aggregate.ts`'s `hasWrittenSoFar` duck-type so `supabase pull` can
+ * report partial progress. Omitted entirely (not an empty array) when
+ * nothing had downloaded yet, since the duck-type checks presence, not
+ * non-emptiness.
+ */
+function attachDownloadWrittenSoFar<E extends object>(
+  error: E,
+  downloadedSoFar: ReadonlyArray<string>,
+): E {
+  return downloadedSoFar.length === 0
+    ? error
+    : Object.assign(error, { writtenSoFar: [...downloadedSoFar] });
+}
+
+/** The Management API calls `downloadFunctions` makes: the function body, its metadata and the function list. */
+export const functionsDownload = block("functions-download", [
+  { operationId: "v1-get-a-function-body", kind: "required" },
+  {
+    operationId: "v1-get-a-function",
+    kind: "required",
+    context:
+      "on the server-side path (--use-api, --use-docker=false, or Docker not running), when the downloaded metadata names no entrypoint",
+  },
+  {
+    operationId: "v1-list-all-functions",
+    kind: "required",
+    context: "no function name is given",
+  },
+]);
+
+export const downloadFunctions = Effect.fn("functions.download")(function* <
+  ResolveError,
+  ResolveRequirements,
+>(
   flags: DownloadFunctionsOptions,
-  dependencies: DownloadFunctionsDependencies<
-    ResolveError,
-    ResolveRequirements,
-    ProxyError,
-    ProxyRequirements
-  >,
+  dependencies: DownloadFunctionsDependencies<ResolveError, ResolveRequirements>,
 ) {
-  return Effect.gen(function* () {
-    const output = yield* Output;
+  const output = yield* Output;
+  const path = yield* Path.Path;
 
-    yield* validateDownloadFlags(dependencies.rawArgs);
+  yield* validateDownloadFlags(dependencies.rawArgs);
 
-    if (Option.isSome(flags.functionName)) {
-      yield* validateSlug(flags.functionName.value);
-    }
+  if (Option.isSome(flags.functionName)) {
+    yield* validateSlug(flags.functionName.value);
+  }
 
-    // `--legacy-bundle` is the only case still delegated to the Go binary
-    // after CLI-1963: it requires installing/upgrading a real Deno binary on
-    // the host (`InstallOrUpgradeDeno`) and shelling out to an embedded Deno
-    // script — a Deno-host-binary-management subsystem with no precedent
-    // anywhere else in this codebase or the Go CLI itself. See CLI-1963 for
-    // the parity-audit rationale on why porting it is tracked separately.
-    // `--use-docker` (default `true`) now runs natively below, matching
-    // Go's own dispatcher, which falls through to the *same* native
-    // server-side downloader when Docker isn't running rather than
-    // delegating anywhere (`download.go:138-148`).
-    if (flags.legacyBundle) {
-      const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);
+  const projectRef = yield* dependencies.resolveProjectRef;
 
-      if (output.format === "text") {
-        yield* dependencies.proxyDownload(flags, projectRef, false);
-        return;
-      }
+  // Resolved unconditionally here, before checking `useDocker` or whether
+  // Docker is running: an invalid `supabase/config.toml` (e.g. a bad
+  // `edge_runtime.deno_version`) must fail up front regardless of
+  // `--use-api`/`--use-docker`/Docker's state, not only on the Docker path.
+  const resolvedEdgeRuntimeImage = yield* resolveEdgeRuntimeImage(dependencies, projectRef);
 
-      // Resolve the slug list *before* delegating, mirroring Go's own
-      // `downloadAll` (which also lists before looping through downloads,
-      // `apps/cli-go/internal/functions/download/download.go`). The
-      // delegated Go child never emits the TS `Output` envelope itself
-      // (CLI-1546: stdout is payload-only in machine mode, so its raw text
-      // is captured/discarded below, not inherited) — this list is purely
-      // for the JSON payload. Resolving it first means a transient listing
-      // failure is reported before any download side effect, instead of
-      // masking an already-successful delegated download with a later,
-      // unrelated listing failure.
-      const slugs = Option.isSome(flags.functionName)
-        ? [flags.functionName.value]
-        : yield* listRemoteFunctionSlugs(dependencies.api, projectRef);
+  // Resolved once for the entire invocation, before any per-function work,
+  // so the "Docker is not running" warning can print even for a project
+  // with zero functions. `edgeRuntimeImage === undefined` is the single
+  // source of truth for "use the server-side path" instead of a separate
+  // boolean that could silently disagree with whether an image resolved.
+  const styleWarning = dependencies.styleWarning ?? ((text: string) => text);
+  const edgeRuntimeImage: EdgeRuntimeImage | undefined =
+    !flags.useApi && flags.useDocker
+      ? (yield* isDockerRunning())
+        ? resolvedEdgeRuntimeImage
+        : yield* output
+            .raw(`${styleWarning("WARNING:")} Docker is not running\n`, "stderr")
+            .pipe(Effect.as(undefined))
+      : undefined;
 
-      // Mirrors the native path's empty-project short-circuit just below:
-      // an empty project has nothing to delegate, so report it the same way
-      // ("No functions found.") instead of still invoking the Go child (an
-      // unnecessary Docker/subprocess round-trip) and reporting a
-      // misleading "Downloaded Edge Function source." success with an
-      // empty slug list.
-      if (slugs.length === 0) {
-        yield* output.success("No functions found.", {
-          function_slugs: [],
-          project_ref: projectRef,
-        });
-        return;
-      }
+  const slugs = Option.isSome(flags.functionName)
+    ? [flags.functionName.value]
+    : yield* listRemoteFunctionSlugs(dependencies.api, projectRef);
 
-      yield* dependencies.proxyDownload(flags, projectRef, true);
+  // The standalone `functionsDownload` handler emits the final summary;
+  // this only computes and returns the result.
+  if (slugs.length === 0) {
+    return { projectRef, slugs: [], empty: true };
+  }
 
-      yield* output.success("Downloaded Edge Function source.", {
-        function_slugs: slugs,
-        project_ref: projectRef,
-      });
-      return;
-    }
+  if (output.format === "text" && Option.isNone(flags.functionName)) {
+    yield* output.raw(`Found ${slugs.length} function(s) to download\n`, "stderr");
+  }
+  yield* Effect.annotateCurrentSpan({ "function.count": slugs.length });
 
-    const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);
+  // Resolved once for the whole invocation, not once per slug — see
+  // `PulledEdgeRuntimeImage`'s own doc comment. The redeploy suggestion on
+  // a resolve failure uses the first slug as a representative example,
+  // since none is "the" one being processed yet.
+  const styleAqua = dependencies.styleAqua ?? ((text: string) => text);
+  const pulledEdgeRuntimeImage: PulledEdgeRuntimeImage | undefined =
+    edgeRuntimeImage === undefined
+      ? undefined
+      : {
+          ...edgeRuntimeImage,
+          image: yield* resolveFunctionsDockerImage(
+            edgeRuntimeImage.rawImage,
+            edgeRuntimeImage.projectEnvValues,
+          ).pipe(Effect.mapError(withUseApiRetrySuggestion(slugs[0] ?? "", styleAqua))),
+        };
 
-    // Go: `flags.LoadConfig(fsys)` runs unconditionally at the very top of
-    // `Run`, before checking `useDocker`, before checking whether Docker
-    // itself is running, and before any API/filesystem side effect
-    // (`download.go:135-138`) — an invalid `supabase/config.toml` (e.g. a bad
-    // `edge_runtime.deno_version`) must fail up front regardless of
-    // `--use-api`/`--use-docker`/Docker's running state, not only on the
-    // Docker happy path. Resolving unconditionally here (rather than nested
-    // inside the `isDockerRunning()` branch below) keeps that ordering: a
-    // config error now surfaces even when `--use-api` was passed or Docker is
-    // down, matching Go instead of silently skipping validation and
-    // proceeding straight to `listRemoteFunctionSlugs`/`downloadSingle`.
-    const resolvedEdgeRuntimeImage = yield* resolveEdgeRuntimeImage(dependencies, projectRef);
-
-    // Go: `Run` resolves ONE downloader for the entire invocation, before any
-    // per-function work — including before listing when no slug is given
-    // (`download.go:138-153`), so this warning can print even when the
-    // project turns out to have zero functions. Mirrors Go's
-    // `if useApi { useDocker = false }` (`cmd/functions.go:51-53`), which
-    // reads the resolved flag value, not `pflag.Changed`.
-    // Single source of truth for "use the Docker downloader": `undefined`
-    // means the native server-side path runs instead, whether because
-    // `--use-api` (or `--use-docker=false`) resolved that way or because
-    // Docker isn't running. Deliberately not a separate `useDocker: boolean`
-    // alongside this — a boolean that could disagree with whether an image
-    // was actually resolved would let the loop below silently downgrade to
-    // the server-side path while claiming to honor `--use-docker`.
-    const styleWarning = dependencies.styleWarning ?? ((text: string) => text);
-    const edgeRuntimeImage: EdgeRuntimeImage | undefined =
-      !flags.useApi && flags.useDocker
-        ? (yield* isDockerRunning())
-          ? resolvedEdgeRuntimeImage
-          : yield* output
-              .raw(`${styleWarning("WARNING:")} Docker is not running\n`, "stderr")
-              .pipe(Effect.as(undefined))
-        : undefined;
-
-    const slugs = Option.isSome(flags.functionName)
-      ? [flags.functionName.value]
-      : yield* listRemoteFunctionSlugs(dependencies.api, projectRef);
-
-    if (slugs.length === 0) {
-      if (output.format === "text") {
-        yield* output.raw(`No functions found in project  ${projectRef}\n`, "stderr");
-        return;
-      }
-      yield* output.success("No functions found.", { function_slugs: [], project_ref: projectRef });
-      return;
-    }
-
-    if (output.format === "text" && Option.isNone(flags.functionName)) {
-      yield* output.raw(`Found ${slugs.length} function(s) to download\n`, "stderr");
-    }
-
-    // Go: `DockerStart` -> `DockerResolveImageIfNotCached` (`internal/utils/docker.go:326-386`)
-    // — resolved ONCE here, for the whole invocation, not once per slug
-    // inside the loop below: the image is identical for every function, so
-    // per-slug resolution would multiply both the cache-check subprocess
-    // count and, on a registry outage, the retry-backoff sleep (up to ~36s)
-    // by the function count — see `PulledEdgeRuntimeImage`'s own doc comment
-    // for why this diverges from Go's per-container `DockerStart` without
-    // losing parity (Go's cache check is in-process, not a fork+exec). The
-    // `--legacy-bundle` suggestion on a resolve failure uses the first slug
-    // as a representative example, since no single slug is "the" one being
-    // processed yet at this point.
-    const styleAqua = dependencies.styleAqua ?? ((text: string) => text);
-    const pulledEdgeRuntimeImage: PulledEdgeRuntimeImage | undefined =
-      edgeRuntimeImage === undefined
-        ? undefined
-        : {
-            ...edgeRuntimeImage,
-            image: yield* resolveFunctionsDockerImage(
-              edgeRuntimeImage.rawImage,
-              edgeRuntimeImage.projectEnvValues,
-            ).pipe(Effect.mapError(withLegacyBundleSuggestion(slugs[0] ?? "", styleAqua))),
-          };
-
-    const downloaded: string[] = [];
-    for (const slug of slugs) {
-      // Go: CLI-1891, `downloadAll`'s per-item validation runs before any
-      // per-slug network/filesystem work (`download.go:182-188`). A
-      // user-supplied slug is already validated above (`validateSlug`); this
-      // covers slugs sourced from the Management API's function list, which
-      // this threat model treats as untrusted (a malicious/compromised
-      // response, or a MITM).
+  const downloaded: string[] = [];
+  // Absolute directory path per fully-downloaded slug, separate from
+  // `downloaded` (bare slugs): a caller upstream (`pull.aggregate.ts`'s
+  // `hasWrittenSoFar`) needs an on-disk path.
+  const downloadedPaths: string[] = [];
+  for (const slug of slugs) {
+    yield* Effect.gen(function* () {
+      // A user-supplied slug is already validated above; this covers
+      // slugs sourced from the Management API's function list, which is
+      // untrusted (a malicious/compromised response, or a MITM).
       if (Option.isNone(flags.functionName)) {
         yield* validateRemoteSlug(slug, styleAqua);
       }
@@ -1405,21 +1265,14 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
       } else {
         downloaded.push(yield* downloadSingle(dependencies, projectRef, slug));
       }
-    }
+      downloadedPaths.push(path.resolve(dependencies.projectRoot, "supabase", "functions", slug));
+    }).pipe(
+      Effect.mapError((error) => attachDownloadWrittenSoFar(error, downloadedPaths)),
+      Effect.withSpan("functions.download.function"),
+    );
+  }
 
-    if (output.format !== "text") {
-      yield* output.success("Downloaded Edge Function source.", {
-        function_slugs: downloaded,
-        project_ref: projectRef,
-      });
-      return;
-    }
-
-    if (Option.isNone(flags.functionName)) {
-      yield* output.raw(
-        `Successfully downloaded all functions from project ${projectRef}\n`,
-        "stderr",
-      );
-    }
-  });
-}
+  // The standalone `functionsDownload` handler emits the final summary;
+  // this only computes and returns the result.
+  return { projectRef, slugs: downloaded, empty: false };
+});

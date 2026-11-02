@@ -8,7 +8,7 @@ import {
 } from "../shared/telemetry/error-actionability.ts";
 import type { DbSession } from "./db-connection.service.ts";
 
-/** Reading or updating `vault.secrets` failed (`UpsertVaultSecrets` errors). */
+/** Reading or updating `vault.secrets` failed. */
 export class MigrationVaultError extends Data.TaggedError("MigrationVaultError")<{
   readonly message: string;
 }> {
@@ -17,24 +17,23 @@ export class MigrationVaultError extends Data.TaggedError("MigrationVaultError")
   }
 }
 
-/** A resolved `[db.vault]` secret. `resolved` mirrors `len(SHA256) > 0` gate. */
+/** A resolved `[db.vault]` secret; `resolved` is true when a SHA256 digest was computed. */
 export interface VaultSecret {
   readonly name: string;
   readonly value: string;
   readonly resolved: boolean;
 }
 
-// Exported for the shadow baseline cache's embedded-SQL digest (`shadow-cache.ts`), which must
-// re-key whenever the SQL this module bakes into a baseline changes across CLI releases.
+// Exported so the shadow baseline cache's embedded-SQL digest (`shadow-cache.ts`)
+// re-keys whenever this SQL changes across CLI releases.
 export const READ_VAULT_KV = "SELECT id, name FROM vault.secrets WHERE name = ANY($1)";
 export const UPDATE_VAULT_KV = "SELECT vault.update_secret($1, $2)";
 export const CREATE_VAULT_KV = "SELECT vault.create_secret($1, $2)";
 
 /**
- * Upserts `[db.vault]` secrets into `vault.secrets`. Port of Go's
- * `vault.UpsertVaultSecrets`: only resolved secrets
- * (Go gates on a non-empty SHA256) are processed; existing names are updated by
- * id, the rest are created. No resolved secrets → no-op (no DB round-trip).
+ * Upserts `[db.vault]` secrets into `vault.secrets`: only resolved secrets
+ * are processed, existing names are updated by id, and the rest are created.
+ * No resolved secrets is a no-op (no DB round-trip).
  */
 export const upsertVaultSecrets = (session: DbSession, secrets: ReadonlyArray<VaultSecret>) =>
   Effect.gen(function* () {
@@ -55,7 +54,7 @@ export const upsertVaultSecrets = (session: DbSession, secrets: ReadonlyArray<Va
       existing.map((row) => [String(row["name"]), String(row["id"])] as const),
     );
 
-    // One transaction, mirroring Go's implicitly-transactional `SendBatch`.
+    // One transaction: all secrets update/create together, or none do.
     const batch = Effect.gen(function* () {
       yield* session.exec("BEGIN");
       for (const secret of resolved) {

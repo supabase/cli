@@ -1,4 +1,4 @@
-import { CliError } from "effect/unstable/cli";
+import { CliError } from "effect/cli";
 import { describe, expect, it } from "vitest";
 import { classifyCliErrorActionability } from "./error-actionability.ts";
 

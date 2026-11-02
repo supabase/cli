@@ -30,10 +30,10 @@ artifacts (`./schema.json`, `./project-schema.json`).
   project-environment resolution, and `inferFunctionsManifest` (discovers and validates
   `supabase/functions/*` on disk).
 - `@supabase/config/internal` (CLI-2234) — NOT covered by semver, and only `apps/cli` may import it
-  (enforced by `src/monorepo-import-contract.unit.test.ts`). Carries `apps/cli`'s own Go-parity
-  call sites and contract-guard tests: `loadCliConfig`/`resolveCliConfigValue`/
+  (enforced by `src/monorepo-import-contract.unit.test.ts`). Carries `apps/cli`'s own
+  config-loading entrypoints and contract-guard tests: `loadCliConfig`/`resolveCliConfigValue`/
   `resolveCliConfigSubtree` — the SAME runtime functions `./effect` exports, re-typed here to
-  additionally accept the internal-only `goViperCompat` option (`InternalLoadCliConfigOptions` for
+  additionally accept the internal-only `cliCompat` option (`InternalLoadCliConfigOptions` for
   `loadCliConfig`; `resolveCliConfigValue`/`resolveCliConfigSubtree`'s own widened options type,
   `InternalResolveCliConfigOptions`, is package-internal and not itself re-exported) — plus the
   otherwise-internal registry data (`AUTH_HOOK_NAMES`, `unmappedSecretApiPaths`,
@@ -45,13 +45,18 @@ artifacts (`./schema.json`, `./project-schema.json`).
   `ConfigChange`/`ConfigChangeClass`/`ConfigChangeCounts`/`ConfigChangeSet`/
   `DiffProjectConfigOptions` types, lives on `.`, not here — see above),
   `dualScopeProjectConfigPaths`, the raw `[remotes.*]` helpers `remoteNameForProjectRef`/
-  `remoteProjectIdEntries`, and the atomic single-file writer `writeCliConfigDocumentText`/
-  `CliConfigWriteError` — kept off `./effect`'s public surface deliberately (no consumer outside
+  `remoteProjectIdEntries`, the atomic single-file writer `writeCliConfigDocumentText`/
+  `CliConfigWriteError`, and the two pipeline stages `loadCliConfig` is built from —
+  `parseCliConfigDocumentFile` (discover and parse) with `mergeParsedCliConfig` (merge the
+  `[remotes.*]` block a caller-supplied `selectRemote` picks) and `decodeMergedCliConfig` (interpolate `env()` against a caller-supplied
+  env record, then decode and validate, optionally on an overlaid document) — kept off `./effect`'s public surface deliberately (no consumer outside
   `apps/cli` needs them, and internal-only keeps the published semver surface unchanged). Anything
   here can change or vanish in any release.
-- `@supabase/config/schema.json` — generated JSON Schema (draft 2020-12) for `CliConfig` (a
-  `dist/` build output).
-- `@supabase/config/project-schema.json` (CLI-2234) — generated JSON Schema (draft 2020-12) for
+  Migration-check vocabulary for the CLI resolver: `MIGRATION_CHECK_RULES`, `mapMigrationCheckRules`,
+  `DEFAULT_MIGRATION_CHECK_SEVERITY`, `MigrationCheckRule`, and `MigrationCheckSeverity`.
+- `@supabase/config/schema.json` — generated JSON Schema (draft-07) for `CliConfig` (a
+  `dist/` build output); number, integer, boolean, enum and string-list fields also accept `env(VAR)` strings.
+- `@supabase/config/project-schema.json` (CLI-2234) — generated JSON Schema (draft-07) for
   `ProjectConfig`, derived from `ProjectConfigSchema` (`src/project-config/project-schema.ts`); a
   `dist/` build output alongside `schema.json`.
 
@@ -65,8 +70,8 @@ artifacts (`./schema.json`, `./project-schema.json`).
   from `@supabase/config`.
 - `@supabase/config/io` is exclusively for external consumers outside this monorepo that aren't
   Effect-native. Do not add an internal consumer of it.
-- `@supabase/config/internal` is for `apps/cli`'s own Go-parity call sites and contract-guard
-  tests only — a symbol that needs the internal-only `goViperCompat` typings, or the internal
+- `@supabase/config/internal` is for `apps/cli`'s own config-loading entrypoints and contract-guard
+  tests only — a symbol that needs the internal-only `cliCompat` typings, or the internal
   registry data, imports it from there; every other symbol in the same import statement stays on
   its public specifier (`.`/`./effect`). Enforced: every `@supabase/config/internal` occurrence
   outside this package must be under `apps/cli/`.
@@ -94,8 +99,7 @@ surface must update that test deliberately — it is not meant to be a silent pa
    every `dist`/`types`/`default` export condition points at.
 2. Renders both generated JSON Schema artifacts (`dist/schema.json`, `dist/project-schema.json`)
    from `toCliConfigJsonSchema()`/`toProjectConfigJsonSchema()`, post-processed (via
-   `scripts/json-schema-postprocess.ts`) to collapse Effect's non-finite-number `anyOf` encoding
-   back to a plain `number`/`integer` node and to add `$id`/`title`/`description`, then formatted
+   `scripts/json-schema-postprocess.ts`) to add `$id`/`title`/`description`, then formatted
    through `oxfmt`.
 3. Verifies every `types`/non-`bun` `default` target (plus both JSON artifacts) declared in
    package.json's `exports` map actually exists on disk.
@@ -145,8 +149,9 @@ own guarantees and must stay green after any entrypoint or type-surface change:
   directory.
 - `src/lib/resolve.unit.test.ts` — behavioral coverage of the public sync resolvers.
 - `scripts/json-schema-postprocess.unit.test.ts` / `scripts/build-artifacts.unit.test.ts` — the
-  JSON Schema post-processing `renderJsonSchema` applies (non-finite-number `anyOf` collapse,
-  `$id`/`title`/`description`), the second against the real generated documents.
+  `$id`/`title`/`description` metadata `withSchemaMetadata` adds, and, against the real generated
+  documents, that every config number schema is finite (no non-finite `anyOf` split reaches the
+  published artifacts).
 
 ## Releases (CLI-2233)
 
@@ -163,14 +168,36 @@ elsewhere in the monorepo never releases `@supabase/config`, and vice versa.
   a human approves the `config-release` GitHub environment (reviewing the plan job's step summary:
   release notes + type-surface diff); then an OIDC/provenance publish job publishes **that exact
   tarball** (`npm publish <tgz> --ignore-scripts` — no rebuild, no repack, no lifecycle scripts:
-  the approved bytes are the published bytes). After publishing, the job verifies the version is
-  registry-visible with the reviewed tarball's integrity and the expected dist-tag before pushing
-  the `config-v*` tag.
+  the approved bytes are the published bytes). After publishing, the job pushes the `config-v*`
+  tag, then verifies the version is registry-visible with the reviewed tarball's integrity and the
+  expected dist-tag.
 - **`package.json`'s committed `version` (`0.1.0`) is a placeholder.** The real version is stamped
   into the tarball at pack time (`npm pkg set version` in the plan job) from the computed version —
-  never hand-bump the committed field, and never hand-push a `config-v*` tag.
+  never hand-bump the committed field. Hand-pushing a `config-v*` tag is reserved for the
+  documented recovery below.
 - **Local dry runs:** `scripts/release-plan.ts` runs the plan locally without publishing;
   `tools/config-release-gate.ts --tarball` rehearses the type-surface gate locally.
+
+### Recovering a published-but-untagged release
+
+- **Symptom:** npm holds a version whose `config-v*` tag never reached origin, because a step
+  after `npm publish` failed.
+- **Why it must be fixed:** the planner derives the next version from the last `config-v*` tag,
+  never from npm, so every later run re-plans the same version. As soon as any commit changes
+  `packages/config`, the repacked bytes diverge from the published ones and the publish job's
+  integrity guard refuses permanently.
+- **Recovery option 1 (preferred, while available):** re-run the failed publish job from the
+  original run, so it reuses the reviewed artifact rather than rebuilding. Two limits close this
+  option: release artifacts are kept 7 days, and re-running a workflow run discards the earlier
+  attempt's artifacts.
+- **Recovery option 2:** create the tag directly at the commit the published bytes were built
+  from. A full workflow re-run is not a substitute: semantic-release refuses to plan from any
+  commit behind the release branch's tip, so a re-run pinned to the original commit reports no
+  release and never reaches the publish job. `config-v*` tags are protected by a repo ruleset
+  whose only bypass actor is the releaser GitHub App, so this needs a repo admin to temporarily
+  grant themselves bypass on that ruleset, push the annotated tag, then restore the ruleset and
+  confirm it matches its prior state. Add the matching GitHub release with `--latest=false`, since
+  a config release must never become the repo's `latest` release.
 
 ### Standing release configuration (set up under CLI-2169)
 
@@ -191,8 +218,8 @@ release fails unexpectedly, and restore them if repo or npm settings are ever re
    cut `1.0.0` with release notes generated from the entire monorepo history — a whole-history
    changelog as both the approval artifact and the public GH release body — so
    `scripts/release-plan.ts` refuses to plan in that state (escape hatch:
-   `CONFIG_RELEASE_ALLOW_NO_BASELINE=1`). Seeding it was the single exception to the "never
-   hand-push a `config-v*` tag" rule above.
+   `CONFIG_RELEASE_ALLOW_NO_BASELINE=1`). Seeding it was a hand-pushed tag, same as the
+   recovery procedure above.
 4. **The "Protect `config-v*` release tags" ruleset** restricts creating, moving, and deleting
    `config-v*` tags to the `supabase-cli-releaser` App (the same App the release workflows mint
    tokens from). The last `config-v*` tag is the version oracle: a stray hand-pushed tag

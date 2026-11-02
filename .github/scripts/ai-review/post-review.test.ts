@@ -4,11 +4,13 @@ import {
   assertFindings,
   assertMergedReview,
   buildReviewPayload,
+  clampNextImpactSeverity,
   foldInlineCommentsIntoBody,
   isSuperseded,
   type MarkedEntry,
   type MergedFinding,
   type MergedReview,
+  parseAiReviewState,
   parseDiffAnchors,
   partitionFindings,
   postConsolidatedReview,
@@ -25,9 +27,7 @@ import {
   truncateReviewBody,
 } from "./post-review.ts";
 
-// A single hunk touching file.ts lines 10-14 on the new side: line 10 is
-// context, line 11 replaces a removed line, 12 is a pure addition, 13-14 are
-// trailing context. Hand-computed RIGHT-side anchors: {10, 11, 12, 13, 14}.
+// One hunk on file.ts; RIGHT-side anchors: {10, 11, 12, 13, 14}.
 const SINGLE_HUNK_DIFF = `diff --git a/file.ts b/file.ts
 index 111..222 100644
 --- a/file.ts
@@ -41,8 +41,7 @@ index 111..222 100644
  context line 14
 `;
 
-// Two hunks in the same file: {1,2,3} from the first hunk, {20,21,22} from
-// the second (the RIGHT counter resets to each hunk's own header).
+// Two hunks in one file; each resets the RIGHT counter to its own header.
 const MULTI_HUNK_DIFF = `diff --git a/multi.ts b/multi.ts
 index 1..2 100644
 --- a/multi.ts
@@ -101,8 +100,7 @@ index 0..6
 +line three
 `;
 
-// A trailing "\ No newline at end of file" marker on both sides must not
-// perturb the RIGHT counter: anchors are still {1,2}.
+// A trailing "\ No newline at end of file" marker must not perturb the RIGHT counter.
 const NO_NEWLINE_DIFF = `diff --git a/nonewline.ts b/nonewline.ts
 index 7..8 100644
 --- a/nonewline.ts
@@ -115,9 +113,7 @@ index 7..8 100644
 \\ No newline at end of file
 `;
 
-// git appends a literal TAB after a `+++` path that needs quoting (here,
-// because it contains a space); the tab must be stripped so anchors key on
-// "has space.ts", not "has space.ts\t".
+// git appends a literal TAB after a quoted `+++` path; it must be stripped.
 const TAB_PATH_DIFF = `diff --git a/has space.ts b/has space.ts
 index 9..a 100644
 --- a/has space.ts
@@ -127,10 +123,7 @@ index 9..a 100644
 +added line
 `;
 
-// A pure rename (100% similarity) carries no `---`/`+++`/`@@` lines at all,
-// followed by a normal file's diff — the parser must not leak state (e.g. a
-// leftover `currentFile`) from the header-less rename section into the next
-// file.
+// A pure rename carries no `---`/`+++`/`@@` lines; state must not leak into the next file's diff.
 const RENAME_ONLY_THEN_NORMAL_DIFF = `diff --git a/old-name.ts b/new-name.ts
 similarity index 100%
 rename from old-name.ts
@@ -144,10 +137,7 @@ index 1..2 100644
 +added
 `;
 
-// An added line whose literal content is "++ b/not-a-real-header.ts" appears
-// in the diff, prefixed by the diff's own "+", as "+++ b/not-a-real-header.ts"
-// — a `+++`-lookalike that must not hijack `currentFile` because it occurs
-// inside a hunk, not between a `diff --git` boundary and the first `@@`.
+// An added line whose content looks like a `+++` header must not hijack `currentFile`.
 const PLUS_LOOKALIKE_DIFF = `diff --git a/lookalike.ts b/lookalike.ts
 index 1..2 100644
 --- a/lookalike.ts
@@ -546,6 +536,8 @@ describe("renderReviewBody", () => {
     trigger: "auto",
     runUrl: "https://example.com/run/9",
     modelsFooter: "`claude-fable-5` + `gpt-5.6-sol`",
+    headSha: "a".repeat(40),
+    reviewsComplete: true,
   };
 
   test("shows 'No issues found.' when nothing was posted", () => {
@@ -683,6 +675,8 @@ describe("buildReviewPayload", () => {
     trigger: "manual",
     runUrl: "https://example.com/run/1",
     modelsFooter: "`claude-fable-5` + `gpt-5.6-sol`",
+    headSha: "a".repeat(40),
+    reviewsComplete: true,
   };
 
   test("event is always COMMENT", () => {
@@ -695,6 +689,29 @@ describe("buildReviewPayload", () => {
     const review = makeMergedReview({ findings: [] });
     const payload = buildReviewPayload(review, anchors, footer);
     expect(payload.body).toContain(AI_REVIEW_MARKER);
+  });
+
+  test("posts on the reviewed head and records every unrefuted finding, inline or not", () => {
+    const review = makeMergedReview({
+      findings: [
+        makeFinding({ id: "inline", file: "file.ts", line: 10 }),
+        makeFinding({ id: "outside", file: "file.ts", line: 99, claim: "x".repeat(70_000) }),
+        makeFinding({ id: "refuted", adjudication: { verdict: "refuted", reason: "No." } }),
+        makeFinding({ id: "advisory", category: "next-impact" }),
+      ],
+    });
+    const payload = buildReviewPayload(review, anchors, { ...footer, reviewsComplete: false });
+
+    expect(payload.commit_id).toBe(footer.headSha);
+    expect(payload.comments).toHaveLength(1);
+    expect(payload.body).toContain("truncated");
+    expect(payload.body).not.toContain(footer.modelsFooter);
+    expect(payload.body).toContain(AI_REVIEW_MARKER);
+    expect(parseAiReviewState(payload.body)).toEqual({
+      head: "a".repeat(40),
+      complete: false,
+      findings: 3,
+    });
   });
 
   test("the injected models footer appears in the body verbatim", () => {
@@ -828,10 +845,6 @@ describe("buildReviewPayload", () => {
   });
 
   test("truncates the very first payload's body when it already exceeds the cap with zero comments to fold", () => {
-    // Not anchorable (line 999 is outside the diff hunk), so this produces a
-    // body-only payload with no inline comments — the 422-retry fold path
-    // never runs, so only truncating `buildReviewPayload`'s own body catches
-    // an oversized initial POST.
     const finding = makeFinding({ file: "file.ts", line: 999, claim: "x".repeat(70_000) });
     const review = makeMergedReview({ findings: [finding] });
     const payload = buildReviewPayload(review, anchors, footer);
@@ -842,12 +855,66 @@ describe("buildReviewPayload", () => {
   });
 });
 
+describe("next-impact findings", () => {
+  const footer: ReviewFooterInfo = {
+    trigger: "auto",
+    runUrl: "https://example.com/run/2",
+    modelsFooter: "`claude-fable-5` + `gpt-5.6-sol`",
+    headSha: "a".repeat(40),
+    reviewsComplete: true,
+  };
+  const anchors = parseDiffAnchors(SINGLE_HUNK_DIFF);
+
+  test("clamps critical and major to minor and leaves minor and nit alone", () => {
+    const severities = (["critical", "major", "minor", "nit"] as const).map(
+      (severity) => clampNextImpactSeverity(makeFinding({ severity })).severity,
+    );
+    expect(severities).toEqual(["minor", "minor", "minor", "nit"]);
+  });
+
+  test("renders an advisory section with the clamped severity and no inline comment", () => {
+    const finding = makeFinding({
+      file: "file.ts",
+      line: 10,
+      severity: "critical",
+      category: "next-impact",
+      claim: "Adds Go delegation that next removes.",
+    });
+    const payload = buildReviewPayload(makeMergedReview({ findings: [finding] }), anchors, footer);
+    expect(payload.event).toBe("COMMENT");
+    expect(payload.comments).toEqual([]);
+    expect(payload.body).toContain("### Next impact (advisory)");
+    expect(payload.body).toContain("Adds Go delegation that next removes.");
+    expect(payload.body).toContain("🟡 MINOR");
+    expect(payload.body).not.toContain("🔴 CRITICAL");
+    expect(payload.body).toContain("No issues found.");
+  });
+
+  test("omits the section when there are no next-impact findings", () => {
+    const finding = makeFinding({ file: "file.ts", line: 10 });
+    const payload = buildReviewPayload(makeMergedReview({ findings: [finding] }), anchors, footer);
+    expect(payload.body).not.toContain("Next impact");
+  });
+
+  test("a refuted next-impact finding stays in the refuted details", () => {
+    const finding = makeFinding({
+      category: "next-impact",
+      adjudication: { verdict: "refuted", reason: "next keeps this code." },
+    });
+    const payload = buildReviewPayload(makeMergedReview({ findings: [finding] }), anchors, footer);
+    expect(payload.body).not.toContain("### Next impact (advisory)");
+    expect(payload.body).toContain("Refuted findings");
+  });
+});
+
 describe("foldInlineCommentsIntoBody", () => {
   const anchors = parseDiffAnchors(SINGLE_HUNK_DIFF);
   const footer: ReviewFooterInfo = {
     trigger: "manual",
     runUrl: "https://example.com/run/1",
     modelsFooter: "`claude-fable-5` + `gpt-5.6-sol`",
+    headSha: "a".repeat(40),
+    reviewsComplete: true,
   };
 
   test("returns the same payload unchanged when there are no inline comments", () => {
@@ -1012,11 +1079,12 @@ describe("post flow via injected ReviewIo", () => {
     trigger: "manual",
     runUrl: "https://example.com/run/1",
     modelsFooter: "`claude-fable-5` + `gpt-5.6-sol`",
+    headSha: "a".repeat(40),
+    reviewsComplete: true,
   };
 
   function makeReviewIo(
     opts: {
-      diff?: string;
       reviews?: MarkedEntry[];
       comments?: MarkedEntry[];
       postReviewStatuses?: number[];
@@ -1039,16 +1107,12 @@ describe("post flow via injected ReviewIo", () => {
     let postReviewCalls = 0;
 
     const io: ReviewIo = {
-      fetchPrDiff: () => Promise.resolve(opts.diff ?? ""),
       listReviews: () => {
         calls.push("listReviews");
         if (opts.failSupersede) {
           return Promise.reject(new Error("listReviews failed"));
         }
-        // Mirror real GitHub: a review posted earlier in the same run shows
-        // up in later listings as a marker-bearing bot review. The supersede
-        // pass must snapshot BEFORE posting or it would wrap the fresh
-        // review as "superseded" too.
+        // Mirrors real GitHub: a review posted earlier in the same run shows up in later listings.
         const alreadyPosted = postedReviews.map((payload, i) => ({
           id: 900 + i,
           body: payload.body,
@@ -1111,7 +1175,6 @@ describe("post flow via injected ReviewIo", () => {
     };
 
     const { io, updatedReviews, updatedComments, postedReviews, calls } = makeReviewIo({
-      diff: SINGLE_HUNK_DIFF,
       reviews: [priorMarkerReview, humanReview],
       comments: [
         priorMarkerComment,
@@ -1122,7 +1185,7 @@ describe("post flow via injected ReviewIo", () => {
     });
 
     const review = makeMergedReview({ findings: [] });
-    await postConsolidatedReview(io, 42, review, footer);
+    await postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer);
 
     expect(updatedReviews).toEqual([{ reviewId: 1, body: supersededBody(priorMarkerReview.body) }]);
     expect(updatedComments).toEqual([
@@ -1135,15 +1198,10 @@ describe("post flow via injected ReviewIo", () => {
 
   test("the freshly posted review is never swept into its own supersede pass", async () => {
     const review = makeMergedReview({ findings: [] });
-    const { io, updatedReviews, updatedComments, postedReviews, calls } = makeReviewIo({
-      diff: SINGLE_HUNK_DIFF,
-    });
+    const { io, updatedReviews, updatedComments, postedReviews, calls } = makeReviewIo();
 
-    await postConsolidatedReview(io, 42, review, footer);
+    await postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer);
 
-    // With no prior AI review on the PR, nothing may be wrapped as superseded
-    // — especially not the review this run just posted (which the fake's
-    // listReviews, like real GitHub, includes in post-POST listings).
     expect(postedReviews).toHaveLength(1);
     expect(updatedReviews).toEqual([]);
     expect(updatedComments).toEqual([]);
@@ -1152,17 +1210,19 @@ describe("post flow via injected ReviewIo", () => {
 
   test("a review still posts even when the best-effort supersede fails", async () => {
     const review = makeMergedReview({ findings: [] });
-    const { io, postedReviews } = makeReviewIo({ diff: SINGLE_HUNK_DIFF, failSupersede: true });
-    await expect(postConsolidatedReview(io, 42, review, footer)).resolves.toBeUndefined();
+    const { io, postedReviews } = makeReviewIo({ failSupersede: true });
+    await expect(
+      postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer),
+    ).resolves.toBeUndefined();
     expect(postedReviews).toHaveLength(1);
   });
 
   test("posts exactly one review when the first POST succeeds", async () => {
     const finding = makeFinding({ file: "file.ts", line: 10 });
     const review = makeMergedReview({ findings: [finding] });
-    const { io, postedReviews } = makeReviewIo({ diff: SINGLE_HUNK_DIFF });
+    const { io, postedReviews } = makeReviewIo();
 
-    await postConsolidatedReview(io, 42, review, footer);
+    await postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer);
 
     expect(postedReviews).toHaveLength(1);
   });
@@ -1171,11 +1231,10 @@ describe("post flow via injected ReviewIo", () => {
     const finding = makeFinding({ file: "file.ts", line: 10 });
     const review = makeMergedReview({ findings: [finding] });
     const { io, postedReviews } = makeReviewIo({
-      diff: SINGLE_HUNK_DIFF,
       postReviewStatuses: [422, 200],
     });
 
-    await postConsolidatedReview(io, 42, review, footer);
+    await postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer);
 
     expect(postedReviews).toHaveLength(2);
     expect(postedReviews[0]?.comments).toHaveLength(1);
@@ -1183,30 +1242,39 @@ describe("post flow via injected ReviewIo", () => {
     expect(postedReviews[1]?.body).toContain("Inline comments (GitHub rejected");
   });
 
-  test("never retries with the fold when there were no inline comments to fold", async () => {
+  test("retries a rejected pinned review on the current head, still naming the reviewed commit", async () => {
     const finding = makeFinding({ file: "file.ts", line: 999 }); // not anchorable -> body-only
     const review = makeMergedReview({ findings: [finding] });
-    const { io, postedReviews } = makeReviewIo({
-      diff: SINGLE_HUNK_DIFF,
-      postReviewStatuses: [422],
-    });
+    const { io, postedReviews } = makeReviewIo({ postReviewStatuses: [422, 200] });
 
-    await expect(postConsolidatedReview(io, 42, review, footer)).rejects.toThrow(
-      /Review POST failed \(status 422\)/,
-    );
+    await postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer);
+
+    expect(postedReviews.map((posted) => posted.commit_id)).toEqual([footer.headSha, undefined]);
+    expect(parseAiReviewState(postedReviews[1]?.body ?? "")?.head).toBe(footer.headSha);
+  });
+
+  test("an older workflow's review carries no state, so it never retries a body-only 422", async () => {
+    const finding = makeFinding({ file: "file.ts", line: 999 });
+    const review = makeMergedReview({ findings: [finding] });
+    const { io, postedReviews } = makeReviewIo({ postReviewStatuses: [422] });
+    const unpinned = { ...footer, headSha: undefined, reviewsComplete: undefined };
+
+    await expect(
+      postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, unpinned),
+    ).rejects.toThrow(/Review POST failed \(status 422\)/);
     expect(postedReviews).toHaveLength(1);
+    expect(parseAiReviewState(postedReviews[0]?.body ?? "")).toBeNull();
   });
 
   test("throws with GitHub's response body when the retry also 422s, instead of swallowing it", async () => {
     const finding = makeFinding({ file: "file.ts", line: 10 });
     const review = makeMergedReview({ findings: [finding] });
     const { io, postedReviews } = makeReviewIo({
-      diff: SINGLE_HUNK_DIFF,
       postReviewStatuses: [422, 422],
       postReviewBodies: [undefined, '{"message":"still invalid"}'],
     });
 
-    await expect(postConsolidatedReview(io, 42, review, footer)).rejects.toThrow(
+    await expect(postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer)).rejects.toThrow(
       /status 422.*still invalid/s,
     );
     expect(postedReviews).toHaveLength(2);
@@ -1217,11 +1285,10 @@ describe("post flow via injected ReviewIo", () => {
     const finding = makeFinding({ file: "file.ts", line: 10, claim: hugeClaim });
     const review = makeMergedReview({ findings: [finding] });
     const { io, postedReviews } = makeReviewIo({
-      diff: SINGLE_HUNK_DIFF,
       postReviewStatuses: [422, 200],
     });
 
-    await postConsolidatedReview(io, 42, review, footer);
+    await postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer);
 
     const foldedBody = postedReviews[1]?.body ?? "";
     expect(foldedBody.length).toBeLessThanOrEqual(65536);
@@ -1230,13 +1297,11 @@ describe("post flow via injected ReviewIo", () => {
   });
 
   test("posts a truncated body on the very first attempt for an oversized body-only review (no comments to fold)", async () => {
-    // Not anchorable, so there's no inline comment for GitHub to 422 on — the
-    // old behavior threw here instead of posting a truncated body.
     const finding = makeFinding({ file: "file.ts", line: 999, claim: "x".repeat(70_000) });
     const review = makeMergedReview({ findings: [finding] });
-    const { io, postedReviews } = makeReviewIo({ diff: SINGLE_HUNK_DIFF });
+    const { io, postedReviews } = makeReviewIo();
 
-    await postConsolidatedReview(io, 42, review, footer);
+    await postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer);
 
     expect(postedReviews).toHaveLength(1);
     expect(postedReviews[0]?.body.length).toBeLessThanOrEqual(65536);

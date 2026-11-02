@@ -1,32 +1,61 @@
-import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { promisify } from "node:util";
-import { afterEach, beforeAll, describe, expect, test } from "vitest";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
+import { BunServices } from "@effect/platform-bun";
+import { Clock, Crypto, Data, Effect, FileSystem, Layer, Path, Schema } from "effect";
+import { beforeAll, describe, expect, it } from "@effect/vitest";
+import {
+  catalogPins,
+  slimImageMirrors,
+  type ArtifactKind,
+} from "@supabase/stack/internal/artifacts";
 
 import { dockerfileServiceImageRaw } from "../../shared/services/dockerfile-images.ts";
-import { toSlimImage } from "../../shared/services/slim-images.ts";
+import { isSlimImageRef, toSlimImage } from "../../shared/services/slim-images.ts";
+import {
+  expectedPinnedImage,
+  GHCR_SLIM_IMAGE_PATTERN,
+} from "../../../tests/helpers/slim-images.ts";
 import { buildHealthCmdArg } from "../../command-internal/db-bootstrap/docker-create-args.ts";
 import {
   slimWgetHealthcheck,
   slimWgetWaitCommand,
 } from "../../command-internal/db-bootstrap/slim-runtime.ts";
 import { REALTIME_TENANT_ID } from "../../command-internal/db-bootstrap/realtime-env.ts";
-import { ensureImage, resolveDeadline } from "../../../tests/helpers/docker-image.ts";
-import { overrideStackPorts, requireCliSuccess, runSupabase } from "../../../tests/helpers/cli.ts";
+import { ensureImage } from "../../../tests/helpers/docker-image.ts";
 import {
-  sanitizeProjectId,
-  serviceContainerName,
-  localDbContainerId,
-} from "../../command-internal/docker-ids.ts";
+  overrideStackPorts,
+  requireCliSuccess,
+  runSupabaseEffect,
+  runDockerEffect,
+} from "../../../tests/helpers/cli.ts";
+import { serviceContainerName, localDbContainerId } from "../../command-internal/docker-ids.ts";
+import { sanitizeProjectId } from "../../shared/config/project-id.ts";
 
-const execFileAsync = promisify(execFile);
+class StartE2eSetupError extends Data.TaggedError("StartE2eSetupError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
+const overridePorts = (dir: string) =>
+  Effect.tryPromise({
+    try: () => overrideStackPorts(dir),
+    catch: (cause) => new StartE2eSetupError({ message: "failed to override stack ports", cause }),
+  });
+const makeProject = Effect.fnUntraced(function* (prefix: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const dir = yield* fs.makeTempDirectoryScoped({ prefix });
+  yield* Effect.addFinalizer(() =>
+    runSupabaseEffect(["stop", "--no-backup"], { cwd: dir, env: SLIM_ENV }).pipe(Effect.ignore),
+  );
+  return dir;
+});
 
 const START_TIMEOUT_MS = 280_000;
 const SHORT_E2E_TIMEOUT_MS = 30_000;
+const WGET_PROBE_TIMEOUT_MS = 10_000;
+const WGET_PROBE_FORCE_KILL_AFTER_MS = 2_000;
+const WGET_PROBE_CLEANUP_TIMEOUT_MS = 5_000;
 const PULL_TIMEOUT_MS = 240_000;
 const LIFECYCLE_OVERHEAD_MS = 90_000;
+const CLEANUP_TIMEOUT_MS = 120_000;
 
 const SLIM_ENV = { SUPABASE_USE_SLIM_IMAGES: "1" } as const;
 /** Override an inherited dogfood/CI flag so docker.io starts stay on docker.io. */
@@ -43,20 +72,35 @@ const PULL_ALIASES = [
   "mailpit",
   "kong",
 ] as const;
-/** Slim images whose in-container probe is BusyBox wget. */
-const WGET_PROBE_ALIASES = [
-  "gotrue",
+/**
+ * Catalog services whose slim image ships BusyBox wget as its in-container probe (not the
+ * Dockerfile-derived image: whether the Dockerfile's tag currently matches that catalog pin is
+ * unrelated to whether the pinned slim image itself accepts the BusyBox argv).
+ */
+const WGET_PROBE_SERVICES: ReadonlyArray<ArtifactKind> = [
+  "auth",
   "realtime",
   "storage",
-  "logflare",
-  "supavisor",
+  "analytics",
   "vector",
-] as const;
+  "pooler",
+];
+const WGET_PROBE_TEST_TIMEOUT_MS =
+  catalogPins()
+    .filter((entry) => WGET_PROBE_SERVICES.includes(entry.service))
+    .reduce((count, entry) => count + (entry.service === "vector" ? 2 : 1), 0) *
+    (WGET_PROBE_TIMEOUT_MS + WGET_PROBE_FORCE_KILL_AFTER_MS + WGET_PROBE_CLEANUP_TIMEOUT_MS) +
+  10_000;
+
+function wgetProbeCatalogImages(): ReadonlyArray<string> {
+  return catalogPins()
+    .filter((entry) => WGET_PROBE_SERVICES.includes(entry.service))
+    .map((entry) => entry.pin.image);
+}
 
 function latestImagesToPull(): ReadonlyArray<string> {
-  return [...new Set([...PULL_ALIASES, ...WGET_PROBE_ALIASES])].map((alias) =>
-    toSlimImage(alias, dockerfileServiceImageRaw(alias)),
-  );
+  const dockerfileImages = PULL_ALIASES.map((alias) => expectedSlimImage(alias));
+  return [...new Set([...dockerfileImages, ...wgetProbeCatalogImages()])];
 }
 
 function readSectionPort(config: string, section: string): number {
@@ -67,220 +111,329 @@ function readSectionPort(config: string, section: string): number {
   }
   return Number(match[1]);
 }
-async function containerImage(name: string): Promise<string> {
-  const { stdout } = await execFileAsync("docker", [
-    "inspect",
-    name,
-    "--format",
-    "{{.Config.Image}}",
-  ]);
+const containerImage = Effect.fnUntraced(function* (name: string) {
+  const { stdout } = yield* runDockerEffect(["inspect", name, "--format", "{{.Config.Image}}"]);
   return stdout.trim();
-}
+});
 
+/* A slim image GHCR cannot serve comes from the ECR Public mirror at the same tag and digest. */
+const expectSlimContainerImage = Effect.fnUntraced(function* (name: string, expected: string) {
+  expect([expected, ...slimImageMirrors(expected)]).toContain(yield* containerImage(name));
+});
+
+/** `kong` has no slim build at all, so this stays fallback-tolerant for the pull-ahead list. */
 function expectedSlimImage(alias: string): string {
-  return toSlimImage(alias, dockerfileServiceImageRaw(alias));
+  const raw = dockerfileServiceImageRaw(alias);
+  return toSlimImage(alias, raw) ?? raw;
 }
 
-async function containerHealthcheckTest(name: string): Promise<ReadonlyArray<string>> {
-  const { stdout } = await execFileAsync("docker", [
+/**
+ * The Dockerfile aliases whose spec builder switches its healthcheck on `usesSlimImageRuntime`
+ * (`*.service.ts`). Every one of them is slim today (`expectedPinnedImage`), but the assertions
+ * below still derive the expected healthcheck from the image actually resolved, not from that
+ * assumption directly.
+ */
+type HealthcheckedAlias = "gotrue" | "storage" | "realtime";
+
+/** Mirrors each service's own upstream (non-slim) `healthcheck.test`, `CMD` prefix included. */
+function upstreamHealthcheckTest(alias: HealthcheckedAlias): ReadonlyArray<string> {
+  switch (alias) {
+    case "gotrue":
+      return [
+        "CMD",
+        "wget",
+        "--no-verbose",
+        "--tries=1",
+        "--spider",
+        "http://127.0.0.1:9999/health",
+      ];
+    case "storage":
+      return [
+        "CMD",
+        "wget",
+        "--no-verbose",
+        "--tries=1",
+        "--spider",
+        "http://127.0.0.1:5000/status",
+      ];
+    case "realtime":
+      return [
+        "CMD",
+        "curl",
+        "-sSfL",
+        "--head",
+        "-o",
+        "/dev/null",
+        "-H",
+        `Host:${REALTIME_TENANT_ID}`,
+        "http://127.0.0.1:4000/api/ping",
+      ];
+  }
+}
+
+/** Mirrors each service's own slim (BusyBox wget) `healthcheck.test`, `CMD` prefix included. */
+function slimHealthcheckTest(alias: HealthcheckedAlias): ReadonlyArray<string> {
+  switch (alias) {
+    case "gotrue":
+      return slimWgetHealthcheck("http://127.0.0.1:9999/health").test;
+    case "storage":
+      return slimWgetHealthcheck("http://127.0.0.1:5000/status").test;
+    case "realtime":
+      return slimWgetHealthcheck("http://127.0.0.1:4000/api/ping", {
+        header: `Host:${REALTIME_TENANT_ID}`,
+      }).test;
+  }
+}
+
+/** The `healthcheck.test` a container running `image` must have — matched to its family. */
+function expectedHealthcheckTest(alias: HealthcheckedAlias, image: string): ReadonlyArray<string> {
+  return isSlimImageRef(image) ? slimHealthcheckTest(alias) : upstreamHealthcheckTest(alias);
+}
+
+const containerHealthcheckTest = Effect.fnUntraced(function* (name: string) {
+  const { stdout } = yield* runDockerEffect([
     "inspect",
     name,
     "--format",
     "{{json .Config.Healthcheck.Test}}",
   ]);
-  return JSON.parse(stdout.trim()) as ReadonlyArray<string>;
-}
+  return yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Array(Schema.String)))(
+    stdout.trim(),
+  );
+});
 
-async function containerHealthStatus(name: string): Promise<string> {
-  const { stdout } = await execFileAsync("docker", [
+const containerHealthStatus = Effect.fnUntraced(function* (name: string) {
+  const { stdout } = yield* runDockerEffect([
     "inspect",
     name,
     "--format",
     "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
   ]);
   return stdout.trim();
-}
+});
 
-async function edgeRuntimeFailureDiagnostics(name: string): Promise<string> {
-  let mounts = "<unavailable>";
-  try {
-    const { stdout } = await execFileAsync("docker", [
-      "inspect",
-      name,
-      "--format",
-      "{{json .Mounts}}",
-    ]);
-    mounts = stdout.trim() || "[]";
-  } catch (error) {
-    mounts = `<unavailable: ${error instanceof Error ? error.message : String(error)}>`;
-  }
-
-  let logs = "<unavailable>";
-  try {
-    const { stdout, stderr } = await execFileAsync("docker", ["logs", name]);
-    logs = `${stdout}${stderr}`.trim() || "<empty>";
-  } catch (error) {
-    logs = `<unavailable: ${error instanceof Error ? error.message : String(error)}>`;
-  }
-
+const edgeRuntimeFailureDiagnostics = Effect.fnUntraced(function* (name: string) {
+  const mounts = yield* runDockerEffect(["inspect", name, "--format", "{{json .Mounts}}"]).pipe(
+    Effect.map(({ stdout }) => stdout.trim() || "[]"),
+    Effect.catch((error) => Effect.succeed(`<unavailable: ${error.message}>`)),
+  );
+  const logs = yield* runDockerEffect(["logs", name]).pipe(
+    Effect.map(({ stdout, stderr }) => `${stdout}${stderr}`.trim() || "<empty>"),
+    Effect.catch((error) => Effect.succeed(`<unavailable: ${error.message}>`)),
+  );
   return `edge runtime Mounts: ${mounts}\nedge runtime logs:\n${logs}`;
-}
+});
 
-async function runWgetInImage(
+const runWgetInImage = Effect.fn("start.e2e.wgetProbe")(function* (
   image: string,
   args: ReadonlyArray<string>,
-): Promise<{ readonly stdout: string; readonly stderr: string }> {
-  try {
-    const { stdout, stderr } = await execFileAsync("docker", [
+) {
+  const crypto = yield* Crypto.Crypto;
+  const containerName = `sb-wget-probe-${yield* crypto.randomUUIDv4}`;
+  const removeContainer = runDockerEffect(["rm", "--force", containerName], {
+    timeout: WGET_PROBE_CLEANUP_TIMEOUT_MS,
+  }).pipe(
+    Effect.catchTag("DockerCommandError", (error) => {
+      const output = `${error.message}\n${error.stdout}\n${error.stderr}`;
+      return /no such container/iu.test(output)
+        ? Effect.void
+        : Effect.fail(
+            new StartE2eSetupError({
+              message: `failed to clean up wget probe container ${containerName}: ${error.message}`,
+              cause: error,
+            }),
+          );
+    }),
+  );
+  return yield* runDockerEffect(
+    [
       "run",
       "--rm",
+      "--name",
+      containerName,
       "--network",
       "none",
       "--entrypoint",
       "wget",
       image,
       ...args,
-    ]);
-    return { stdout, stderr };
-  } catch (error) {
-    const failed = error as { stdout?: string; stderr?: string };
-    return { stdout: failed.stdout ?? "", stderr: failed.stderr ?? "" };
-  }
-}
-
-function expectBusyBoxAccepted(
-  output: { readonly stdout: string; readonly stderr: string },
-  label: string,
-): void {
-  const text = `${output.stdout}\n${output.stderr}`;
-  expect(text, label).not.toMatch(
-    /Unable to find image|executable file not found|unrecognized option|invalid option|unknown option/i,
+    ],
+    { timeout: WGET_PROBE_TIMEOUT_MS, forceKillAfter: WGET_PROBE_FORCE_KILL_AFTER_MS },
+  ).pipe(
+    Effect.catchTag("DockerCommandError", (error) => {
+      const output = `${error.stdout}\n${error.stderr}`
+        .replace(
+          /^WARNING: The requested image's platform \([a-z0-9._/-]+\) does not match the detected host platform \([a-z0-9._/-]+\) and no specific platform was requested\r?$/gmu,
+          "",
+        )
+        .trim();
+      return output === "wget: can't connect to remote host (127.0.0.1): Connection refused"
+        ? Effect.succeed({ stdout: error.stdout, stderr: error.stderr })
+        : Effect.fail(
+            new StartE2eSetupError({
+              message: `wget probe failed for ${image}: ${error.message}`,
+              cause: error,
+            }),
+          );
+    }),
+    Effect.onExit(() => removeContainer),
   );
-}
+});
 
-async function pullLatestImage(image: string, deadline: number): Promise<void> {
-  try {
-    await execFileAsync("docker", ["pull", image], {
-      timeout: Math.max(1, deadline - Date.now()),
-    });
-  } catch {
-    await ensureImage(image, deadline);
-  }
-}
+const pullLatestImage = Effect.fnUntraced(function* (image: string, deadline: number) {
+  const now = yield* Clock.currentTimeMillis;
+  yield* runDockerEffect(["pull", image], { timeout: Math.max(1, deadline - now) }).pipe(
+    Effect.catch(() =>
+      Effect.tryPromise({
+        try: () => ensureImage(image, deadline),
+        catch: (cause) =>
+          new StartE2eSetupError({ message: "failed to ensure Docker image", cause }),
+      }),
+    ),
+  );
+});
 
 describe("supabase start slim images (e2e)", () => {
-  let projectDir: string | undefined;
-
-  beforeAll(async () => {
-    const deadline = resolveDeadline(PULL_TIMEOUT_MS);
-    for (const image of latestImagesToPull()) {
-      await pullLatestImage(image, deadline);
-    }
-  }, PULL_TIMEOUT_MS + 10_000);
-
-  afterEach(async () => {
-    if (projectDir === undefined) return;
-    await runSupabase(["stop", "--no-backup"], {
-      cwd: projectDir,
-      env: SLIM_ENV,
-    }).catch(() => undefined);
-    await rm(projectDir, { recursive: true, force: true }).catch(() => undefined);
-    projectDir = undefined;
-  });
-
-  test(
-    "every slim wget image accepts the BusyBox healthcheck argv",
-    { timeout: SHORT_E2E_TIMEOUT_MS },
-    async () => {
-      for (const alias of WGET_PROBE_ALIASES) {
-        const image = expectedSlimImage(alias);
-        const probe =
-          alias === "realtime"
-            ? slimWgetHealthcheck("http://127.0.0.1:9/", {
-                header: `Host:${REALTIME_TENANT_ID}`,
-              })
-            : slimWgetHealthcheck("http://127.0.0.1:9/");
-        expectBusyBoxAccepted(await runWgetInImage(image, probe.test.slice(2)), image);
-        if (alias === "vector") {
-          const waitArgs = slimWgetWaitCommand("http://127.0.0.1:9/").split(" ").slice(1);
-          expectBusyBoxAccepted(await runWgetInImage(image, waitArgs), `${image} wait`);
-        }
-      }
-    },
+  beforeAll(
+    () =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const deadline = (yield* Clock.currentTimeMillis) + PULL_TIMEOUT_MS;
+          for (const image of latestImagesToPull()) {
+            yield* pullLatestImage(image, deadline);
+          }
+        }).pipe(Effect.provide(Layer.merge(BunServices.layer, FetchHttpClient.layer))),
+      ),
+    PULL_TIMEOUT_MS + 10_000,
   );
 
-  test(
-    "starts the latest slim images, serves a function without a version pin, and keeps the Dockerfile tag",
-    { timeout: START_TIMEOUT_MS + LIFECYCLE_OVERHEAD_MS },
-    async () => {
-      projectDir = await mkdtemp(path.join(tmpdir(), "sb-slim-start-e2e-"));
-      const projectId = sanitizeProjectId(path.basename(projectDir));
-      const edgeRuntimeContainer = serviceContainerName("edge_runtime", projectId);
-      const dbContainer = localDbContainerId(projectId);
-      const storageContainer = serviceContainerName("storage", projectId);
-      const authContainer = serviceContainerName("auth", projectId);
-      const realtimeContainer = serviceContainerName("realtime", projectId);
+  it.live(
+    "every pinned slim wget image accepts the BusyBox healthcheck argv",
+    () =>
+      Effect.gen(function* () {
+        for (const entry of catalogPins()) {
+          if (!WGET_PROBE_SERVICES.includes(entry.service)) continue;
+          const image = yield* Effect.tryPromise({
+            try: () => ensureImage(entry.pin.image),
+            catch: (cause) =>
+              new StartE2eSetupError({ message: "failed to ensure Docker image", cause }),
+          });
+          const probe =
+            entry.service === "realtime"
+              ? slimWgetHealthcheck("http://127.0.0.1:9/", {
+                  header: `Host:${REALTIME_TENANT_ID}`,
+                })
+              : slimWgetHealthcheck("http://127.0.0.1:9/");
+          yield* runWgetInImage(image, probe.test.slice(2));
+          if (entry.service === "vector") {
+            const waitArgs = slimWgetWaitCommand("http://127.0.0.1:9/").split(" ").slice(1);
+            yield* runWgetInImage(image, waitArgs);
+          }
+        }
+      }).pipe(Effect.provide(Layer.merge(BunServices.layer, FetchHttpClient.layer))),
+    WGET_PROBE_TEST_TIMEOUT_MS,
+  );
 
-      const init = await runSupabase(["init"], {
-        cwd: projectDir,
-        exitTimeoutMs: SHORT_E2E_TIMEOUT_MS,
-        env: DOCKER_IO_ENV,
-      });
-      requireCliSuccess(init, "init");
+  it.live(
+    "starts each service on its resolved image (slim or upstream), matching healthchecks to family, and serves a function without a version pin",
+    () =>
+      Effect.gen(function* () {
+        const projectDir = yield* makeProject("sb-slim-start-e2e-");
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const projectId = sanitizeProjectId(path.basename(projectDir));
+        const edgeRuntimeContainer = serviceContainerName("edge_runtime", projectId);
+        const dbContainer = localDbContainerId(projectId);
+        const storageContainer = serviceContainerName("storage", projectId);
+        const authContainer = serviceContainerName("auth", projectId);
+        const realtimeContainer = serviceContainerName("realtime", projectId);
 
-      const created = await runSupabase(["functions", "new", "hello", "--auth", "none"], {
-        cwd: projectDir,
-        exitTimeoutMs: SHORT_E2E_TIMEOUT_MS,
-        env: { ...DOCKER_IO_ENV, SUPABASE_YES: "1" },
-      });
-      requireCliSuccess(created, "functions new");
-      await overrideStackPorts(projectDir);
-      const config = await readFile(path.join(projectDir, "supabase", "config.toml"), "utf8");
-      const apiPort = readSectionPort(config, "api");
+        const init = yield* runSupabaseEffect(["init"], {
+          cwd: projectDir,
+          exitTimeoutMs: SHORT_E2E_TIMEOUT_MS,
+          env: DOCKER_IO_ENV,
+        });
+        requireCliSuccess(init, "init");
 
-      const start = await runSupabase(START_ARGS, {
-        cwd: projectDir,
-        exitTimeoutMs: START_TIMEOUT_MS,
-        env: SLIM_ENV,
-      });
-      expect(start.exitCode, `stdout:\n${start.stdout}\nstderr:\n${start.stderr}`).toBe(0);
-
-      expect(await containerImage(dbContainer)).toBe(expectedSlimImage("pg"));
-      expect(await containerImage(storageContainer)).toBe(expectedSlimImage("storage"));
-      expect(await containerImage(edgeRuntimeContainer)).toBe(expectedSlimImage("edgeruntime"));
-
-      expect(await containerHealthcheckTest(authContainer)).toEqual([
-        "CMD-SHELL",
-        buildHealthCmdArg(slimWgetHealthcheck("http://127.0.0.1:9999/health").test),
-      ]);
-      expect(await containerHealthcheckTest(realtimeContainer)).toEqual([
-        "CMD-SHELL",
-        buildHealthCmdArg(
-          slimWgetHealthcheck("http://127.0.0.1:4000/api/ping", {
-            header: `Host:${REALTIME_TENANT_ID}`,
-          }).test,
-        ),
-      ]);
-      expect(await containerHealthcheckTest(storageContainer)).toEqual([
-        "CMD-SHELL",
-        buildHealthCmdArg(slimWgetHealthcheck("http://127.0.0.1:5000/status").test),
-      ]);
-      expect(await containerHealthStatus(authContainer)).toBe("healthy");
-      expect(await containerHealthStatus(realtimeContainer)).toBe("healthy");
-      expect(await containerHealthStatus(storageContainer)).toBe("healthy");
-
-      const invoked = await fetch(`http://127.0.0.1:${apiPort}/functions/v1/hello`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: "Functions" }),
-      });
-      const body = await invoked.text();
-      if (!invoked.ok) {
-        throw new Error(
-          `Functions request failed (${invoked.status}): ${body}\n${await edgeRuntimeFailureDiagnostics(edgeRuntimeContainer)}`,
+        const created = yield* runSupabaseEffect(["functions", "new", "hello", "--auth", "none"], {
+          cwd: projectDir,
+          exitTimeoutMs: SHORT_E2E_TIMEOUT_MS,
+          env: { ...DOCKER_IO_ENV, SUPABASE_YES: "1" },
+        });
+        requireCliSuccess(created, "functions new");
+        // The template imports from live jsr/npm; new.stack.e2e.test.ts covers that resolution.
+        yield* fs.writeFileString(
+          path.join(projectDir, "supabase", "functions", "hello", "index.ts"),
+          'Deno.serve(async (req) => Response.json({ message: "Hello " + (await req.json()).name + "!" }));\n',
         );
-      }
-      expect(JSON.parse(body)).toEqual({ message: "Hello Functions!" });
-    },
+        yield* overridePorts(projectDir);
+        const config = yield* fs.readFileString(path.join(projectDir, "supabase", "config.toml"));
+        const apiPort = readSectionPort(config, "api");
+
+        const start = yield* runSupabaseEffect(START_ARGS, {
+          cwd: projectDir,
+          exitTimeoutMs: START_TIMEOUT_MS,
+          env: SLIM_ENV,
+        });
+        expect(start.exitCode, `stdout:\n${start.stdout}\nstderr:\n${start.stderr}`).toBe(0);
+
+        // Every alias here is slim-capable, and its default Dockerfile tag is generated from the
+        // catalog, so it matches a catalog pin — so each expected image is read straight from the catalog
+        // (`expectedPinnedImage`), independent of `toSlimImage`.
+        const authImage = expectedPinnedImage("gotrue", dockerfileServiceImageRaw("gotrue"));
+        const realtimeImage = expectedPinnedImage(
+          "realtime",
+          dockerfileServiceImageRaw("realtime"),
+        );
+        const storageImage = expectedPinnedImage("storage", dockerfileServiceImageRaw("storage"));
+        for (const image of [authImage, realtimeImage, storageImage]) {
+          expect(image).toMatch(GHCR_SLIM_IMAGE_PATTERN);
+        }
+
+        yield* expectSlimContainerImage(
+          dbContainer,
+          expectedPinnedImage("pg", dockerfileServiceImageRaw("pg")),
+        );
+        yield* expectSlimContainerImage(storageContainer, storageImage);
+        yield* expectSlimContainerImage(
+          edgeRuntimeContainer,
+          expectedPinnedImage("edgeruntime", dockerfileServiceImageRaw("edgeruntime")),
+        );
+        yield* expectSlimContainerImage(authContainer, authImage);
+        yield* expectSlimContainerImage(realtimeContainer, realtimeImage);
+
+        expect(yield* containerHealthcheckTest(authContainer)).toEqual([
+          "CMD-SHELL",
+          buildHealthCmdArg(expectedHealthcheckTest("gotrue", authImage)),
+        ]);
+        expect(yield* containerHealthcheckTest(realtimeContainer)).toEqual([
+          "CMD-SHELL",
+          buildHealthCmdArg(expectedHealthcheckTest("realtime", realtimeImage)),
+        ]);
+        expect(yield* containerHealthcheckTest(storageContainer)).toEqual([
+          "CMD-SHELL",
+          buildHealthCmdArg(expectedHealthcheckTest("storage", storageImage)),
+        ]);
+        expect(yield* containerHealthStatus(authContainer)).toBe("healthy");
+        expect(yield* containerHealthStatus(realtimeContainer)).toBe("healthy");
+        expect(yield* containerHealthStatus(storageContainer)).toBe("healthy");
+
+        const invoked = yield* HttpClientRequest.post(
+          `http://127.0.0.1:${apiPort}/functions/v1/hello`,
+        ).pipe(
+          HttpClientRequest.bodyText('{"name":"Functions"}', "application/json"),
+          HttpClient.execute,
+        );
+        const body = yield* invoked.text;
+        if (invoked.status < 200 || invoked.status >= 300) {
+          throw new Error(
+            `Functions request failed (${invoked.status}): ${body}\n${yield* edgeRuntimeFailureDiagnostics(edgeRuntimeContainer)}`,
+          );
+        }
+        expect(yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(body)).toEqual({
+          message: "Hello Functions!",
+        });
+      }).pipe(Effect.provide(Layer.merge(BunServices.layer, FetchHttpClient.layer))),
+    START_TIMEOUT_MS + LIFECYCLE_OVERHEAD_MS + CLEANUP_TIMEOUT_MS,
   );
 });

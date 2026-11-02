@@ -6,18 +6,15 @@ import {
   ErrorActionabilityId,
 } from "../../../shared/telemetry/error-actionability.ts";
 
-/**
- * Setting up / connecting to / migrating the throwaway shadow database failed.
- * Wraps the errors from `CreateShadowDatabase` / `ConnectShadowDatabase` /
- * `SetupShadowDatabase` / `MigrateShadowDatabase`
- * (`apps/cli-go/internal/db/diff/diff.go`).
- */
+/** Setting up, connecting to, or migrating the throwaway shadow database failed. */
 export class DeclarativeShadowDbError extends Data.TaggedError("DeclarativeShadowDbError")<{
   readonly message: string;
   readonly docker?: "daemon";
-  /** Recovery hint carried over from the underlying failure (e.g. a health-check
-   *  timeout's exact image-removal command), so the seam surfaces the same
-   *  actionable suggestion `db start` itself would render. */
+  /**
+   * Recovery hint carried over from the underlying failure (e.g. a health-check timeout's
+   * exact image-removal command), so the seam surfaces the same actionable suggestion
+   * `db start` itself would render.
+   */
   readonly suggestion?: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -28,10 +25,7 @@ export class DeclarativeShadowDbError extends Data.TaggedError("DeclarativeShado
 }
 
 /**
- * Materializing the declarative export on disk failed. Byte-matches Go's
- * `WriteDeclarativeSchemas` errors (`declarative.go:239`):
- * `"failed to clean declarative schema directory: " + err` and
- * `"unsafe declarative export path: " + path`. Shared by `db schema declarative
+ * Materializing the declarative export on disk failed. Shared by `db schema declarative
  * generate`/`sync` and `db pull --declarative`.
  */
 export class DeclarativeWriteError extends Data.TaggedError("DeclarativeWriteError")<{

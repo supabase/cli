@@ -2,9 +2,20 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
-import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import {
+  buildTestRuntime,
+  mockCommandPlatformApi,
+  mockCommandSettings,
+} from "../../../../tests/helpers/command-mocks.ts";
+import { configValuesLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import { NO_TARGET } from "../../../../tests/helpers/db-target-selection.ts";
+import { YesFlag } from "../../../command-internal/global-flags.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
+import type {
+  DbConnectionInput,
+  ResolvedDbConfig,
+} from "../../../command-internal/db-config.types.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
 import { bloatSpec } from "./bloat/bloat.query.ts";
 import { blockingSpec } from "./blocking/blocking.query.ts";
@@ -36,11 +47,17 @@ function setup(rows: ReadonlyArray<Record<string, unknown>>) {
   let querySql: string | undefined;
   let queryParams: ReadonlyArray<unknown> | undefined;
   const layer = Layer.mergeAll(
-    out.layer,
-    Layer.succeed(CliArgs, { args: [] }),
+    buildTestRuntime({
+      out,
+      api: mockCommandPlatformApi(),
+      cliSettings: mockCommandSettings({ workdir: "/tmp/inspect-specs-test" }),
+    }),
+    Layer.succeed(YesFlag, false),
+    Layer.succeed(TargetPolicy, { group: "selectable", consent: "none" }),
+    configValuesLayer(),
     Layer.succeed(DbConfigResolver, {
-      resolve: (_flags: DbConfigFlags) =>
-        Effect.succeed({ conn: LOCAL_CONN, isLocal: true } satisfies ResolvedDbConfig),
+      resolveConnection: (input: DbConnectionInput) =>
+        Effect.succeed({ conn: LOCAL_CONN, isLocal: true, target: input.target }),
       resolvePoolerFallback: () => Effect.succeed(Option.none()),
     }),
     Layer.succeed(DbConnection, {
@@ -70,13 +87,6 @@ function setup(rows: ReadonlyArray<Record<string, unknown>>) {
     },
   };
 }
-
-const localFlags = {
-  dbUrl: Option.none<string>(),
-  linked: false,
-  local: true,
-  projectRef: Option.none<string>(),
-};
 
 type ParamKind = "none" | "schemas1" | "schemas2";
 
@@ -273,15 +283,13 @@ describe("inspect db specs (per-subcommand correctness)", () => {
   });
 
   for (const testCase of cases) {
-    it.live(`runs the ${testCase.spec.name} query and renders its cells`, () => {
+    it.effect(`runs the ${testCase.spec.name} query and renders its cells`, () => {
       const ctx = setup([testCase.row]);
       return Effect.gen(function* () {
-        yield* runInspectQuery(testCase.spec, localFlags, "native");
+        yield* runInspectQuery(testCase.spec, NO_TARGET, "native");
 
-        // The embedded SQL is sent verbatim.
         expect(ctx.querySql).toBe(testCase.spec.sql);
 
-        // Query parameters match the subcommand's shape.
         if (testCase.params === "none") {
           expect(ctx.queryParams).toEqual([]);
         } else {
@@ -295,7 +303,6 @@ describe("inspect db specs (per-subcommand correctness)", () => {
           }
         }
 
-        // The rendered table contains the headers and the projected cells.
         for (const header of testCase.spec.headers) {
           expect(ctx.out.stdoutText).toContain(header);
         }
@@ -309,10 +316,6 @@ describe("inspect db specs (per-subcommand correctness)", () => {
     });
   }
 
-  // Cell-level truth for blocking's per-column backtick-wrapping: col 2
-  // (`blocking_statement`) is backtick-wrapped, so a null/empty value renders as
-  // the two literal backticks (glamour's empty-code-span rule), while col 5
-  // (`blocked_statement`) stays bare, so an empty value renders as "".
   it("projects a null blocking_statement to the two-backtick empty code span, keeping blocked_statement bare", () => {
     const row: Record<string, unknown> = {
       blocked_pid: 1,

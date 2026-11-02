@@ -1,10 +1,17 @@
 import { Effect } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
+import { projectRefPicker } from "../../../config/project-ref.layer.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
+import { postgresConfigRead, postgresConfigWrite } from "../postgres-config.shared.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
-import { RESOURCE_OUTPUT_FORMATS } from "../../../command-internal/go-output-flag.ts";
+import { RESOURCE_OUTPUT_FORMATS } from "../../../command-internal/output-formats.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { stringSliceFlag } from "../../../command-internal/string-slice-flag.ts";
 import {
@@ -12,23 +19,21 @@ import {
   withCommandTelemetry,
 } from "../../../telemetry/command-telemetry.ts";
 import { postgresConfigDelete } from "./delete.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
-// Go declares `--config` with pflag's `StringSliceVar` (`cmd/postgres.go:64`);
-// malformed CSV fails at parse time with pflag's exact diagnostic (CLI-2005,
-// see `stringSliceFlag`) — before the `--experimental` gate, matching
-// cobra's ParseFlags-before-PersistentPreRunE ordering.
+/**
+ * CSV-splits each occurrence into config keys, failing at parse time with a diagnostic
+ * on malformed CSV — before the --experimental gate runs.
+ */
 export const postgresConfigDeleteConfigFlag = stringSliceFlag(
   "config",
   "Config keys to delete (comma-separated)",
 );
 
 const config = {
-  projectRef: Flag.string("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
   config: postgresConfigDeleteConfigFlag,
-  noRestart: Flag.boolean("no-restart").pipe(
+  noRestart: Flag.Boolean("no-restart").pipe(
     Flag.withDescription("Do not restart the database after deleting config."),
     Flag.withDefault(false),
   ),
@@ -39,19 +44,24 @@ export type PostgresConfigDeleteFlags = CliCommand.Command.Config.Infer<typeof c
 export const postgresConfigDeleteCommand = Command.make("delete", config).pipe(
   Command.withDescription("Delete specific Postgres database config overrides."),
   Command.withShortDescription("Delete Postgres database config overrides"),
+  withPermissions(
+    compose(
+      { operations: [], noApiEffectFlags: ["config", "no-restart"] },
+      postgresConfigRead,
+      postgresConfigWrite,
+      projectRefPicker,
+      linkedProjectCache,
+      branchResolution,
+    ),
+  ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
-      // Cobra parses flags — rejecting an out-of-enum `-o` (`internal/utils/enum.go:21-27`)
-      // — before `PersistentPreRunE` ever runs (`cobra@v1.10.2/command.go:919,985`), so an
-      // invalid `-o` value must win over a missing `--experimental` flag.
+      // Validate the -o value before the --experimental gate, so an invalid value is
+      // reported even without --experimental set.
       yield* validateOutputFormat(RESOURCE_OUTPUT_FORMATS);
-      // Go gates `postgresCmd` behind `--experimental` in PersistentPreRunE
-      // (root.go:91-96) BEFORE the `IsManagementAPI` login check (root.go:105-109).
-      // `managementApiRuntimeLayer` eagerly resolves an access token as part
-      // of building its `CommandPlatformApi` layer, so it must be provided AFTER
-      // the gate (inline here) rather than via `Command.provide` on the whole
-      // command — `Command.provide` would build the layer, and fail on a missing
-      // token, before this generator's first `yield*` ever runs.
+      // managementApiRuntimeLayer eagerly resolves an access token, so it's provided here
+      // (after the gate) rather than via Command.provide, which would build it — and fail
+      // on a missing token — before this generator's first yield* runs.
       yield* requireExperimental;
       return yield* postgresConfigDelete(flags).pipe(
         withCommandTelemetry({ flags }),
@@ -59,4 +69,5 @@ export const postgresConfigDeleteCommand = Command.make("delete", config).pipe(
       );
     }).pipe(withJsonErrorHandling),
   ),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

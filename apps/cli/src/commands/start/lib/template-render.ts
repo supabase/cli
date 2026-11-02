@@ -1,35 +1,31 @@
 /**
- * Pure renderer for the `text/template`-style sources under `../templates/`:
- * every placeholder is a bare `{{ .FieldName }}` reference (no pipelines,
- * functions, or control structures), and a placeholder with no matching
- * field always throws — it never silently renders as empty.
+ * Pure renderer for `{{ .FieldName }}`-style templates under `../templates/`:
+ * a placeholder referencing a missing field throws — it never silently
+ * renders as empty.
  *
- * `custom_nginx.template` is deliberately NOT rendered here: it is not one of
- * these templates at all (see the comment on
- * `START_CUSTOM_NGINX_TEMPLATE`) and is injected byte-for-byte, with
- * its `${{VAR}}` placeholders substituted by Kong itself at container boot.
- * Callers needing that file should import `START_CUSTOM_NGINX_TEMPLATE`
- * directly from `../templates/custom_nginx.template.ts`.
+ * `custom_nginx.template` is not rendered here: its `${{VAR}}` placeholders
+ * are substituted by Kong itself at container boot. Import
+ * `START_CUSTOM_NGINX_TEMPLATE` directly for that file.
  */
 import { START_KONG_YML_TEMPLATE } from "../templates/kong.yml.ts";
 import { START_POOLER_EXS_TEMPLATE } from "../templates/pooler.exs.ts";
 import { START_VECTOR_YAML_TEMPLATE } from "../templates/vector.yaml.ts";
 
-const GO_TEMPLATE_FIELD_PATTERN = /\{\{\s*\.(\w+)\s*\}\}/g;
+const TEMPLATE_FIELD_PATTERN = /\{\{\s*\.(\w+)\s*\}\}/g;
 
 /**
  * Substitutes every `{{ .FieldName }}` occurrence in `template` with the
  * matching value from `fields`: a placeholder referencing a field not
  * present in `fields` throws instead of silently rendering as empty.
  */
-export function renderGoTemplate(
+export function renderTemplate(
   template: string,
   fields: Readonly<Record<string, string | number>>,
 ): string {
-  return template.replace(GO_TEMPLATE_FIELD_PATTERN, (_match, fieldName: string) => {
+  return template.replace(TEMPLATE_FIELD_PATTERN, (_match, fieldName: string) => {
     if (!Object.hasOwn(fields, fieldName)) {
       throw new Error(
-        `renderGoTemplate: template references undefined field ".${fieldName}" (missingkey=error)`,
+        `renderTemplate: template references undefined field ".${fieldName}" (missingkey=error)`,
       );
     }
     return String(fields[fieldName]);
@@ -54,7 +50,7 @@ export interface StartKongYmlFields {
 
 /** Renders `kong.yml` from {@link StartKongYmlFields}. */
 export function renderStartKongYml(fields: StartKongYmlFields): string {
-  return renderGoTemplate(START_KONG_YML_TEMPLATE, {
+  return renderTemplate(START_KONG_YML_TEMPLATE, {
     GotrueId: fields.gotrueId,
     RestId: fields.restId,
     RealtimeId: fields.realtimeId,
@@ -86,7 +82,7 @@ export interface StartVectorYamlFields {
 
 /** Renders `vector.yaml` from {@link StartVectorYamlFields}. */
 export function renderStartVectorYaml(fields: StartVectorYamlFields): string {
-  return renderGoTemplate(START_VECTOR_YAML_TEMPLATE, {
+  return renderTemplate(START_VECTOR_YAML_TEMPLATE, {
     ApiKey: fields.apiKey,
     VectorId: fields.vectorId,
     LogflareId: fields.logflareId,
@@ -113,7 +109,7 @@ export interface StartPoolerExsFields {
 
 /** Renders `pooler.exs` from {@link StartPoolerExsFields}. */
 export function renderStartPoolerExs(fields: StartPoolerExsFields): string {
-  return renderGoTemplate(START_POOLER_EXS_TEMPLATE, {
+  return renderTemplate(START_POOLER_EXS_TEMPLATE, {
     DbHost: fields.dbHost,
     DbPort: fields.dbPort,
     DbDatabase: fields.dbDatabase,

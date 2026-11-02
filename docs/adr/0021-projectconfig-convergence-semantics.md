@@ -83,7 +83,7 @@ Concrete behavior families, by normalizer:
   limitations, not a permanent semantic ceiling.
 
 - **CLI-only fields with no hosted counterpart on EITHER arm** (CLI-2316, `DOCUMENT_ONLY_LOCAL_PATHS`,
-  `project-config.ts`) — a family DISTINCT from the unmanaged-by-push family above, despite the
+  `hosted-sections.ts`) — a family DISTINCT from the unmanaged-by-push family above, despite the
   similar-looking mechanism (both drop a document-declared value from the projection): this family's
   omissions are a PERMANENT semantic ceiling, not a push-capability gap CLI-2266's lockstep rule
   governs. `api.port`/`api.tls`/`api.external_url`, `db.port`/`db.shadow_port`/`db.health_timeout`,
@@ -93,7 +93,9 @@ Concrete behavior families, by normalizer:
   ever converge toward, confirmed directly against the OpenAPI-generated schema
   (`packages/api/src/generated/contracts.ts`), not assumed. There is no "push gains the capability"
   future for these: a hosted project has no port to bind or Docker image to select, so unlike the
-  family above, extending push could never make one of these comparable.
+  family above, extending push could never make one of these comparable. The exclusion is now
+  enforced at the `ProjectConfig` type and at `ProjectConfigSchema`/`toProjectConfigJsonSchema`
+  too, not only by `fromConfigDocument`'s runtime stripping.
 
   **A field that DOES have a `v2GetProjectConfig` counterpart is never a member of this family, even
   when `config push` cannot write it** (PR #6451 review round, correcting this family's initial
@@ -243,9 +245,9 @@ inert/unrepresentable server-side when the container's own toggle is off, indepe
 actor's write path — rather than "what legacy push happened to send"**:
 
 - `api.{schemas,extra_search_path,max_rows}`: `api.enabled` isn't an independent wire field at all —
-  the registry derives it from `db_schema.length > 0`, the same fact `schemas` itself carries, and
-  the API arm already row-gates all three siblings on that same check independently. Symmetry with
-  something the API arm enforces on its own, not push imitation.
+  the registry derives it from `db_schema` via `remoteDataApiDisabled`, the same fact `schemas`
+  itself carries, and the API arm already row-gates all three siblings on that same check
+  independently. Symmetry with something the API arm enforces on its own, not push imitation.
 - `db.network_restrictions.{allowed_cidrs,allowed_cidrs_v6}`: the flag's own schema description is
   "Enable **management** of network restrictions," not "enable network restrictions" — a
   deliberate, actor-independent opt-out with no v2 API field at all (the one entry with no API-arm
@@ -308,7 +310,7 @@ document — the whole reason `ConfigAbsencePolicy` exists to be named as a call
 rather than an implicit side effect of which overload happened to be called.
 
 **5. Correct the record.** A related claim lives outside this ADR's own text, in
-`project-config.ts`'s `DOCUMENT_ONLY_LOCAL_PATHS` docstring (added by PR #6451/CLI-2316, predating
+`hosted-sections.ts`'s `DOCUMENT_ONLY_LOCAL_PATHS` docstring (added by PR #6451/CLI-2316, predating
 this branch, left as-is — out of this addendum's scope): that `auth.oauth_server` "starts
 UNDECLARED and only becomes `unmanaged` on ITS first pull," contrasted there against
 `db.major_version`/`db.pooler.*` (permanently unmanaged because the `supabase init` template always
@@ -318,7 +320,7 @@ with `authorization_url_path = "/oauth/consent"` in the stock template, exactly 
 was being contrasted against — every stock project has always had this path declared from
 `supabase init` onward, never "starting undeclared." A similar "first pull" framing was also echoed
 in `pull.handler.ts`/`pull.plan.ts`'s own comments; this commit corrects those two directly (Part D
-of this reconciliation), so only the `project-config.ts` original remains uncorrected. Separately,
+of this reconciliation), so only the `hosted-sections.ts` original remains uncorrected. Separately,
 commit `23ae41d02` on this branch made `oauth_server.{enabled,allow_dynamic_registration,
 authorization_url_path}` genuinely pushable through the v1 auth endpoint (`oauth_server_enabled`,
 `oauth_server_allow_dynamic_registration`, `oauth_server_authorization_path`) — so as of this

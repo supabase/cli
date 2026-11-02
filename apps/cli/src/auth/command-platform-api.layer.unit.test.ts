@@ -1,14 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Layer, Option, Path, Redacted } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
+import { BunServices } from "@effect/platform-bun";
+import { DateTime, Effect, Exit, FileSystem, Layer, Option, Path, Redacted, Schema } from "effect";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { vi } from "vitest";
 
+import { useTempWorkdir } from "../../tests/helpers/command-mocks.ts";
 import { DebugFlag, DnsResolverFlag } from "../command-internal/global-flags.ts";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../shared/telemetry/runtime.service.ts";
@@ -25,6 +23,15 @@ import { CommandPlatformApi } from "./command-platform-api.service.ts";
 const VALID_TOKEN = "sbp_" + "a".repeat(40);
 const SESSION_LAST_ACTIVE = 1_777_200_000_000;
 
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const TelemetryConfigJson = Schema.fromJsonString(
+  Schema.Struct({
+    enabled: Schema.optionalKey(Schema.Boolean),
+    distinct_id: Schema.optionalKey(Schema.String),
+    schema_version: Schema.optionalKey(Schema.Finite),
+  }),
+);
+
 function mockCliSettings(opts: {
   accessToken?: string;
   apiUrl?: string;
@@ -33,7 +40,11 @@ function mockCliSettings(opts: {
   projectHost?: string;
 }) {
   return Layer.succeed(CommandSettings, {
+    githubToken: Option.none(),
+    workdirEnvValue: Option.none(),
     profile: opts.profile ?? "supabase",
+    profileEnvValue: Option.none(),
+    supabaseHome: "/tmp/.supabase",
     apiUrl: opts.apiUrl ?? "https://api.supabase.com",
     projectHost: opts.projectHost ?? "supabase.co",
     poolerHost: "supabase.com",
@@ -72,9 +83,7 @@ function mockTelemetryRuntime(
     TelemetryRuntime,
     TelemetryRuntime.of({
       configDir: opts.configDir ?? "/tmp/supabase-cli-test-home",
-      tracesDir: path.join(opts.configDir ?? "/tmp/supabase-cli-test-home", "traces"),
       consent: "granted",
-      showDebug: false,
       deviceId: opts.deviceId ?? "device-123",
       sessionId: "session-123",
       identity: makeTelemetryIdentity(opts.distinctId),
@@ -111,55 +120,32 @@ function mockAnalytics() {
   return { layer, aliases, identifies };
 }
 
-function nodeFileSystemLayer() {
-  return Layer.succeed(FileSystem.FileSystem, {
-    [FileSystem.FileSystem.key]: FileSystem.FileSystem.key,
-    exists: (filePath: string) =>
-      Effect.tryPromise(() =>
-        access(filePath)
-          .then(() => true)
-          .catch(() => false),
-      ),
-    makeDirectory: (dirPath: string, opts?: { recursive?: boolean; mode?: number }) =>
-      Effect.tryPromise(() =>
-        mkdir(dirPath, { recursive: opts?.recursive, mode: opts?.mode }).then(() => undefined),
-      ),
-    readFileString: (filePath: string) => Effect.tryPromise(() => readFile(filePath, "utf8")),
-    writeFileString: (filePath: string, content: string, opts?: { mode?: number }) =>
-      Effect.tryPromise(() => writeFile(filePath, content, { mode: opts?.mode })),
-  } as unknown as FileSystem.FileSystem);
-}
-
-function nodePathLayer() {
-  return Layer.succeed(Path.Path, {
-    [Path.Path.key]: Path.Path.key,
-    ...path,
-  } as unknown as Path.Path);
-}
-
-function tempTelemetryConfig(opts: { distinctId?: string; enabled?: boolean } = {}) {
-  const dir = mkdtempSync(path.join(tmpdir(), "supabase-platform-api-"));
-  writeFileSync(
+const writeTelemetryConfig = Effect.fnUntraced(function* (
+  dir: string,
+  opts: { distinctId?: string; enabled?: boolean } = {},
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* fs.writeFileString(
     path.join(dir, "telemetry.json"),
-    JSON.stringify({
+    yield* encodeJson({
       enabled: opts.enabled ?? true,
       device_id: "device-123",
       session_id: "session-123",
-      session_last_active: new Date(SESSION_LAST_ACTIVE).toISOString(),
+      session_last_active: DateTime.formatIso(DateTime.makeUnsafe(SESSION_LAST_ACTIVE)),
       ...(opts.distinctId === undefined ? {} : { distinct_id: opts.distinctId }),
       schema_version: 1,
     }),
   );
-  return dir;
-}
+});
 
-function readTelemetryConfig(configDir: string) {
-  return JSON.parse(readFileSync(path.join(configDir, "telemetry.json"), "utf8")) as {
-    enabled?: boolean;
-    distinct_id?: string;
-    schema_version?: number;
-  };
-}
+const readTelemetryConfig = Effect.fnUntraced(function* (configDir: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  return yield* Schema.decodeEffect(TelemetryConfigJson)(
+    yield* fs.readFileString(path.join(configDir, "telemetry.json")),
+  );
+});
 
 function withBaseDeps(
   opts: {
@@ -173,11 +159,8 @@ function withBaseDeps(
   } = {},
 ) {
   const analytics = opts.analytics ?? mockAnalytics();
-  // The typed client now consumes the single `IdentityStitch` service rather
-  // than building its own stitcher, so build that service from the test's
-  // Analytics / TelemetryRuntime / FileSystem / Path fakes and provide it. The
-  // underlying stitch behaviour is identical (the service wraps the same
-  // `makeIdentityStitcher`), so all alias/persist assertions still hold.
+  /* Builds the shared `IdentityStitch` service from the test's Analytics/TelemetryRuntime fakes
+     and Bun's FileSystem/Path; alias/persist assertions rely on this real service instance. */
   const identityStitch = identityStitchLayer.pipe(
     Layer.provide(analytics.layer),
     Layer.provide(
@@ -189,8 +172,7 @@ function withBaseDeps(
         isCi: opts.isCi,
       }),
     ),
-    Layer.provide(nodeFileSystemLayer()),
-    Layer.provide(nodePathLayer()),
+    Layer.provide(BunServices.layer),
   );
   return <ROut, E, RIn>(layer: Layer.Layer<ROut, E, RIn>) =>
     layer.pipe(
@@ -223,6 +205,8 @@ function captureRequests(responseHeaders: Record<string, string> = {}) {
 }
 
 describe("commandPlatformApiLayer", () => {
+  const telemetryDir = useTempWorkdir("supabase-platform-api-");
+
   it.effect("uses env access token over keyring-stored token", () => {
     const http = captureRequests();
     const layer = commandPlatformApiLayer.pipe(
@@ -271,45 +255,39 @@ describe("commandPlatformApiLayer", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = yield* encodeJson(exit.cause);
         expect(errorJson).toContain("AccessTokenRequiredError");
         expect(errorJson).toContain("Access token not provided");
       }
     });
   });
 
-  it.effect(
-    "fails with the invalid-token error when the env token is malformed (Go parity)",
-    () => {
-      // The env token is validated against the sbp_ pattern before any API
-      // call; a malformed SUPABASE_ACCESS_TOKEN must fail with the
-      // invalid-token error, not be sent to the API.
-      const http = captureRequests();
-      const layer = commandPlatformApiLayer.pipe(
-        Layer.provide(mockCliSettings({ accessToken: "sbp_not_a_valid_token" })),
-        Layer.provide(mockCredentials(Option.none())),
-        Layer.provide(http.layer),
-        withBaseDeps(),
+  it.effect("fails with the invalid-token error when the env token is malformed", () => {
+    const http = captureRequests();
+    const layer = commandPlatformApiLayer.pipe(
+      Layer.provide(mockCliSettings({ accessToken: "sbp_not_a_valid_token" })),
+      Layer.provide(mockCredentials(Option.none())),
+      Layer.provide(http.layer),
+      withBaseDeps(),
+    );
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        Effect.gen(function* () {
+          const api = yield* CommandPlatformApi;
+          return yield* api.v1.listAllProjects();
+        }).pipe(Effect.provide(layer)),
       );
-      return Effect.gen(function* () {
-        const exit = yield* Effect.exit(
-          Effect.gen(function* () {
-            const api = yield* CommandPlatformApi;
-            return yield* api.v1.listAllProjects();
-          }).pipe(Effect.provide(layer)),
-        );
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const errorJson = JSON.stringify(exit.cause);
-          expect(errorJson).toContain("InvalidAccessTokenError");
-          expect(errorJson).toContain("Invalid access token format");
-        }
-        expect(http.requests).toHaveLength(0);
-      });
-    },
-  );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const errorJson = yield* encodeJson(exit.cause);
+        expect(errorJson).toContain("InvalidAccessTokenError");
+        expect(errorJson).toContain("Invalid access token format");
+      }
+      expect(http.requests).toHaveLength(0);
+    });
+  });
 
-  it.effect("sends Go-style User-Agent and no X-Supabase-Command headers", () => {
+  it.effect("sends the CLI User-Agent and no X-Supabase-Command headers", () => {
     const http = captureRequests();
     const layer = commandPlatformApiLayer.pipe(
       Layer.provide(
@@ -375,7 +353,7 @@ describe("commandPlatformApiLayer", () => {
   });
 
   it.effect("stitches identity from X-Gotrue-Id responses outside CI", () => {
-    const configDir = tempTelemetryConfig();
+    const configDir = telemetryDir.current;
     const analytics = mockAnalytics();
     const http = captureRequests({ "X-Gotrue-Id": "user-123" });
     const layer = commandPlatformApiLayer.pipe(
@@ -386,24 +364,21 @@ describe("commandPlatformApiLayer", () => {
     );
 
     return Effect.gen(function* () {
-      try {
-        const api = yield* CommandPlatformApi;
-        yield* api.v1.listAllProjects();
+      yield* writeTelemetryConfig(configDir);
+      const api = yield* CommandPlatformApi;
+      yield* api.v1.listAllProjects();
 
-        expect(analytics.aliases).toEqual([{ distinctId: "user-123", alias: "device-123" }]);
-        expect(analytics.identifies).toEqual([]);
-        const telemetry = readTelemetryConfig(configDir);
-        expect(telemetry.distinct_id).toBe("user-123");
-        expect(telemetry.enabled).toBe(true);
-        expect(telemetry.schema_version).toBe(1);
-      } finally {
-        rmSync(configDir, { recursive: true, force: true });
-      }
-    }).pipe(Effect.provide(layer));
+      expect(analytics.aliases).toEqual([{ distinctId: "user-123", alias: "device-123" }]);
+      expect(analytics.identifies).toEqual([]);
+      const telemetry = yield* readTelemetryConfig(configDir);
+      expect(telemetry.distinct_id).toBe("user-123");
+      expect(telemetry.enabled).toBe(true);
+      expect(telemetry.schema_version).toBe(1);
+    }).pipe(Effect.provide([layer, BunServices.layer]));
   });
 
   it.effect("does not stitch identity from X-Gotrue-Id responses in CI", () => {
-    const configDir = tempTelemetryConfig();
+    const configDir = telemetryDir.current;
     const analytics = mockAnalytics();
     const http = captureRequests({ "X-Gotrue-Id": "user-123" });
     const layer = commandPlatformApiLayer.pipe(
@@ -414,21 +389,18 @@ describe("commandPlatformApiLayer", () => {
     );
 
     return Effect.gen(function* () {
-      try {
-        const api = yield* CommandPlatformApi;
-        yield* api.v1.listAllProjects();
+      yield* writeTelemetryConfig(configDir);
+      const api = yield* CommandPlatformApi;
+      yield* api.v1.listAllProjects();
 
-        expect(analytics.aliases).toEqual([]);
-        expect(analytics.identifies).toEqual([]);
-        expect(readTelemetryConfig(configDir).distinct_id).toBeUndefined();
-      } finally {
-        rmSync(configDir, { recursive: true, force: true });
-      }
-    }).pipe(Effect.provide(layer));
+      expect(analytics.aliases).toEqual([]);
+      expect(analytics.identifies).toEqual([]);
+      expect((yield* readTelemetryConfig(configDir)).distinct_id).toBeUndefined();
+    }).pipe(Effect.provide([layer, BunServices.layer]));
   });
 
   it.effect("does not stitch identity in a first-run non-TTY runtime", () => {
-    const configDir = mkdtempSync(path.join(tmpdir(), "supabase-platform-api-"));
+    const configDir = telemetryDir.current;
     const analytics = mockAnalytics();
     const http = captureRequests({ "X-Gotrue-Id": "user-123" });
     const layer = commandPlatformApiLayer.pipe(
@@ -439,21 +411,19 @@ describe("commandPlatformApiLayer", () => {
     );
 
     return Effect.gen(function* () {
-      try {
-        const api = yield* CommandPlatformApi;
-        yield* api.v1.listAllProjects();
+      const api = yield* CommandPlatformApi;
+      yield* api.v1.listAllProjects();
 
-        expect(analytics.aliases).toEqual([]);
-        expect(analytics.identifies).toEqual([]);
-        expect(existsSync(path.join(configDir, "telemetry.json"))).toBe(false);
-      } finally {
-        rmSync(configDir, { recursive: true, force: true });
-      }
-    }).pipe(Effect.provide(layer));
+      expect(analytics.aliases).toEqual([]);
+      expect(analytics.identifies).toEqual([]);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      expect(yield* fs.exists(path.join(configDir, "telemetry.json"))).toBe(false);
+    }).pipe(Effect.provide([layer, BunServices.layer]));
   });
 
   it.effect("stitches identity in a first-run TTY runtime", () => {
-    const configDir = mkdtempSync(path.join(tmpdir(), "supabase-platform-api-"));
+    const configDir = telemetryDir.current;
     const analytics = mockAnalytics();
     const http = captureRequests({ "X-Gotrue-Id": "user-123" });
     const layer = commandPlatformApiLayer.pipe(
@@ -464,21 +434,17 @@ describe("commandPlatformApiLayer", () => {
     );
 
     return Effect.gen(function* () {
-      try {
-        const api = yield* CommandPlatformApi;
-        yield* api.v1.listAllProjects();
+      const api = yield* CommandPlatformApi;
+      yield* api.v1.listAllProjects();
 
-        expect(analytics.aliases).toEqual([{ distinctId: "user-123", alias: "device-123" }]);
-        expect(analytics.identifies).toEqual([]);
-        expect(readTelemetryConfig(configDir).distinct_id).toBe("user-123");
-      } finally {
-        rmSync(configDir, { recursive: true, force: true });
-      }
-    }).pipe(Effect.provide(layer));
+      expect(analytics.aliases).toEqual([{ distinctId: "user-123", alias: "device-123" }]);
+      expect(analytics.identifies).toEqual([]);
+      expect((yield* readTelemetryConfig(configDir)).distinct_id).toBe("user-123");
+    }).pipe(Effect.provide([layer, BunServices.layer]));
   });
 
   it.effect("does not stitch identity when a distinct_id is already known", () => {
-    const configDir = tempTelemetryConfig({ distinctId: "existing-user" });
+    const configDir = telemetryDir.current;
     const analytics = mockAnalytics();
     const http = captureRequests({ "X-Gotrue-Id": "user-123" });
     const layer = commandPlatformApiLayer.pipe(
@@ -489,21 +455,18 @@ describe("commandPlatformApiLayer", () => {
     );
 
     return Effect.gen(function* () {
-      try {
-        const api = yield* CommandPlatformApi;
-        yield* api.v1.listAllProjects();
+      yield* writeTelemetryConfig(configDir, { distinctId: "existing-user" });
+      const api = yield* CommandPlatformApi;
+      yield* api.v1.listAllProjects();
 
-        expect(analytics.aliases).toEqual([]);
-        expect(analytics.identifies).toEqual([]);
-        expect(readTelemetryConfig(configDir).distinct_id).toBe("existing-user");
-      } finally {
-        rmSync(configDir, { recursive: true, force: true });
-      }
-    }).pipe(Effect.provide(layer));
+      expect(analytics.aliases).toEqual([]);
+      expect(analytics.identifies).toEqual([]);
+      expect((yield* readTelemetryConfig(configDir)).distinct_id).toBe("existing-user");
+    }).pipe(Effect.provide([layer, BunServices.layer]));
   });
 
   it.effect("does not stitch identity when legacy telemetry state is disabled", () => {
-    const configDir = tempTelemetryConfig({ enabled: false });
+    const configDir = telemetryDir.current;
     const analytics = mockAnalytics();
     const http = captureRequests({ "X-Gotrue-Id": "user-123" });
     const layer = commandPlatformApiLayer.pipe(
@@ -514,27 +477,22 @@ describe("commandPlatformApiLayer", () => {
     );
 
     return Effect.gen(function* () {
-      try {
-        const api = yield* CommandPlatformApi;
-        yield* api.v1.listAllProjects();
+      yield* writeTelemetryConfig(configDir, { enabled: false });
+      const api = yield* CommandPlatformApi;
+      yield* api.v1.listAllProjects();
 
-        expect(analytics.aliases).toEqual([]);
-        expect(analytics.identifies).toEqual([]);
-        const telemetry = readTelemetryConfig(configDir);
-        expect(telemetry.enabled).toBe(false);
-        expect(telemetry.distinct_id).toBeUndefined();
-      } finally {
-        rmSync(configDir, { recursive: true, force: true });
-      }
-    }).pipe(Effect.provide(layer));
+      expect(analytics.aliases).toEqual([]);
+      expect(analytics.identifies).toEqual([]);
+      const telemetry = yield* readTelemetryConfig(configDir);
+      expect(telemetry.enabled).toBe(false);
+      expect(telemetry.distinct_id).toBeUndefined();
+    }).pipe(Effect.provide([layer, BunServices.layer]));
   });
 });
 
-// The lazy factory underpins the `--linked` db-config resolver's auth-free
-// `--password` path, which only loads a token when no password is supplied.
-// Building the factory must therefore resolve NO token; the friendly auth
-// error must still surface when a command branch actually reaches `make`
-// (e.g. minting a temp role).
+// The lazy factory backs the `--linked` db-config resolver's auth-free `--password` path, which
+// must build without resolving a token but still surface the auth error once `make` is actually
+// reached.
 describe("commandPlatformApiFactoryLayer (lazy token)", () => {
   it.effect("builds without resolving an access token even when none is configured", () => {
     const layer = commandPlatformApiFactoryLayer.pipe(
@@ -542,9 +500,6 @@ describe("commandPlatformApiFactoryLayer (lazy token)", () => {
       Layer.provide(mockCredentials(Option.none())),
       withBaseDeps(),
     );
-    // The eager `commandPlatformApiLayer` would fail to build here; obtaining the
-    // factory service without touching `make` must succeed — this is exactly the
-    // `--linked --password` path, which never mints a temp role.
     return Effect.gen(function* () {
       const factory = yield* CommandPlatformApiFactory;
       expect(typeof factory.make).toBe("object");
@@ -562,7 +517,7 @@ describe("commandPlatformApiFactoryLayer (lazy token)", () => {
       const exit = yield* Effect.exit(factory.make);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = yield* encodeJson(exit.cause);
         expect(errorJson).toContain("AccessTokenRequiredError");
         expect(errorJson).toContain("Access token not provided");
       }
@@ -579,8 +534,6 @@ describe("commandPlatformApiFactoryLayer (lazy token)", () => {
       const factory = yield* CommandPlatformApiFactory;
       const first = yield* factory.make;
       const second = yield* factory.make;
-      // `Effect.cached` guarantees the token is resolved once and the same client
-      // instance is reused across repeated `make` calls within one command run.
       expect(first).toBe(second);
     }).pipe(Effect.provide(layer));
   });

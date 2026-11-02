@@ -84,6 +84,7 @@
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
     "@vitest/coverage-v8": "catalog:",
+    "ajv": "^8.20.0",
     "effect": "catalog:",
     "semantic-release": "catalog:",
     "typescript": "catalog:",

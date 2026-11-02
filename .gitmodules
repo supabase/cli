@@ -1,12 +1,14 @@
 [submodule ".repos/effect"]
 	path = .repos/effect
-	url = https://github.com/Effect-TS/effect-smol.git
+	url = https://github.com/Effect-TS/effect.git
+	branch = main
 [submodule ".repos/effect-patterns"]
 	path = .repos/effect-patterns
 	url = https://github.com/PaulJPhilp/EffectPatterns
 [submodule ".repos/effect-v3"]
 	path = .repos/effect-v3
 	url = https://github.com/Effect-TS/effect.git
+	branch = v3
 [submodule ".repos/lalph"]
 	path = .repos/lalph
 	url = https://github.com/tim-smart/lalph.git

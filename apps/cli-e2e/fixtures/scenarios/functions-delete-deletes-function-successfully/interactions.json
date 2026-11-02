@@ -2,7 +2,7 @@
   {
     "request": {
       "method": "DELETE",
-      "path": "/v1/projects/__PROJECT_REF__/functions/hello-world",
+      "path": "/v1/projects/replayfixtureprojref/functions/hello-world",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",

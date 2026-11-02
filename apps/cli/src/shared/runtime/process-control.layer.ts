@@ -14,27 +14,24 @@ const defaultSignals: ReadonlyArray<CliProcessSignal> = ["SIGINT", "SIGTERM"];
  */
 export const processControlLayer = Layer.sync(ProcessControl, () =>
   ProcessControl.of({
-    // `awaitSignal` is used for long-lived command interruption such as `start`.
     awaitSignal: (signals = defaultSignals) =>
       Effect.callback<CliProcessSignal>((resume) => {
         const cleanup = () => {
-          for (const signal of signals) {
-            process.off(signal, listeners[signal]);
+          for (const { signal, listener } of listeners) {
+            process.off(signal, listener);
           }
         };
 
-        const listeners = Object.fromEntries(
-          signals.map((signal) => [
-            signal,
-            () => {
-              cleanup();
-              resume(Effect.succeed(signal));
-            },
-          ]),
-        ) as Record<CliProcessSignal, () => void>;
+        const listeners = signals.map((signal) => ({
+          signal,
+          listener: () => {
+            cleanup();
+            resume(Effect.succeed(signal));
+          },
+        }));
 
-        for (const signal of signals) {
-          process.once(signal, listeners[signal]);
+        for (const { signal, listener } of listeners) {
+          process.once(signal, listener);
         }
 
         return Effect.sync(cleanup);
@@ -63,13 +60,8 @@ export const processControlLayer = Layer.sync(ProcessControl, () =>
 
       return Effect.sync(cleanup);
     }),
-    // `holdSignals` is the no-resume dual of `awaitSignal`. It installs a
-    // no-op listener per signal for the lifetime of the caller's scope. The
-    // only purpose is to suppress the runtime's default terminate-on-signal
-    // behavior so a child process spawned with `detached:false` can receive
-    // the signal via the shared process group and handle it itself, while
-    // the parent waits for the child's real exit code instead of being
-    // killed with 130 by Bun/Node's default action.
+    // No-op listener per signal for the scope's lifetime; see
+    // `ProcessControlShape.holdSignals` for why.
     holdSignals: (signals) =>
       Effect.acquireRelease(
         Effect.sync(() => {

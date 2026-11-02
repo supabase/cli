@@ -1,0 +1,31 @@
+diff --git a/dist/internal/internal.js b/dist/internal/internal.js
+index 7138319bb00fb82572338e74ddc8947aa7c2967e..018a7180229568cdb42db75fe8c0a73a33bc1230 100644
+--- a/dist/internal/internal.js
++++ b/dist/internal/internal.js
+@@ -28,12 +28,24 @@ const runPromise = /*#__PURE__*/Effect.fnUntraced(function* (effect, _ctx) {
+ }));
+ /** @internal */
+ const runTest = ctx => effect => {
+-  const promise = runPromise(effect, ctx);
++  // Rejects with the pretty errors themselves (an AggregateError when there are several) so
++  // Vitest prints the defect instead of the runtime's squashed wrapper, and reports a cause
++  // that mixes an interrupt with a real failure once the finalizers have run.
++  const failure = cause => {
++    const errors = Cause.prettyErrors(cause);
++    return errors.length > 1 ? new AggregateError(errors) : errors[0] ?? Cause.squash(cause);
++  };
++  const exitPromise = Effect.runPromiseExit(effect, {
++    signal: ctx?.signal
++  });
++  const promise = exitPromise.then(exit => Exit.isSuccess(exit) ? exit.value : Promise.reject(failure(exit.cause)));
+   if (ctx) {
+     // Vitest stops awaiting the test promise once the signal aborts (timeout or
+     // cancellation), so only then add a hook that waits for the finalizers.
+     // Registering it unconditionally would change the teardown of every test.
+-    const onAbort = () => ctx.onTestFinished(() => promise.then(constVoid, constVoid));
++    const onAbort = () => ctx.onTestFinished(() => exitPromise.then(exit => {
++      if (Exit.isFailure(exit) && Cause.hasInterrupts(exit.cause) && !Cause.hasInterruptsOnly(exit.cause)) return Promise.reject(failure(exit.cause));
++    }));
+     ctx.signal.addEventListener("abort", onAbort, {
+       once: true
+     });

@@ -1,0 +1,745 @@
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
+import { FetchHttpClient } from "effect/http";
+import * as net from "node:net";
+import type { Stack } from "@supabase/stack/effect";
+import {
+  mockCommandSettings,
+  mockTelemetryStateTracked,
+} from "../../../../../tests/helpers/command-mocks.ts";
+import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
+import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api-factory.service.ts";
+import { dbConnectionLayer } from "../../../../command-internal/db-connection.sql-pg.layer.ts";
+import { DbConnection } from "../../../../command-internal/db-connection.service.ts";
+import { parseConnectionString } from "../../../../command-internal/db-config.parse.ts";
+import { stackCatalogSetupLayer } from "../../../../command-internal/stack-catalog-setup.ts";
+import { StackApi, stackApiLayer, stackTargetResolverLayer } from "../stack.shared.ts";
+import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
+import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
+import { runtimeInfoLayer } from "../../../../shared/runtime/runtime-info.layer.ts";
+import { ExperimentalFlag, YesFlag } from "../../../../command-internal/global-flags.ts";
+import { stackStart } from "./start.handler.ts";
+import { selection } from "../../../../../tests/helpers/pins.ts";
+import { destroyTestStacks } from "../../../../../tests/helpers/stack-cleanup.ts";
+import { cliConfigValuesTestLayer } from "../../../../../tests/helpers/config-values-layer.ts";
+
+const excluded = [
+  "rest",
+  "auth",
+  "realtime",
+  "storage",
+  "functions",
+  "studio",
+  "mail",
+  "analytics",
+  "pooler",
+];
+const flags = (exclude: ReadonlyArray<string>) => ({
+  exclude,
+  stack: Option.none<string>(),
+  stackId: Option.none<string>(),
+  runtime: "native" as const,
+  preparation: "on-demand" as const,
+  frozen: false,
+  eager: false,
+});
+
+const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
+
+const captureOwnerPid = (capture: (pid: number) => void) =>
+  Layer.effect(
+    StackApi,
+    Effect.gen(function* () {
+      const api = yield* Effect.provide(Effect.service(StackApi), liveStackApi);
+      const observe = (stack: Stack, stateRoot: string): Stack => ({
+        ...stack,
+        composition: {
+          ...stack.composition,
+          supabase: (services, compositionOptions) =>
+            stack.composition.supabase(services, compositionOptions).pipe(
+              Effect.onExit(() =>
+                api.discover({ stateRoot }).pipe(
+                  Effect.flatMap((definitions) => {
+                    const host = definitions.find(
+                      ({ definition }) => definition.id === stack.id,
+                    )?.host;
+                    return host === undefined
+                      ? Effect.die("Stack owner was not discoverable")
+                      : Effect.sync(() => capture(host.pid));
+                  }),
+                ),
+              ),
+            ),
+        },
+      });
+      const captureOpenOwner = (stack: Stack, stateRoot: string) =>
+        api.discover({ stateRoot }).pipe(
+          Effect.flatMap((definitions) => {
+            const host = definitions.find(({ definition }) => definition.id === stack.id)?.host;
+            return host === undefined ? Effect.void : Effect.sync(() => capture(host.pid));
+          }),
+        );
+      return StackApi.of({
+        ...api,
+        create: (options) =>
+          api.create(options).pipe(Effect.map((stack) => observe(stack, options.stateRoot))),
+        open: (options) =>
+          api.open(options).pipe(
+            Effect.tap((stack) =>
+              options.startOwner === true
+                ? captureOpenOwner(stack, options.stateRoot)
+                : Effect.void,
+            ),
+            Effect.map((stack) => observe(stack, options.stateRoot)),
+          ),
+      });
+    }),
+  );
+
+const ownerHasExited = (pid: number) =>
+  Effect.try(() => process.kill(pid, 0)).pipe(
+    Effect.as(false),
+    Effect.catchIf(
+      ({ cause }) =>
+        typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ESRCH",
+      () => Effect.succeed(true),
+    ),
+  );
+
+const projectConfig = `
+project_id = "stack-start-native-integration"
+
+[api]
+enabled = true
+
+[auth]
+enabled = false
+
+[realtime]
+enabled = false
+
+[storage]
+enabled = false
+
+[edge_runtime]
+enabled = false
+
+[studio]
+enabled = false
+
+[analytics]
+enabled = false
+
+[db.pooler]
+enabled = false
+
+[local_smtp]
+enabled = false
+`;
+
+/** REST and Auth share the API listener; an absent \`[api] port\` requests an automatic one. */
+const n2ProjectConfig = (apiPort: number | undefined) => `
+project_id = "stack-start-n2-replan"
+${apiPort === undefined ? "" : `\n[api]\nport = ${apiPort}\n`}
+[auth]
+enabled = true
+
+[realtime]
+enabled = false
+
+[storage]
+enabled = false
+
+[edge_runtime]
+enabled = false
+
+[studio]
+enabled = false
+
+[analytics]
+enabled = false
+
+[db.pooler]
+enabled = false
+
+[local_smtp]
+enabled = false
+`;
+const onlyRestAndAuth = [
+  "realtime",
+  "storage",
+  "functions",
+  "studio",
+  "mail",
+  "analytics",
+  "pooler",
+];
+const onlyRest = [...onlyRestAndAuth, "auth"];
+
+const makeLayers = (root: string, apiLayer = liveStackApi, workdir = root) => {
+  const settings = mockCommandSettings({ workdir, supabaseHome: root });
+  const resolver = stackTargetResolverLayer.pipe(
+    Layer.provide(Layer.mergeAll(BunServices.layer, settings, apiLayer)),
+  );
+  const output = mockOutput();
+  const telemetry = mockTelemetryStateTracked();
+  const tty = mockTty({ stdinIsTty: false, stdoutIsTty: false });
+  return {
+    output,
+    telemetry,
+    layer: Layer.mergeAll(
+      cliConfigValuesTestLayer,
+      FetchHttpClient.layer,
+      runtimeInfoLayer,
+      settings,
+      apiLayer,
+      resolver,
+      output.layer,
+      telemetry.layer,
+      stackCatalogSetupLayer,
+      dbConnectionLayer,
+      Layer.succeed(ExperimentalFlag, false),
+      Layer.succeed(YesFlag, false),
+      Layer.succeed(CliArgs, { args: ["stack", "start"] }),
+      Layer.succeed(CommandPlatformApiFactory, { make: Effect.die("unused") }),
+      stdinLayer.pipe(Layer.provide(tty)),
+      tty,
+    ).pipe(Layer.provideMerge(BunServices.layer)),
+  };
+};
+
+describe("experimental stack start native lifecycle", () => {
+  it.live(
+    "preserves database identity, data, and port while excluding then including REST",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-native-" });
+        yield* fs.makeDirectory(path.join(root, "supabase", "migrations"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(root, "supabase", "migrations", "20260919000000_native_start.sql"),
+          "THIS IS NOT SQL;\n",
+        );
+        yield* fs.writeFileString(path.join(root, "supabase", "config.toml"), projectConfig);
+        const fixture = makeLayers(root);
+        yield* Effect.ensuring(
+          Effect.gen(function* () {
+            const api = yield* StackApi;
+            yield* Effect.scoped(
+              api.create({
+                projectRoot: root,
+                stateRoot: path.join(root, "stacks"),
+                cacheRoot: path.join(root, "cache"),
+                runtime: "native",
+                startOwner: true,
+              }),
+            );
+            const preparedDefinitions = yield* api.discover({
+              stateRoot: path.join(root, "stacks"),
+            });
+            const existingOwnerPid = preparedDefinitions[0]?.host?.pid;
+            if (existingOwnerPid === undefined)
+              return yield* Effect.die("prepared stack owner missing");
+            const failedStart = yield* Effect.scoped(Effect.exit(stackStart(flags([]))));
+            expect(Exit.isFailure(failedStart)).toBe(true);
+            const failedDefinitions = yield* api.discover({ stateRoot: path.join(root, "stacks") });
+            expect(failedDefinitions).toHaveLength(1);
+            const failedDefinition = failedDefinitions[0];
+            if (failedDefinition === undefined)
+              return yield* Effect.die("registered stack missing");
+            expect(failedDefinition.host?.pid).toBe(existingOwnerPid);
+            expect(() => process.kill(existingOwnerPid, 0)).not.toThrow();
+            {
+              const failedStack = yield* api.open({
+                id: failedDefinition.definition.id,
+                stateRoot: path.join(root, "stacks"),
+                cacheRoot: path.join(root, "cache"),
+              });
+              expect(yield* failedStack.services.list).toHaveLength(0);
+              expect((yield* failedStack.composition.describe).members).toHaveLength(0);
+            }
+            yield* fs.writeFileString(
+              path.join(root, "supabase", "migrations", "20260919000000_native_start.sql"),
+              "CREATE TABLE native_migration_probe(value text NOT NULL); INSERT INTO native_migration_probe(value) VALUES ('once');\n",
+            );
+            const stackId = yield* stackStart(flags(excluded));
+            const stack = yield* api.open({
+              id: stackId,
+              stateRoot: path.join(root, "stacks"),
+              cacheRoot: path.join(root, "cache"),
+            });
+            const firstDatabase = (yield* stack.services.list).find(
+              (instance) => instance.service === "database",
+            );
+            if (firstDatabase === undefined) return yield* Effect.die("database missing");
+            const firstCredentials = yield* firstDatabase.credentials({ from: "host" });
+            const firstDatabaseUrl = firstCredentials.databaseUrl;
+            if (firstDatabaseUrl === undefined) return yield* Effect.die("database URL missing");
+            const firstConnection = yield* parseConnectionString(firstDatabaseUrl);
+            if (firstConnection === undefined) return yield* Effect.die("database URL invalid");
+            const db = yield* DbConnection;
+            yield* Effect.scoped(
+              Effect.gen(function* () {
+                const session = yield* db.connect(firstConnection, {
+                  isLocal: true,
+                  dnsResolver: "native",
+                });
+                yield* session.exec("CREATE TABLE native_start_probe(value text NOT NULL)");
+                yield* session.exec("INSERT INTO native_start_probe(value) VALUES ('preserved')");
+                const migrationRows = yield* session.query(
+                  "SELECT value FROM native_migration_probe",
+                );
+                expect(migrationRows).toEqual([{ value: "once" }]);
+              }),
+            );
+            const secondId = yield* stackStart(flags([]));
+            expect(secondId).toBe(stackId);
+            const thirdId = yield* stackStart(flags([]));
+            expect(thirdId).toBe(stackId);
+            const reopened = yield* api.open({
+              id: secondId,
+              stateRoot: path.join(root, "stacks"),
+              cacheRoot: path.join(root, "cache"),
+            });
+            const services = yield* reopened.services.list;
+            const secondDatabase = services.find((instance) => instance.service === "database");
+            if (secondDatabase === undefined) return yield* Effect.die("reopened database missing");
+            expect(services.some((instance) => instance.service === "rest")).toBe(false);
+            expect(secondDatabase.id).toBe(firstDatabase.id);
+            const secondCredentials = yield* secondDatabase.credentials({ from: "host" });
+            expect(secondCredentials.databaseUrl).toBe(firstDatabaseUrl);
+            const secondConnection = yield* parseConnectionString(
+              secondCredentials.databaseUrl ?? "",
+            );
+            if (secondConnection === undefined) return yield* Effect.die("reopened URL invalid");
+            const rows = yield* Effect.scoped(
+              Effect.gen(function* () {
+                const session = yield* db.connect(secondConnection, {
+                  isLocal: true,
+                  dnsResolver: "native",
+                });
+                return yield* session.query("SELECT value FROM native_start_probe");
+              }),
+            );
+            expect(rows).toEqual([{ value: "preserved" }]);
+            yield* reopened.stop;
+            const restartedId = yield* stackStart(flags([]));
+            expect(restartedId).toBe(stackId);
+            const restarted = yield* api.open({
+              id: restartedId,
+              stateRoot: path.join(root, "stacks"),
+              cacheRoot: path.join(root, "cache"),
+            });
+            const restartedServices = yield* restarted.services.list;
+            const restartedDatabase = restartedServices.find(
+              (instance) => instance.service === "database",
+            );
+            if (restartedDatabase === undefined)
+              return yield* Effect.die("restarted database missing");
+            expect(restartedServices.some((instance) => instance.service === "rest")).toBe(true);
+            expect(restartedDatabase.id).toBe(firstDatabase.id);
+            const restartedCredentials = yield* restartedDatabase.credentials({ from: "host" });
+            expect(restartedCredentials.databaseUrl).toBe(firstDatabaseUrl);
+            const restartedConnection = yield* parseConnectionString(
+              restartedCredentials.databaseUrl ?? "",
+            );
+            if (restartedConnection === undefined)
+              return yield* Effect.die("restarted URL invalid");
+            const restartedRows = yield* Effect.scoped(
+              Effect.gen(function* () {
+                const session = yield* db.connect(restartedConnection, {
+                  isLocal: true,
+                  dnsResolver: "native",
+                });
+                return yield* session.query("SELECT value FROM native_start_probe");
+              }),
+            );
+            expect(restartedRows).toEqual([{ value: "preserved" }]);
+          }),
+          Effect.gen(function* () {
+            const api = yield* StackApi;
+            yield* destroyTestStacks(api, path.join(root, "stacks"), path.join(root, "cache"));
+          }),
+        ).pipe(Effect.provide(fixture.layer));
+      }).pipe(Effect.provide(BunServices.layer)),
+    { timeout: 180_000 },
+  );
+
+  it.live(
+    "names the pinned Studio port setting when another process holds that port",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-native-studio-" });
+        yield* fs.makeDirectory(path.join(root, "supabase"), { recursive: true });
+        const server = net.createServer();
+        const ownedServer = yield* Effect.acquireRelease(
+          Effect.callback<net.Server, Error>((resume) => {
+            const onError = (cause: Error) => resume(Effect.fail(cause));
+            server.once("error", onError);
+            server.listen(0, "127.0.0.1", () => {
+              server.removeListener("error", onError);
+              resume(Effect.succeed(server));
+            });
+            return Effect.sync(() => {
+              server.removeListener("error", onError);
+              if (server.listening) server.close();
+            });
+          }),
+          (listeningServer) =>
+            Effect.callback<void>((resume) => {
+              listeningServer.close(() => resume(Effect.void));
+            }),
+        );
+        const address = ownedServer.address();
+        if (address === null || typeof address === "string")
+          return yield* Effect.die("Unable to reserve a native test port");
+        yield* fs.writeFileString(
+          path.join(root, "supabase", "config.toml"),
+          projectConfig.replace(
+            "[studio]\nenabled = false",
+            `[studio]\nenabled = true\nport = ${address.port}`,
+          ),
+        );
+        const fixture = makeLayers(root);
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const api = yield* StackApi;
+            yield* Effect.addFinalizer(() =>
+              destroyTestStacks(api, path.join(root, "stacks"), path.join(root, "cache")),
+            );
+            const failedStart = yield* Effect.scoped(
+              Effect.exit(
+                stackStart(flags(excluded.filter((name) => name !== "studio" && name !== "rest"))),
+              ),
+            );
+            expect(Exit.isFailure(failedStart)).toBe(true);
+            if (!Exit.isFailure(failedStart)) return;
+            expect(Cause.findErrorOption(failedStart.cause)).toMatchObject(
+              Option.some({
+                suggestion:
+                  "Set `studio.port` in supabase/config.toml (or SUPABASE_STUDIO_PORT) to a free port.",
+              }),
+            );
+          }),
+        ).pipe(Effect.provide(fixture.layer));
+      }).pipe(Effect.provide(BunServices.layer)),
+    { timeout: 180_000 },
+  );
+
+  it.live(
+    "stops owners after bind failures across retries, and rejects an invalid config before spawning one",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-native-bind-" });
+        yield* fs.makeDirectory(path.join(root, "supabase"), { recursive: true });
+        const server = net.createServer();
+        const ownedServer = yield* Effect.acquireRelease(
+          Effect.callback<net.Server, Error>((resume) => {
+            const onError = (cause: Error) => resume(Effect.fail(cause));
+            server.once("error", onError);
+            server.listen(0, "127.0.0.1", () => {
+              server.removeListener("error", onError);
+              resume(Effect.succeed(server));
+            });
+            return Effect.sync(() => {
+              server.removeListener("error", onError);
+              if (server.listening) server.close();
+            });
+          }),
+          (listeningServer) =>
+            Effect.callback<void>((resume) => {
+              listeningServer.close(() => resume(Effect.void));
+            }),
+        );
+        const address = ownedServer.address();
+        if (address === null || typeof address === "string")
+          return yield* Effect.die("Unable to reserve a native test port");
+        const occupiedPort = address.port;
+        yield* fs.writeFileString(
+          path.join(root, "supabase", "config.toml"),
+          projectConfig.replace("[db.pooler]", `[db]\nport = ${occupiedPort}\n\n[db.pooler]`),
+        );
+        const ownerPids: Array<number> = [];
+        let activeAttempt = 0;
+        const fixture = makeLayers(
+          root,
+          captureOwnerPid((pid) => (ownerPids[activeAttempt] = pid)),
+        );
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const api = yield* StackApi;
+            yield* Effect.addFinalizer(() =>
+              destroyTestStacks(api, path.join(root, "stacks"), path.join(root, "cache")),
+            );
+            let stackId: string | undefined;
+            for (let attempt = 0; attempt < 2; attempt++) {
+              activeAttempt = attempt;
+              const failedStart = yield* Effect.scoped(Effect.exit(stackStart(flags([]))));
+              expect(Exit.isFailure(failedStart)).toBe(true);
+              if (!Exit.isFailure(failedStart)) return;
+              // Linux rejects the bind; platforms that allow overlapping binds reject the probe.
+              expect(Cause.pretty(failedStart.cause)).toMatch(
+                new RegExp(
+                  `127\\.0\\.0\\.1:${occupiedPort}(: Cannot bind TCP listener| is in use by another process)`,
+                ),
+              );
+              expect(Cause.findErrorOption(failedStart.cause)).toMatchObject(
+                Option.some({
+                  suggestion:
+                    "Set `db.port` in supabase/config.toml (or SUPABASE_DB_PORT) to a free port.",
+                }),
+              );
+              const ownerPid = ownerPids[attempt];
+              expect(ownerPid).toBeDefined();
+              if (ownerPid === undefined) return yield* Effect.die("stack owner PID missing");
+              expect(yield* ownerHasExited(ownerPid)).toBe(true);
+              const definitions = yield* api.discover({ stateRoot: path.join(root, "stacks") });
+              expect(definitions).toHaveLength(1);
+              const definition = definitions[0];
+              if (definition === undefined) return yield* Effect.die("registered stack missing");
+              if (stackId === undefined) stackId = definition.definition.id;
+              else expect(definition.definition.id).toBe(stackId);
+              expect(definition.host).toBeUndefined();
+              const stack = yield* api.open({
+                id: definition.definition.id,
+                stateRoot: path.join(root, "stacks"),
+                cacheRoot: path.join(root, "cache"),
+              });
+              expect(yield* stack.services.list).toHaveLength(0);
+              expect((yield* stack.composition.describe).members).toHaveLength(0);
+            }
+            // A stopped stack reads its project config before reopening, so an invalid config
+            // rejects without spawning another owner (`ownerPids[2]` stays unset). The resolved
+            // config is memoised per runtime, so the rewritten file needs a fresh service.
+            yield* fs.writeFileString(path.join(root, "supabase", "config.toml"), "project_id = [");
+            activeAttempt = 2;
+            const invalidConfigStart = yield* Effect.scoped(
+              Effect.exit(stackStart(flags([]))),
+            ).pipe(Effect.provide(cliConfigValuesTestLayer));
+            expect(Exit.isFailure(invalidConfigStart)).toBe(true);
+            if (!Exit.isFailure(invalidConfigStart)) return;
+            const configError = Cause.findErrorOption(invalidConfigStart.cause);
+            expect(Option.isSome(configError)).toBe(true);
+            if (Option.isSome(configError))
+              expect(configError.value).toMatchObject({ reason: "invalid-config" });
+            expect(ownerPids[2]).toBeUndefined();
+            const definitions = yield* api.discover({ stateRoot: path.join(root, "stacks") });
+            expect(definitions).toHaveLength(1);
+            const definition = definitions[0];
+            if (definition === undefined) return yield* Effect.die("registered stack missing");
+            expect(definition.definition.id).toBe(stackId);
+            expect(definition.host).toBeUndefined();
+            const stack = yield* api.open({
+              id: definition.definition.id,
+              stateRoot: path.join(root, "stacks"),
+              cacheRoot: path.join(root, "cache"),
+            });
+            expect(yield* stack.services.list).toHaveLength(0);
+            expect((yield* stack.composition.describe).members).toHaveLength(0);
+            expect(ownerPids.filter((pid) => pid !== undefined)).toHaveLength(2);
+          }),
+        ).pipe(Effect.provide(fixture.layer));
+      }).pipe(Effect.provide(BunServices.layer)),
+    { timeout: 60_000 },
+  );
+
+  it.live.skipIf(process.platform === "win32")(
+    "restarts a stack created through a symlinked workdir after it is stopped",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-symlink-" }),
+        );
+        const project = path.join(root, "project");
+        const workdir = path.join(root, "workdir");
+        yield* fs.makeDirectory(path.join(project, "supabase"), { recursive: true });
+        yield* fs.symlink(project, workdir);
+        yield* fs.writeFileString(
+          path.join(project, "supabase", "config.toml"),
+          projectConfig.replace(
+            "[edge_runtime]\nenabled = false",
+            "[edge_runtime]\nenabled = true",
+          ),
+        );
+        const fixture = makeLayers(root, liveStackApi, workdir);
+        const onlyFunctions = excluded.filter((name) => name !== "functions");
+        yield* Effect.ensuring(
+          Effect.gen(function* () {
+            const api = yield* StackApi;
+            const locations = {
+              stateRoot: path.join(root, "stacks"),
+              cacheRoot: path.join(root, "cache"),
+            };
+            const functionsRoot = Effect.fn("functionsRoot")(function* (id: string) {
+              const stack = yield* api.open({ ...locations, id });
+              const functions = (yield* stack.services.list).find(
+                (instance) => instance.service === "functions",
+              );
+              if (functions === undefined) return yield* Effect.die("Functions missing");
+              const status = yield* functions.status;
+              return {
+                id: functions.id,
+                root:
+                  status.config.service === "functions" ? status.config.config.functionsRoot : "",
+              };
+            });
+            const stackId = yield* stackStart(flags(onlyFunctions));
+            const first = yield* functionsRoot(stackId);
+            expect(first.root.startsWith(project)).toBe(true);
+            yield* (yield* api.open({ ...locations, id: stackId })).stop;
+
+            const restartedId = yield* stackStart(flags(onlyFunctions));
+
+            expect(restartedId).toBe(stackId);
+            expect(yield* functionsRoot(restartedId)).toEqual(first);
+          }),
+          Effect.gen(function* () {
+            const api = yield* StackApi;
+            yield* destroyTestStacks(api, path.join(root, "stacks"), path.join(root, "cache"));
+          }),
+        ).pipe(Effect.provide(fixture.layer));
+      }).pipe(Effect.provide(BunServices.layer)),
+    { timeout: 180_000 },
+  );
+
+  it.live(
+    "re-plans the shared API port after excluding a sibling that previously shared it",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-n2-replan-" });
+        yield* fs.makeDirectory(path.join(root, "supabase"), { recursive: true });
+        // Below the native backend range (10000-19999), the automatic public range (20000-32767)
+        // and every OS ephemeral range, so no concurrent stack claim or outbound socket holds it.
+        const fixedPort = 8_915;
+        const locations = (r: string) => ({
+          stateRoot: path.join(r, "stacks"),
+          cacheRoot: path.join(r, "cache"),
+        });
+        yield* fs.writeFileString(
+          path.join(root, "supabase", "config.toml"),
+          n2ProjectConfig(fixedPort),
+        );
+        const fixture = makeLayers(root);
+        yield* Effect.ensuring(
+          Effect.gen(function* () {
+            const api = yield* StackApi;
+            const stackId = yield* stackStart(flags(onlyRestAndAuth));
+            const stack = yield* api.open({ id: stackId, ...locations(root) });
+            const restBefore = (yield* stack.services.list).find(
+              (instance) => instance.service === "rest",
+            );
+            if (restBefore === undefined) return yield* Effect.die("REST missing");
+            const statusBefore = yield* restBefore.status;
+            const portBefore = statusBefore.endpoints.find(({ name }) => name === "http")?.port;
+            expect(portBefore).toBe(fixedPort);
+
+            yield* stack.stop;
+            // The config drops the fixed API port and now excludes Auth too: REST alone remains,
+            // so Auth's still-saved fixed port must not anchor REST's shared port back to it.
+            // The resolved config is memoised per runtime, so the rewritten file needs a fresh service.
+            yield* fs.writeFileString(
+              path.join(root, "supabase", "config.toml"),
+              n2ProjectConfig(undefined),
+            );
+            const restartedId = yield* stackStart(flags(onlyRest)).pipe(
+              Effect.provide(cliConfigValuesTestLayer),
+            );
+            expect(restartedId).toBe(stackId);
+            const restarted = yield* api.open({ id: restartedId, ...locations(root) });
+            const restAfter = (yield* restarted.services.list).find(
+              (instance) => instance.service === "rest",
+            );
+            if (restAfter === undefined) return yield* Effect.die("REST missing after restart");
+            expect(restAfter.id).toBe(restBefore.id);
+            const statusAfter = yield* restAfter.status;
+            const portAfter = statusAfter.endpoints.find(({ name }) => name === "http")?.port;
+            expect(portAfter).toBeDefined();
+            // The fixed port is outside the automatic range, so the replan to automatic claims a
+            // different number and that claim agrees with the live bind.
+            const changes = yield* restarted.startupEndpointChanges;
+            const restChange = changes.find((change) => change.service === "rest");
+            expect(restChange?.from).toBe(fixedPort);
+            expect(restChange?.to).toBe(portAfter);
+            expect(restChange?.to).not.toBe(fixedPort);
+          }),
+          Effect.gen(function* () {
+            const api = yield* StackApi;
+            yield* destroyTestStacks(api, path.join(root, "stacks"), path.join(root, "cache"));
+          }),
+        ).pipe(Effect.provide(fixture.layer));
+      }).pipe(Effect.provide(BunServices.layer)),
+    { timeout: 120_000 },
+  );
+
+  it.live(
+    "refuses an Auth older than the one that migrated the data, and accepts a newer one",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-downgrade-" });
+        yield* fs.makeDirectory(path.join(root, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(root, "supabase", "config.toml"),
+          n2ProjectConfig(undefined),
+        );
+        const locations = {
+          stateRoot: path.join(root, "stacks"),
+          cacheRoot: path.join(root, "cache"),
+        };
+        const fixture = makeLayers(root);
+        yield* Effect.ensuring(
+          Effect.gen(function* () {
+            const api = yield* StackApi;
+            const stackId = yield* stackStart(flags(onlyRestAndAuth));
+            const stack = yield* api.open({ id: stackId, ...locations });
+            const database = (yield* stack.services.list).find(
+              (instance) => instance.service === "database",
+            );
+            if (database === undefined) return yield* Effect.die("database missing");
+            const record = path.join(
+              locations.stateRoot,
+              stackId,
+              "data",
+              database.id,
+              "schema-writers.json",
+            );
+            expect(yield* fs.readFileString(record)).toContain(selection.auth.upstreamVersion);
+            yield* stack.stop;
+
+            yield* fs.writeFileString(record, '{"auth":"v999.0.0"}');
+            const refused = yield* Effect.scoped(Effect.exit(stackStart(flags(onlyRestAndAuth))));
+            expect(Exit.isFailure(refused)).toBe(true);
+            if (!Exit.isFailure(refused)) return;
+            const message = Cause.pretty(refused.cause);
+            expect(message).toContain(
+              `auth ${selection.auth.upstreamVersion} is older than v999.0.0`,
+            );
+            expect(message).toContain(`supabase stack destroy --stack-id ${stackId}`);
+            expect(yield* fs.readFileString(record)).toContain("v999.0.0");
+
+            yield* fs.writeFileString(record, '{"auth":"v0.0.1"}');
+            expect(yield* stackStart({ ...flags(onlyRestAndAuth), eager: true })).toBe(stackId);
+            const raised = yield* fs.readFileString(record);
+            expect(raised).toContain(selection.auth.upstreamVersion);
+            expect(raised).not.toContain("v0.0.1");
+          }),
+          Effect.gen(function* () {
+            const api = yield* StackApi;
+            yield* destroyTestStacks(api, locations.stateRoot, locations.cacheRoot);
+          }),
+        ).pipe(Effect.provide(fixture.layer));
+      }).pipe(Effect.provide(BunServices.layer)),
+    { timeout: 180_000 },
+  );
+});

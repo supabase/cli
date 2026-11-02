@@ -1,0 +1,131 @@
+import {
+  type Host,
+  isWindowsScript,
+  quoteForCmd,
+  resolveWindowsCommand,
+  type SpawnRequest,
+  type SpawnResult,
+} from "@supabase/typegen";
+import { Data, Effect, Stream } from "effect";
+import { ChildProcess, type ChildProcessSpawner } from "effect/process";
+
+import { collectText } from "../../../command-internal/container-cli.ts";
+import { withProcessSpanScoped } from "../../../shared/telemetry/spans.ts";
+
+export interface TypegenHostOptions {
+  /** Where out-of-process tools run: the directory the command was invoked from. */
+  readonly cwd: string;
+  /** What the registry's Windows lookup reads; the child inherits the full environment. */
+  readonly env: Readonly<Record<string, string | undefined>>;
+  readonly platform: NodeJS.Platform;
+  readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
+  /** `Effect.runPromiseWith(context)` from the generator fiber, so it owns the spawned tool. */
+  readonly runPromise: <A>(
+    effect: Effect.Effect<A>,
+    options?: { readonly signal?: AbortSignal | undefined },
+  ) => Promise<A>;
+}
+
+type TypegenSpawnOutcome = Data.TaggedEnum<{
+  Exited: { readonly result: SpawnResult };
+  NotFound: {};
+  Failed: { readonly error: unknown };
+}>;
+const TypegenSpawnOutcome = Data.taggedEnum<TypegenSpawnOutcome>();
+
+const spawnForTypegen = (
+  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+  request: SpawnRequest,
+  platform: NodeJS.Platform,
+): Effect.Effect<TypegenSpawnOutcome> =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      let command = request.command;
+      let args: ReadonlyArray<string> = request.args;
+      let shell = false;
+      if (platform === "win32") {
+        // `spawn` cannot start the `.bat` Flutter ships `dart` as without a shell.
+        const resolved = resolveWindowsCommand(request.command, request.env);
+        if (resolved === undefined) return TypegenSpawnOutcome.NotFound();
+        shell = isWindowsScript(resolved);
+        command = shell ? quoteForCmd(resolved) : resolved;
+        if (shell) args = request.args.map(quoteForCmd);
+      }
+      const child = yield* withProcessSpanScoped(
+        "GenTypes.spawnTypegen",
+        { executable: request.command, argCount: args.length },
+        (traceEnv) =>
+          spawner.spawn(
+            ChildProcess.make(command, [...args], {
+              cwd: request.cwd,
+              env: { ...request.env, ...traceEnv },
+              extendEnv: true,
+              shell,
+              stdin: "pipe",
+              stdout: "pipe",
+              stderr: "pipe",
+            }),
+          ),
+      );
+      // Written here rather than handed to the spawner, so a tool that exits before reading its
+      // input fails the write in this fiber, where it is expected, instead of in a forked one.
+      // Raced against the child's own exit: under load, a stalled write can lose its scheduling
+      // race against the pipe's "error" event and wait forever on a drain that never comes. Exit
+      // is always observable, so it bounds the wait without a timer.
+      const feedStdin = Effect.raceFirst(
+        Stream.run(Stream.make(new TextEncoder().encode(request.stdin)), child.stdin),
+        child.exitCode,
+      ).pipe(Effect.ignore);
+      const [, stdout, stderr, exitCode] = yield* Effect.all(
+        [
+          feedStdin,
+          collectText(child.stdout),
+          collectText(child.stderr),
+          // A signal-ended process fails `exitCode`; the registry's contract wants `null`.
+          child.exitCode.pipe(
+            Effect.map(Number),
+            Effect.orElseSucceed((): number | null => null),
+          ),
+        ],
+        { concurrency: "unbounded" },
+      );
+      return TypegenSpawnOutcome.Exited({ result: { exitCode, stdout, stderr } });
+    }),
+  ).pipe(
+    Effect.catchReason(
+      "PlatformError",
+      "NotFound",
+      () => Effect.succeed(TypegenSpawnOutcome.NotFound()),
+      (_reason, error) => Effect.succeed(TypegenSpawnOutcome.Failed({ error })),
+    ),
+  );
+
+const commandNotFound = (command: string): Error =>
+  Object.assign(new Error(`spawn ${command} ENOENT`), {
+    code: "ENOENT",
+    syscall: `spawn ${command}`,
+    path: command,
+  });
+
+/** The registry `Host` for `gen types`; TypeScript is handed back unformatted, `oxfmt` stays out. */
+export const makeTypegenHost = (options: TypegenHostOptions): Host => ({
+  cwd: options.cwd,
+  env: options.env,
+  spawn: (request) =>
+    options
+      .runPromise(spawnForTypegen(options.spawner, request, options.platform), {
+        signal: request.signal,
+      })
+      .then(
+        TypegenSpawnOutcome.$match({
+          Exited: ({ result }) => result,
+          NotFound: () => {
+            throw commandNotFound(request.command);
+          },
+          Failed: ({ error }) => {
+            throw error;
+          },
+        }),
+      ),
+  format: (code) => Promise.resolve(code),
+});

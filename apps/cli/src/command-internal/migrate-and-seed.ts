@@ -13,17 +13,14 @@ export interface MigrateAndSeedConfig {
   readonly migrationsEnabled: boolean;
   readonly seed: SeedConfig;
   /**
-   * `--experimental`/`SUPABASE_EXPERIMENTAL` — together with an empty `version` and
-   * `pgDeltaEnabled === false`, switches the branch below from applying migration files to
-   * applying `schemaPaths`'s declarative schema files instead. `migration down` (the other
-   * caller of this function) always passes a concrete `version`, so `len(version) == 0`
-   * half of the same condition is already false there regardless of this field — see that
-   * call site's own comment for why a static value is safe.
+   * `--experimental`/`SUPABASE_EXPERIMENTAL` — combined with an empty `version` and
+   * `pgDeltaEnabled === false`, switches from applying migration files to applying
+   * `schemaPaths`'s declarative schema files instead.
    */
   readonly experimental: boolean;
-  /** `[experimental.pgdelta] enabled` — `utils.IsPgDeltaEnabled()`. See `experimental` above. */
+  /** `[experimental.pgdelta] enabled`. See `experimental` above. */
   readonly pgDeltaEnabled: boolean;
-  /** `db.migrations.schema_paths` — `Config.Db.Migrations.SchemaPaths`. Only read by the declarative branch above. */
+  /** `db.migrations.schema_paths`; only read by the declarative branch above. */
   readonly schemaPaths: ReadonlyArray<string>;
   /**
    * Effective local `[experimental.webhooks].enabled` value. `undefined` means
@@ -48,16 +45,30 @@ const migrationApplyError = (
   });
 };
 
+/** Warns a versionless `--experimental` rebuild that `schema_paths` is ignored while pg-delta is on. */
+export const experimentalSchemaPathsIgnoredWarning =
+  "WARNING: [db.migrations].schema_paths is not applied while pg-delta is enabled (the default). Set [experimental.pgdelta] enabled = false to apply schema_paths files.\n";
+
+/** Whether {@link experimentalSchemaPathsIgnoredWarning} applies to this rebuild. */
+export const ignoresExperimentalSchemaPaths = (inputs: {
+  readonly experimental: boolean;
+  readonly version: string;
+  readonly pgDeltaEnabled: boolean;
+  readonly schemaPaths: ReadonlyArray<string>;
+}): boolean =>
+  inputs.experimental &&
+  inputs.version.length === 0 &&
+  inputs.pgDeltaEnabled &&
+  inputs.schemaPaths.length > 0;
+
 /**
- * Reapplies local migrations up to `version`, then runs seed files. Port of Go's
- * `apply.MigrateAndSeed`: when `experimental` is
- * set, `version` is empty, and `pgDeltaEnabled` is false, the declarative `schemaPaths`
- * files are applied INSTEAD of migration files via the shared {@link applySchemaFiles}
- * (`migration-apply.ts` — also used by `db reset`'s own `--experimental` remote path,
- * so both callers share one Go-quirk-preserving implementation instead of two), bypassing
- * `migrationsEnabled` entirely — `applySchemaFiles` has no such gate, only
- * `applyMigrationFiles` does; otherwise migration apply is gated on `db.migrations.enabled` as
- * before. Seeding (`db.seed.enabled`, inside the seed helper) always runs, on either branch.
+ * Reapplies local migrations up to `version`, then runs seed files.
+ *
+ * When `experimental` is set, `version` is empty, and `pgDeltaEnabled` is false, the declarative
+ * `schemaPaths` files are applied instead of migration files, via the shared
+ * {@link applySchemaFiles} — bypassing `migrationsEnabled` entirely, since only
+ * `applyMigrationFiles` is gated on it. Otherwise migration apply is gated on
+ * `db.migrations.enabled` as usual. Seeding always runs, on either branch.
  */
 export const migrateAndSeed = (
   session: DbSession,
@@ -69,6 +80,9 @@ export const migrateAndSeed = (
 ) =>
   Effect.gen(function* () {
     const output = yield* Output;
+    if (ignoresExperimentalSchemaPaths({ ...config, version })) {
+      yield* output.raw(experimentalSchemaPathsIgnoredWarning, "stderr");
+    }
     if (config.experimental && version.length === 0 && !config.pgDeltaEnabled) {
       yield* applySchemaFiles(
         session,

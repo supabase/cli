@@ -1,10 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Ref, Sink, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { Deferred, Effect, Fiber, Ref, Sink, Stream } from "effect";
+import * as TestClock from "effect/testing/TestClock";
+import { ChildProcessSpawner } from "effect/process";
 
+import { CONTAINER_CLI_CONCURRENCY } from "../container-cli.ts";
 import { ImagePrepullError, ensureImagesCached } from "./image-prepull.ts";
 
-/** Matches the standing `mockSpawner` shape in `docker-lifecycle.unit.test.ts`, generalized to a per-call handler so each argv can respond differently (needed for "some images cached, others not"). */
+/** Per-call variant of `docker-lifecycle.unit.test.ts`'s `mockSpawner`, so each argv can respond differently. */
 function mockSpawner(
   handler: (args: ReadonlyArray<string>) => { exitCode: number; stdout?: string; stderr?: string },
 ) {
@@ -48,6 +50,26 @@ function mockSpawner(
   };
 }
 
+const backoffClockLimitSeconds = 120;
+
+/** Steps `TestClock` a second at a time through the pull backoff until `fiber` settles. */
+const joinAdvancingClock = <A, E>(fiber: Fiber.Fiber<A, E>) =>
+  Effect.gen(function* () {
+    for (
+      let second = 0;
+      second < backoffClockLimitSeconds && fiber.pollUnsafe() === undefined;
+      second++
+    ) {
+      yield* TestClock.adjust("1 seconds");
+    }
+    if (fiber.pollUnsafe() === undefined) {
+      return yield* Effect.die(
+        `fiber still pending after ${backoffClockLimitSeconds} virtual seconds of pull backoff`,
+      );
+    }
+    return yield* Fiber.join(fiber);
+  });
+
 describe("ensureImagesCached", () => {
   it.live("dedupes images before resolving, returning original ref -> resolved URL", () => {
     const mock = mockSpawner((args) => {
@@ -56,9 +78,7 @@ describe("ensureImagesCached", () => {
         const cached =
           image === "public.ecr.aws/supabase/postgres:15" ||
           image === "public.ecr.aws/supabase/kong:3";
-        // A confirmed "no such image" (not merely a non-zero exit) is what tells
-        // `hasLocalImage` this candidate is a genuine cache miss rather than some other
-        // inspect failure, which now fails fast instead of falling through to a pull.
+        // This stderr text is what `hasLocalImage` treats as a confirmed cache miss.
         return cached
           ? { exitCode: 0 }
           : { exitCode: 1, stderr: `Error response from daemon: No such image: ${image}` };
@@ -78,7 +98,6 @@ describe("ensureImagesCached", () => {
             ["supabase/kong:3", "public.ecr.aws/supabase/kong:3"],
           ]),
         );
-        // One `image inspect` call per UNIQUE image, not one per (duplicated) input entry.
         const inspectCalls = mock.spawned.filter(
           (call) => call[0] === "image" && call[1] === "inspect",
         );
@@ -87,25 +106,23 @@ describe("ensureImagesCached", () => {
     );
   });
 
-  it.live("resolves every image concurrently rather than one at a time", () =>
+  it.live("resolves images concurrently, at most CONTAINER_CLI_CONCURRENCY at a time", () =>
     Effect.gen(function* () {
-      const started = yield* Ref.make(0);
-      const bothStarted = yield* Deferred.make<void>();
+      const inFlight = yield* Ref.make(0);
+      const peak = yield* Ref.make(0);
+      const capReached = yield* Deferred.make<void>();
 
       const spawner = ChildProcessSpawner.make((command) =>
         Effect.gen(function* () {
           const args = command._tag === "StandardCommand" ? command.args : [];
           if (args[0] === "image" && args[1] === "inspect") {
-            const count = yield* Ref.updateAndGet(started, (n) => n + 1);
-            if (count < 2) {
-              // A sequential (non-concurrent) implementation would never let the
-              // second image's `image inspect` call start until this one
-              // returns, so awaiting here would hang forever — proving
-              // concurrency is what lets this test complete at all.
-              yield* Deferred.await(bothStarted);
-            } else {
-              yield* Deferred.succeed(bothStarted, undefined);
-            }
+            const count = yield* Ref.updateAndGet(inFlight, (n) => n + 1);
+            yield* Ref.update(peak, (n) => Math.max(n, count));
+            if (count === CONTAINER_CLI_CONCURRENCY) yield* Deferred.succeed(capReached, undefined);
+            yield* Deferred.await(capReached);
+            /* Yield before decrementing so an unbounded fan-out exceeds the cap. */
+            yield* Effect.yieldNow;
+            yield* Ref.update(inFlight, (n) => n - 1);
           }
           const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
           yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(0));
@@ -125,17 +142,18 @@ describe("ensureImagesCached", () => {
         }),
       );
 
-      const resolved = yield* ensureImagesCached(spawner, ["supabase/a:1", "supabase/b:1"]);
-      expect(resolved.size).toBe(2);
+      const images = Array.from(
+        { length: CONTAINER_CLI_CONCURRENCY + 4 },
+        (_, index) => `supabase/image-${index}:1`,
+      );
+      const resolved = yield* ensureImagesCached(spawner, images);
+      expect(resolved.size).toBe(images.length);
+      expect(yield* Ref.get(peak)).toBe(CONTAINER_CLI_CONCURRENCY);
     }),
   );
 
-  // Every pull attempt fails, so this drives the real DOCKER_PULL_RETRY_DELAYS_MS
-  // backoff (4s + 8s) to exhaustion across all 3 registry candidates (~36s) —
-  // needs more than Vitest's 5s default.
-  it.live(
-    "aggregates every failed image's message into one combined error",
-    () => {
+  it.effect("aggregates every failed image's message into one combined error", () =>
+    Effect.gen(function* () {
       const mock = mockSpawner((args) => {
         if (args[0] === "image" && args[1] === "inspect") {
           return {
@@ -147,45 +165,44 @@ describe("ensureImagesCached", () => {
         return { exitCode: 1 };
       });
 
-      return ensureImagesCached(mock.spawner, ["supabase/a:1", "supabase/b:1"]).pipe(
-        Effect.flip,
-        Effect.map((error) => {
-          expect(error).toBeInstanceOf(ImagePrepullError);
-          expect(error.message).toContain("supabase/a:1");
-          expect(error.message).toContain("supabase/b:1");
-        }),
+      const fiber = yield* ensureImagesCached(mock.spawner, ["supabase/a:1", "supabase/b:1"]).pipe(
+        Effect.forkChild({ startImmediately: true }),
       );
-    },
-    60_000,
+      const error = yield* joinAdvancingClock(fiber).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(ImagePrepullError);
+      expect(error.message).toContain("supabase/a:1");
+      expect(error.message).toContain("supabase/b:1");
+    }),
   );
 
-  it.live(
+  it.effect(
     "appends the install hint once when a failure indicates the daemon is unreachable",
-    () => {
-      const mock = mockSpawner((args) => {
-        if (args[0] === "image" && args[1] === "inspect") {
-          return {
-            exitCode: 1,
-            stderr: `Error response from daemon: No such image: ${args[2]}`,
-          };
-        }
-        if (args[0] === "pull") {
-          return {
-            exitCode: 1,
-            stderr: "Cannot connect to the Docker daemon at unix:///var/run/docker.sock\n",
-          };
-        }
-        return { exitCode: 1 };
-      });
+    () =>
+      Effect.gen(function* () {
+        const mock = mockSpawner((args) => {
+          if (args[0] === "image" && args[1] === "inspect") {
+            return {
+              exitCode: 1,
+              stderr: `Error response from daemon: No such image: ${args[2]}`,
+            };
+          }
+          if (args[0] === "pull") {
+            return {
+              exitCode: 1,
+              stderr: "Cannot connect to the Docker daemon at unix:///var/run/docker.sock\n",
+            };
+          }
+          return { exitCode: 1 };
+        });
 
-      return ensureImagesCached(mock.spawner, ["supabase/a:1"]).pipe(
-        Effect.flip,
-        Effect.map((error) => {
-          expect(error.message).toContain("Docker Desktop is a prerequisite for local development");
-        }),
-      );
-    },
-    60_000,
+        const fiber = yield* ensureImagesCached(mock.spawner, ["supabase/a:1"]).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        const error = yield* joinAdvancingClock(fiber).pipe(Effect.flip);
+
+        expect(error.message).toContain("Docker Desktop is a prerequisite for local development");
+      }),
   );
 
   it.live("resolves an empty map for an empty image list without spawning anything", () => {
