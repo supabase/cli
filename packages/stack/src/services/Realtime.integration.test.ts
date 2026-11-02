@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Data, Effect, Fiber, Layer, Redacted, Ref, Stream } from "effect";
+import { Data, Effect, Layer, Redacted, Ref, Stream } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
@@ -10,6 +10,7 @@ import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 import { engineTarget, testEngine } from "../../tests/engine-target.ts";
 import { httpHost } from "../../tests/helpers/endpoint.ts";
 import { selection } from "../../tests/pins.ts";
+import { failOnStall } from "../../tests/stall-guard.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-realtime",
@@ -51,33 +52,24 @@ const makeLaunchTrace = Effect.gen(function* () {
     );
   });
   const enter = (service: string, step: string) => Ref.set(phase, { service, step });
-  /** Reports a stall without waiting for the stalled scope's finalizers, which may hang too. */
-  const guard =
-    (duration: `${number} seconds`) =>
-    <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-      Effect.flatMap(Effect.forkDetach(effect), (fiber) =>
-        Fiber.join(fiber).pipe(
-          Effect.onInterrupt(() => Effect.forkDetach(Fiber.interrupt(fiber))),
-          Effect.timeoutOrElse({
-            duration,
-            orElse: () =>
-              Effect.all([Ref.get(phase), Ref.get(outputs)]).pipe(
-                Effect.flatMap(([{ service, step }, output]) =>
-                  Effect.fail(
-                    new CatalogStallError({
-                      message: [
-                        `${service} ${step} did not finish within ${duration}`,
-                        ...(service === "database" ? [service] : [service, "database"]).map(
-                          (name) => `${name} output:\n${output.get(name) || "(none)"}`,
-                        ),
-                      ].join("\n"),
-                    }),
-                  ),
+  const guard = (duration: `${number} seconds`) =>
+    failOnStall(
+      duration,
+      Effect.all([Ref.get(phase), Ref.get(outputs)]).pipe(
+        Effect.flatMap(([{ service, step }, output]) =>
+          Effect.fail(
+            new CatalogStallError({
+              message: [
+                `${service} ${step} did not finish within ${duration}`,
+                ...(service === "database" ? [service] : [service, "database"]).map(
+                  (name) => `${name} output:\n${output.get(name) || "(none)"}`,
                 ),
-              ),
-          }),
+              ].join("\n"),
+            }),
+          ),
         ),
-      );
+      ),
+    );
   return { capture, enter, guard };
 });
 
