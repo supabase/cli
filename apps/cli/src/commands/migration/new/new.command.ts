@@ -6,6 +6,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { migrationNewRuntimeLayer } from "../migration.layers.ts";
 import { migrationNew } from "./new.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   migrationName: Argument.String("migration name").pipe(
@@ -23,4 +24,5 @@ export const migrationNewCommand = Command.make("new", config).pipe(
     migrationNew(flags).pipe(withCommandTelemetry(), withJsonErrorHandling),
   ),
   Command.provide(migrationNewRuntimeLayer),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

@@ -1,31 +1,27 @@
 import { Effect, FileSystem, Option, Path, Ref } from "effect";
 
-import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
-import { resolveYesWithProjectEnv } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { RemoteTarget, type ResolvedRemoteTarget } from "../../../config/remote-target.service.ts";
+import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import {
-  checkDbToml,
-  loadProjectEnv,
-  warnDeprecatedOrioleDBVersionEnv,
-} from "../../../command-internal/db-config.toml-read.ts";
+import { checkDbToml } from "../../../command-internal/db-config.toml-read.ts";
 import { dbPushCore } from "../../../command-internal/db-push-core.ts";
-import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
-import { warnLinkedTargetDefault } from "../../../command-internal/target-default-warning.ts";
+import { hostedMutationPreapproval } from "../../../command-internal/hosted-consent/hosted-consent.ts";
+import { planDbSeed } from "../../../command-internal/seed-remote-consent.ts";
+import { resolveTarget } from "../../../command-internal/target/resolve-target.ts";
+import { flagsForTarget } from "../../../command-internal/target/target-flags.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import type { DbPushFlags } from "./push.command.ts";
-import { DbPushTargetFlagsError } from "./push.errors.ts";
 
 /**
  * `supabase db push` — apply pending local migrations (and optionally seed data
- * and custom roles) to the local or linked/remote database.
+ * and custom roles) to the local database by default, or to the project, branch or database URL
+ * that `--remote` names (the linked project when bare).
  *
- * Resolves the `--db-url`/`--linked`/`--local` target and `config.toml`, then
- * delegates the actual push to `dbPushCore`, shared with `bootstrap`.
+ * Resolves the target and `config.toml`, then delegates the push to `dbPushCore`, shared with
+ * `bootstrap`, which asks one combined consent once the plan is known.
  */
 export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
   const output = yield* Output;
@@ -35,86 +31,51 @@ export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
   const linkedProjectCache = yield* LinkedProjectCache;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const cliArgs = yield* CliArgs;
   const dnsResolver = yield* DnsResolverFlag;
+  const configValues = yield* CliConfigValues;
 
   const workdir = cliSettings.workdir;
-  // The project `.env` is applied before the history prompt, so a
-  // `SUPABASE_YES` set only in `supabase/.env` auto-confirms. Resolve `yes`
-  // with that project env, as `db pull` does.
-  const projectEnv = yield* loadProjectEnv(fs, path, workdir);
-  const yes = yield* resolveYesWithProjectEnv(projectEnv);
   const linkedRefForCache = yield* Ref.make<string | undefined>(undefined);
 
   const body = Effect.gen(function* () {
-    const target = resolveDbTargetFlags(cliArgs.args);
-    yield* warnLinkedTargetDefault({
-      command: "db push",
-      targetSelected: target.connType !== undefined || Option.isSome(flags.projectRef),
-    });
-    // Mutually-exclusive db-url/linked/local group, keyed off the
-    // explicitly-set flags, not the `--linked` default value.
-    if (target.setFlags.length > 1) {
-      return yield* new DbPushTargetFlagsError({
-        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
-      });
-    }
-    // push defaults `--linked` to true, so no target flag → linked.
-    const connType = target.connType ?? "linked";
-
-    // `--project-ref` never implies `--linked` and must not be silently discarded on a
-    // non-linked target. This is stricter than `SUPABASE_PROJECT_ID`, which is read
-    // unconditionally but simply goes unused on `--local`/`--db-url` — an explicitly
-    // typed flag doing nothing silently would be a footgun the env var doesn't share.
-    if (Option.isSome(flags.projectRef) && connType !== "linked") {
-      return yield* new DbPushTargetFlagsError({
-        message:
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      });
-    }
-
-    // The linked path resolves the project ref before loading config so a
-    // matching `[remotes.<ref>]` block merges. For `--local` / `--db-url`,
-    // the ref stays empty.
-    let projectRef = "";
-    let linkedTarget: ResolvedRemoteTarget | undefined;
-    if (connType === "linked") {
-      const remoteTarget = yield* RemoteTarget;
-      linkedTarget = yield* remoteTarget.load(flags.projectRef);
-      projectRef = linkedTarget.ref;
-      yield* Ref.set(linkedRefForCache, projectRef);
-    }
+    const target = yield* resolveTarget(flags);
+    const projectRef = target.kind === "linked" ? target.ref : "";
+    if (target.kind === "linked") yield* Ref.set(linkedRefForCache, projectRef);
 
     // Single config load (except `--skip-vault`, which omits `[db.vault]` secret
     // resolution): decodes with env-expansion + weak-typed booleans, applies
     // `SUPABASE_*` overrides, merges a matching `[remotes.<ref>]` block, and decrypts
-    // `encrypted:` secrets — aborting here on any invalid config, before
-    // `resolver.resolve()`'s network activity, so a remote override prints first.
+    // `encrypted:` secrets — aborting here on any invalid config, before the
+    // connection's network activity, so a remote override prints first.
     const toml = yield* checkDbToml(fs, path, workdir, projectRef !== "" ? projectRef : undefined, {
       resolveVaultSecrets: !flags.skipVault,
     });
     if (toml.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }
-    yield* warnDeprecatedOrioleDBVersionEnv(toml.envLookup);
+    const resolvedConfig = yield* configValues.load({
+      workdir,
+      projectRef: projectRef !== "" ? Option.some(projectRef) : Option.none(),
+    });
+    const seed = yield* planDbSeed(resolvedConfig, { workdir, ref: projectRef });
+    const includeSeed = Option.getOrElse(flags.includeSeed, () => false);
 
-    const cfg = yield* resolver.resolve({
-      dbUrl: flags.dbUrl,
-      connType,
+    const cfg = yield* resolver.resolveConnection({
+      target,
       dnsResolver,
       password: flags.password,
       resolveVaultSecrets: !flags.skipVault,
-      linkedProjectRef: flags.projectRef,
-      target: linkedTarget,
+      hasPasswordFlag: true,
+      networkBanRemoval: yield* hostedMutationPreapproval,
     });
 
     yield* Effect.annotateCurrentSpan({
-      "db.conn_type": connType,
+      "db.conn_type": target.kind,
       "db.is_local": cfg.isLocal,
       "db.push.dry_run": flags.dryRun,
       "db.push.include_all": flags.includeAll,
       "db.push.include_roles": flags.includeRoles,
-      "db.push.include_seed": flags.includeSeed,
+      "db.push.include_seed": includeSeed,
     });
 
     yield* dbPushCore({
@@ -122,15 +83,16 @@ export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
       projectRef,
       conn: cfg.conn,
       isLocal: cfg.isLocal,
-      repairSuggestsLocalFlag: connType === "local",
+      repairTargetFlags: flagsForTarget(target),
       dryRun: flags.dryRun,
       includeAll: flags.includeAll,
       includeRoles: flags.includeRoles,
-      includeSeed: flags.includeSeed,
+      includeSeed,
+      seed,
       includeVault: !flags.skipVault,
       dnsResolver,
       toml,
-      yes,
+      preapproved: Option.none(),
       emitStructuredResult: true,
     });
   });

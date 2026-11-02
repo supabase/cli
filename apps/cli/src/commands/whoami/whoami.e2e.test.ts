@@ -51,12 +51,8 @@ it.live("shows the authenticated profile through the CLI", () =>
       }),
       (running) => Effect.promise(() => running.stop(true)),
     );
-    const home = yield* Effect.acquireRelease(
-      Effect.try({
-        try: () => makeTempHome(),
-        catch: (cause) => new WhoamiSetupError({ cause }),
-      }),
-      (owned) => Effect.sync(() => owned[Symbol.dispose]()),
+    const home = yield* makeTempHome.pipe(
+      Effect.mapError((cause) => new WhoamiSetupError({ cause })),
     );
 
     const fs = yield* FileSystem.FileSystem;

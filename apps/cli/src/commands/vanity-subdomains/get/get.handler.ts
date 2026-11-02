@@ -1,19 +1,19 @@
 import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { RemoteTarget } from "../../../config/remote-target.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeEnv, encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
+import { encodeEnv, encodeSortedJson } from "../../../command-internal/output.encoders.ts";
 import {
-  encodeGoToml,
-  encodeGoYaml,
-  goPtr,
-  goString,
-  goStruct,
-} from "../../../command-internal/go-struct-output.encoders.ts";
+  encodeStructToml,
+  encodeStructYaml,
+  shapePtr,
+  shapeString,
+  shapeStruct,
+} from "../../../command-internal/struct-output.encoders.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import { gateMapError } from "../../../command-internal/upgrade-suggest.ts";
 import {
@@ -22,10 +22,10 @@ import {
 } from "../vanity-subdomains.errors.ts";
 import type { VanitySubdomainsGetFlags } from "./get.command.ts";
 
-/** Type shape for `api.VanitySubdomainConfigResponse` (`types.gen.go`). */
-const GO_VANITY_CONFIG_RESPONSE = goStruct([
-  ["custom_domain", goPtr(goString)],
-  ["status", goString],
+/** Type shape for the vanity subdomain config response. */
+const VANITY_CONFIG_RESPONSE_SHAPE = shapeStruct([
+  ["custom_domain", shapePtr(shapeString)],
+  ["status", shapeString],
 ]);
 
 const mapGetError = mapHttpError({
@@ -41,12 +41,11 @@ export const vanitySubdomainsGet = Effect.fn("vanity-subdomains.get")(function* 
   const output = yield* Output;
   const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* RemoteTarget;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
-    const { ref } = yield* resolver.resolve(flags.projectRef);
+    const ref = yield* resolveProjectTarget(flags);
 
     yield* Effect.gen(function* () {
       const fetching =
@@ -57,21 +56,21 @@ export const vanitySubdomainsGet = Effect.fn("vanity-subdomains.get")(function* 
       );
       yield* fetching?.clear ?? Effect.void;
 
-      const goOutput = Option.getOrUndefined(outputFlag);
+      const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
-      if (goOutput === "json") {
-        yield* output.raw(encodeGoJson(response));
+      if (outputFlagFormat === "json") {
+        yield* output.raw(encodeSortedJson(response));
         return;
       }
-      if (goOutput === "yaml") {
-        yield* output.raw(encodeGoYaml(response, GO_VANITY_CONFIG_RESPONSE));
+      if (outputFlagFormat === "yaml") {
+        yield* output.raw(encodeStructYaml(response, VANITY_CONFIG_RESPONSE_SHAPE));
         return;
       }
-      if (goOutput === "toml") {
-        yield* output.raw(encodeGoToml(response, GO_VANITY_CONFIG_RESPONSE));
+      if (outputFlagFormat === "toml") {
+        yield* output.raw(encodeStructToml(response, VANITY_CONFIG_RESPONSE_SHAPE));
         return;
       }
-      if (goOutput === "env") {
+      if (outputFlagFormat === "env") {
         yield* output.raw(encodeEnv(response) + "\n");
         return;
       }

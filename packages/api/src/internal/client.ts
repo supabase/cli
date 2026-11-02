@@ -1,5 +1,6 @@
 import { Clock, Data, Duration, Effect, Option, Context, Random, Schedule } from "effect";
 import * as Cause from "effect/Cause";
+import { NodeInspectSymbol } from "effect/Inspectable";
 import * as Redacted from "effect/Redacted";
 import type { SchemaError } from "effect/Schema";
 import * as Schema from "effect/Schema";
@@ -97,12 +98,22 @@ export class SupabaseApiClient extends Context.Service<SupabaseApiClient, Supaba
   "@supabase/api/SupabaseApiClient",
 ) {}
 
-export class SupabaseApiConfigError extends Error {
-  readonly _tag = "SupabaseApiConfigError";
+export class SupabaseApiConfigError extends Data.TaggedError("SupabaseApiConfigError")<{
+  readonly message: string;
+}> {
+  override readonly name = "SupabaseApiConfigError";
+
+  static {
+    /* Keep native Error inspect output instead of Effect's toJSON view. */
+    Object.defineProperty(this.prototype, NodeInspectSymbol, { value: undefined });
+  }
 
   constructor(message: string) {
-    super(message);
-    this.name = "SupabaseApiConfigError";
+    super({ message });
+  }
+
+  override toJSON(): unknown {
+    return { _tag: this._tag, name: this.name };
   }
 }
 
@@ -114,17 +125,32 @@ export type SupabaseApiInputErrorSource = "generated_client" | "user_input";
  * bug; command boundaries can reclassify a confirmed user-derived request as
  * `user_input`. The original schema failure is preserved as `cause`.
  */
-export class SupabaseApiInputError extends Error {
-  readonly _tag = "SupabaseApiInputError";
+export class SupabaseApiInputError extends Data.TaggedError("SupabaseApiInputError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {
+  override readonly name = "SupabaseApiInputError";
   #source: SupabaseApiInputErrorSource = "generated_client";
+
+  static {
+    /* Keep native Error inspect output instead of Effect's toJSON view. */
+    Object.defineProperty(this.prototype, NodeInspectSymbol, { value: undefined });
+  }
 
   get source(): SupabaseApiInputErrorSource {
     return this.#source;
   }
 
   constructor(message: string, options?: { readonly cause?: unknown }) {
-    super(message, options);
-    this.name = "SupabaseApiInputError";
+    super(
+      options === undefined || !("cause" in options)
+        ? { message }
+        : { message, cause: options.cause },
+    );
+  }
+
+  override toJSON(): unknown {
+    return { _tag: this._tag, name: this.name };
   }
 
   static markAsUserInput<T extends SupabaseApiInputError>(error: T): T {
@@ -146,10 +172,8 @@ function resolveSupabaseApiConfig(
     const accessToken = config.accessToken ?? Option.getOrUndefined(apiConfig.accessToken);
 
     if (accessToken === undefined) {
-      return yield* Effect.fail(
-        new SupabaseApiConfigError(
-          "Missing access token. Provide `accessToken` or set `SUPABASE_ACCESS_TOKEN`.",
-        ),
+      return yield* new SupabaseApiConfigError(
+        "Missing access token. Provide `accessToken` or set `SUPABASE_ACCESS_TOKEN`.",
       );
     }
 
@@ -505,7 +529,7 @@ function asBinaryRequestBody(value: unknown): Effect.Effect<Uint8Array, HttpBody
   }
   if (revealed instanceof Blob) {
     return Effect.tryPromise({
-      try: async () => new Uint8Array(await revealed.arrayBuffer()),
+      try: () => revealed.arrayBuffer().then((buffer) => new Uint8Array(buffer)),
       catch: (cause) => new HttpBody.HttpBodyError({ reason: { _tag: "JsonError" }, cause }),
     });
   }

@@ -18,6 +18,25 @@ export class CliConfigParseError extends Data.TaggedError("CliConfigParseError")
   readonly appliedRemote?: string;
 }> {}
 
+/** A config document uses keys the config format no longer accepts; `removedKeys` lists every one with its replacement. */
+export class CliConfigRemovedKeyError extends Data.TaggedError("CliConfigRemovedKeyError")<{
+  readonly path: string;
+  readonly format: ConfigFormat;
+  readonly removedKeys: ReadonlyArray<{ readonly key: string; readonly replacement: string }>;
+}> {
+  override get message(): string {
+    const file = this.path.split(/[\\/]/).slice(-2).join("/");
+    const [only, ...rest] = this.removedKeys;
+    if (only !== undefined && rest.length === 0) {
+      return `${only.key} in ${file} is no longer supported. Use ${only.replacement} instead.`;
+    }
+    return [
+      `${file} uses config keys that are no longer supported:`,
+      ...this.removedKeys.map(({ key, replacement }) => `  ${key}: use ${replacement} instead.`),
+    ].join("\n");
+  }
+}
+
 const PROJECT_CONFIG_PARSE_ERROR_MESSAGE_PREFIX =
   "Could not read the project config from the Management API response";
 

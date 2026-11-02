@@ -9,7 +9,9 @@
 import type { CliConfig } from "@supabase/config";
 import { Effect, FileSystem } from "effect";
 import {
+  ConfigValidateError,
   emailContentPathReadErrorMessage,
+  fsErrorCause,
   resolveEmailTemplateContentPath,
 } from "../../../command-internal/config-validate.ts";
 import { ConfigPushLoadConfigError } from "./push.errors.ts";
@@ -62,16 +64,15 @@ const readTemplateContent = Effect.fnUntraced(function* (
   return new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
 });
 
-const resolveContentPath = (
-  options: Parameters<typeof resolveEmailTemplateContentPath>[0],
-): Effect.Effect<string | undefined, ConfigPushLoadConfigError> =>
-  Effect.try({
-    try: () => resolveEmailTemplateContentPath(options),
-    catch: (cause) =>
-      new ConfigPushLoadConfigError({
+const resolveContentPath = (options: Parameters<typeof resolveEmailTemplateContentPath>[0]) =>
+  resolveEmailTemplateContentPath(options).pipe(
+    Effect.mapError((error) => {
+      const cause = error instanceof ConfigValidateError ? error : fsErrorCause(error);
+      return new ConfigPushLoadConfigError({
         message: cause instanceof Error ? cause.message : String(cause),
-      }),
-  });
+      });
+    }),
+  );
 
 /**
  * Loads auth email template HTML from disk for `config push`.

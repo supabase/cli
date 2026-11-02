@@ -14,6 +14,7 @@ import {
   PropOrgSlug,
 } from "../shared/telemetry/event-catalog.ts";
 import { Output } from "../shared/output/output.service.ts";
+import { parsePlanGateEnvelope } from "./http-errors.ts";
 import { billingUrl } from "./profile.ts";
 import { block } from "./command-permissions/model.ts";
 
@@ -32,33 +33,6 @@ export const upgradeSuggestion = block("upgrade-suggest", [
       "after a 4xx response that carries no plan-gate error, at a call site that names a feature",
   },
 ]);
-
-function readString(obj: unknown, key: string): string {
-  if (typeof obj === "object" && obj !== null && key in obj) {
-    const value = (obj as Record<string, unknown>)[key];
-    return typeof value === "string" ? value : "";
-  }
-  return "";
-}
-
-interface PlanGateEnvelope {
-  readonly feature: string;
-  readonly upgradeUrl: string;
-}
-
-// Hand-validated: the packages/api codegen emits no non-2xx schemas.
-function parsePlanGateEnvelope(body: unknown): PlanGateEnvelope | undefined {
-  if (typeof body !== "object" || body === null) return undefined;
-  const error = (body as { readonly error?: unknown }).error;
-  if (typeof error !== "object" || error === null) return undefined;
-  const code = readString(error, "code");
-  const feature = readString(error, "feature");
-  const upgradeUrl = readString(error, "upgrade_url");
-  if (code !== "entitlement_required" || feature === "" || upgradeUrl === "") {
-    return undefined;
-  }
-  return { feature, upgradeUrl };
-}
 
 function orgSlugFromUpgradeUrl(upgradeUrl: string): string {
   const match = /\/org\/([^/]+)/.exec(upgradeUrl);
@@ -138,9 +112,9 @@ export const suggestUpgrade = Effect.fn("UpgradeSuggest.check")(function* (opts:
     const envelope = Option.isSome(body) ? parsePlanGateEnvelope(body.value) : undefined;
     if (envelope !== undefined) {
       gate = {
-        billingUrl: envelope.upgradeUrl,
+        billingUrl: envelope.upgrade_url,
         feature: envelope.feature,
-        orgSlug: orgSlugFromUpgradeUrl(envelope.upgradeUrl),
+        orgSlug: orgSlugFromUpgradeUrl(envelope.upgrade_url),
       };
     }
   }

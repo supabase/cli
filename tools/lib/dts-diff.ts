@@ -6,56 +6,73 @@
  * built `dist/`).
  */
 
-import { appendFile, readFile, stat } from "node:fs/promises";
-import path from "node:path";
-import process from "node:process";
+import { Config, Effect, FileSystem, Path, Schema } from "effect";
+
+class DtsDiffError extends Schema.TaggedError<DtsDiffError>()("DtsDiffError", {
+  message: Schema.String,
+}) {}
+
+const foreignFailure = (cause: unknown) =>
+  new DtsDiffError({ message: cause instanceof Error ? cause.message : String(cause) });
 
 /** `Bun.Glob.scan` throws ENOENT on a missing directory; a missing tree means "no declarations", not a tool failure. */
-async function directoryExists(dir: string): Promise<boolean> {
-  try {
-    return (await stat(dir)).isDirectory();
-  } catch {
-    return false;
-  }
-}
+const directoryExists = (fs: FileSystem.FileSystem, dir: string) =>
+  fs.stat(dir).pipe(
+    Effect.map((info) => info.type === "Directory"),
+    Effect.orElseSucceed(() => false),
+  );
 
-export async function countDeclarationFiles(dir: string): Promise<number> {
-  if (!(await directoryExists(dir))) {
+export const countDeclarationFiles = Effect.fnUntraced(function* (dir: string) {
+  const fs = yield* FileSystem.FileSystem;
+  if (!(yield* directoryExists(fs, dir))) {
     return 0;
   }
   const glob = new Bun.Glob("**/*.d.ts");
-  let count = 0;
-  for await (const _relativePath of glob.scan({ cwd: dir })) {
-    count++;
-  }
-  return count;
-}
+  const relativePaths = yield* Effect.tryPromise({
+    try: () => Array.fromAsync(glob.scan({ cwd: dir })),
+    catch: foreignFailure,
+  });
+  return relativePaths.length;
+});
 
-async function listDeclarationFiles(dir: string): Promise<string[]> {
-  if (!(await directoryExists(dir))) {
+const listDeclarationFiles = Effect.fnUntraced(function* (fs: FileSystem.FileSystem, dir: string) {
+  if (!(yield* directoryExists(fs, dir))) {
     return [];
   }
   const glob = new Bun.Glob("**/*.d.ts");
-  const relativePaths: string[] = [];
-  for await (const relativePath of glob.scan({ cwd: dir })) {
-    relativePaths.push(relativePath);
-  }
+  const relativePaths = yield* Effect.tryPromise({
+    try: () => Array.fromAsync(glob.scan({ cwd: dir })),
+    catch: foreignFailure,
+  });
   return relativePaths.sort();
-}
+});
 
-async function unifiedDiff(
+/* `ignoreBOM` keeps a leading BOM, which `readFileString` would strip. */
+export const readUtf8 = (fs: FileSystem.FileSystem, filePath: string) =>
+  fs
+    .readFile(filePath)
+    .pipe(Effect.map((bytes) => new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes)));
+
+const unifiedDiff = Effect.fnUntraced(function* (
   oldPath: string,
   newPath: string,
   oldLabel: string,
   newLabel: string,
-): Promise<string> {
-  const proc = Bun.spawn(["diff", "-u", "-L", oldLabel, "-L", newLabel, oldPath, newPath], {
-    stdout: "pipe",
-    stderr: "pipe",
+) {
+  const proc = yield* Effect.try({
+    try: () =>
+      Bun.spawn(["diff", "-u", "-L", oldLabel, "-L", newLabel, oldPath, newPath], {
+        stdout: "pipe",
+        stderr: "pipe",
+      }),
+    catch: foreignFailure,
   });
-  const [, stdout] = await Promise.all([proc.exited, new Response(proc.stdout).text()]);
+  const [, stdout] = yield* Effect.tryPromise({
+    try: () => Promise.all([proc.exited, new Response(proc.stdout).text()]),
+    catch: foreignFailure,
+  });
   return stdout;
-}
+});
 
 export interface FileEntry {
   readonly status: "added" | "removed" | "changed";
@@ -69,14 +86,13 @@ export interface CompareResult {
 }
 
 /** Diffs two emitted `.d.ts` trees (`**\/*.d.ts` only — the glob itself never matches `.d.ts.map`). */
-export async function diffDeclarationTrees(
-  headDir: string,
-  baseDir: string,
-): Promise<CompareResult> {
-  const [headFiles, baseFiles] = await Promise.all([
-    listDeclarationFiles(headDir),
-    listDeclarationFiles(baseDir),
-  ]);
+export const diffDeclarationTrees = Effect.fnUntraced(function* (headDir: string, baseDir: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const [headFiles, baseFiles] = yield* Effect.all(
+    [listDeclarationFiles(fs, headDir), listDeclarationFiles(fs, baseDir)],
+    { concurrency: "unbounded" },
+  );
   const headSet = new Set(headFiles);
   const baseSet = new Set(baseFiles);
 
@@ -87,7 +103,7 @@ export async function diffDeclarationTrees(
       entries.push({
         status: "added",
         path: relativePath,
-        diff: await unifiedDiff(
+        diff: yield* unifiedDiff(
           "/dev/null",
           path.join(headDir, relativePath),
           "/dev/null",
@@ -97,15 +113,18 @@ export async function diffDeclarationTrees(
       continue;
     }
 
-    const [headContent, baseContent] = await Promise.all([
-      readFile(path.join(headDir, relativePath), "utf8"),
-      readFile(path.join(baseDir, relativePath), "utf8"),
-    ]);
+    const [headContent, baseContent] = yield* Effect.all(
+      [
+        readUtf8(fs, path.join(headDir, relativePath)),
+        readUtf8(fs, path.join(baseDir, relativePath)),
+      ],
+      { concurrency: "unbounded" },
+    );
     if (headContent !== baseContent) {
       entries.push({
         status: "changed",
         path: relativePath,
-        diff: await unifiedDiff(
+        diff: yield* unifiedDiff(
           path.join(baseDir, relativePath),
           path.join(headDir, relativePath),
           `base/${relativePath}`,
@@ -120,7 +139,7 @@ export async function diffDeclarationTrees(
       entries.push({
         status: "removed",
         path: relativePath,
-        diff: await unifiedDiff(
+        diff: yield* unifiedDiff(
           path.join(baseDir, relativePath),
           "/dev/null",
           `base/${relativePath}`,
@@ -132,7 +151,7 @@ export async function diffDeclarationTrees(
 
   entries.sort((a, b) => a.path.localeCompare(b.path));
   return { identical: entries.length === 0, entries };
-}
+});
 
 export function countByStatus(entries: readonly FileEntry[], status: FileEntry["status"]): number {
   return entries.filter((entry) => entry.status === status).length;
@@ -197,10 +216,11 @@ export function renderDiffDetailsBlocks(entries: readonly FileEntry[]): string[]
   return lines;
 }
 
-export async function writeStepSummary(markdown: string): Promise<void> {
-  const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+export const writeStepSummary = Effect.fnUntraced(function* (markdown: string) {
+  const summaryPath = yield* Config.String("GITHUB_STEP_SUMMARY").pipe(Config.withDefault(""));
   if (!summaryPath) {
     return;
   }
-  await appendFile(summaryPath, `${markdown}\n`);
-}
+  const fs = yield* FileSystem.FileSystem;
+  yield* fs.writeFileString(summaryPath, `${markdown}\n`, { flag: "a" });
+});

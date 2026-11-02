@@ -1,5 +1,6 @@
 import { Effect, FileSystem, Path, Schema } from "effect";
 import { promptYesNo } from "../../command-internal/prompt-yes-no.ts";
+import { sanitizeProjectId } from "../config/project-id.ts";
 import { Output } from "../output/output.service.ts";
 import { Tty } from "../runtime/tty.service.ts";
 import {
@@ -10,18 +11,6 @@ import {
   renderCliConfigTemplate,
 } from "./project-init.templates.ts";
 import { InitParseSettingsError } from "./project-init.errors.ts";
-
-const invalidProjectId = /[^a-zA-Z0-9_.-]+/g;
-const maxProjectIdLength = 40;
-
-function truncateText(text: string, maxLength: number): string {
-  return text.length > maxLength ? text.slice(0, maxLength) : text;
-}
-
-function sanitizeProjectId(src: string): string {
-  const sanitized = src.replaceAll(invalidProjectId, "_").replace(/^[_.-]+/, "");
-  return truncateText(sanitized, maxProjectIdLength);
-}
 
 // Strips line and block comments and trailing commas while preserving
 // string contents, so an existing JSONC settings file parses correctly.

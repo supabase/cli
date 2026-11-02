@@ -5,52 +5,37 @@ import { CommandPlatformApi } from "../../../auth/command-platform-api.service.t
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { BRANCH_LOOKUP_TIMEOUT, findBranchName } from "../../../command-internal/branch-target.ts";
 import { BRANCH_PROJECT_REF_PATTERN } from "../../../command-internal/ref-patterns.ts";
-import { readLinkSnapshotSoft } from "../../../command-internal/link-snapshot.ts";
+import { readLinkSnapshotSoft } from "../../../shared/config/link-snapshot.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 
 /**
- * What `ref` actually is, resolved for `config push`'s target-echo and branch confirmation gate:
- *
- * - `"project"` — `ref` is the linked project itself; `name` is present when the live probe
- *   found it.
- * - `"branch"` — `ref` is confirmed to be a preview branch (an explicit `--project-ref
- *   <name-or-uuid>`, or a live 404); `parentRef`/`parentName`/`branch` are each present only
- *   when they could be determined.
- * - `"unknown"` — the live probe couldn't tell (a timeout, a transport failure, or an
- *   unexpected status). Never asserted as a branch, since an uncertain outcome must not gate an
- *   unattended push behind a confirmation that then auto-declines it; never asserted as a
- *   project either — the target-echo line says plainly that it doesn't know.
+ * What `ref` is for `config push`'s payload: the linked or production `"project"`, a confirmed
+ * preview `"branch"` (`parentRef`/`branch` present only when known), or `"unknown"` when nothing
+ * could settle it, which the payload asserts as neither.
  */
 export type ConfigPushTarget =
-  | { readonly kind: "project"; readonly ref: string; readonly name?: string }
+  | { readonly kind: "project"; readonly ref: string }
   | {
       readonly kind: "branch";
       readonly ref: string;
       readonly parentRef?: string;
-      readonly parentName?: string;
       readonly branch?: string;
     }
   | { readonly kind: "unknown"; readonly ref: string };
 
 /**
- * A branch name/UUID the caller already resolved `ref` from — this makes the caller's knowledge
- * that `ref` is a branch definitive, so {@link resolveConfigPushTarget} never runs the live
- * `getProject` probe for it:
- *
- * - `"name"` — both fields were resolved eagerly, nothing more to recover.
- * - `"uuid"` — certain to be a branch, but a UUID carries no display name and never forces its
- *   parent, so it runs the same best-effort cache recovery a live 404 does. A discriminated
- *   union rather than an all-optional shape, since a partial state (a parent without a name, or
- *   vice versa) never occurs in practice.
+ * What the caller knows about the `--remote` branch `ref` came from, so
+ * {@link resolveConfigPushTarget} skips the live probe: a `"name"` (parent known), a `"uuid"`
+ * (certainly a branch; the parent is recovered best-effort), the `"production"` default branch
+ * (the project itself) or an `"unverified"` UUID (says nothing about `ref`).
  */
 export type ConfigPushKnownBranch =
   | { readonly kind: "name"; readonly branchName: string; readonly parentRef: string }
-  | { readonly kind: "uuid" };
+  | { readonly kind: "uuid" }
+  | { readonly kind: "production" }
+  | { readonly kind: "unverified" };
 
-/** `V1GetProjectOutput.name`/a branch's `name` are unconstrained strings — an
- * empty (or empty-after-sanitization-adjacent) live value must render as "no
- * name available", matching the link reader's own
- * empty-filtering convention for cached names. */
+/** An API name is an unconstrained string; an empty one means "no name available". */
 function normalizeApiName(name: string | undefined): string | undefined {
   return name !== undefined && name.length > 0 ? name : undefined;
 }
@@ -64,22 +49,17 @@ function isNotFound(cause: unknown): boolean {
 }
 
 type ProbeOutcome = Data.TaggedEnum<{
-  Project: { readonly name: string | undefined };
+  Project: {};
   Branch: {};
   Unknown: {};
 }>;
 const ProbeOutcome = Data.taggedEnum<ProbeOutcome>();
 
 /**
- * Resolves what `ref` actually is, so `config push` can tell the user whether they're pushing to
- * the linked project or a branch, and gate a branch push behind confirmation. Never fails: this
- * probe is diagnostic-only and must never abort a push that would otherwise succeed.
- *
- * A known branch name/UUID skips the live probe. Otherwise `GET /v1/projects/{ref}` (bounded at
- * {@link BRANCH_LOOKUP_TIMEOUT}) returns a project on 200, `"unknown"` on any other failure
- * (never blocking the push), or falls into best-effort recovery on a 404:
- * the link's parent record and linked ref supply the parent ref and branch name when
- * they can be trusted, and a bare `{ kind: "branch", ref }` otherwise.
+ * Resolves what `ref` is so `config push` can tell a branch from the linked project. Never fails,
+ * since this diagnostic must not abort a push: `GET /v1/projects/{ref}` (bounded at
+ * {@link BRANCH_LOOKUP_TIMEOUT}) is a project on 200, `"unknown"` on any other failure, and on a
+ * 404 recovers the parent and name from the link when they can be trusted.
  */
 export function resolveConfigPushTarget(
   ref: string,
@@ -96,25 +76,15 @@ export function resolveConfigPushTarget(
     const readSnapshot = readLinkSnapshotSoft(fs, path, cliSettings.workdir);
     const readCachedParent = readSnapshot.pipe(Effect.map((snapshot) => snapshot.parent));
 
-    // A name target: both fields already known, so just enrich the parent's name from cache
-    // when it happens to match.
     if (opts.knownBranch?.kind === "name") {
       const { branchName, parentRef } = opts.knownBranch;
-      const cached = yield* readCachedParent;
-      const parentName =
-        Option.isSome(cached) && cached.value.ref === parentRef ? cached.value.name : undefined;
-      return {
-        kind: "branch",
-        ref,
-        parentRef,
-        ...(parentName === undefined ? {} : { parentName }),
-        branch: branchName,
-      };
+      return { kind: "branch", ref, parentRef, branch: branchName };
     }
+    if (opts.knownBranch?.kind === "production") return { kind: "project", ref };
+    if (opts.knownBranch?.kind === "unverified") return { kind: "unknown", ref };
 
-    // A uuid known-branch means ref is certainly a branch, so skip the live probe. Otherwise
-    // the probe's only certain outcomes are 200 (return immediately) and 404 (fall through to
-    // shared recovery).
+    // A known branch skips the live probe; otherwise its only certain outcomes are 200 (return)
+    // and 404 (fall through to the shared recovery).
     if (opts.knownBranch === undefined) {
       const api = yield* CommandPlatformApi;
       const output = yield* Output;
@@ -123,7 +93,7 @@ export function resolveConfigPushTarget(
 
       const probe: ProbeOutcome = yield* Effect.timeoutOrElse(
         api.v1.getProject({ ref }).pipe(
-          Effect.map((project) => ProbeOutcome.Project({ name: normalizeApiName(project.name) })),
+          Effect.map(() => ProbeOutcome.Project()),
           Effect.catch((cause) =>
             Effect.succeed(isNotFound(cause) ? ProbeOutcome.Branch() : ProbeOutcome.Unknown()),
           ),
@@ -138,14 +108,9 @@ export function resolveConfigPushTarget(
       yield* (ProbeOutcome.$is("Unknown")(probe) ? probing?.fail() : probing?.clear) ?? Effect.void;
 
       const probed = ProbeOutcome.$match(probe, {
-        Project: ({ name }): ConfigPushTarget => ({
-          kind: "project",
-          ref,
-          ...(name === undefined ? {} : { name }),
-        }),
+        Project: (): ConfigPushTarget => ({ kind: "project", ref }),
         Unknown: (): ConfigPushTarget => ({ kind: "unknown", ref }),
-        // A Branch probe (404) falls into the shared recovery below, same as an
-        // incomplete uuid knownBranch.
+        // A 404 falls into the shared recovery below, same as a uuid known branch.
         Branch: () => undefined,
       });
       if (probed !== undefined) {
@@ -178,15 +143,10 @@ export function resolveConfigPushTarget(
       return { kind: "branch", ref };
     }
 
-    const parentName =
-      Option.isSome(cached) && cached.value.ref === candidateParentRef
-        ? cached.value.name
-        : undefined;
     return {
       kind: "branch",
       ref,
       parentRef: candidateParentRef,
-      ...(parentName === undefined ? {} : { parentName }),
       ...(branchName === undefined ? {} : { branch: branchName }),
     };
   });

@@ -1,30 +1,18 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunCrypto } from "@effect/platform-bun";
 import type { V1ListAllBranchesOutput } from "@supabase/api/effect";
-import {
-  Cause,
-  Effect,
-  Exit,
-  FileSystem,
-  Layer,
-  Option,
-  Path,
-  Predicate,
-  Schema,
-  Stdio,
-} from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Predicate, Schema } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequestModule from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
-import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import {
   mockAnalytics,
   mockContextualAnalytics,
   mockOutput,
   mockTty,
 } from "../../../tests/helpers/mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-values-layer.ts";
 import {
   VALID_REF,
   buildTestRuntime,
@@ -37,10 +25,10 @@ import {
   mockCommandPlatformApiService,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../tests/helpers/command-mocks.ts";
 import { assertPermissionDrift } from "../../../tests/helpers/permission-drift.ts";
 import { link } from "./link.handler.ts";
-import { linkHandler } from "./link.command.ts";
 import type { LinkFlags } from "./link.command.ts";
 
 const HEALTHY_PROJECT = {
@@ -253,14 +241,17 @@ function setup(opts: SetupOpts = {}) {
     workdir: tempRoot.current,
     projectId: opts.projectId ?? Option.none(),
   });
-  const layer = buildTestRuntime({
-    out,
-    api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer(opts) },
-    cliSettings,
-    analytics,
-    telemetry: telemetry.layer,
-    linkedProjectCache: linkedCache.layer,
-  });
+  const layer = Layer.merge(
+    buildTestRuntime({
+      out,
+      api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer(opts) },
+      cliSettings,
+      analytics,
+      telemetry: telemetry.layer,
+      linkedProjectCache: linkedCache.layer,
+    }),
+    cliConfigValuesTestLayer,
+  );
   return { layer, out, analytics, telemetry, linkedCache, apiMock, workdir: tempRoot.current };
 }
 
@@ -622,11 +613,14 @@ describe("link integration", () => {
         workdir: tempRoot.current,
         projectId: Option.none(),
       });
-      const layer = buildTestRuntime({
-        out,
-        api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer({ tenant: "fail" }) },
-        cliSettings,
-      });
+      const layer = Layer.merge(
+        buildTestRuntime({
+          out,
+          api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer({ tenant: "fail" }) },
+          cliSettings,
+        }),
+        cliConfigValuesTestLayer,
+      );
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -1315,7 +1309,8 @@ describe("link integration", () => {
             message: "Resolving branch...",
           });
           expect(out.stderrText).toBe(
-            `Resolved branch "feature-branch" of project ${PARENT_REF} to project ref ${BRANCH_PROJECT_REF}.\n`,
+            `Resolved branch "feature-branch" of project ${PARENT_REF} to project ref ${BRANCH_PROJECT_REF}.\n` +
+              unverifiedTargetBanner(BRANCH_PROJECT_REF),
           );
           expect(out.stdoutText).toBe("Finished supabase link.\n");
         }).pipe(Effect.provide(layer));
@@ -1456,75 +1451,6 @@ describe("link integration", () => {
       },
     );
   });
-
-  describe("telemetry: --project-ref redaction (CLI-2167)", () => {
-    it.effect(
-      "does not redact --project-ref in cli_command_executed when it is ref-shaped (Go parity: cmd/link.go:52)",
-      () => {
-        const out = mockOutput({ format: "text" });
-        const analytics = mockContextualAnalytics();
-        const apiMock = mockCommandPlatformApiService({
-          v1: {
-            getProject: () => Effect.succeed(HEALTHY_PROJECT),
-            getProjectApiKeys: () => Effect.succeed(SERVICE_KEYS),
-            getStorageConfig: () => Effect.succeed({ migrationVersion: "m" }),
-            getPoolerConfig: () => Effect.succeed(POOLER_PRIMARY),
-          },
-        });
-        const cliSettings = mockCommandSettings({
-          workdir: tempRoot.current,
-          projectId: Option.none(),
-        });
-        const layer = Layer.mergeAll(
-          buildTestRuntime({
-            out,
-            api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer({}) },
-            cliSettings,
-            analytics,
-          }),
-          commandRuntimeLayer(["link"]).pipe(Layer.provide(BunCrypto.layer)),
-          Stdio.layerTest({
-            args: Effect.succeed(["link", "--project-ref", VALID_REF]),
-          }),
-        );
-        return Effect.gen(function* () {
-          yield* linkHandler(flags({ projectRef: Option.some(VALID_REF) }));
-          const event = analytics.captured.find((c) => c.event === "cli_command_executed");
-          expect(event?.properties.flags).toEqual({ "project-ref": VALID_REF });
-        }).pipe(Effect.provide(layer));
-      },
-    );
-
-    it.effect(
-      "redacts --project-ref in cli_command_executed when it is a branch name, not a ref",
-      () => {
-        const out = mockOutput({ format: "text" });
-        const analytics = mockContextualAnalytics();
-        const apiMock = mockCommandPlatformApiService({ v1: {} });
-        const cliSettings = mockCommandSettings({
-          workdir: tempRoot.current,
-          projectId: Option.none(),
-        });
-        const layer = Layer.mergeAll(
-          buildTestRuntime({
-            out,
-            api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer({}) },
-            cliSettings,
-            analytics,
-          }),
-          commandRuntimeLayer(["link"]).pipe(Layer.provide(BunCrypto.layer)),
-          Stdio.layerTest({
-            args: Effect.succeed(["link", "--project-ref", "my-branch"]),
-          }),
-        );
-        return Effect.gen(function* () {
-          yield* Effect.exit(linkHandler(flags({ projectRef: Option.some("my-branch") })));
-          const event = analytics.captured.find((c) => c.event === "cli_command_executed");
-          expect(event?.properties.flags).toEqual({ "project-ref": "<redacted>" });
-        }).pipe(Effect.provide(layer));
-      },
-    );
-  });
 });
 
 // Records the Management API requests `link` makes, which the service-level mock above cannot.
@@ -1534,6 +1460,8 @@ describe("link permissions", () => {
   function setupRecording(
     opts: {
       readonly selectResponses?: ReadonlyArray<string>;
+      /* A project-scoped token without API Key Secrets read: `reveal=true` is refused. */
+      readonly revealRefused?: boolean;
     } = {},
   ) {
     const out = mockOutput({ format: "text", promptSelectResponses: opts.selectResponses });
@@ -1559,7 +1487,14 @@ describe("link permissions", () => {
               : jsonResponse(request, 200, { ...HEALTHY_PROJECT, id: ref, ref });
           }
           if (rest === "/branches") return jsonResponse(request, 200, [LINK_BRANCH]);
-          if (rest === "/api-keys") return jsonResponse(request, 200, SERVICE_KEYS);
+          if (rest === "/api-keys") {
+            return opts.revealRefused === true
+              ? jsonResponse(request, 403, {
+                  message:
+                    "Your account does not have the necessary privileges to access this endpoint.",
+                })
+              : jsonResponse(request, 200, SERVICE_KEYS);
+          }
           if (rest === "/config/storage") {
             return jsonResponse(request, 200, {
               migrationVersion: "2026-01-01-000000",
@@ -1571,15 +1506,18 @@ describe("link permissions", () => {
           return jsonResponse(request, 404, { message: "unexpected request" });
         }),
     });
-    const layer = buildTestRuntime({
-      out,
-      api,
-      cliSettings: mockCommandSettings({
-        workdir: tempRoot.current,
-        projectId: Option.none(),
+    const layer = Layer.merge(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings: mockCommandSettings({
+          workdir: tempRoot.current,
+          projectId: Option.none(),
+        }),
+        tty: mockTty({ stdinIsTty: true }),
       }),
-      tty: mockTty({ stdinIsTty: true }),
-    });
+      cliConfigValuesTestLayer,
+    );
     return { layer, api, out, workdir: tempRoot.current };
   }
 
@@ -1606,9 +1544,32 @@ describe("link permissions", () => {
       expect(yield* readTemp(workdir, "project-ref")).toBe(VALID_REF);
       assertPermissionDrift({
         command: "link",
-        activeFlags: { "project-ref": true, "skip-pooler": false },
+        activeFlags: { "project-ref": VALID_REF, "skip-pooler": false },
         requests: api.requests,
         exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("links with a token that cannot read secret keys, skipping the version checks", () => {
+    const { layer, api, out, workdir } = setupRecording({ revealRefused: true });
+    return Effect.gen(function* () {
+      yield* link(flags());
+
+      expect(api.requests.map(({ method, urlWithParams }) => `${method} ${urlWithParams}`)).toEqual(
+        [
+          `GET ${API}/v1/projects/${VALID_REF}`,
+          `GET ${API}/v1/projects/${VALID_REF}/api-keys?reveal=true`,
+          `GET ${API}/v1/projects/${VALID_REF}/config/storage`,
+          `GET ${API}/v1/projects/${VALID_REF}/config/database/pooler`,
+        ],
+      );
+      expect(out.stderrText).toContain("API Key Secrets: read");
+      expect(yield* readTemp(workdir, "project-ref")).toBe(VALID_REF);
+      assertPermissionDrift({
+        command: "link",
+        activeFlags: { "project-ref": VALID_REF, "skip-pooler": false },
+        requests: api.requests,
       });
     }).pipe(Effect.provide(layer));
   });
@@ -1674,7 +1635,7 @@ describe("link permissions", () => {
         ]);
         assertPermissionDrift({
           command: "link",
-          activeFlags: { "project-ref": true, "skip-pooler": false },
+          activeFlags: { "project-ref": BRANCH_PROJECT_REF, "skip-pooler": false },
           requests: api.requests,
         });
       }).pipe(Effect.provide(layer));

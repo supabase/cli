@@ -139,10 +139,9 @@ are quoted so that sourcing the file performs no shell expansion. The exported v
 `PUBLISHABLE_KEY`, `SECRET_KEY`, `ANON_KEY`, and `SERVICE_ROLE_KEY`; `REST_URL` and
 `FUNCTIONS_URL` are `<API_URL>/rest/v1` and `<API_URL>/functions/v1`, `MCP_URL` is `<API_URL>/mcp`,
 whose port is assigned per project, and `DB_URL` uses the `postgres` role with the saved database
-password, URI-encoded, and no query string. `INBUCKET_URL` is also exported alongside
-`MAILPIT_URL`, with the same value, as a deprecated alias. `start` and `status` text output shows
-only the publishable and secret keys; `ANON_KEY` and `SERVICE_ROLE_KEY` appear only in JSON `env`
-and `status --env`. `start` and `status` JSON/stream-JSON results include this same connection map
+password, URI-encoded, and no query string. `start` and `status` text output shows only the
+publishable and secret keys; `ANON_KEY` and `SERVICE_ROLE_KEY` appear only in JSON `env` and
+`status --env`. `start` and `status` JSON/stream-JSON results include this same connection map
 under `env`; `status --env` remains the dotenv/variable-map export, and `--override-name` only
 applies there. `--override-name` accepts repeated or comma-separated `EXPORTED_VARIABLE=NAME`
 entries, requires `--env`, and rejects unknown variables, invalid names, and collisions. The
@@ -190,9 +189,9 @@ unavailable. An invalid `SUPABASE_EXPERIMENTAL_STACK` value is still an error.
 For temporary selection, set `SUPABASE_EXPERIMENTAL_STACK=1` to select the new backend or
 `SUPABASE_EXPERIMENTAL_STACK=0` to select the legacy backend. This environment variable takes
 precedence over `experimental.stack`; an unset or empty value falls back to the file setting.
-Other values are rejected, including by `supabase link`, `supabase unlink` and `supabase projects
-delete`, which read or write the project link. The override is applied before reading the project
-configuration.
+Non-boolean values are rejected, including by `supabase link`, `supabase unlink` and `supabase
+projects delete`, which read or write the project link. The override is applied before reading the
+project configuration.
 
 `supabase services` follows the same backend selection. In stack mode it lists image versions and
 canonical `ghcr.io/supabase/cli/...` names, including Mailpit. The versions come from
@@ -212,16 +211,16 @@ project config and omits the Docker-era default ports so the stack is not pinned
 Without the environment variable, `init` still writes the established template with those ports
 and without the stack flag. Blank `supabase bootstrap` uses the same scaffold.
 
-When the flag is on, `--local` targets of the `db`, `migration`, `test db`, `gen types`, and
+When the flag is on, local targets of the `db`, `migration`, `test db`, `gen types`, and
 `inspect` families use the project stack and provision a throwaway shadow database owned by the
 stack runtime. The shadow runs the project's resolved database version, the OrioleDB build when
 `db.orioledb_version` is set, and its baseline cache is keyed by that version. Top-level
-`supabase pull` uses the same stack shadow as `db pull`. Linked and `--db-url` targets stay on the Management API for engine selection.
-A `--db-url` that matches `config.toml` host and port is still rewritten like a published
+`supabase pull` uses the same stack shadow as `db pull`. Targets selected with `--remote` stay on the Management API for engine selection.
+A `--remote=<url>` database URL that matches `config.toml` host and port is still rewritten like a published
 stack target for dump's tool container. Compose names (`supabase_db_*`, `supabase_network_*`,
 `db:5432`) are not used. The stack backend requires the in-process pg-delta engine;
 `--use-migra`, `--use-pgadmin`, `--use-pg-schema`, and `db pull --diff-engine migra` are
-rejected. The flag also routes local `functions serve` through the stack; other `functions`
+rejected (`--use-migra=false` and `--use-pgadmin=false` keep pg-delta and are accepted). The flag also routes local `functions serve` through the stack; other `functions`
 commands retain their existing behavior.
 
 `functions serve` requires a running project stack. It attaches to the existing Functions member,
@@ -244,34 +243,33 @@ and restores default JWT verification on the same Functions instance. Per-functi
 `--output-format stream-json`, readiness emits a result containing the instance ID and URL,
 followed by live log events.
 
-`storage ls`/`cp`/`mv`/`rm` and `seed buckets` (including bucket seeding inside `db reset
---local`) also consult `experimental.stack`, with the same `SUPABASE_EXPERIMENTAL_STACK`
+`storage ls`/`cp`/`mv`/`rm` and `seed buckets` (including bucket seeding inside `db reset`) also consult `experimental.stack`, with the same `SUPABASE_EXPERIMENTAL_STACK`
 env-precedence rule as `start`/`stop`/`status`. See
-[Storage and bucket seeding](#storage-and-bucket-seeding) below. Explicit `--linked`/
-`--project-ref` remote targeting for these commands is unaffected by the flag either way.
+[Storage and bucket seeding](#storage-and-bucket-seeding) below. Explicit `--remote`
+targeting for these commands is unaffected by the flag either way.
 
 `db start` brings up a postgres-only project stack on first create. An existing stack resumes its
 primary database without changing other services (webhooks setup only, creating a missing
 `supabase_functions` schema; no second overlay or migrate-and-seed).
 `supabase start` while that postgres-only stack is running stops it and starts the full
 configured stack, keeping data. `--from-backup` is not supported on the stack path.
-`db reset --local` and declarative resets rebuild the existing database while retaining stack
+A local `db reset` and declarative resets rebuild the existing database while retaining stack
 identity, ports, and composition. See
 [`db/reset/SIDE_EFFECTS.md`](../src/commands/db/reset/SIDE_EFFECTS.md).
 
-`gen types --local` and `inspect db … --local` resolve the project stack through the same
-`--local` database target as `db dump`. They do not start a stack.
+A local `gen types` and `inspect db …` resolve the project stack through the same
+local database target as `db dump`. They do not start a stack.
 
-On the stack backend, `db dump --local`, `migration squash`, and `test db --local` run
+On the stack backend, a local `db dump`, `migration squash`, and a local `test db` run
 catalog tools attached to their owning stack. Tools use runtime-facing database addresses;
 `test db` preserves the user, password, and database selected by the CLI resolver.
 
-External `--linked` and `--db-url` tools use CLI-owned adapters without creating a stack.
+External `--remote` tools use CLI-owned adapters without creating a stack.
 Supported native platforms run the bundled executable with `artifact/bin` on PATH. Other
 platforms use a one-shot container from the catalog Postgres image. Neither path falls back to
 host-installed PostgreSQL tools. Missing tools fail closed; container execution requires Docker.
 
-`db lint --local` talks to the running stack over SQL. Catalog Postgres includes
+A local `db lint` talks to the running stack over SQL. Catalog Postgres includes
 `plpgsql_check`, so native and container stacks can `CREATE EXTENSION` inside the
 lint transaction (always rolled back). It does not launch a client binary.
 
@@ -351,7 +349,7 @@ start --frozen` fails instead of resolving when the lock is missing or stale; it
 targets another project or branch than the lock observed (run `supabase stack update`), and when
 this CLI bundles a newer revision of a locked version. A lock that is malformed, does not match the
 format, or comes from a newer CLI always fails the start. The lock's JSON Schema is published at
-`https://supabase.com/docs/cli/supabase-lock/v1.schema.json`. A database with initialized data keeps
+`https://supabase.com/schemas/supabase-lock/v1.json`. A database with initialized data keeps
 its build: any change other than a new `-rN` revision of the same build (a different upstream build,
 release line or major) is refused. The refusal offers to keep the data by pinning the recorded build with
 `[local.services.database] version`, setting `[db] major_version` back when the major differs and removing any
@@ -411,12 +409,12 @@ to be destroyed does not stop the rest, though the command still fails.
 
 The `experimental.stack` flag (with the usual `SUPABASE_EXPERIMENTAL_STACK=1|0` env
 precedence) routes several command families at once: the top-level `start`/`stop`/`status`
-aliases, the `stack` namespace itself, `db`/`migration`/`test`'s `--local` targets (above), and
+aliases, the `stack` namespace itself, `db`/`migration`/`test`'s local targets (above), and
 now `storage ls`/`cp`/`mv`/`rm` and `seed buckets` (including the bucket seeding step inside `db
-reset --local`). An explicit `--linked`/`--project-ref` remote target for `storage`/`seed` is
+reset`). An explicit `--remote` target for `storage`/`seed` is
 unaffected by the flag either way.
 
-Under the stack backend, `--local` Storage operations resolve their endpoint and credential from
+Under the stack backend, local Storage operations resolve their endpoint and credential from
 the selected composition rather than `[api]`/`[api.tls]`: the endpoint is the Storage member's
 observed HTTP binding plus `/storage/v1/...`, and the service-role JWT is generated from the
 primary database member's observed JWT secret. The stack is located by the project root
@@ -444,7 +442,7 @@ status`/`supabase stack restart`, or `supabase start` when the stack has never b
 Missing Storage HTTP endpoints fail with `StackStorageCapabilityError`, as do other Storage
 capability failures. A stack-gateway 502/503 encountered while Storage activates is reported as
 `StackStorageCapabilityError` guiding the user to `supabase stack logs` then `supabase stack
-restart`, not as a raw status body — but only for a `--local` target; a `--linked` failure passes
+restart`, not as a raw status body — but only for a local target; a `--remote` failure passes
 through unchanged. All of these failures exit `1` for
 `storage`/`seed buckets`, and no HTTP
 request is sent when Storage is disabled or the stack is not running.
@@ -466,6 +464,6 @@ a missing capability/endpoint, a gateway activation failure, or an invalid bucke
 `start` command; startup does not silently skip the configured seed. See
 [`stack/start/SIDE_EFFECTS.md`](../src/commands/experimental/stack/start/SIDE_EFFECTS.md).
 
-**`db reset --local` and declarative reset** reapply the catalog, migrations, and seeds before
+**A local `db reset` and declarative reset** reapply the catalog, migrations, and seeds before
 resuming the saved composition. Bucket-seeding failures warn after the database reset succeeds.
 See [`db/reset/SIDE_EFFECTS.md`](../src/commands/db/reset/SIDE_EFFECTS.md).

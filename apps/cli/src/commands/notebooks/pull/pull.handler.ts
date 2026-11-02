@@ -2,14 +2,10 @@ import { Effect, Option } from "effect";
 import { Output } from "../../../shared/output/output.service.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { RemoteTarget } from "../../../config/remote-target.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
-import {
-  emitNotebooksMachineOutput,
-  notebooksMachineOutputRequested,
-  rejectNotebooksEnvOutput,
-} from "../notebooks.output.ts";
+import { emitNotebooksMachineOutput, rejectNotebooksEnvOutput } from "../notebooks.output.ts";
 import {
   isNotebookNameWritable,
   downloadNotebook,
@@ -46,7 +42,6 @@ export const notebooksPull = Effect.fn("notebooks.pull")(function* (flags: Noteb
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
-  const resolver = yield* RemoteTarget;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
@@ -59,9 +54,8 @@ export const notebooksPull = Effect.fn("notebooks.pull")(function* (flags: Noteb
     // Refused before the project is resolved: `-o env` cannot hold the payload,
     // and failing at emit time would mean failing after the files are written.
     yield* rejectNotebooksEnvOutput();
-    const machineOutput = yield* notebooksMachineOutputRequested();
 
-    const { ref } = yield* resolver.resolve(flags.projectRef);
+    const ref = yield* resolveProjectTarget(flags);
 
     yield* Effect.gen(function* () {
       const pulled: Array<string> = [];
@@ -112,7 +106,6 @@ export const notebooksPull = Effect.fn("notebooks.pull")(function* (flags: Noteb
           names: localOnly,
           copyLabel: "Create them in the project",
           deleteLabel: `Delete them from ${dir}`,
-          machineOutput,
         });
 
         if (choice === "delete") {

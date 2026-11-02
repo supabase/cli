@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { BunFileSystem, BunPath } from "@effect/platform-bun";
+import { Data, Effect, FileSystem, Layer, Path, Schema } from "effect";
 import { BaseSequencer, type TestSpecification } from "vitest/node";
 
 /** Bun `--timings` file of measured e2e file durations, refreshed from CI artifacts. */
@@ -123,45 +123,68 @@ function isTimingsEnvelope(
   );
 }
 
+const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
+
 /** Reads the committed Bun `--timings` file under `root`; anything but that envelope reads as absent. */
-export function readTimings(root: string): Readonly<Record<string, number>> | undefined {
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(resolve(root, TIMINGS_FILE), "utf8"));
-    return isTimingsEnvelope(parsed) ? parsed.files : undefined;
-  } catch {
-    return undefined;
-  }
-}
+export const readTimings = Effect.fn("E2eSequencer.readTimings")(function* (root: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  return yield* fs.readFile(path.resolve(root, TIMINGS_FILE)).pipe(
+    Effect.map((bytes) => new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes)),
+    Effect.flatMap(decodeJson),
+    Effect.map((parsed): Readonly<Record<string, number>> | undefined =>
+      isTimingsEnvelope(parsed) ? parsed.files : undefined,
+    ),
+    Effect.orElseSucceed(() => undefined),
+  );
+});
+
+const sequencerLayer = Layer.mergeAll(BunFileSystem.layer, BunPath.layer);
+
+class HashSplitFailed extends Data.TaggedError("HashSplitFailed")<{ readonly cause: unknown }> {}
 
 /**
  * Shards the e2e projects by measured duration. Other projects, and the e2e projects while
  * the timings file is absent, keep Vitest's hash split.
  */
 export class E2eSequencer extends BaseSequencer {
-  override async shard(files: TestSpecification[]): Promise<TestSpecification[]> {
+  override shard(files: TestSpecification[]): Promise<TestSpecification[]> {
     const { root, shard } = this.ctx.config;
-    const timings = files.every((spec) => E2E_PROJECTS.has(spec.project.name))
-      ? readTimings(root)
-      : undefined;
-    if (shard === undefined || timings === undefined) {
-      return super.shard(files);
-    }
+    const hashSplit = () => super.shard(files);
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const timings = files.every((spec) => E2E_PROJECTS.has(spec.project.name))
+          ? yield* readTimings(root)
+          : undefined;
+        if (shard === undefined || timings === undefined) {
+          return yield* Effect.tryPromise({
+            try: hashSplit,
+            catch: (cause) => new HashSplitFailed({ cause }),
+          });
+        }
 
-    const byKey = new Map(
-      files.map((spec) => [relative(root, spec.moduleId).replaceAll("\\", "/"), spec]),
+        const path = yield* Path.Path;
+        const byKey = new Map(
+          files.map((spec) => [path.relative(root, spec.moduleId).replaceAll("\\", "/"), spec]),
+        );
+        const shardFiles = [...byKey].map(([key, spec]) => ({
+          key,
+          exclusive: spec.project.name === E2E_EXCLUSIVE_PROJECT,
+        }));
+        const maxWorkers =
+          files.find((spec) => spec.project.name === E2E_PROJECT)?.project.config.maxWorkers ?? 1;
+        // Concurrent files share one Docker daemon and slow each other, so pack against half the slots.
+        const workers = Math.max(1, Math.floor(maxWorkers / 2));
+        const assigned =
+          packShards(shardFiles, timings, shard.count, workers)[shard.index - 1] ?? [];
+        return assigned.flatMap((key) => {
+          const spec = byKey.get(key);
+          return spec === undefined ? [] : [spec];
+        });
+      }).pipe(
+        Effect.provide(sequencerLayer),
+        Effect.catchTag("HashSplitFailed", (error) => Effect.die(error.cause)),
+      ),
     );
-    const shardFiles = [...byKey].map(([key, spec]) => ({
-      key,
-      exclusive: spec.project.name === E2E_EXCLUSIVE_PROJECT,
-    }));
-    const maxWorkers =
-      files.find((spec) => spec.project.name === E2E_PROJECT)?.project.config.maxWorkers ?? 1;
-    // Concurrent files share one Docker daemon and slow each other, so pack against half the slots.
-    const workers = Math.max(1, Math.floor(maxWorkers / 2));
-    const assigned = packShards(shardFiles, timings, shard.count, workers)[shard.index - 1] ?? [];
-    return assigned.flatMap((key) => {
-      const spec = byKey.get(key);
-      return spec === undefined ? [] : [spec];
-    });
   }
 }

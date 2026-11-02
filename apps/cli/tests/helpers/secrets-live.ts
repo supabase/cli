@@ -27,7 +27,7 @@ export function requireSuccess(result: LiveRun, label: string) {
 /** Exact-name cleanup; unsetting an already-removed secret is tolerated. */
 export function unsetSecret(cliEffect: LiveCliEffect, name: string, ref: string) {
   return Effect.gen(function* () {
-    const cleanup = yield* cliEffect(["secrets", "unset", name, "--project-ref", ref, "--yes"]);
+    const cleanup = yield* cliEffect(["secrets", "unset", name, `--remote=${ref}`, "--yes"]);
     if (
       cleanup.exitCode !== 0 &&
       !/not found|does not exist/iu.test(`${cleanup.stdout}\n${cleanup.stderr}`)

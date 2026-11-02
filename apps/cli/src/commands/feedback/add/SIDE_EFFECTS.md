@@ -1,5 +1,7 @@
 # `supabase feedback add [message...] [--project-ref <ref>]`
 
+Target: account, no consent — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
 | Path                                            | Format                              | When                                                                                                                                                                                                                         |
@@ -138,7 +140,7 @@ event); the shared stream-json layer emits these for every `output.task`.
   (written by `supabase link`) → `null`, the same order as `feedback delete`.
   The flag and env values are validated like every other command's explicit
   ref (a malformed value fails with the shared invalid-ref error); the file is the
-  soft half of `RemoteTarget.resolveOptional`, read directly so the
+  soft half of `ProjectRefResolver.resolveOptional`, read directly so the
   command has no auth dependency and works when the user is not logged in — a
   missing, unreadable, or malformed file degrades to `null`. Note
   `CommandSettings.projectId` alone is only the env var — it is NOT

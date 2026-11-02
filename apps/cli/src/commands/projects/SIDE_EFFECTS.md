@@ -1,5 +1,7 @@
 # `supabase projects` (group)
 
+Target: account, consent default Yes for `create`, No for `delete`, no consent for `list`; `api-keys` is hosted, no consent — see [Command target](../../../docs/command-target.md)
+
 Group-level side-effect summary for the natively-ported `projects` commands:
 `list`, `create`, `delete`, `api-keys`. Per-subcommand detail lives in each
 subcommand's own `SIDE_EFFECTS.md`.
@@ -23,18 +25,20 @@ subcommand's own `SIDE_EFFECTS.md`.
 > — a no-op. The only observable output there is a keyring-backend
 > _availability_ error (`Keyring is not supported on WSL`, emitted when the
 > system keyring is down, e.g. on headless CI); that environment noise is
-> normalized away in the cli-e2e parity harness.
+> normalized away in the cli-e2e harness.
 
 ## API Routes
 
-| Method   | Path                          | Auth         | Request body                                                                                                                         | Response (used fields)                                                       |
-| -------- | ----------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
-| `GET`    | `/v1/projects`                | Bearer token | —                                                                                                                                    | `[{id, ref, organization_slug, name, region, created_at, status, database}]` |
-| `POST`   | `/v1/projects`                | Bearer token | `{name, organization_slug, db_pass, region?, desired_instance_size?, high_availability?, release_channel?, postgres_engine?}` (JSON) | `{id, ref, organization_slug, name, region, created_at, status}`             |
-| `DELETE` | `/v1/projects/{ref}`          | Bearer token | —                                                                                                                                    | `{id, ref, name}`; `404` → does-not-exist                                    |
-| `GET`    | `/v1/projects/{ref}/api-keys` | Bearer token | —                                                                                                                                    | `[{name, api_key?}]`                                                         |
-| `GET`    | `/v1/projects/{ref}`          | Bearer token | —                                                                                                                                    | linked-project cache fill, best-effort (`Effect.ensuring`)                   |
-| `GET`    | `/v1/organizations`           | Bearer token | —                                                                                                                                    | `[{id, slug, name}]` — `create` interactive org prompt only                  |
+| Method   | Path                             | Auth         | Request body                                                                                                                         | Response (used fields)                                                                        |
+| -------- | -------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| `GET`    | `/v1/projects`                   | Bearer token | —                                                                                                                                    | `[{id, ref, organization_slug, name, region, created_at, status, database}]`                  |
+| `POST`   | `/v1/projects`                   | Bearer token | `{name, organization_slug, db_pass, region?, desired_instance_size?, high_availability?, release_channel?, postgres_engine?}` (JSON) | `{id, ref, organization_slug, name, region, created_at, status}`                              |
+| `DELETE` | `/v1/projects/{ref}`             | Bearer token | —                                                                                                                                    | `{id, ref, name}`; `404` → does-not-exist                                                     |
+| `GET`    | `/v1/projects/{parent}/branches` | Bearer token | —                                                                                                                                    | `[{id, name, project_ref, is_default}]` — `api-keys` with `--remote=<branch>` only            |
+| `GET`    | `/v1/branches/{id}`              | Bearer token | —                                                                                                                                    | `{ref, status, …}` — `api-keys` with `--remote=<branch UUID>` only, when no project is linked |
+| `GET`    | `/v1/projects/{ref}/api-keys`    | Bearer token | —                                                                                                                                    | `[{name, api_key?}]`                                                                          |
+| `GET`    | `/v1/projects/{ref}`             | Bearer token | —                                                                                                                                    | linked-project cache fill, best-effort (`Effect.ensuring`)                                    |
+| `GET`    | `/v1/organizations`              | Bearer token | —                                                                                                                                    | `[{id, slug, name}]` — `create` interactive org prompt only                                   |
 
 ## Environment Variables
 
@@ -48,13 +52,14 @@ subcommand's own `SIDE_EFFECTS.md`.
 
 ## Exit Codes
 
-| Code | Condition                                                                      |
-| ---- | ------------------------------------------------------------------------------ |
-| `0`  | success                                                                        |
-| `1`  | auth / network / non-2xx status (incl. decode failure) / invalid ref           |
-| `1`  | `create`: required params missing in non-interactive mode / empty project name |
-| `1`  | `delete`: declined confirmation (cancellation) / no ref on a non-TTY           |
-| `1`  | `list`: `--output env` is unsupported                                          |
+| Code | Condition                                                                                     |
+| ---- | --------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                       |
+| `1`  | auth / network / non-2xx status (incl. decode failure) / invalid ref                          |
+| `1`  | `create`: required params missing in non-interactive mode / empty project name                |
+| `1`  | `create` / `delete`: confirmation declined, or needed on a run that can't prompt (no `--yes`) |
+| `1`  | `delete`: no ref on a non-TTY                                                                 |
+| `1`  | `list`: `--output env` is unsupported                                                         |
 
 ## Telemetry Events Fired
 
@@ -62,25 +67,23 @@ subcommand's own `SIDE_EFFECTS.md`.
 | ---------------------- | ------------------------------------------ | ----------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` |
 
-`safeFlags`: `--org-id` (`create`), `--project-ref`
-(`api-keys`). No custom events beyond `cli_command_executed`.
+`safeFlags`: `--org-id` (`create`). The shared wrapper reports the target flags: `--remote` as
+`true` (bare), the ref, or `<redacted>`, and `--project-ref` only when it is ref-shaped. No custom events beyond `cli_command_executed`.
 
 ## Output (two-axis: `--output` × `--output-format`)
 
 `--output {pretty|json|yaml|toml|env}` takes priority when set; otherwise
 `--output-format {text|json|stream-json}` applies.
 
-- **list** — pretty/text: Glamour table `LINKED | ORG ID | REFERENCE ID | NAME | REGION | CREATED AT (UTC)`; `--output json/yaml/toml` encode the `linkedProject[]` (`{projects=[...]}` for toml); `--output env` is an error; `--output-format json/stream-json` `success("", {projects})`.
-- **create** — stderr `Created a new project at <dashboard>/project/<id>` for all formats; pretty/text: table `ORG ID | REFERENCE ID | NAME | REGION | CREATED AT (UTC)`; `--output json/yaml/toml/env` encode the created project (env supported here); `--output-format json/stream-json` `success("Created project", {...project})`.
-- **delete** — text: confirmation prompt (default No, honours `--yes`) then stdout `Deleted project: <name>`; `--output-format json/stream-json` `success("Deleted project", {name})`.
-- **api-keys** — pretty/text: Glamour table `NAME | KEY VALUE` (`******` masks null keys); `--output toml/env` encode the `SUPABASE_<NAME>_KEY` map; `--output json/yaml` encode `ApiKeyResponse[]`; `--output-format json/stream-json` `success("", {keys})`.
+- **list** — pretty/text: table `LINKED | ORG ID | REFERENCE ID | NAME | REGION | CREATED AT (UTC)`; `--output json/yaml/toml` encode the `linkedProject[]` (`{projects=[...]}` for toml); `--output env` is an error; `--output-format json/stream-json` `success("", {projects})`.
+- **create** — a confirmation question (default Yes) first, unless `--yes`/`SUPABASE_YES` answers it; stderr `Created a new project at <dashboard>/project/<id>` for all formats; pretty/text: table `ORG ID | REFERENCE ID | NAME | REGION | CREATED AT (UTC)`; `--output json/yaml/toml/env` encode the created project (env supported here); `--output-format json/stream-json` `success("Created project", {...project})`.
+- **delete** — text: confirmation prompt (default No, `--yes`/`SUPABASE_YES` answers it) then stdout `Deleted project: <name>`; `--output-format json/stream-json` need `--yes` and emit `success("Deleted project", {name})`.
+- **api-keys** — pretty/text: table `NAME | KEY VALUE` (`******` masks null keys); `--output toml/env` encode the `SUPABASE_<NAME>_KEY` map; `--output json/yaml` encode `ApiKeyResponse[]`; `--output-format json/stream-json` `success("", {keys})`.
 
 ## Notes
 
-- **Terminal color:** the old Go CLI wrapped refs / project names / dashboard URLs
-  in ANSI; this port emits plain text. The old renderer disabled color when
-  stdout/stderr was not a TTY, so piped / CI output matches byte-for-byte; only
-  the interactive-terminal appearance differs.
+- **Terminal color:** refs / project names / dashboard URLs are emitted as plain
+  text, with no ANSI color, whether or not stdout/stderr is a TTY.
 - **`create` linked cache:** the new project ref is cached on success. `delete`
   first removes `supabase/.temp` when the deleted ref is the linked one, then makes
   a best-effort cache fill (`supabase/.temp/linked-project.json`); the project
@@ -92,6 +95,5 @@ subcommand's own `SIDE_EFFECTS.md`.
 - `--plan` on `create` is accepted but ignored (no-op, hidden) — a vestigial flag.
 - `create` interactivity is gated on `--interactive` (default true) **and** a TTY stdin
   **and** an interactive (text-mode) `Output`.
-- `delete` confirmation defaults to **No** and honours the global `--yes`.
-- `api-keys` resolves `--project-ref` via the shared resolver (flag → env →
-  `.temp/project-ref` → prompt on a TTY → error when unlinked).
+- `create` asks before the `POST` (default **Yes**) and `delete` asks before the `DELETE`
+  (default **No**, irreversible); without consent neither makes an API write.

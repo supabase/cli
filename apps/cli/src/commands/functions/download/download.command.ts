@@ -1,25 +1,30 @@
+import { Effect, Layer, Option } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
-import { projectRefPicker } from "../../../config/remote-target.layer.ts";
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { functionsDownload as functionsDownloadCalls } from "../../../shared/functions/download.ts";
-import { FUNCTIONS_PROJECT_REF_SAFE_FLAGS } from "../../../shared/functions/functions.shared.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
+import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { removedFlag } from "../../../command-internal/removed-command.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
 import { functionsDownload } from "./download.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 
 const config = {
   functionName: Argument.String("Function name").pipe(
     Argument.withDescription("Name of the Function to download. Downloads all if omitted."),
     Argument.optional,
   ),
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
   useApi: Flag.Boolean("use-api").pipe(
     Flag.withDescription("Unbundle functions server-side without using Docker."),
     Flag.withDefault(false),
@@ -29,22 +34,33 @@ const config = {
     Flag.withDefault(true),
     Flag.withHidden,
   ),
+  // Kept parsed (and hidden) only so using it produces an actionable removal error instead of
+  // an unknown-flag parse error; see `functionsDownloadLegacyBundleHandler`.
   legacyBundle: Flag.Boolean("legacy-bundle").pipe(
-    Flag.withDescription("Use legacy bundling."),
-    Flag.withDefault(false),
+    Flag.withDescription("Removed: use --use-api instead."),
+    Flag.optional,
     Flag.withHidden,
   ),
 } as const;
 
 export type FunctionsDownloadFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-// Exported so integration tests can drive the exact wiring `Command.withHandler`
-// uses below, instead of re-asserting the generic instrumentation mechanism.
-export const functionsDownloadHandler = (flags: FunctionsDownloadFlags) =>
-  functionsDownload(flags).pipe(
-    withCommandTelemetry({ flags, safeFlags: FUNCTIONS_PROJECT_REF_SAFE_FLAGS }),
-    withJsonErrorHandling,
-  );
+const functionsDownloadHandler = (flags: FunctionsDownloadFlags) =>
+  functionsDownload(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling);
+
+const COMMAND_PATH = ["functions", "download"];
+const managementApiLayer = managementApiRuntimeLayer(COMMAND_PATH);
+const removedFlagLayer = Layer.mergeAll(commandRuntimeLayer(COMMAND_PATH), telemetryStateLayer);
+
+// Rejected on a credential-free runtime: `managementApiRuntimeLayer` resolves the access token
+// eagerly, so building it first would fail with a login error before the removal message.
+const functionsDownloadLegacyBundleHandler = (flags: FunctionsDownloadFlags) => {
+  const slug = Option.getOrElse(flags.functionName, () => "<slug>");
+  return removedFlag(
+    "--legacy-bundle",
+    `Retry with \`supabase functions download --use-api ${slug}\` to unbundle server-side without Docker. If that also fails and the Function was deployed with a CLI older than 1.120.0, redeploy it with the current CLI.`,
+  ).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling, Effect.provide(removedFlagLayer));
+};
 
 export const functionsDownloadCommand = Command.make("download", config).pipe(
   Command.withDescription(
@@ -57,7 +73,7 @@ export const functionsDownloadCommand = Command.make("download", config).pipe(
       description: "Download a single function from the linked project",
     },
     {
-      command: "supabase functions download --project-ref abcdefghijklmnopqrst",
+      command: "supabase functions download --remote=abcdefghijklmnopqrst",
       description: "Download all functions from a specific project",
     },
   ]),
@@ -70,8 +86,15 @@ export const functionsDownloadCommand = Command.make("download", config).pipe(
       functionsDownloadCalls,
       projectRefPicker,
       linkedProjectCache,
+      branchResolution,
     ),
   ),
-  Command.withHandler(functionsDownloadHandler),
-  Command.provide(managementApiRuntimeLayer(["functions", "download"])),
+  Command.withHandler((flags) =>
+    Option.isSome(flags.legacyBundle)
+      ? functionsDownloadLegacyBundleHandler(flags)
+      : functionsDownloadHandler(flags).pipe(Effect.provide(managementApiLayer)),
+  ),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
+  withTargetPolicy({ group: "hosted", consent: "none" }),
 );

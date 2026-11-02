@@ -1,18 +1,33 @@
 import type { CliOutput, HelpDoc } from "effect/cli";
-import {
-  permissionSectionForHelp,
-  withoutPermissionAnnotations,
-} from "../../command-internal/command-permissions/help-section.ts";
+import { permissionSectionForHelp } from "../../command-internal/command-permissions/help-section.ts";
 import type { CliErrorSuggestionContext } from "../cli/subcommand-flag-suggestions.ts";
 import { cliErrorCode, formatCliErrorsForDisplay } from "../cli/subcommand-flag-suggestions.ts";
+import { subcommandScopes, targetHelpFor, withRemoteFlagValue } from "./target-help.ts";
 
 export function jsonCliOutputFormatter(context?: CliErrorSuggestionContext): CliOutput.Formatter {
   return {
     formatHelpDoc: (doc: HelpDoc.HelpDoc) => {
+      const scopes = subcommandScopes(doc, context?.rootCommand);
+      const target = targetHelpFor(doc);
       const permissions = permissionSectionForHelp(doc);
+      const { annotations: _annotations, ...serializable } = withRemoteFlagValue(doc);
       return JSON.stringify({
         _tag: "Help",
-        doc: withoutPermissionAnnotations(doc),
+        doc: {
+          ...serializable,
+          ...(target === undefined ? {} : { target }),
+          ...(serializable.subcommands === undefined
+            ? {}
+            : {
+                subcommands: serializable.subcommands.map((group) => ({
+                  ...group,
+                  commands: group.commands.map((sub) => {
+                    const scope = scopes.get(sub.name);
+                    return scope === undefined ? sub : { ...sub, target: { scope } };
+                  }),
+                })),
+              }),
+        },
         ...(permissions === undefined ? {} : { permissions }),
       });
     },

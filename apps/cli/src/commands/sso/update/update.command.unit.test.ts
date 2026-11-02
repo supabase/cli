@@ -8,7 +8,7 @@ import {
   ssoUpdateRemoveDomainsFlag,
 } from "./update.command.ts";
 
-describe("sso update domain flags (pflag StringSlice parity)", () => {
+describe("sso update domain flags", () => {
   it.effect("--domains splits a comma-separated value into multiple domains", () =>
     Effect.gen(function* () {
       const [, domains] = yield* ssoUpdateDomainsFlag
@@ -103,7 +103,7 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
     }),
   );
 
-  it.effect("keeps only the first CSV record of a multiline value (pflag reads ONE record)", () =>
+  it.effect("keeps only the first CSV record of a multiline value (only ONE record is read)", () =>
     Effect.gen(function* () {
       const [, domains] = yield* ssoUpdateDomainsFlag
         .parse({
@@ -116,7 +116,7 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
     }),
   );
 
-  it.effect("--domains rejects malformed CSV (bare quote) with pflag's exact diagnostic", () =>
+  it.effect("--domains rejects malformed CSV (bare quote) with the exact diagnostic", () =>
     Effect.gen(function* () {
       const exit = yield* ssoUpdateDomainsFlag
         .parse({
@@ -134,7 +134,7 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
     }),
   );
 
-  it.effect("--add-domains rejects malformed CSV with pflag's exact diagnostic", () =>
+  it.effect("--add-domains rejects malformed CSV with the exact diagnostic", () =>
     Effect.gen(function* () {
       const exit = yield* ssoUpdateAddDomainsFlag
         .parse({
@@ -152,7 +152,7 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
     }),
   );
 
-  it.effect("--remove-domains rejects malformed CSV with pflag's exact diagnostic", () =>
+  it.effect("--remove-domains rejects malformed CSV with the exact diagnostic", () =>
     Effect.gen(function* () {
       const exit = yield* ssoUpdateRemoveDomainsFlag
         .parse({
@@ -170,7 +170,7 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
     }),
   );
 
-  it.effect("rejects a blank-only value with pflag's EOF diagnostic", () =>
+  it.effect("rejects a blank-only value with the EOF diagnostic", () =>
     Effect.gen(function* () {
       const exit = yield* ssoUpdateAddDomainsFlag
         .parse({

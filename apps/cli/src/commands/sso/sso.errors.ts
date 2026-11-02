@@ -6,6 +6,7 @@ import {
   planLimitGatedActionability,
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
+import type { PlanGateEntitlement } from "../../shared/output/normalize-error.ts";
 import type { SsoFileErrorReason } from "./sso.saml.ts";
 
 function ssoFileActionability(reason: SsoFileErrorReason): CliErrorActionabilityDeclaration {
@@ -40,7 +41,7 @@ const gatedNotFoundActionability = (
 ): CliErrorActionabilityDeclaration =>
   upgradeSuggested === true ? planLimitGatedActionability : actionability.invalidInput;
 
-// Shared across show/update/remove. Message: `identity provider ID %q is not a UUID`.
+// Shared across show/update/remove. Message: `identity provider ID "<id>" is not a UUID`.
 export class SsoInvalidUuidError extends Data.TaggedError("SsoInvalidUuidError")<{
   readonly providerId: string;
   readonly message: string;
@@ -51,7 +52,7 @@ export class SsoInvalidUuidError extends Data.TaggedError("SsoInvalidUuidError")
 }
 
 // Shared across list/show. Reachable when an `attribute_mapping` `default`
-// value can't be encoded (e.g. an array with a nil element).
+// value can't be encoded (e.g. an array with a null element).
 export class SsoTomlEncodeError extends Data.TaggedError("SsoTomlEncodeError")<{
   readonly message: string;
 }> {
@@ -85,6 +86,7 @@ export class SsoListUnexpectedStatusError extends Data.TaggedError("SsoListUnexp
   readonly body: string;
   readonly message: string;
   readonly upgradeSuggested?: boolean;
+  readonly entitlement?: PlanGateEntitlement;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, { upgradeSuggested: this.upgradeSuggested });
@@ -116,6 +118,7 @@ export class SsoAddUnexpectedStatusError extends Data.TaggedError("SsoAddUnexpec
   readonly body: string;
   readonly message: string;
   readonly upgradeSuggested?: boolean;
+  readonly entitlement?: PlanGateEntitlement;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, { upgradeSuggested: this.upgradeSuggested });
@@ -150,9 +153,8 @@ export class SsoMutexFlagError extends Data.TaggedError("SsoMutexFlagError")<{
   }
 }
 
-// Emulates pflag's rejection of a bare value-taking flag as the final argv
-// token, a case the Effect parser accepts. Shared by add + update; the
-// message matches pflag's template.
+// Rejects a bare value-taking flag as the final argv
+// token, a case the Effect parser accepts. Shared by add + update.
 export class SsoFlagNeedsArgumentError extends Data.TaggedError("SsoFlagNeedsArgumentError")<{
   readonly message: string;
 }> {
@@ -161,11 +163,10 @@ export class SsoFlagNeedsArgumentError extends Data.TaggedError("SsoFlagNeedsArg
   }
 }
 
-// Emulates pflag's rejection of an invalid flag value in cases the Effect
+// Rejects an invalid flag value in cases the Effect
 // parser accepts: a later occurrence of a repeated flag (the parser resolves
 // repeats first-wins and never validates the rest), or a boolean literal
-// outside pflag's accepted set. Shared by add + update; the message matches
-// pflag's template.
+// outside the accepted set. Shared by add + update.
 export class SsoInvalidFlagValueError extends Data.TaggedError("SsoInvalidFlagValueError")<{
   readonly message: string;
 }> {
@@ -287,6 +288,7 @@ export class SsoUpdateUnexpectedStatusError extends Data.TaggedError(
   readonly body: string;
   readonly message: string;
   readonly upgradeSuggested?: boolean;
+  readonly entitlement?: PlanGateEntitlement;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, {
@@ -343,6 +345,7 @@ export class SsoRemoveUnexpectedStatusError extends Data.TaggedError(
   readonly body: string;
   readonly message: string;
   readonly upgradeSuggested?: boolean;
+  readonly entitlement?: PlanGateEntitlement;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, { upgradeSuggested: this.upgradeSuggested });

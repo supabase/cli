@@ -14,6 +14,7 @@ export {
 } from "./base.ts";
 export {
   CliConfigParseError,
+  CliConfigRemovedKeyError,
   CliProjectEnvParseError,
   DuplicateRemoteProjectIdError,
   InvalidRemoteProjectIdError,

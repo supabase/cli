@@ -144,12 +144,14 @@ layer(BunServices.layer)("migrateAndSeed experimental declarative-schema branch"
         );
         expect(execs).toContain("create table schema_marker ()");
         expect(execs).not.toContain("create table migration_marker ()");
-        expect(out.rawChunks.map((c) => c.text).join("")).not.toContain("Applying migration");
+        const stderr = out.rawChunks.map((c) => c.text).join("");
+        expect(stderr).not.toContain("Applying migration");
+        expect(stderr).not.toContain("schema_paths is not applied");
       }),
   );
 
   it.effect(
-    "falls back to migration files when pg-delta is enabled, even with experimental on and an empty version",
+    "falls back to migration files and warns that schema_paths is ignored when pg-delta is enabled, even with experimental on and an empty version",
     () =>
       Effect.gen(function* () {
         const workdir = yield* makeWorkdir;
@@ -175,6 +177,9 @@ layer(BunServices.layer)("migrateAndSeed experimental declarative-schema branch"
         );
         expect(execs).toContain("create table migration_marker ()");
         expect(execs).not.toContain("create table schema_marker ()");
+        expect(out.rawChunks.map((c) => c.text).join("")).toContain(
+          "[db.migrations].schema_paths is not applied while pg-delta is enabled",
+        );
       }),
   );
 
@@ -233,6 +238,40 @@ layer(BunServices.layer)("migrateAndSeed experimental declarative-schema branch"
         );
         expect(execs).toContain("create table migration_marker ()");
         expect(execs).not.toContain("create table schema_marker ()");
+      }),
+  );
+
+  it.effect(
+    "warns that schema_paths is ignored even when migrations are disabled and pg-delta is enabled",
+    () =>
+      Effect.gen(function* () {
+        const workdir = yield* makeWorkdir;
+        yield* writeFile(workdir, "supabase/schemas/a.sql", "create table schema_marker ();");
+        yield* writeFile(
+          workdir,
+          "supabase/migrations/20240101000000_x.sql",
+          "create table migration_marker ();",
+        );
+        const { session, execs } = fakeSession();
+        const out = mockOutput();
+        yield* run(
+          workdir,
+          "",
+          {
+            ...baseConfig,
+            migrationsEnabled: false,
+            experimental: true,
+            pgDeltaEnabled: true,
+            schemaPaths: ["supabase/schemas/a.sql"],
+          },
+          session,
+          out,
+        );
+        expect(execs).not.toContain("create table migration_marker ()");
+        expect(execs).not.toContain("create table schema_marker ()");
+        expect(out.rawChunks.map((c) => c.text).join("")).toContain(
+          "[db.migrations].schema_paths is not applied while pg-delta is enabled",
+        );
       }),
   );
 
@@ -384,7 +423,7 @@ layer(BunServices.layer)("migrateAndSeed experimental declarative-schema branch"
       }),
   );
 
-  it.effect("attaches the failing schema file as Go's CmdSuggestion (See schema file: <fp>)", () =>
+  it.effect("attaches the failing schema file as a suggestion (See schema file: <fp>)", () =>
     Effect.gen(function* () {
       const workdir = yield* makeWorkdir;
       const schemaPath = "supabase/schemas/broken.sql";

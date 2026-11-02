@@ -8,7 +8,7 @@ import {
 } from "./push.errors.ts";
 
 /** Cost matrix entry: the addon variant's display name and price description, used to render
- *  the cost-aware confirmation prompt. */
+ *  the price line shown before consent. */
 export interface CostItem {
   readonly name: string;
   readonly price: string;

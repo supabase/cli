@@ -3,6 +3,9 @@ import { withPermissions } from "../../../../command-internal/command-permission
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { stackOutdated } from "./outdated.handler.ts";
+import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
+import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 
 export const stackOutdatedCommand = Command.make("outdated").pipe(
   Command.withDescription(
@@ -20,4 +23,7 @@ export const stackOutdatedCommand = Command.make("outdated").pipe(
   Command.withHandler(() =>
     stackOutdated().pipe(withCommandTelemetry({ flags: {} }), withJsonErrorHandling),
   ),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags({}),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

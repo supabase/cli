@@ -4,8 +4,9 @@ import { CommandPlatformApi } from "../../../auth/command-platform-api.service.t
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
-import { RemoteTarget } from "../../../config/remote-target.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import {
   BranchesDisableNetworkError,
   BranchesDisableUnexpectedStatusError,
@@ -30,11 +31,15 @@ export const branchesDisable = Effect.fn("branches.disable")(function* (
   // `branches` is PARENT-scoped: after `supabase link <branch>`,
   // `supabase/.temp/project-ref` holds the branch's own ref, and the platform
   // 403s on that ref for every branches-management endpoint.
-  const remoteTarget = yield* RemoteTarget;
-  const { ref } = yield* remoteTarget.resolveParentScoped(flags.projectRef);
+  const ref = yield* resolveProjectTarget(
+    { remote: flags.remote, projectRef: flags.projectRef },
+    { parent: true },
+  );
   yield* Effect.annotateCurrentSpan("project.ref", ref);
 
   yield* Effect.gen(function* () {
+    yield* requireHostedMutationConsent({ action: "Disable preview branching" });
+
     const disabling =
       output.format === "text" ? yield* output.task("Disabling preview branching...") : undefined;
     yield* api.v1.disablePreviewBranching({ ref }).pipe(

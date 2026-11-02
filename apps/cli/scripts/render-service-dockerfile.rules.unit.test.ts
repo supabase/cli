@@ -6,7 +6,7 @@ import { renderDockerfile } from "./render-service-dockerfile.ts";
 // one-line-per-alias check is satisfied by default; each test only mutates what it's
 // exercising. `vi.mock` factories are hoisted above every other top-level statement, so the
 // fixture pins are built inline here rather than imported from an outer module.
-vi.mock("@supabase/stack/internal/artifacts", async (importOriginal) => {
+vi.mock("@supabase/stack/internal/artifacts", (importOriginal) => {
   const nativePin = { archive: "a".repeat(64), manifest: "b".repeat(64) };
   const natives = { "darwin-arm64": nativePin, "linux-amd64": nativePin, "linux-arm64": nativePin };
   const pin = (sourceService: string, upstreamImage: string, isDefault: boolean) => ({
@@ -21,8 +21,8 @@ vi.mock("@supabase/stack/internal/artifacts", async (importOriginal) => {
       natives,
     },
   });
-  return {
-    ...(await importOriginal<typeof import("@supabase/stack/internal/artifacts")>()),
+  return importOriginal<typeof import("@supabase/stack/internal/artifacts")>().then((actual) => ({
+    ...actual,
     catalogPins: () => [
       pin("postgres", "supabase/postgres:17.0.0", true),
       pin("postgres", "supabase/postgres:15.0.0", false),
@@ -40,7 +40,7 @@ vi.mock("@supabase/stack/internal/artifacts", async (importOriginal) => {
       pin("storage", "supabase/storage-api:v1.0.0", true),
       pin("analytics", "supabase/logflare:1.0.0", true),
     ],
-  };
+  }));
 });
 
 /** A minimal Dockerfile with every slim-capable alias, plus kong and pg14 (hand-managed). */

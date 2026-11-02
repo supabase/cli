@@ -1,6 +1,6 @@
 name: Fill sticky disks
 
-# Test jobs mount the pnpm, Go and Docker image caches from Blacksmith sticky
+# Test jobs mount the pnpm and Docker image caches from Blacksmith sticky
 # disks but pull request runs never commit them. This workflow is the trusted
 # writer: it runs on protected branches, which are the only refs Blacksmith's
 # sticky-disk branch protection lets commit.
@@ -56,7 +56,6 @@ jobs:
       # Starting a default project pulls every image `supabase start` uses.
       - name: Pull CLI images
         env:
-          SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
           SUPABASE_CLI_BINARY_OVERRIDE: ${{ github.workspace }}/apps/cli/dist/supabase
         run: |
           project="$(mktemp -d)"

@@ -14,8 +14,6 @@ const FAKE_REF = "a".repeat(20);
 describe("supabase functions download — argument validation", () => {
   const conflicts = [
     { name: "--use-api + --use-docker", flags: ["--use-api", "--use-docker"] },
-    { name: "--use-api + --legacy-bundle", flags: ["--use-api", "--legacy-bundle"] },
-    { name: "--use-docker + --legacy-bundle", flags: ["--use-docker", "--legacy-bundle"] },
   ] as const;
 
   for (const { name, flags } of conflicts) {
@@ -25,7 +23,7 @@ describe("supabase functions download — argument validation", () => {
         withTempHome((home) =>
           Effect.gen(function* () {
             const { exitCode, stderr } = yield* runSupabaseEffect(
-              ["functions", "download", SLUG, "--project-ref", FAKE_REF, ...flags],
+              ["functions", "download", SLUG, ...flags, `--remote=${FAKE_REF}`],
               {
                 home: home.dir,
                 env: { HOME: home.dir, SUPABASE_ACCESS_TOKEN: FAKE_TOKEN },
@@ -42,8 +40,4 @@ describe("supabase functions download — argument validation", () => {
   // `--use-api` alone (without --use-docker) is covered in
   // download.integration.test.ts instead, since validating it here would
   // require a real network round-trip to the Management API.
-
-  // `--legacy-bundle` alone is covered in download.integration.test.ts
-  // instead: it routes to the Go binary's downloader, which would trigger a
-  // real Deno download from GitHub on every e2e run.
 });

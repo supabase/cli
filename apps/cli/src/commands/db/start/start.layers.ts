@@ -23,6 +23,7 @@ const httpClient = httpClientLayer.pipe(Layer.provide(debugLoggerLayer));
 
 export const dbStartRuntimeLayer = Layer.mergeAll(
   cliSettings,
+  debugLoggerLayer,
   telemetryStateLayer,
   // Backs `isLocalDbRunning`'s direct Engine-API probe (+ its `--debug` trace).
   localDockerEngineLayer.pipe(Layer.provide(debugLoggerLayer)),

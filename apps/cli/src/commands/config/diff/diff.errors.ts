@@ -5,7 +5,6 @@ import {
   ErrorActionabilityId,
   statusCodeActionability,
 } from "../../../shared/telemetry/error-actionability.ts";
-import { mintConfigTargetErrors } from "../../../command-internal/project-target.ts";
 
 interface NetworkErrorArgs {
   readonly message: string;
@@ -46,52 +45,6 @@ export class ConfigDiffOutputFlagUnsupportedError extends Data.TaggedError(
 )<{ readonly message: string }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidInput;
-  }
-}
-
-const targetErrors = mintConfigTargetErrors("ConfigDiff");
-
-/** `--project-ref` named a branch the parent project does not have. */
-export const ConfigDiffBranchNotFoundError = targetErrors.BranchNotFoundError;
-export type ConfigDiffBranchNotFoundError = InstanceType<typeof ConfigDiffBranchNotFoundError>;
-
-/**
- * `--project-ref` named a branch by name, but no project is linked to search branches under —
- * none of `SUPABASE_PROJECT_ID`, `supabase/.temp/linked-project.json`, or
- * `supabase/.temp/project-ref` yielded a candidate. Mirrors `LinkBranchNotLinkedError`.
- */
-export const ConfigDiffBranchNotLinkedError = targetErrors.BranchNotLinkedError;
-export type ConfigDiffBranchNotLinkedError = InstanceType<typeof ConfigDiffBranchNotLinkedError>;
-
-/**
- * `--project-ref` named a branch by name, and a parent-project candidate exists but isn't
- * ref-shaped — corrupt or stale linked state. Mirrors `LinkParentRefInvalidError`.
- */
-export const ConfigDiffParentRefInvalidError = targetErrors.ParentRefInvalidError;
-export type ConfigDiffParentRefInvalidError = InstanceType<typeof ConfigDiffParentRefInvalidError>;
-
-/**
- * The resolved branch has no project ref yet (still provisioning), guarding against an
- * empty ref reaching `/v2/projects//config`. Mirrors `LinkBranchNotReadyError`.
- */
-export const ConfigDiffBranchNotReadyError = targetErrors.BranchNotReadyError;
-export type ConfigDiffBranchNotReadyError = InstanceType<typeof ConfigDiffBranchNotReadyError>;
-
-export class ConfigDiffBranchResolveNetworkError extends Data.TaggedError(
-  "ConfigDiffBranchResolveNetworkError",
-)<NetworkErrorArgs> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return this.decode === true
-      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
-      : actionability.externalNetwork;
-  }
-}
-
-export class ConfigDiffBranchResolveStatusError extends Data.TaggedError(
-  "ConfigDiffBranchResolveStatusError",
-)<StatusErrorArgs> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 

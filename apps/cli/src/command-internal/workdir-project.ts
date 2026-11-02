@@ -6,11 +6,19 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
+import { configParseCauseMessage } from "../shared/output/normalize-error.ts";
 import { sanitizeInlineName } from "./http-errors.ts";
 
 /** Renders a config-load path relative to `workdir` (e.g. `supabase/config.json`), regardless of invocation cwd. */
 export function relativeConfigPath(workdir: string, path: string): string {
   return path.startsWith(workdir) ? path.slice(workdir.length).replace(/^[/\\]/, "") : path;
+}
+
+export function describeConfigParseError(
+  workdir: string,
+  error: { readonly path: string; readonly cause: unknown },
+): string {
+  return `failed to parse ${relativeConfigPath(workdir, error.path)}: ${configParseCauseMessage(error.cause)}`;
 }
 
 /**
@@ -70,8 +78,8 @@ class WorkdirProjectMissingError extends Data.TaggedError("WorkdirProjectMissing
  * Fails when an explicit `--workdir`/`SUPABASE_WORKDIR` holds no project; a no-op for a defaulted
  * workdir.
  *
- * Only valid for callers that don't pass `tomlOnly: true` to `loadCliConfig` — that mode can
- * return `null` for a `config.json`-only project even though this probe succeeds.
+ * Valid for any caller that loads config through the resolved config, which probes `config.json` and
+ * `config.toml` alike.
  */
 export const requireExplicitWorkdirProject = Effect.fnUntraced(function* (cliSettings: {
   readonly workdir: string;

@@ -1,11 +1,12 @@
 import { Effect, Option } from "effect";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
+import type { ProjectTargetFlagValues } from "../../../command-internal/target/target-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
-  encodeGoJson,
+  encodeSortedJson,
   encodeToml,
   encodeYaml,
-} from "../../../command-internal/go-output.encoders.ts";
+} from "../../../command-internal/output.encoders.ts";
 import { ComputeEnvNotSupportedError } from "./compute.errors.ts";
 
 /**
@@ -17,21 +18,21 @@ import { ComputeEnvNotSupportedError } from "./compute.errors.ts";
  */
 const PAYLOAD_FORMATS = new Set(["json", "yaml", "toml", "env"]);
 
-function emitsPayloadFor(goFormat: string | undefined): boolean {
-  return goFormat !== undefined && PAYLOAD_FORMATS.has(goFormat);
+function emitsPayloadFor(outputFlagFormat: string | undefined): boolean {
+  return outputFlagFormat !== undefined && PAYLOAD_FORMATS.has(outputFlagFormat);
 }
 
 export const emitComputeMachineOutput = Effect.fnUntraced(function* (
   payload: Record<string, unknown>,
 ) {
   const output = yield* Output;
-  const goFormat = Option.getOrUndefined(yield* OutputFlag);
+  const outputFlagFormat = Option.getOrUndefined(yield* OutputFlag);
 
-  if (!emitsPayloadFor(goFormat)) {
+  if (!emitsPayloadFor(outputFlagFormat)) {
     return false;
   }
 
-  if (goFormat === "env") {
+  if (outputFlagFormat === "env") {
     // Unreachable when the command called `rejectComputeEnvOutput` first,
     // which is where the refusal belongs; here as the backstop that stops a new
     // command silently emitting TOML for `-o env`.
@@ -40,11 +41,11 @@ export const emitComputeMachineOutput = Effect.fnUntraced(function* (
     });
   }
 
-  if (goFormat === "json") {
-    yield* output.raw(encodeGoJson(payload));
+  if (outputFlagFormat === "json") {
+    yield* output.raw(encodeSortedJson(payload));
     return true;
   }
-  if (goFormat === "yaml") {
+  if (outputFlagFormat === "yaml") {
     yield* output.raw(encodeYaml(payload));
     return true;
   }
@@ -72,8 +73,8 @@ export const computeMachineOutputRequested = Effect.fnUntraced(function* () {
  */
 export const computeRenderFormat = Effect.fnUntraced(function* () {
   const output = yield* Output;
-  const goFormat = Option.getOrUndefined(yield* OutputFlag);
-  const forcesText = goFormat !== undefined && !emitsPayloadFor(goFormat);
+  const outputFlagFormat = Option.getOrUndefined(yield* OutputFlag);
+  const forcesText = outputFlagFormat !== undefined && !emitsPayloadFor(outputFlagFormat);
   return forcesText ? ("text" as const) : output.format;
 });
 
@@ -93,16 +94,15 @@ export const rejectComputeEnvOutput = Effect.fnUntraced(function* () {
 });
 
 /**
- * The `--project-ref` a retry suggestion has to carry, or `""` when it came
- * from the link.
+ * The ` --remote=<ref>` a retry suggestion has to carry, or `""` when the project came from the
+ * link.
  *
- * Dropping an explicit `--project-ref` from a copy-pasted suggestion would
- * re-resolve to whichever project is currently linked — for `delete --yes`,
- * a same-named compute deleted without a prompt. Keyed off the flag, not the
- * resolved ref, so a link-supplied ref isn't echoed back as noise; an empty
- * flag value counts as "not supplied", matching `RemoteTarget`.
+ * Dropping an explicit selector from a copy-pasted suggestion would re-resolve to whichever
+ * project is currently linked — for `delete --yes`, a same-named compute deleted without a
+ * prompt. Keyed off the flags, not the resolved ref, so a link-supplied ref isn't echoed back as
+ * noise; the resolved ref also stands in for a branch name, which needs no second lookup.
  */
-export const computeProjectRefSuffix = (projectRef: Option.Option<string>): string =>
-  Option.isSome(projectRef) && projectRef.value.length > 0
-    ? ` --project-ref ${projectRef.value}`
+export const computeRemoteSuffix = (flags: ProjectTargetFlagValues, ref: string): string =>
+  Option.isSome(flags.projectRef) || Option.exists(flags.remote, (value) => value._tag !== "Linked")
+    ? ` --remote=${ref}`
     : "";

@@ -26,7 +26,9 @@ import { inspectDbUnusedIndexesCommand } from "./unused-indexes/unused-indexes.c
 import { inspectDbVacuumStatsCommand } from "./vacuum-stats/vacuum-stats.command.ts";
 
 export const inspectDbCommand = Command.make("db").pipe(
-  Command.withDescription("Tools to inspect your Supabase database."),
+  Command.withDescription(
+    "Tools to inspect your Supabase database. They inspect the local database by default; pass --remote for the linked project, or --remote=<ref|branch|url> for another database.",
+  ),
   Command.withShortDescription("Inspect database"),
   Command.withSubcommands([
     inspectDbDbStatsCommand,
@@ -44,11 +46,11 @@ export const inspectDbCommand = Command.make("db").pipe(
     inspectDbTrafficProfileCommand,
     inspectDbCacheHitCommand,
     inspectDbIndexUsageCommand,
-    inspectDbTotalIndexSizeCommand,
+    inspectDbTotalIndexSizeCommand.pipe(Command.unlisted),
     inspectDbIndexSizesCommand,
     inspectDbTableSizesCommand,
-    inspectDbTableIndexSizesCommand,
-    inspectDbTotalTableSizesCommand,
+    inspectDbTableIndexSizesCommand.pipe(Command.unlisted),
+    inspectDbTotalTableSizesCommand.pipe(Command.unlisted),
     inspectDbUnusedIndexesCommand,
     inspectDbTableRecordCountsCommand,
     inspectDbSeqScansCommand,
