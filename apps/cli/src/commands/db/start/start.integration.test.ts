@@ -1039,6 +1039,17 @@ describe("db start", () => {
     });
   });
 
+  it.effect("emits the health-start flags on a supported engine", () => {
+    const base = freshVolumeRoute(defaultRoute());
+    const { layer, child } = setup({
+      route: (args) => (args[0] === "version" ? { stdout: ["1.44 1.44 1.56"] } : base(args)),
+    });
+    return Effect.gen(function* () {
+      yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(createArgs(child.spawned)).toContain("--health-start-interval");
+    });
+  });
+
   it.effect("starts when Docker's health check cannot exec but the host can connect", () => {
     const s = setup({ route: execFailedHealthRoute(freshVolumeRoute(defaultRoute())) });
     return Effect.gen(function* () {
