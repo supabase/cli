@@ -38,7 +38,10 @@ import {
   resolveApiTlsPath,
   resolveEmailTemplateContentPath,
 } from "../../command-internal/config-validate.ts";
-import { isContainerNotFoundMessage } from "../../command-internal/container-cli.ts";
+import {
+  dockerSupportsHealthStartInterval,
+  isContainerNotFoundMessage,
+} from "../../command-internal/container-cli.ts";
 import { checkDbToml } from "../../command-internal/db-config.toml-read.ts";
 import { resolveEdgeRuntimeImage } from "../../command-internal/edge-runtime-image.ts";
 import {
@@ -796,6 +799,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     const startOpts: ContainerOpts = {
       projectId,
       isBitbucketPipeline: inBitbucketPipeline,
+      healthStartInterval: yield* dockerSupportsHealthStartInterval(spawner),
       workdir: cliSettings.workdir,
       extraHosts,
     };

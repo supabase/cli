@@ -1741,6 +1741,65 @@ describe("start integration", () => {
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
+    describe("Docker's first health check", () => {
+      const withVersionAnswer = (answer: RouteResult) => {
+        const base = defaultRoute();
+        return (args: ReadonlyArray<string>) => (args[0] === "version" ? answer : base(args));
+      };
+      const healthFlagsFor = (spawned: ReadonlyArray<SpawnRecord>, service: string) => {
+        const args =
+          spawned.find(
+            (s) =>
+              s.args[0] === "create" &&
+              containerNameFromCreateArgs(s.args).includes(`_${service}_`),
+          )?.args ?? [];
+        return Object.fromEntries(
+          args.flatMap((arg, index) =>
+            arg.startsWith("--health-") ? [[arg, args[index + 1]]] : [],
+          ),
+        );
+      };
+
+      it.effect("emits the health-start flags on a supported engine, asking Docker once", () =>
+        Effect.gen(function* () {
+          const { layer, child } = yield* setup({
+            route: withVersionAnswer({ stdout: ["1.44 1.44 1.44"] }),
+          });
+
+          yield* start(flags()).pipe(Effect.provide(layer));
+
+          expect(child.spawned.filter((s) => s.args[0] === "version")).toHaveLength(1);
+          for (const service of ["db", "auth", "realtime", "storage", "studio", "kong"]) {
+            expect(healthFlagsFor(child.spawned, service)).toMatchObject({
+              "--health-interval": "10s",
+              "--health-start-period": "10s",
+              "--health-start-interval": "1s",
+            });
+          }
+          expect(healthFlagsFor(child.spawned, "rest")).toEqual({});
+        }).pipe(Effect.provide(BunServices.layer)),
+      );
+
+      it.effect.each([
+        { name: "an engine below API 1.44", answer: { stdout: ["1.43 1.43 1.43"] } },
+        { name: "a docker shim for Podman", answer: { stdout: ["6.1.3 6.1.3 6.1.3"] } },
+        { name: "a failing docker version", answer: { exitCode: 1 } },
+      ])("passes none of the start flags on $name", ({ answer }) =>
+        Effect.gen(function* () {
+          const { layer, child } = yield* setup({ route: withVersionAnswer(answer) });
+
+          yield* start(flags()).pipe(Effect.provide(layer));
+
+          const creates = child.spawned.filter((s) => s.args[0] === "create");
+          expect(creates.length).toBeGreaterThan(0);
+          for (const create of creates) {
+            expect(create.args).not.toContain("--health-start-interval");
+          }
+          expect(healthFlagsFor(child.spawned, "auth")).not.toHaveProperty("--health-start-period");
+        }).pipe(Effect.provide(BunServices.layer)),
+      );
+    });
+
     it.effect(
       "starts Studio in a fresh project on Podman, which rejects missing bind sources",
       () =>

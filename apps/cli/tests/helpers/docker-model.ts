@@ -191,6 +191,7 @@ export function dockerModel(hooks: DockerModelHooks = {}) {
         exitCode: 0,
         stdout: [
           format
+            .replaceAll("{{.Client.DefaultAPIVersion}}", "1.45")
             .replaceAll("{{.Client.APIVersion}}", "1.45")
             .replaceAll("{{.Server.APIVersion}}", "1.45"),
         ],
