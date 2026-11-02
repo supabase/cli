@@ -332,4 +332,33 @@ describe("inspect db specs (per-subcommand correctness)", () => {
     expect(cells[1]).toBe("``");
     expect(cells[4]).toBe("");
   });
+
+  it("projects toast-sizes columns in header order, leaving a never-vacuumed cell empty", () => {
+    const row: Record<string, unknown> = {
+      name: "public.events",
+      total_size: "120 kB",
+      heap_size: "80 kB",
+      toast_size: "40 kB",
+      toast_live_chunks: 1200,
+      toast_dead_chunks: 80,
+      toast_dead_pct: "6.3",
+      last_autovacuum: "2025-01-15 03:00",
+      last_vacuum: null,
+    };
+    const cells = toastSizesSpec.project(row, {
+      conn: LOCAL_CONN,
+      isLocal: true,
+    } satisfies ResolvedDbConfig);
+    expect(cells).toEqual([
+      "public.events",
+      "120 kB",
+      "80 kB",
+      "40 kB",
+      "1200",
+      "80",
+      "6.3",
+      "2025-01-15 03:00",
+      "",
+    ]);
+  });
 });
