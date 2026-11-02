@@ -58,6 +58,7 @@ function makeCliSettings(workdir = "/nonexistent-workdir") {
     workdir,
     explicitWorkdir: false,
     userAgent: "test",
+    apiMaxRetries: Option.none(),
   });
 }
 
