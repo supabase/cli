@@ -1,3 +1,4 @@
+import { outputFormatsForCommand } from "../../command-internal/output-formats.ts";
 import { Layer } from "effect";
 import { identityStitchLayer } from "../../command-internal/identity-stitch.ts";
 import { Argument, Command, Flag } from "effect/cli";
@@ -136,7 +137,11 @@ export const logsCommandFor = (localEnabled: boolean, computeEnabled = false) =>
         withPermissions(readPermissions(["local", "file", "since", "from", "to"])),
         Command.withHandler((flags) =>
           logsQuery(flags).pipe(
-            withCommandTelemetry({ flags, config: queryConfig }),
+            withCommandTelemetry({
+              flags,
+              config: queryConfig,
+              outputFormats: outputFormatsForCommand(["logs", "query"]),
+            }),
             withJsonErrorHandling,
           ),
         ),
@@ -170,7 +175,11 @@ export const logsCommandFor = (localEnabled: boolean, computeEnabled = false) =>
         ),
         Command.withHandler((flags) =>
           logsTail(flags, localEnabled, computeEnabled).pipe(
-            withCommandTelemetry({ flags, config: tailConfig }),
+            withCommandTelemetry({
+              flags,
+              config: tailConfig,
+              outputFormats: outputFormatsForCommand(["logs", "tail"]),
+            }),
             withJsonErrorHandling,
           ),
         ),
@@ -197,7 +206,11 @@ export const logsCommandFor = (localEnabled: boolean, computeEnabled = false) =>
         ),
         Command.withHandler((flags) =>
           logsSources(flags, localEnabled, computeEnabled).pipe(
-            withCommandTelemetry({ flags, config: sourcesConfig }),
+            withCommandTelemetry({
+              flags,
+              config: sourcesConfig,
+              outputFormats: outputFormatsForCommand(["logs", "sources"]),
+            }),
             withJsonErrorHandling,
           ),
         ),

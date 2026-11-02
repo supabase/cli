@@ -18,6 +18,16 @@ export const RESOURCE_OUTPUT_FORMATS = ["env", "pretty", "json", "toml", "yaml"]
 /** Accepted `-o`/`--output` values for `db query`. */
 export const QUERY_OUTPUT_FORMATS = ["json", "table", "csv"] as const;
 
+const commandOutputFormats: Readonly<Record<string, ReadonlyArray<string>>> = {
+  "db query": QUERY_OUTPUT_FORMATS,
+  "logs query": ["pretty", "table", "json", "csv"],
+  "logs sources": ["pretty", "table", "json", "csv"],
+  "logs tail": ["pretty", "table", "json"],
+};
+
+export const outputFormatsForCommand = (path: ReadonlyArray<string>): ReadonlyArray<string> =>
+  commandOutputFormats[path.join(" ")] ?? RESOURCE_OUTPUT_FORMATS;
+
 /**
  * Raised when `-o`/`--output` carries a value the active command doesn't accept. The message
  * has the form `invalid argument "<value>" for "<flag>" flag: <reason>`.

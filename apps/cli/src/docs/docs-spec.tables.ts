@@ -1,3 +1,4 @@
+import { outputFormatsForCommand } from "../command-internal/output-formats.ts";
 import type { DocsFlag } from "./docs-spec.ts";
 import { genTypesLanguageFlagDefaults } from "../commands/gen/types/types.languages.ts";
 
@@ -153,7 +154,27 @@ export const DOCS_DEFAULT_OVERRIDES: Readonly<Record<string, string>> = {
  * choice at parse time (which documents only the globally valid formats), so
  * its own page documents the query-specific formats here.
  */
+const logsOutputFlag = (leaf: string): ReadonlyArray<DocsFlag> => {
+  const formats = outputFormatsForCommand(["logs", leaf]);
+  const type = `[ ${formats.join(" | ")} ]`;
+  return [
+    {
+      id: "output",
+      name: `-o, --output <${type}>`,
+      description:
+        leaf === "tail"
+          ? "Output format: pretty or table for text, json for JSON Lines."
+          : "Output format: pretty, table, json, or csv.",
+      default_value: "pretty",
+      accepted_values: formats.map((format) => ({ id: format, name: format, type })),
+    },
+  ];
+};
+
 export const DOCS_EXTRA_FLAGS: Readonly<Record<string, ReadonlyArray<DocsFlag>>> = {
+  "supabase-logs-query": logsOutputFlag("query"),
+  "supabase-logs-sources": logsOutputFlag("sources"),
+  "supabase-logs-tail": logsOutputFlag("tail"),
   "supabase-db-query": [
     {
       id: "output",
@@ -169,12 +190,6 @@ export const DOCS_EXTRA_FLAGS: Readonly<Record<string, ReadonlyArray<DocsFlag>>>
   ],
 };
 
-/**
- * Documented accepted values where the Effect choice union is wider than the
- * globally valid set, keyed `"<doc id> <flag id>"`. The root `-o, --output`
- * union includes `table`/`csv` only because `db query` reuses the global
- * flag; everywhere else the valid formats are the five below.
- */
 export const DOCS_CHOICE_OVERRIDES: Readonly<Record<string, ReadonlyArray<string>>> = {
   "supabase output": ["env", "pretty", "json", "toml", "yaml"],
 };

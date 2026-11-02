@@ -529,6 +529,31 @@ describe("respondToComplete", () => {
   });
 
   describe("--output's choice values are validated per-command, not the widened global union (CLI-1965 review)", () => {
+    it.each([
+      { leaf: "query", format: "table", accepted: true },
+      { leaf: "query", format: "csv", accepted: true },
+      { leaf: "sources", format: "table", accepted: true },
+      { leaf: "sources", format: "csv", accepted: true },
+      { leaf: "tail", format: "table", accepted: true },
+      { leaf: "tail", format: "csv", accepted: false },
+      { leaf: "query", format: "env", accepted: false },
+    ])(
+      "validates logs $leaf -o $format before completing the next flag",
+      ({ leaf, format, accepted }) => {
+        const result = respondToComplete(rootCommand, [
+          "__complete",
+          "logs",
+          leaf,
+          "-o",
+          format,
+          "--rem",
+        ]);
+        if (accepted)
+          expect(result?.candidates.map((candidate) => candidate.name)).toContain("--remote=");
+        else expect(result).toEqual({ candidates: [], directive: CompletionDirective.Default });
+      },
+    );
+
     it("rejects db query's own local values (table/csv) everywhere else", () => {
       const result = respondToComplete(rootCommand, ["__complete", "--output", "table", ""]);
       expect(result).toEqual({ candidates: [], directive: CompletionDirective.Default });

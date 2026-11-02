@@ -296,6 +296,18 @@ describe("buildDocsSpec", () => {
     expect(output?.accepted_values?.map((value) => value.id)).toEqual(["json", "table", "csv"]);
   });
 
+  it.each([
+    { leaf: "query", formats: ["pretty", "table", "json", "csv"] },
+    { leaf: "sources", formats: ["pretty", "table", "json", "csv"] },
+    { leaf: "tail", formats: ["pretty", "table", "json"] },
+  ])("documents the supported logs $leaf output formats", ({ leaf, formats }) => {
+    const output = builtSpec()
+      .byId.get(`supabase-logs-${leaf}`)
+      ?.flags.find((flag) => flag.id === "output");
+    expect(output?.accepted_values?.map((value) => value.id)).toEqual(formats);
+    expect(output?.default_value).toBe("pretty");
+  });
+
   it("quotes YAML 1.1 boolean-like scalars in the serialized spec", () => {
     const { spec } = builtSpec();
     const yaml = stringifyDocsSpec(spec);
