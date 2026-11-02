@@ -430,12 +430,7 @@ describe("branches create integration", () => {
       expect(api.requests[0]?.url).toContain("/branches");
       assertPermissionDrift({ command: "branches create", requests: api.requests, exact: true });
       expect(out.stderrText).toContain("/org/env-org/billing");
-      expect(analytics.captured).toEqual([
-        {
-          event: "cli_upgrade_suggested",
-          properties: { feature_key: "branching_limit", org_slug: "env-org" },
-        },
-      ]);
+      expect(analytics.captured).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 

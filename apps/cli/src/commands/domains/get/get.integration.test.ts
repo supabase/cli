@@ -393,12 +393,7 @@ describe("domains get integration", () => {
       assertPermissionDrift({ command: "domains get", requests: api.requests });
       expect(out.stderrText).toContain("Upgrade your plan:");
       expect(out.stderrText).toContain("/org/env-org/billing");
-      expect(analytics.captured).toEqual([
-        {
-          event: "cli_upgrade_suggested",
-          properties: { feature_key: "custom_domain", org_slug: "env-org" },
-        },
-      ]);
+      expect(analytics.captured).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 

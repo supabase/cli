@@ -34,10 +34,8 @@ export const upgradeSuggestion = block("upgrade-suggest", [
   },
 ]);
 
-function orgSlugFromUpgradeUrl(upgradeUrl: string): string {
-  const match = /\/org\/([^/]+)/.exec(upgradeUrl);
-  return match?.[1] ?? "";
-}
+const upgradeHint = (upgradeUrl: string): string =>
+  `Your organization does not have access to this feature. Upgrade your plan: ${styleText("bold", upgradeUrl)}`;
 
 export function gateResponse(cause: unknown): HttpClientResponse.HttpClientResponse | undefined {
   return HttpClientError.isHttpClientError(cause) ? cause.response : undefined;
@@ -91,8 +89,6 @@ export const suggestUpgrade = Effect.fn("UpgradeSuggest.check")(function* (opts:
    * an unauthenticated request), `undefined` uses the client's own token.
    */
   readonly accessToken?: Option.Option<Redacted.Redacted<string>>;
-  /** Set false for call sites that must not fire `EventUpgradeSuggested` (vanity check-availability). */
-  readonly trackAnalytics?: boolean;
 }) {
   if (opts.statusCode < 400 || opts.statusCode >= 500) {
     return false;
@@ -103,81 +99,67 @@ export const suggestUpgrade = Effect.fn("UpgradeSuggest.check")(function* (opts:
   const cliSettings = yield* CommandSettings;
   yield* Effect.annotateCurrentSpan("upgrade.gated", false);
 
-  let gate:
-    | { readonly billingUrl: string; readonly feature: string; readonly orgSlug: string }
-    | undefined;
-
   if (opts.response !== undefined) {
     const body = yield* opts.response.json.pipe(Effect.option);
     const envelope = Option.isSome(body) ? parsePlanGateEnvelope(body.value) : undefined;
     if (envelope !== undefined) {
-      gate = {
-        billingUrl: envelope.upgrade_url,
-        feature: envelope.feature,
-        orgSlug: orgSlugFromUpgradeUrl(envelope.upgrade_url),
-      };
+      // The error carries `entitlement`, so the command wrapper fires the event.
+      yield* Effect.annotateCurrentSpan("upgrade.gated", true);
+      if (output.format === "text") {
+        yield* output.raw(upgradeHint(envelope.upgrade_url) + "\n", "stderr");
+      }
+      return true;
     }
   }
 
-  if (gate === undefined) {
-    if (opts.featureKey === undefined || opts.featureKey === "") {
-      return false;
-    }
+  if (opts.featureKey === undefined || opts.featureKey === "") {
+    return false;
+  }
 
-    if (opts.accessToken !== undefined && Option.isNone(opts.accessToken)) {
-      return false;
-    }
+  if (opts.accessToken !== undefined && Option.isNone(opts.accessToken)) {
+    return false;
+  }
 
-    const api = yield* CommandPlatformApi;
-    const requestOptions = {
-      baseUrl: opts.apiUrl,
-      accessToken: opts.accessToken === undefined ? undefined : opts.accessToken.value,
-    };
-    const project = yield* api.v1
-      .getProject({ ref: opts.projectRef }, requestOptions)
-      .pipe(Effect.option);
-    if (Option.isNone(project)) {
-      return false;
-    }
-    const orgSlug = project.value.organization_slug;
-    if (orgSlug.length === 0) {
-      return false;
-    }
+  const api = yield* CommandPlatformApi;
+  const requestOptions = {
+    baseUrl: opts.apiUrl,
+    accessToken: opts.accessToken === undefined ? undefined : opts.accessToken.value,
+  };
+  const project = yield* api.v1
+    .getProject({ ref: opts.projectRef }, requestOptions)
+    .pipe(Effect.option);
+  if (Option.isNone(project)) {
+    return false;
+  }
+  const orgSlug = project.value.organization_slug;
+  if (orgSlug.length === 0) {
+    return false;
+  }
 
-    const entitlements = yield* api.v1
-      .getOrganizationEntitlements({ slug: orgSlug }, requestOptions)
-      .pipe(Effect.option);
-    if (Option.isNone(entitlements)) {
-      return false;
-    }
+  const entitlements = yield* api.v1
+    .getOrganizationEntitlements({ slug: orgSlug }, requestOptions)
+    .pipe(Effect.option);
+  if (Option.isNone(entitlements)) {
+    return false;
+  }
 
-    const gated = entitlements.value.entitlements.some(
-      (entry) => entry.feature.key === opts.featureKey && entry.hasAccess === false,
-    );
-    if (!gated) {
-      return false;
-    }
-
-    gate = {
-      billingUrl: billingUrl(cliSettings.profile, orgSlug),
-      feature: opts.featureKey,
-      orgSlug,
-    };
+  const gated = entitlements.value.entitlements.some(
+    (entry) => entry.feature.key === opts.featureKey && entry.hasAccess === false,
+  );
+  if (!gated) {
+    return false;
   }
 
   yield* Effect.annotateCurrentSpan("upgrade.gated", true);
-  const suggestion = `Your organization does not have access to this feature. Upgrade your plan: ${styleText("bold", gate.billingUrl)}`;
 
   if (output.format === "text") {
-    yield* output.raw(suggestion + "\n", "stderr");
+    yield* output.raw(upgradeHint(billingUrl(cliSettings.profile, orgSlug)) + "\n", "stderr");
   }
 
-  if (opts.trackAnalytics !== false) {
-    yield* analytics.capture(EventUpgradeSuggested, {
-      [PropFeatureKey]: gate.feature,
-      [PropOrgSlug]: gate.orgSlug,
-    });
-  }
+  yield* analytics.capture(EventUpgradeSuggested, {
+    [PropFeatureKey]: opts.featureKey,
+    [PropOrgSlug]: orgSlug,
+  });
 
   return true;
 });
