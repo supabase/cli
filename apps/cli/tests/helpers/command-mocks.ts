@@ -540,6 +540,7 @@ export interface MockCommandPlatformApiOpts {
   readonly apiUrl?: string;
   readonly userAgent?: string;
   readonly accessToken?: string;
+  readonly clientMaxRetries?: number;
 }
 
 export interface MockCommandPlatformApiResult {
@@ -611,7 +612,7 @@ export function mockCommandPlatformApi(
         accessToken: opts.accessToken ?? VALID_TOKEN,
         userAgent: opts.userAgent ?? DEFAULT_USER_AGENT,
       },
-      { retry: { maxRetries: 0 } },
+      { retry: { maxRetries: opts.clientMaxRetries ?? 0 } },
     ),
   ).pipe(Layer.provide(httpClientLayer));
 

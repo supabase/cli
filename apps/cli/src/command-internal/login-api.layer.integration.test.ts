@@ -67,7 +67,7 @@ describe("loginApiLayer", () => {
   it.effect("looks the profile up once when SUPABASE_API_MAX_RETRIES is 0", () => {
     const { api, layer } = setup(
       {
-        /* `Retry-After: 0` keeps any retry from waiting on the test clock. */
+        // `Retry-After: 0` keeps any retry from waiting on the test clock.
         handler: (request) =>
           Effect.succeed(
             HttpClientResponse.fromWeb(

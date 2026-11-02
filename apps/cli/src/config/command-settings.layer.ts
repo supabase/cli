@@ -186,8 +186,8 @@ export const commandSettingsLayer = Layer.unwrap(
           path,
         );
 
-        /* Empty means unset, like the other SUPABASE_* settings; anything else must be plain
-           digits, rejected here before a command reaches the network. */
+        // Empty means unset, like the other SUPABASE_* settings; anything else must be plain
+        // digits, rejected here before a command reaches the network.
         const rawApiMaxRetries = yield* read(
           Config.option(Config.String("SUPABASE_API_MAX_RETRIES")),
         );

@@ -309,7 +309,7 @@ describe("commandPlatformApiLayer", () => {
   });
 
   it.effect("sends a failing request once when SUPABASE_API_MAX_RETRIES is 0", () => {
-    /* `Retry-After: 0` keeps any retry from waiting on the test clock. */
+    // `Retry-After: 0` keeps any retry from waiting on the test clock.
     const http = captureRequests({ "Retry-After": "0" }, 500);
     const layer = commandPlatformApiLayer.pipe(
       Layer.provide(mockCliSettings({ accessToken: VALID_TOKEN, apiMaxRetries: 0 })),
