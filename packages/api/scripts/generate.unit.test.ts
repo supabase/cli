@@ -145,18 +145,19 @@ describe("generate", () => {
     });
   });
 
-  test("drops content annotations from binary strings without touching a property named contentEncoding", () => {
+  test("reduces binary strings to their format, keeping nullability, without touching a property named contentEncoding", () => {
     expect(
       renderOpenApiSchema({
         type: "object",
         additionalProperties: false,
         properties: {
           eszip: { type: "string", format: "binary", contentEncoding: "binary" },
+          described: { type: "string", format: "binary", description: "Raw ESZIP", nullable: true },
           contentEncoding: { type: "string", contentMediaType: "text/plain" },
         },
       }),
     ).toBe(
-      'Schema.Struct({ "eszip": Schema.optionalKey(Schema.String.annotate({ "format": "binary" })), "contentEncoding": Schema.optionalKey(Schema.String) })',
+      'Schema.Struct({ "eszip": Schema.optionalKey(Schema.String.annotate({ "format": "binary" })), "described": Schema.optionalKey(Schema.Union([Schema.String.annotate({ "format": "binary" }), Schema.Null])), "contentEncoding": Schema.optionalKey(Schema.String) })',
     );
   });
 
