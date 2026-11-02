@@ -163,7 +163,7 @@ flags.noBackup`. `--backup=false` alone does **not** delete volumes; only
   `--no-backup` does.
 - Volume prune gates `--all` on the Docker client and daemon API versions (`container-cli.ts`'s
   `dockerSupportsVolumePruneAllFlag`, checked via `docker version --format
-'{{.Client.APIVersion}} {{.Server.APIVersion}}'`) — Docker requires both to be >= 1.42. This
+'{{.Client.DefaultAPIVersion}} {{.Client.APIVersion}} {{.Server.APIVersion}}'`) — the CLI requires all three to be >= 1.42. This
   isn't cosmetic: a pre-23.0 Docker CLI doesn't know `--all` on `volume prune`, and a newer
   CLI annotates it `version: "1.42"` and rejects it when the daemon is below 1.42, before
   pruning runs, so sending it unconditionally hard-fails the whole call instead of just

@@ -1208,6 +1208,20 @@ describe("db reset", () => {
       );
     });
 
+    it.effect("emits the health-start flags on a supported engine", () => {
+      const base = defaultLocalResetRoute();
+      const { layer, child } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset"],
+        isLocal: true,
+        route: (args) => (args[0] === "version" ? { stdout: ["1.44 1.44 1.56"] } : base(args)),
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(createArgs(child.spawned)).toContain("--health-start-interval");
+      });
+    });
+
     it.effect(
       "recreates when Docker cannot exec the database's health check but it accepts connections",
       () => {

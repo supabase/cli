@@ -104,22 +104,20 @@ export const branchesCreate = Effect.fn("branches.create")(function* (flags: Bra
         Effect.tapError(() => creating?.fail() ?? Effect.void),
         // Runs the plan-gate check before mapping the error, even for a gated 4xx.
         Effect.catch(
-          gateMapError(
-            { projectRef: ref, featureKey: "branching_limit" },
-            (cause, upgradeSuggested) =>
-              mapCreateErrorRaw(cause).pipe(
-                Effect.catchTag("BranchesCreateUnexpectedStatusError", (mapped) =>
-                  Effect.fail(
-                    new BranchesCreateUnexpectedStatusError({
-                      status: mapped.status,
-                      body: mapped.body,
-                      message: mapped.message,
-                      upgradeSuggested,
-                      entitlement: mapped.entitlement,
-                    }),
-                  ),
+          gateMapError({ projectRef: ref }, (cause, upgradeSuggested) =>
+            mapCreateErrorRaw(cause).pipe(
+              Effect.catchTag("BranchesCreateUnexpectedStatusError", (mapped) =>
+                Effect.fail(
+                  new BranchesCreateUnexpectedStatusError({
+                    status: mapped.status,
+                    body: mapped.body,
+                    message: mapped.message,
+                    upgradeSuggested,
+                    entitlement: mapped.entitlement,
+                  }),
                 ),
               ),
+            ),
           ),
         ),
       );

@@ -8,7 +8,6 @@ import { branchResolution } from "../../../command-internal/target/branch-resolu
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
-import { upgradeSuggestion } from "../../../command-internal/upgrade-suggest.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
 import { RESOURCE_OUTPUT_FORMATS } from "../../../command-internal/output-formats.ts";
@@ -54,7 +53,6 @@ export const vanitySubdomainsActivateCommand = Command.make("activate", config).
           },
         ],
       },
-      upgradeSuggestion,
       projectRefPicker,
       linkedProjectCache,
       branchResolution,

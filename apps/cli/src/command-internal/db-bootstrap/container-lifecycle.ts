@@ -34,6 +34,7 @@ import {
 import {
   buildStartContainerCreateArgs,
   applyBitbucketStartContainerFilter,
+  applyHealthStartInterval,
   isDockerClientEnvKey,
   type StartContainerSpec,
 } from "./docker-create-args.ts";
@@ -124,6 +125,11 @@ export interface ContainerOpts {
   readonly projectId: string;
   /** Passed in (rather than read via env here) so this module stays a pure effect orchestrator. */
   readonly isBitbucketPipeline: boolean;
+  /**
+   * Whether the engine takes `--health-start-interval`, probed once per run by each command that
+   * reads Docker's health status. Shadow databases leave it unset: nothing reads theirs.
+   */
+  readonly healthStartInterval?: boolean;
   /**
    * Stamped onto every created container as {@link CLI_WORKDIR_LABEL} so a later `stop` or
    * {@link rollbackStart} can find this directory from the container's own label alone, without
@@ -716,7 +722,10 @@ export function createContainer(
       }
     }
 
-    const finalSpec = applyBitbucketStartContainerFilter(labeledSpec, opts.isBitbucketPipeline);
+    const finalSpec = applyHealthStartInterval(
+      applyBitbucketStartContainerFilter(labeledSpec, opts.isBitbucketPipeline),
+      opts.healthStartInterval === true,
+    );
 
     const createArgs = buildStartContainerCreateArgs(finalSpec);
     // `isDockerClientEnvKey` keys are already emitted inline as `-e KEY=value` above; see
