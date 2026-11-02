@@ -10,7 +10,7 @@ FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE c.relkind = 'r'
   AND NOT n.nspname LIKE ANY($1)
-ORDER BY age(c.relfrozenxid) DESC`;
+ORDER BY age(c.relfrozenxid) DESC, name`;
 
 export const xidAgeSpec: InspectQuerySpec = {
   name: "xid-age",

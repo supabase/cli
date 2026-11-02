@@ -67,7 +67,7 @@ Each subcommand runs one read-only `SELECT` (the embedded `<name>.sql`). The
 | bloat                | bloat.sql                | yes (`$1`)                  |
 | vacuum-stats         | vacuum_stats.sql         | yes (`$1`)                  |
 | table-stats          | table_stats.sql          | yes (`$1`)                  |
-| xid-age              | xid-age.query.ts         | yes (`$1`)                  |
+| xid-age              | xid_age.sql              | yes (`$1`)                  |
 | replication-slots    | replication_slots.sql    | no                          |
 | locks                | locks.sql                | no                          |
 | blocking             | blocking.sql             | no                          |

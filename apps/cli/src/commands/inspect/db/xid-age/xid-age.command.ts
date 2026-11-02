@@ -13,12 +13,12 @@ import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
 
 export const inspectDbXidAgeCommand = Command.make("xid-age", INSPECT_DB_FLAGS).pipe(
   Command.withDescription(
-    "Lists user tables with their transaction ID (XID) age, ordered from oldest to newest. " +
-      "PostgreSQL wraps around at ~2 billion transactions; as a table's age approaches that limit " +
-      "an emergency autovacuum freeze is forced, which can make the database temporarily unavailable. " +
+    "Lists user tables with their transaction ID (XID) age, oldest first. " +
+      "Transactions remaining is the headroom to a 2 billion threshold, below PostgreSQL's ~2.1 billion wraparound limit. " +
+      "Autovacuum forces a freeze once a table passes autovacuum_freeze_max_age, and PostgreSQL stops assigning XIDs near the limit. " +
       "Tables older than 1.5 billion transactions should be treated as urgent.",
   ),
-  Command.withShortDescription("Show XID age for all tables"),
+  Command.withShortDescription("Show XID age for user tables"),
   withPermissions(INSPECT_DB_PERMISSIONS),
   Command.withHandler(inspectDbCommandHandler(inspectDbXidAge)),
   Command.provide(inspectDbRuntimeLayer("xid-age")),
