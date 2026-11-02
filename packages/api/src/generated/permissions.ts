@@ -344,6 +344,7 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
     oauthScope: "analytics_config:write",
   },
   "v2-run-project-advisors": { fga: [["advisors_read"]] },
+  "v2-download-project-backup": { fga: [["backups_write"]], oauthScope: "database:write" },
   "v2-create-a-branch": {
     fga: [["branching_development_create"], ["branching_production_create"]],
     oauthScope: "environment:write",
@@ -381,8 +382,6 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
     oauthScope: "edge_functions:write",
   },
   "v2-deploy-a-compute-instance": { fga: [["workers_write"]], oauthScope: "edge_functions:write" },
-  "v2-list-organization-members": { fga: [["members_read"]], oauthScope: "organizations:read" },
-  "v2-assign-organization-member-role": { fga: [["organization_admin_write"]] },
   "v2-list-organization-roles": { fga: [["members_read"]], oauthScope: "organizations:read" },
   "v2-create-organization-invitations": {
     fga: [["members_write"]],
@@ -392,6 +391,15 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
     fga: [["members_write"]],
     oauthScope: "organizations:write",
   },
+  "v2-list-organization-members": { fga: [["members_read"]], oauthScope: "organizations:read" },
+  "v2-assign-organization-member-role": {
+    fga: [["organization_admin_write"]],
+    oauthScope: "organizations:write",
+  },
+  "v2-remove-organization-members": {
+    fga: [["organization_admin_write"]],
+    oauthScope: "organizations:write",
+  },
   "v2-list-organization-projects": {
     fga: [["organization_projects_read"]],
     oauthScope: "projects:read",
@@ -399,6 +407,10 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
   "v2-list-organization-github-connections": {
     fga: [["organization_projects_read"]],
     oauthScope: "projects:read",
+  },
+  "v2-list-organization-maintenance-windows": {
+    fga: [["organization_admin_read"]],
+    oauthScope: "organizations:read",
   },
   "v2-projects-ref-webhooks-endpoints-get": { fga: [] },
   "v2-projects-ref-webhooks-endpoints-post": { fga: [] },
