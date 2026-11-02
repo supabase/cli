@@ -45,6 +45,7 @@ export const inspectDbCommand = Command.make("db").pipe(
     inspectDbVacuumStatsCommand,
     inspectDbTableStatsCommand,
     inspectDbTrafficProfileCommand,
+    inspectDbXidAgeCommand,
     inspectDbCacheHitCommand,
     inspectDbIndexUsageCommand,
     inspectDbTotalIndexSizeCommand.pipe(Command.unlisted),
@@ -57,6 +58,5 @@ export const inspectDbCommand = Command.make("db").pipe(
     inspectDbSeqScansCommand,
     inspectDbRoleConfigsCommand,
     inspectDbRoleConnectionsCommand,
-    inspectDbXidAgeCommand,
   ]),
 );
