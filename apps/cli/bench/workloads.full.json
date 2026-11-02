@@ -48,7 +48,7 @@
       "runs": 10,
       "warmup": 1,
       "traceRuns": 2,
-      "estimatedSeconds": 90
+      "estimatedSeconds": 220
     },
     {
       "id": "db-query",
@@ -61,7 +61,7 @@
       "runs": 10,
       "warmup": 1,
       "traceRuns": 2,
-      "estimatedSeconds": 90
+      "estimatedSeconds": 220
     },
     {
       "id": "db-reset",
@@ -90,7 +90,7 @@
       "warmup": 1,
       "traceRuns": 1,
       "timeoutSeconds": 120,
-      "estimatedSeconds": 60
+      "estimatedSeconds": 180
     },
     {
       "id": "gen-types-small",
@@ -104,7 +104,7 @@
       "runs": 10,
       "warmup": 1,
       "traceRuns": 2,
-      "estimatedSeconds": 90
+      "estimatedSeconds": 220
     },
     {
       "id": "gen-types-medium",
@@ -118,7 +118,7 @@
       "runs": 10,
       "warmup": 1,
       "traceRuns": 2,
-      "estimatedSeconds": 90
+      "estimatedSeconds": 220
     },
     {
       "id": "gen-types-large",
@@ -132,7 +132,7 @@
       "runs": 10,
       "warmup": 1,
       "traceRuns": 2,
-      "estimatedSeconds": 100
+      "estimatedSeconds": 250
     },
     {
       "id": "db-diff-cold",
@@ -183,7 +183,7 @@
       "runs": 10,
       "warmup": 1,
       "traceRuns": 2,
-      "estimatedSeconds": 100
+      "estimatedSeconds": 250
     },
     {
       "id": "db-lint",
@@ -197,7 +197,7 @@
       "runs": 10,
       "warmup": 1,
       "traceRuns": 2,
-      "estimatedSeconds": 90
+      "estimatedSeconds": 220
     },
     {
       "id": "migration-up",
@@ -239,7 +239,7 @@
       "runs": 10,
       "warmup": 1,
       "traceRuns": 2,
-      "estimatedSeconds": 90
+      "estimatedSeconds": 220
     },
     {
       "id": "stack-start-docker",
@@ -266,7 +266,7 @@
       "runs": 10,
       "warmup": 1,
       "traceRuns": 2,
-      "estimatedSeconds": 60
+      "estimatedSeconds": 150
     },
     {
       "id": "stack-stop-docker",
@@ -294,7 +294,7 @@
       "runs": 10,
       "warmup": 1,
       "traceRuns": 2,
-      "estimatedSeconds": 60
+      "estimatedSeconds": 150
     },
     {
       "id": "stack-db-reset-docker",
@@ -336,7 +336,7 @@
       "runs": 10,
       "warmup": 1,
       "traceRuns": 2,
-      "estimatedSeconds": 60
+      "estimatedSeconds": 150
     },
     {
       "id": "stack-stop-native",
@@ -364,7 +364,7 @@
       "runs": 10,
       "warmup": 1,
       "traceRuns": 2,
-      "estimatedSeconds": 60
+      "estimatedSeconds": 150
     },
     {
       "id": "stack-db-reset-native",

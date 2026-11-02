@@ -137,6 +137,21 @@ describe("buildUnitPlan", () => {
   });
 });
 
+describe("buildUnitPlan block sizing", () => {
+  it("gives ten runs five blocks per build by default, each tagged with its block index", () => {
+    const plan = buildUnitPlan(10, 1, "block");
+
+    for (const build of ["base", "branch"] as const) {
+      expect(plan.filter((unit) => unit.build === build).map((unit) => unit.block)).toEqual([
+        0, 1, 2, 3, 4,
+      ]);
+    }
+    expect(
+      plan.every((unit) => unit.launches.filter((kind) => kind === "timed").length === 2),
+    ).toBe(true);
+  });
+});
+
 describe("parseBenchArgs for stack runs", () => {
   it("lets explicit --runs and --warmup override the manifest, and defaults otherwise", () => {
     expect(parseBenchArgs(required)).toMatchObject({
