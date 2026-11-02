@@ -2948,6 +2948,22 @@ export const versionedEffectOperations = {
           options,
         );
       }),
+    downloadProjectBackup: (
+      input: typeof operationDefinitions.v2DownloadProjectBackup.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2DownloadProjectBackup.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2DownloadProjectBackup">(
+          operationDefinitions.v2DownloadProjectBackup,
+          input,
+          options,
+        );
+      }),
     getAComputeInstance: (
       input: typeof operationDefinitions.v2GetAComputeInstance.inputSchema.Type,
       options?: SupabaseApiRequestOptions,
@@ -3056,6 +3072,22 @@ export const versionedEffectOperations = {
         const client = yield* SupabaseApiClient;
         return yield* client.execute<"v2ListOrganizationGithubConnections">(
           operationDefinitions.v2ListOrganizationGithubConnections,
+          input,
+          options,
+        );
+      }),
+    listOrganizationMaintenanceWindows: (
+      input: typeof operationDefinitions.v2ListOrganizationMaintenanceWindows.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2ListOrganizationMaintenanceWindows.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2ListOrganizationMaintenanceWindows">(
+          operationDefinitions.v2ListOrganizationMaintenanceWindows,
           input,
           options,
         );
@@ -3456,6 +3488,22 @@ export const versionedEffectOperations = {
         const client = yield* SupabaseApiClient;
         return yield* client.execute<"v2ProjectsRefWebhooksEndpointsPost">(
           operationDefinitions.v2ProjectsRefWebhooksEndpointsPost,
+          input,
+          options,
+        );
+      }),
+    removeOrganizationMembers: (
+      input: typeof operationDefinitions.v2RemoveOrganizationMembers.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2RemoveOrganizationMembers.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2RemoveOrganizationMembers">(
+          operationDefinitions.v2RemoveOrganizationMembers,
           input,
           options,
         );
