@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   Context,
   Crypto,
+  Data,
   Effect,
   Exit,
   Fiber,
@@ -11,11 +12,12 @@ import {
   Path,
   Queue,
   Redacted,
+  Ref,
   Scope,
   Stream,
 } from "effect";
 import { HttpClient } from "effect/http";
-import { tmpdir } from "node:os";
+import { testArtifactCacheRoot as cacheRoot } from "../tests/artifact-cache.ts";
 import { engineTarget, testEngine } from "../tests/engine-target.ts";
 import { ownerFor } from "../tests/owner-rpc.ts";
 import type { LogRecord } from "./host/LogRecord.ts";
@@ -25,7 +27,6 @@ import * as StackNamespace from "./StackNamespace.ts";
 import type { SavedStack } from "./StackNamespace.ts";
 import { selection } from "../tests/pins.ts";
 
-const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
 const services = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
 
 const stackFor = (id: string, runtime: SavedStack["runtime"]): SavedStack => ({
@@ -96,6 +97,45 @@ const isOutput = (record: LogRecord) => record.kind === "stdout" || record.kind 
 const firstOutput = (records: Stream.Stream<LogRecord, StackError>) =>
   records.pipe(Stream.filter(isOutput), Stream.take(1), Stream.runCollect);
 
+class NativeMailStallError extends Data.TaggedError("NativeMailStallError")<{
+  readonly message: string;
+}> {}
+
+/** Fails a stalled native Mailpit step within the test timeout, naming the step and its persisted output. */
+const guardNativeMail =
+  (
+    history: (id: string) => Stream.Stream<LogRecord, StackError>,
+    phase: Ref.Ref<{ readonly step: string; readonly id?: string }>,
+  ) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.timeoutOrElse({
+        duration: "25 seconds",
+        orElse: () =>
+          Effect.gen(function* () {
+            const { step, id } = yield* Ref.get(phase);
+            const output =
+              id === undefined
+                ? []
+                : yield* history(id).pipe(
+                    Stream.filter(isOutput),
+                    Stream.runCollect,
+                    Effect.timeoutOrElse({
+                      duration: "2 seconds",
+                      orElse: () => Effect.succeed([]),
+                    }),
+                    Effect.orElseSucceed(() => []),
+                  );
+            const text = Array.from(output, (record) => record.text ?? "")
+              .join("")
+              .slice(-2_000);
+            return yield* new NativeMailStallError({
+              message: `native Mailpit ${step}${id === undefined ? "" : ` (${id})`} did not finish within 25 seconds; output:\n${text || "(none)"}`,
+            });
+          }),
+      }),
+    );
+
 /** Follows from the oldest record until `count` launch markers are persisted. */
 const awaitLaunches = (records: Stream.Stream<LogRecord, StackError>, count: number) =>
   records.pipe(
@@ -112,19 +152,28 @@ describe("owner persisted logs", () => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const owner = yield* openOwner("owner-logs-native-", "native");
-        const mail = yield* owner.rpc.createService({
-          service: "mail",
-          pin: selection.mail,
-          config: {},
-          endpoints: { http: { port: "auto" } },
+        const phase = yield* Ref.make<{ readonly step: string; readonly id?: string }>({
+          step: "create",
         });
-        yield* owner.rpc.startService({ id: mail.id });
-        yield* owner.rpc.readyService({ id: mail.id });
-
-        const [followed] = yield* firstOutput(owner.rpc.readLogs({ id: mail.id, follow: true }));
-        const history = Array.from(
-          yield* owner.rpc.readLogs({ id: mail.id, follow: false }).pipe(Stream.runCollect),
-        );
+        const { mail, followed, history } = yield* Effect.gen(function* () {
+          const mail = yield* owner.rpc.createService({
+            service: "mail",
+            pin: selection.mail,
+            config: {},
+            endpoints: { http: { port: "auto" } },
+          });
+          yield* Ref.set(phase, { step: "artifact preparation and start", id: mail.id });
+          yield* owner.rpc.startService({ id: mail.id });
+          yield* Ref.set(phase, { step: "readiness", id: mail.id });
+          yield* owner.rpc.readyService({ id: mail.id });
+          yield* Ref.set(phase, { step: "first followed output", id: mail.id });
+          const [followed] = yield* firstOutput(owner.rpc.readLogs({ id: mail.id, follow: true }));
+          yield* Ref.set(phase, { step: "history read", id: mail.id });
+          const history = Array.from(
+            yield* owner.rpc.readLogs({ id: mail.id, follow: false }).pipe(Stream.runCollect),
+          );
+          return { mail, followed, history };
+        }).pipe(guardNativeMail((id) => owner.rpc.readLogs({ id, follow: false }), phase));
 
         expect(history[0]).toMatchObject({ kind: "launch", launchId: 1 });
         expect(history).toContainEqual(followed);
