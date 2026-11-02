@@ -45,6 +45,8 @@ permissions: {}
 concurrency:
   group: cli-bench-full-${{ github.ref_name }}
   cancel-in-progress: false
+  # The default `single` cancels a pending run when another is queued.
+  queue: max
 
 jobs:
   # Decides what this run measures and against which base, splits the workloads into shards, and
@@ -511,6 +513,8 @@ jobs:
     concurrency:
       group: cli-bench-comment-lightweight-${{ needs.plan.outputs.pr_number }}
       cancel-in-progress: false
+      # The default `single` cancels a pending run when another is queued.
+      queue: max
     permissions:
       contents: read
       pull-requests: write

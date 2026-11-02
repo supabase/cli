@@ -272,6 +272,8 @@ jobs:
     concurrency:
       group: cli-bench-comment-lightweight-${{ github.event.pull_request.number }}
       cancel-in-progress: false
+      # The default `single` cancels a pending run when another is queued.
+      queue: max
     # The only pull_request job that can write to the pull request. It checks out the merge commit,
     # which its author can already run with this token by editing the workflow. It never builds or
     # runs the benchmarked binaries and reads the rendered markdown as data.
