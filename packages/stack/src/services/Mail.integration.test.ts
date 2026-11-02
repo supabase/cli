@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Data, Effect, Exit, FileSystem, Layer, Path, Ref, Stream } from "effect";
+import { Data, Effect, Exit, Fiber, FileSystem, Layer, Path, Ref, Stream } from "effect";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
@@ -61,63 +61,70 @@ const sendTestEmail = (
 
 class MailStallError extends Data.TaggedError("MailStallError")<{ readonly message: string }> {}
 
-/** Fails a stalled launch within the test timeout, naming its current phase and Mailpit's output. */
+/** Fails a stalled launch within the test timeout without waiting for its scope's teardown. */
 const guardLaunch =
   (duration: `${number} seconds`, phase: Ref.Ref<string>, logs: Ref.Ref<string>) =>
   <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    effect.pipe(
-      Effect.timeoutOrElse({
-        duration,
-        orElse: () =>
-          Effect.all([Ref.get(phase), Ref.get(logs)]).pipe(
-            Effect.flatMap(([stalled, output]) =>
-              Effect.fail(
-                new MailStallError({
-                  message: `Mailpit ${stalled} did not finish within ${duration}; output:\n${output || "(none)"}`,
-                }),
+    Effect.flatMap(Effect.forkDetach(effect), (fiber) =>
+      Fiber.join(fiber).pipe(
+        Effect.onInterrupt(() => Effect.forkDetach(Fiber.interrupt(fiber))),
+        Effect.timeoutOrElse({
+          duration,
+          orElse: () =>
+            Effect.all([Ref.get(phase), Ref.get(logs)]).pipe(
+              Effect.flatMap(([stalled, output]) =>
+                Effect.fail(
+                  new MailStallError({
+                    message: `Mailpit ${stalled} did not finish within ${duration}; output:\n${output || "(none)"}`,
+                  }),
+                ),
               ),
             ),
-          ),
-      }),
+        }),
+      ),
     );
 
 describe("service catalog", () => {
   it.live("launches the real Mailpit recipe and serves its HTTP endpoint", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const client = yield* HttpClient.HttpClient;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-mail-" });
-        const recipe = yield* makeServiceRecipe(
-          { service: "mail", pin: selection.mail, config: {} },
-          dockerOptions(root),
-        );
-        const logs = yield* Ref.make("");
-        yield* Stream.fromSubscription(yield* recipe.logs).pipe(
-          Stream.runForEach(({ bytes }) =>
-            Ref.update(logs, (text) => text + new TextDecoder().decode(bytes)),
-          ),
-          Effect.forkScoped({ startImmediately: true }),
-        );
-        const instance = yield* makeStandaloneService(recipe.definition, {
-          id: "mail",
-          config: recipe.creation,
-        });
-        const phase = yield* Ref.make("start");
-        const response = yield* Effect.gen(function* () {
+    Effect.gen(function* () {
+      const phase = yield* Ref.make("setup");
+      const logs = yield* Ref.make("");
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const client = yield* HttpClient.HttpClient;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-mail-" });
+          const recipe = yield* makeServiceRecipe(
+            { service: "mail", pin: selection.mail, config: {} },
+            dockerOptions(root),
+          );
+          const decoders = { stdout: new TextDecoder(), stderr: new TextDecoder() };
+          yield* Stream.fromSubscription(yield* recipe.logs).pipe(
+            Stream.runForEach(({ stream, bytes }) =>
+              Ref.update(logs, (text) => text + decoders[stream].decode(bytes, { stream: true })),
+            ),
+            Effect.forkScoped({ startImmediately: true }),
+          );
+          const instance = yield* makeStandaloneService(recipe.definition, {
+            id: "mail",
+            config: recipe.creation,
+          });
+          yield* Ref.set(phase, "start");
           yield* instance.start;
           yield* Ref.set(phase, "readiness");
           yield* instance.ready;
           yield* Ref.set(phase, "/readyz request");
           const endpoint = yield* recipe.endpoint("http");
-          return yield* client.execute(
+          const response = yield* client.execute(
             HttpClientRequest.get(`http://${httpHost(endpoint)}:${endpoint.port}/readyz`),
           );
-        }).pipe(guardLaunch("25 seconds", phase, logs));
-        expect(response.status).toBe(200);
-        yield* instance.stop;
-      }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+          expect(response.status).toBe(200);
+          yield* Ref.set(phase, "stop");
+          yield* instance.stop;
+          yield* Ref.set(phase, "scope teardown");
+        }),
+      ).pipe(guardLaunch("25 seconds", phase, logs));
+    }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
   );
 
   it.live(
