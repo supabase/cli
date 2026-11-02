@@ -376,10 +376,9 @@ describe("start container env precedence goldens", () => {
             ),
           ),
         };
+        const goldenText = yield* goldenJson(golden, { [workdir]: "<WORKDIR>" });
         yield* Effect.promise(() =>
-          ctx
-            .expect(goldenJson(golden, { [workdir]: "<WORKDIR>" }))
-            .toMatchFileSnapshot(`${GOLDEN_DIR}/${fixture.golden}.json`),
+          ctx.expect(goldenText).toMatchFileSnapshot(`${GOLDEN_DIR}/${fixture.golden}.json`),
         );
       }).pipe(Effect.provide(BunServices.layer)),
     );

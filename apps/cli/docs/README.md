@@ -32,6 +32,20 @@ To publish by hand, run the same pipe the job runs:
 bun scripts/generate-docs-spec.ts <version> | bun scripts/publish-docs-spec.ts --version <version> [--dry-run]
 ```
 
+The same job then publishes the config, project-config and `supabase.lock` JSON Schemas from
+`apps/docs/public/schemas` with `scripts/publish-schemas.ts`. It copies each schema's current
+(highest) `v<N>.json` into `apps/www/public/schemas` on the `cli/schemas` branch in supabase/supabase,
+serving it at `https://supabase.com/schemas/<name>/v<N>.json`, opens a PR when the files differ, and
+arms auto-merge, which squash-merges once a reviewer approves. Lower versions are frozen: the script
+never writes them and refuses to run when supabase.com already serves a higher version than the
+current one. Both publishers share the clone, branch, commit and PR flow in
+`scripts/publish-pull-request.ts`. A failed publish of either pages Slack; rerun the "Publish to
+supabase.com" job.
+
+```bash
+bun scripts/publish-schemas.ts --version <version> [--dry-run]
+```
+
 ## Maintenance
 
 When adding or changing a command or flag, update the matching entries in

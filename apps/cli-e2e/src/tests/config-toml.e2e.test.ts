@@ -1,8 +1,7 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { Effect, FileSystem, Path } from "effect";
 import { describe, expect } from "vitest";
 import { PROJECT_REF } from "./env.ts";
-import { testBehaviour } from "./test-context.ts";
+import { postControl, runE2e, testBehaviour } from "./test-context.ts";
 
 // Regression guard: a non-string field written as `env(VAR)` (e.g.
 // a port) must not crash config decoding before env resolution runs.
@@ -10,10 +9,12 @@ import { testBehaviour } from "./test-context.ts";
 // A 401 is injected so the test doesn't need a real API fixture; it only
 // asserts that the CLI got past config decode.
 
-function writeConfigWithEnvPorts(dir: string): void {
-  mkdirSync(join(dir, "supabase"), { recursive: true });
-  writeFileSync(
-    join(dir, "supabase", "config.toml"),
+const writeConfigWithEnvPorts = Effect.fnUntraced(function* (dir: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* fs.makeDirectory(path.join(dir, "supabase"), { recursive: true });
+  yield* fs.writeFileString(
+    path.join(dir, "supabase", "config.toml"),
     [
       'project_id = "with-env-ports"',
       "",
@@ -28,7 +29,7 @@ function writeConfigWithEnvPorts(dir: string): void {
       "",
     ].join("\n"),
   );
-}
+});
 
 const ENV_PORTS = {
   SUPABASE_API_PORT: "54321",
@@ -37,21 +38,25 @@ const ENV_PORTS = {
 };
 
 describe("env-in-config-toml", () => {
-  testBehaviour("does not crash on numeric fields", async ({ run, workspace, apiUrl }) => {
-    writeConfigWithEnvPorts(workspace.path);
+  testBehaviour("does not crash on numeric fields", ({ run, workspace, apiUrl, signal }) =>
+    runE2e(
+      Effect.gen(function* () {
+        yield* writeConfigWithEnvPorts(workspace.path);
 
-    await fetch(`${apiUrl}/_ctrl/error-all`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: 401, body: { message: "Invalid token" } }),
-    });
+        yield* postControl(`${apiUrl}/_ctrl/error-all`, {
+          status: 401,
+          body: { message: "Invalid token" },
+        });
 
-    const result = await run(["secrets", "list", `--remote=${PROJECT_REF}`], {
-      env: ENV_PORTS,
-    });
+        const result = yield* run(["secrets", "list", `--remote=${PROJECT_REF}`], {
+          env: ENV_PORTS,
+        });
 
-    const output = `${result.stdout}\n${result.stderr}`;
-    expect(output).not.toContain("CliConfigParseError");
-    expect(output).not.toMatch(/Expected number.*env\(SUPABASE_/);
-  });
+        const output = `${result.stdout}\n${result.stderr}`;
+        expect(output).not.toContain("CliConfigParseError");
+        expect(output).not.toMatch(/Expected number.*env\(SUPABASE_/);
+      }),
+      signal,
+    ),
+  );
 });

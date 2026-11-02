@@ -101,10 +101,7 @@ describe("commandsFor", () => {
     const invocations = commandsFor(entry("flaky-focused-run1"), 3, ["--changed", "abc123"]);
 
     expect(invocations.map((i) => [i.reports, outputOf(i.argv)])).toEqual([
-      [
-        { turbo: ["test:unit:run", "--filter=!@supabase/cli-go"], report: "unit.3" },
-        ".flaky-results/unit.3.json",
-      ],
+      [{ turbo: ["test:unit:run"], report: "unit.3" }, ".flaky-results/unit.3.json"],
       [
         { turbo: ["test:integration:run", "--filter=!@supabase/api"], report: "integration.3" },
         ".flaky-results/integration.3.json",

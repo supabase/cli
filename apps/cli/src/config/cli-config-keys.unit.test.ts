@@ -139,6 +139,21 @@ describe("config key registry", () => {
     expect(missing).toEqual([]);
   });
 
+  it.each(["email", "sms"] as const)(
+    "gives [auth.%s] enable_signup the _ENABLED env name ahead of _ENABLE_SIGNUP and enabled none",
+    (section) => {
+      const upper = section.toUpperCase();
+      const key = CliConfigKeys.auth[section].enableSignup;
+
+      expect(key.env).toEqual([
+        `SUPABASE_AUTH_${upper}_ENABLED`,
+        `SUPABASE_AUTH_${upper}_ENABLE_SIGNUP`,
+      ]);
+      expect(cliConfigRegistry.keyForEnvName(`SUPABASE_AUTH_${upper}_ENABLED`)).toBe(key);
+      expect(CliConfigKeys.auth[section].enabled.env).toEqual([]);
+    },
+  );
+
   it("follows the legacy prefixes for hooks, sms providers and the dynamic tables", () => {
     expect(CliConfigKeys.auth.hook.sendSms.uri.env).toEqual(["SUPABASE_AUTH_HOOK_SEND_SMS_URI"]);
     expect(CliConfigKeys.auth.sms.twilioVerify.accountSid.env).toEqual([

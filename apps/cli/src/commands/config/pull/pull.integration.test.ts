@@ -802,6 +802,65 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect.each([
+    {
+      name: "enabled",
+      declared: "enabled = true",
+      written: "enabled = false",
+      absent: "enable_signup",
+      documentPath: ["auth", "email", "enabled"],
+      deprecationWarned: false,
+    },
+    {
+      name: "the deprecated enable_signup",
+      declared: "enable_signup = true",
+      written: "enable_signup = false",
+      absent: "enabled",
+      documentPath: ["auth", "email", "enable_signup"],
+      deprecationWarned: true,
+    },
+  ])(
+    "an email provider turned off remotely rewrites the key the file declares: $name",
+    ({ declared, written, absent, documentPath, deprecationWarned }) => {
+      const { layer, out } = setup({
+        toml: `project_id = "test"\n[auth.email]\n${declared}\n`,
+        format: "json",
+        yes: true,
+        v2: {
+          status: 200,
+          body: v2Response({
+            attributes: (attributes) => ({
+              ...attributes,
+              auth: { ...asJsonRecord(attributes["auth"]), external_email_enabled: false },
+            }),
+          }),
+        },
+      });
+      return Effect.gen(function* () {
+        yield* configPull(noFlags);
+        const config = yield* readConfig;
+        expect(config).toContain(written);
+        expect(config).not.toMatch(new RegExp(`^${absent} =`, "m"));
+        const success = out.messages.find((message) => message.type === "success");
+        const data = yield* decodeJsonRecord(success?.data);
+        expect(data["changes"]).toEqual([
+          {
+            path: ["auth", "email", "enable_signup"],
+            class: "update",
+            declared: true,
+            local: true,
+            remote: false,
+            written: true,
+            document_path: documentPath,
+          },
+        ]);
+        const deprecation =
+          "WARN: auth.email.enable_signup is deprecated and will be removed in v4, use auth.email.enabled instead.\n";
+        expect(out.stderrText.includes(deprecation)).toBe(deprecationWarned);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.effect("telemetry flushes and the linked-project cache writes on a failed run too", () => {
     const { layer, telemetry, linkedProjectCache, api } = setup();
     return Effect.gen(function* () {

@@ -1,5 +1,5 @@
 /**
- * Run history kept inside the benchmark comment. The newest run is the comment itself; earlier
+ * Run history kept inside one benchmark comment. The newest run is the comment itself; earlier
  * runs sit in a collapsed list, backed by a hidden marker so the next update can carry them on.
  * The marker is read back only from the workflow bot's own comment, and anything that does not
  * decode cleanly counts as no history.
@@ -39,9 +39,9 @@ const isEntry = (value: unknown): value is RunEntry => {
   );
 };
 
-/** The title the renderer puts after `## CLI benchmark:`, flattened to one bounded line. */
+/** The title the renderer puts after the `## CLI benchmark` heading, flattened to one bounded line. */
 export function headlineOf(markdown: string): string {
-  const title = /^## CLI benchmark: (.+)$/mu.exec(markdown)?.[1] ?? "unknown";
+  const title = /^## CLI benchmark(?: \([^)\n]*\))?: (.+)$/mu.exec(markdown)?.[1] ?? "unknown";
   return title.replaceAll(/\s+/gu, " ").trim().slice(0, MAX_HEADLINE_CHARS);
 }
 
@@ -87,14 +87,16 @@ const day = (at: string) => `${at.slice(0, 10)} ${at.slice(11, 16)} UTC`;
 
 /**
  * The hidden marker for `entries` (current run first), preceded by a collapsed list of the
- * earlier ones when there are any. `clean` makes a headline safe to render.
+ * earlier ones when there are any. While a run is in progress the comment has no current result,
+ * so every entry is listed. `clean` makes a headline safe to render.
  */
 export function renderHistory(
   entries: ReadonlyArray<RunEntry>,
   clean: (text: string) => string,
+  running = false,
 ): string {
   const marker = `<!-- cli-bench:history ${Buffer.from(JSON.stringify(entries)).toString("base64")} -->`;
-  const earlier = entries.slice(1);
+  const earlier = running ? entries : entries.slice(1);
   if (earlier.length === 0) return marker;
   const lines = earlier.map(
     (entry) =>

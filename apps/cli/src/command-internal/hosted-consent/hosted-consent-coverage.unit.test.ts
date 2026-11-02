@@ -1,7 +1,6 @@
-import { readFileSync, readdirSync } from "node:fs";
-import { join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Option } from "effect";
+import { BunServices } from "@effect/platform-bun";
+import { Effect, FileSystem, Option, Path } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { commandTreeFor } from "../../../tests/helpers/command-flags.ts";
@@ -31,15 +30,24 @@ const consentLeafPaths: ReadonlySet<string> = new Set(consentDefaultByLeaf.keys(
 const LITERAL_CALL = /\bdescribeHostedConsent\(\s*"([^"]+)"/g;
 const ANY_CALL = /\bdescribeHostedConsent\(/g;
 
-const testFiles = readdirSync(srcDir, { recursive: true, encoding: "utf8" })
-  .filter((file) => file.endsWith(".test.ts"))
-  .map((file) => file.split(sep).join("/"));
+const testSources = await Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const files = yield* fs.readDirectory(srcDir, { recursive: true });
+  return yield* Effect.forEach(
+    files.filter((file) => file.endsWith(".test.ts")),
+    (file) =>
+      Effect.map(fs.readFileString(path.join(srcDir, file)), (source) => ({
+        file: file.split(path.sep).join("/"),
+        source,
+      })),
+  );
+}).pipe(Effect.provide(BunServices.layer), Effect.runPromise);
 
 const callsByLeaf = new Map<string, Array<string>>();
 const nonLiteralCallSites: Array<string> = [];
 
-for (const file of testFiles) {
-  const source = readFileSync(join(srcDir, file), "utf8");
+for (const { file, source } of testSources) {
   const literalCalls = [...source.matchAll(LITERAL_CALL)];
   for (const [, leaf] of literalCalls) {
     callsByLeaf.set(leaf!, [...(callsByLeaf.get(leaf!) ?? []), file]);
@@ -52,7 +60,7 @@ for (const file of testFiles) {
 
 describe("hosted consent coverage", () => {
   it("scans real test files and finds consenting leaves in the command tree", () => {
-    expect(testFiles.length).toBeGreaterThan(0);
+    expect(testSources.length).toBeGreaterThan(0);
     expect(consentLeafPaths.size).toBeGreaterThan(0);
   });
 

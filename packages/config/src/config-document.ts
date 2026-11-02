@@ -2,6 +2,7 @@ import { Schema } from "effect";
 import * as SmolToml from "smol-toml";
 import { CliConfigSchema, type CliConfig } from "./base.ts";
 import type { ConfigFormat } from "./config-format.ts";
+import { writeProviderSignupPreferredKeys } from "./lib/provider-signup.ts";
 import { getDefaultCliConfig, setOwnProperty, subtractValue } from "./sparse.ts";
 import type { CliProjectEnvironment } from "./project.ts";
 
@@ -26,6 +27,8 @@ export interface LoadedCliConfig {
   readonly config: CliConfig;
   readonly schemaRef?: string;
   readonly ignoredPaths: ReadonlyArray<string>;
+  /** Dotted paths of keys written with a deprecated spelling, e.g. `auth.email.enable_signup` or `remotes.staging.auth.sms.enable_signup`. */
+  readonly deprecatedPaths: ReadonlyArray<string>;
   /**
    * The raw, post-`env()`-interpolation document `config` was decoded from, with any matching
    * `[remotes.*]` override merged in. Lets callers inspect key presence that the decoded
@@ -172,7 +175,7 @@ function toConfigDocument(
   config: CliConfig,
   schemaRef: string | undefined,
 ): Record<string, unknown> {
-  const encoded = encodeMinimalCliConfig(config);
+  const encoded = writeProviderSignupPreferredKeys(encodeMinimalCliConfig(config));
   return schemaRef === undefined ? encoded : { [cliConfigSchemaKey]: schemaRef, ...encoded };
 }
 
