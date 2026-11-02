@@ -65,7 +65,12 @@ const makeLaunchTrace = Effect.gen(function* () {
                 Effect.flatMap(([{ service, step }, output]) =>
                   Effect.fail(
                     new CatalogStallError({
-                      message: `${service} ${step} did not finish within ${duration}; ${service} output:\n${output.get(service) || "(none)"}`,
+                      message: [
+                        `${service} ${step} did not finish within ${duration}`,
+                        ...(service === "database" ? [service] : [service, "database"]).map(
+                          (name) => `${name} output:\n${output.get(name) || "(none)"}`,
+                        ),
+                      ].join("\n"),
                     }),
                   ),
                 ),
