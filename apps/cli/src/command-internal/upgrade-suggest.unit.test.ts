@@ -258,20 +258,6 @@ describe("suggestUpgrade", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("skips cli_upgrade_suggested analytics when trackAnalytics=false", () => {
-    const { layer, analytics, out } = setup();
-    return Effect.gen(function* () {
-      yield* suggestUpgrade({
-        projectRef: VALID_REF,
-        featureKey: "branching_limit",
-        statusCode: 402,
-        trackAnalytics: false,
-      });
-      expect(analytics.captured).toHaveLength(0);
-      expect(out.stderrText).toContain("Upgrade your plan:");
-    }).pipe(Effect.provide(layer));
-  });
-
   const ENVELOPE_BODY = {
     message: "Branching is supported only on the Pro plan or above",
     error: {
@@ -286,7 +272,7 @@ describe("suggestUpgrade", () => {
     return jsonResponse(request, status, body);
   }
 
-  it.live("envelope path suggests with zero API calls and envelope-derived telemetry", () => {
+  it.live("envelope path prints the hint with zero API calls and no event", () => {
     const { layer, out, analytics, api } = setup();
     return Effect.gen(function* () {
       yield* suggestUpgrade({
@@ -297,12 +283,7 @@ describe("suggestUpgrade", () => {
       });
       expect(out.stderrText).toContain("Upgrade your plan:");
       expect(out.stderrText).toContain("/org/env-org/billing");
-      expect(analytics.captured).toEqual([
-        {
-          event: "cli_upgrade_suggested",
-          properties: { feature_key: "branching_persistent", org_slug: "env-org" },
-        },
-      ]);
+      expect(analytics.captured).toHaveLength(0);
       expect(api.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
@@ -324,12 +305,7 @@ describe("suggestUpgrade", () => {
       });
       expect(api.requests).toHaveLength(0);
       expect(out.stderrText).toContain("Upgrade your plan:");
-      expect(analytics.captured).toEqual([
-        {
-          event: "cli_upgrade_suggested",
-          properties: { feature_key: "custom_domain", org_slug: "env-org" },
-        },
-      ]);
+      expect(analytics.captured).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 
@@ -437,7 +413,7 @@ describe("suggestUpgrade", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("envelope path respects json output mode (no stderr, telemetry fires)", () => {
+  it.live("envelope path writes no hint in json output mode", () => {
     const { layer, out, analytics } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* suggestUpgrade({
@@ -446,21 +422,7 @@ describe("suggestUpgrade", () => {
         response: gateResponse(402, ENVELOPE_BODY),
       });
       expect(out.stderrText).toBe("");
-      expect(analytics.captured).toHaveLength(1);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("envelope path respects trackAnalytics=false", () => {
-    const { layer, out, analytics } = setup();
-    return Effect.gen(function* () {
-      yield* suggestUpgrade({
-        projectRef: VALID_REF,
-        statusCode: 402,
-        response: gateResponse(402, ENVELOPE_BODY),
-        trackAnalytics: false,
-      });
       expect(analytics.captured).toHaveLength(0);
-      expect(out.stderrText).toContain("Upgrade your plan:");
     }).pipe(Effect.provide(layer));
   });
 });

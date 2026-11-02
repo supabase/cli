@@ -43,9 +43,10 @@ Same auth fallback chain as every Management-API command. Project-ref discovery 
 
 ## Telemetry Events Fired
 
-| Event                  | When                                       | Notable properties                  |
-| ---------------------- | ------------------------------------------ | ----------------------------------- |
-| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` |
+| Event                   | When                                                                                                                      | Notable properties                                                        |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `cli_command_executed`  | post-run, success or failure (via wrapper)                                                                                | `exit_code`, `duration_ms`, `flags`                                       |
+| `cli_upgrade_suggested` | post-run (via wrapper), before `cli_command_executed`, on a restore 4xx whose body is the `entitlement_required` envelope | `feature_key` (from the envelope), `org_slug` (parsed from `upgrade_url`) |
 
 ## Output
 

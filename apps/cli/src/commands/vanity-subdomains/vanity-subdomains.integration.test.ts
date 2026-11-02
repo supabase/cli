@@ -200,12 +200,7 @@ describe("vanity-subdomains get", () => {
       assertPermissionDrift({ command: "vanity-subdomains get", requests: api.requests });
       expect(out.stderrText).toContain("Upgrade your plan:");
       expect(out.stderrText).toContain("/org/env-org/billing");
-      expect(analytics.captured).toEqual([
-        {
-          event: "cli_upgrade_suggested",
-          properties: { feature_key: "vanity_subdomain", org_slug: "env-org" },
-        },
-      ]);
+      expect(analytics.captured).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 
@@ -758,7 +753,7 @@ describe("vanity-subdomains activate", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("suggests upgrade and fires analytics for gated activation", () => {
+  it.effect("suggests upgrade for gated activation", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 400, body: VANITY_GATE_ENVELOPE } });
     const analytics = mockAnalytics();
@@ -775,12 +770,7 @@ describe("vanity-subdomains activate", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       expect(out.stderrText).toContain("Upgrade your plan:");
       expect(out.stderrText).toContain("/org/env-org/billing");
-      expect(analytics.captured).toEqual([
-        {
-          event: "cli_upgrade_suggested",
-          properties: { feature_key: "vanity_subdomain", org_slug: "env-org" },
-        },
-      ]);
+      expect(analytics.captured).toHaveLength(0);
       expect(requestLines(api)).toEqual([
         `POST ${API_URL}/v1/projects/${VALID_REF}/vanity-subdomain/activate`,
       ]);
