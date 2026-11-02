@@ -123,6 +123,7 @@ const cell = (value: string) => value.replaceAll("|", "\\|");
 const code = (value: string) => `\`${value.replaceAll("`", "'").replaceAll(/\s+/gu, " ")}\``;
 const command = (analysis: Pick<WorkloadAnalysis, "args">) =>
   code(["supabase", ...analysis.args].join(" "));
+const workload = (analysis: Pick<WorkloadAnalysis, "id">) => code(analysis.id);
 const plural = (count: number, one: string, many: string) => (count === 1 ? one : many);
 const callCount = (count: number | undefined) =>
   `${count ?? "some"} ${count === 1 ? "call" : "calls"}`;
@@ -216,9 +217,10 @@ const hasRuntimes = (analyses: ReadonlyArray<WorkloadAnalysis>) =>
 function timingTable(analyses: ReadonlyArray<WorkloadAnalysis>): string {
   const withRuntime = hasRuntimes(analyses);
   return table(
-    ["Command", ...(withRuntime ? ["Runtime"] : []), "Before", "After", "Change"],
+    ["Command", "Workload", ...(withRuntime ? ["Runtime"] : []), "Before", "After", "Change"],
     analyses.map((analysis) => [
       command(analysis),
+      workload(analysis),
       ...(withRuntime ? [runtimeLabel(analysis)] : []),
       ms(analysis.base.timing.median),
       ms(analysis.branch.timing.median),
@@ -273,6 +275,7 @@ function containerDetailTable(analyses: ReadonlyArray<WorkloadAnalysis>): string
       .sort()
       .map((verb) => [
         command(analysis),
+        workload(analysis),
         runtimeLabel(analysis),
         code(verb),
         String(base.containers?.[verb] ?? 0),
@@ -280,7 +283,7 @@ function containerDetailTable(analyses: ReadonlyArray<WorkloadAnalysis>): string
       ]);
   });
   if (rows.length === 0) return "No container operations were recorded.";
-  return table(["Command", "Runtime", "Operation", "Before", "After"], rows);
+  return table(["Command", "Workload", "Runtime", "Operation", "Before", "After"], rows);
 }
 
 interface ApiOverview {
@@ -349,6 +352,7 @@ function apiDetailTable(analyses: ReadonlyArray<WorkloadAnalysis>): string {
     .filter((analysis) => analysis.base.api !== undefined || analysis.branch.api !== undefined)
     .map((analysis) => [
       command(analysis),
+      workload(analysis),
       String(analysis.base.api?.medianCalls ?? "n/a"),
       String(analysis.branch.api?.medianCalls ?? "n/a"),
       analysis.endpointChanges
@@ -356,14 +360,15 @@ function apiDetailTable(analyses: ReadonlyArray<WorkloadAnalysis>): string {
         .join("<br>"),
     ]);
   if (rows.length === 0) return "API calls were not counted.";
-  return table(["Command", "Before", "After", "Endpoint changes"], rows);
+  return table(["Command", "Workload", "Before", "After", "Endpoint changes"], rows);
 }
 
 function rangeTable(analyses: ReadonlyArray<WorkloadAnalysis>): string {
   return table(
-    ["Command", "Before range", "After range", "Change", "Verdict"],
+    ["Command", "Workload", "Before range", "After range", "Change", "Verdict"],
     analyses.map((analysis) => [
       command(analysis),
+      workload(analysis),
       range(analysis.base),
       range(analysis.branch),
       `${signedMs(analysis.deltaMs)} (${signedPct(analysis.deltaPct)})`,
@@ -378,6 +383,7 @@ function phaseDetail(analyses: ReadonlyArray<WorkloadAnalysis>): string {
       const only = row.onlyIn === undefined ? undefined : row[row.onlyIn];
       return [
         command(analysis),
+        workload(analysis),
         code(row.name),
         row.deltaMs === undefined
           ? `${row.onlyIn === "base" ? "before" : "after"} only, ${Math.round(only?.medianMs ?? 0)} ms`
@@ -391,7 +397,7 @@ function phaseDetail(analyses: ReadonlyArray<WorkloadAnalysis>): string {
       ? "No phase deltas are available; some commands were not comparable."
       : "No command moved beyond noise, so there are no phase deltas.";
   }
-  return table(["Command", "Span", "Change", "Before -> after"], rows);
+  return table(["Command", "Workload", "Span", "Change", "Before -> after"], rows);
 }
 
 export interface RenderContext {

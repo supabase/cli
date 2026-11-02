@@ -43,7 +43,7 @@ const migrationNew = {
 };
 
 describe("renderSummary", () => {
-  it("leads with no changes found and shows commands, not workload ids", () => {
+  it("leads with no changes found and shows each command with its workload id", () => {
     const sized = {
       ...report([steady("version", ["--version"])]),
       baseSizeBytes: 140269744,
@@ -59,10 +59,34 @@ describe("renderSummary", () => {
     expect(markdown).toContain(
       "Commit `abcdef1` against `develop` at `1234567` · 5 runs each · report only, never blocks merging",
     );
-    expect(markdown).toContain("| `supabase --version` | 32 ms | 32 ms | no real change |");
+    expect(markdown).toContain(
+      "| `supabase --version` | `version` | 32 ms | 32 ms | no real change |",
+    );
     expect(markdown).toContain("API calls: unchanged for the command.");
     expect(markdown).toContain("Binary size: 133.8 MB, unchanged.");
     expect(markdown).not.toContain("⚠️");
+  });
+
+  it("tells workload variants of one command apart in every table", () => {
+    const markdown = renderSummary(
+      report([
+        { ...migrationNew, id: "migration-new-cold" },
+        { ...migrationNew, id: "migration-new-warm" },
+      ]),
+      "unused",
+    );
+
+    for (const id of ["migration-new-cold", "migration-new-warm"]) {
+      const rows = markdown.split("\n").filter((line) => line.includes(`\`${id}\``));
+      expect(
+        rows.filter((line) => line.startsWith("| `supabase migration new bench` |")),
+      ).toHaveLength(4);
+    }
+    expect(markdown).toContain(
+      "| Command | Workload | Before range | After range | Change | Verdict |",
+    );
+    expect(markdown).toContain("| Command | Workload | Before | After | Endpoint changes |");
+    expect(markdown).toContain("| Command | Workload | Span | Change | Before -> after |");
   });
 
   it("shows a binary size change in MB, or KB when it is small", () => {
@@ -300,8 +324,8 @@ describe("renderSummary for integration-heavy commands", () => {
     ]);
 
     expect(markdown).toContain("## CLI benchmark (Integration Heavy Commands): no changes found");
-    expect(markdown).toContain("| Command | Runtime | Before | After | Change |");
-    expect(markdown).toContain("| `supabase status` | docker |");
+    expect(markdown).toContain("| Command | Workload | Runtime | Before | After | Change |");
+    expect(markdown).toContain("| `supabase status` | `status` | docker |");
     expect(markdown).toContain("Container operations: unchanged for the command.");
   });
 
@@ -316,7 +340,9 @@ describe("renderSummary for integration-heavy commands", () => {
     );
     expect(markdown).toContain("Container operations changed for 1 command:");
     expect(markdown).toContain("`container inspect` 3 -> 4");
-    expect(markdown).toContain("| `supabase status` | docker | `container inspect` | 3 | 4 |");
+    expect(markdown).toContain(
+      "| `supabase status` | `status` | docker | `container inspect` | 3 | 4 |",
+    );
   });
 
   it("flags container commands that appear where there were none", () => {
@@ -333,7 +359,7 @@ describe("renderSummary for integration-heavy commands", () => {
     ]);
 
     expect(markdown).toContain("Container operations were not counted.");
-    expect(markdown).toContain("| `supabase status` | stack, native |");
+    expect(markdown).toContain("| `supabase status` | `stack-status` | stack, native |");
     expect(markdown).not.toContain("container commands");
   });
 
@@ -366,7 +392,7 @@ describe("renderSummary for integration-heavy commands", () => {
 
     expect(markdown).toContain("API calls: none, before or after, for the command.");
     expect(markdown).not.toContain("API calls were not counted.");
-    expect(markdown).toContain("| `supabase status` | 0 | 0 |");
+    expect(markdown).toContain("| `supabase status` | `status` | 0 | 0 |");
   });
 
   it("says API calls were not counted when no launch was traced against the test server", () => {
