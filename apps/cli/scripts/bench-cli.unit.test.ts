@@ -3,6 +3,7 @@ import { BunServices } from "@effect/platform-bun";
 import { Effect } from "effect";
 import {
   buildRunPlan,
+  buildUnitPlan,
   isolatedEnv,
   parseBenchArgs,
   profileYaml,
@@ -105,6 +106,73 @@ describe("buildRunPlan", () => {
       ["branch", false],
       ["base", false],
     ]);
+  });
+});
+
+describe("buildUnitPlan", () => {
+  it("gives a run-scoped workload one launch per unit in the order buildRunPlan chooses", () => {
+    const plan = buildUnitPlan(2, 1, "run");
+
+    expect(plan.map((unit) => [unit.build, ...unit.launches])).toEqual([
+      ["branch", "warmup"],
+      ["base", "warmup"],
+      ["base", "timed"],
+      ["branch", "timed"],
+      ["branch", "timed"],
+      ["base", "timed"],
+    ]);
+  });
+
+  it("splits a block-scoped workload into blocks of measured launches after the warmup launches, swapping the first build every other block", () => {
+    const plan = buildUnitPlan(7, 1, "block", 5);
+
+    expect(plan.map((unit) => unit.build)).toEqual(["base", "branch", "branch", "base"]);
+    const measured = (build: "base" | "branch") =>
+      plan
+        .filter((unit) => unit.build === build)
+        .map((unit) => unit.launches.filter((kind) => kind === "timed").length);
+    expect(measured("base")).toEqual([5, 2]);
+    expect(measured("branch")).toEqual([5, 2]);
+    expect(plan[0]?.launches).toEqual(["warmup", "timed", "timed", "timed", "timed", "timed"]);
+  });
+});
+
+describe("parseBenchArgs for stack runs", () => {
+  it("lets explicit --runs and --warmup override the manifest, and defaults otherwise", () => {
+    expect(parseBenchArgs(required)).toMatchObject({
+      runs: 10,
+      warmup: 2,
+      runsExplicit: false,
+      warmupExplicit: false,
+    });
+    expect(parseBenchArgs([...required, "--runs", "3", "--warmup", "0"])).toMatchObject({
+      runs: 3,
+      warmup: 0,
+      runsExplicit: true,
+      warmupExplicit: true,
+    });
+  });
+
+  it("reads --only, --runtime and a resolved --artifact-cache", () => {
+    const options = parseBenchArgs([
+      ...required,
+      "--only",
+      "a,b",
+      "--runtime",
+      "native",
+      "--artifact-cache",
+      "/tmp/cache",
+    ]);
+
+    expect(options).toMatchObject({
+      only: ["a", "b"],
+      runtime: "native",
+      artifactCache: "/tmp/cache",
+    });
+  });
+
+  it("rejects an unknown runtime", () => {
+    expect(() => parseBenchArgs([...required, "--runtime", "podman"])).toThrow("--runtime");
   });
 });
 
