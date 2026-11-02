@@ -24,6 +24,9 @@ import {
   type SavedStack,
   type ServiceInstance,
 } from "@supabase/stack/effect";
+import { LinkedProjectCache } from "../../../../telemetry/linked-project-cache.service.ts";
+import { ProjectRefResolver } from "../../../../config/project-ref.service.ts";
+import { ProcessControl } from "../../../../shared/runtime/process-control.service.ts";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
@@ -32,8 +35,13 @@ import {
 import { StackApi, stackApiLayer, stackTargetResolverLayer } from "../stack.shared.ts";
 import type { StackLogsFlags } from "./logs.command.ts";
 import { stackLogs } from "./logs.handler.ts";
+import { logsTail } from "../../../logs/logs.handler.ts";
+import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api-factory.service.ts";
+import { TargetPolicy } from "../../../../command-internal/target/target-policy.ts";
+import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 import { selection } from "../../../../../tests/helpers/pins.ts";
 
+const decodeRow = Schema.decodeSync(Schema.fromJsonString(Schema.JsonObject));
 const live = Layer.provideMerge(stackApiLayer, BunServices.layer);
 
 type SavedInstance = SavedStack["instances"][number];
@@ -174,7 +182,11 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
         records.map((record) => `${record}\n`).join(""),
       );
     });
-  const run = (flags: Partial<StackLogsFlags>, format: "text" | "stream-json" | "json" = "text") =>
+  const run = (
+    flags: Partial<StackLogsFlags>,
+    format: "text" | "stream-json" | "json" = "text",
+    unified = false,
+  ) =>
     Effect.gen(function* () {
       const output = mockOutput({ format, interactive: false });
       const telemetry = mockTelemetryStateTracked();
@@ -183,10 +195,46 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
         telemetry.layer,
         Layer.provideMerge(stackTargetResolverLayer, Layer.merge(settings, fakeApi)),
       );
-      const exit = yield* stackLogs({ ...baseFlags(stack.id), ...flags }).pipe(
-        Effect.provide(layer),
-        Effect.exit,
-      );
+      const runLogs = unified
+        ? logsTail(
+            {
+              remote: Option.none(),
+              projectRef: Option.none(),
+              local: true,
+              linked: false,
+              stack: Option.none(),
+              stackId: Option.some(stack.id),
+              service: ["postgres"],
+              resource: Option.none(),
+              kind: Option.none(),
+              level: [],
+              search: Option.none(),
+              since: Option.some("start"),
+              tail: 100,
+              noFollow: true,
+            },
+            true,
+            false,
+          ).pipe(
+            Effect.provide(
+              Layer.mergeAll(
+                Layer.succeed(OutputFlag, Option.some("json")),
+                Layer.mock(LinkedProjectCache, {}),
+                Layer.mock(ProjectRefResolver, {}),
+                Layer.mock(ProcessControl, {}),
+                Layer.succeed(TargetPolicy, {
+                  group: "selectable",
+                  consent: "none",
+                  consentExemptReason: "read logs",
+                }),
+                Layer.succeed(CommandPlatformApiFactory, {
+                  make: Effect.die("local logs must not resolve hosted credentials"),
+                }),
+              ),
+            ),
+          )
+        : stackLogs({ ...baseFlags(stack.id), ...flags });
+      const exit = yield* runLogs.pipe(Effect.provide(layer), Effect.exit);
       return { exit, output, telemetry };
     });
   return { stackId: stack.id, stateRoot, opened, writeSegment, run };
@@ -200,6 +248,35 @@ const eventLines = (events: ReadonlyArray<{ readonly type: string; readonly line
 
 describe("stack logs", () => {
   const t0 = Date.parse("2026-09-29T10:00:00.000Z");
+
+  it.effect("preserves full retained records and markers in unified JSON Lines while stopped", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({ instances: [database("db-a")], members: ["db-a"] });
+      yield* f.writeSegment("database", "db-a", [
+        launch(t0),
+        line(t0 + 1, "stdout", "retained"),
+        lost(t0 + 2, 3),
+      ]);
+      const { exit, output } = yield* f.run({}, "json", true);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      const rows = output.stdoutText
+        .trim()
+        .split("\n")
+        .map((text) => decodeRow(text));
+      expect(rows.map((row) => row.kind)).toEqual(["launch", "stdout", "lost"]);
+      expect(rows[1]).toMatchObject({
+        instanceId: "db-a",
+        service: "database",
+        launchId: 1,
+        text: "retained",
+        source: "history",
+      });
+      expect(rows[1]?.position).toMatchObject({ generation: 1 });
+      expect(rows[2]).toMatchObject({ count: 3 });
+      expect(output.stderrText).not.toContain("deprecated");
+      expect(yield* Ref.get(f.opened)).toBe(0);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
 
   it.effect("prints the newest lines across services with aligned labels, offline", () =>
     Effect.gen(function* () {
@@ -370,7 +447,7 @@ describe("stack logs", () => {
   it.effect("fails --follow without a running owner before printing anything", () =>
     Effect.gen(function* () {
       const f = yield* fixture({ instances: [mail("mail-a")], members: ["mail-a"] });
-      yield* f.writeSegment("mail", "mail-a", [launch(t0), line(t0 + 1, "stdout", "retained")]);
+      yield* f.writeSegment("database", "db-a", [launch(t0), line(t0 + 1, "stdout", "retained")]);
 
       const followed = yield* f.run({ follow: true });
       const finite = yield* f.run({ follow: true }, "json");

@@ -1,0 +1,381 @@
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Deferred, Effect, Fiber, Layer, Option, Stream, Schema } from "effect";
+import { DebugFlag, ProfileFlag, WorkdirFlag } from "../../command-internal/global-flags.ts";
+import {
+  mockContextualAnalytics,
+  mockTelemetryRuntime,
+  mockProcessControl,
+} from "../../../tests/helpers/mocks.ts";
+import { TestClock } from "effect/testing";
+import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
+import { CommandPlatformApiFactory } from "../../auth/command-platform-api-factory.service.ts";
+import { TargetPolicy } from "../../command-internal/target/target-policy.ts";
+import { Stdin } from "../../shared/runtime/stdin.service.ts";
+import {
+  makeComputeProject,
+  setupCompute,
+  COMPUTE_PROJECT_REF,
+} from "../../../tests/helpers/compute.ts";
+import { StackApi, StackTargetResolver } from "../experimental/stack/stack.shared.ts";
+import { Output } from "../../shared/output/output.service.ts";
+import { logsQuery, logsTail, logsSources } from "./logs.handler.ts";
+import type { LogsQueryFlags, LogsTailFlags } from "./logs.command.ts";
+import { LogsApiError, LogsInputError } from "./logs.errors.ts";
+
+const decodeRows = Schema.decodeSync(Schema.fromJsonString(Schema.Array(Schema.JsonObject)));
+const decodeRow = Schema.decodeSync(Schema.fromJsonString(Schema.JsonObject));
+
+const route = `GET /v1/projects/${COMPUTE_PROJECT_REF}/analytics/endpoints/logs`;
+const now = Date.parse("2026-11-02T12:00:00Z");
+const queryFlags = (overrides: Partial<LogsQueryFlags> = {}): LogsQueryFlags => ({
+  remote: Option.none(),
+  projectRef: Option.none(),
+  local: false,
+  sql: Option.some("select event_message, log_attributes from logs limit 2"),
+  file: Option.none(),
+  since: Option.none(),
+  from: Option.none(),
+  to: Option.none(),
+  ...overrides,
+});
+const tailFlags = (overrides: Partial<LogsTailFlags> = {}): LogsTailFlags => ({
+  remote: Option.some({ _tag: "Linked" }),
+  projectRef: Option.none(),
+  local: false,
+  linked: false,
+  service: ["postgres"],
+  resource: Option.none(),
+  kind: Option.none(),
+  level: [],
+  search: Option.none(),
+  since: Option.none(),
+  tail: 100,
+  noFollow: true,
+  stack: Option.none(),
+  stackId: Option.none(),
+  ...overrides,
+});
+const stdin = (text?: string) =>
+  Layer.succeed(Stdin, {
+    isTTY: text === undefined,
+    readPipedText: Effect.succeed(Option.fromUndefinedOr(text)),
+    readPipedBytes: Effect.succeed(Option.none()),
+    pipedBytesStream: Stream.empty,
+    readLine: () => Effect.succeed(Option.none()),
+  });
+const row = (id: string, ts = now - 1000) => ({
+  id,
+  ts_ms: ts,
+  source: "postgres_logs",
+  severity_text: "INFO",
+  level: "error",
+  event_message: "db failure",
+  log_attributes: { "parsed.error_severity": "ERROR", trace_id: "correlation" },
+});
+
+const prepare = Effect.fnUntraced(function* (
+  options: Parameters<typeof setupCompute>[0],
+  piped?: string,
+) {
+  const setup = setupCompute(options);
+  const api = yield* CommandPlatformApi.pipe(Effect.provide(setup.layer));
+  const layer = Layer.mergeAll(
+    setup.layer,
+    Layer.mock(StackApi, {}),
+    Layer.mock(StackTargetResolver, {}),
+    Layer.succeed(DebugFlag, false),
+    Layer.succeed(ProfileFlag, "supabase"),
+    Layer.succeed(WorkdirFlag, Option.none()),
+    mockContextualAnalytics().layer,
+    mockTelemetryRuntime(),
+    Layer.succeed(CommandPlatformApiFactory, { make: Effect.succeed(api) }),
+    stdin(piped),
+    Layer.succeed(TargetPolicy, {
+      group: "selectable",
+      consent: "none",
+      consentExemptReason: "Read logs",
+    }),
+  );
+  return { ...setup, layer };
+});
+
+describe("unified logs", () => {
+  it.effect("queries arbitrary hosted SQL from a file with exact bounds and raw attributes", () =>
+    Effect.gen(function* () {
+      const repo = yield* makeComputeProject({
+        "query.sql": "select id, log_attributes from logs limit 2",
+      });
+      const setup = yield* prepare({
+        workdir: repo.dir,
+        outputFlag: "json",
+        routes: {
+          [route]: {
+            status: 200,
+            body: {
+              result: [{ id: "a", log_attributes: { "user.id": "123", trace_id: "abc" } }],
+              error: null,
+            },
+          },
+        },
+      });
+      yield* logsQuery(
+        queryFlags({
+          sql: Option.none(),
+          file: Option.some("query.sql"),
+          from: Option.some("2026-11-02T11:00:00Z"),
+          to: Option.some("2026-11-02T12:00:00Z"),
+        }),
+      ).pipe(Effect.provide(setup.layer));
+      expect(decodeRows(setup.out.stdoutText)).toEqual([
+        { id: "a", log_attributes: { "user.id": "123", trace_id: "abc" } },
+      ]);
+      expect(setup.http.requests[0]?.urlParams).toMatchObject({
+        sql: "select id, log_attributes from logs limit 2",
+        iso_timestamp_start: "2026-11-02T11:00:00.000Z",
+        iso_timestamp_end: "2026-11-02T12:00:00.000Z",
+      });
+      expect(setup.telemetry.flushed).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect(
+    "rejects conflicting SQL inputs, local SQL, oversized ranges, and invalid formats before querying",
+    () =>
+      Effect.gen(function* () {
+        const repo = yield* makeComputeProject();
+        for (const test of [
+          { flags: queryFlags({ file: Option.some("query.sql") }) },
+          { flags: queryFlags({ local: true }) },
+          { flags: queryFlags({ since: Option.some("25h") }) },
+          { flags: queryFlags(), format: "env" as const },
+        ]) {
+          const setup = yield* prepare({ workdir: repo.dir, routes: {}, outputFlag: test.format });
+          const error = yield* logsQuery(test.flags).pipe(Effect.flip, Effect.provide(setup.layer));
+          expect(Schema.is(LogsInputError)(error)).toBe(true);
+          expect(setup.http.requests).toEqual([]);
+        }
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("surfaces HTTP-200 query errors and accepts null empty results", () =>
+    Effect.gen(function* () {
+      const repo = yield* makeComputeProject();
+      const bad = yield* prepare({
+        workdir: repo.dir,
+        routes: {
+          [route]: { status: 200, body: { result: null, error: { message: "Unknown field" } } },
+        },
+      });
+      const error = yield* logsQuery(queryFlags()).pipe(Effect.flip, Effect.provide(bad.layer));
+      expect(Schema.is(LogsApiError)(error) && error.message).toContain("Unknown field");
+      const empty = yield* prepare({
+        workdir: repo.dir,
+        outputFlag: "json",
+        routes: { [route]: { status: 200, body: { result: null, error: null } } },
+      });
+      yield* logsQuery(queryFlags()).pipe(Effect.provide(empty.layer));
+      expect(empty.out.stdoutText).toBe("[]\n");
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect(
+    "tails oldest first with raw IDs and attributes and escapes literal filter values",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(now);
+        const repo = yield* makeComputeProject();
+        const setup = yield* prepare({
+          workdir: repo.dir,
+          outputFlag: "json",
+          routes: {
+            [route]: {
+              status: 200,
+              body: { result: [row("new"), row("old", now - 2000)], error: null },
+            },
+          },
+        });
+        yield* logsTail(
+          tailFlags({ level: ["error"], search: Option.some("can't_%\\") }),
+          false,
+          false,
+        ).pipe(Effect.provide(setup.layer));
+        const lines = setup.out.stdoutText
+          .trim()
+          .split("\n")
+          .map((line) => decodeRow(line));
+        expect(lines.map((line) => line.id)).toEqual(["old", "new"]);
+        expect(lines[0]?.log_attributes).toMatchObject({ trace_id: "correlation" });
+        const sql = setup.http.requests[0]?.urlParams.sql;
+        expect(sql).toContain("source = 'postgres_logs'");
+        expect(sql).toContain("positionCaseInsensitiveUTF8(event_message, 'can''t_%\\\\') > 0");
+        expect(sql).toContain("parsed.error_severity");
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("discovers truthful hosted capabilities without querying logs", () =>
+    Effect.gen(function* () {
+      const repo = yield* makeComputeProject();
+      const setup = yield* prepare({ workdir: repo.dir, outputFlag: "json", routes: {} });
+      yield* logsSources({ ...tailFlags(), service: Option.some("storage") }, false, false).pipe(
+        Effect.provide(setup.layer),
+      );
+      const sources = decodeRows(setup.out.stdoutText);
+      expect(sources).toHaveLength(1);
+      expect(sources[0]).toMatchObject({ service: "storage", severity: null });
+      expect(sources[0]?.filters).not.toContain("level");
+      expect(setup.http.requests).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+  it.effect(
+    "follows overlapping windows once, retries rate limits, and preserves finalizers on interruption",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(now);
+        const repo = yield* makeComputeProject();
+        const setup = yield* prepare({
+          workdir: repo.dir,
+          outputFlag: "json",
+          routes: {
+            [route]: [
+              { status: 200, body: { result: [row("a")], error: null } },
+              { status: 429 },
+              { status: 200, body: { result: [row("a"), row("b", now)], error: null } },
+              {
+                status: 200,
+                body: { result: [row("b", now), row("c", now + 10_000)], error: null },
+              },
+            ],
+          },
+        });
+        const first = yield* Deferred.make<void>();
+        const second = yield* Deferred.make<void>();
+        const stop = yield* Deferred.make<"SIGINT">();
+        const output = yield* Output.pipe(Effect.provide(setup.layer));
+        const control = mockProcessControl({ awaitSignal: Deferred.await(stop) });
+        const observed = Layer.succeed(Output, {
+          ...output,
+          raw: (line, stream) =>
+            output
+              .raw(line, stream)
+              .pipe(
+                Effect.andThen(
+                  line.includes('"id":"c"')
+                    ? Deferred.succeed(stop, "SIGINT")
+                    : line.includes('"id":"b"')
+                      ? Deferred.succeed(second, undefined)
+                      : line.includes('"id":"a"')
+                        ? Deferred.succeed(first, undefined)
+                        : Effect.void,
+                ),
+                Effect.asVoid,
+              ),
+        });
+        const fiber = yield* logsTail(tailFlags({ noFollow: false }), false, false).pipe(
+          Effect.provide(Layer.mergeAll(setup.layer, observed, control.layer)),
+          Effect.forkScoped,
+        );
+        yield* Deferred.await(first);
+        yield* TestClock.adjust("10 seconds");
+        yield* Deferred.await(second);
+        yield* TestClock.adjust("10 seconds");
+        yield* Fiber.join(fiber);
+        expect(
+          setup.out.stdoutText
+            .trim()
+            .split("\n")
+            .map((line) => decodeRow(line).id),
+        ).toEqual(["a", "b", "c"]);
+        expect(setup.http.requests).toHaveLength(4);
+        expect(control.exitCode).toBe(130);
+        expect(setup.telemetry.flushed).toBe(true);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect(
+    "starts a no-history follow query at invocation instead of requesting the previous hour",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(now);
+        const repo = yield* makeComputeProject();
+        const setup = yield* prepare({
+          workdir: repo.dir,
+          outputFlag: "json",
+          routes: {
+            [route]: { status: 200, body: { result: [row("new", now + 1000)], error: null } },
+          },
+        });
+        const stop = yield* Deferred.make<"SIGINT">();
+        const output = yield* Output.pipe(Effect.provide(setup.layer));
+        const control = mockProcessControl({ awaitSignal: Deferred.await(stop) });
+        const observed = Layer.succeed(Output, {
+          ...output,
+          raw: (line, stream) =>
+            output
+              .raw(line, stream)
+              .pipe(Effect.andThen(Deferred.succeed(stop, "SIGINT")), Effect.asVoid),
+        });
+        yield* logsTail(tailFlags({ tail: 0, noFollow: false }), false, false).pipe(
+          Effect.provide(Layer.mergeAll(setup.layer, observed, control.layer)),
+        );
+        expect(setup.http.requests).toHaveLength(1);
+        expect(setup.http.requests[0]?.urlParams.iso_timestamp_start).toBe(
+          "2026-11-02T12:00:00.000Z",
+        );
+        expect(setup.http.requests[0]?.urlParams.sql).toContain("limit 1000");
+        expect(setup.out.stdoutText).toContain('"id":"new"');
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("stops with an explicit truncation failure when a follow page reaches its budget", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(now);
+      const repo = yield* makeComputeProject();
+      const setup = yield* prepare({
+        workdir: repo.dir,
+        routes: {
+          [route]: {
+            status: 200,
+            body: {
+              result: Array.from({ length: 1000 }, (_, index) => row(String(index), now)),
+              error: null,
+            },
+          },
+        },
+      });
+      const error = yield* logsTail(tailFlags({ tail: 0, noFollow: false }), false, false).pipe(
+        Effect.flip,
+        Effect.provide(setup.layer),
+      );
+      expect(Schema.is(LogsInputError)(error) && error.message).toContain(
+        "some logs may be missing",
+      );
+      expect(setup.http.requests).toHaveLength(1);
+      expect(setup.telemetry.flushed).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+  it.effect("reads fallback stdin but never consumes a pipe when explicit SQL is supplied", () =>
+    Effect.gen(function* () {
+      const repo = yield* makeComputeProject();
+      const setup = yield* prepare(
+        {
+          workdir: repo.dir,
+          outputFlag: "json",
+          routes: { [route]: { status: 200, body: { result: [], error: null } } },
+        },
+        "select count() from logs",
+      );
+      yield* logsQuery(queryFlags({ sql: Option.none() })).pipe(Effect.provide(setup.layer));
+      expect(setup.http.requests[0]?.urlParams.sql).toBe("select count() from logs");
+      const failOnRead = Layer.succeed(Stdin, {
+        isTTY: false,
+        readPipedText: Effect.die("explicit SQL must not consume stdin"),
+        readPipedBytes: Effect.succeed(Option.none()),
+        pipedBytesStream: Stream.empty,
+        readLine: () => Effect.succeed(Option.none()),
+      });
+      yield* logsQuery(queryFlags()).pipe(Effect.provide(Layer.merge(setup.layer, failOnRead)));
+      expect(setup.http.requests[1]?.urlParams.sql).toContain("select event_message");
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+});
