@@ -212,46 +212,52 @@ describe("timingVerdict", () => {
 });
 
 describe("timingVerdict with blocks", () => {
-  const base = { median: 100, min: 60, max: 150, p90: 140 };
+  const base = { median: 100, min: 90, max: 110, p90: 108 };
   const context = { comparable: true, samples: 10 };
   const pairs = (...branchMedians: ReadonlyArray<number>) =>
     branchMedians.map((branch) => ({ base: 100, branch }));
 
-  it("reads mixed-sign blocks as within noise even when the pooled median moved", () => {
-    const branch = { median: 130, min: 60, max: 200, p90: 190 };
-    expect(
-      timingVerdict(base, branch, {
-        ...context,
-        blocks: pairs(180, 70, 130, 75, 85),
-      }),
-    ).toBe("within noise");
+  it("reads mixed-sign blocks as within noise although the ranges are separated", () => {
+    const branch = { median: 130, min: 115, max: 200, p90: 190 };
+    expect(timingVerdict(base, branch, { ...context, blocks: pairs(180, 70, 130, 75, 85) })).toBe(
+      "within noise",
+    );
+    expect(timingVerdict(base, branch, context)).toBe("slower");
   });
 
   it("flags slower when a majority of blocks agree past the floor", () => {
-    const branch = { median: 130, min: 100, max: 150, p90: 150 };
-    expect(
-      timingVerdict(base, branch, {
-        ...context,
-        blocks: pairs(130, 125, 140, 99, 135),
-      }),
-    ).toBe("slower");
+    const branch = { median: 130, min: 115, max: 150, p90: 150 };
+    expect(timingVerdict(base, branch, { ...context, blocks: pairs(130, 125, 140, 99, 135) })).toBe(
+      "slower",
+    );
   });
 
   it("flags faster when a majority of blocks agree past the floor", () => {
-    const branch = { median: 70, min: 60, max: 100, p90: 95 };
-    expect(
-      timingVerdict(base, branch, {
-        ...context,
-        blocks: pairs(70, 65, 75, 110, 72),
-      }),
-    ).toBe("faster");
+    const branch = { median: 70, min: 60, max: 85, p90: 85 };
+    expect(timingVerdict(base, branch, { ...context, blocks: pairs(70, 65, 75, 110, 72) })).toBe(
+      "faster",
+    );
   });
 
   it("falls back to the range check below three blocks", () => {
-    const branch = { median: 120, min: 100, max: 130, p90: 130 };
-    expect(timingVerdict(base, branch, { ...context, blocks: pairs(120, 120) })).toBe(
-      "within noise",
-    );
+    const branch = { median: 130, min: 115, max: 150, p90: 150 };
+    expect(timingVerdict(base, branch, { ...context, blocks: pairs(60, 60) })).toBe("slower");
+  });
+});
+
+describe("timingVerdict with a wider build", () => {
+  const context = { comparable: true, samples: 10 };
+
+  it("reads a slower median as noise when the base median sits inside the branch range", () => {
+    const base = { median: 225, min: 218, max: 240, p90: 238 };
+    const branch = { median: 274, min: 218, max: 305, p90: 300 };
+    expect(timingVerdict(base, branch, context)).toBe("within noise");
+  });
+
+  it("reads a faster median as noise when the base median sits inside the branch range", () => {
+    const base = { median: 11211, min: 11172, max: 11224, p90: 11224 };
+    const branch = { median: 10557, min: 10381, max: 11236, p90: 11236 };
+    expect(timingVerdict(base, branch, context)).toBe("within noise");
   });
 });
 

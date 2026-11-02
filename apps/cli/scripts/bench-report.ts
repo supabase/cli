@@ -364,9 +364,9 @@ const exceedsFloor = (delta: Delta): boolean =>
 
 /**
  * "slower" or "faster" only when the median change is at least {@link VERDICT_MIN_PCT} percent
- * and {@link VERDICT_MIN_MS} ms. Run-scoped samples also need the branch median outside the base
- * min-max range. With at least {@link VERDICT_MIN_BLOCKS} paired blocks, a strict majority of
- * blocks must instead move the same way, each past the same floor.
+ * and {@link VERDICT_MIN_MS} ms and each build's median lies outside the other's min-max range, so
+ * a wide spread in either build reads as noise. With at least {@link VERDICT_MIN_BLOCKS} paired
+ * blocks, a strict majority of blocks must also move the same way, each past the same floor.
  */
 export function timingVerdict(
   base: TimingSummary,
@@ -380,18 +380,20 @@ export function timingVerdict(
   if (!context.comparable || context.samples < VERDICT_MIN_SAMPLES) return "not comparable";
   const delta = deltaOf(base.median, branch.median);
   if (!exceedsFloor(delta)) return "within noise";
-  const direction = delta.ms > 0 ? "slower" : "faster";
+  const slower = delta.ms > 0;
+  const separated = slower
+    ? branch.median > base.max && base.median < branch.min
+    : branch.median < base.min && base.median > branch.max;
+  if (!separated) return "within noise";
   const blocks = context.blocks;
   if (blocks !== undefined && blocks.length >= VERDICT_MIN_BLOCKS) {
     const agreeing = blocks.filter((block) => {
       const blockDelta = deltaOf(block.base, block.branch);
-      return exceedsFloor(blockDelta) && blockDelta.ms > 0 === delta.ms > 0;
+      return exceedsFloor(blockDelta) && blockDelta.ms > 0 === slower;
     }).length;
-    return agreeing * 2 > blocks.length ? direction : "within noise";
+    if (agreeing * 2 <= blocks.length) return "within noise";
   }
-  if (branch.median > base.max) return "slower";
-  if (branch.median < base.min) return "faster";
-  return "within noise";
+  return slower ? "slower" : "faster";
 }
 
 /** Pairs the per-block medians of both builds; empty unless every sample carries a block index. */
