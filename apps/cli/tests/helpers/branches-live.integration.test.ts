@@ -279,12 +279,12 @@ describe("live branch lifecycle helpers", () => {
     Effect.gen(function* () {
       let creates = 0;
       const cli: BranchCli = (args) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           if (args[1] === "create") {
             creates += 1;
             return creates === 1
               ? result(
-                  JSON.stringify({
+                  yield* json({
                     _tag: "Error",
                     error: {
                       message:
@@ -294,9 +294,9 @@ describe("live branch lifecycle helpers", () => {
                   "",
                   1,
                 )
-              : result(JSON.stringify(branch));
+              : result(yield* json(branch));
           }
-          return result(JSON.stringify([defaultBranch]));
+          return result(yield* json([defaultBranch]));
         });
       const ref = yield* createLiveBranchEffect(cli, project, branch.name);
       expect(ref).toBe(branchRef);
