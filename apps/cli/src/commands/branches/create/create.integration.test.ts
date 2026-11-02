@@ -409,7 +409,7 @@ describe("branches create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("envelope on 402 suggests upgrade with no extra API calls", () => {
+  it.effect("fails a 402 envelope with its entitlement and no extra API calls", () => {
     const { layer, out, analytics, api } = setup({
       status: 402,
       response: {
@@ -422,14 +422,19 @@ describe("branches create integration", () => {
       },
     });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
+      const error = yield* Effect.flip(
         branchesCreate({ ...baseFlags, name: Option.some("feat-x") }),
       );
-      expect(Exit.isFailure(exit)).toBe(true);
+      expect(error).toMatchObject({
+        entitlement: {
+          feature: "branching_limit",
+          upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
+        },
+      });
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.url).toContain("/branches");
       assertPermissionDrift({ command: "branches create", requests: api.requests, exact: true });
-      expect(out.stderrText).toContain("/org/env-org/billing");
+      expect(out.stderrText).not.toContain("Upgrade your plan:");
       expect(analytics.captured).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });

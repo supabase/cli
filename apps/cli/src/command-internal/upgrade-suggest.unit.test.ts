@@ -272,26 +272,29 @@ describe("suggestUpgrade", () => {
     return jsonResponse(request, status, body);
   }
 
-  it.live("envelope path prints the hint with zero API calls and no event", () => {
-    const { layer, out, analytics, api } = setup();
-    return Effect.gen(function* () {
-      yield* suggestUpgrade({
-        projectRef: VALID_REF,
-        featureKey: "branching_limit",
-        statusCode: 402,
-        response: gateResponse(402, ENVELOPE_BODY),
-      });
-      expect(out.stderrText).toContain("Upgrade your plan:");
-      expect(out.stderrText).toContain("/org/env-org/billing");
-      expect(analytics.captured).toHaveLength(0);
-      expect(api.requests).toHaveLength(0);
-    }).pipe(Effect.provide(layer));
-  });
+  it.live(
+    "envelope path confirms the gate with zero API calls and leaves the hint and event to the command wrapper",
+    () => {
+      const { layer, out, analytics, api } = setup();
+      return Effect.gen(function* () {
+        const suggested = yield* suggestUpgrade({
+          projectRef: VALID_REF,
+          featureKey: "branching_limit",
+          statusCode: 402,
+          response: gateResponse(402, ENVELOPE_BODY),
+        });
+        expect(suggested).toBe(true);
+        expect(out.stderrText).toBe("");
+        expect(analytics.captured).toHaveLength(0);
+        expect(api.requests).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("envelope path works without a featureKey (envelope-only sites)", () => {
     const { layer, out, analytics, api } = setup();
     return Effect.gen(function* () {
-      yield* suggestUpgrade({
+      const suggested = yield* suggestUpgrade({
         projectRef: VALID_REF,
         statusCode: 400,
         response: gateResponse(400, {
@@ -303,8 +306,9 @@ describe("suggestUpgrade", () => {
           },
         }),
       });
+      expect(suggested).toBe(true);
       expect(api.requests).toHaveLength(0);
-      expect(out.stderrText).toContain("Upgrade your plan:");
+      expect(out.stderrText).toBe("");
       expect(analytics.captured).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
@@ -410,19 +414,6 @@ describe("suggestUpgrade", () => {
       });
       expect(api.requests).toHaveLength(2);
       expect(out.stderrText).toContain("/org/test-org/billing");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("envelope path writes no hint in json output mode", () => {
-    const { layer, out, analytics } = setup({ format: "json" });
-    return Effect.gen(function* () {
-      yield* suggestUpgrade({
-        projectRef: VALID_REF,
-        statusCode: 402,
-        response: gateResponse(402, ENVELOPE_BODY),
-      });
-      expect(out.stderrText).toBe("");
-      expect(analytics.captured).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 });

@@ -231,9 +231,10 @@ use established encoders before the `output.format` branch.
 
 Plan-gated denials carry an optional `entitlement: { feature, upgrade_url }` on the error.
 `mapHttpError` attaches it from the Management API's `entitlement_required` body. The json and
-stream-json error object carries it and `withCommandTelemetry` fires `cli_upgrade_suggested` from
-it, so a handler that rebuilds a mapped status error must forward it. `suggestUpgrade` fires the
-event only on its entitlements-lookup fallback.
+stream-json error object carries it, the text layer's `fail` prints the upgrade hint from it, and
+`withCommandTelemetry` fires `cli_upgrade_suggested` from it, so a handler that rebuilds a mapped
+status error must forward it. `suggestUpgrade` prints and fires only on its entitlements-lookup
+fallback.
 
 ## Targets and hosted consent
 

@@ -173,7 +173,7 @@ describe("vanity-subdomains get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("suggests upgrade from entitlement_required envelope on 400", () => {
+  it.effect("fails with the entitlement_required envelope's entitlement on 400", () => {
     const out = mockOutput({ format: "text" });
     const analytics = mockAnalytics();
     const api = mockCommandPlatformApi({
@@ -192,14 +192,18 @@ describe("vanity-subdomains get", () => {
     const layer = runtimeWith({ out, api, analytics });
 
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
+      const error = yield* Effect.flip(
         vanitySubdomainsGet({ remote: Option.none(), projectRef: Option.none() }),
       );
-      expect(Exit.isFailure(exit)).toBe(true);
+      expect(error).toMatchObject({
+        entitlement: {
+          feature: "vanity_subdomain",
+          upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
+        },
+      });
       expect(api.requests).toHaveLength(1);
       assertPermissionDrift({ command: "vanity-subdomains get", requests: api.requests });
-      expect(out.stderrText).toContain("Upgrade your plan:");
-      expect(out.stderrText).toContain("/org/env-org/billing");
+      expect(out.stderrText).not.toContain("Upgrade your plan:");
       expect(analytics.captured).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
@@ -488,23 +492,27 @@ describe("vanity-subdomains check-availability", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("suggests upgrade for gated checks without firing analytics", () => {
+  it.effect("fails gated checks with the envelope's entitlement", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 400, body: VANITY_GATE_ENVELOPE } });
     const analytics = mockAnalytics();
     const layer = runtimeWith({ out, api, analytics });
 
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
+      const error = yield* Effect.flip(
         vanitySubdomainsCheckAvailability({
           remote: Option.none(),
           projectRef: Option.none(),
           desiredSubdomain: Option.some("example.com"),
         }),
       );
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(out.stderrText).toContain("Upgrade your plan:");
-      expect(out.stderrText).toContain("/org/env-org/billing");
+      expect(error).toMatchObject({
+        entitlement: {
+          feature: "vanity_subdomain",
+          upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
+        },
+      });
+      expect(out.stderrText).not.toContain("Upgrade your plan:");
       expect(analytics.captured).toHaveLength(0);
       expect(requestLines(api)).toEqual([
         `POST ${API_URL}/v1/projects/${VALID_REF}/vanity-subdomain/check-availability`,
@@ -753,23 +761,27 @@ describe("vanity-subdomains activate", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("suggests upgrade for gated activation", () => {
+  it.effect("fails gated activation with the envelope's entitlement", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 400, body: VANITY_GATE_ENVELOPE } });
     const analytics = mockAnalytics();
     const layer = runtimeWith({ out, api, analytics });
 
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
+      const error = yield* Effect.flip(
         vanitySubdomainsActivate({
           remote: Option.none(),
           projectRef: Option.none(),
           desiredSubdomain: Option.some("example.com"),
         }),
       );
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(out.stderrText).toContain("Upgrade your plan:");
-      expect(out.stderrText).toContain("/org/env-org/billing");
+      expect(error).toMatchObject({
+        entitlement: {
+          feature: "vanity_subdomain",
+          upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
+        },
+      });
+      expect(out.stderrText).not.toContain("Upgrade your plan:");
       expect(analytics.captured).toHaveLength(0);
       expect(requestLines(api)).toEqual([
         `POST ${API_URL}/v1/projects/${VALID_REF}/vanity-subdomain/activate`,

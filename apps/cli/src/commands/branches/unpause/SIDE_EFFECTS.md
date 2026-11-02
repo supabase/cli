@@ -52,6 +52,8 @@ Same auth fallback chain as every Management-API command. Project-ref discovery 
 
 Silent on success in every mode (the handler writes nothing itself; the target banner and any `Confirmed by --yes` line go to stderr).
 
+A restore denied with the `entitlement_required` envelope prints the upgrade hint on stderr before the error in text mode.
+
 ## Notes
 
 - `--remote=<ref>` names the parent project; with no selector or a bare `--remote` the parent comes from the chain above. A branch name or UUID is rejected with `` `supabase branches unpause` acts on a parent project, so --remote takes its project ref, not a branch name. Use --remote=<ref>. `` The branch itself stays a positional argument.

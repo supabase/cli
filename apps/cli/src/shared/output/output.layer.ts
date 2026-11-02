@@ -31,7 +31,7 @@ import { Tty } from "../runtime/tty.service.ts";
 import { CommandTarget } from "./command-target.service.ts";
 import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError, StdoutClosedError } from "./errors.ts";
 import { MachineErrorContext } from "./machine-error-context.service.ts";
-import type { PlanGateEntitlement } from "./normalize-error.ts";
+import { type PlanGateEntitlement, upgradeHint } from "./normalize-error.ts";
 import { Output } from "./output.service.ts";
 import type { OutputFormat, StreamEvent } from "./types.ts";
 
@@ -528,6 +528,9 @@ export const textOutputLayer = Layer.effect(
             activeSpinner.handle.clear();
             activeSpinner.pauses = 0;
             activeSpinner = undefined;
+          }
+          if (err.entitlement !== undefined) {
+            process.stderr.write(upgradeHint(err.entitlement.upgrade_url) + "\n");
           }
           // Bypasses clack's `log.error` framing (`│` guide + `■` icon): a
           // red-styled message on stderr, optionally followed by a suggestion.

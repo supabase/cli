@@ -1,5 +1,3 @@
-import { styleText } from "node:util";
-
 import type { SupabaseApiError } from "@supabase/api/effect";
 import { Effect, Option, type Redacted } from "effect";
 import * as HttpClientError from "effect/http/HttpClientError";
@@ -13,6 +11,7 @@ import {
   PropFeatureKey,
   PropOrgSlug,
 } from "../shared/telemetry/event-catalog.ts";
+import { upgradeHint } from "../shared/output/normalize-error.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { parsePlanGateEnvelope } from "./http-errors.ts";
 import { billingUrl } from "./profile.ts";
@@ -33,9 +32,6 @@ export const upgradeSuggestion = block("upgrade-suggest", [
       "after a 4xx response that carries no plan-gate error, at a call site that names a feature",
   },
 ]);
-
-const upgradeHint = (upgradeUrl: string): string =>
-  `Your organization does not have access to this feature. Upgrade your plan: ${styleText("bold", upgradeUrl)}`;
 
 export function gateResponse(cause: unknown): HttpClientResponse.HttpClientResponse | undefined {
   return HttpClientError.isHttpClientError(cause) ? cause.response : undefined;
@@ -103,11 +99,8 @@ export const suggestUpgrade = Effect.fn("UpgradeSuggest.check")(function* (opts:
     const body = yield* opts.response.json.pipe(Effect.option);
     const envelope = Option.isSome(body) ? parsePlanGateEnvelope(body.value) : undefined;
     if (envelope !== undefined) {
-      // The error carries `entitlement`, so the command wrapper fires the event.
+      // The error carries `entitlement`, so the command wrapper prints the hint and fires the event.
       yield* Effect.annotateCurrentSpan("upgrade.gated", true);
-      if (output.format === "text") {
-        yield* output.raw(upgradeHint(envelope.upgrade_url) + "\n", "stderr");
-      }
       return true;
     }
   }
