@@ -1,7 +1,10 @@
 import { DateTime } from "effect";
 import { describe, expect, it } from "vitest";
 import type { StackLogRecord } from "@supabase/stack/effect";
-import { makeHistoryCollector, parseSince } from "./logs.format.ts";
+import {
+  makeHistoryCollector,
+  parseSince,
+} from "../../../../command-internal/stack-logs/retained-logs.format.ts";
 
 const now = Date.parse("2026-09-29T12:00:00.000Z");
 

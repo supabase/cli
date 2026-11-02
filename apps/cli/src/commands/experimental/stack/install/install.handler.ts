@@ -18,7 +18,7 @@ import { CommandSettings } from "../../../../config/command-settings.service.ts"
 import { Output } from "../../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
-import { mapTargetError, rejectStackOutput } from "../stack.shared.ts";
+import { mapTargetError, rejectStackOutput } from "../../../../command-internal/stack-target.ts";
 import type { StackInstallFlags } from "./install.command.ts";
 import {
   StackCommandInstallError,

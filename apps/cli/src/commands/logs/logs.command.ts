@@ -13,7 +13,7 @@ import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { linkedDbResolverRuntimeLayer } from "../../command-internal/management-api-runtime.layer.ts";
 import { stdinLayer } from "../../shared/runtime/stdin.layer.ts";
-import { stackTargetResolverLayer, stackApiLayer } from "../experimental/stack/stack.shared.ts";
+import { stackTargetResolverLayer, stackApiLayer } from "../../command-internal/stack-target.ts";
 import { logsQuery, logsTail, logsSources } from "./logs.handler.ts";
 
 const sinceFlag = Flag.String("since").pipe(

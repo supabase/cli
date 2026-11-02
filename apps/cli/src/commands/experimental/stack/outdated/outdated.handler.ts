@@ -12,7 +12,7 @@ import { CommandSettings } from "../../../../config/command-settings.service.ts"
 import { renderGlamourTable } from "../../../../output/glamour-table.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
-import { mapTargetError, rejectStackOutput } from "../stack.shared.ts";
+import { mapTargetError, rejectStackOutput } from "../../../../command-internal/stack-target.ts";
 import { StackCommandOutdatedError } from "./outdated.errors.ts";
 
 const status = (row: OutdatedService) =>

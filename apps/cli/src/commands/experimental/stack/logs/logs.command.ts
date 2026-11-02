@@ -5,7 +5,7 @@ import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
-import { stackLogs } from "./logs.handler.ts";
+import { stackLogs } from "../../../../command-internal/stack-logs/retained-logs.ts";
 import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 
 const config = {

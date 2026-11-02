@@ -1,5 +1,5 @@
 import { DateTime, Option } from "effect";
-import { parseSince } from "../experimental/stack/logs/logs.format.ts";
+import { parseSince } from "../../command-internal/stack-logs/retained-logs.format.ts";
 import { LogsInputError } from "./logs.errors.ts";
 import { Effect } from "effect";
 

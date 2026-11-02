@@ -9,7 +9,11 @@ import {
   mockTelemetryStateTracked,
 } from "../../../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockStdin, mockTty } from "../../../../../tests/helpers/mocks.ts";
-import { StackApi, stackApiLayer, stackTargetResolverLayer } from "../stack.shared.ts";
+import {
+  StackApi,
+  stackApiLayer,
+  stackTargetResolverLayer,
+} from "../../../../command-internal/stack-target.ts";
 import { stackDestroy } from "./destroy.handler.ts";
 import { StackCommandDestroyError } from "./destroy.errors.ts";
 

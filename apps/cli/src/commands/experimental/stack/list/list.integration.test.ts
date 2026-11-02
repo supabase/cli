@@ -7,7 +7,7 @@ import {
   mockTelemetryStateTracked,
 } from "../../../../../tests/helpers/command-mocks.ts";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
-import { StackApi, stackApiLayer } from "../stack.shared.ts";
+import { StackApi, stackApiLayer } from "../../../../command-internal/stack-target.ts";
 import { stackList } from "./list.handler.ts";
 
 const registry = Effect.fn("StackListTest.registry")(function* () {

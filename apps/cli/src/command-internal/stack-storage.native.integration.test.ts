@@ -12,11 +12,7 @@ import {
   stackStorageEndpointFor,
 } from "./stack-storage.ts";
 import { makeStorageGateway } from "./storage-gateway.ts";
-import {
-  StackApi,
-  stackApiLayer,
-  stackTargetResolverLayer,
-} from "../commands/experimental/stack/stack.shared.ts";
+import { StackApi, stackApiLayer, stackTargetResolverLayer } from "./stack-target.ts";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,

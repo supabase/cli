@@ -15,7 +15,7 @@ import {
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
-import { mapTargetError, rejectStackOutput } from "../stack.shared.ts";
+import { mapTargetError, rejectStackOutput } from "../../../../command-internal/stack-target.ts";
 import { StackCommandUpdateError } from "./update.errors.ts";
 import type { StackUpdateFlags } from "./update.command.ts";
 

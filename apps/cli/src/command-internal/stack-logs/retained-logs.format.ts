@@ -1,16 +1,8 @@
 import { DateTime, Option } from "effect";
 import type { LogPosition, LogRecord, StackLogRecord } from "@supabase/stack/effect";
-import {
-  aqua,
-  blue,
-  type ColorStream,
-  dim,
-  green,
-  magenta,
-  yellow,
-} from "../../../../command-internal/colors.ts";
-import { stripControlSequences } from "../../../../shared/output/strip-control-sequences.ts";
-import { markerText } from "../../../../command-internal/stack-log-events.ts";
+import { aqua, blue, type ColorStream, dim, green, magenta, yellow } from "../colors.ts";
+import { stripControlSequences } from "../../shared/output/strip-control-sequences.ts";
+import { markerText } from "../stack-log-events.ts";
 
 /** A `--since` bound: an absolute time, or each instance's latest launch. */
 export type SinceBound =

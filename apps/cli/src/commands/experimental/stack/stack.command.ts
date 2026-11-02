@@ -20,7 +20,7 @@ import { stackRestartCommand as stackRestartCommandBase } from "./restart/restar
 import { stackInstallCommand as stackInstallCommandBase } from "./install/install.command.ts";
 import { stackOutdatedCommand as stackOutdatedCommandBase } from "./outdated/outdated.command.ts";
 import { stackUpdateCommand as stackUpdateCommandBase } from "./update/update.command.ts";
-import { stackApiLayer, stackTargetResolverLayer } from "./stack.shared.ts";
+import { stackApiLayer, stackTargetResolverLayer } from "../../../command-internal/stack-target.ts";
 import { configureLoopbackProxyBypass } from "../../../command-internal/hostname.ts";
 
 const stackCommandSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));

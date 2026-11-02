@@ -32,9 +32,13 @@ import {
   mockCommandSettings,
   mockTelemetryStateTracked,
 } from "../../../../../tests/helpers/command-mocks.ts";
-import { StackApi, stackApiLayer, stackTargetResolverLayer } from "../stack.shared.ts";
+import {
+  StackApi,
+  stackApiLayer,
+  stackTargetResolverLayer,
+} from "../../../../command-internal/stack-target.ts";
 import type { StackLogsFlags } from "./logs.command.ts";
-import { stackLogs } from "./logs.handler.ts";
+import { stackLogs } from "../../../../command-internal/stack-logs/retained-logs.ts";
 import { logsTail } from "../../../logs/logs.handler.ts";
 import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api-factory.service.ts";
 import { TargetPolicy } from "../../../../command-internal/target/target-policy.ts";

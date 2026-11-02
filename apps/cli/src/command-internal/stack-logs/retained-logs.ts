@@ -6,20 +6,19 @@ import {
   type SavedStack,
   type StackLogRecord,
 } from "@supabase/stack/effect";
-import { Output } from "../../../../shared/output/output.service.ts";
-import { OutputFlag } from "../../../../command-internal/global-flags.ts";
-import { dim } from "../../../../command-internal/colors.ts";
-import { CommandSettings } from "../../../../config/command-settings.service.ts";
-import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
+import { Output } from "../../shared/output/output.service.ts";
+import { OutputFlag } from "../global-flags.ts";
+import { dim } from "../colors.ts";
+import { CommandSettings } from "../../config/command-settings.service.ts";
+import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
 import {
   StackApi,
   mapTargetError,
   StackTargetResolver,
   rejectStackOutput,
   validateStackTarget,
-} from "../stack.shared.ts";
-import { StackCommandLogsError } from "./logs.errors.ts";
-import type { StackLogsFlags } from "./logs.command.ts";
+} from "../stack-target.ts";
+import { StackCommandLogsError } from "./retained-logs.errors.ts";
 import {
   isAfter,
   isFromLaunch,
@@ -27,8 +26,17 @@ import {
   makeTextFormatter,
   parseSince,
   truncationFooter,
-} from "./logs.format.ts";
-import { logEvent, type LogSource } from "../../../../command-internal/stack-log-events.ts";
+} from "./retained-logs.format.ts";
+import { logEvent, type LogSource } from "../stack-log-events.ts";
+
+export interface RetainedLogsFlags {
+  readonly stack: Option.Option<string>;
+  readonly stackId: Option.Option<string>;
+  readonly service: ReadonlyArray<string>;
+  readonly follow: boolean;
+  readonly tail: number;
+  readonly since: Option.Option<string>;
+}
 
 const targetError = mapTargetError((props) => new StackCommandLogsError(props));
 const logsError = (cause: { readonly message: string }) =>
@@ -93,7 +101,7 @@ const select = (
 };
 
 export const stackLogs = Effect.fn("experimental.stack.logs")(function* (
-  flags: StackLogsFlags,
+  flags: RetainedLogsFlags,
   options: { readonly unified?: boolean } = {},
 ) {
   const telemetry = yield* TelemetryState;

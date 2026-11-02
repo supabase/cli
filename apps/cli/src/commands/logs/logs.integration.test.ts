@@ -17,7 +17,7 @@ import {
   setupCompute,
   COMPUTE_PROJECT_REF,
 } from "../../../tests/helpers/compute.ts";
-import { StackApi, StackTargetResolver } from "../experimental/stack/stack.shared.ts";
+import { StackApi, StackTargetResolver } from "../../command-internal/stack-target.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { logsQuery, logsTail, logsSources } from "./logs.handler.ts";
 import type { LogsQueryFlags, LogsTailFlags } from "./logs.command.ts";
