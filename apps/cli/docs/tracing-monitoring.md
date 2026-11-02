@@ -181,6 +181,9 @@ the timing ranges, API calls per command, and the slowest phases. It reports:
 - Wall time: base ("before") and branch ("after") medians and ranges. A verdict of slower or faster needs the branch
   median outside the base min-max range, a change of at least 5 percent and 5 ms, and at least 5
   measured runs; otherwise it reads "within noise", or "not comparable" when a build failed.
+  Block-scoped workloads record a block index per launch and, from three paired blocks, replace the
+  range check with a majority rule: more than half of the blocks must move the same way past the
+  same floor, so one outlier stack session cannot flag a workload.
   Thresholds are named constants in `bench-report.ts`.
 - API calls per workload, base and branch.
 - Phase deltas: the three largest span deltas for each workload with a slower or faster verdict.
@@ -297,7 +300,7 @@ described above:
 | Field                                | Meaning                                                                                                                |
 | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
 | `setup`, `teardown`                  | Lists of CLI arguments run untimed with the build under test. `teardown` always runs, even after a failure or timeout. |
-| `setupScope`                         | `run` (default) repeats setup and teardown for every launch; `block` starts one stack per block of five launches.      |
+| `setupScope`                         | `run` (default) repeats setup and teardown for every launch; `block` starts one stack per block of two launches.       |
 | `stack`                              | Sets `SUPABASE_EXPERIMENTAL_STACK=1` on every launch of the workload, the only variable a workload can set.            |
 | `runtime`                            | `docker` or `native`. A stack workload must pass the same `--runtime` to every `stack start`.                          |
 | `fixture`                            | A directory under `apps/cli/bench/fixtures/` copied into the project's `supabase/` directory after `init`.             |

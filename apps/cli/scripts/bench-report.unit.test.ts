@@ -13,6 +13,7 @@ import {
   parseWorkloadManifest,
   summarizeSpanRun,
   summarizeTimings,
+  pairBlocks,
   timingVerdict,
   validateWorkloads,
   type BenchReport,
@@ -207,6 +208,71 @@ describe("timingVerdict", () => {
     const slow = { median: 200, min: 190, max: 210, p90: 209 };
     expect(timingVerdict(base, slow, { comparable: false, samples: 10 })).toBe("not comparable");
     expect(timingVerdict(base, slow, { comparable: true, samples: 3 })).toBe("not comparable");
+  });
+});
+
+describe("timingVerdict with blocks", () => {
+  const base = { median: 100, min: 60, max: 150, p90: 140 };
+  const context = { comparable: true, samples: 10 };
+  const pairs = (...branchMedians: ReadonlyArray<number>) =>
+    branchMedians.map((branch) => ({ base: 100, branch }));
+
+  it("reads mixed-sign blocks as within noise even when the pooled median moved", () => {
+    const branch = { median: 130, min: 60, max: 200, p90: 190 };
+    expect(
+      timingVerdict(base, branch, {
+        ...context,
+        blocks: pairs(180, 70, 130, 75, 85),
+      }),
+    ).toBe("within noise");
+  });
+
+  it("flags slower when a majority of blocks agree past the floor", () => {
+    const branch = { median: 130, min: 100, max: 150, p90: 150 };
+    expect(
+      timingVerdict(base, branch, {
+        ...context,
+        blocks: pairs(130, 125, 140, 99, 135),
+      }),
+    ).toBe("slower");
+  });
+
+  it("flags faster when a majority of blocks agree past the floor", () => {
+    const branch = { median: 70, min: 60, max: 100, p90: 95 };
+    expect(
+      timingVerdict(base, branch, {
+        ...context,
+        blocks: pairs(70, 65, 75, 110, 72),
+      }),
+    ).toBe("faster");
+  });
+
+  it("falls back to the range check below three blocks", () => {
+    const branch = { median: 120, min: 100, max: 130, p90: 130 };
+    expect(timingVerdict(base, branch, { ...context, blocks: pairs(120, 120) })).toBe(
+      "within noise",
+    );
+  });
+});
+
+describe("pairBlocks", () => {
+  const at = (block: number, wallMs: number) => ({
+    wallMs,
+    exitCode: 0,
+    block,
+  });
+
+  it("pairs per-block medians of both builds by block index", () => {
+    expect(
+      pairBlocks([at(0, 10), at(0, 20), at(1, 30)], [at(0, 40), at(0, 60), at(1, 50)]),
+    ).toEqual([
+      { base: 15, branch: 50 },
+      { base: 30, branch: 50 },
+    ]);
+  });
+
+  it("returns no pairs when a sample has no block index", () => {
+    expect(pairBlocks([{ wallMs: 10, exitCode: 0 }], [at(0, 10)])).toEqual([]);
   });
 });
 
