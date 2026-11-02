@@ -108,7 +108,7 @@ describe("waitUntilInstallable", () => {
         onInstallable: (pkg) => Effect.sync(() => void installable.push(pkg.name)),
       }).pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
 
-      yield* TestClock.adjust("14 minutes");
+      yield* TestClock.adjust("29 minutes");
       expect(fiber.pollUnsafe()).toBeUndefined();
 
       yield* TestClock.adjust("2 minutes");

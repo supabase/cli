@@ -275,7 +275,7 @@ jobs:
     # count as self-hosted from sigstore's POV, so this job must stay on a github-hosted runner
     # (it's short and not compute-bound, so the cost is negligible).
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       CHANNEL: ${{ inputs.channel }}
       NPM_TAG: ${{ inputs.npm_tag }}
