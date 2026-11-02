@@ -3,7 +3,7 @@ import { describe, expect, test } from "vitest";
 import { buildMailpitContainerSpec } from "./mailpit.service.ts";
 
 describe("buildMailpitContainerSpec", () => {
-  test("builds the minimal spec with only the always-on web UI port bound (start.go:853-901)", () => {
+  test("builds the minimal spec with only the always-on web UI port bound", () => {
     const spec = buildMailpitContainerSpec({
       image: "supabase/mailpit:v1",
       projectId: "proj",
@@ -31,7 +31,7 @@ describe("buildMailpitContainerSpec", () => {
     });
   });
 
-  test("adds the SMTP port binding only when smtpPort is set and non-zero (start.go:858-862)", () => {
+  test("adds the SMTP port binding only when smtpPort is set and non-zero", () => {
     const spec = buildMailpitContainerSpec({
       image: "img",
       projectId: "proj",
@@ -45,7 +45,7 @@ describe("buildMailpitContainerSpec", () => {
     ]);
   });
 
-  test("omits the SMTP port binding when smtpPort is explicitly 0, matching Go's zero-value guard", () => {
+  test("omits the SMTP port binding when smtpPort is explicitly 0", () => {
     const spec = buildMailpitContainerSpec({
       image: "img",
       projectId: "proj",
@@ -56,7 +56,7 @@ describe("buildMailpitContainerSpec", () => {
     expect(spec.ports).toEqual([{ hostPort: "54324", containerPort: "8025" }]);
   });
 
-  test("adds the POP3 port binding only when pop3Port is set and non-zero (start.go:863-867)", () => {
+  test("adds the POP3 port binding only when pop3Port is set and non-zero", () => {
     const spec = buildMailpitContainerSpec({
       image: "img",
       projectId: "proj",
@@ -70,7 +70,7 @@ describe("buildMailpitContainerSpec", () => {
     ]);
   });
 
-  test("adds both optional ports together, in Go's declared order", () => {
+  test("adds both optional ports together, in declared order", () => {
     const spec = buildMailpitContainerSpec({
       image: "img",
       projectId: "proj",

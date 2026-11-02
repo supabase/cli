@@ -6,10 +6,12 @@
  * `startSetupLocalDatabase`) with a distinct sequence per major version: PG >= 15 recreates the
  * container/volume/network and re-runs setup; PG <= 14 recreates the two databases in place and
  * reinitializes the schema. Neither path probes for an existing volume, supports
- * `--from-backup`, or rolls back on failure.
+ * `--from-backup`, or rolls back the database on failure; PG15 stops storage/auth/realtime/pooler
+ * first and restarts them (+ Kong reload) once at the end, or after a failure unless Docker
+ * reports the db container missing or stopped.
  */
 
-import { Data, Effect, Result, Schedule, type FileSystem, type Path } from "effect";
+import { Data, Effect, Exit, Result, Schedule, type FileSystem, type Path } from "effect";
 import type * as HttpClient from "effect/http/HttpClient";
 import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
@@ -21,10 +23,12 @@ import {
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
 import { isSqlState } from "../connect-errors.ts";
+import { isContainerNotFoundMessage } from "../container-cli.ts";
 import { checkDbToml } from "../db-config.toml-read.ts";
 import { DbConnection, type DbSession } from "../db-connection.service.ts";
 import { DbExecError, type DbConnectError } from "../db-connection.errors.ts";
 import { CLI_PROJECT_LABEL } from "../docker-ids.ts";
+import { inspectContainerState } from "../docker-lifecycle.ts";
 import type { DockerRun } from "../docker-run.service.ts";
 import { migrateAndSeed } from "../migrate-and-seed.ts";
 import { formatExecBatchError, type MigrationApplyError } from "../migration-apply.ts";
@@ -44,7 +48,6 @@ import {
 } from "./container-lifecycle.ts";
 import {
   runFreshDbSetup,
-  resolveResetSeedConfig,
   applyApiPrivileges,
   applyDatabaseWebhooks,
   initSchema14,
@@ -67,10 +70,12 @@ import {
 import {
   restartContainer,
   restartServicesAndReloadKong,
+  stopSatelliteServices,
   type ContainerRestartError,
   type KongReloadError,
   type RestartServicesError,
 } from "./restart-services.ts";
+import { CliConfigValues } from "../../config/cli-config-values.service.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
@@ -134,8 +139,6 @@ export interface RecreateLocalDatabaseInput<E> {
   readonly dbHealthTimeoutSeconds: number;
   /** The resolved reset migration version (`""` for every pending migration). */
   readonly version: string;
-  /** `db reset`'s `--no-seed`/`--sql-paths` — see {@link resolveResetSeedConfig}. */
-  readonly seedFlags: { readonly noSeed: boolean; readonly sqlPaths: ReadonlyArray<string> };
   /** The same shape `start-database.ts`'s `StartDatabaseInput.setup` uses — hoisted to {@link FreshDbSetupInput}. */
   readonly setup: FreshDbSetupInput<E>;
 }
@@ -252,6 +255,8 @@ const resetRecreateDatabases = Effect.fn("DbBootstrap.recreateDatabases")(functi
   }
 });
 
+const STACK_RECOVERY_HINT = "Run supabase stop && supabase start to bring the local stack back.";
+
 /** PG >= 15 recreate path — see this module's own header for the full sequence. */
 const recreateLocalDatabase15 = <E>(
   spawner: Spawner,
@@ -266,10 +271,12 @@ const recreateLocalDatabase15 = <E>(
   | HttpClient.HttpClient
   | FileSystem.FileSystem
   | Path.Path
+  | CliConfigValues
 > =>
   Effect.gen(function* () {
     const output = yield* Output;
 
+    yield* stopSatelliteServices(spawner, input.projectId);
     yield* removeContainer(spawner, input.dbContainerId);
     yield* removeVolume(spawner, input.dbContainerId);
 
@@ -302,7 +309,7 @@ const recreateLocalDatabase15 = <E>(
     );
 
     // No fresh-volume gate needed: a reset just removed the volume above, so it's always fresh.
-    // Passes the resolved reset `version`/`seedFlags`, unlike `db start`'s own call.
+    // Passes the resolved reset `version`, unlike `db start`'s own call.
     yield* runFreshDbSetup(spawner, {
       fs: input.fs,
       path: input.path,
@@ -312,13 +319,37 @@ const recreateLocalDatabase15 = <E>(
       hostname: input.hostname,
       dbPort: input.dbPort,
       version: input.version,
-      seedFlags: input.seedFlags,
       setup: input.setup,
     });
 
     yield* output.raw("Restarting containers...\n", "stderr");
-    yield* restartServicesAndReloadKong(spawner, input.projectId);
-  });
+  }).pipe(
+    Effect.onExit((exit) =>
+      Exit.isSuccess(exit)
+        ? restartServicesAndReloadKong(spawner, input.projectId)
+        : Effect.gen(function* () {
+            const output = yield* Output;
+            const inspected = yield* inspectContainerState(spawner, input.dbContainerId).pipe(
+              Effect.result,
+            );
+            const dbGone = Result.isFailure(inspected)
+              ? isContainerNotFoundMessage(inspected.failure.message)
+              : !inspected.success.running;
+            if (dbGone) {
+              return yield* output.warn(
+                `The local database is not running, so storage, auth, realtime and the pooler were left stopped.\n${STACK_RECOVERY_HINT}`,
+              );
+            }
+            yield* restartServicesAndReloadKong(spawner, input.projectId).pipe(
+              Effect.catchTags({
+                RestartServicesError: (error) =>
+                  output.warn(`${error.message}\n${STACK_RECOVERY_HINT}`),
+                KongReloadError: (error) => output.warn(`${error.message}\n${error.suggestion}`),
+              }),
+            );
+          }),
+    ),
+  );
 
 /**
  * Loads `config.toml` once, ahead of `initDatabase` (needs `api.auto_expose_new_tables`) and the
@@ -337,6 +368,7 @@ const recreateLocalDatabase14 = <E>(
   | HttpClient.HttpClient
   | FileSystem.FileSystem
   | Path.Path
+  | CliConfigValues
 > =>
   Effect.gen(function* () {
     const { setup, fs, path, workdir } = input;
@@ -410,7 +442,7 @@ const recreateLocalDatabase14 = <E>(
         const session = yield* connectAs("postgres", "postgres");
         yield* migrateAndSeed(session, fs, path, workdir, input.version, {
           migrationsEnabled: toml.migrationsEnabled,
-          seed: resolveResetSeedConfig(toml.seed, input.seedFlags, path),
+          seed: toml.seed,
           experimental: setup.experimental,
           pgDeltaEnabled: toml.pgDelta.enabled,
           schemaPaths: toml.schemaPaths,
@@ -437,6 +469,7 @@ export const recreateLocalDatabase = <E>(
   | HttpClient.HttpClient
   | FileSystem.FileSystem
   | Path.Path
+  | CliConfigValues
 > =>
   (input.setup.majorVersion <= 14
     ? recreateLocalDatabase14(spawner, input)

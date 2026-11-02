@@ -84,7 +84,7 @@ describe("logout integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("empty non-interactive stdin takes Go's default (false) and cancels", () => {
+  it.effect("empty non-interactive stdin takes the default (false) and cancels", () => {
     const { layer, credentials } = setupLogout({ stdinIsTty: false });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(logout());

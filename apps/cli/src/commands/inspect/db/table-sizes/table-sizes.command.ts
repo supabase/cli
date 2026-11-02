@@ -5,8 +5,11 @@ import {
   INSPECT_DB_FLAGS,
   INSPECT_DB_PERMISSIONS,
   inspectDbCommandHandler,
+  withInspectDbTargetPolicy,
 } from "../inspect-db-command.ts";
 import { inspectDbRuntimeLayer } from "../db.layers.ts";
+import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
+import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
 
 export const inspectDbTableSizesCommand = Command.make("table-sizes", INSPECT_DB_FLAGS).pipe(
   Command.withDescription(
@@ -16,4 +19,7 @@ export const inspectDbTableSizesCommand = Command.make("table-sizes", INSPECT_DB
   withPermissions(INSPECT_DB_PERMISSIONS),
   Command.withHandler(inspectDbCommandHandler(inspectDbTableSizes)),
   Command.provide(inspectDbRuntimeLayer("table-sizes")),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(INSPECT_DB_FLAGS),
+  withInspectDbTargetPolicy,
 );

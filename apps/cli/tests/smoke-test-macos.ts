@@ -105,11 +105,6 @@ const main = Effect.gen(function* () {
     const arch = process.arch;
     const binDir = path.join(root, "packages", `cli-darwin-${arch}`, "bin");
     const binaries = ["supabase"];
-    if (
-      yield* fs.exists(path.join(binDir, "supabase-go")).pipe(Effect.orElseSucceed(() => false))
-    ) {
-      binaries.push("supabase-go");
-    }
 
     for (const binary of binaries) {
       const name = `native-darwin-${arch}-signature-${binary}`;

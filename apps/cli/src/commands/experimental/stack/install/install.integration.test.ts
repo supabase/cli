@@ -25,6 +25,7 @@ import { selection } from "../../../../../tests/helpers/pins.ts";
 import { ExperimentalFlag } from "../../../../command-internal/global-flags.ts";
 import { StackCommandInstallError } from "./install.errors.ts";
 import { stackInstall } from "./install.handler.ts";
+import { cliConfigValuesTestLayer } from "../../../../../tests/helpers/config-values-layer.ts";
 
 const UPSTREAM = (kind: ServiceKind) => (kind === "database" ? "17.99.0.0" : "v99.0.0");
 
@@ -92,6 +93,7 @@ const install = (
         output.layer,
         mockTelemetryStateTracked().layer,
         mockCommandSettings({ workdir: root }),
+        cliConfigValuesTestLayer,
         Layer.succeed(ExperimentalFlag, false),
       ),
     ),

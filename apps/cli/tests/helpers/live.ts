@@ -236,7 +236,7 @@ export function requireLiveJson(
 
 /** Flags every storage live test passes: the suite links the shared project
  * and the storage command family is experimental-gated. */
-export const storageLiveFlags: ReadonlyArray<string> = ["--linked", "--experimental"];
+export const storageLiveFlags: ReadonlyArray<string> = ["--remote", "--experimental"];
 
 /**
  * Best-effort exact-object cleanup for storage live tests: removes one owned
@@ -267,7 +267,7 @@ export function removeStorageLiveObject(
 /** Flags for experimental-gated live tests that address the shared project by
  * ref rather than linking it (contrast `storageLiveFlags`). */
 export function experimentalProjectLiveFlags(project: LiveProject): ReadonlyArray<string> {
-  return ["--project-ref", project.ref, "--experimental"];
+  return [`--remote=${project.ref}`, "--experimental"];
 }
 
 /**
@@ -286,6 +286,7 @@ export function removePostgresConfigLiveOverride(
         cli([
           "postgres-config",
           "delete",
+          "--yes",
           "--config",
           key,
           ...experimentalProjectLiveFlags(project),
@@ -308,7 +309,15 @@ export function removeLiveMigration(
   return runLive(
     Effect.gen(function* () {
       const reverted = yield* awaitForeign(() =>
-        cli(["migration", "repair", version, "--status", "reverted", "--db-url", project.dbUrl]),
+        cli([
+          "migration",
+          "repair",
+          version,
+          "--status",
+          "reverted",
+          `--remote=${project.dbUrl}`,
+          "--yes",
+        ]),
       );
       yield* callForeign(() =>
         requireCliSuccess(reverted, `migration repair cleanup for ${version}`),

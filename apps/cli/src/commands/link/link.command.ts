@@ -1,17 +1,21 @@
-import { Option } from "effect";
+import { Effect, Option } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
-import { PROJECT_REF_PATTERN } from "../../config/remote-target.service.ts";
 import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose, withContext } from "../../command-internal/command-permissions/model.ts";
 import { linkServices } from "../../command-internal/link-services-core.ts";
-import { projectRefPicker } from "../../config/remote-target.layer.ts";
+import { projectRefPicker } from "../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../telemetry/linked-project-cache.layer.ts";
+import { withCliConfigFlags } from "../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
+import { CliConfigKeys } from "../../config/cli-config-keys.ts";
+import { Output } from "../../shared/output/output.service.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { link } from "./link.handler.ts";
+import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
 
 const config = {
   refOrBranch: Argument.String("ref-or-branch").pipe(
@@ -26,11 +30,12 @@ const config = {
     ),
     Flag.optional,
   ),
-  password: Flag.String("password").pipe(
-    Flag.withAlias("p"),
-    Flag.withDescription("Password to your remote Postgres database."),
-    Flag.optional,
-  ),
+  password: CliConfigKeys.linkedDb.password.flag({
+    name: "password",
+    alias: "p",
+    description: "Password to your remote Postgres database.",
+    hidden: true,
+  }),
   skipPooler: Flag.Boolean("skip-pooler").pipe(
     Flag.withDescription("Use direct connection instead of pooler."),
     Flag.withDefault(false),
@@ -44,26 +49,26 @@ const config = {
 
 export type LinkFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const linkHandler = (flags: LinkFlags) =>
+const linkHandler = (flags: LinkFlags) =>
   link(flags).pipe(
-    // `--project-ref` is only safe to log verbatim when it's ref-shaped — it can also be a
-    // branch name, which is user data. `--skip-pooler` is always safe; `--password` stays redacted.
     withCommandTelemetry({
       flags,
-      safeFlags:
-        Option.isSome(flags.projectRef) && PROJECT_REF_PATTERN.test(flags.projectRef.value)
-          ? ["project-ref"]
-          : [],
     }),
     withJsonErrorHandling,
   );
+
+const warnPasswordIgnored = Effect.fnUntraced(function* (flags: LinkFlags) {
+  if (Option.isNone(flags.password)) return;
+  const output = yield* Output;
+  yield* output.warn("link ignores --password; remove it from your scripts.");
+});
 
 export const linkCommand = Command.make("link", config).pipe(
   Command.withDescription("Link to a Supabase project."),
   Command.withShortDescription("Link to a Supabase project"),
   Command.withExamples([
     {
-      command: "supabase link --project-ref abcdefghijklmnopqrst",
+      command: "supabase link abcdefghijklmnopqrst",
       description: "Link to a project by ref",
     },
     {
@@ -109,4 +114,9 @@ export const linkCommand = Command.make("link", config).pipe(
   ),
   Command.withHandler(linkHandler),
   Command.provide(managementApiRuntimeLayer(["link"])),
+  Command.provide(cliConfigValuesLayer),
+  // Outermost, so it runs before the management API runtime resolves the access token.
+  Command.provideEffectDiscard((flags) => warnPasswordIgnored(flags)),
+  withCliConfigFlags(config),
+  withTargetPolicy({ group: "hosted", consent: "none" }),
 );

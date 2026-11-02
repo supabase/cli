@@ -5,10 +5,12 @@ import { runSupabaseEffect, withTempHome } from "../../../../tests/helpers/cli.t
 
 const E2E_TIMEOUT_MS = 30_000;
 
-// A definitely-closed local port: `--db-url` resolves without a config.toml or running
+// A definitely-closed local port: `--remote=<url>` resolves without a config.toml or running
 // stack, then the native handler dials and fails fast — exercising the real subprocess path
-// without depending on a live database in CI.
-const DEAD_DB_URL = "postgres://postgres:postgres@127.0.0.1:1/postgres";
+// without depending on a live database in CI. The password is unique so a leak shows up even
+// when the scheme or path of the URL is rewritten.
+const DEAD_DB_PASSWORD = "e2e-dead-secret";
+const DEAD_DB_URL = `postgres://postgres:${DEAD_DB_PASSWORD}@127.0.0.1:1/postgres`;
 
 // `--agent no` forces text-mode output; otherwise the CLI may auto-select a machine format
 // (JSON on stdout) in a detected coding-agent environment, routing the error away from stderr.
@@ -21,13 +23,15 @@ describe("supabase inspect db", () => {
     () =>
       withTempHome((home) =>
         Effect.gen(function* () {
-          const { exitCode, stderr } = yield* runSupabaseEffect(
-            ["inspect", "db", "locks", TEXT_MODE, TEXT_MODE_VALUE, "--db-url", DEAD_DB_URL],
+          const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
+            ["inspect", "db", "locks", TEXT_MODE, TEXT_MODE_VALUE, `--remote=${DEAD_DB_URL}`],
             { home: home.dir, env: { HOME: home.dir } },
           );
           expect(exitCode).toBe(1);
-          expect(stderr).toContain("Connecting to remote database...");
+          expect(stderr).toContain("Target: custom Postgres (127.0.0.1:1)");
           expect(stderr).toMatch(/failed to connect to postgres|connection refused|ECONNREFUSED/i);
+          expect(`${stdout}${stderr}`).not.toContain(DEAD_DB_PASSWORD);
+          expect(`${stdout}${stderr}`).not.toContain(DEAD_DB_URL);
         }),
       ),
     E2E_TIMEOUT_MS,
@@ -39,15 +43,15 @@ describe("supabase inspect db", () => {
       withTempHome((home) =>
         Effect.gen(function* () {
           const { exitCode, stderr } = yield* runSupabaseEffect(
-            ["inspect", "db", "cache-hit", TEXT_MODE, TEXT_MODE_VALUE, "--db-url", DEAD_DB_URL],
+            ["inspect", "db", "cache-hit", TEXT_MODE, TEXT_MODE_VALUE, `--remote=${DEAD_DB_URL}`],
             { home: home.dir, env: { HOME: home.dir } },
           );
           expect(exitCode).toBe(1);
           expect(stderr).toContain('Command "cache-hit" is deprecated, use "db-stats" instead.');
           const deprecationIndex = stderr.indexOf('Command "cache-hit" is deprecated');
-          const connectingIndex = stderr.indexOf("Connecting to remote database...");
+          const bannerIndex = stderr.indexOf("Target: custom Postgres (127.0.0.1:1)");
           expect(deprecationIndex).toBeGreaterThanOrEqual(0);
-          expect(connectingIndex).toBeGreaterThan(deprecationIndex);
+          expect(bannerIndex).toBeGreaterThan(deprecationIndex);
         }),
       ),
     E2E_TIMEOUT_MS,

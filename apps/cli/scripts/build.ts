@@ -114,7 +114,6 @@ const main = Effect.gen(function* () {
 
   const entrypoint = path.join(root, "apps/cli/src/main.ts");
   const distDir = path.join(root, "dist");
-  const goSource = path.resolve(root, "apps/cli-go");
   const buildDefines = {
     ...(yield* step(() => stackReleaseDefine())),
     SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: yield* encodeJson(yield* bundleServeMainTemplate()),
@@ -123,17 +122,6 @@ const main = Effect.gen(function* () {
     // Skips msgpackr's startup probe for its native addon at the build host's store path, which
     // on macOS goes through the automounter and can hang every command (supabase/cli#6771).
     "process.env.MSGPACKR_NATIVE_ACCELERATION_DISABLED": yield* encodeJson("true"),
-  };
-
-  type BunTarget = (typeof TARGETS)[number]["bunTarget"];
-
-  const GO_TARGETS: Record<BunTarget, { goos: string; goarch: string }> = {
-    "bun-darwin-arm64": { goos: "darwin", goarch: "arm64" },
-    "bun-darwin-x64": { goos: "darwin", goarch: "amd64" },
-    "bun-linux-arm64": { goos: "linux", goarch: "arm64" },
-    "bun-linux-x64-baseline": { goos: "linux", goarch: "amd64" },
-    "bun-windows-x64-baseline": { goos: "windows", goarch: "amd64" },
-    "bun-windows-arm64": { goos: "windows", goarch: "arm64" },
   };
 
   type SignMode = "adhoc" | "off";
@@ -167,45 +155,6 @@ const main = Effect.gen(function* () {
       },
     });
     yield* Console.log(`[${target.pkg}] Done.`);
-  });
-
-  const buildGoTarget = Effect.fnUntraced(function* (target: (typeof TARGETS)[number]) {
-    const binDir = path.join(root, "packages", target.pkg, "bin");
-    yield* fs.makeDirectory(binDir, { recursive: true });
-
-    const { goos, goarch } = GO_TARGETS[target.bunTarget];
-    const outfile = path.join(binDir, `supabase-go${target.ext}`);
-
-    yield* Console.log(`[${target.pkg}] Compiling Go CLI (${goos}/${goarch})...`);
-    const ldflagParts = [
-      "-s",
-      "-w",
-      `-X github.com/supabase/cli/internal/utils.Version=${version}`,
-    ];
-    const { SENTRY_DSN, POSTHOG_API_KEY, POSTHOG_ENDPOINT } = process.env;
-    if (SENTRY_DSN) {
-      ldflagParts.push(`-X github.com/supabase/cli/internal/utils.SentryDsn=${SENTRY_DSN}`);
-    }
-    if (POSTHOG_API_KEY) {
-      ldflagParts.push(
-        `-X github.com/supabase/cli/internal/utils.PostHogAPIKey=${POSTHOG_API_KEY}`,
-      );
-    }
-    if (POSTHOG_ENDPOINT) {
-      ldflagParts.push(
-        `-X github.com/supabase/cli/internal/utils.PostHogEndpoint=${POSTHOG_ENDPOINT}`,
-      );
-    }
-    const goLdflags = ldflagParts.join(" ");
-    yield* step(() =>
-      $`go build -trimpath -ldflags=${goLdflags} -o ${outfile} .`.cwd(goSource).env({
-        ...process.env,
-        GOOS: goos,
-        GOARCH: goarch,
-        CGO_ENABLED: "0",
-      }),
-    );
-    yield* Console.log(`[${target.pkg}] Go binary done.`);
   });
 
   /**
@@ -249,11 +198,9 @@ const main = Effect.gen(function* () {
 
         yield* Console.log(`[${target.pkg}] Ad-hoc signing ${binary} (${identifier})...`);
         // No key material, so rcodesign produces an ad-hoc signature, equivalent to
-        // `codesign --sign -`, replacing Bun/Go's linker-signed one.
+        // `codesign --sign -`, replacing Bun's linker-signed one.
         yield* step(() => $`rcodesign sign --binary-identifier ${identifier} ${binPath}`);
 
-        // Matches the identifier's whole value, so the SFE's `com.supabase.cli` can't satisfy
-        // the sidecar's `com.supabase.cli-go`, and confirms the signature is no longer linker-signed.
         const info = yield* step(() => $`rcodesign print-signature-info ${binPath}`.text());
         const signedIdentifier = info.match(/^\s*identifier:\s*(\S+)\s*$/m)?.[1];
         if (signedIdentifier !== identifier) {
@@ -275,21 +222,18 @@ const main = Effect.gen(function* () {
     yield* Console.log(`[${target.pkg}] Creating archive ${target.archive}...`);
 
     if (target.archive.endsWith(".zip")) {
-      const files = [
-        path.join(binDir, `supabase${target.ext}`),
-        path.join(binDir, `supabase-go${target.ext}`),
-      ];
+      const files = [path.join(binDir, `supabase${target.ext}`)];
       yield* step(() => $`zip -j ${archivePath} ${files}`);
 
       // setup-cli and other download clients always fetch a .tar.gz, even on Windows, so
       // publish one alongside the .zip. See #5257.
       const tarArchive = target.archive.replace(/\.zip$/, ".tar.gz");
       const tarArchivePath = path.join(distDir, tarArchive);
-      const tarFiles = [`supabase${target.ext}`, `supabase-go${target.ext}`];
+      const tarFiles = [`supabase${target.ext}`];
       yield* Console.log(`[${target.pkg}] Creating archive ${tarArchive}...`);
       yield* step(() => $`tar -czf ${tarArchivePath} -C ${binDir} ${tarFiles}`);
     } else {
-      const files = [`supabase${target.ext}`, `supabase-go${target.ext}`];
+      const files = [`supabase${target.ext}`];
       yield* step(() => $`tar -czf ${archivePath} -C ${binDir} ${files}`);
     }
   });
@@ -314,19 +258,6 @@ const main = Effect.gen(function* () {
                 },
               });
 
-              // The Go binary is fully static (CGO_ENABLED=0), so the glibc build works on musl too;
-              // copy it into the musl package so GoProxy finds supabase-go there.
-              const glibcTarget = TARGETS.find(
-                (candidate) => "nfpmArch" in candidate && candidate.nfpmArch === target.nfpmArch,
-              );
-              if (!glibcTarget) {
-                throw new Error(`No glibc Linux target found for musl arch ${target.nfpmArch}`);
-              }
-              const src = path.join(root, "packages", glibcTarget.pkg, "bin", "supabase-go");
-              const dst = path.join(binDir, "supabase-go");
-              yield* Console.log(`[${target.pkg}] Copying Go binary from ${glibcTarget.pkg}...`);
-              yield* fs.copyFile(src, dst);
-
               yield* Console.log(`[${target.pkg}] Done.`);
             }),
           ),
@@ -349,11 +280,8 @@ const main = Effect.gen(function* () {
         const outPath = path.join(distDir, outFile);
         const binDir = fmt === "apk" ? muslBinDir : glibcBinDir;
 
-        // The Go binary is fully static, so apk (musl) still references supabase-go
-        // from the glibc dir where it was built.
         const contents: Array<{ src: string; dst: string }> = [
           { src: path.join(binDir, "supabase"), dst: "/usr/bin/supabase" },
-          { src: path.join(glibcBinDir, "supabase-go"), dst: "/usr/bin/supabase-go" },
         ];
 
         const nfpmConfig: Record<string, unknown> = {
@@ -427,9 +355,6 @@ const main = Effect.gen(function* () {
   yield* Console.log(`Building the CLI for ${TARGETS.length} targets...\n`);
 
   yield* step(() => Promise.all(TARGETS.map((target) => runJob(buildTarget(target)))));
-
-  yield* Console.log("\nCompiling Go CLI for all targets...");
-  yield* step(() => Promise.all(TARGETS.map((target) => runJob(buildGoTarget(target)))));
 
   // Must run before archiveTarget / buildLinuxPackages / generateChecksums so every
   // distribution channel ships the signed bytes.

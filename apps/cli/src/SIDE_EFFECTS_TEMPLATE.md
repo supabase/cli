@@ -77,12 +77,6 @@
 ## Telemetry Events Fired
 
 <!-- List every PostHog event the command emits, including the universal cli_command_executed.
-     If the command is still a Phase 0 proxy, write "proxy — see Go binary" and leave
-     the table empty; the Go subprocess fires telemetry. For a still-wrapped command, grep
-     its Go source under apps/cli-go/internal/<command>/*.go for `service.Capture`,
-     `service.Alias`, `service.Identify`, `service.GroupIdentify`, `TrackUpgradeSuggested`
-     (apps/cli-go now contains only the residual wrapped-command subset; for an
-     already-ported command, check out commit 7b469f5b3 to grep its former Go source instead).
      Constants live in apps/cli/src/shared/telemetry/event-catalog.ts. -->
 
 | Event                  | When                                       | Notable properties / groups         |
@@ -124,7 +118,7 @@
 ## Notes
 
 <!-- Anything else an implementer or reviewer needs to know:
-     - Behaviour differences between --local / --linked / --project-ref modes
+     - Behaviour differences between local and --remote targets
      - Idempotency characteristics
-     - Known divergences from Go CLI output that are intentional
+     - Intentional output quirks
      - Side effects of retries or partial failures -->

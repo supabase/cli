@@ -68,7 +68,7 @@ filter __supabase_escapeStringWithSpecialChars {
 
     if ( $WordToComplete -eq "" -And ( -Not $IsEqualFlag )) {
         # If the last parameter is complete (there is a space following it)
-        # We add an extra empty parameter so we can indicate this to the go method.
+        # We add an extra empty parameter so we can indicate this to the completion program.
         __supabase_debug "Adding extra empty parameter"
         # PowerShell 7.2+ changed the way how the arguments are passed to executables,
         # so for pre-7.2 or when Legacy argument passing is enabled we need to use
@@ -105,7 +105,7 @@ filter __supabase_escapeStringWithSpecialChars {
 
     if (($Directive -band $ShellCompDirectiveError) -ne 0 ) {
         # Error code.  No completion.
-        __supabase_debug "Received error from custom completion go code"
+        __supabase_debug "Received error from custom completion code"
         return
     }
 

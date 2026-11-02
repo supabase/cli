@@ -19,6 +19,7 @@ import { seedLock } from "../../../../../tests/helpers/stack-lock.ts";
 import { ExperimentalFlag } from "../../../../command-internal/global-flags.ts";
 import { StackCommandOutdatedError } from "./outdated.errors.ts";
 import { stackOutdated } from "./outdated.handler.ts";
+import { cliConfigValuesTestLayer } from "../../../../../tests/helpers/config-values-layer.ts";
 
 const UPSTREAM = "v99.0.0";
 
@@ -55,6 +56,7 @@ const layer = (root: string, output: ReturnType<typeof mockOutput>) =>
     output.layer,
     mockTelemetryStateTracked().layer,
     mockCommandSettings({ workdir: root }),
+    cliConfigValuesTestLayer,
     Layer.succeed(ExperimentalFlag, false),
   );
 

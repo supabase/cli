@@ -156,13 +156,9 @@ describe("commandSettingsLayer", () => {
     }).pipe(Effect.provide(makeLayer({ env: {}, cwd: tempRoot.current }))),
   );
 
-  it.effect("captures SUPABASE_DB_PASSWORD and GITHUB_TOKEN as redacted options", () =>
+  it.effect("captures GITHUB_TOKEN as a redacted option", () =>
     Effect.gen(function* () {
       const config = yield* CommandSettings;
-      expect(Option.isSome(config.dbPassword)).toBe(true);
-      if (Option.isSome(config.dbPassword)) {
-        expect(Redacted.value(config.dbPassword.value)).toBe("db-pw");
-      }
       expect(Option.isSome(config.githubToken)).toBe(true);
       if (Option.isSome(config.githubToken)) {
         expect(Redacted.value(config.githubToken.value)).toBe("gh-tok");
@@ -177,16 +173,11 @@ describe("commandSettingsLayer", () => {
     ),
   );
 
-  it.effect("captures empty SUPABASE_DB_PASSWORD and GITHUB_TOKEN as none", () =>
+  it.effect("captures an empty GITHUB_TOKEN as none", () =>
     Effect.gen(function* () {
       const config = yield* CommandSettings;
-      expect(Option.isNone(config.dbPassword)).toBe(true);
       expect(Option.isNone(config.githubToken)).toBe(true);
-    }).pipe(
-      Effect.provide(
-        makeLayer({ env: { SUPABASE_DB_PASSWORD: "", GITHUB_TOKEN: "" }, cwd: tempRoot.current }),
-      ),
-    ),
+    }).pipe(Effect.provide(makeLayer({ env: { GITHUB_TOKEN: "" }, cwd: tempRoot.current }))),
   );
 
   it.effect("preserves an empty SUPABASE_PROFILE without selecting a profile", () =>
@@ -325,26 +316,24 @@ describe("commandSettingsLayer", () => {
     }).pipe(Effect.provide(BunServices.layer));
   });
 
-  it.effect(
-    "fails when SUPABASE_PROFILE is neither a known name nor a readable file — Go parity",
-    () =>
-      Effect.gen(function* () {
-        const exit = yield* configExit({
-          env: { SUPABASE_PROFILE: "rogue-profile" },
-          cwd: tempRoot.current,
-        });
-        expectProfileLoadFailure(exit, "failed to read profile: Unsupported Config Type");
-      }),
+  it.effect("fails when SUPABASE_PROFILE is neither a known name nor a readable file", () =>
+    Effect.gen(function* () {
+      const exit = yield* configExit({
+        env: { SUPABASE_PROFILE: "rogue-profile" },
+        cwd: tempRoot.current,
+      });
+      expectProfileLoadFailure(exit, "failed to read profile: unsupported config file type");
+    }),
   );
 
   it.effect("fails when --profile names a non-existent profile instead of falling back", () =>
     Effect.gen(function* () {
       const exit = yield* configExit({ profileFlag: "resms", cwd: tempRoot.current });
-      expectProfileLoadFailure(exit, "failed to read profile: Unsupported Config Type");
+      expectProfileLoadFailure(exit, "failed to read profile: unsupported config file type");
     }),
   );
 
-  it.effect("matches built-in profile names case-insensitively — Go strings.EqualFold", () =>
+  it.effect("matches built-in profile names case-insensitively", () =>
     Effect.gen(function* () {
       const config = yield* CommandSettings;
       expect(config.profile).toBe("supabase-staging");
@@ -352,27 +341,25 @@ describe("commandSettingsLayer", () => {
     }).pipe(Effect.provide(makeLayer({ profileFlag: "SUPABASE-STAGING", cwd: tempRoot.current }))),
   );
 
-  it.effect(
-    "explicit --profile supabase shadows an unloadable SUPABASE_PROFILE — pflag Changed",
-    () =>
-      Effect.gen(function* () {
-        const config = yield* CommandSettings;
-        expect(config.profile).toBe("supabase");
-        expect(config.apiUrl).toBe("https://api.supabase.com");
-      }).pipe(
-        Effect.provide(
-          makeLayer({
-            argv: ["link", "--profile", "supabase"],
-            env: { SUPABASE_PROFILE: "rogue-profile" },
-            cwd: tempRoot.current,
-          }),
-        ),
+  it.effect("explicit --profile supabase shadows an unloadable SUPABASE_PROFILE", () =>
+    Effect.gen(function* () {
+      const config = yield* CommandSettings;
+      expect(config.profile).toBe("supabase");
+      expect(config.apiUrl).toBe("https://api.supabase.com");
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          argv: ["link", "--profile", "supabase"],
+          env: { SUPABASE_PROFILE: "rogue-profile" },
+          cwd: tempRoot.current,
+        }),
       ),
+    ),
   );
 
-  it.effect("resolves repeated --profile occurrences last-wins — pflag parity", () =>
+  it.effect("resolves repeated --profile occurrences last-wins", () =>
     Effect.gen(function* () {
-      // The Effect parser is first-wins ("rogue-profile"); pflag keeps the last.
+      // The Effect parser is first-wins ("rogue-profile"); the last occurrence wins.
       const config = yield* CommandSettings;
       expect(config.profile).toBe("supabase");
     }).pipe(
@@ -386,14 +373,14 @@ describe("commandSettingsLayer", () => {
     ),
   );
 
-  it.effect("fails when the last --profile occurrence is unloadable — pflag parity", () =>
+  it.effect("fails when the last --profile occurrence is unloadable", () =>
     Effect.gen(function* () {
       const exit = yield* configExit({
         argv: ["link", "--profile", "supabase", "--profile", "resms"],
         profileFlag: "supabase",
         cwd: tempRoot.current,
       });
-      expectProfileLoadFailure(exit, "failed to read profile: Unsupported Config Type");
+      expectProfileLoadFailure(exit, "failed to read profile: unsupported config file type");
     }),
   );
 
@@ -439,7 +426,7 @@ describe("commandSettingsLayer", () => {
     }).pipe(Effect.provide(BunServices.layer));
   });
 
-  it.effect("keeps pooler_host empty when a YAML profile omits it — Go omitempty", () => {
+  it.effect("keeps pooler_host empty when a YAML profile omits it", () => {
     const profilePath = path.join(tempRoot.current, "no-pooler.yaml");
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -463,7 +450,7 @@ describe("commandSettingsLayer", () => {
     }).pipe(Effect.provide(BunServices.layer));
   });
 
-  it.effect("fails when a YAML profile omits required keys — Go validator parity", () => {
+  it.effect("fails when a YAML profile omits required keys", () => {
     const profilePath = path.join(tempRoot.current, "no-host.yaml");
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -478,13 +465,13 @@ describe("commandSettingsLayer", () => {
       expectProfileLoadFailure(
         exit,
         "invalid profile:",
-        "Field validation for 'DashboardURL' failed on the 'required' tag",
-        "Field validation for 'ProjectHost' failed on the 'required' tag",
+        "dashboard_url is required",
+        "project_host is required",
       );
     }).pipe(Effect.provide(BunServices.layer));
   });
 
-  it.effect("fails when SUPABASE_PROFILE points to a non-existent file — Go parity", () =>
+  it.effect("fails when SUPABASE_PROFILE points to a non-existent file", () =>
     Effect.gen(function* () {
       const missingPath = path.join(tempRoot.current, "missing.yaml");
       const exit = yield* configExit({
@@ -498,7 +485,7 @@ describe("commandSettingsLayer", () => {
     }),
   );
 
-  it.effect("fails when SUPABASE_PROFILE points to malformed YAML — Go parity", () => {
+  it.effect("fails when SUPABASE_PROFILE points to malformed YAML", () => {
     const profilePath = path.join(tempRoot.current, "broken.yaml");
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -507,7 +494,7 @@ describe("commandSettingsLayer", () => {
         env: { SUPABASE_PROFILE: profilePath },
         cwd: tempRoot.current,
       });
-      expectProfileLoadFailure(exit, "failed to read profile: While parsing config:");
+      expectProfileLoadFailure(exit, "failed to read profile: invalid config file:");
     }).pipe(Effect.provide(BunServices.layer));
   });
 
@@ -520,11 +507,11 @@ describe("commandSettingsLayer", () => {
       yield* fs.makeDirectory(path.join(home, ".supabase"), { recursive: true });
       yield* fs.writeFileString(path.join(home, ".supabase", "profile"), "resms\n");
       const exit = yield* configExit({ home, cwd: tempRoot.current });
-      expectProfileLoadFailure(exit, "failed to read profile: Unsupported Config Type");
+      expectProfileLoadFailure(exit, "failed to read profile: unsupported config file type");
     }).pipe(Effect.provide(BunServices.layer));
   });
 
-  it.effect("ignores SUPABASE_API_URL — Go parity", () =>
+  it.effect("ignores SUPABASE_API_URL", () =>
     Effect.gen(function* () {
       const config = yield* CommandSettings;
       expect(config.apiUrl).toBe("https://api.supabase.com");
@@ -589,8 +576,6 @@ describe("commandSettingsLayer", () => {
     Effect.gen(function* () {
       const config = yield* CommandSettings;
       expect(config.workdir).toBe("/flag/workdir");
-      // An explicit --workdir is used verbatim, letting `shouldSearchAncestors` skip the
-      // second ancestor climb inside `loadCliConfig`.
       expect(config.explicitWorkdir).toBe(true);
     }).pipe(
       Effect.provide(
@@ -691,6 +676,78 @@ describe("commandSettingsLayer", () => {
       );
       expect(config.workdir).toBe(projectRoot);
       expect(config.explicitWorkdir).toBe(false);
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.effect("walks up from CWD to a project that only has supabase/config.json", () => {
+    const projectRoot = path.join(tempRoot.current, "json-project");
+    const nested = path.join(projectRoot, "apps", "web");
+
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(path.join(projectRoot, "supabase"), { recursive: true });
+      yield* fs.makeDirectory(nested, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(projectRoot, "supabase", "config.json"),
+        '{"project_id":"x"}\n',
+      );
+      const config = yield* Effect.provide(
+        Effect.service(CommandSettings),
+        makeLayer({ cwd: nested }),
+      );
+      expect(config.workdir).toBe(projectRoot);
+      expect(config.explicitWorkdir).toBe(false);
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.effect("uses an explicit --workdir below a config.json project verbatim", () => {
+    const projectRoot = path.join(tempRoot.current, "json-project");
+    const below = path.join(projectRoot, "apps", "web");
+
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(path.join(projectRoot, "supabase"), { recursive: true });
+      yield* fs.makeDirectory(below, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(projectRoot, "supabase", "config.json"),
+        '{"project_id":"x"}\n',
+      );
+      const config = yield* Effect.provide(
+        Effect.service(CommandSettings),
+        makeLayer({ workdirFlag: Option.some(below), cwd: projectRoot }),
+      );
+      expect(config.workdir).toBe(below);
+      expect(config.explicitWorkdir).toBe(true);
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.effect("picks the directory holding both config files over an enclosing project", () => {
+    const outer = path.join(tempRoot.current, "outer");
+    const inner = path.join(outer, "packages", "inner");
+    const nested = path.join(inner, "src");
+
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(path.join(outer, "supabase"), { recursive: true });
+      yield* fs.makeDirectory(path.join(inner, "supabase"), { recursive: true });
+      yield* fs.makeDirectory(nested, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(outer, "supabase", "config.json"),
+        '{"project_id":"outer"}\n',
+      );
+      yield* fs.writeFileString(
+        path.join(inner, "supabase", "config.json"),
+        '{"project_id":"inner"}\n',
+      );
+      yield* fs.writeFileString(
+        path.join(inner, "supabase", "config.toml"),
+        'project_id = "inner"\n',
+      );
+      const config = yield* Effect.provide(
+        Effect.service(CommandSettings),
+        makeLayer({ cwd: nested }),
+      );
+      expect(config.workdir).toBe(inner);
     }).pipe(Effect.provide(BunServices.layer));
   });
 

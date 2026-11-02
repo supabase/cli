@@ -11,6 +11,7 @@ import {
   Option,
   Path,
   PlatformError,
+  Redacted,
 } from "effect";
 import { vi } from "vitest";
 
@@ -25,16 +26,16 @@ import { mockOutput, mockRuntimeInfo, mockTty } from "../../../../tests/helpers/
 import {
   VALID_REF,
   VALID_TOKEN,
+  buildTestRuntime,
+  jsonResponse,
+  mockCommandPlatformApi,
   mockCommandSettings,
   mockTelemetryStateTracked,
+  unverifiedTargetBanner,
   useTempWorkdir,
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
-import {
-  assertTargetDefaultWarning,
-  setLinkedRefFile,
-} from "../../../../tests/helpers/target-default-warning.ts";
 import {
   asRecordedRequests,
   realDbConfigResolver,
@@ -42,17 +43,22 @@ import {
   stubManagementApi,
   type StubbedRequest,
 } from "../../../../tests/helpers/permission-real-layers.ts";
-import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { cliConfigProviderLayer } from "../../../shared/config/cli-config-provider.layer.ts";
-import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
+import { configValuesLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import { DnsResolverFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
-import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
+import type {
+  DbConnectionInput,
+  ResolvedDbConnection,
+} from "../../../command-internal/db-config.types.ts";
 import { DbConnectError, DbCopyError } from "../../../command-internal/db-connection.errors.ts";
 import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import type { InspectReportFlags } from "./report.command.ts";
 import { inspectReport } from "./report.handler.ts";
 import { REPORT_QUERIES, reportIgnoreSchemas, wrapReportQuery } from "./report.queries.ts";
+import { describeDbTargetSelection } from "../../../../tests/helpers/db-target-selection.ts";
+import { branchRow, warningsOf } from "../../../../tests/helpers/remote-selection.ts";
 
 const LOCAL_CONN: PgConnInput = {
   host: "127.0.0.1",
@@ -83,24 +89,25 @@ function tempDirLayer<S>(
 }
 
 function mockResolver(opts: { conn?: PgConnInput; isLocal?: boolean; fails?: boolean } = {}) {
-  let resolveInput: DbConfigFlags | undefined;
+  let connectionInput: DbConnectionInput | undefined;
   const layer = Layer.succeed(DbConfigResolver, {
-    resolve: (flags: DbConfigFlags) => {
-      resolveInput = flags;
+    resolveConnection: (input: DbConnectionInput) => {
+      connectionInput = input;
       if (opts.fails === true) {
         return Effect.fail(new DbConfigLoadError({ message: "cannot load config" }));
       }
       return Effect.succeed({
         conn: opts.conn ?? LOCAL_CONN,
         isLocal: opts.isLocal ?? true,
-      } satisfies ResolvedDbConfig);
+        target: input.target,
+      } satisfies ResolvedDbConnection);
     },
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
   return {
     layer,
-    get resolveInput() {
-      return resolveInput;
+    get connectionInput() {
+      return connectionInput;
     },
   };
 }
@@ -155,9 +162,11 @@ interface SetupOpts {
   stdoutIsTty?: boolean;
   cwd?: string;
   workdir?: string;
-  noProjectId?: boolean;
+  /** The ref `SUPABASE_PROJECT_ID` supplies to the real project-ref resolver. */
+  projectId?: string;
   /** Raw CLI args slice, used to detect which flags were explicitly passed. */
   cliArgs?: ReadonlyArray<string>;
+  commandPath?: ReadonlyArray<string>;
   /** Runs the real `DbConfigResolver` against `workdir`. */
   realLayers?: boolean;
 }
@@ -175,13 +184,33 @@ function setupReport(opts: SetupOpts = {}) {
     copyFails: opts.copyFails,
   });
   const telemetry = mockTelemetryStateTracked();
-  const settings = (workdir: string) =>
-    mockCommandSettings({
-      workdir,
-      ...(opts.noProjectId === true ? { projectId: Option.none() } : {}),
-    });
+  const projectId = opts.projectId === undefined ? Option.none() : Option.some(opts.projectId);
+  const cliSettings = (
+    opts.workdir === undefined
+      ? tempDirLayer("supabase-report-workdir-", (workdir) =>
+          mockCommandSettings({ workdir, projectId }),
+        )
+      : mockCommandSettings({ workdir: opts.workdir, projectId })
+  ).pipe(Layer.orDie);
+  const runtimeInfo = (
+    opts.cwd === undefined
+      ? tempDirLayer("supabase-report-cwd-", (cwd) => mockRuntimeInfo({ cwd }))
+      : mockRuntimeInfo({ cwd: opts.cwd })
+  ).pipe(Layer.orDie);
+  const api = mockCommandPlatformApi({
+    handler: (request) => Effect.succeed(jsonResponse(request, 200, [branchRow("feature-x")])),
+  });
   const layer = Layer.mergeAll(
-    out.layer,
+    buildTestRuntime({
+      out,
+      api,
+      cliSettings,
+      tty: mockTty({ stdoutIsTty: opts.stdoutIsTty ?? false }),
+      runtimeInfo,
+      telemetry: telemetry.layer,
+      cliArgs: opts.cliArgs,
+      commandPath: opts.commandPath,
+    }),
     opts.realLayers !== true || opts.workdir === undefined
       ? resolver.layer
       : realDbConfigResolver({
@@ -190,31 +219,31 @@ function setupReport(opts: SetupOpts = {}) {
           env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
         }),
     connection.layer,
-    telemetry.layer,
     Layer.succeed(DnsResolverFlag, "native"),
-    Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
-    opts.workdir === undefined
-      ? tempDirLayer("supabase-report-workdir-", settings)
-      : settings(opts.workdir),
-    opts.cwd === undefined
-      ? tempDirLayer("supabase-report-cwd-", (cwd) => mockRuntimeInfo({ cwd }))
-      : mockRuntimeInfo({ cwd: opts.cwd }),
-    mockTty({ stdoutIsTty: opts.stdoutIsTty ?? false }),
-    BunServices.layer,
-    opts.realLayers !== true
-      ? cliConfigProviderLayer
-      : ConfigProvider.layer(
-          ConfigProvider.fromEnvRecord(
-            { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
-            { preserveEmptyStrings: true },
-          ),
-        ),
+    Layer.succeed(YesFlag, false),
+    Layer.succeed(TargetPolicy, { group: "selectable", consent: "none" }),
+    configValuesLayer(),
+    ConfigProvider.layer(
+      ConfigProvider.fromEnvRecord(
+        opts.realLayers === true ? { SUPABASE_ACCESS_TOKEN: VALID_TOKEN } : {},
+        { preserveEmptyStrings: true },
+      ),
+    ),
   );
-  return { layer, out, resolver, connection, telemetry };
+  return {
+    layer,
+    out,
+    resolver,
+    connection,
+    telemetry,
+    branchRequests: api.requests,
+    warnings: () => warningsOf(out),
+  };
 }
 
 const flags = (over: Partial<InspectReportFlags> = {}): InspectReportFlags => ({
   dbUrl: over.dbUrl ?? Option.none<string>(),
+  remote: over.remote ?? Option.none(),
   linked: over.linked ?? false,
   local: over.local ?? false,
   projectRef: over.projectRef ?? Option.none<string>(),
@@ -253,7 +282,9 @@ const dateFolderContents = Effect.fnUntraced(function* (base: string) {
 });
 
 describe("inspect report", () => {
-  it.effect("writes one CSV per inspect query for the linked project", () => {
+  const targetWorkdir = useTempWorkdir("supabase-inspect-report-target-");
+
+  it.effect("writes one CSV per inspect query", () => {
     const { layer, connection } = setupReport({ csvs: DEFAULT_RULE_CSVS });
     const prevUmask = process.umask(0);
     return Effect.gen(function* () {
@@ -277,142 +308,77 @@ describe("inspect report", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => process.umask(prevUmask))));
   });
 
-  it.effect("inspects the local database with --local", () => {
-    const { layer, resolver } = setupReport({
-      csvs: DEFAULT_RULE_CSVS,
-      cliArgs: ["--local"],
-    });
+  it.effect("inspects a custom database with --remote=<url>", () => {
+    const { layer, resolver, out } = setupReport({ csvs: DEFAULT_RULE_CSVS, isLocal: false });
     return Effect.gen(function* () {
       const base = yield* tempDir("supabase-report-out-");
-      yield* inspectReport(flags({ outputDir: base, local: true }));
-      expect(resolver.resolveInput?.connType).toBe("local");
+      yield* inspectReport(
+        flags({
+          outputDir: base,
+          remote: Option.some({ _tag: "DbUrl", url: "postgres://x" } as const),
+        }),
+      );
+      const target = resolver.connectionInput?.target;
+      expect(target?.kind === "db-url" ? Redacted.value(target.url) : undefined).toBe(
+        "postgres://x",
+      );
+      expect(out.stderrText).not.toContain("Connecting to");
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("inspects a custom database with --db-url and labels the diagnostic 'remote'", () => {
-    const { layer, resolver, out } = setupReport({
+  it.effect("a bare --remote routes to the linked project and announces it", () => {
+    const { layer, resolver, out, warnings } = setupReport({
       csvs: DEFAULT_RULE_CSVS,
-      isLocal: false,
-      cliArgs: ["--db-url=postgres://x"],
+      projectId: VALID_REF,
     });
     return Effect.gen(function* () {
       const base = yield* tempDir("supabase-report-out-");
-      yield* inspectReport(flags({ outputDir: base, dbUrl: Option.some("postgres://x") }));
-      expect(resolver.resolveInput?.dbUrl).toEqual(Option.some("postgres://x"));
-      expect(out.stderrText).toContain("Connecting to remote database...");
+      yield* inspectReport(
+        flags({ outputDir: base, remote: Option.some({ _tag: "Linked" } as const) }),
+      );
+      expect(resolver.connectionInput?.target).toMatchObject({ kind: "linked", ref: VALID_REF });
+      expect(out.stderrText).toContain(unverifiedTargetBanner());
+      expect(warnings()).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("inspects the linked project by default when no connection flag is set", () => {
-    const { layer, resolver } = setupReport({ csvs: DEFAULT_RULE_CSVS });
+  describeDbTargetSelection("inspect report", {
+    dbUrl: true,
+    workdir: () => targetWorkdir.current,
+    attempt: ({ workdir, args, target }) => {
+      const ctx = setupReport({
+        csvs: DEFAULT_RULE_CSVS,
+        workdir,
+        projectId: VALID_REF,
+        cliArgs: args,
+        commandPath: ["inspect", "report"],
+      });
+      return {
+        layer: ctx.layer,
+        out: ctx.out,
+        run: inspectReport(flags({ ...target, outputDir: workdir })),
+        target: () => ctx.resolver.connectionInput?.target,
+        branchLookups: () => ctx.branchRequests,
+        apiRequests: () => ctx.branchRequests,
+      };
+    },
+  });
+
+  it.effect("prints running + saved progress to stderr and the rules table to stdout", () => {
+    const { layer, out } = setupReport({ csvs: DEFAULT_RULE_CSVS, isLocal: true });
     return Effect.gen(function* () {
       const base = yield* tempDir("supabase-report-out-");
       yield* inspectReport(flags({ outputDir: base }));
-      expect(resolver.resolveInput?.connType).toBe("linked");
+      expect(out.stderrText).not.toContain("Connecting to");
+      expect(out.stderrText).toContain("Running queries...");
+      expect(out.stderrText).toContain("Reports saved to ");
+      expect(out.stderrText).toContain("Loading default rules...");
+      expect(out.stdoutText).toContain("RULE");
+      expect(out.stdoutText).toContain("STATUS");
+      expect(out.stdoutText).toContain("MATCHES");
+      expect(out.stdoutText).toContain("No old locks");
     }).pipe(Effect.provide(layer));
   });
-
-  it.effect("rejects more than one of --db-url/--linked/--local", () => {
-    const { layer } = setupReport({ cliArgs: ["--linked", "--local"] });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(inspectReport(flags({ linked: true, local: true })));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("are set none of the others can be");
-      }
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("--local=false is Changed and routes to local (not linked)", () => {
-    const { layer, resolver } = setupReport({
-      csvs: DEFAULT_RULE_CSVS,
-      cliArgs: ["--local=false"],
-    });
-    return Effect.gen(function* () {
-      const base = yield* tempDir("supabase-report-out-");
-      yield* inspectReport(flags({ outputDir: base, local: false }));
-      expect(resolver.resolveInput?.connType).toBe("local");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("--linked --local=false raises the mutual-exclusion error", () => {
-    const { layer } = setupReport({ cliArgs: ["--linked", "--local=false"] });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        inspectReport(flags({ linked: true, local: false, outputDir: "." })),
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("are set none of the others can be");
-        expect(causeText).toContain("[linked local]");
-      }
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("--linked routes to linked", () => {
-    const { layer, resolver } = setupReport({
-      csvs: DEFAULT_RULE_CSVS,
-      cliArgs: ["--linked"],
-    });
-    return Effect.gen(function* () {
-      const base = yield* tempDir("supabase-report-out-");
-      yield* inspectReport(flags({ outputDir: base, linked: true }));
-      expect(resolver.resolveInput?.connType).toBe("linked");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("reports on the project given via --project-ref on the default linked path", () => {
-    const FLAG_REF = "flagflagflagflagflag";
-    const { layer, resolver } = setupReport({ csvs: DEFAULT_RULE_CSVS });
-    return Effect.gen(function* () {
-      const base = yield* tempDir("supabase-report-out-");
-      yield* inspectReport(flags({ outputDir: base, projectRef: Option.some(FLAG_REF) }));
-      expect(resolver.resolveInput?.connType).toBe("linked");
-      expect(resolver.resolveInput?.linkedProjectRef).toEqual(Option.some(FLAG_REF));
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("rejects --project-ref combined with an explicit --local target", () => {
-    const FLAG_REF = "flagflagflagflagflag";
-    const { layer, resolver } = setupReport({
-      csvs: DEFAULT_RULE_CSVS,
-      cliArgs: ["--local"],
-    });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        inspectReport(flags({ local: true, projectRef: Option.some(FLAG_REF) })),
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain(
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-        );
-      }
-      expect(resolver.resolveInput).toBeUndefined();
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect(
-    "prints connect + running + saved progress to stderr and the rules table to stdout",
-    () => {
-      const { layer, out } = setupReport({ csvs: DEFAULT_RULE_CSVS, isLocal: true });
-      return Effect.gen(function* () {
-        const base = yield* tempDir("supabase-report-out-");
-        yield* inspectReport(flags({ outputDir: base }));
-        expect(out.stderrText).toContain("Connecting to local database...");
-        expect(out.stderrText).toContain("Running queries...");
-        expect(out.stderrText).toContain("Reports saved to ");
-        expect(out.stderrText).toContain("Loading default rules...");
-        expect(out.stdoutText).toContain("RULE");
-        expect(out.stdoutText).toContain("STATUS");
-        expect(out.stdoutText).toContain("MATCHES");
-        expect(out.stdoutText).toContain("No old locks");
-      }).pipe(Effect.provide(layer));
-    },
-  );
 
   it.effect("shows a passing rule as ✔/- and a failing rule with its message and matches", () => {
     const { layer, out } = setupReport({ csvs: DEFAULT_RULE_CSVS });
@@ -550,7 +516,7 @@ describe("inspect report", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("invalid keys: typo");
+        expect(causeText).toContain("unknown keys: typo");
       }
       // `base` is the pre-created temp dir itself; no dated subfolder is created.
       expect(connection.copiedSql.length).toBe(0);
@@ -559,14 +525,10 @@ describe("inspect report", () => {
   );
 
   it.effect("emits a structured result and writes CSVs but no table in json mode", () => {
-    const { layer, out } = setupReport({
-      format: "json",
-      csvs: DEFAULT_RULE_CSVS,
-      cliArgs: ["--linked"],
-    });
+    const { layer, out } = setupReport({ format: "json", csvs: DEFAULT_RULE_CSVS });
     return Effect.gen(function* () {
       const base = yield* tempDir("supabase-report-out-");
-      yield* inspectReport(flags({ outputDir: base, linked: true }));
+      yield* inspectReport(flags({ outputDir: base }));
       expect(out.stdoutText).toBe("");
       expect(out.messages).toContainEqual(
         expect.objectContaining({ type: "success", message: "inspect report" }),
@@ -728,7 +690,7 @@ describe("inspect report through the real database-config resolver", () => {
     const { layer, connection } = setupReport({
       csvs: DEFAULT_RULE_CSVS,
       isLocal: false,
-      cliArgs: ["inspect", "report", "--project-ref", VALID_REF],
+      cliArgs: ["inspect", "report", `--remote=${VALID_REF}`],
       workdir: tempRoot.current,
       realLayers: true,
     });
@@ -736,7 +698,9 @@ describe("inspect report through the real database-config resolver", () => {
     return Effect.gen(function* () {
       const base = yield* tempDir("supabase-report-out-");
       yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
-      yield* inspectReport(flags({ outputDir: base, projectRef: Option.some(VALID_REF) }));
+      yield* inspectReport(
+        flags({ outputDir: base, remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const) }),
+      );
       expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
         `GET /v1/projects/${VALID_REF}/config/database/pooler`,
         `POST /v1/projects/${VALID_REF}/cli/login-role`,
@@ -746,17 +710,17 @@ describe("inspect report through the real database-config resolver", () => {
       expect(connection.copiedSql).toHaveLength(14);
       assertPermissionDrift({
         command: "inspect report",
-        activeFlags: { "project-ref": VALID_REF, "output-dir": true },
+        activeFlags: { remote: VALID_REF, "output-dir": true },
         requests: asRecordedRequests(requests),
         exact: true,
       });
     }).pipe(Effect.scoped, Effect.provide(layer));
   });
 
-  it.effect("makes no Management API request for --local", () => {
+  it.effect("makes no Management API request for the default local target", () => {
     const { layer, connection } = setupReport({
       csvs: DEFAULT_RULE_CSVS,
-      cliArgs: ["inspect", "report", "--local"],
+      cliArgs: ["inspect", "report"],
       workdir: tempRoot.current,
       realLayers: true,
     });
@@ -764,64 +728,17 @@ describe("inspect report through the real database-config resolver", () => {
     return Effect.gen(function* () {
       const base = yield* tempDir("supabase-report-out-");
       yield* stubManagementApi(requests, () => undefined);
-      yield* inspectReport(flags({ outputDir: base, local: true }));
+      yield* inspectReport(flags({ outputDir: base }));
       const { files } = yield* dateFolderContents(base);
       expect(files).toHaveLength(14);
       expect(connection.copiedSql).toHaveLength(14);
       expect(requests).toEqual([]);
       assertPermissionDrift({
         command: "inspect report",
-        activeFlags: { local: true, "output-dir": true },
+        activeFlags: { "output-dir": true },
         requests: [],
         exact: true,
       });
     }).pipe(Effect.scoped, Effect.provide(layer));
   });
-});
-
-describe("inspect report target default warning", () => {
-  const tempRoot = useTempWorkdir("supabase-inspect-report-warning-");
-  const selectors = [
-    { label: "--linked", args: ["--linked"], over: { linked: true } },
-    { label: "--linked=false", args: ["--linked=false"], over: {} },
-    { label: "--local", args: ["--local"], over: { local: true } },
-    {
-      label: "--db-url",
-      args: ["--db-url", "postgres://x"],
-      over: { dbUrl: Option.some("postgres://x") },
-    },
-    {
-      label: "--project-ref",
-      args: ["--project-ref", VALID_REF],
-      over: { linked: true, projectRef: Option.some(VALID_REF) },
-    },
-  ] as const;
-
-  it.effect(
-    "warns on a bare run in a linked workdir and stays silent with every selector or when unlinked",
-    () =>
-      Effect.gen(function* () {
-        const base = yield* tempDir("supabase-report-out-");
-        const runWith = (linked: boolean) => (selector: (typeof selectors)[number] | undefined) =>
-          Effect.andThen(setLinkedRefFile(tempRoot.current, linked), () => {
-            const { layer, out } = setupReport({
-              csvs: DEFAULT_RULE_CSVS,
-              cliArgs: selector?.args ?? [],
-              workdir: tempRoot.current,
-              noProjectId: true,
-            });
-            return inspectReport(flags({ outputDir: base, ...selector?.over })).pipe(
-              Effect.provide(layer),
-              Effect.map(() => ({ stdout: out.stdoutText, stderr: out.stderrText })),
-            );
-          });
-        yield* assertTargetDefaultWarning({
-          command: "inspect report",
-          sameTarget: selectors[0],
-          selectors,
-          run: runWith(true),
-          runUnlinked: runWith(false),
-        });
-      }).pipe(Effect.provide(BunServices.layer)),
-  );
 });

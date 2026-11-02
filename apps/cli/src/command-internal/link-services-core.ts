@@ -3,7 +3,7 @@ import { Effect, Option } from "effect";
 
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { CommandPlatformApi } from "../auth/command-platform-api.service.ts";
-import { LegacyProjectState } from "./legacy-project-state.service.ts";
+import { LegacyProjectState } from "../shared/config/legacy-project-state.service.ts";
 import {
   fetchGotrueVersion,
   fetchPostgrestVersion,

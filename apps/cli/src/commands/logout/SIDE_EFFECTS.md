@@ -1,5 +1,7 @@
 # `supabase logout`
 
+Target: account, no consent — see [Command target](../../../docs/command-target.md)
+
 Deletes the access token and sweeps all stored project credentials. Makes no
 API calls.
 
@@ -15,7 +17,7 @@ API calls.
 | ----------------------------------------------- | ------ | ---------------------------------------------------------------------------- |
 | `~/.supabase/access-token`                      | —      | deleted first, always (a missing file is ignored)                            |
 | OS keyring (`Supabase CLI` namespace)           | —      | the access-token entries **and** all project DB-password entries are deleted |
-| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | always (PersistentPostRun flush)                                             |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | always (post-run flush)                                                      |
 
 ## API Routes
 

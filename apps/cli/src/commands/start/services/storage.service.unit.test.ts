@@ -59,7 +59,7 @@ describe("buildStorageEnv", () => {
     expect(env["FILE_SIZE_LIMIT"]).toBe(String(5 * 1024 * 1024));
   });
 
-  test("matches Go's remaining static env values", () => {
+  test("sets the remaining static env values", () => {
     const env = buildStorageEnv(baseEnvInput);
     expect(env).toMatchObject({
       STORAGE_BACKEND: "file",
@@ -113,7 +113,7 @@ describe("buildStorageEnv", () => {
       expect(env["VECTOR_DATABASE_URL"]).toBeUndefined();
     });
 
-    test("appends the four VECTOR_* keys with Go's defaults when enabled and no override is set", () => {
+    test("appends the four VECTOR_* keys with defaults when enabled and no override is set", () => {
       const env = buildStorageEnv({ ...baseEnvInput, vectorBucketsEnabled: true });
       expect(env["VECTOR_ENABLED"]).toBe("true");
       expect(env["VECTOR_BUCKET_PROVIDER"]).toBe("pgvector");
@@ -130,7 +130,7 @@ describe("buildStorageEnv", () => {
       expect(env["DATABASE_URL"]).toContain("supabase_storage_admin:postgres@");
     });
 
-    test("respects a projectEnvValues override over the default, matching Go's envOrDefault", () => {
+    test("respects a projectEnvValues override over the default", () => {
       const env = buildStorageEnv({
         ...baseEnvInput,
         vectorBucketsEnabled: true,

@@ -11,7 +11,7 @@ import type { CliConfig } from "@supabase/config";
 
 import { localDbContainerId } from "../docker-ids.ts";
 import { toDockerMountPath } from "../docker-path.ts";
-import { encodeToml } from "../go-output.encoders.ts";
+import { encodeToml } from "../output.encoders.ts";
 import { POSTGRES_DEFAULT_ROOT_KEY } from "../local-config-values.ts";
 import type { StartContainerSpec } from "./docker-create-args.ts";
 import { START_DB_RESTORE_SH } from "./templates/db-restore.sh.ts";

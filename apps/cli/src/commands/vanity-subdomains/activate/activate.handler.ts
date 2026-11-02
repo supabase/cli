@@ -1,19 +1,20 @@
 import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { RemoteTarget } from "../../../config/remote-target.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { gateResponse, suggestUpgrade } from "../../../command-internal/upgrade-suggest.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeEnv, encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
+import { encodeEnv, encodeSortedJson } from "../../../command-internal/output.encoders.ts";
 import {
-  encodeGoToml,
-  encodeGoYaml,
-  goString,
-  goStruct,
-} from "../../../command-internal/go-struct-output.encoders.ts";
+  encodeStructToml,
+  encodeStructYaml,
+  shapeString,
+  shapeStruct,
+} from "../../../command-internal/struct-output.encoders.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import {
   DesiredSubdomainRequiredError,
@@ -23,7 +24,7 @@ import {
 import type { VanitySubdomainsActivateFlags } from "./activate.command.ts";
 
 /** Struct shape for encoding the activate response as YAML/TOML. */
-const GO_ACTIVATE_VANITY_RESPONSE = goStruct([["custom_domain", goString]]);
+const ACTIVATE_VANITY_RESPONSE_SHAPE = shapeStruct([["custom_domain", shapeString]]);
 
 const mapActivateError = mapHttpError({
   networkError: VanitySubdomainsActivateNetworkError,
@@ -38,12 +39,11 @@ export const vanitySubdomainsActivate = Effect.fn("vanity-subdomains.activate")(
   const output = yield* Output;
   const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* RemoteTarget;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
-    const { ref } = yield* resolver.resolve(flags.projectRef);
+    const ref = yield* resolveProjectTarget(flags);
 
     yield* Effect.gen(function* () {
       // This check sits inside both `Effect.ensuring` wrappers so telemetry and the
@@ -55,6 +55,10 @@ export const vanitySubdomainsActivate = Effect.fn("vanity-subdomains.activate")(
         });
       }
       const desiredSubdomain = flags.desiredSubdomain.value;
+      yield* requireHostedMutationConsent({
+        action: `Activate vanity subdomain ${desiredSubdomain}`,
+        details: ["Auth services stop working on the project's default hostname."],
+      });
       const activating =
         output.format === "text" ? yield* output.task("Activating vanity subdomain...") : undefined;
       const response = yield* api.v1
@@ -87,21 +91,21 @@ export const vanitySubdomainsActivate = Effect.fn("vanity-subdomains.activate")(
         );
       yield* activating?.clear ?? Effect.void;
 
-      const goOutput = Option.getOrUndefined(outputFlag);
+      const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
-      if (goOutput === "json") {
-        yield* output.raw(encodeGoJson(response));
+      if (outputFlagFormat === "json") {
+        yield* output.raw(encodeSortedJson(response));
         return;
       }
-      if (goOutput === "yaml") {
-        yield* output.raw(encodeGoYaml(response, GO_ACTIVATE_VANITY_RESPONSE));
+      if (outputFlagFormat === "yaml") {
+        yield* output.raw(encodeStructYaml(response, ACTIVATE_VANITY_RESPONSE_SHAPE));
         return;
       }
-      if (goOutput === "toml") {
-        yield* output.raw(encodeGoToml(response, GO_ACTIVATE_VANITY_RESPONSE));
+      if (outputFlagFormat === "toml") {
+        yield* output.raw(encodeStructToml(response, ACTIVATE_VANITY_RESPONSE_SHAPE));
         return;
       }
-      if (goOutput === "env") {
+      if (outputFlagFormat === "env") {
         yield* output.raw(encodeEnv(response) + "\n");
         return;
       }

@@ -37,7 +37,6 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
-          go-cache: "false"
 
       - name: Setup Podman
         if: matrix.runtime == 'podman'

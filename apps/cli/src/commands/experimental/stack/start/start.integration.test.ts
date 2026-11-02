@@ -1,7 +1,6 @@
 import { generateKeyPairSync } from "node:crypto";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { vi } from "vitest";
 import {
   ConfigProvider,
   Deferred,
@@ -77,7 +76,7 @@ import {
   DbConnection,
   type DbSession,
 } from "../../../../command-internal/db-connection.service.ts";
-import { writeProjectLink } from "../../../../command-internal/project-link.ts";
+import { writeProjectLink } from "../../../../shared/config/project-link.ts";
 import { StackCatalogSetup } from "../../../../command-internal/stack-catalog-setup.ts";
 import { ExperimentalFlag, YesFlag } from "../../../../command-internal/global-flags.ts";
 import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api-factory.service.ts";
@@ -91,6 +90,7 @@ import { jsonOutputLayer, streamJsonOutputLayer } from "../../../../shared/outpu
 import { StackApi, stackApiLayer, StackTargetResolver } from "../stack.shared.ts";
 import { stackStart } from "./start.handler.ts";
 import { StackCommandStartError } from "./start.errors.ts";
+import { cliConfigValuesTestLayer } from "../../../../../tests/helpers/config-values-layer.ts";
 
 const flags = (exclude: ReadonlyArray<string> = []) => ({
   exclude,
@@ -606,6 +606,7 @@ const layers = (
     findDeleted: () => Effect.die("identity not used"),
   });
   return Layer.mergeAll(
+    cliConfigValuesTestLayer,
     BunServices.layer,
     runtimeInfo,
     output.layer,
@@ -2178,7 +2179,6 @@ describe("experimental stack start", () => {
       before: "[db]\nmajor_version = 15\n",
       after: `[db]\norioledb_version = "${orioledb}"\n`,
       env: undefined,
-      envVar: "SUPABASE_DB_ORIOLEDB_VERSION",
       changes: `[db] major_version: saved 15, requested 17; [db] orioledb_version: saved unset, requested ${orioledb}`,
       revert: "Revert the settings listed to their saved values",
     },
@@ -2187,18 +2187,8 @@ describe("experimental stack start", () => {
       before: "",
       after: "",
       env: orioledb,
-      envVar: "SUPABASE_DB_ORIOLEDB_VERSION",
       changes: `SUPABASE_DB_ORIOLEDB_VERSION: saved unset, requested ${orioledb}`,
       revert: "Revert SUPABASE_DB_ORIOLEDB_VERSION to its saved value",
-    },
-    {
-      name: "the deprecated SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION when it alone switches a saved stock stack to OrioleDB",
-      before: "",
-      after: "",
-      env: orioledb,
-      envVar: "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION",
-      changes: `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION: saved unset, requested ${orioledb}`,
-      revert: "Revert SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION to its saved value",
     },
   ])
     it.live(`names ${target.name}`, () =>
@@ -2218,7 +2208,7 @@ describe("experimental stack start", () => {
         const restart = startOnHost(root, fixture, host).pipe(Effect.flip);
         const error = yield* target.env === undefined
           ? restart
-          : withEnvVar(target.envVar, target.env, restart);
+          : withEnvVar("SUPABASE_DB_ORIOLEDB_VERSION", target.env, restart);
 
         expect(error).toMatchObject({
           reason: "invalid-config",
@@ -2229,40 +2219,6 @@ describe("experimental stack start", () => {
         });
       }).pipe(Effect.provide(BunServices.layer)),
     );
-
-  it.live(
-    "warns once about SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION on a first start that includes storage",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const host = yield* startReleaseFixture;
-        publishOrioledb(host);
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-orioledb-alias-" });
-        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
-        yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "alias"\n');
-        yield* fs.writeFileString(
-          `${root}/supabase/.env`,
-          `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION=${orioledb}\n`,
-        );
-        const fixture = fakeStack();
-        const consoleErrors: Array<string> = [];
-        const errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
-          consoleErrors.push(args.map((a) => String(a)).join(" "));
-        });
-        yield* startOnHost(root, fixture, host).pipe(
-          Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())),
-        );
-        const services = yield* fixture.stack.services.list;
-        expect(services.map(({ service }) => service)).toContain("storage");
-        expect(
-          consoleErrors.filter(
-            (line) =>
-              line ===
-              "WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.",
-          ),
-        ).toHaveLength(1);
-      }).pipe(Effect.provide(BunServices.layer)),
-  );
 
   it.effect("offers no revert to an OrioleDB build the catalog no longer pins", () =>
     Effect.gen(function* () {

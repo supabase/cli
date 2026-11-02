@@ -53,14 +53,6 @@ export class SecretsSetUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-export class SecretsSetWorkdirError extends Data.TaggedError("SecretsSetWorkdirError")<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
 export class SecretsUnsetNetworkError extends Data.TaggedError("SecretsUnsetNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
@@ -126,9 +118,18 @@ export class InvalidSecretPairError extends Data.TaggedError("InvalidSecretPairE
 
 export class SecretsNoArgumentsError extends Data.TaggedError("SecretsNoArgumentsError")<{
   readonly message: string;
+  readonly suggestion?: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.provideFlags;
+  }
+}
+
+export class SecretsUnsetInputError extends Data.TaggedError("SecretsUnsetInputError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
   }
 }
 
@@ -137,13 +138,5 @@ export class SecretsEnvNotSupportedError extends Data.TaggedError("SecretsEnvNot
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidInput;
-  }
-}
-
-export class SecretsUnsetCancelledError extends Data.TaggedError("SecretsUnsetCancelledError")<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.cancelled;
   }
 }

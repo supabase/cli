@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path } from "effect";
 import { vi } from "vitest";
 
-import { projectStateModeLayer } from "../../command-internal/project-state-mode.ts";
+import { projectStateModeLayer } from "../config/project-state-mode.ts";
 import { mockCommandSettings } from "../../../tests/helpers/command-mocks.ts";
 import { seedLock } from "../../../tests/helpers/stack-lock.ts";
 import { runtimeInfoLayer } from "../runtime/runtime-info.layer.ts";

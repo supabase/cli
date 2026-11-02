@@ -8,6 +8,7 @@ import { analyticsLayerFor } from "../telemetry/analytics.layer.ts";
 import { defaultCompleteDeps, tryComplete } from "./complete.ts";
 import { resolveProjectStateSelection } from "../command-internal/stack-backend.ts";
 import { resolveComputeEnabled } from "../commands/experimental/compute/compute-backend.ts";
+import { cliConfigProviderLayer } from "../shared/config/cli-config-provider.layer.ts";
 import { cliEntrypointForFeatures } from "./root.ts";
 
 const args = await Effect.runPromise(
@@ -22,15 +23,13 @@ const selectionExit = await Effect.runPromiseExit(
     const { projectState, stackBackend } = yield* resolveProjectStateSelection({
       args,
       cwd: process.cwd(),
-      env: process.env,
     });
     const computeEnabled = yield* resolveComputeEnabled({
       args,
       cwd: process.cwd(),
-      env: process.env,
     });
     return { projectState, stackBackend, computeEnabled };
-  }).pipe(Effect.provide(BunServices.layer)),
+  }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, cliConfigProviderLayer))),
 );
 const { rootCommand: selectedRoot, agentDefaultOutputFormat } = cliEntrypointForFeatures(
   Exit.isSuccess(selectionExit)

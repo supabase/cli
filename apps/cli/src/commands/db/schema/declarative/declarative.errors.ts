@@ -9,8 +9,8 @@ import {
 import type { DeclarativeLoadCompatibilityFinding } from "./declarative.flow.ts";
 
 /**
- * Declarative commands were invoked without `--experimental` and without
- * `[experimental.pgdelta] enabled = true`; message text and suggestion are an established
+ * Declarative commands were invoked without `--experimental` while config sets
+ * `[experimental.pgdelta] enabled = false`; message text and suggestion are an established
  * output contract.
  */
 export class DeclarativeNotEnabledError extends Data.TaggedError("DeclarativeNotEnabledError")<{
@@ -22,10 +22,7 @@ export class DeclarativeNotEnabledError extends Data.TaggedError("DeclarativeNot
   }
 }
 
-/**
- * A target could not be resolved in non-interactive mode; message text is an established output
- * contract, shared by `generate` and the `sync` variants requiring `generate` first.
- */
+/** `sync` found no declarative schema and cannot offer to generate one without a terminal. */
 export class DeclarativeNonInteractiveError extends Data.TaggedError(
   "DeclarativeNonInteractiveError",
 )<{
@@ -36,26 +33,10 @@ export class DeclarativeNonInteractiveError extends Data.TaggedError(
   }
 }
 
-/**
- * A mutually-exclusive flag group was violated: `generate`'s `db-url`/`linked`/`local`, or
- * `sync`'s `apply`/`no-apply`. Message text is an established output contract; both fail before
- * any side effects run.
- */
+/** `sync`'s `--apply` and `--no-apply` were both set; fails before any side effects run. */
 export class DeclarativeMutuallyExclusiveFlagsError extends Data.TaggedError(
   "DeclarativeMutuallyExclusiveFlagsError",
 )<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
-/**
- * The interactive custom-database-URL prompt was empty or unparseable; message text is an
- * established output contract.
- */
-export class DeclarativeInvalidDbUrlError extends Data.TaggedError("DeclarativeInvalidDbUrlError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

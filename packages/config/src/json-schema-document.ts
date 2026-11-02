@@ -13,7 +13,8 @@ const SCHEMA_MAP_KEYWORDS = new Set(["properties", "patternProperties"]);
  * keeping pattern-keyed records open: the generator writes a boolean `additionalProperties` on them
  * (effect 4.0) with no per-schema setting, while the published documents never carried one there.
  * With `acceptEnvReferences`, number, integer, boolean, string-enum and string-list leaves also
- * accept the `env(VAR)` references the loader resolves.
+ * accept the `env(VAR)` references the loader resolves. A bare object whose only constraint is
+ * one object schema in `allOf` is replaced by that schema, so editors read its properties directly.
  */
 export function toPublishedJsonSchemaDocument(
   schema: Schema.Constraint,
@@ -50,7 +51,25 @@ function openPatternKeyedRecords<T>(node: T): T {
   if (isRecordLike(out) && typeof out["additionalProperties"] === "boolean") {
     delete out["additionalProperties"];
   }
-  return out as T;
+  return (singleObjectAllOf(out) ?? out) as T;
+}
+
+function singleObjectAllOf(node: Record<string, unknown>): Record<string, unknown> | undefined {
+  const allOf = node["allOf"];
+  if (Object.keys(node).length !== 2 || node["type"] !== "object") return undefined;
+  if (!Array.isArray(allOf) || allOf.length !== 1) return undefined;
+  const [member]: ReadonlyArray<unknown> = allOf;
+  return isObjectSchema(member) ? member : undefined;
+}
+
+function isObjectSchema(value: unknown): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    "type" in value &&
+    value.type === "object"
+  );
 }
 
 function isRecordLike(node: Record<string, unknown>): boolean {
@@ -109,8 +128,13 @@ function isEnvReferenceBranch(node: unknown): boolean {
 function isEnvReferenceTarget(node: unknown): node is Node {
   if (!isNode(node) || typeof node["type"] !== "string") return false;
   if (COERCED_TYPES.has(node["type"])) return true;
-  if (node["type"] === "string") return !isFreeFormString(node);
+  if (node["type"] === "string") return !isFreeFormString(node) && !isEmptyLiteral(node);
   return node["type"] === "array" && isFreeFormString(node["items"]);
+}
+
+function isEmptyLiteral(node: Node): boolean {
+  const values = node["enum"];
+  return Array.isArray(values) && values.length === 1 && values[0] === "";
 }
 
 function isFreeFormString(node: unknown): boolean {

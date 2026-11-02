@@ -28,7 +28,14 @@ test("copies a local file to the remote bucket", ({ cli, cliEffect, project, wor
         });
         requireLiveSuccess(linked, "link setup for storage cp");
 
-        const result = yield* cliEffect(["storage", "cp", local, remote, ...storageLiveFlags]);
+        const result = yield* cliEffect([
+          "storage",
+          "cp",
+          local,
+          remote,
+          "--yes",
+          ...storageLiveFlags,
+        ]);
         expect(result.exitCode, result.stderr).toBe(0);
       });
 

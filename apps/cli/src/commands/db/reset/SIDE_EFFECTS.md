@@ -1,14 +1,16 @@
 # `supabase db reset`
 
+Target: selectable, consent default No — see [Command target](../../../../docs/command-target.md)
+
 Reinitialises a database from local migrations (plus seed). Both targets are
-fully native. The **remote** path (`--linked`, or a remote `--db-url`)
+fully native. The **remote** path (`--remote` for a project or branch, or a remote `--remote=<url>`)
 drops all user schemas, upserts vault secrets, then either re-applies migrations
 (the default) or, on a versionless `--experimental`/`SUPABASE_EXPERIMENTAL` reset
-with pg-delta not enabled, applies the declarative `[db.migrations].schema_paths`
+with pg-delta explicitly disabled (`[experimental.pgdelta] enabled = false`; it defaults
+to true), applies the declarative `[db.migrations].schema_paths`
 files instead (the `MigrateAndSeed` EXPERIMENTAL branch, CLI-1958), then
-seeds. The **local** path (`--local`/default, or a `--db-url` pointing at the local
-stack) is ALSO fully native (CLI-1955 removed the hidden Go `db __db-bootstrap` seam
-this used to delegate to): the running check, the PG14/PG15 container-recreate
+seeds. The **local** path (the default, or a `--remote=<url>` pointing at the local
+stack) is ALSO fully native: the running check, the PG14/PG15 container-recreate
 composition (`command-internal/db-bootstrap/recreate-local-database.ts`, reusing the
 same container-bootstrap primitives `db start` uses — see that command's own
 `SIDE_EFFECTS.md`), the post-recreate satellite-restart + Kong reload
@@ -18,14 +20,15 @@ git-branch line are all native TS — including the local target's own
 `--experimental` schema-files apply (`migrateAndSeed`, shared with the remote
 path's branch above).
 
+A hosted target (a remote project or branch, or a remote `--remote=<url>`) asks for one
+confirmation before anything is dropped; the local path never prompts for the reset itself.
+
 The whole local-reset composition is hoisted into `command-internal/db-bootstrap/
 reset-local-database.ts`'s `resetLocalDatabase` (CLI-2062), which this
 handler's own `cfg.isLocal` branch calls as a thin wrapper (keeping only version/
 seed-flags resolution and the JSON envelope, which are specific to this top-level
-command). `db schema declarative`'s smart-target local-reset prompt and `db schema
-sync`'s failed-apply recovery reset both call the SAME function in-process now,
-instead of shelling out to a second `supabase-go` child through the previously
-removed `DeclarativeSeam.execInherit` seam — see those commands' own
+command). `db schema declarative`'s optional local reset and `db schema sync`'s
+failed-apply recovery reset both call the same function in-process — see those commands' own
 `SIDE_EFFECTS.md`.
 
 When the `experimental.stack` feature flag is on (`SUPABASE_EXPERIMENTAL_STACK=1|0` env
@@ -44,9 +47,9 @@ errored Storage is skipped. The gateway handles lazy activation. The command nev
 reset for a Storage problem: an unavailable service, missing credentials, a stack-gateway
 activation failure, or an invalid bucket config all print `WARNING: skipped seeding storage buckets: <reason>
 <next step>` to stderr and exit `0`,
-where the next step is `Run supabase seed buckets --local once Storage is available.` (or, for
+where the next step is `Run supabase seed buckets once Storage is available.` (or, for
 disabled Storage, to enable `[storage]`, run `supabase stack stop` then `supabase stack start`,
-then `supabase seed buckets --local`), unless the underlying stack-storage error carries its own
+then `supabase seed buckets`), unless the underlying stack-storage error carries its own
 suggestion (a missing API gateway endpoint, Auth disabled, or a gateway 502/503), in which case
 that suggestion is printed as the next step instead. The warning is omitted when the project
 configures no `[storage.buckets]` or vector buckets, since there is nothing to seed. The
@@ -59,31 +62,31 @@ responsibility — the runtime never creates buckets itself. Durable stack state
 `$SUPABASE_HOME/stacks/<stackId>/`. A missing stack reports "The local stack is not
 running." The database and stack config are validated before the wipe. If catalog preparation
 or migrations fail, companion services remain stopped. Fix the reported error and rerun
-`supabase db reset --local` to complete the reset and resume them.
+`supabase db reset` to complete the reset and resume them.
 
 ## Files Read
 
-| Path                                                                                         | Format     | When                                                                                                                                           |
-| -------------------------------------------------------------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/migrations/`                                                             | directory  | to validate `--version` / resolve `--last`, and to load migrations                                                                             |
-| `<workdir>/supabase/config.toml`                                                             | TOML       | always, parsed up front before any destructive work (embedded defaults when absent); re-read for local bucket seeding                          |
-| `<workdir>/supabase/.env`, `.env.local`, project-root/`SUPABASE_ENV`-selected dotenv file    | dotenv     | always, resolved before the local prelude (config values, bootstrap config)                                                                    |
-| `<workdir>/.git/HEAD` (walked upward)                                                        | plain text | local path, for the `Finished … on branch <branch>.` line                                                                                      |
-| `~/.supabase/<hash>/project-ref`                                                             | plain text | `--linked`, to resolve the ref — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set                                                |
-| `~/.supabase/access-token`                                                                   | plain text | `--linked`, when `SUPABASE_ACCESS_TOKEN` unset and a temp role is minted                                                                       |
-| seed files from `--sql-paths` or `[db.seed].sql_paths`                                       | SQL        | when seeding is enabled (not `--no-seed`); `--sql-paths` overrides config                                                                      |
-| schema files from `[db.migrations].schema_paths`                                             | SQL        | when the `--experimental` schema-files branch is taken, either target (see Notes)                                                              |
-| `<workdir>/supabase/buckets/`                                                                | files      | local path, when storage is up and `[storage.buckets]` configure objects                                                                       |
-| `<workdir>/supabase/roles.sql`                                                               | SQL        | local PG15 path only, via the reused `startSetupLocalDatabase` pipeline — missing file tolerated                                               |
-| `~/.docker/config.json` + Docker context store (`contexts/meta/<sha256(context)>/meta.json`) | JSON       | resolving the daemon endpoint for the local path's running probe (in-process); also read by the `docker`/`podman` CLI itself for registry auth |
-| `PGSSL*` PEM, `pg_service.conf`                                                              | PEM, libpq | linked project, when set; see `db push`                                                                                                        |
+| Path                                                                                         | Format      | When                                                                                                                                                               |
+| -------------------------------------------------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `<workdir>/supabase/migrations/`                                                             | directory   | to validate `--version` / resolve `--last`, and to load migrations                                                                                                 |
+| `<workdir>/supabase/config.json` or `config.toml`                                            | JSON / TOML | always, parsed and decoded up front before any destructive work (`config.json` preferred; embedded defaults when neither exists); re-read for local bucket seeding |
+| `<workdir>/supabase/.env`, `.env.local`, project-root/`SUPABASE_ENV`-selected dotenv file    | dotenv      | always, resolved before the local prelude (config values, bootstrap config)                                                                                        |
+| `<workdir>/.git/HEAD` (walked upward)                                                        | plain text  | local path, for the `Finished … on branch <branch>.` line                                                                                                          |
+| `<workdir>/supabase/.temp/project-ref`                                                       | plain text  | bare `--remote`, to resolve the ref — skipped when `SUPABASE_PROJECT_ID` is set; with no selector, only to name the project in the `Target:` hint                  |
+| `~/.supabase/access-token`                                                                   | plain text  | a remote project or branch, when `SUPABASE_ACCESS_TOKEN` unset and a temp role is minted                                                                           |
+| seed files from `--sql-paths` or `[db.seed].sql_paths`                                       | SQL         | when seeding is enabled (not `--no-seed`); `--sql-paths` overrides config                                                                                          |
+| schema files from `[db.migrations].schema_paths`                                             | SQL         | when the `--experimental` schema-files branch is taken, either target (see Notes)                                                                                  |
+| `<workdir>/supabase/buckets/`                                                                | files       | local path, when storage is up and `[storage.buckets]` configure objects                                                                                           |
+| `<workdir>/supabase/roles.sql`                                                               | SQL         | local PG15 path only, via the reused `startSetupLocalDatabase` pipeline — missing file tolerated                                                                   |
+| `~/.docker/config.json` + Docker context store (`contexts/meta/<sha256(context)>/meta.json`) | JSON        | resolving the daemon endpoint for the local path's running probe (in-process); also read by the `docker`/`podman` CLI itself for registry auth                     |
+| `PGSSL*` PEM, `pg_service.conf`                                                              | PEM, libpq  | a remote project or branch, when set; see `db push`                                                                                                                |
 
 ## Files Written
 
-| Path                                             | Format | When                              |
-| ------------------------------------------------ | ------ | --------------------------------- |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | `--linked` (post-run cache)       |
-| `~/.supabase/telemetry.json`                     | JSON   | always (post-run telemetry flush) |
+| Path                                           | Format | When                                        |
+| ---------------------------------------------- | ------ | ------------------------------------------- |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | a remote project or branch (post-run cache) |
+| `~/.supabase/telemetry.json`                   | JSON   | always (post-run telemetry flush)           |
 
 On the local path, the native recreate additionally recreates the
 `supabase_db_<project>` container/volume (PG15) or the `postgres`/`_supabase`
@@ -95,6 +98,7 @@ equivalent, PG15) or `InitSchema14`/`ApplyApiPrivileges` (PG14).
 | Command                                                                                                                      | When                                  | Purpose                                                                                                                                                                                                                                                   |
 | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `docker container inspect supabase_db_<project>`                                                                             | local path                            | `AssertSupabaseDbIsRunning` probe (Podman fallback) — spawned only when the direct Engine-API request over the active local socket/named pipe gives no definitive answer                                                                                  |
+| `docker stop <storage\|auth\|realtime\|pooler container>`                                                                    | local path, PG15                      | stop the satellites before removing the db container so their `unless-stopped` restarts cannot race the one-shot init jobs (issue #6915), not-found tolerated per service                                                                                 |
 | `docker container rm -f supabase_db_<project>` / `docker volume rm -f <same>`                                                | local path, PG15                      | remove the existing container/volume before recreating (Podman fallback)                                                                                                                                                                                  |
 | `docker network create` / `docker volume create` / `docker create` / `docker start`                                          | local path, PG15                      | recreate the Postgres container (same primitives `db start` uses)                                                                                                                                                                                         |
 | `docker run --rm <realtime\|storage\|gotrue image>`                                                                          | local path, PG15, per enabled service | the one-shot `initSchema15` migrate jobs (`startSetupLocalDatabase`)                                                                                                                                                                                      |
@@ -113,9 +117,8 @@ Docker's first health verdict on the database container (polling `docker contain
 health check), so a following `supabase status` does not see `starting`. That wait never fails the
 reset.
 
-No subprocess delegation remains on either target — the remote path's
-`--experimental` schema-files apply (formerly delegated to a `supabase-go db reset`
-child) is fully native as of CLI-1958.
+No subprocess delegation on either target — the remote path's
+`--experimental` schema-files apply is fully native.
 
 ## Database Mutations
 
@@ -125,14 +128,15 @@ child) is fully native as of CLI-1958.
 | ------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
 | `dropObjectsSql` `DO` block (drops user schemas/extensions/public objects, truncates auth/migrations)                                            | always, first                                                                                              |
 | `SELECT vault.update_secret(...)` / `vault.create_secret(...)`                                                                                   | when `[db.vault]` has syncable secrets                                                                     |
-| schema-file statements (no history bookkeeping, no `RESET ALL` between files)                                                                    | `--experimental` + no resolved version + pg-delta not enabled (see Notes)                                  |
+| schema-file statements (no history bookkeeping, no `RESET ALL` between files)                                                                    | `--experimental` + no resolved version + pg-delta disabled (see Notes)                                     |
 | migration statements + `schema_migrations` history insert (per file, transactional; pipeline-incompatible statements run standalone — see Notes) | otherwise, when `[db.migrations].enabled`, for migrations `≤ --version`                                    |
 | seed statements + `seed_files` hash upsert                                                                                                       | when `[db.seed].enabled` and not `--no-seed` (runs after either branch above)                              |
 | `SET SESSION ROLE postgres`                                                                                                                      | stepped-down sessions only: after each role-reverting statement, at end of each file, before ledger writes |
 
 ### Local path (native, in TS)
 
-**PG15+:** the container/volume are removed and recreated (see "Subprocesses"), then
+**PG15+:** the storage/auth/realtime/pooler containers are stopped, then the
+container/volume are removed and recreated (see "Subprocesses"), then
 the reused `startSetupLocalDatabase` pipeline runs the initial schema (as
 one-shot Docker jobs, not SQL over a session), `ApplyApiPrivileges`, a vault upsert,
 a `roles.sql` seed, and `MigrateAndSeed` (migrations `≤ --version`, seed unless
@@ -161,27 +165,31 @@ Bucket objects are then seeded over the Storage gateway (reusing the `seed bucke
 local path), gated on a native storage-health check: absent (any inspect error, not
 just "not found") skips buckets without failing; present-but-unhealthy waits up to a
 **hardcoded 30 seconds** (independent of `db.health_timeout`) and, on timeout, **fails
-the whole reset** (not just "skip buckets").
+the whole reset** (not just "skip buckets"). On PG15, a failure or interrupt before the final
+restart inspects `supabase_db_<project>` and, unless Docker reports it missing or stopped, runs the
+same restart + Kong reload once before the original error surfaces (a restore failure only warns);
+otherwise the satellites stay stopped with a warning to run `supabase stop && supabase start`.
 
 ## API Routes
 
-| Method | Path                                     | Auth | Request body | Response (used fields)                                                                                                                                                                                                                                                                        |
-| ------ | ---------------------------------------- | ---- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| —      | —                                        | —    | —            | Connects to Postgres directly. The `--linked` resolver may call the Management API to mint a temporary login role; local bucket seeding calls the Storage gateway.                                                                                                                            |
-| GET    | `/containers/supabase_db_<project>/json` | —    | —            | local path — the running probe's Docker Engine API request over the active context's local socket/named pipe (`Api-Version`/`Server` identity headers + status; a 200 body must parse as a JSON object; identity-gated 200 → running, 404 → absent; anything else → the spawned-CLI fallback) |
+| Method | Path                                     | Auth | Request body | Response (used fields)                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------ | ---------------------------------------- | ---- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| —      | —                                        | —    | —            | Connects to Postgres directly. A remote project or branch may call the Management API to mint a temporary login role (and `--remote=<branch>`, or a bare `--remote` followed by a word that could name a branch, calls `GET /v1/projects/{parent}/branches` to find the branch's project; `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project; a branch UUID with no linked project uses `GET /v1/branches/{id}`); local bucket seeding calls the Storage gateway. |
+| GET    | `/containers/supabase_db_<project>/json` | —    | —            | local path — the running probe's Docker Engine API request over the active context's local socket/named pipe (`Api-Version`/`Server` identity headers + status; a 200 body must parse as a JSON object; identity-gated 200 → running, 404 → absent; anything else → the spawned-CLI fallback)                                                                                                                                                                               |
 
 ## Environment Variables
 
 | Variable                                                                                                             | Purpose                                                                                                                                                                                                                                                                                                                                                                                                         | Required?                                               |
 | -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
 | `DOCKER_HOST` / `DOCKER_CONTEXT` / `DOCKER_TLS_VERIFY` / `DOCKER_CERT_PATH` / `DOCKER_API_VERSION` / `DOCKER_CONFIG` | local path: ambient shell environment only (project dotenv files deliberately never override Docker client keys) — resolves the daemon endpoint for the running probe (in-process) and steers the spawned `docker`/`podman` CLI itself                                                                                                                                                                          | no                                                      |
-| `SUPABASE_ACCESS_TOKEN`                                                                                              | auth token for the `--linked` resolver path                                                                                                                                                                                                                                                                                                                                                                     | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_DB_PASSWORD`                                                                                               | password for the linked/remote connection                                                                                                                                                                                                                                                                                                                                                                       | no                                                      |
-| `SUPABASE_YES`                                                                                                       | auto-confirm the reset prompt and the local path's bucket-seed overwrite/prune prompts (shell or project dotenv, same as `seed buckets`)                                                                                                                                                                                                                                                                        | no (also `--yes`)                                       |
+| `SUPABASE_ACCESS_TOKEN`                                                                                              | auth token for a remote project or branch                                                                                                                                                                                                                                                                                                                                                                       | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_DB_PASSWORD`                                                                                               | password for the remote connection; ignored for a target other than the linked project (see Notes)                                                                                                                                                                                                                                                                                                              | no                                                      |
+| `SUPABASE_DB_SEED_ENABLED`                                                                                           | overrides `[db.seed].enabled` (flag > env > matched `[remotes.*]` > base); honoured on the local and remote paths                                                                                                                                                                                                                                                                                               | no                                                      |
+| `SUPABASE_YES`                                                                                                       | grants the hosted reset consent (shell only; a `SUPABASE_YES` in `supabase/.env` does not count) and auto-confirms the local path's bucket-seed overwrite/prune prompts (shell or project dotenv, same as `seed buckets`)                                                                                                                                                                                       | no (also `--yes`)                                       |
 | `SUPABASE_EXPERIMENTAL`                                                                                              | selects the schema-files apply branch on either target                                                                                                                                                                                                                                                                                                                                                          | no (also `--experimental`)                              |
-| `SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED`                                                                              | overrides `[experimental.pgdelta].enabled`; a truthy value flips the reset gate (`experimental && resolvedVersion === "" && !toml.pgDelta.enabled`) back to timestamped migrations even with `--experimental` set — switches between two different destructive code paths                                                                                                                                       | no                                                      |
-| `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS`                                                                                | overrides `[db.migrations].schema_paths` (viper `AutomaticEnv`, beats the config-file value) for the schema-files apply branch — genuinely effective on both targets now                                                                                                                                                                                                                                        | no (no dedicated flag — config-file-only otherwise)     |
-| `SUPABASE_PROJECT_ID`                                                                                                | overrides the local container id; ALSO the linked-ref resolution fallback `--project-ref` supersedes — see Notes for the narrower scope of the flag                                                                                                                                                                                                                                                             | no                                                      |
+| `SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED`                                                                              | overrides `[experimental.pgdelta].enabled` (default true); `false` opens the reset gate (`experimental && resolvedVersion === "" && !toml.pgDelta.enabled`) so `--experimental` applies `schema_paths` files instead of timestamped migrations — switches between two different destructive code paths                                                                                                          | no                                                      |
+| `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS`                                                                                | overrides `[db.migrations].schema_paths` (beats the config-file value and a matched `[remotes.*]` block) for the schema-files apply branch — genuinely effective on both targets now                                                                                                                                                                                                                            | no (no dedicated flag — config-file-only otherwise)     |
+| `SUPABASE_PROJECT_ID`                                                                                                | overrides the local container id; ALSO the linked-ref resolution fallback and the parent project `--remote=<branch>` resolves against; `--remote=<ref>` supersedes it for the ref — see Notes for the narrower scope of the flag                                                                                                                                                                                | no                                                      |
 | `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                                                                   | overrides the image registry used to resolve the local path's container images (project `.env` or shell)                                                                                                                                                                                                                                                                                                        | no (project `.env` or shell)                            |
 | `SUPABASE_USE_SLIM_IMAGES`                                                                                           | resolves the local-reset Postgres image and the realtime/storage/auth migrate-job images from slim `ghcr.io/supabase/cli` builds (`true`/`1` enable); majors 13/15 use `15.14.1.167` when the flag is on; historical pins, PG14, OrioleDB tags the catalog does not pin, and flag-off `15.8.1.085` stay on docker.io; a failed GHCR pull falls back to the same tag and digest on `public.ecr.aws/supabase/cli` | no (ambient shell only)                                 |
 | `SUPABASE_DB_PORT` / `SUPABASE_DB_MAJOR_VERSION` / `SUPABASE_DB_HEALTH_TIMEOUT` / `SUPABASE_DB_SETTINGS_*`           | local-path container-recreate config overrides, same as `db start`                                                                                                                                                                                                                                                                                                                                              | no                                                      |
@@ -189,8 +197,7 @@ the whole reset** (not just "skip buckets").
 | `SUPABASE_AUTH_JWT_SECRET` / `SUPABASE_AUTH_SERVICE_ROLE_KEY`                                                        | local path: override `auth.jwt_secret` / `auth.service_role_key` (shell or project dotenv, `encrypted:` decrypted) — feeds the recreated Postgres container (jwt secret), the fresh-database setup jobs (both) and the legacy-backend bucket-seed Storage service-role key, same as `seed buckets`. Not consulted on the stack backend, which uses the stack's own service-role JWT                             | no                                                      |
 | `SUPABASE_NETWORK_ID` (`--network-id`)                                                                               | forces the recreated container/network onto an existing Docker network — legacy backend only                                                                                                                                                                                                                                                                                                                    | no                                                      |
 | `SUPABASE_EXPERIMENTAL_STACK`                                                                                        | `1`/`0` selects the stack backend for the local path, overriding `experimental.stack`                                                                                                                                                                                                                                                                                                                           | no (→ `experimental.stack` → legacy)                    |
-| `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION`                                                                             | deprecated alias of `SUPABASE_DB_ORIOLEDB_VERSION`, used only while that is unset; when set, stderr gets `WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.`                                                                                                                                                                      | no                                                      |
-| `PG*` libpq                                                                                                          | linked-project TLS, timeout, service; see `db push`                                                                                                                                                                                                                                                                                                                                                             | no                                                      |
+| `PG*` libpq                                                                                                          | remote TLS, timeout, service; see `db push`                                                                                                                                                                                                                                                                                                                                                                     | no                                                      |
 
 ## Connection loss during migration apply
 
@@ -207,27 +214,31 @@ echoed, because those may genuinely have reached the server.
 | Code | Condition                                                                                                                                  |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | `0`  | success                                                                                                                                    |
-| `1`  | mutually exclusive target flags (`[db-url linked local]`)                                                                                  |
 | `1`  | `--version` + `--last` together (`[last version]`)                                                                                         |
 | `1`  | `--version` not an integer (`invalid version number`)                                                                                      |
 | `1`  | `--version` has no matching migration file                                                                                                 |
 | `1`  | local: database not running (`supabase start is not running.`)                                                                             |
-| `1`  | user declined the reset confirmation (`context canceled`)                                                                                  |
+| `1`  | hosted target, reset confirmation declined (`HostedMutationDeclinedError`, `context canceled`); nothing is changed                         |
+| `1`  | hosted target in a JSON, piped, agent or non-TTY run without `--yes` or a shell `SUPABASE_YES` (`HostedMutationConsentRequiredError`)      |
+| `1`  | an invalid config value, including an unparsable `SUPABASE_*` override                                                                     |
 | `1`  | `config.toml` parse failure                                                                                                                |
 | `1`  | drop / migrate / seed / vault apply failure, or connection error                                                                           |
 | `1`  | no `[db.migrations].schema_paths` pattern matched anything on the `--experimental` branch, either target                                   |
 | `1`  | local: container/volume remove, network/volume/container create, health-check timeout, PG14 SQL, satellite-restart, or Kong-reload failure |
-| `1`  | `--project-ref` set with a resolved target other than linked (see Notes)                                                                   |
+| `1`  | local, PG15: satellite stop failure                                                                                                        |
 
-There is no remaining Go child on either target (CLI-1955 removed it for local,
-CLI-1958 for remote) — every failure is a native, typed TS error surfaced as `1`.
+Neither target delegates to a child process — every failure is a native, typed error
+surfaced as `1`.
 
 ## Output
 
-The remote path prints `Resetting remote database…` to **stderr**, then either the
-schema-files branch's apply (no per-file progress, CLI-1958) or the migrate/seed
-progress (`Applying migration …`, `Seeding data from …`). There is **no**
-`Connecting to … database…` line and **no** `Finished …` line on the remote path.
+Alias deprecation warnings print first. Every target prints a `Target:` line to **stderr**
+before the first database change. There is no `Connecting to … database…` line.
+
+The remote path then asks for confirmation (see Notes), prints `Resetting remote database…` to
+**stderr**, then either the schema-files branch's apply (no per-file progress, CLI-1958) or the
+migrate/seed progress (`Applying migration …`, `Seeding data from …`). There is **no**
+`Finished …` line on the remote path.
 
 The local path prints `Resetting local database…` to **stderr**, then
 `Recreating database...` (PG15) or nothing extra (PG14, until the restart step) /
@@ -241,14 +252,14 @@ silent (no-progress-line) `--experimental` schema-files apply.
 
 ### `--output-format json` / `stream-json`
 
-stdout is payload-only; a `result` object is emitted:
+stdout is payload-only; a `result` object is emitted, carrying the announced `target` object:
 
 ```json
-{ "target": "remote" | "local", "version": "<resolved version or empty>" }
+{ "target": { "kind": "local" | "linked" | "db-url", … }, "version": "<resolved version or empty>" }
 ```
 
-In machine modes the remote confirmation prompt is non-interactive and takes its
-default (`false`), so a remote reset is declined unless `--yes` is set. The local
+A remote reset in machine modes cannot prompt, so it needs `--yes` or a shell `SUPABASE_YES`
+and otherwise fails with `HostedMutationConsentRequiredError` before anything is dropped. The local
 path has no reset confirmation, but its bucket-seed step carries the seed-buckets
 overwrite/prune confirmations: in machine modes they take their defaults silently
 (overwrite → yes, prune → no) unless `--yes`/`SUPABASE_YES` auto-confirms; in text
@@ -271,21 +282,31 @@ to those defaults (the usual outcome for an interactive terminal).
   its own suggestion (missing API gateway endpoint, Auth disabled, gateway 502/503), that
   suggestion is the next step instead of the generic one. The stack's service-role JWT is
   never printed or logged.
+- Unlike `SUPABASE_PROJECT_ID`, `--remote=<ref>` and `--project-ref` do not affect the local
+  container id.
 - **Target/local split** follows whether the resolved config points at the local
-  stack, not the flag name: a `--db-url` pointing at the local stack is treated
-  as a local reset.
-- **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
-  command) overrides ONLY the linked-ref resolution `RemoteTarget`
-  performs (flag > `SUPABASE_PROJECT_ID` > `~/.supabase/<hash>/project-ref`) —
-  unlike `SUPABASE_PROJECT_ID`, it does not affect the local container id. It
-  never implies `--linked`: passing it with a resolved `--local`/`--db-url`
-  target is a hard error rather than a silently discarded flag (deliberately
-  stricter than `SUPABASE_PROJECT_ID`, which simply goes unused on a
-  non-linked target).
+  stack, not the flag name: a `--remote=<url>` pointing at the local stack is treated
+  as a local reset and never prompts.
+- **Hosted consent.** A remote project, branch or remote `--remote=<url>` reset asks once, after the
+  plan is known and before the first drop, with default No. The question lists dropping every user
+  schema, the vault upsert count, the apply step and the seed plan. The apply step reads
+  `apply the declarative schema files` when schema files are in use, and otherwise
+  `apply local migrations` (`apply local migrations up to version <version>` with `--version`) only
+  when `[db.migrations].enabled` is true; with migrations disabled the question lists no apply step.
 - **Pipeline-incompatible statements** (`CREATE INDEX CONCURRENTLY`, `VACUUM`, …) run
   standalone outside the per-file transaction batch, with the same non-atomic flush
   behaviour as `db push` — see `db push`'s SIDE_EFFECTS Notes (supabase/cli#5139,
   adopted into TS in PR supabase/cli#5671).
+- **Config value precedence** (ADR 0032): explicit flag > shell env > project
+  `.env*` > config (`config.json` over `config.toml`; a matched `[remotes.*]`
+  block over the base document) > default. The linked-database password env is
+  withheld when the target differs from `.temp/project-ref`: stderr gets
+  `Not sending SUPABASE_DB_PASSWORD to <target>: this directory is linked to <linked>. Using a temporary login role instead (needs supabase login or SUPABASE_ACCESS_TOKEN).` and a temporary login role is minted.
+- **Seed plan (remote).** The consent question includes the seed line: `seed <n> file(s)`, and for
+  a remote project or branch that matched a `[remotes.<name>]` block it names the block and the origin that
+  enabled seeding (for example `seed 1 file into [remotes.preview] (seeding enabled by --sql-paths)`).
+  There is no separate seed question; declining the reset declines the seeding. `--no-seed`
+  removes the line.
 - `--no-seed` forces seeding off; on the
   local path it feeds `resolveResetSeedConfig`, applied on top of the loaded
   `[db.seed]` config inside the recreate's own `MigrateAndSeed` step (same override
@@ -295,18 +316,17 @@ to those defaults (the usual outcome for an interactive terminal).
   patterns (supabase-relative). Mutually exclusive with `--no-seed`. On the local path
   it is applied the same way as `--no-seed` above; on the remote path it seeds the
   selected database after migrations (a warning is printed when paired with
-  `--linked` / `--db-url`).
+  a remote target).
 - `--last n` reverts the most recent `n` migrations; if `n ≥ total`, the reset target
   version becomes `-` (revert everything). Mutually exclusive with `--version`.
-- `--db-url`, `--linked`, and `--local` (default true) are mutually exclusive.
 - **`--experimental` schema-files apply** (the `MigrateAndSeed` EXPERIMENTAL
   branch) is taken on
   EITHER target when `--experimental`/`SUPABASE_EXPERIMENTAL` is set, no
-  `--version`/`--last` resolved a version, AND `[experimental.pgdelta].enabled` is
-  NOT set. Taking this branch means timestamped
+  `--version`/`--last` resolved a version, AND `[experimental.pgdelta].enabled`
+  resolves false, which requires an explicit `enabled = false` (the default is true).
+  Taking the schema-files branch means timestamped
   migrations never run at all, even when `[db.migrations].schema_paths` matches
-  nothing. Faithfully reproduces two undocumented quirks inherited from the old
-  Go CLI: (1) the `schema_paths`
+  nothing. Two quirks apply: (1) the `schema_paths`
   default is `[]`, so a stock project running an experimental reset silently applies
   NOTHING (drops schemas, seeds, but replays no SQL) rather than falling back to
   migrations; (2) a partial glob failure (some patterns match, others don't) is
@@ -316,18 +336,17 @@ to those defaults (the usual outcome for an interactive terminal).
   progress line is printed per file, no
   migration-history row is inserted, and no `RESET ALL` runs between files. Seeding
   still runs afterward, unconditionally, exactly as on the migrations branch. The
-  local target's branch was already native before this port (`migrateAndSeed`,
-  reused by both the PG14 and PG15 recreate branches, already implements this exact
-  branch); CLI-1958 ports the remote target's copy of the same branch
-  (`applySchemaFiles`), removing the last Go delegation on this command.
+  local target's branch is `migrateAndSeed`, reused by both the PG14 and PG15 recreate
+  branches; the remote target's copy of the same branch is `applySchemaFiles`.
   `encrypted:` vault secrets are NOT skipped on the remote path — `checkDbToml`
   decrypts them into `toml.vault`, and `upsertVaultSecrets` upserts the
   decrypted values unconditionally, before either branch (schema-files or migrations)
   runs.
-- `db schema declarative`/`db schema sync`'s own local-reset paths now call
-  `resetLocalDatabase` in-process too (CLI-2062) — the previous scope boundary
-  (those two commands shelling out to a second `supabase-go` child via the now-removed
-  `DeclarativeSeam.execInherit`) is closed. That in-process call collapses to a
+- When a versionless `--experimental` reset skips the schema-files branch only because
+  pg-delta is enabled and `schema_paths` is non-empty, it prints a stderr warning that
+  `schema_paths` is not applied and that `[experimental.pgdelta] enabled = false` restores it
+  (before the confirmation on the remote path).
+- `db schema declarative`/`db schema sync`'s own local-reset paths call
+  `resetLocalDatabase` in-process too, so the reset runs inside a
   single telemetry/linked-project-cache finalizer cycle (the outer `db schema
-declarative`/`sync` command's own) — the removed subprocess design used to fire a
-  second, independent one from the child process's own execution.
+declarative`/`sync` command's own).

@@ -1,10 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import {
-  GO_DOCKERFILE_PATH,
-  TS_DOCKERFILE_PATH,
-  renderDockerfile,
-} from "./render-service-dockerfile.ts";
+import { TS_DOCKERFILE_PATH, renderDockerfile } from "./render-service-dockerfile.ts";
 
 /* Decoded as UTF-8 with a leading byte order mark kept (`.text()` would drop it). */
 const readDockerfile = (path: string) =>
@@ -24,13 +20,6 @@ describe("renderDockerfile against the real catalog and Dockerfile", () => {
   test("rendering twice is stable", () => {
     expect(renderDockerfile(currentTsDockerfile)).toBe(renderDockerfile(currentTsDockerfile));
   });
-
-  // The Go tree still `go:embed`s its own copy for a dependency that hasn't been removed yet;
-  // this is the single place that keeps the two copies in sync until apps/cli-go is deleted.
-  test("the Go tree's embedded Dockerfile is a byte copy of the TS-owned one", () =>
-    readDockerfile(GO_DOCKERFILE_PATH).then((goDockerfile) => {
-      expect(goDockerfile).toBe(currentTsDockerfile);
-    }));
 
   test("detects drift when a generated line is hand-edited", () => {
     // A hand-edit to a generated tag (bumping gotrue without touching the catalog) must not
