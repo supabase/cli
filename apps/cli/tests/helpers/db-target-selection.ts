@@ -1,9 +1,6 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option, Predicate, type Scope } from "effect";
+import { Effect, Exit, FileSystem, Layer, Option, Path, Predicate, type Scope } from "effect";
 import { CliOutput, Command } from "effect/cli";
 
 import { legacyProjectStateLayer } from "../../src/shared/config/legacy-project-state.layer.ts";
@@ -90,9 +87,9 @@ export const storageTargetOf = (
 };
 
 interface DbTargetAttempt<R> {
-  readonly layer: Layer.Layer<R, unknown>;
+  readonly layer: Layer.Layer<R, Error>;
   readonly out: ReturnType<typeof mockOutput>;
-  readonly run: Effect.Effect<unknown, unknown, R | Scope.Scope>;
+  readonly run: Effect.Effect<unknown, Error, R | Scope.Scope>;
   /** The target the leaf connected or sent requests to; `undefined` until it reached one. */
   readonly target: () => ObservedTarget | undefined;
   readonly cachedRef?: () => string | undefined;
@@ -128,7 +125,7 @@ interface DbTargetSelectionScenario<R> {
     readonly workdir: string;
     readonly args: ReadonlyArray<string>;
     readonly target: TargetFlagValuesWithDbUrl;
-  }) => DbTargetAttempt<R> | Effect.Effect<DbTargetAttempt<R>, unknown, BunServices.BunServices>;
+  }) => DbTargetAttempt<R> | Effect.Effect<DbTargetAttempt<R>, Error, BunServices.BunServices>;
   /** Wraps each row, for a leaf whose tests pin ambient environment variables around their body. */
   readonly around?: <E>(row: Effect.Effect<void, E>) => Effect.Effect<void, E>;
   /** The flags besides `--remote` that the run sets and the leaf's permission map branches on. */
@@ -137,11 +134,14 @@ interface DbTargetSelectionScenario<R> {
   readonly optOut?: Partial<Record<Row, string>>;
 }
 
-const linkCheckout = (workdir: string) => {
-  const temp = join(workdir, "supabase", ".temp");
-  mkdirSync(temp, { recursive: true });
-  writeFileSync(join(temp, "project-ref"), VALID_REF);
-};
+const linkCheckout = (workdir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const temp = path.join(workdir, "supabase", ".temp");
+    yield* fs.makeDirectory(temp, { recursive: true });
+    yield* fs.writeFileString(path.join(temp, "project-ref"), VALID_REF);
+  }).pipe(Effect.provide(BunServices.layer));
 
 const expectCachedRef = <R>(ctx: DbTargetAttempt<R>, ref: string | undefined) => {
   if (ctx.cachedRef !== undefined) expect(ctx.cachedRef()).toBe(ref);
@@ -170,34 +170,36 @@ export function describeDbTargetSelection<R>(
       readonly linked?: true;
       readonly check: (
         ctx: DbTargetAttempt<R>,
-      ) => Effect.Effect<void, unknown, R | CommandTarget | Scope.Scope>;
+      ) => Effect.Effect<void, Error, R | CommandTarget | Scope.Scope>;
     },
   ) => {
     if (optedOut(row)) return;
-    it.effect(name, () => {
-      const workdir = scenario.workdir();
-      if (spec.linked === true) linkCheckout(workdir);
-      const attempted = scenario.attempt({
-        workdir,
-        args: [...words, ...spec.args],
-        target: spec.target,
-      });
-      const row = Effect.flatMap(
-        Effect.isEffect(attempted)
-          ? Effect.provide(attempted, BunServices.layer)
-          : Effect.succeed(attempted),
-        (ctx) =>
-          spec
-            .check(ctx)
-            .pipe(
-              Effect.provide(
-                Layer.mergeAll(ctx.layer, commandTargetLayer.pipe(Layer.provide(ctx.out.layer))),
+    it.effect(name, () =>
+      Effect.gen(function* () {
+        const workdir = scenario.workdir();
+        if (spec.linked === true) yield* linkCheckout(workdir);
+        const attempted = scenario.attempt({
+          workdir,
+          args: [...words, ...spec.args],
+          target: spec.target,
+        });
+        const row = Effect.flatMap(
+          Effect.isEffect(attempted)
+            ? Effect.provide(attempted, BunServices.layer)
+            : Effect.succeed(attempted),
+          (ctx) =>
+            spec
+              .check(ctx)
+              .pipe(
+                Effect.provide(
+                  Layer.mergeAll(ctx.layer, commandTargetLayer.pipe(Layer.provide(ctx.out.layer))),
+                ),
+                Effect.scoped,
               ),
-              Effect.scoped,
-            ),
-      );
-      return scenario.around === undefined ? row : scenario.around(row);
-    });
+        );
+        yield* scenario.around === undefined ? row : scenario.around(row);
+      }),
+    );
   };
 
   describe(`target selection: ${path}`, () => {
@@ -287,7 +289,7 @@ export function describeDbTargetSelection<R>(
         linked: true,
         check: (ctx) =>
           Effect.gen(function* () {
-            const error = yield* Effect.flip(ctx.run);
+            const error = yield* ctx.run.pipe(Effect.asVoid, Effect.flip, Effect.orDie);
             expect(error).toMatchObject({
               _tag: "LinkBranchNotFoundError",
               message: expect.stringContaining("Available branches: feature-x"),
@@ -375,7 +377,7 @@ export function describeDbTargetSelection<R>(
       target: { ...BARE_REMOTE, local: true },
       check: (ctx) =>
         Effect.gen(function* () {
-          const error = yield* Effect.flip(ctx.run);
+          const error = yield* ctx.run.pipe(Effect.asVoid, Effect.flip, Effect.orDie);
           expect(error).toMatchObject({ _tag: "TargetSelectorConflictError" });
           expect(ctx.target()).toBeUndefined();
           expectCachedRef(ctx, undefined);

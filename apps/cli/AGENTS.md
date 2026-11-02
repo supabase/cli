@@ -131,7 +131,7 @@ block over the base document) > default. Do not reorder it or special-case it pe
 
 Add the field to `CliConfigSchema`; the registry key and its `SUPABASE_<UPPER_SNAKE_PATH>` env name
 follow. Touch `config/cli-config-key-annotations.ts` only for a section gate, codec override,
-secret or exclusion. Never read a `SUPABASE_*` name anywhere else.
+secret, env-name override or exclusion. Never read a `SUPABASE_*` name anywhere else.
 
 **Variables that are not config keys**
 

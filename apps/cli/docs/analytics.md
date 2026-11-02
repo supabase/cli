@@ -125,6 +125,10 @@ The analytics layer attaches a base set of properties to every PostHog event:
 - `is_tty`
 - `is_ci`
 - `is_agent`
+- `agent_name` (the detected agent, such as `claude`, `codex`, or `cursor_cli`; only when
+  `is_agent` is true)
+- `is_eval` (true when `SUPABASE_EVAL` is `1` or `true`, so automated evaluation runs can be
+  excluded from usage metrics)
 - `env_signals` (allowlisted agent and terminal environment variables, when any are set)
 - `os`
 - `arch`

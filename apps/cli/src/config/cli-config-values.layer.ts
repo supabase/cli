@@ -24,6 +24,7 @@ import { collectDotenvPrivateKeys } from "../shared/config/vault-decrypt.ts";
 import { loadCliProjectEnvFiles, readShellEnvironment } from "../shared/config/cli-config-env.ts";
 import { CliConfigLoadError } from "../shared/config/cli-config-load.errors.ts";
 import { DebugLogger } from "../shared/output/debug-logger.service.ts";
+import { escapeControlCharacters } from "../shared/output/escape-control-characters.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { CLI_CONFIG_FAMILIES, CLI_CONFIG_REMOVED_ENV_NAMES } from "./cli-config-key-annotations.ts";
 import {
@@ -78,11 +79,17 @@ const emptyMergedDocument = (workdir: string, separator: string): MergedCliConfi
   rawText: "",
   schemaRef: undefined,
   ignoredPaths: [],
+  deprecatedPaths: [],
   rawDocument: {},
   document: {},
   appliedRemote: undefined,
   remoteLeafPaths: [],
 });
+
+const deprecatedKeyLine = (deprecatedPath: string): string => {
+  const shown = escapeControlCharacters(deprecatedPath);
+  return `WARN: ${shown} is deprecated and will be removed in v4, use ${shown.replace(/enable_signup$/, "enabled")} instead.\n`;
+};
 
 const registryEnvNames = cliConfigRegistry.keys.flatMap((key) => key.env);
 
@@ -207,6 +214,11 @@ export const cliConfigValuesLayer = Layer.effect(
       warned.add(message);
       return output.warn(message);
     };
+    const printOnce = (line: string) => {
+      if (warned.has(line)) return Effect.void;
+      warned.add(line);
+      return output.raw(line, "stderr");
+    };
 
     const parsedDocuments = yield* Cache.makeWith(
       (workdir: string) => withPlatform(parseCliConfigDocumentFile(workdir, { search: false })),
@@ -223,6 +235,9 @@ export const cliConfigValuesLayer = Layer.effect(
       const parsed = target.ignoreConfigFile
         ? null
         : yield* Cache.get(parsedDocuments, target.workdir);
+      for (const deprecatedPath of parsed?.deprecatedPaths ?? []) {
+        yield* printOnce(deprecatedKeyLine(deprecatedPath));
+      }
       const rawDocument = parsed?.rawDocument ?? {};
 
       const shell = yield* readShellEnvironment({

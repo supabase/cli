@@ -1,6 +1,5 @@
-import { realpathSync } from "node:fs";
 import { afterEach, vi } from "vitest";
-import { Option, Redacted } from "effect";
+import { Effect, FileSystem, Option, Redacted, Schema } from "effect";
 
 import { PINNED_ENV_PREFIXES } from "./config-env-pins.ts";
 
@@ -51,28 +50,25 @@ function normalize(value: unknown): unknown {
   return value;
 }
 
-function resolvedPath(candidate: string): string {
-  try {
-    return realpathSync(candidate);
-  } catch {
-    return candidate;
-  }
-}
+const encodeGolden = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }));
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 /**
  * Stable golden serialization: sorted keys, `Option`/`undefined` collapsed to value/`null`, `Set`
  * as sorted array, functions dropped, and each `redactions` key (e.g. a temp workdir) replaced
  * by its placeholder.
  */
-export function goldenJson(
+export const goldenJson = Effect.fnUntraced(function* (
   value: unknown,
   redactions: Readonly<Record<string, string>> = {},
-): string {
-  let text = `${JSON.stringify(normalize(value), null, 2)}\n`;
+) {
+  const fs = yield* FileSystem.FileSystem;
+  let text = `${yield* encodeGolden(normalize(value))}\n`;
   for (const [needle, placeholder] of Object.entries(redactions)) {
-    for (const variant of new Set([needle, resolvedPath(needle)])) {
-      text = text.replaceAll(JSON.stringify(variant).slice(1, -1), placeholder);
+    const resolved = yield* fs.realPath(needle).pipe(Effect.orElseSucceed(() => needle));
+    for (const variant of new Set([needle, resolved])) {
+      text = text.replaceAll((yield* encodeJson(variant)).slice(1, -1), placeholder);
     }
   }
   return text;
-}
+});

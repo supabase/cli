@@ -18,7 +18,7 @@ on:
         type: string
         default: ""
       status:
-        description: Notification kind (success | failure | awaiting-approval | declined | sync-conflict)
+        description: Notification kind (success | failure | publish-failure | awaiting-approval | declined | sync-conflict)
         required: false
         type: string
         default: success
@@ -104,6 +104,11 @@ jobs:
               if [[ -n "$VERSION" ]]; then
                 DETAILS="*Version:* v${VERSION}\n${DETAILS}"
               fi
+              ;;
+            publish-failure)
+              HEADER="⚠️ ${PACKAGE} v${VERSION} released, but publishing to supabase.com failed"
+              FALLBACK_TEXT="⚠️ ${PACKAGE} v${VERSION} was released, but publishing to supabase.com failed"
+              DETAILS="The CLI reference or config schemas pull request in supabase/supabase was not opened or updated. Rerun the *Publish to supabase.com* job.\n*Version:* v${VERSION}\n*Commit:* <${COMMIT_URL}|${SHORT_SHA}>\n*Workflow run:* <${RUN_URL}|view failed run>"
               ;;
             awaiting-approval)
               # The approval itself happens on the workflow run page (Approve button +

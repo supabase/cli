@@ -110,6 +110,19 @@ the Postgres container (polling `docker container inspect` every 1s until the st
 `starting`, the container stops running, or Docker cannot launch its health check), so a
 following `supabase status` or `supabase start` does not see `starting`. It never fails the run.
 
+Before creating any container, `start` runs `docker version --format
+'{{.Client.DefaultAPIVersion}} {{.Client.APIVersion}} {{.Server.APIVersion}}'` once. When all three
+are Docker API versions >= 1.44, every container whose spec sets a Docker healthcheck also gets
+`--health-start-interval 1s` and, unless its service sets its own, `--health-start-period 10s`. The
+first check then runs about 1s after the container starts instead of one 10s interval later, and the
+interval returns to 10s after the first pass. Failures inside the period do not count, so a failing
+service with 3 retries reaches `unhealthy` about 30s after it starts, or one interval later if a slow
+probe straddles the end of the period; the wait's budget and error type do not change. Below API
+1.44, when `docker version` fails, or with the Podman CLI or a `docker` shim for it,
+`--health-start-interval` is not passed and only Mailpit and Logflare keep their own start period.
+The real `docker` client on a Podman socket reporting 1.44 gets them: Podman keeps the start period
+and drops the start interval, so there is no speedup there.
+
 When a container is running but Docker could not launch its health check, it is judged from the
 host instead of failing. This applies only when the container's last recorded probe has exit
 code `-1` with an `OCI runtime exec failed ... unable to start container process` output, whatever
@@ -193,13 +206,14 @@ command.
 
 ## Files Written
 
-| Path                                                                                     | Format | When                                                                                                                                                                                             |
-| ---------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `<workdir>/supabase/.branches/_current_branch`                                           | text   | on every start, only if absent — writes `"main"`                                                                                                                                                 |
-| `$SUPABASE_HOME/locks/start-<project_id>.lock`                                           | SQLite | on every start with a non-empty project id — the per-project start lock (see "Concurrent starts"); never deleted, released when the command ends (by the OS if the process dies)                 |
-| `<workdir>/supabase/snippets/`                                                           | —      | when Studio is enabled, only if absent — created before any container and kept on rollback; `podman create -v`, unlike Docker, rejects a missing bind source                                     |
-| `<workdir>/supabase/.temp/start-secrets/<edgeRuntimeContainerName>/{env,multiline-env}/` | varies | Edge Runtime's own JWT/service-role-key/secret env artifacts — see below                                                                                                                         |
-| auth email `content_path` files (SELinux security label only, no content change)         | xattr  | when the container runtime applies SELinux labels (enforcing or permissive): the `rw,z` Kong bind relabels each mounted template to the shared container context; persists after `supabase stop` |
+| Path                                                                                     | Format           | When                                                                                                                                                                                                               |
+| ---------------------------------------------------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `<workdir>/supabase/.branches/_current_branch`                                           | text             | on every start, only if absent — writes `"main"`                                                                                                                                                                   |
+| `<workdir>/supabase/snippets/`                                                           | —                | when Studio is enabled, only if absent — created before any container and kept on rollback; `podman create -v`, unlike Docker, rejects a missing bind source                                                       |
+| `<workdir>/supabase/.temp/start-secrets/<edgeRuntimeContainerName>/{env,multiline-env}/` | varies           | Edge Runtime's own JWT/service-role-key/secret env artifacts — see below                                                                                                                                           |
+| auth email `content_path` files (SELinux security label only, no content change)         | xattr            | when the container runtime applies SELinux labels (enforcing or permissive): the `rw,z` Kong bind relabels each mounted template to the shared container context; persists after `supabase stop`                   |
+| `$SUPABASE_HOME/locks/docker-lifecycle.lock`                                             | SQLite lock file | held for the whole run: shared for one project, exclusive for `stop --all`; waits up to 10 minutes for a conflicting command (skipped, with a debug line, when `$SUPABASE_HOME/locks` cannot be created or opened) |
+| `$SUPABASE_HOME/locks/docker-project-<sha256(project label)>.lock`                       | SQLite lock file | held for the whole run: serializes lifecycle commands for the same project; waits up to 10 minutes (skipped, with a debug line, when `$SUPABASE_HOME/locks` cannot be created or opened)                           |
 
 Kong's `custom_nginx.template`, Vector's `vector.yaml`, and Postgres's own bootstrap
 script (`postgresql.conf`-equivalent setup) are all rendered in memory and injected
@@ -274,7 +288,7 @@ version check that _would_ call the Management API and is deliberately not imple
 
 | Variable                                                                                                             | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Required? |
 | -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| `SUPABASE_*` (any dotted config field)                                                                               | Overrides the config key at the matching path, `SUPABASE_` plus the upper-snake path (e.g. `SUPABASE_AUTH_ENABLED`, `SUPABASE_API_PORT`). Shell beats project `.env*`, which beats config. An unparsable value fails the command; an empty value is ignored. Env for a key inside an optional section (e.g. an SMS provider) applies only when the section exists in config                                                                                                                                                                                                                                                                                    | no        |
+| `SUPABASE_*` (any dotted config field)                                                                               | Overrides the config key at the matching path, `SUPABASE_` plus the upper-snake path (e.g. `SUPABASE_AUTH_ENABLED`, `SUPABASE_API_PORT`). Shell beats project `.env*`, which beats config. An unparsable value fails the command; an empty value is ignored. Env for a key inside an optional section (e.g. an SMS provider) applies only when the section exists in config. `SUPABASE_AUTH_EMAIL_ENABLED`/`SUPABASE_AUTH_SMS_ENABLED` set `enable_signup` in `[auth.email]`/`[auth.sms]` and beat `SUPABASE_AUTH_EMAIL_ENABLE_SIGNUP`/`SUPABASE_AUTH_SMS_ENABLE_SIGNUP`                                                                                       | no        |
 | `SUPABASE_EXPERIMENTAL` (or `--experimental`)                                                                        | Fresh volume + no pg-delta: applies `db.migrations.schema_paths` files instead of `migrations/*.sql` (see "Fresh-volume DB setup" above)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | no        |
 | `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                                                                   | Overrides the image registry used to resolve every service's image                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | no        |
 | `SUPABASE_PROJECT_ID`                                                                                                | Overrides the resolved local project id (shell → project `.env*` → config → workdir basename)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | no        |
@@ -306,7 +320,7 @@ code is surfaced on failure.
 | `1`  | an unparsable `SUPABASE_*` config override (e.g. a non-boolean `SUPABASE_AUTH_ENABLED`)                                                                                                                                                                                                                                                                                |
 | `1`  | stopped Postgres detected but the project id sanitizes to empty — aborts before recovery removes any containers                                                                                                                                                                                                                                                        |
 | `1`  | Postgres container exists but is not running and is not recovered (Bitbucket Pipelines, or Docker reported no state) — `<container> container is not running: <status>` (`unknown` for an empty status) with a `supabase stop` then `supabase start` suggestion; the "already running" banner is never printed                                                         |
-| `1`  | another `supabase start`/`supabase db start` for this project still held the start lock after the 10-minute wait (`LocalStackStartBusyError`) — fails before any container work, with a suggestion to wait for or cancel the other start                                                                                                                               |
+| `1`  | another lifecycle command still holds this project's lock after 10 minutes — prints `Waiting for another Supabase CLI command to finish with project <id>...` (or `...with local Supabase projects...` behind `stop --all`) to stderr first (`ProjectLifecycleLockBusyError`)                                                                                          |
 | `1`  | `docker`/`podman` not spawnable, or the daemon is unreachable                                                                                                                                                                                                                                                                                                          |
 | `1`  | stopped-stack recovery cannot list, stop, or prune current-project containers, or prune matching networks — aborts before startup; named volumes are preserved                                                                                                                                                                                                         |
 | `1`  | image pull exhausted across every registry candidate, or the Docker daemon becomes unreachable during the pre-pull — even with `--ignore-health-check` (never swallowed into exit 0; see the `--ignore-health-check` note under "Notes")                                                                                                                               |
@@ -401,6 +415,16 @@ prose, not structured data.
 
 ## Notes
 
+- **Lifecycle lock**: `start`, `db start`, and `stop` serialize on `$SUPABASE_HOME/locks`, so a
+  `docker network prune` from one never lands between another's network create and its first
+  container attach. The lock (SQLite `BEGIN IMMEDIATE` locks the OS releases when the process
+  dies) is taken once the project id is resolved, before inspecting any container, and held until
+  the command ends, after any rollback. A command that has to wait prints a waiting line to stderr
+  (text format only), waits up to 10 minutes, then fails with `ProjectLifecycleLockBusyError`. A lock location that cannot be
+  created or opened never blocks the command: it continues unlocked and logs the reason under
+  `--debug`. The lock does not cover older CLI binaries, raw `docker` commands, a different
+  `SUPABASE_HOME`, projects sharing a custom `--network-id`, or Docker requests a killed process
+  already sent, and `stop --all` is not queued ahead of a stream of single-project commands.
 - **`pg_net` converges with `[experimental.webhooks]` on every non-backup start**: a fresh
   volume installs `pg_net` only when webhooks are enabled or migration history contains a
   `create extension … pg_net`; an existing volume
@@ -463,14 +487,6 @@ prose, not structured data.
 create` and `docker start`) is recovered like any other stopped stack. The named volume is
   preserved, and the data-directory probe (see "Fresh-volume DB setup") decides whether the
   next bring-up still runs the setup pipeline and bucket seeding.
-- **Concurrent starts:** `start` and `db start` take a per-project
-  lock at `$SUPABASE_HOME/locks/start-<project_id>.lock` (a SQLite `BEGIN IMMEDIATE` lock the OS
-  releases when the process dies) once the project id is resolved and before inspecting any
-  container, and hold it until the command ends. A second run prints `Waiting for another supabase
-start for this project to finish...` to stderr (text format only) and waits up to 10
-  minutes, then fails with `LocalStackStartBusyError`. A lock location that cannot be created or
-  opened never blocks a start: it continues unlocked and logs the reason under `--debug`. `stop`
-  does not take the lock, so it still runs while another start is in progress.
 - **Spec-strict import-map key matching:** Edge Runtime bind mounts are computed by the same
   functions import scanner as `functions deploy`/`functions serve`
   (`walkImportPaths`/`substituteImportMapValue`, shared code), which matches import-map keys

@@ -274,6 +274,20 @@ describe("published JSON Schema documents", () => {
     expect(JSON.stringify(toProjectConfigJsonSchema())).not.toContain('"x-secret"');
   });
 
+  test.each(["email", "sms"])(
+    "describes project config auth.%s.enable_signup like the CLI enabled alias, not as deprecated",
+    (section) => {
+      const cli = at(toCliConfigJsonSchema(), "properties", "auth", "properties", section);
+      const project = at(toProjectConfigJsonSchema(), "properties", "auth", "properties", section);
+
+      const enabledDescription = at(cli, "properties", "enabled").description;
+      expect(enabledDescription).toBeTypeOf("string");
+      expect(enabledDescription).not.toContain("Deprecated");
+      expect(at(project, "properties", "enable_signup").description).toBe(enabledDescription);
+      expect(at(cli, "properties", "enable_signup").description).toContain("Deprecated");
+    },
+  );
+
   test("custom annotations other than x-secret are not published", () => {
     const deferredSecret = toPublishedJsonSchemaDocument(
       Schema.Struct({ token: env({ secret: true }) }),
@@ -292,11 +306,17 @@ describe("env() references in the published CLI JSON Schema", () => {
   const baseline = {
     project_id: "demo",
     api: { port: 54321, max_rows: 1000 },
-    auth: { enable_signup: true },
+    auth: { enable_signup: true, email: { enabled: false }, sms: { enabled: true } },
     db: { settings: { max_connections: 100 } },
     compute: { web: { instances: 2 } },
     storage: { file_size_limit: "50MiB" },
-    remotes: { staging: { api: { max_rows: 500 }, compute: { web: { instances: 4 } } } },
+    remotes: {
+      staging: {
+        api: { max_rows: 500 },
+        auth: { email: { enabled: true } },
+        compute: { web: { instances: 4 } },
+      },
+    },
   };
 
   describe("validation", () => {
@@ -308,6 +328,8 @@ describe("env() references in the published CLI JSON Schema", () => {
       ["api.max_rows", { api: { max_rows: "env(MAX_ROWS)" } }],
       ["api.port", { api: { port: "env(API_PORT)" } }],
       ["auth.enable_signup", { auth: { enable_signup: "env(ENABLE_SIGNUP)" } }],
+      ["auth.email.enabled", { auth: { email: { enabled: "env(EMAIL_ENABLED)" } } }],
+      ["auth.sms.enabled", { auth: { sms: { enabled: "env(SMS_ENABLED)" } } }],
       ["db.settings.max_connections", { db: { settings: { max_connections: "env(MAX_CONN)" } } }],
       ["compute.<name>.instances", { compute: { web: { instances: "env(WEB_INSTANCES)" } } }],
       ["storage.file_size_limit", { storage: { file_size_limit: "env(FILE_SIZE_LIMIT)" } }],
@@ -323,6 +345,10 @@ describe("env() references in the published CLI JSON Schema", () => {
         { remotes: { staging: { auth: { enable_signup: "env(SIGNUP)" } } } },
       ],
       [
+        "remotes.<name>.auth.email.enabled",
+        { remotes: { staging: { auth: { email: { enabled: "env(EMAIL)" } } } } },
+      ],
+      [
         "remotes.<name>.compute.<name>.instances",
         { remotes: { staging: { compute: { web: { instances: "env(WEB)" } } } } },
       ],
@@ -333,6 +359,11 @@ describe("env() references in the published CLI JSON Schema", () => {
     test.each([
       ["a numeric string in a number field", { api: { max_rows: "1000" } }, "/api/max_rows"],
       ["a word in a boolean field", { auth: { enable_signup: "yes" } }, "/auth/enable_signup"],
+      [
+        "a word in a provider enabled field",
+        { auth: { sms: { enabled: "yes" } } },
+        "/auth/sms/enabled",
+      ],
       ["an unclosed env() reference", { api: { port: "env(PORT" } }, "/api/port"],
       [
         "an env() reference with leading whitespace",

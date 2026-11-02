@@ -34,6 +34,7 @@ import {
 import {
   buildStartContainerCreateArgs,
   applyBitbucketStartContainerFilter,
+  applyHealthStartInterval,
   isDockerClientEnvKey,
   type StartContainerSpec,
 } from "./docker-create-args.ts";
@@ -125,6 +126,11 @@ export interface ContainerOpts {
   /** Passed in (rather than read via env here) so this module stays a pure effect orchestrator. */
   readonly isBitbucketPipeline: boolean;
   /**
+   * Whether the engine takes `--health-start-interval`, probed once per run by each command that
+   * reads Docker's health status. Shadow databases leave it unset: nothing reads theirs.
+   */
+  readonly healthStartInterval?: boolean;
+  /**
    * Stamped onto every created container as {@link CLI_WORKDIR_LABEL} so a later `stop` or
    * {@link rollbackStart} can find this directory from the container's own label alone, without
    * depending on the invoking cwd/`--workdir` matching `start`'s.
@@ -191,10 +197,10 @@ function portConflictSuggestion(hostPort: string, serviceLabel: string): string 
  * Creates the shared docker network for this project via `docker network create --label ...`,
  * treating "already exists" as success.
  *
- * Called once per `start` run rather than once per container: the network can't be deleted
- * externally mid-run, so it's guaranteed to still exist for every later {@link createContainer}
- * call. Returns immediately for a built-in network name (`default`, `bridge`, `host`, `none`),
- * which already exists and cannot be created.
+ * Called once per `start` run rather than once per container: callers holding the project lifecycle
+ * lock keep other lifecycle commands from pruning it before every {@link createContainer} call has run.
+ * Returns immediately for a built-in network name (`default`, `bridge`, `host`, `none`), which
+ * already exists and cannot be created.
  */
 export function ensureNetwork(
   spawner: Spawner,
@@ -716,7 +722,10 @@ export function createContainer(
       }
     }
 
-    const finalSpec = applyBitbucketStartContainerFilter(labeledSpec, opts.isBitbucketPipeline);
+    const finalSpec = applyHealthStartInterval(
+      applyBitbucketStartContainerFilter(labeledSpec, opts.isBitbucketPipeline),
+      opts.healthStartInterval === true,
+    );
 
     const createArgs = buildStartContainerCreateArgs(finalSpec);
     // `isDockerClientEnvKey` keys are already emitted inline as `-e KEY=value` above; see

@@ -38,7 +38,10 @@ import {
   resolveApiTlsPath,
   resolveEmailTemplateContentPath,
 } from "../../command-internal/config-validate.ts";
-import { isContainerNotFoundMessage } from "../../command-internal/container-cli.ts";
+import {
+  dockerSupportsHealthStartInterval,
+  isContainerNotFoundMessage,
+} from "../../command-internal/container-cli.ts";
 import { checkDbToml } from "../../command-internal/db-config.toml-read.ts";
 import { resolveEdgeRuntimeImage } from "../../command-internal/edge-runtime-image.ts";
 import {
@@ -64,6 +67,7 @@ import {
   type ContainerIdName,
 } from "../../command-internal/docker-lifecycle.ts";
 import { dockerRemoveAll } from "../../command-internal/docker-remove-all.ts";
+import { holdProjectLifecycleLock } from "../../command-internal/project-lifecycle-lock.ts";
 import {
   resolveAuthCaptcha,
   resolveAuthEmail,
@@ -94,7 +98,6 @@ import {
 import { resolveConfigSubtree } from "../../config/cli-config-subtree.ts";
 import { CliConfigValueError } from "../../config/cli-config.errors.ts";
 import { seedBucketsRun } from "../../command-internal/seed-buckets.ts";
-import { holdLocalStackStartLock } from "../../command-internal/local-stack-start-lock.ts";
 import { cleanupStartSecrets } from "../../command-internal/start-secrets-cleanup.ts";
 import {
   dbNotRunningError,
@@ -542,6 +545,9 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     const filterValue = cliProjectFilterValue(projectId);
     const dbNotRunning = (status: string) => dbNotRunningError(dbContainerId, status);
 
+    // Held until the handler scope closes, after recovery, bring-up, and any rollback have run.
+    yield* holdProjectLifecycleLock(projectId);
+
     // Shared by the already-running branch (full status pipeline, re-health-checked) and the
     // success path (a direct pretty-print, no re-health-check).
     //
@@ -569,9 +575,6 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     const inBitbucketPipeline = yield* isBitbucketPipeline(projectEnvValues).pipe(
       Effect.mapError((error) => new StartConfigLoadError({ message: error.message })),
     );
-
-    // A concurrent start's rollback would otherwise prune this run's containers and network.
-    yield* holdLocalStackStartLock(projectId);
 
     // 3. A missing container proceeds to startup; other inspect failures propagate. Stopped
     // stacks are recovered unless Bitbucket's lack of named volumes makes removal destructive.
@@ -796,6 +799,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     const startOpts: ContainerOpts = {
       projectId,
       isBitbucketPipeline: inBitbucketPipeline,
+      healthStartInterval: yield* dockerSupportsHealthStartInterval(spawner),
       workdir: cliSettings.workdir,
       extraHosts,
     };

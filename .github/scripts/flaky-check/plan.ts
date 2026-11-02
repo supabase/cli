@@ -218,12 +218,7 @@ function api(runtime: string[], project: string, report: string, extra: string[]
 }
 
 function unit(iteration: number, extra: string[]): Invocation[] {
-  return [
-    turbo(["test:unit:run", "--filter=!@supabase/cli-go"], `unit.${iteration}`, [
-      "--passWithNoTests",
-      ...extra,
-    ]),
-  ];
+  return [turbo(["test:unit:run"], `unit.${iteration}`, ["--passWithNoTests", ...extra])];
 }
 
 // @supabase/api chains a Node and a Bun Vitest run in one script, and Turbo forwards arguments

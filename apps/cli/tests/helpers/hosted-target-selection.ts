@@ -37,7 +37,7 @@ interface RecordedCall {
 }
 
 interface TargetSelectionHarness<R> {
-  readonly layer: Layer.Layer<R, unknown>;
+  readonly layer: Layer.Layer<R, Error>;
   readonly requests: () => ReadonlyArray<RecordedCall>;
   readonly warnings: () => ReadonlyArray<string>;
   /** The ref the leaf cached as its target. */
@@ -65,10 +65,10 @@ export interface TargetSelectionMatrix<R> {
     readonly workdir: string;
   }) => TargetSelectionHarness<R>;
   /** Seeds the workdir before every run. */
-  readonly prepare?: (workdir: string) => Effect.Effect<void, unknown, R>;
+  readonly prepare?: (workdir: string) => Effect.Effect<void, Error, R>;
   /** Marks the workdir as linked to {@link VALID_REF}, the parent a branch name resolves under. */
-  readonly linkParent: (workdir: string) => Effect.Effect<void, unknown, R>;
-  readonly run: (flags: TargetSelectionFlags) => Effect.Effect<unknown, unknown, R>;
+  readonly linkParent: (workdir: string) => Effect.Effect<void, Error, R>;
+  readonly run: (flags: TargetSelectionFlags) => Effect.Effect<unknown, Error, R>;
 }
 
 // `snippets list` names its project in a `project_ref` query parameter, not in the path.
@@ -171,7 +171,7 @@ export function describeTargetSelectionMatrix<R>(
               remote: Option.some({ _tag: "Branch", name: "feature-x" }),
               projectRef: Option.none(),
             })
-            .pipe(Effect.flip);
+            .pipe(Effect.asVoid, Effect.flip, Effect.orDie);
 
           expect(error).toMatchObject({
             _tag: "TargetNeedsProjectError",
@@ -246,7 +246,7 @@ export interface HostedTargetSelectionScenario {
   ) => ReturnType<ApiHandler>;
   readonly run: (
     flags: TargetSelectionFlags,
-  ) => Effect.Effect<unknown, unknown, HostedTargetSelectionServices>;
+  ) => Effect.Effect<unknown, Error, HostedTargetSelectionServices>;
   readonly activeFlags?: ActiveFlags;
 }
 

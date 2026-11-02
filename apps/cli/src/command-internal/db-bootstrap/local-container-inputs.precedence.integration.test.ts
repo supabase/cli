@@ -4,6 +4,7 @@ import { ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect"
 import { ChildProcessSpawner } from "effect/process";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import { catalogPins } from "@supabase/stack/internal/artifacts";
 
 import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-values-layer.ts";
 import { mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
@@ -16,6 +17,9 @@ import { buildLocalDbContainerInputs } from "./local-container-inputs.ts";
 
 const TARGET_REF = "abcdefghijklmnopqrst";
 const GOLDEN_DIR = "./testdata/config-precedence/local-container-inputs";
+const DEFAULT_POSTGRES_IMAGE = catalogPins().find(
+  (entry) => entry.service === "database" && entry.isDefault,
+)!.pin.upstreamImage;
 
 const BASE_CONFIG = `project_id = "golden-shadow"
 
@@ -192,10 +196,12 @@ describe("local container inputs precedence goldens", () => {
             projectEnvValues: configEnvOnly(setup.projectEnvValues ?? {}),
           },
         };
+        const goldenText = (yield* goldenJson(golden, { [workdir]: "<WORKDIR>" })).replaceAll(
+          `"${DEFAULT_POSTGRES_IMAGE}"`,
+          `"<DEFAULT_POSTGRES_IMAGE>"`,
+        );
         yield* Effect.promise(() =>
-          ctx
-            .expect(goldenJson(golden, { [workdir]: "<WORKDIR>" }))
-            .toMatchFileSnapshot(`${GOLDEN_DIR}/${fixture.golden}.json`),
+          ctx.expect(goldenText).toMatchFileSnapshot(`${GOLDEN_DIR}/${fixture.golden}.json`),
         );
       }).pipe(Effect.provide(BunServices.layer)),
     );

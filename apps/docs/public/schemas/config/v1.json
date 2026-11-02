@@ -298,7 +298,7 @@
           ]
         },
         "enable_signup": {
-          "description": "Allow/disallow new user signups to your project.",
+          "description": "Allow/disallow new user signups to your project. Existing users can still sign in.",
           "default": true,
           "anyOf": [
             {
@@ -844,8 +844,21 @@
         "email": {
           "type": "object",
           "properties": {
+            "enabled": {
+              "description": "Allow/disallow the email provider. When false, users can't sign up or sign in with email (password, magic link or OTP); set `auth.enable_signup = false` to block new signups only.",
+              "default": true,
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^env\\((.*)\\)$"
+                }
+              ]
+            },
             "enable_signup": {
-              "description": "Allow/disallow new user signups via email to your project.",
+              "description": "Deprecated: use `auth.email.enabled` instead. Allow/disallow the email provider; when false, users can't sign up or sign in with email.",
               "default": true,
               "anyOf": [
                 {
@@ -1068,8 +1081,21 @@
         "sms": {
           "type": "object",
           "properties": {
+            "enabled": {
+              "description": "Allow/disallow the phone provider. When false, users can't sign up or sign in with a phone number (password or SMS OTP); set `auth.enable_signup = false` to block new signups only.",
+              "default": false,
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^env\\((.*)\\)$"
+                }
+              ]
+            },
             "enable_signup": {
-              "description": "Allow/disallow new user signups via SMS to your project.",
+              "description": "Deprecated: use `auth.sms.enabled` instead. Allow/disallow the phone provider; when false, users can't sign up or sign in with a phone number.",
               "default": false,
               "anyOf": [
                 {
@@ -4851,7 +4877,7 @@
                         ]
                       },
                       "enable_signup": {
-                        "description": "Allow/disallow new user signups to your project.",
+                        "description": "Allow/disallow new user signups to your project. Existing users can still sign in.",
                         "default": true,
                         "anyOf": [
                           {
@@ -5397,8 +5423,21 @@
                       "email": {
                         "type": "object",
                         "properties": {
+                          "enabled": {
+                            "description": "Allow/disallow the email provider. When false, users can't sign up or sign in with email (password, magic link or OTP); set `auth.enable_signup = false` to block new signups only.",
+                            "default": true,
+                            "anyOf": [
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "string",
+                                "pattern": "^env\\((.*)\\)$"
+                              }
+                            ]
+                          },
                           "enable_signup": {
-                            "description": "Allow/disallow new user signups via email to your project.",
+                            "description": "Deprecated: use `auth.email.enabled` instead. Allow/disallow the email provider; when false, users can't sign up or sign in with email.",
                             "default": true,
                             "anyOf": [
                               {
@@ -5621,8 +5660,21 @@
                       "sms": {
                         "type": "object",
                         "properties": {
+                          "enabled": {
+                            "description": "Allow/disallow the phone provider. When false, users can't sign up or sign in with a phone number (password or SMS OTP); set `auth.enable_signup = false` to block new signups only.",
+                            "default": false,
+                            "anyOf": [
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "string",
+                                "pattern": "^env\\((.*)\\)$"
+                              }
+                            ]
+                          },
                           "enable_signup": {
-                            "description": "Allow/disallow new user signups via SMS to your project.",
+                            "description": "Deprecated: use `auth.sms.enabled` instead. Allow/disallow the phone provider; when false, users can't sign up or sign in with a phone number.",
                             "default": false,
                             "anyOf": [
                               {

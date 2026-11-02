@@ -5,7 +5,7 @@ import {
   GroupProject,
   MaxEnvSignalValueLength,
 } from "../shared/telemetry/event-catalog.ts";
-import { collectEnvSignals, resolveGroups } from "./analytics.layer.ts";
+import { collectEnvSignals, detectEval, resolveGroups } from "./analytics.layer.ts";
 
 function readEnvSignals(
   env: Record<string, string> = {},
@@ -18,6 +18,16 @@ function readEnvSignals(
     ),
   );
   return Option.isSome(signals) ? signals.value : undefined;
+}
+
+function readEval(env: Record<string, string> = {}): boolean {
+  return Effect.runSync(
+    detectEval.pipe(
+      Effect.provide(
+        ConfigProvider.layer(ConfigProvider.fromEnvRecord(env, { preserveEmptyStrings: true })),
+      ),
+    ),
+  );
 }
 
 const linkedCacheValue = (over: Partial<Record<string, string>> = {}) => ({
@@ -63,6 +73,20 @@ describe("collectEnvSignals", () => {
 
   it("skips value keys with empty/whitespace-only values", () => {
     expect(readEnvSignals({ AI_AGENT: "   " })).toBeUndefined();
+  });
+});
+
+describe("detectEval", () => {
+  it.each(["1", "true", "TRUE", " TRUE "])("is true when SUPABASE_EVAL is %j", (value) => {
+    expect(readEval({ SUPABASE_EVAL: value })).toBe(true);
+  });
+
+  it.each(["", "0", "false", "yes"])("is false when SUPABASE_EVAL is %j", (value) => {
+    expect(readEval({ SUPABASE_EVAL: value })).toBe(false);
+  });
+
+  it("is false when SUPABASE_EVAL is unset", () => {
+    expect(readEval()).toBe(false);
   });
 });
 

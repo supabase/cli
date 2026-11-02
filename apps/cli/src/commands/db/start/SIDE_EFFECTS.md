@@ -4,11 +4,8 @@ Fully native — see `db reset --local`'s own `SIDE_EFFECTS.md`. This is `db sta
 **not** the top-level `supabase start`: no status table, no `cli_stack_started` event, no
 `Finished` line, no `--exclude`, no `--ignore-health-check`.
 
-The handler validates config, takes the per-project start lock shared with `supabase start`
-(`$SUPABASE_HOME/locks/start-<project_id>.lock`, held until the command ends: a second start for
-the same project prints `Waiting for another supabase start for this project to finish...` to
-stderr in text format, waits up to 10 minutes, then fails with `LocalStackStartBusyError`; a lock
-location that cannot be opened never blocks the command), inspects the local Postgres
+The handler validates config, takes the project lifecycle lock (see Files Written; held until the
+command ends), inspects the local Postgres
 container (`localDbState` in `command-internal/db-bootstrap/local-db-running.ts` — a direct
 Docker Engine API `GET /containers/<id>/json` over the active context's unix socket / named
 pipe, falling back to a spawned `docker container inspect` whenever the Engine gives no
@@ -84,7 +81,11 @@ composition reuses too — see that command's `SIDE_EFFECTS.md`):
 9. Wait up to 15s for Docker's first health verdict, so `supabase db start && supabase status`
    does not see `starting`: poll `docker container inspect` every 1s until the health status
    leaves `starting`, the container stops running, or Docker cannot launch its health check. Never
-   fails the command, whatever the outcome, and is not covered by the rollback below.
+   fails the command, whatever the outcome, and is not covered by the rollback below. When the
+   `docker version` probe reports API >= 1.44 on both ends, `docker create` also gets
+   `--health-start-period 10s --health-start-interval 1s`, so the first check runs about 1s after
+   start instead of 10s. Older engines and the Podman CLI get neither flag; the `docker` client on a
+   Podman socket reporting API >= 1.44 gets both, Podman drops the interval, and there is no speedup.
 
 Any failure from step 1 onward prints `Stopping containers...` to stderr and rolls back via
 `rollbackDatabaseStart`, which only touches what this command creates: the db container
@@ -113,14 +114,15 @@ failure is logged to stderr and never replaces the original error.
 
 ## Files Written
 
-| Path                                                                  | Format | When                                                                                                                                   |
-| --------------------------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/.branches/_current_branch`                        | text   | only if absent — writes `"main"` (see the step-by-step sequence above for exactly when)                                                |
-| local Docker volume `supabase_db_<project>`                           | —      | the Postgres data volume, created on first start (or first `--from-backup` restore)                                                    |
-| local Docker network `supabase_network_<project>` (or `--network-id`) | —      | created if it doesn't already exist                                                                                                    |
-| `$SUPABASE_HOME/locks/start-<project_id>.lock`                        | SQLite | the per-project start lock shared with `supabase start`; never deleted, released when the command ends (by the OS if the process dies) |
-| `$SUPABASE_HOME/stacks/<stackId>/`                                    | JSON   | the stack definition, service identities, selected runtime, and service state on the stack backend                                     |
-| `~/.supabase/telemetry.json`                                          | JSON   | always — telemetry flush (`Effect.ensuring(telemetryState.flush)`), success and failure                                                |
+| Path                                                                  | Format           | When                                                                                                                                                                                                               |
+| --------------------------------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `<workdir>/supabase/.branches/_current_branch`                        | text             | only if absent — writes `"main"` (see the step-by-step sequence above for exactly when)                                                                                                                            |
+| local Docker volume `supabase_db_<project>`                           | —                | the Postgres data volume, created on first start (or first `--from-backup` restore)                                                                                                                                |
+| local Docker network `supabase_network_<project>` (or `--network-id`) | —                | created if it doesn't already exist                                                                                                                                                                                |
+| `$SUPABASE_HOME/stacks/<stackId>/`                                    | JSON             | the stack definition, service identities, selected runtime, and service state on the stack backend                                                                                                                 |
+| `~/.supabase/telemetry.json`                                          | JSON             | always — telemetry flush (`Effect.ensuring(telemetryState.flush)`), success and failure                                                                                                                            |
+| `$SUPABASE_HOME/locks/docker-lifecycle.lock`                          | SQLite lock file | held for the whole run: shared for one project, exclusive for `stop --all`; waits up to 10 minutes for a conflicting command (skipped, with a debug line, when `$SUPABASE_HOME/locks` cannot be created or opened) |
+| `$SUPABASE_HOME/locks/docker-project-<sha256(project label)>.lock`    | SQLite lock file | held for the whole run: serializes lifecycle commands for the same project; waits up to 10 minutes (skipped, with a debug line, when `$SUPABASE_HOME/locks` cannot be created or opened)                           |
 
 ## Subprocesses
 
@@ -137,6 +139,7 @@ only spawns on fallback.
 | `docker volume inspect supabase_db_<project>`                                                      | when not already running — the pre-create fresh-volume probe                                                                                               |
 | `docker image inspect` / `docker pull` (registry-fallback resolve)                                 | when not already running — resolves the Postgres image                                                                                                     |
 | `docker volume create --label ...`                                                                 | when not already running, unless a `--from-backup` restore onto an existing volume (fails first)                                                           |
+| `docker version --format ...`                                                                      | when not already running, once: API >= 1.44 on both ends adds the health start flags (see step 9)                                                          |
 | `docker create` + optional `docker cp - <id>:/` + `docker start`                                   | when not already running — `cp` streams one in-memory tar archive containing the pgsodium root key at its exact path when the selected entrypoint needs it |
 | `docker cp <id>:/var/lib/postgresql/data/PG_VERSION -`                                             | when the volume already existed, between `docker create` and `docker start` — the data-directory probe; its stdout is discarded                            |
 | `docker container inspect` (repeated)                                                              | readiness polling every 500ms up to `db.health_timeout`, then health-settle polling every 1s for up to 15s                                                 |
@@ -185,17 +188,17 @@ code is surfaced on failure.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                   |
-| ---- | ----------------------------------------------------------------------------------------------------------- |
-| `0`  | success — database started, or already running                                                              |
-| `0`  | `--from-backup` set and the health-check timed out (swallowed)                                              |
-| `1`  | malformed `supabase/config.toml`                                                                            |
-| `1`  | Docker daemon unreachable / inspect failure                                                                 |
-| `1`  | db container exists but is not running, in Bitbucket Pipelines (`supabase stop` suggestion)                 |
-| `1`  | `backup volume already exists` (`--from-backup` against a non-fresh volume)                                 |
-| `1`  | a health-check timeout with `--from-backup` unset                                                           |
-| `1`  | another `supabase start`/`db start` still held the start lock after 10 minutes (`LocalStackStartBusyError`) |
-| `1`  | any other container-bootstrap failure (network/volume/create/start/setup)                                   |
+| Code | Condition                                                                                                                                                                                                                                                                     |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — database started, or already running                                                                                                                                                                                                                                |
+| `0`  | `--from-backup` set and the health-check timed out (swallowed)                                                                                                                                                                                                                |
+| `1`  | malformed `supabase/config.toml`                                                                                                                                                                                                                                              |
+| `1`  | another lifecycle command still holds this project's lock after 10 minutes — prints `Waiting for another Supabase CLI command to finish with project <id>...` (or `...with local Supabase projects...` behind `stop --all`) to stderr first (`ProjectLifecycleLockBusyError`) |
+| `1`  | Docker daemon unreachable / inspect failure                                                                                                                                                                                                                                   |
+| `1`  | db container exists but is not running, in Bitbucket Pipelines (`supabase stop` suggestion)                                                                                                                                                                                   |
+| `1`  | `backup volume already exists` (`--from-backup` against a non-fresh volume)                                                                                                                                                                                                   |
+| `1`  | a health-check timeout with `--from-backup` unset                                                                                                                                                                                                                             |
+| `1`  | any other container-bootstrap failure (network/volume/create/start/setup)                                                                                                                                                                                                     |
 
 ## Output
 

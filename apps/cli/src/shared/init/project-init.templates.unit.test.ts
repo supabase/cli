@@ -1,7 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
-import { applyConfigEdits, type ConfigEdit } from "@supabase/config/internal";
+import { applyConfigEdits, loadCliConfig, type ConfigEdit } from "@supabase/config/internal";
 import { orioledbVersions, postgresMajor } from "@supabase/stack/internal/artifacts";
 import { postgresVersionCompare } from "../../command-internal/db-bootstrap/postgres.service.ts";
 import {
@@ -73,6 +73,29 @@ const NATIVE_WEB3_ETHEREUM_EXAMPLE = `
 # enabled = true
 `;
 
+// The vendored scaffold describes the per-provider `enable_signup` keys as signup switches; the
+// native template spells them `enabled`, says they turn the provider off and points to `[auth]
+// enable_signup` for signups.
+const SCAFFOLD_SIGNUP_COMMENT = `# Allow/disallow new user signups to your project.
+enable_signup = true`;
+
+const NATIVE_SIGNUP_COMMENT = `# Allow/disallow new user signups to your project. Existing users can still sign in.
+enable_signup = true`;
+
+const SCAFFOLD_EMAIL_SIGNUP_COMMENT = `# Allow/disallow new user signups via email to your project.
+enable_signup = true`;
+
+const NATIVE_EMAIL_SIGNUP_COMMENT = `# Allow/disallow the email provider. When false, users can't sign up or sign in with email.
+# To block new signups only, set enable_signup = false under [auth] instead.
+enabled = true`;
+
+const SCAFFOLD_SMS_SIGNUP_COMMENT = `# Allow/disallow new user signups via SMS to your project.
+enable_signup = false`;
+
+const NATIVE_SMS_SIGNUP_COMMENT = `# Allow/disallow the phone provider. When false, users can't sign up or sign in with SMS.
+# To block new signups only, set enable_signup = false under [auth] instead.
+enabled = false`;
+
 const renderExpectedNativeEject = renderExpectedInitOutput.pipe(
   Effect.map((eject) =>
     eject
@@ -81,6 +104,9 @@ const renderExpectedNativeEject = renderExpectedInitOutput.pipe(
         '# content_path = "./supabase/templates/password_changed_notification.html"',
       )
       .replace(SCAFFOLD_AUTO_EXPOSE_COMMENT, NATIVE_AUTO_EXPOSE_COMMENT)
+      .replace(SCAFFOLD_SIGNUP_COMMENT, NATIVE_SIGNUP_COMMENT)
+      .replace(SCAFFOLD_EMAIL_SIGNUP_COMMENT, NATIVE_EMAIL_SIGNUP_COMMENT)
+      .replace(SCAFFOLD_SMS_SIGNUP_COMMENT, NATIVE_SMS_SIGNUP_COMMENT)
       .replace("rows returns from", "rows returned from")
       .replace("(SIWS, EIP-4361)", "(SIWS)")
       .replace(
@@ -128,6 +154,26 @@ describe("project init templates", () => {
         expect(postgresVersionCompare(version, other)).toBeGreaterThanOrEqual(0);
     }
   });
+
+  it.effect("renders a config that loads with provider switches declared and no deprecation", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-init-template-" });
+      yield* fs.makeDirectory(path.join(cwd, "supabase"));
+      yield* fs.writeFileString(
+        path.join(cwd, "supabase", "config.toml"),
+        renderCliConfigTemplate("demo-project", false),
+      );
+      const loaded = yield* loadCliConfig(cwd, { cliCompat: true });
+
+      expect(loaded?.config.auth.email.enable_signup).toBe(true);
+      expect(loaded?.config.auth.sms.enable_signup).toBe(false);
+      expect(loaded?.document).toHaveProperty("auth.email.enable_signup", true);
+      expect(loaded?.document).toHaveProperty("auth.sms.enable_signup", false);
+      expect(loaded?.deprecatedPaths).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 
   it("enables pg-delta by default in the generated config", () => {
     const rendered = renderCliConfigTemplate("demo-project", false);
