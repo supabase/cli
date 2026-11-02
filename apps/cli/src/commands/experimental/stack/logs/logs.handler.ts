@@ -92,7 +92,10 @@ const select = (
   ]);
 };
 
-export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: StackLogsFlags) {
+export const stackLogs = Effect.fn("experimental.stack.logs")(function* (
+  flags: StackLogsFlags,
+  options: { readonly unified?: boolean } = {},
+) {
   const telemetry = yield* TelemetryState;
   return yield* Effect.gen(function* () {
     const output = yield* Output;
@@ -100,14 +103,28 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: 
     const path = yield* Path.Path;
     const api = yield* StackApi;
     const resolver = yield* StackTargetResolver;
-    yield* rejectStackOutput(yield* Effect.serviceOption(OutputFlag)).pipe(
-      Effect.mapError(targetError),
-    );
+    const outputFlag = Option.flatten(yield* Effect.serviceOption(OutputFlag));
+    if (!options.unified)
+      yield* rejectStackOutput(yield* Effect.serviceOption(OutputFlag)).pipe(
+        Effect.mapError(targetError),
+      );
+    if (
+      options.unified &&
+      Option.isSome(outputFlag) &&
+      !["json", "pretty", "table"].includes(outputFlag.value)
+    )
+      return yield* new StackCommandLogsError({
+        reason: "flags",
+        message: "Log tails support -o json (JSON Lines) or -o pretty.",
+      });
+    const jsonLines =
+      options.unified &&
+      (Option.isSome(outputFlag) ? outputFlag.value === "json" : output.format !== "text");
     yield* validateStackTarget({
       stack: Option.getOrUndefined(flags.stack),
       stackId: Option.getOrUndefined(flags.stackId),
     }).pipe(Effect.mapError(targetError));
-    if (flags.follow && output.format === "json")
+    if (!options.unified && flags.follow && output.format === "json")
       return yield* new StackCommandLogsError({
         reason: "flags",
         message: "Following logs requires text or stream-json output.",
@@ -163,15 +180,17 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: 
       );
     const { window, positions: printed, launches } = collector.finish();
 
-    if (output.format === "json")
+    if (!options.unified && output.format === "json")
       return yield* output.result(window.records.map((record) => logEvent(record, "history")));
     // Colour follows the terminal only when stdout is one, so piped logs stay plain.
     const terminal = output.interactive;
     const text = makeTextFormatter(selected, terminal ? process.stdout : {});
     const emit = (record: StackLogRecord, source: LogSource) =>
-      output.format === "stream-json"
-        ? output.event(logEvent(record, source))
-        : output.raw(text(record));
+      jsonLines
+        ? output.raw(`${JSON.stringify({ ...record, source })}\n`)
+        : output.format === "stream-json" && !options.unified
+          ? output.event(logEvent(record, source))
+          : output.raw(text(record));
     yield* Effect.forEach(window.records, (record) => emit(record, "history"), { discard: true });
     if (output.format === "text" && flags.tail > 0) {
       const note = (message: string) =>

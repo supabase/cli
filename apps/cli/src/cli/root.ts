@@ -31,6 +31,7 @@ import { initCommand } from "../commands/init/init.command.ts";
 import { inspectCommand } from "../commands/inspect/inspect.command.ts";
 import { issueCommand } from "../commands/issue/issue.command.ts";
 import { linkCommand } from "../commands/link/link.command.ts";
+import { logsCommandFor } from "../commands/logs/logs.command.ts";
 import { loginCommand } from "../commands/login/login.command.ts";
 import { logoutCommand } from "../commands/logout/logout.command.ts";
 import { migrationCommand } from "../commands/migration/migration.command.ts";
@@ -153,7 +154,8 @@ const agentDefaultOutputFormatFor = (
   features: RootCommandFeatures,
   args: ReadonlyArray<string>,
 ): OutputFormat =>
-  features.stackBackend === "stack" && isFunctionsServePath(extractCommandPath(args))
+  (features.stackBackend === "stack" && isFunctionsServePath(extractCommandPath(args))) ||
+  extractCommandPath(args).join(" ") === "logs tail"
     ? "stream-json"
     : "json";
 
@@ -179,6 +181,7 @@ export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
       linkCommand,
       loginCommand,
       logoutCommand,
+      logsCommandFor(options.stackBackend === "stack", options.computeEnabled),
       migrationCommand,
       networkBansCommand,
       networkRestrictionsCommand,

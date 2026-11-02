@@ -321,6 +321,8 @@ LoginMissingTokenError
 LoginSaveTokenError
 LoginVerificationError
 LogoutCancelledError
+LogsApiError
+LogsInputError
 MigraDiffError
 MigraSchemaLoadError
 MigrationApplyError

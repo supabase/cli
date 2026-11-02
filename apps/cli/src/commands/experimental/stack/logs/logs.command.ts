@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { Output } from "../../../../shared/output/output.service.ts";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
@@ -74,7 +76,13 @@ export const stackLogsCommand = Command.make("logs", config).pipe(
     noApiEffectFlags: ["stack", "stack-id", "service", "follow", "tail", "since"],
   }),
   Command.withHandler((flags) =>
-    stackLogs(flags).pipe(
+    Effect.gen(function* () {
+      yield* (yield* Output).raw(
+        "Warning: stack logs is deprecated and will be removed in v5. Use supabase logs tail --local --no-follow instead; omit --no-follow to follow.\n",
+        "stderr",
+      );
+      yield* stackLogs(flags);
+    }).pipe(
       withCommandTelemetry({ flags, config, aliases: { f: "follow" } }),
       withJsonErrorHandling,
     ),

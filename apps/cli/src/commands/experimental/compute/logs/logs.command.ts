@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { Output } from "../../../../shared/output/output.service.ts";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
@@ -114,7 +116,13 @@ export const computeLogsCommand = Command.make("logs", config).pipe(
     ),
   ),
   Command.withHandler((flags) =>
-    computeLogs(flags).pipe(
+    Effect.gen(function* () {
+      yield* (yield* Output).raw(
+        "Warning: compute logs is deprecated and will be removed in v5. Use supabase logs tail --remote --service compute --resource <name> --no-follow instead; omit --no-follow to follow.\n",
+        "stderr",
+      );
+      yield* computeLogs(flags);
+    }).pipe(
       // `config` as well as `flags`: `--kind` is a choice flag, and the wrapper
       // treats a command's own declared choices as safe to log verbatim.
       withCommandTelemetry({ flags, config, aliases: { f: "follow" } }),
