@@ -38,6 +38,7 @@ export const DOCS_TAGS: Readonly<Record<string, ReadonlyArray<string>>> = {
   "supabase-link": ["local-dev"],
   "supabase-login": ["local-dev"],
   "supabase-logout": ["local-dev"],
+  "supabase-logs": ["management-api", "local-dev"],
   "supabase-migration": ["local-dev"],
   "supabase-network-bans": ["management-api"],
   "supabase-network-restrictions": ["management-api"],
