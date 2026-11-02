@@ -29,7 +29,12 @@ export interface TimingSummary {
   readonly min: number;
   readonly max: number;
   readonly p90: number;
+  readonly iqr: number;
 }
+
+/** Interquartile range by nearest rank, so one extreme value at either end cannot move it. */
+const iqr = (values: ReadonlyArray<number>): number =>
+  percentile(values, 75) - percentile(values, 25);
 
 export function summarizeTimings(values: ReadonlyArray<number>): TimingSummary {
   const sorted = [...values].sort((a, b) => a - b);
@@ -38,6 +43,7 @@ export function summarizeTimings(values: ReadonlyArray<number>): TimingSummary {
     min: round(sorted[0] ?? 0),
     max: round(sorted[sorted.length - 1] ?? 0),
     p90: round(percentile(sorted, 90)),
+    iqr: round(iqr(sorted)),
   };
 }
 
@@ -347,8 +353,9 @@ export const encodeBenchReport = Schema.encodeEffect(BenchReportJson);
 export const VERDICT_MIN_PCT = 5;
 export const VERDICT_MIN_MS = 5;
 export const VERDICT_MIN_SAMPLES = 5;
-/** Paired blocks needed before the per-block agreement rule replaces the min-max range check. */
+/** Paired blocks needed before the block, not the launch, is the unit of evidence for a verdict. */
 export const VERDICT_MIN_BLOCKS = 3;
+export const VERDICT_IQR_FACTOR = 1.5;
 export const PHASE_ROWS = 3;
 
 export type TimingVerdict = "slower" | "faster" | "within noise" | "not comparable";
@@ -363,10 +370,12 @@ const exceedsFloor = (delta: Delta): boolean =>
   Math.abs(delta.pct) >= VERDICT_MIN_PCT && Math.abs(delta.ms) >= VERDICT_MIN_MS;
 
 /**
- * "slower" or "faster" only when the median change is at least {@link VERDICT_MIN_PCT} percent
- * and {@link VERDICT_MIN_MS} ms and each build's median lies outside the other's min-max range, so
- * a wide spread in either build reads as noise. With at least {@link VERDICT_MIN_BLOCKS} paired
- * blocks, a strict majority of blocks must also move the same way, each past the same floor.
+ * "slower" or "faster" only when the median change passes the {@link VERDICT_MIN_PCT} percent and
+ * {@link VERDICT_MIN_MS} ms floor and is larger than {@link VERDICT_IQR_FACTOR} times the wider
+ * build's interquartile range, so one extreme sample cannot fake a change. Run-scoped timings
+ * also need the branch median beyond the base range; with at least {@link VERDICT_MIN_BLOCKS}
+ * paired blocks the spread test runs on block medians instead, and a strict majority of blocks
+ * must pass the floor in the same direction.
  */
 export function timingVerdict(
   base: TimingSummary,
@@ -378,22 +387,32 @@ export function timingVerdict(
   },
 ): TimingVerdict {
   if (!context.comparable || context.samples < VERDICT_MIN_SAMPLES) return "not comparable";
-  const delta = deltaOf(base.median, branch.median);
-  if (!exceedsFloor(delta)) return "within noise";
-  const slower = delta.ms > 0;
-  const separated = slower
-    ? branch.median > base.max && base.median < branch.min
-    : branch.median < base.min && base.median > branch.max;
-  if (!separated) return "within noise";
   const blocks = context.blocks;
   if (blocks !== undefined && blocks.length >= VERDICT_MIN_BLOCKS) {
+    const baseMedians = blocks.map((block) => block.base);
+    const branchMedians = blocks.map((block) => block.branch);
+    const reference = median(baseMedians);
+    const ms = median(blocks.map((block) => block.branch - block.base));
+    const pct = reference === 0 ? 0 : (ms / reference) * 100;
+    if (!exceedsFloor({ ms: round(ms), pct: round(pct) })) return "within noise";
     const agreeing = blocks.filter((block) => {
       const blockDelta = deltaOf(block.base, block.branch);
-      return exceedsFloor(blockDelta) && blockDelta.ms > 0 === slower;
+      return exceedsFloor(blockDelta) && blockDelta.ms > 0 === ms > 0;
     }).length;
     if (agreeing * 2 <= blocks.length) return "within noise";
+    if (Math.abs(ms) <= VERDICT_IQR_FACTOR * Math.max(iqr(baseMedians), iqr(branchMedians))) {
+      return "within noise";
+    }
+    return ms > 0 ? "slower" : "faster";
   }
-  return slower ? "slower" : "faster";
+  const delta = deltaOf(base.median, branch.median);
+  if (!exceedsFloor(delta)) return "within noise";
+  const outsideRange = delta.ms > 0 ? branch.median > base.max : branch.median < base.min;
+  if (!outsideRange) return "within noise";
+  if (Math.abs(delta.ms) <= VERDICT_IQR_FACTOR * Math.max(base.iqr, branch.iqr)) {
+    return "within noise";
+  }
+  return delta.ms > 0 ? "slower" : "faster";
 }
 
 /** Pairs the per-block medians of both builds; empty unless every sample carries a block index. */

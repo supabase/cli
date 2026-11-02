@@ -178,12 +178,14 @@ the timing ranges, API calls per command, and the slowest phases. It reports:
   responses (the build did not follow the recorded scenario), non-zero or differing exit codes,
   missing traces, and too few runs for a timing verdict. Other count changes, such as 1 to 2 calls, appear in the API calls table with the
   changed endpoints but are not flagged.
-- Wall time: base ("before") and branch ("after") medians and ranges. A verdict of slower or faster needs each build's
-  median outside the other's min-max range, a change of at least 5 percent and 5 ms, and at least 5
-  measured runs; otherwise it reads "within noise", or "not comparable" when a build failed.
-  Block-scoped workloads record a block index per launch and, from three paired blocks, also need a
-  majority rule: more than half of the blocks must move the same way past the same floor, so one
-  outlier stack session cannot flag a workload.
+- Wall time: base ("before") and branch ("after") medians and ranges. A verdict of slower or faster needs a
+  change of at least 5 percent and 5 ms that is also larger than 1.5 times the wider build's
+  interquartile range, a branch median beyond the base min-max range for run-scoped workloads, and
+  at least 5 measured runs; otherwise it reads "within noise", or "not
+  comparable" when a build failed. Block-scoped workloads record a block index per launch and, from
+  three paired blocks, judge block medians instead: the median per-block change must pass the same
+  tests and more than half of the blocks must move the same way past the floor, so one outlier
+  stack session can neither flag nor hide a change.
   Thresholds are named constants in `bench-report.ts`.
 - API calls per workload, base and branch.
 - Phase deltas: the three largest span deltas for each workload with a slower or faster verdict.

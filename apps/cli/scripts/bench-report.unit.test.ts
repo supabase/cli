@@ -52,6 +52,7 @@ describe("summarizeTimings", () => {
       min: 10,
       max: 50,
       p90: 50,
+      iqr: 20,
     });
   });
 });
@@ -181,83 +182,94 @@ describe("classifyHttpSpans", () => {
   });
 });
 
+const timings = (values: ReadonlyArray<number>) => summarizeTimings(values);
+const repeat = (count: number, value: number) => Array.from({ length: count }, () => value);
+
 describe("timingVerdict", () => {
-  const base = { median: 100, min: 95, max: 108, p90: 107 };
   const context = { comparable: true, samples: 10 };
 
   it.each([
-    { branch: { median: 120, min: 115, max: 125, p90: 124 }, expected: "slower" },
-    { branch: { median: 80, min: 78, max: 90, p90: 88 }, expected: "faster" },
-    { branch: { median: 103, min: 99, max: 110, p90: 109 }, expected: "within noise" },
-    { branch: { median: 107, min: 99, max: 118, p90: 117 }, expected: "within noise" },
-  ])("calls a branch median of $branch.median $expected", ({ branch, expected }) => {
-    expect(timingVerdict(base, branch, context)).toBe(expected);
+    { branch: 120, expected: "slower" },
+    { branch: 80, expected: "faster" },
+    { branch: 103, expected: "within noise" },
+  ])("calls a steady branch of $branch ms $expected", ({ branch, expected }) => {
+    expect(timingVerdict(timings(repeat(10, 100)), timings(repeat(10, branch)), context)).toBe(
+      expected,
+    );
   });
 
   it("ignores a large percentage change that is under the absolute floor", () => {
-    expect(
-      timingVerdict(
-        { median: 10, min: 9, max: 11, p90: 11 },
-        { median: 14, min: 13, max: 15, p90: 15 },
-        context,
-      ),
-    ).toBe("within noise");
+    expect(timingVerdict(timings(repeat(10, 10)), timings(repeat(10, 14)), context)).toBe(
+      "within noise",
+    );
   });
 
   it("declines to compare when runs are not comparable or too few", () => {
-    const slow = { median: 200, min: 190, max: 210, p90: 209 };
+    const base = timings(repeat(10, 100));
+    const slow = timings(repeat(10, 200));
     expect(timingVerdict(base, slow, { comparable: false, samples: 10 })).toBe("not comparable");
     expect(timingVerdict(base, slow, { comparable: true, samples: 3 })).toBe("not comparable");
+  });
+
+  it("flags slower although one branch launch was fast", () => {
+    const branch = timings([...repeat(9, 125), 90]);
+    expect(timingVerdict(timings(repeat(10, 100)), branch, context)).toBe("slower");
+  });
+
+  it("reads a branch median inside a noisy base range as noise on real five-run data", () => {
+    const base = timings([328, 234, 228, 229, 237]);
+    const branch = timings([303, 317, 273, 268, 313]);
+    expect(timingVerdict(base, branch, { comparable: true, samples: 5 })).toBe("within noise");
+  });
+
+  it("reads a change past the floor but within 1.5 times the wider spread as noise", () => {
+    const base = timings([88, 92, 95, 100, 100, 100, 103, 107, 110, 112]);
+    const branch = timings([105, 110, 112, 115, 115, 115, 118, 120, 122, 125]);
+    expect(base.iqr).toBe(12);
+    expect(branch.iqr).toBe(8);
+    expect(branch.median).toBeGreaterThan(base.max);
+    expect(timingVerdict(base, branch, context)).toBe("within noise");
   });
 });
 
 describe("timingVerdict with blocks", () => {
-  const base = { median: 100, min: 90, max: 110, p90: 108 };
   const context = { comparable: true, samples: 10 };
+  const unused = timings(repeat(10, 100));
   const pairs = (...branchMedians: ReadonlyArray<number>) =>
     branchMedians.map((branch) => ({ base: 100, branch }));
 
-  it("reads mixed-sign blocks as within noise although the ranges are separated", () => {
-    const branch = { median: 130, min: 115, max: 200, p90: 190 };
-    expect(timingVerdict(base, branch, { ...context, blocks: pairs(180, 70, 130, 75, 85) })).toBe(
-      "within noise",
-    );
-    expect(timingVerdict(base, branch, context)).toBe("slower");
+  it("flags slower when four of five blocks are clearly slower and one is fast", () => {
+    expect(
+      timingVerdict(unused, unused, { ...context, blocks: pairs(125, 126, 124, 125, 80) }),
+    ).toBe("slower");
   });
 
-  it("flags slower when a majority of blocks agree past the floor", () => {
-    const branch = { median: 130, min: 115, max: 150, p90: 150 };
-    expect(timingVerdict(base, branch, { ...context, blocks: pairs(130, 125, 140, 99, 135) })).toBe(
-      "slower",
-    );
-  });
-
-  it("flags faster when a majority of blocks agree past the floor", () => {
-    const branch = { median: 70, min: 60, max: 85, p90: 85 };
-    expect(timingVerdict(base, branch, { ...context, blocks: pairs(70, 65, 75, 110, 72) })).toBe(
+  it("flags faster when most blocks are clearly faster", () => {
+    expect(timingVerdict(unused, unused, { ...context, blocks: pairs(75, 74, 76, 75, 120) })).toBe(
       "faster",
     );
   });
 
-  it("falls back to the range check below three blocks", () => {
-    const branch = { median: 130, min: 115, max: 150, p90: 150 };
-    expect(timingVerdict(base, branch, { ...context, blocks: pairs(60, 60) })).toBe("slower");
-  });
-});
-
-describe("timingVerdict with a wider build", () => {
-  const context = { comparable: true, samples: 10 };
-
-  it("reads a slower median as noise when the base median sits inside the branch range", () => {
-    const base = { median: 225, min: 218, max: 240, p90: 238 };
-    const branch = { median: 274, min: 218, max: 305, p90: 300 };
-    expect(timingVerdict(base, branch, context)).toBe("within noise");
+  it("reads mixed-sign blocks as within noise", () => {
+    expect(timingVerdict(unused, unused, { ...context, blocks: pairs(180, 70, 130, 75, 85) })).toBe(
+      "within noise",
+    );
   });
 
-  it("reads a faster median as noise when the base median sits inside the branch range", () => {
-    const base = { median: 11211, min: 11172, max: 11224, p90: 11224 };
-    const branch = { median: 10557, min: 10381, max: 11236, p90: 11236 };
-    expect(timingVerdict(base, branch, context)).toBe("within noise");
+  it("reads block medians with wide spread as noise", () => {
+    const blocks = [
+      [222, 276],
+      [224, 252],
+      [227, 225],
+      [233, 299],
+      [222, 291],
+    ].map(([base, branch]) => ({ base: base!, branch: branch! }));
+    expect(timingVerdict(unused, unused, { ...context, blocks })).toBe("within noise");
+  });
+
+  it("falls back to the run path below three blocks", () => {
+    const branch = timings(repeat(10, 130));
+    expect(timingVerdict(unused, branch, { ...context, blocks: pairs(60, 60) })).toBe("slower");
   });
 });
 
