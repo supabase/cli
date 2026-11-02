@@ -290,6 +290,5 @@ export function buildCollationDriftReport(rawRows: ReadonlyArray<Record<string, 
 export const collationDriftSpec: InspectReportSpec = {
   name: "collation-drift",
   sql: SQL,
-  params: () => [],
-  report: (rows) => buildCollationDriftReport(rows),
+  report: buildCollationDriftReport,
 };

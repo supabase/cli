@@ -6,7 +6,6 @@ import { Output } from "../../../shared/output/output.service.ts";
 import { renderReportText } from "../../../output/report-render-text.ts";
 import type { Report } from "../../../output/report.types.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import type { ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -15,18 +14,11 @@ import {
   type InspectConnectionFlags,
 } from "./inspect-query.ts";
 
-/**
- * A report-producing `inspect db` subcommand: the SQL it runs, the query
- * parameters, and how the result rows become a structured `Report` document.
- *
- * `report` is pure — rows in, document out — so a command's entire output
- * logic is unit-testable without a database.
- */
+/** A report-producing `inspect db` subcommand: its SQL and a pure rows-to-`Report` mapping. */
 export interface InspectReportSpec {
   readonly name: string;
   readonly sql: string;
-  readonly params: (cfg: ResolvedDbConfig) => ReadonlyArray<unknown>;
-  readonly report: (rows: ReadonlyArray<Record<string, unknown>>, cfg: ResolvedDbConfig) => Report;
+  readonly report: (rows: ReadonlyArray<Record<string, unknown>>) => Report;
 }
 
 /** Connection selection mirrors `runInspectQuery`; keep the two in sync. */
@@ -70,11 +62,11 @@ const runInspectReport = Effect.fnUntraced(function* (
         "stderr",
       );
       const session = yield* dbConn.connect(cfg.conn, { isLocal: cfg.isLocal, dnsResolver });
-      return yield* session.query(spec.sql, spec.params(cfg));
+      return yield* session.query(spec.sql, []);
     }),
   );
 
-  const report = spec.report(rows, cfg);
+  const report = spec.report(rows);
 
   if (output.format === "text") {
     yield* output.raw(renderReportText(report));
