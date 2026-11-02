@@ -296,6 +296,14 @@ const RunSample = Schema.Struct({
 });
 export type RunSample = typeof RunSample.Type;
 
+const TeardownFailure = Schema.Struct({
+  build: Schema.Literals(["base", "branch"]),
+  /** The teardown step's arguments, space-joined. */
+  command: Schema.String,
+  exitCode: Schema.Finite,
+});
+export type TeardownFailure = typeof TeardownFailure.Type;
+
 const WorkloadReport = Schema.Struct({
   id: Schema.String,
   args: Schema.Array(Schema.String),
@@ -307,6 +315,8 @@ const WorkloadReport = Schema.Struct({
   traceRuns: Schema.optionalKey(Schema.Finite),
   /** Wall seconds across both builds, including setup, teardown and traced launches. */
   elapsedSeconds: Schema.optionalKey(Schema.Finite),
+  /** Teardown steps that exited non-zero, which can leave state behind for later units. */
+  teardownFailures: Schema.optionalKey(Schema.Array(TeardownFailure)),
   base: Schema.Array(RunSample),
   branch: Schema.Array(RunSample),
 });
@@ -475,6 +485,7 @@ export interface WorkloadAnalysis {
   readonly endpointChanges: ReadonlyArray<EndpointChange>;
   /** Container verbs whose per-run call count differs between builds. */
   readonly containerChanges: ReadonlyArray<ContainerChange>;
+  readonly teardownFailures: ReadonlyArray<TeardownFailure>;
 }
 
 /** Whether every launch of the workload exited 0 and every API call got a non-error response. */
@@ -569,6 +580,7 @@ export function analyzeWorkload(workload: WorkloadReport, traced: boolean): Work
       verdict === "slower" || verdict === "faster" ? (spans ?? []).slice(0, PHASE_ROWS) : [],
     endpointChanges: endpointChanges(base, branch),
     containerChanges: containerChanges(base, branch),
+    teardownFailures: workload.teardownFailures ?? [],
   };
 }
 
@@ -586,7 +598,8 @@ export type FlagKind =
   | "non-zero-exit"
   | "exit-codes-differ"
   | "traced-exit-differs"
-  | "insufficient-samples";
+  | "insufficient-samples"
+  | "teardown-failed";
 
 export interface Flag {
   readonly workload: string;
@@ -636,6 +649,14 @@ export function collectFlags(analysis: WorkloadAnalysis): ReadonlyArray<Flag> {
     add("exit-codes-differ", "exit codes differ between builds, so timings are not comparable");
   }
   for (const build of ["base", "branch"] as const) {
+    const failures = analysis.teardownFailures.filter((failure) => failure.build === build);
+    if (failures.length > 0) {
+      add(
+        "teardown-failed",
+        failures.map((failure) => `\`${failure.command}\` exited ${failure.exitCode}`).join(", "),
+        build,
+      );
+    }
     const summary = analysis[build];
     const failed = summary.exitCodes.filter((code) => code !== 0).length;
     if (failed > 0) {

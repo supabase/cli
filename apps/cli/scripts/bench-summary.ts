@@ -181,6 +181,8 @@ function describeFlag(flag: Flag, analysis: WorkloadAnalysis, integration: boole
       return `${name} exits with different codes before and after, so its timing is not compared.`;
     case "traced-exit-differs":
       return `${name} exited differently when traced ${at}, so its timing is not compared.`;
+    case "teardown-failed":
+      return `Teardown of ${code(analysis.id)} failed on the ${flag.build} build (${flag.detail}), so later results for this workload may be affected.`;
     case "insufficient-samples":
       return `${name} had too few timed runs for a timing verdict.`;
   }

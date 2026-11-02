@@ -104,6 +104,23 @@ describe("renderSummary", () => {
     expect(markdown).not.toContain("no changes found");
   });
 
+  it("warns which build's teardown failed for a workload", () => {
+    const markdown = renderSummary(
+      report([
+        {
+          ...steady("db-diff-warm", ["db", "diff"]),
+          teardownFailures: [{ build: "branch", command: "stack stop", exitCode: 3 }],
+        },
+      ]),
+      "unused",
+    );
+
+    expect(markdown).toContain(
+      "⚠️ Teardown of `db-diff-warm` failed on the branch build (`stack stop` exited 3), so later results for this workload may be affected.",
+    );
+    expect(markdown).toContain("1 thing to check");
+  });
+
   it("describes a dropped API call with a singular count", () => {
     const dropped = {
       id: "list",

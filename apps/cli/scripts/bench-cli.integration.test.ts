@@ -267,6 +267,31 @@ describe("runWorkloadBench", () => {
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer))),
   );
 
+  it.effect("records which build's teardown step failed", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const builds = yield* makeBuilds;
+        yield* fs.writeFileString(
+          builds.base,
+          LOGGING_CLI.replace("fail) exit 3 ;;", "fail) exit 0 ;;"),
+        );
+
+        const { report } = yield* runWorkloadBench(
+          baseOptions(builds.base, { branch: builds.branch, runs: 1, warmup: 0 }),
+          stackWorkload({ teardown: [["fail"], ["halt"]] }),
+          yield* Ref.make(false),
+        );
+
+        expect(report.teardownFailures).toEqual([
+          { build: "branch", command: "fail", exitCode: 3 },
+        ]);
+        const commands = parseCalls(yield* builds.calls).map((call) => call.command);
+        expect(commands).toEqual(["work", "fail", "halt", "work", "fail", "halt"]);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer))),
+  );
+
   it.effect(
     "copies the workload's fixture into the project and links the shared artifact cache into every home",
     () =>

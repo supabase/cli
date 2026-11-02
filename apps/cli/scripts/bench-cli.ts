@@ -38,6 +38,7 @@ import {
   type RunSample,
   type SpanComparison,
   type Workload,
+  type TeardownFailure,
   type WorkloadAnalysis,
   type WorkloadReport,
 } from "./bench-report.ts";
@@ -509,6 +510,7 @@ const runUnit = Effect.fn("BenchCli.runUnit")(function* (params: {
   readonly build: Build;
   readonly launches: ReadonlyArray<LaunchKind>;
   readonly profiled: Ref.Ref<boolean>;
+  readonly teardownFailures: Ref.Ref<ReadonlyArray<TeardownFailure>>;
   readonly onProfile: (path: string) => void;
 }) {
   const { options, workload, build, launches } = params;
@@ -519,9 +521,21 @@ const runUnit = Effect.fn("BenchCli.runUnit")(function* (params: {
       const path = yield* Path.Path;
       const unit = yield* prepareUnit(options, workload, binary);
       yield* Effect.addFinalizer(() =>
-        Effect.forEach(workload.teardown ?? [], (args) => runStep("teardown", binary, unit, args), {
-          discard: true,
-        }).pipe(Effect.ignore),
+        Effect.forEach(
+          workload.teardown ?? [],
+          (args) =>
+            runStep("teardown", binary, unit, args).pipe(
+              Effect.flatMap((exitCode) =>
+                exitCode === 0
+                  ? Effect.void
+                  : Ref.update(params.teardownFailures, (failures) => [
+                      ...failures,
+                      { build, command: args.join(" "), exitCode },
+                    ]),
+              ),
+            ),
+          { discard: true },
+        ).pipe(Effect.ignore),
       );
       let setupExitCode = 0;
       for (const args of workload.setup ?? []) {
@@ -638,6 +652,7 @@ export const runWorkloadBench = (
       base: [],
       branch: [],
     };
+    const teardownFailures = yield* Ref.make<ReadonlyArray<TeardownFailure>>([]);
     let cpuProfilePath: string | undefined;
     const onProfile = (path: string) => {
       cpuProfilePath = path;
@@ -672,6 +687,7 @@ export const runWorkloadBench = (
           build,
           launches: planned.launches,
           profiled,
+          teardownFailures,
           onProfile,
         });
         record(build, outcomes);
@@ -684,6 +700,7 @@ export const runWorkloadBench = (
               build,
               launches: ["traced"],
               profiled,
+              teardownFailures,
               onProfile,
             }),
           );
@@ -708,6 +725,7 @@ export const runWorkloadBench = (
           build,
           launches: [...planned.launches, ...extra],
           profiled,
+          teardownFailures,
           onProfile,
         }),
       );
@@ -723,6 +741,7 @@ export const runWorkloadBench = (
         };
       });
     const finished = yield* Clock.currentTimeNanos;
+    const failedTeardowns = yield* Ref.get(teardownFailures);
     const report: WorkloadReport = {
       id: workload.id,
       args: workload.args,
@@ -730,6 +749,7 @@ export const runWorkloadBench = (
       ...(workload.stack === undefined ? {} : { stack: workload.stack }),
       ...(options.trace ? { traceRuns } : {}),
       elapsedSeconds: Math.round(Number(finished - started) / 1_000_000) / 1000,
+      ...(failedTeardowns.length === 0 ? {} : { teardownFailures: failedTeardowns }),
       base: sample("base"),
       branch: sample("branch"),
     };

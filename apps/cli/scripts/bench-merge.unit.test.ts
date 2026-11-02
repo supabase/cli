@@ -41,6 +41,19 @@ describe("mergeReports", () => {
     ]);
   });
 
+  it("keeps a workload's teardown failures", () => {
+    const failed = shard("http://127.0.0.1:1", ["a"]);
+    const teardownFailures = [{ build: "base" as const, command: "stack stop", exitCode: 1 }];
+    const withFailure = {
+      ...failed,
+      workloads: failed.workloads.map((workload) => ({ ...workload, teardownFailures })),
+    };
+
+    expect(
+      mergeReports([withFailure, shard(undefined, ["b"])], [])?.workloads[0]?.teardownFailures,
+    ).toEqual(teardownFailures);
+  });
+
   it("carries an API URL even when the first shard recorded none", () => {
     const merged = mergeReports([shard(undefined, ["a"]), shard("http://127.0.0.1:2", ["b"])], []);
 
