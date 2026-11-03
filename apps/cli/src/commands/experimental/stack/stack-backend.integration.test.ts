@@ -430,6 +430,7 @@ stack = true
               "destroy",
               "install",
               "list",
+              "logs",
               "outdated",
               "restart",
               "start",
