@@ -1,4 +1,4 @@
-import { Crypto, Effect, type FileSystem, Option, type Path } from "effect";
+import { Crypto, Effect, type FileSystem, Option, type Path, Redacted } from "effect";
 import type { RuntimeInfo } from "../runtime/runtime-info.service.ts";
 import type { LoadedCliConfig } from "@supabase/config/effect";
 import { CliConfigValues, type ResolvedCliConfig } from "../../config/cli-config-values.service.ts";
@@ -74,3 +74,20 @@ export const loadFunctionsCliConfig = Effect.fn("FunctionsConfig.load")(function
     denoVersion: context.denoVersion,
   } satisfies FunctionsCliConfigContext;
 });
+
+/**
+ * `[edge_runtime.secrets]` as the Functions container env: names uppercased, only resolved
+ * non-empty values kept. An unresolved `env(VAR)` literal stays a plain string, not
+ * `Redacted`, so it is dropped, the same guard `secrets set` uses.
+ */
+export function toEdgeRuntimeSecretsEnv(
+  secrets: Readonly<Record<string, string | Redacted.Redacted<string> | undefined>> | undefined,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(secrets ?? {}).flatMap(([name, value]): Array<[string, string]> =>
+      Redacted.isRedacted(value) && Redacted.value(value).length > 0
+        ? [[name.toUpperCase(), Redacted.value(value)]]
+        : [],
+    ),
+  );
+}
