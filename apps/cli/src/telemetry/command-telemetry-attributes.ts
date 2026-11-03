@@ -2,6 +2,7 @@ import { Context, Effect } from "effect";
 import type { StackRuntime } from "../command-internal/stack-runtime.ts";
 import type { ServeEndReason } from "../shared/functions/serve.ts";
 import {
+  PropConfigKey,
   PropEdgeRuntimeExitCode,
   PropOrioleDb,
   PropServeEndReason,
@@ -10,6 +11,7 @@ import {
 
 /** Properties that code below a command handler adds to its `cli_command_executed` event. */
 export interface CommandTelemetryAttributeValues {
+  readonly [PropConfigKey]?: string;
   readonly [PropOrioleDb]?: boolean;
   readonly [PropStackRuntime]?: StackRuntime;
   readonly [PropServeEndReason]?: ServeEndReason;

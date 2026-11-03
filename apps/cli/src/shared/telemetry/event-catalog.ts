@@ -45,6 +45,8 @@ export const PropStackBackend = "stack_backend";
 export const PropOrioleDb = "orioledb";
 // Set only once a stack-backend command resolves its stack's runtime.
 export const PropStackRuntime = "stack_runtime";
+// Set only on failures classified `invalid_config` whose config key is known.
+export const PropConfigKey = "config_key";
 // Set only once `functions serve` on the Docker runtime reaches its final outcome.
 export const PropServeEndReason = "serve_end_reason";
 // Set only when the Edge Runtime container's exit code is known at that outcome.
