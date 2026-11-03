@@ -71,9 +71,18 @@ export function resolveGroups(
   context: AnalyticsContext,
   linkedProject: Option.Option<LinkedProjectCacheValue>,
 ): Record<string, string> | undefined {
+  const contextProject = context.groups?.project;
   const resolved =
-    context.groups?.organization !== undefined && context.groups.project !== undefined
-      ? { organization: context.groups.organization, project: context.groups.project }
+    contextProject !== undefined
+      ? {
+          organization:
+            context.groups?.organization ??
+            Option.match(linkedProject, {
+              onNone: () => "",
+              onSome: (linked) => (linked.ref === contextProject ? linked.organization_id : ""),
+            }),
+          project: contextProject,
+        }
       : Option.match(linkedProject, {
           onNone: () => undefined,
           onSome: (linked) => ({ organization: linked.organization_id, project: linked.ref }),
