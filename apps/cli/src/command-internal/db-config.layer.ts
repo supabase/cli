@@ -203,8 +203,9 @@ const loginRoleErrorMapper = mapHttpError({
 const isMissingPrivilegedRole = (error: Errors.DbConfigLoginRoleStatusError): boolean =>
   error.status === 400 && /permission denied to alter role/i.test(error.body);
 
-const missingPrivilegedRoleError = (error: Errors.DbConfigLoginRoleStatusError) =>
+const missingPrivilegedRoleError = (ref: string, error: Errors.DbConfigLoginRoleStatusError) =>
   new Errors.DbConfigLoginRoleMissingPrivilegedRoleError({
+    projectRef: ref,
     message: `failed to create a temporary login role, likely because the project database is missing supabase_privileged_role: ${error.body}`,
     suggestion:
       "Connect with your database password instead, which skips the temporary login role: --password where the command supports it, SUPABASE_DB_PASSWORD for the linked project, or a Postgres URL that includes the password (--db-url, or --from/--to for db diff). Contact support at https://supabase.com/dashboard/support/new to repair the project's roles.",
@@ -279,7 +280,7 @@ const initLoginRole = Effect.fn("DbConfig.initLoginRole")(function* (
   const role = yield* api.v1.createLoginRole({ ref, read_only: false }).pipe(
     Effect.catch(loginRoleErrorMapper),
     Effect.catchTag("DbConfigLoginRoleStatusError", (error) =>
-      Effect.fail(isMissingPrivilegedRole(error) ? missingPrivilegedRoleError(error) : error),
+      Effect.fail(isMissingPrivilegedRole(error) ? missingPrivilegedRoleError(ref, error) : error),
     ),
   );
   return { ...conn, user: role.role, password: role.password };

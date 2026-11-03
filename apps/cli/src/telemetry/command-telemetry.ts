@@ -15,7 +15,10 @@ import {
 } from "../command-internal/global-flags.ts";
 import { removedFlag, type RemovedSurfaceError } from "../command-internal/removed-command.ts";
 import { ProcessControl } from "../shared/runtime/process-control.service.ts";
-import { withAnalyticsContext } from "../shared/telemetry/analytics-context.ts";
+import {
+  type AnalyticsContext,
+  withAnalyticsContext,
+} from "../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../shared/telemetry/runtime.service.ts";
 import {
@@ -550,9 +553,15 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
           const id = svc.stitchedDistinctId();
           return id === undefined ? Option.none() : Option.some(id);
         });
+        const failedProjectRef =
+          failureCause === undefined ? undefined : failureProjectRef(failureCause);
+        const contextWithProject: AnalyticsContext =
+          failedProjectRef === undefined
+            ? analyticsContext
+            : { ...analyticsContext, groups: { project: failedProjectRef } };
         const captureContext = Option.match(stitchedDistinctId, {
-          onNone: () => analyticsContext,
-          onSome: (distinct_id) => ({ ...analyticsContext, distinct_id }),
+          onNone: () => contextWithProject,
+          onSome: (distinct_id) => ({ ...contextWithProject, distinct_id }),
         });
         const failureMetadata =
           failureCause !== undefined
@@ -588,6 +597,16 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
         return exit.value;
       }).pipe(Effect.withSpan(getCommandRuntimeSpanName(commandRuntime)));
     });
+}
+
+/** The project a typed failure names in its `projectRef` field, for the event's project group. */
+function failureProjectRef(cause: Cause.Cause<unknown>): string | undefined {
+  const error = Cause.findErrorOption(cause);
+  if (Option.isNone(error) || typeof error.value !== "object" || error.value === null) {
+    return undefined;
+  }
+  const ref: unknown = Reflect.get(error.value, "projectRef");
+  return typeof ref === "string" && PROJECT_REF_PATTERN.test(ref) ? ref : undefined;
 }
 
 export function withCommandTelemetry(): <A, E, R>(

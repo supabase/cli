@@ -82,7 +82,7 @@ export class DbConfigLoginRoleStatusError extends Data.TaggedError("DbConfigLogi
  */
 export class DbConfigLoginRoleMissingPrivilegedRoleError extends Data.TaggedError(
   "DbConfigLoginRoleMissingPrivilegedRoleError",
-)<{ readonly message: string; readonly suggestion: string }> {
+)<{ readonly message: string; readonly suggestion: string; readonly projectRef: string }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return {
       error_kind: CliErrorKind.ExternalService,

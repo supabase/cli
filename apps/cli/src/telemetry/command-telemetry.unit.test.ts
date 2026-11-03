@@ -26,6 +26,7 @@ import {
 import { ProcessControl } from "../shared/runtime/process-control.service.ts";
 import { ConfigDiffLoadConfigError } from "../commands/config/diff/diff.errors.ts";
 import { DbDumpRunError } from "../commands/db/dump/dump.errors.ts";
+import { DbConfigLoginRoleMissingPrivilegedRoleError } from "../command-internal/db-config.errors.ts";
 import { StdoutClosedError } from "../shared/output/errors.ts";
 import { IdentityStitch } from "../command-internal/identity-stitch.ts";
 import { RemovedSurfaceError } from "../command-internal/removed-command.ts";
@@ -989,6 +990,38 @@ describe("withCommandTelemetry", () => {
           expect(analytics.captured[0]?.properties).not.toHaveProperty(PropSuggestedCommand);
           expect(analytics.captured[0]?.properties).not.toHaveProperty(PropWorkflow);
           expect(yield* encodeJson(analytics.captured[0])).not.toContain(secret);
+        }),
+      ),
+      Effect.asVoid,
+    );
+  });
+
+  it.live("attributes a failure that names its project to that project group", () => {
+    const analytics = mockContextualAnalytics();
+    const failure = new DbConfigLoginRoleMissingPrivilegedRoleError({
+      message: "missing role",
+      suggestion: "use a password",
+      projectRef: "abcdefghijklmnopqrst",
+    });
+
+    return Effect.fail(failure).pipe(
+      withCommandTelemetry(),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["migration", "list"]) }),
+          commandRuntimeLayer(["migration", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
+      ),
+      Effect.exit,
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(analytics.captured[0]?.properties).toMatchObject({
+            groups: { project: "abcdefghijklmnopqrst" },
+            [PropErrorFingerprint]: "tag:DbConfigLoginRoleMissingPrivilegedRoleError",
+          });
         }),
       ),
       Effect.asVoid,
