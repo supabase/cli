@@ -341,6 +341,7 @@ jobs:
     # those granted to the calling job, so this must be declared here too.
     permissions:
       actions: read
+      attestations: write
       contents: write
       id-token: write
       pull-requests: write
