@@ -64,10 +64,7 @@ const sourceWriting = (bytes: Uint8Array = archive): ArtifactSource => ({
       yield* fs.makeDirectory(`${destination}/etc`, { recursive: true });
       yield* fs.writeFileString(`${destination}/bin/postgres`, "native postgres", { mode: 0o755 });
       yield* fs.writeFileString(`${destination}/etc/postgres.conf`, "config", { mode: 0o644 });
-      const crypto = yield* SecureRandom.SecureRandom;
-      yield* verifySha256(bytes, expectedSha256).pipe(
-        Effect.provideService(SecureRandom.SecureRandom, crypto),
-      );
+      yield* verifySha256(bytes, expectedSha256);
     }).pipe(mapMaterializeError),
 });
 
@@ -85,10 +82,7 @@ const sourceWritingAlt = (): ArtifactSource => ({
         mode: 0o755,
       });
       yield* fs.writeFileString(`${destination}/etc/postgres.conf`, "config alt", { mode: 0o644 });
-      const crypto = yield* SecureRandom.SecureRandom;
-      yield* verifySha256(archiveAlt, expectedSha256).pipe(
-        Effect.provideService(SecureRandom.SecureRandom, crypto),
-      );
+      yield* verifySha256(archiveAlt, expectedSha256);
     }).pipe(mapMaterializeError),
 });
 
@@ -566,10 +560,7 @@ describe("a required path missing from the archive", () => {
         yield* fs.writeFileString(`${destination}/bin/postgres`, "native postgres", {
           mode: 0o755,
         });
-        const crypto = yield* SecureRandom.SecureRandom;
-        yield* verifySha256(archive, expectedSha256).pipe(
-          Effect.provideService(SecureRandom.SecureRandom, crypto),
-        );
+        yield* verifySha256(archive, expectedSha256);
       }).pipe(mapMaterializeError),
   });
 
