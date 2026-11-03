@@ -1,7 +1,9 @@
+import { CLI_CONFIG_SCHEMA_URL } from "@supabase/config";
 import { orioledbVersions, postgresMajor } from "@supabase/stack/internal/artifacts";
 import { postgresVersionCompare } from "../../command-internal/db-bootstrap/postgres.service.ts";
 
-const CONFIG_TEMPLATE_RAW = `# For detailed configuration reference documentation, visit:
+const CONFIG_TEMPLATE_RAW = `#:schema ${CLI_CONFIG_SCHEMA_URL}
+# For detailed configuration reference documentation, visit:
 # https://supabase.com/docs/guides/local-development/cli/config
 # A string used to distinguish different Supabase projects on the same host. Defaults to the
 # working directory name when running \`supabase init\`.
@@ -465,6 +467,9 @@ export const VSCODE_SETTINGS_TEMPLATE = `{
   ],
   "[typescript]": {
     "editor.defaultFormatter": "denoland.vscode-deno"
+  },
+  "json.schemaDownload.trustedDomains": {
+    "https://supabase.com/schemas/": true
   }
 }
 `;

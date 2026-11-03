@@ -33,6 +33,10 @@ const decodeOrioleDbConfig = Schema.decodeUnknownEffect(
   }),
 );
 
+const decodeJsonObject = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
+
 const readTextFile = (...segments: Array<string>) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -142,6 +146,7 @@ describe("init", () => {
       }).pipe(Effect.provide(layer));
 
       const content = yield* readTextFile(tempDir, "supabase", "config.toml");
+      expect(content.split("\n")[0]).toBe("#:schema https://supabase.com/schemas/config/v1.json");
       expect(content).toContain("major_version = 17");
       expect(content).toContain("port = 54321");
       expect(content).not.toContain("stack = true");
@@ -346,6 +351,44 @@ describe("init", () => {
         '"deno.enablePaths"',
       );
     });
+  });
+
+  it.effect("merges the VS Code settings into an existing file without losing user entries", () => {
+    const tempDir = tempRoot.current;
+
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const settingsPath = path.join(tempDir, ".vscode", "settings.json");
+      yield* fs.makeDirectory(path.dirname(settingsPath), { recursive: true });
+      yield* fs.writeFileString(
+        settingsPath,
+        `{
+  // user preferences
+  "editor.fontSize": 14,
+  "json.schemaDownload.trustedDomains": { "https://example.com/": true },
+  "[typescript]": { "editor.tabSize": 4 },
+}
+`,
+      );
+      const { layer } = setup(tempDir);
+
+      yield* init({ ...BASE_INIT_FLAGS, interactive: false, withVscodeSettings: true }).pipe(
+        Effect.provide(layer),
+      );
+
+      expect(yield* decodeJsonObject(yield* readTextFile(settingsPath))).toMatchObject({
+        "editor.fontSize": 14,
+        "json.schemaDownload.trustedDomains": {
+          "https://example.com/": true,
+          "https://supabase.com/schemas/": true,
+        },
+        "[typescript]": {
+          "editor.tabSize": 4,
+          "editor.defaultFormatter": "denoland.vscode-deno",
+        },
+      });
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.effect("writes the stack-opt-in template when SUPABASE_EXPERIMENTAL_STACK=1", () => {

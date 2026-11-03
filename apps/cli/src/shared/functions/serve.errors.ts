@@ -60,6 +60,8 @@ export class DockerLogsStreamError extends Data.TaggedError("DockerLogsStreamErr
    * False when that inspect failed and there is no container state to read.
    */
   readonly oomKilled: boolean;
+  /** The stopped container's exit code from the follow-up inspect, absent when that inspect failed. */
+  readonly containerExitCode?: number;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     if (this.oomKilled) {
