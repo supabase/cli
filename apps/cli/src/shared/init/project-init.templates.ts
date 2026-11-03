@@ -231,6 +231,9 @@ double_confirm_changes = true
 enable_confirmations = false
 # If enabled, users will need to reauthenticate or have logged in recently to change their password.
 secure_password_change = false
+# If enabled, users will need to provide their current password to change their password, unless
+# they signed in with a one-time password, magic link, or recovery link.
+# require_current_password = true
 # Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.
 max_frequency = "1s"
 # Number of characters used in the email OTP.
