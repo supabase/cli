@@ -68,13 +68,10 @@ export const vanitySubdomainsCheckAvailability = Effect.fn("vanity-subdomains.ch
               mapCheckError(cause).pipe(
                 Effect.catchTag("VanitySubdomainsCheckUnexpectedStatusError", (mapped) =>
                   Effect.gen(function* () {
-                    // Unlike `activate`, this command suppresses the upgrade-suggestion
-                    // analytics event.
                     const upgradeSuggested = yield* suggestUpgrade({
                       projectRef: ref,
                       statusCode: mapped.status,
                       response: gateResponse(cause),
-                      trackAnalytics: false,
                     });
                     return yield* new VanitySubdomainsCheckUnexpectedStatusError({
                       status: mapped.status,

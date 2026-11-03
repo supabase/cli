@@ -52,10 +52,10 @@ Target: hosted, consent default Yes — see [Command target](../../../../docs/co
 
 ## Telemetry Events Fired
 
-| Event                   | When                                                       | Notable properties / groups                                                                                                                                   |
-| ----------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cli_command_executed`  | post-run, success or failure (via wrapper)                 | `exit_code`, `duration_ms`, `flags` (`--remote=<ref>` → the ref, a bare `--remote` → `true`; `--project-ref` whitelisted when ref-shaped, otherwise redacted) |
-| `cli_upgrade_suggested` | on a 4xx whose body is the `entitlement_required` envelope | `{feature_key: "branching_limit", org_slug}`                                                                                                                  |
+| Event                   | When                                                                                                              | Notable properties / groups                                                                                                                                   |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cli_command_executed`  | post-run, success or failure (via wrapper)                                                                        | `exit_code`, `duration_ms`, `flags` (`--remote=<ref>` → the ref, a bare `--remote` → `true`; `--project-ref` whitelisted when ref-shaped, otherwise redacted) |
+| `cli_upgrade_suggested` | post-run (via wrapper), before `cli_command_executed`, on a 4xx whose body is the `entitlement_required` envelope | `{feature_key: "branching_limit", org_slug}`                                                                                                                  |
 
 ## Output
 

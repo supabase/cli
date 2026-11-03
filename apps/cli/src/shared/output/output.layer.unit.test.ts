@@ -27,6 +27,7 @@ import {
 import { commandTargetLayer } from "./command-target.layer.ts";
 import { machineErrorContextLayer } from "./machine-error-context.layer.ts";
 import { MachineErrorContext } from "./machine-error-context.service.ts";
+import { upgradeHint } from "./normalize-error.ts";
 import { Output } from "./output.service.ts";
 import {
   jsonOutputLayer,
@@ -287,6 +288,42 @@ describe("Output", () => {
         ),
       );
     });
+
+    it.effect(
+      "fail prints the upgrade hint once, before the message, for a plan-gated denial",
+      () => {
+        const upgradeUrl = "https://supabase.com/dashboard/org/acme/billing";
+        const writes: string[] = [];
+        const originalWrite = process.stderr.write.bind(process.stderr);
+        const originalArgv = process.argv;
+        process.stderr.write = ((chunk: string | Uint8Array) => {
+          writes.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+          return true;
+        }) as typeof process.stderr.write;
+        process.argv = originalArgv.filter((arg) => arg !== "--debug");
+        return Effect.gen(function* () {
+          const out = yield* Output;
+          yield* out.fail({
+            code: "E_TEST",
+            message: "boom",
+            entitlement: { feature: "project_restore_size", upgrade_url: upgradeUrl },
+          });
+          expect(writes).toEqual([
+            upgradeHint(upgradeUrl) + "\n",
+            "\x1B[31mboom\x1B[39m\n",
+            "Try rerunning the command with --debug to troubleshoot the error.\n",
+          ]);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              process.stderr.write = originalWrite;
+              process.argv = originalArgv;
+            }),
+          ),
+        );
+      },
+    );
 
     it.effect("fail omits the --debug suggestion when --debug is set", () => {
       const writes: string[] = [];

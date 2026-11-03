@@ -60,10 +60,10 @@ Cloudflare DNS-over-HTTPS CNAME pre-check.
 
 ## Telemetry Events Fired
 
-| Event                   | When                                                                                  | Notable properties / groups                                                                                                                                                                                  |
-| ----------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `cli_command_executed`  | post-run, success or failure (via wrapper)                                            | `exit_code`, `duration_ms`, `flags` (all redacted — no `domains` flag is telemetry-safe); a rejected `--include-raw-output` fails with `error_fingerprint` ending in `:removed_flag` (`RemovedSurfaceError`) |
-| `cli_upgrade_suggested` | `create`/`get`/`activate`/`reverify` 4xx carrying the `entitlement_required` envelope | `feature_key` (from the envelope), `org_slug` (parsed from `upgrade_url`); envelope-only, no entitlements fallback                                                                                           |
+| Event                   | When                                                                                                                                              | Notable properties / groups                                                                                                                                                                                  |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `cli_command_executed`  | post-run, success or failure (via wrapper)                                                                                                        | `exit_code`, `duration_ms`, `flags` (all redacted — no `domains` flag is telemetry-safe); a rejected `--include-raw-output` fails with `error_fingerprint` ending in `:removed_flag` (`RemovedSurfaceError`) |
+| `cli_upgrade_suggested` | post-run (via wrapper), before `cli_command_executed`, on a `create`/`get`/`activate`/`reverify` 4xx carrying the `entitlement_required` envelope | `feature_key` (from the envelope), `org_slug` (parsed from `upgrade_url`); envelope-only, no entitlements fallback                                                                                           |
 
 ## Output
 
