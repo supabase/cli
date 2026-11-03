@@ -22,7 +22,9 @@ import {
   Layer,
   Option,
   PlatformError,
+  References,
   Schema,
+  Sink,
   Stdio,
   Stream,
 } from "effect";
@@ -89,8 +91,36 @@ const isBrokenPipe = (error: PlatformError.PlatformError): boolean => {
   );
 };
 
-// Keyed by the Stdio service so every output layer built on the same process streams sees a
-// stream close, including the layer that renders the run's final error.
+/* A direct write (clack's progress lines, `--debug`) can meet the closed pipe first and leave the
+   process stream errored; the sink would then wait forever for `drain`, so the write fails instead. */
+const stdioSink = (stdio: typeof Stdio.Stdio.Service, stream: "stdout" | "stderr") => {
+  const errored = process[stream].errored;
+  if (errored !== null) {
+    return Sink.fail(
+      PlatformError.systemError({
+        module: "Stdio",
+        method: stream,
+        _tag: "Unknown",
+        cause: errored,
+      }),
+    );
+  }
+  return stream === "stderr" ? stdio.stderr() : stdio.stdout();
+};
+
+/* Every Stdio write goes through here. A failing direct write sets `errored` a tick later, so the
+   write must not yield before the sink listens for `error`, or that event passes unseen. */
+export const writeStdio = (
+  stdio: typeof Stdio.Stdio.Service,
+  stream: "stdout" | "stderr",
+  chunk: string | Uint8Array,
+) =>
+  Effect.suspend(() => Stream.make(chunk).pipe(Stream.run(stdioSink(stdio, stream)))).pipe(
+    Effect.provideService(References.PreventSchedulerYield, true),
+  );
+
+/* Keyed by the Stdio service so output layers sharing one skip a stream any of them saw close.
+   Layers on another Stdio (run.ts builds the final-error layer on its own) see it via `errored`. */
 const closedStreams = new WeakMap<typeof Stdio.Stdio.Service, Set<"stdout" | "stderr">>();
 
 /**
@@ -108,8 +138,7 @@ const stdioWriter = (stdio: typeof Stdio.Stdio.Service) => {
     Effect.suspend(() =>
       closed.has(stream)
         ? Effect.void
-        : Stream.make(chunk).pipe(
-            Stream.run(stream === "stderr" ? stdio.stderr() : stdio.stdout()),
+        : writeStdio(stdio, stream, chunk).pipe(
             Effect.catchIf(isBrokenPipe, () =>
               Effect.sync(() => closed.add(stream)).pipe(
                 Effect.andThen(

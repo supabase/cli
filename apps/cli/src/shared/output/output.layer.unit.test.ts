@@ -10,6 +10,7 @@ import {
   Layer,
   Option,
   PlatformError,
+  References,
   Schema,
   Sink,
   Stdio,
@@ -17,7 +18,7 @@ import {
 } from "effect";
 import { TestClock } from "effect/testing";
 import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError, StdoutClosedError } from "./errors.ts";
-import { mockTty } from "../../../tests/helpers/mocks.ts";
+import { epipe, mockTty, overrideStreamErrored } from "../../../tests/helpers/mocks.ts";
 import {
   announceTarget,
   CommandTarget,
@@ -845,6 +846,48 @@ describe("Output", () => {
         }).pipe(provideLayer(stdio.layer));
       },
     );
+
+    it.effect("drops diagnostics once a direct write broke stderr", () => {
+      const stdio = mockStdio();
+      return Effect.gen(function* () {
+        yield* overrideStreamErrored(process.stderr, epipe);
+        const out = yield* Output;
+        yield* out.raw("diagnostic\n", "stderr");
+        yield* out.raw("payload\n");
+
+        expect(stdio.stderr).toEqual([]);
+        expect(stdio.stdout).toEqual(["payload\n"]);
+      }).pipe(provideLayer(stdio.layer));
+    });
+
+    it.effect("ends the command once a direct write broke stdout", () => {
+      const stdio = mockStdio();
+      return Effect.gen(function* () {
+        yield* overrideStreamErrored(process.stdout, epipe);
+        const out = yield* Output;
+        yield* out.raw("diagnostic\n", "stderr");
+        const exit = yield* Effect.exit(out.raw("payload\n"));
+
+        expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBeInstanceOf(StdoutClosedError);
+        expect(stdio.stderr).toEqual(["diagnostic\n"]);
+        expect(stdio.stdout).toEqual([]);
+      }).pipe(provideLayer(stdio.layer));
+    });
+
+    it.effect("checks the stream with scheduler yields prevented", () => {
+      const stdio = mockStdio();
+      const preventYield: Array<boolean | undefined> = [];
+      return Effect.gen(function* () {
+        yield* overrideStreamErrored(process.stdout, () => {
+          preventYield.push(Fiber.getCurrent()?.getRef(References.PreventSchedulerYield));
+          return null;
+        });
+        const out = yield* Output;
+        yield* out.raw("payload\n");
+
+        expect(preventYield).toEqual([true]);
+      }).pipe(provideLayer(stdio.layer));
+    });
 
     it.effect("keeps writing stdout once the stderr reader has closed", () => {
       const stdio = brokenStdio("stderr", "EPIPE");
