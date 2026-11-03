@@ -44,8 +44,8 @@ export function inspectText(value: unknown): string {
 
 /**
  * The unwrapped text cell (no backtick code span): an empty/null value renders as the empty
- * string. Only the `vacuum_stats` timestamp columns are written bare; every other string
- * column is wrapped (use `inspectText`).
+ * string. Use it for timestamp columns (`vacuum_stats`, `toast_sizes`); wrap other string
+ * columns with `inspectText`.
  */
 export function inspectPlainText(value: unknown): string {
   if (value === null || value === undefined) return "";
