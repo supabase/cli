@@ -1,8 +1,15 @@
+import { Command } from "effect/cli";
+import { stackLogsCommand } from "./logs.command.ts";
+import {
+  buildTestRuntime,
+  mockCommandPlatformApi,
+} from "../../../../../tests/helpers/command-mocks.ts";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { TestClock } from "effect/testing";
 import {
   Clock,
+  Cause,
   DateTime,
   Deferred,
   Effect,
@@ -15,6 +22,7 @@ import {
   Redacted,
   Ref,
   Schema,
+  Stdio,
   Stream,
 } from "effect";
 import {
@@ -189,7 +197,7 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
   const run = (
     flags: Partial<StackLogsFlags>,
     format: "text" | "stream-json" | "json" = "text",
-    unified = false,
+    mode: "reader" | "unified" | "legacy" = "reader",
   ) =>
     Effect.gen(function* () {
       const output = mockOutput({ format, interactive: false });
@@ -199,8 +207,27 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
         telemetry.layer,
         Layer.provideMerge(stackTargetResolverLayer, Layer.merge(settings, fakeApi)),
       );
-      const runLogs = unified
-        ? logsTail(
+      const legacyArgs = ["logs", "--stack-id", stack.id];
+      const runLogs = Effect.gen(function* () {
+        if (mode === "legacy")
+          return yield* Command.runWith(
+            Command.make("supabase").pipe(Command.withSubcommands([stackLogsCommand])),
+            { version: "test" },
+          )(legacyArgs).pipe(
+            Effect.provide(
+              Layer.mergeAll(
+                buildTestRuntime({
+                  out: output,
+                  api: mockCommandPlatformApi({ response: { status: 200, body: {} } }),
+                  cliSettings: settings,
+                  commandPath: ["stack", "logs"],
+                }),
+                Stdio.layerTest({ args: Effect.succeed(legacyArgs) }),
+              ),
+            ),
+          );
+        if (mode === "unified")
+          return yield* logsTail(
             {
               remote: Option.none(),
               projectRef: Option.none(),
@@ -236,8 +263,9 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
                 }),
               ),
             ),
-          )
-        : stackLogs({ ...baseFlags(stack.id), ...flags });
+          );
+        return yield* stackLogs({ ...baseFlags(stack.id), ...flags });
+      });
       const exit = yield* runLogs.pipe(Effect.provide(layer), Effect.exit);
       return { exit, output, telemetry };
     });
@@ -253,6 +281,25 @@ const eventLines = (events: ReadonlyArray<{ readonly type: string; readonly line
 describe("retained local logs", () => {
   const t0 = Date.parse("2026-09-29T10:00:00.000Z");
 
+  it.effect("reads 200 retained lines without a time filter and warns once with legacy JSON", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({ instances: [mail("mail-a")], members: ["mail-a"] });
+      yield* f.writeSegment("mail", "mail-a", [
+        launch(t0),
+        ...Array.from({ length: 201 }, (_, i) => line(t0 + i + 1, "stdout", `retained ${i}`)),
+      ]);
+      const { exit, output } = yield* f.run({}, "json", "legacy");
+      expect(Exit.isSuccess(exit), Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "").toBe(true);
+      const rows = decodeRows(output.stdoutText);
+      expect(rows).toHaveLength(200);
+      expect(rows[0]).toMatchObject({ text: "retained 1" });
+      expect(output.stderrText.match(/Warning: stack logs is deprecated/g)).toHaveLength(1);
+      expect(output.stderrText).toContain("removed in v4");
+      expect(output.stdoutText).not.toContain("deprecated");
+      expect(yield* Ref.get(f.opened)).toBe(0);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
   it.effect("preserves full retained records and markers in native JSON while stopped", () =>
     Effect.gen(function* () {
       const f = yield* fixture({ instances: [database("db-a")], members: ["db-a"] });
@@ -261,7 +308,7 @@ describe("retained local logs", () => {
         line(t0 + 1, "stdout", "retained"),
         lost(t0 + 2, 3),
       ]);
-      const { exit, output } = yield* f.run({}, "json", true);
+      const { exit, output } = yield* f.run({}, "json", "unified");
       expect(Exit.isSuccess(exit)).toBe(true);
       const rows = decodeRows(output.stdoutText);
       expect(rows.map((row) => row.kind)).toEqual(["launch", "stdout", "lost"]);

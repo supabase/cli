@@ -260,6 +260,79 @@ export function computeResource(options: {
 
 export const computeRoute = (suffix = "") => `/v2/projects/${COMPUTE_PROJECT_REF}/compute${suffix}`;
 
+export const computeLogsRoute = () =>
+  `/v1/projects/${COMPUTE_PROJECT_REF}/analytics/endpoints/logs`;
+
+export function computeLogRow(options: {
+  readonly id?: string;
+  readonly tsMs?: number;
+  readonly stream?: string;
+  readonly message?: string;
+  readonly compute?: string;
+  readonly attributes?: Readonly<Record<string, string>>;
+}) {
+  const stream = options.stream ?? "worker_guest_logs";
+  return {
+    id: options.id ?? "row-1",
+    ts_ms: options.tsMs ?? 1_788_187_532_576,
+    stream,
+    event_message: options.message ?? "compute shim: listening on :8080 (serving)",
+    log_attributes: {
+      subservice: stream,
+      worker: options.compute ?? "api",
+      project: COMPUTE_PROJECT_REF,
+      ...options.attributes,
+    },
+  };
+}
+
+export function computeIngressLogRow(options: {
+  readonly id?: string;
+  readonly tsMs?: number;
+  readonly compute?: string;
+  readonly status?: string;
+  readonly method?: string;
+  readonly path?: string;
+  readonly durationMs?: string;
+}) {
+  const method = options.method ?? "GET";
+  const path = options.path ?? "/";
+  return computeLogRow({
+    ...(options.id === undefined ? {} : { id: options.id }),
+    ...(options.tsMs === undefined ? {} : { tsMs: options.tsMs }),
+    ...(options.compute === undefined ? {} : { compute: options.compute }),
+    stream: "worker_ingress_logs",
+
+    message: `${method} ${path}`,
+    attributes: {
+      method,
+      path,
+      status: options.status ?? "200",
+      duration_ms: options.durationMs ?? "23",
+      instance_id: "microvm-3f4b0c03-9310-3f72-940d-f56deeef795e",
+    },
+  });
+}
+
+export function computeApiLogRow(options: {
+  readonly id?: string;
+  readonly tsMs?: number;
+  readonly compute?: string;
+  readonly event?: string;
+  readonly reason?: string;
+}) {
+  const compute = options.compute ?? "api";
+  const event = options.event ?? "deploy_accepted";
+  return computeLogRow({
+    ...(options.id === undefined ? {} : { id: options.id }),
+    ...(options.tsMs === undefined ? {} : { tsMs: options.tsMs }),
+    compute,
+    stream: "worker_api_logs",
+    message: `${event} ${COMPUTE_PROJECT_REF}/${compute}`,
+    attributes: { event, ...(options.reason === undefined ? {} : { reason: options.reason }) },
+  });
+}
+
 /** A per-test temp project, optionally pre-seeded with files. */
 export function makeComputeProject(files: Readonly<Record<string, string>> = {}) {
   return Effect.gen(function* () {
