@@ -283,9 +283,13 @@ export const removeNativeSocketDirectory = Effect.fn("NativePostgresUser.removeS
  */
 export const restrictDirectoryToOwner = (fs: FileSystem.FileSystem, directory: string) =>
   fs.stat(directory).pipe(
-    Effect.flatMap(({ mode }) => {
+    Effect.flatMap(({ mode, uid }) => {
       const restricted = 0o700 | (mode & 0o001);
-      return (mode & 0o7777) === restricted ? Effect.void : fs.chmod(directory, restricted);
+      // chmod fails on another user's directory, so only an owned directory may skip it.
+      const owned = Option.getOrUndefined(uid) === process.getuid?.();
+      return owned && (mode & 0o7777) === restricted
+        ? Effect.void
+        : fs.chmod(directory, restricted);
     }),
   );
 
