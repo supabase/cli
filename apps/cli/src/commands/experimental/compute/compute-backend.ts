@@ -21,7 +21,10 @@ export const resolveComputeEnabled = (input: {
       commandPath[0] === "__complete" || commandPath[0] === "__completeNoDesc"
         ? commandPath.slice(1)
         : commandPath;
-    if (completePath[0] !== undefined && completePath[0] !== "compute") return false;
+    const logsCapability =
+      completePath[0] === "logs" && (completePath[1] === "tail" || completePath[1] === "sources");
+    if (completePath[0] !== undefined && completePath[0] !== "compute" && !logsCapability)
+      return false;
     return yield* resolveExperimentalFeature({
       feature: "compute",
       configValue: readExperimentalFeatureConfig({

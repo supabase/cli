@@ -147,11 +147,14 @@ describe("resolveComputeEnabled", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
   });
 
-  it.effect("ignores compute configuration for unrelated commands", () =>
+  it.effect.each([
+    ["functions", "list"],
+    ["logs", "query"],
+  ])("ignores compute configuration for unrelated commands %j", (args) =>
     Effect.gen(function* () {
       expect(
         yield* resolve({
-          args: ["functions", "list"],
+          args,
           cwd: "/missing",
           env: { SUPABASE_EXPERIMENTAL_COMPUTE: "invalid" },
         }),
