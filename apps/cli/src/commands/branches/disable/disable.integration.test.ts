@@ -1,6 +1,6 @@
 import type { V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Option, Schema } from "effect";
+import { Cause, Effect, Exit, Layer, Option, FileSystem, Schema } from "effect";
 
 import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -13,10 +13,13 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
 import type { BranchesDisableFlags } from "./disable.command.ts";
 import { branchesDisable } from "./disable.handler.ts";
+import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
@@ -39,6 +42,13 @@ const PROJECT: (typeof V1ListAllProjectsOutput.Type)[number] = {
 
 const tempRoot = useTempWorkdir("supabase-branches-disable-int-");
 
+const buildRuntime = (opts: Parameters<typeof buildTestRuntime>[0]) =>
+  Layer.mergeAll(
+    buildTestRuntime(opts),
+    Layer.succeed(YesFlag, true),
+    Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+  );
+
 interface SetupOpts {
   readonly status?: number;
 }
@@ -49,7 +59,7 @@ function setup(opts: SetupOpts = {}) {
     response: { status: opts.status ?? 200, body: null },
   });
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
-  const layer = buildTestRuntime({ out, api, cliSettings });
+  const layer = buildRuntime({ out, api, cliSettings });
   return { layer, out, api };
 }
 
@@ -61,7 +71,7 @@ function setupTracked(opts: SetupOpts = {}) {
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
   const telemetry = mockTelemetryStateTracked();
   const cache = mockLinkedProjectCacheTracked();
-  const layer = buildTestRuntime({
+  const layer = buildRuntime({
     out,
     api,
     cliSettings,
@@ -72,6 +82,7 @@ function setupTracked(opts: SetupOpts = {}) {
 }
 
 const baseFlags: BranchesDisableFlags = {
+  remote: Option.none(),
   projectRef: Option.none(),
 };
 
@@ -114,7 +125,7 @@ describe("branches disable integration", () => {
         workdir: tempRoot.current,
         projectId: Option.none(),
       });
-      const layer = buildTestRuntime({
+      const layer = buildRuntime({
         out,
         api,
         cliSettings,
@@ -168,4 +179,9 @@ describe("branches disable integration", () => {
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedConsent("branches disable", {
+  api: { response: { status: 200, body: null } },
+  invoke: () => ({ run: branchesDisable(baseFlags) }),
 });

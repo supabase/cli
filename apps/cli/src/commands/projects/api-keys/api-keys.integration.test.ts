@@ -11,6 +11,7 @@ import {
   mockCommandPlatformApi,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
 import { projectsApiKeys } from "./api-keys.handler.ts";
@@ -53,7 +54,7 @@ const tempRoot = useTempWorkdir("supabase-projects-apikeys-int-");
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  readonly outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   readonly response?: ApiKeys;
   readonly status?: number;
   readonly network?: "fail";
@@ -74,7 +75,7 @@ function setup(opts: SetupOpts = {}) {
     out,
     api,
     cliSettings,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api };
 }
@@ -83,7 +84,7 @@ describe("projects api-keys integration", () => {
   it.effect("lists api keys as a NAME / KEY VALUE table and masks null values", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
+      yield* projectsApiKeys({ remote: Option.none(), projectRef: Option.none(), reveal: false });
       expect(out.stdoutText).toContain("NAME");
       expect(out.stdoutText).toContain("KEY VALUE");
       expect(out.stdoutText).toContain("anon-secret");
@@ -91,26 +92,30 @@ describe("projects api-keys integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("resolves the ref from --project-ref", () => {
+  it.effect("resolves the ref from --remote=<ref>", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* projectsApiKeys({ projectRef: Option.some(FLAG_REF), reveal: false });
+      yield* projectsApiKeys({
+        remote: Option.some({ _tag: "Ref", ref: FLAG_REF }),
+        projectRef: Option.none(),
+        reveal: false,
+      });
       expect(api.requests[0]?.url).toContain(`/v1/projects/${FLAG_REF}/api-keys`);
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("resolves the ref from the linked project when --project-ref is omitted", () => {
+  it.effect("resolves the ref from the linked project when --remote is omitted", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
+      yield* projectsApiKeys({ remote: Option.none(), projectRef: Option.none(), reveal: false });
       expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/api-keys`);
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("omits the reveal query param by default (Go request parity)", () => {
+  it.effect("omits the reveal query param by default", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
+      yield* projectsApiKeys({ remote: Option.none(), projectRef: Option.none(), reveal: false });
       expect(api.requests[0]?.urlWithParams).not.toContain("reveal");
       assertPermissionDrift({
         command: "projects api-keys",
@@ -124,7 +129,7 @@ describe("projects api-keys integration", () => {
   it.effect("sends reveal=true when --reveal is passed", () => {
     const { layer, api } = setup({ response: REVEALED_KEYS });
     return Effect.gen(function* () {
-      yield* projectsApiKeys({ projectRef: Option.none(), reveal: true });
+      yield* projectsApiKeys({ remote: Option.none(), projectRef: Option.none(), reveal: true });
       expect(api.requests[0]?.urlWithParams).toContain("reveal=true");
       assertPermissionDrift({
         command: "projects api-keys",
@@ -138,16 +143,16 @@ describe("projects api-keys integration", () => {
   it.effect("renders the revealed secret key in full in the text table", () => {
     const { layer, out } = setup({ response: REVEALED_KEYS });
     return Effect.gen(function* () {
-      yield* projectsApiKeys({ projectRef: Option.none(), reveal: true });
+      yield* projectsApiKeys({ remote: Option.none(), projectRef: Option.none(), reveal: true });
       expect(out.stdoutText).toContain("sb_secret_revealed");
       expect(out.stdoutText).not.toContain("******");
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("includes the revealed secret in the env map for --output env --reveal", () => {
-    const { layer, out } = setup({ goOutput: "env", response: REVEALED_KEYS });
+    const { layer, out } = setup({ outputFlag: "env", response: REVEALED_KEYS });
     return Effect.gen(function* () {
-      yield* projectsApiKeys({ projectRef: Option.none(), reveal: true });
+      yield* projectsApiKeys({ remote: Option.none(), projectRef: Option.none(), reveal: true });
       expect(out.stdoutText).toContain('SUPABASE_SERVICE_ROLE_KEY="sb_secret_revealed"');
     }).pipe(Effect.provide(layer));
   });
@@ -155,16 +160,16 @@ describe("projects api-keys integration", () => {
   it.effect("carries the revealed secret in the { keys } payload for --output-format json", () => {
     const { layer, out } = setup({ format: "json", response: REVEALED_KEYS });
     return Effect.gen(function* () {
-      yield* projectsApiKeys({ projectRef: Option.none(), reveal: true });
+      yield* projectsApiKeys({ remote: Option.none(), projectRef: Option.none(), reveal: true });
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({ keys: REVEALED_KEYS });
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("emits the revealed secret in the Go json array for --output json --reveal", () => {
-    const { layer, out } = setup({ goOutput: "json", response: REVEALED_KEYS });
+  it.effect("emits the revealed secret in the JSON array for --output json --reveal", () => {
+    const { layer, out } = setup({ outputFlag: "json", response: REVEALED_KEYS });
     return Effect.gen(function* () {
-      yield* projectsApiKeys({ projectRef: Option.none(), reveal: true });
+      yield* projectsApiKeys({ remote: Option.none(), projectRef: Option.none(), reveal: true });
       expect(out.stdoutText).toContain('"api_key": "sb_secret_revealed"');
     }).pipe(Effect.provide(layer));
   });
@@ -173,7 +178,7 @@ describe("projects api-keys integration", () => {
     const { layer } = setup({ projectId: Option.none() });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        projectsApiKeys({ projectRef: Option.none(), reveal: false }),
+        projectsApiKeys({ remote: Option.none(), projectRef: Option.none(), reveal: false }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -185,7 +190,7 @@ describe("projects api-keys integration", () => {
   it.effect("emits a success event with { keys } for --output-format json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
-      yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
+      yield* projectsApiKeys({ remote: Option.none(), projectRef: Option.none(), reveal: false });
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({ keys: SAMPLE_KEYS });
     }).pipe(Effect.provide(layer));
@@ -194,41 +199,41 @@ describe("projects api-keys integration", () => {
   it.effect("emits a success event for --output-format stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
-      yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
+      yield* projectsApiKeys({ remote: Option.none(), projectRef: Option.none(), reveal: false });
       expect(out.messages.find((m) => m.type === "success")).toBeDefined();
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("encodes the SUPABASE_<NAME>_KEY map for --output env", () => {
-    const { layer, out } = setup({ goOutput: "env" });
+    const { layer, out } = setup({ outputFlag: "env" });
     return Effect.gen(function* () {
-      yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
+      yield* projectsApiKeys({ remote: Option.none(), projectRef: Option.none(), reveal: false });
       expect(out.stdoutText).toContain('SUPABASE_ANON_KEY="anon-secret"');
       expect(out.stdoutText).toContain('SUPABASE_SERVICE_ROLE_KEY="******"');
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("encodes the SUPABASE_<NAME>_KEY map for --output toml", () => {
-    const { layer, out } = setup({ goOutput: "toml" });
+    const { layer, out } = setup({ outputFlag: "toml" });
     return Effect.gen(function* () {
-      yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
+      yield* projectsApiKeys({ remote: Option.none(), projectRef: Option.none(), reveal: false });
       expect(out.stdoutText).toContain('SUPABASE_ANON_KEY = "anon-secret"');
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("emits a JSON array of api keys for --output json", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
-      yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
+      yield* projectsApiKeys({ remote: Option.none(), projectRef: Option.none(), reveal: false });
       expect(out.stdoutText).toContain('"name": "anon"');
       expect(out.stdoutText.startsWith("[\n")).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("emits a YAML array for --output yaml", () => {
-    const { layer, out } = setup({ goOutput: "yaml" });
+    const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
-      yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
+      yield* projectsApiKeys({ remote: Option.none(), projectRef: Option.none(), reveal: false });
       expect(out.stdoutText).toContain("name: anon");
     }).pipe(Effect.provide(layer));
   });
@@ -237,7 +242,7 @@ describe("projects api-keys integration", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        projectsApiKeys({ projectRef: Option.none(), reveal: false }),
+        projectsApiKeys({ remote: Option.none(), projectRef: Option.none(), reveal: false }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -252,7 +257,7 @@ describe("projects api-keys integration", () => {
     const { layer } = setup({ status: 503, response: [] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        projectsApiKeys({ projectRef: Option.none(), reveal: false }),
+        projectsApiKeys({ remote: Option.none(), projectRef: Option.none(), reveal: false }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -296,7 +301,7 @@ describe("projects api-keys integration", () => {
       const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
       expect(yield* fs.exists(cachePath)).toBe(false);
 
-      yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
+      yield* projectsApiKeys({ remote: Option.none(), projectRef: Option.none(), reveal: false });
 
       expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         `GET ${API}/v1/projects`,
@@ -314,5 +319,11 @@ describe("projects api-keys integration", () => {
         exact: true,
       });
     }).pipe(Effect.provide(layer));
+  });
+
+  describeHostedTargetSelection("projects api-keys", {
+    activeFlags: { reveal: false },
+    respond: (request) => Effect.succeed(jsonResponse(request, 200, SAMPLE_KEYS)),
+    run: (flags) => projectsApiKeys({ ...flags, reveal: false }),
   });
 });

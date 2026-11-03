@@ -5,7 +5,6 @@ import {
   ErrorActionabilityId,
   statusCodeActionability,
 } from "../../../shared/telemetry/error-actionability.ts";
-import { mintConfigTargetErrors } from "../../../command-internal/project-target.ts";
 
 /**
  * Tagged errors for `supabase config push`.
@@ -66,76 +65,10 @@ export class ConfigPushWorkdirError extends Data.TaggedError(
   }
 }
 
-// --project-ref accepts a project ref, or the name (or UUID) of one of its branches; mirrors
-// config diff's own error set under push's own names.
-const targetErrors = mintConfigTargetErrors("ConfigPush");
-
-/** `--project-ref` named a branch the parent project does not have. */
-export const ConfigPushBranchNotFoundError = targetErrors.BranchNotFoundError;
-export type ConfigPushBranchNotFoundError = InstanceType<typeof ConfigPushBranchNotFoundError>;
-
-/**
- * `--project-ref` named a branch (by name), but no project is linked to
- * search for branches under — none of `SUPABASE_PROJECT_ID`,
- * `supabase/.temp/linked-project.json`, or `supabase/.temp/project-ref`
- * yielded a candidate.
- */
-export const ConfigPushBranchNotLinkedError = targetErrors.BranchNotLinkedError;
-export type ConfigPushBranchNotLinkedError = InstanceType<typeof ConfigPushBranchNotLinkedError>;
-
-/**
- * `--project-ref` named a branch (by name), and a parent-project candidate
- * exists but is not ref-shaped — corrupt or stale linked state.
- */
-export const ConfigPushParentRefInvalidError = targetErrors.ParentRefInvalidError;
-export type ConfigPushParentRefInvalidError = InstanceType<typeof ConfigPushParentRefInvalidError>;
-
-/**
- * The resolved branch has no project ref yet (still provisioning) — guards
- * against an empty/placeholder ref reaching a push target.
- */
-export const ConfigPushBranchNotReadyError = targetErrors.BranchNotReadyError;
-export type ConfigPushBranchNotReadyError = InstanceType<typeof ConfigPushBranchNotReadyError>;
-
-export class ConfigPushBranchResolveNetworkError extends Data.TaggedError(
-  "ConfigPushBranchResolveNetworkError",
-)<DecodableNetworkErrorArgs> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return this.decode === true
-      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
-      : actionability.externalNetwork;
-  }
-}
-
-export class ConfigPushBranchResolveStatusError extends Data.TaggedError(
-  "ConfigPushBranchResolveStatusError",
-)<StatusErrorArgs> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
-  }
-}
-
 // The getProject probe that tells the user whether ref is the linked project or a branch is
 // entirely best-effort: a 404 is the branch signal, and any other outcome (a timeout, a
 // transport failure, or an unexpected status) degrades to an uncertain target rather than
 // aborting the push. There is no error class for this probe — it never fails the command.
-
-/**
- * The user declined the branch confirmation gate. Mirrors `projects delete`/`db reset`'s
- * identical top-level "are you sure" cancellation shape: declining fails (exit 1), matching
- * every other top-level confirmation gate in this codebase; the per-service `keep()` prompts
- * below are unrelated and still exit 0 on decline. `suggestion` always names the
- * `--yes`/`SUPABASE_YES` escape hatch, since a machine-mode or non-TTY decline never renders the
- * interactive prompt's own inline hint.
- */
-export class ConfigPushCancelledError extends Data.TaggedError("ConfigPushCancelledError")<{
-  readonly message: string;
-  readonly suggestion?: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.cancelled;
-  }
-}
 
 export class ConfigPushListAddonsNetworkError extends Data.TaggedError(
   "ConfigPushListAddonsNetworkError",

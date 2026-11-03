@@ -2,6 +2,8 @@ import { Layer } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import {
@@ -14,6 +16,7 @@ import { debugLoggerLayer } from "../../../../command-internal/debug-logger.laye
 import { telemetryStateLayer } from "../../../../telemetry/telemetry-state.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { computeNew } from "./new.handler.ts";
+import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 
 const config = {
   name: Argument.String("name").pipe(
@@ -110,4 +113,7 @@ export const computeNewCommand = Command.make("new", config).pipe(
     computeNew(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),
   Command.provide(computeNewRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

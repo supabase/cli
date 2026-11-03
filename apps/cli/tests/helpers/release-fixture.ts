@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- the fixture owns a local native listener.
 import { createServer } from "node:http";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 
 const TARGETS = ["darwin-arm64", "linux-amd64", "linux-arm64"] as const;
 
@@ -20,13 +20,15 @@ export interface ReleaseFixture {
   readonly requests: Array<string>;
 }
 
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+
 const sha256 = (text: string | Uint8Array) => createHash("sha256").update(text).digest("hex");
 
 /** Serves `/releases/…`, `/token` and `/v2/…` from OS-assigned loopback port until the scope closes. */
 export const startReleaseFixture = Effect.acquireRelease(
-  Effect.callback<{ close: () => Promise<void>; fixture: ReleaseFixture }>((resume) => {
+  Effect.gen(function* () {
     const routes = new Map<string, Served>([
-      ["/token", { body: JSON.stringify({ token: "anon" }) }],
+      ["/token", { body: yield* encodeJson({ token: "anon" }) }],
     ]);
     const failing = new Map<string, number>();
     const requests: Array<string> = [];
@@ -44,22 +46,29 @@ export const startReleaseFixture = Effect.acquireRelease(
           response.setHeader(name, value);
       response.end(served?.body ?? "");
     });
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (address === null || typeof address === "string") return;
-      resume(
-        Effect.succeed({
-          close: () =>
-            new Promise<void>((done) => {
-              server.close(() => done());
-              server.closeAllConnections();
-            }),
-          fixture: { origin: `http://127.0.0.1:${address.port}`, routes, failing, requests },
-        }),
-      );
+    const port = yield* Effect.callback<number>((resume) => {
+      const onError = (error: Error) => resume(Effect.die(error));
+      server.once("error", onError);
+      server.listen(0, "127.0.0.1", () => {
+        server.off("error", onError);
+        const address = server.address();
+        if (address === null || typeof address === "string") return;
+        resume(Effect.succeed(address.port));
+      });
     });
+    const fixture: ReleaseFixture = {
+      origin: `http://127.0.0.1:${port}`,
+      routes,
+      failing,
+      requests,
+    };
+    return { server, fixture };
   }),
-  ({ close }) => Effect.promise(close),
+  ({ server }) =>
+    Effect.callback<void>((resume) => {
+      server.close(() => resume(Effect.void));
+      server.closeAllConnections();
+    }),
 ).pipe(Effect.map(({ fixture }) => fixture));
 
 /** The env that points the stack's release resolver at `fixture`. */

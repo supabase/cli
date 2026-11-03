@@ -1,11 +1,9 @@
 import { CliError, Command } from "effect/cli";
 import { describe, expect, it } from "vitest";
-import { networkRestrictionsCommand } from "../../commands/network-restrictions/network-restrictions.command.ts";
+import { ssoCommand } from "../../commands/sso/sso.command.ts";
 import { textCliOutputFormatter } from "./text-formatter.ts";
 
-const testRoot = Command.make("supabase").pipe(
-  Command.withSubcommands([networkRestrictionsCommand]),
-);
+const testRoot = Command.make("supabase").pipe(Command.withSubcommands([ssoCommand]));
 
 describe("textCliOutputFormatter", () => {
   it("preserves default parser suggestions for unchanged errors", () => {
@@ -27,18 +25,18 @@ describe("textCliOutputFormatter", () => {
   it("preserves default parser suggestions for unchanged siblings in rewritten errors", () => {
     const formatter = textCliOutputFormatter({
       rootCommand: testRoot,
-      args: ["network-restrictions", "--project-ref", "jacraenyzrorgjhsdvvf", "get", "--pla"],
+      args: ["sso", "--attribute-mapping-file", "mapping.json", "add", "--pla"],
     });
 
     const text = formatter.formatErrors([
       new CliError.UnrecognizedOption({
-        option: "--project-ref",
-        command: ["supabase", "network-restrictions"],
+        option: "--attribute-mapping-file",
+        command: ["supabase", "sso"],
         suggestions: [],
       }),
       new CliError.UnknownSubcommand({
-        subcommand: "jacraenyzrorgjhsdvvf",
-        parent: ["supabase", "network-restrictions"],
+        subcommand: "mapping.json",
+        parent: ["supabase", "sso"],
         suggestions: [],
       }),
       new CliError.UnrecognizedOption({
@@ -48,7 +46,7 @@ describe("textCliOutputFormatter", () => {
       }),
     ]);
 
-    expect(text).toContain("Hint: --project-ref is available on");
+    expect(text).toContain("Hint: --attribute-mapping-file is available on");
     expect(text).toContain("Unrecognized flag: --pla in command supabase projects create");
     expect(text).toContain("Did you mean this?");
     expect(text).toContain("--plan");

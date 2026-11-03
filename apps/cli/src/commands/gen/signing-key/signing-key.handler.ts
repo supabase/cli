@@ -6,9 +6,10 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { emitSuccessTrailer } from "../../../shared/cli/success-trailer.ts";
 import { findGitRootPath } from "../../../shared/git/git-root.ts";
-import { loadProjectEnv } from "../../../command-internal/db-config.toml-read.ts";
-import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
-import { DEFAULT_SIGNING_KEY } from "../../../command-internal/go-jwt.ts";
+import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
+import { loadCliProjectEnvFiles } from "../../../shared/config/cli-config-env.ts";
+import { DebugLogger } from "../../../shared/output/debug-logger.service.ts";
+import { DEFAULT_SIGNING_KEY } from "../../../command-internal/local-jwt.ts";
 import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { resolveYesWithProjectEnv } from "../../../command-internal/global-flags.ts";
@@ -55,6 +56,7 @@ interface SigningKeyJwk {
 
 interface ResolvedSigningKeysConfig {
   readonly configDisplayPath: string;
+  readonly configFormat: "toml" | "json";
   readonly configured: Option.Option<{
     actualPath: string;
     displayPath: string;
@@ -156,6 +158,7 @@ const loadSigningKeysConfig = Effect.fnUntraced(function* (cwd: string) {
   if (Option.isNone(paths.signingKeysPath)) {
     return {
       configDisplayPath: paths.configDisplayPath,
+      configFormat: paths.configFormat,
       configured: Option.none(),
     } satisfies ResolvedSigningKeysConfig;
   }
@@ -170,6 +173,7 @@ const loadSigningKeysConfig = Effect.fnUntraced(function* (cwd: string) {
     : [{ ...DEFAULT_SIGNING_KEY }];
   return {
     configDisplayPath: paths.configDisplayPath,
+    configFormat: paths.configFormat,
     configured: Option.some({ actualPath, displayPath, existingKeys }),
   } satisfies ResolvedSigningKeysConfig;
 });
@@ -215,8 +219,10 @@ export const genSigningKey = Effect.fn("gen.signing-key")(function* (flags: GenS
   return yield* Effect.gen(function* () {
     // Loaded here (not above) so a malformed `.env` still flushes telemetry: `SUPABASE_YES`
     // in `supabase/.env` must be able to auto-confirm the overwrite prompt below.
-    const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
-    const yes = yield* resolveYesWithProjectEnv(projectEnv);
+    const projectEnv = yield* loadCliProjectEnvFiles(cliSettings.workdir).pipe(
+      Effect.mapError((cause) => new DbConfigLoadError({ message: cause.message })),
+    );
+    const yes = yield* resolveYesWithProjectEnv({ ...projectEnv.values });
     // The configured signing-keys file is validated before any key is
     // generated, so a broken config fails fast without doing throwaway crypto work.
     const signingKeysConfig = yield* loadSigningKeysConfig(cliSettings.workdir);
@@ -227,8 +233,12 @@ export const genSigningKey = Effect.fn("gen.signing-key")(function* (flags: GenS
       const keyJson = yield* Schema.encodeEffect(signingKeyJson)(key).pipe(Effect.orDie);
       yield* output.raw(`${keyJson}\n`, "stdout");
       const defaultPath = path.join("supabase", "signing_keys.json");
+      const snippet =
+        signingKeysConfig.configFormat === "json"
+          ? '{ "auth": { "signing_keys_path": "./signing_keys.json" } }'
+          : '[auth]\nsigning_keys_path = "./signing_keys.json"';
       yield* emitSuccessTrailer(
-        `\nTo enable JWT signing keys in your local project:\n1. Save the generated key to ${emphasize(defaultPath)}\n2. Update your ${emphasize(signingKeysConfig.configDisplayPath)} with the new keys path\n\n[auth]\nsigning_keys_path = "./signing_keys.json"\n\n`,
+        `\nTo enable JWT signing keys in your local project:\n1. Save the generated key to ${emphasize(defaultPath)}\n2. Update your ${emphasize(signingKeysConfig.configDisplayPath)} with the new keys path\n\n${snippet}\n\n`,
       );
       return;
     }

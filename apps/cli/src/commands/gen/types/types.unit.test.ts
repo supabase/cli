@@ -1,28 +1,16 @@
-import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { ConfigProvider, Effect, Exit, Layer } from "effect";
-import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
-import { getHostname } from "../../../command-internal/hostname.ts";
+import { Effect, Exit } from "effect";
 import { parseSchemaFlags } from "../../../command-internal/schema-flags.ts";
 import {
   defaultSchemas,
   rootCaBundle,
   localDbContainerId,
-  localDbPassword,
   localNetworkId,
   parseQueryTimeoutMillis,
 } from "./types.shared.ts";
 
-const resolvePassword = (env: Record<string, string>) =>
-  localDbPassword().pipe(
-    Effect.provideService(
-      ConfigProvider.ConfigProvider,
-      ConfigProvider.fromEnvRecord(env, { preserveEmptyStrings: true }),
-    ),
-  );
-
 describe("parseQueryTimeoutMillis", () => {
-  it.effect("parses compound Go durations", () =>
+  it.effect("parses compound durations", () =>
     Effect.gen(function* () {
       expect(yield* parseQueryTimeoutMillis("15s")).toBe(15000);
       expect(yield* parseQueryTimeoutMillis("1h")).toBe(3600000);
@@ -76,7 +64,7 @@ describe("parseQueryTimeoutMillis", () => {
 
 describe("schema and id helpers", () => {
   it("normalizes comma separated and repeated schema flags", () => {
-    // pflag's StringSlice parses via encoding/csv with no trimming; an empty value yields no field.
+    // CSV parsing does no trimming; an empty value yields no field.
     expect(parseSchemaFlags(["public, auth", " storage ", ""])).toEqual([
       "public",
       " auth",
@@ -98,23 +86,6 @@ describe("schema and id helpers", () => {
     const longId = "a".repeat(60);
     expect(localDbContainerId(longId)).toBe(`supabase_db_${"a".repeat(40)}`);
   });
-
-  it.effect("reads the services hostname and db password from the environment", () =>
-    Effect.gen(function* () {
-      expect(yield* getHostname({ SUPABASE_SERVICES_HOSTNAME: "" })).toBe("127.0.0.1");
-      expect(yield* getHostname({ SUPABASE_SERVICES_HOSTNAME: "db.internal" })).toBe("db.internal");
-      expect(yield* resolvePassword({})).toBe("postgres");
-      expect(yield* resolvePassword({ SUPABASE_DB_PASSWORD: "secret" })).toBe("secret");
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          BunServices.layer,
-          runtimeInfoLayer,
-          ConfigProvider.layer(ConfigProvider.fromEnvRecord({ DOCKER_HOST: undefined })),
-        ),
-      ),
-    ),
-  );
 
   it("bundles the staging and production CA certificates", () => {
     expect(rootCaBundle().length).toBeGreaterThan(0);

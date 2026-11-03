@@ -1,5 +1,7 @@
 # `supabase notebooks pull [Notebook id]`
 
+Target: hosted, no consent — see [Command target](../../../../docs/command-target.md)
+
 Writes the linked project's notebooks into `supabase/notebooks/<name>.json`, one
 file per notebook. A notebook file holds the notebook's API attributes minus the
 ones a file cannot own: `name` is carried by the file name, and the server owns
@@ -7,14 +9,14 @@ the timestamps, the `owner` / `updated_by` identities, and `content.schema_versi
 
 ## Files Read
 
-| Path                                           | Format     | When                                                                                                        |
-| ---------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/notebooks/`                | dir        | when no notebook id is given — to preserve existing notebooks and find local-only notebooks                 |
-| `<workdir>/supabase/notebooks/<name>.json`     | JSON       | only for a local-only notebook the user chose to create in the project                                      |
-| `<workdir>/supabase/.temp/project-ref`         | plain text | when `--project-ref` and `SUPABASE_PROJECT_ID` are both unset                                               |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON       | existence check before the cache fill, once the project ref resolves                                        |
-| `<SUPABASE_HOME or ~/.supabase>/profile`       | plain text | when neither `--profile` nor `SUPABASE_PROFILE` is set — names the profile, defaulting to `supabase`        |
-| `<SUPABASE_PROFILE>` (YAML)                    | YAML       | when `SUPABASE_PROFILE` is a filesystem path rather than a built-in name; a read failure aborts the command |
+| Path                                           | Format     | When                                                                                                             |
+| ---------------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/notebooks/`                | dir        | when no notebook id is given — to preserve existing notebooks and find local-only notebooks                      |
+| `<workdir>/supabase/notebooks/<name>.json`     | JSON       | only for a local-only notebook the user chose to create in the project                                           |
+| `<workdir>/supabase/.temp/project-ref`         | plain text | when `--remote=<ref>` and `SUPABASE_PROJECT_ID` are both unset, and as the linked parent for `--remote=<branch>` |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON       | existence check before the cache fill, once the project ref resolves                                             |
+| `<SUPABASE_HOME or ~/.supabase>/profile`       | plain text | when neither `--profile` nor `SUPABASE_PROFILE` is set — names the profile, defaulting to `supabase`             |
+| `<SUPABASE_PROFILE>` (YAML)                    | YAML       | when `SUPABASE_PROFILE` is a filesystem path rather than a built-in name; a read failure aborts the command      |
 
 ## Files Written
 
@@ -57,13 +59,15 @@ nothing else is reconciled.
 
 ## API Routes
 
-| Method | Path                                | Auth   | Request body                    | Response (used fields)                                                                                                                                                                            |
-| ------ | ----------------------------------- | ------ | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/v2/projects/{ref}/notebooks`      | Bearer | —                               | `data[].id`, `data[].attributes.name`, `links.next` — broad pull only                                                                                                                             |
-| GET    | `/v2/projects/{ref}/notebooks/{id}` | Bearer | —                               | `data.{id,attributes.{name,description,favorite,content}}`                                                                                                                                        |
-| POST   | `/v2/projects/{ref}/notebooks`      | Bearer | `data.attributes` from the file | — (only for the create answer)                                                                                                                                                                    |
-| GET    | `/v1/projects`                      | Bearer | —                               | `id`, `name`, `organization_slug`, `region` — project picker; only when no ref comes from `--project-ref`, `SUPABASE_PROJECT_ID` or `.temp/project-ref`, stdin is a TTY and output is interactive |
-| GET    | `/v1/projects/{ref}`                | Bearer | —                               | linked-project cache fill — best-effort, only when `.temp/linked-project.json` is absent, `.temp/project-ref` is absent or names the same ref, and a token is available; failures are ignored     |
+| Method | Path                                | Auth         | Request body                    | Response (used fields)                                                                                                                                                                                                                                   |
+| ------ | ----------------------------------- | ------------ | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/v1/projects/{parent}/branches`    | Bearer token | none                            | `[{id, name, project_ref, is_default}]` — only for `--remote=<branch>` (or the deprecated `--project-ref=<branch>`), and for a bare `--remote` followed by a word that could name a branch; `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project |
+| `GET`  | `/v1/branches/{id}`                 | Bearer token | none                            | `{ref, status, …}` — only for `--remote=<branch UUID>` when no project is linked                                                                                                                                                                         |
+| GET    | `/v2/projects/{ref}/notebooks`      | Bearer       | —                               | `data[].id`, `data[].attributes.name`, `links.next` — broad pull only                                                                                                                                                                                    |
+| GET    | `/v2/projects/{ref}/notebooks/{id}` | Bearer       | —                               | `data.{id,attributes.{name,description,favorite,content}}`                                                                                                                                                                                               |
+| POST   | `/v2/projects/{ref}/notebooks`      | Bearer       | `data.attributes` from the file | — (only for the create answer)                                                                                                                                                                                                                           |
+| GET    | `/v1/projects`                      | Bearer       | —                               | `id`, `name`, `organization_slug`, `region` — project picker; only when no ref comes from `--remote=<ref>`, `SUPABASE_PROJECT_ID` or `.temp/project-ref`, stdin is a TTY and output is interactive                                                       |
+| GET    | `/v1/projects/{ref}`                | Bearer       | —                               | linked-project cache fill — best-effort, only when `.temp/linked-project.json` is absent, `.temp/project-ref` is absent or names the same ref, and a token is available; failures are ignored                                                            |
 
 The list route is walked by following `links.next` until it is null, rather than
 by counting rows: a short page cannot be told from an exact multiple of the page
@@ -74,7 +78,7 @@ size.
 | Code | Condition                                                                        |
 | ---- | -------------------------------------------------------------------------------- |
 | `0`  | success                                                                          |
-| `1`  | no project ref — not linked and no `--project-ref`                               |
+| `1`  | no project ref — not linked and no `--remote`                                    |
 | `1`  | the supplied notebook id is not a UUID                                           |
 | `1`  | the project holds two notebooks of one name during a broad pull                  |
 | `1`  | the notebooks path exists but cannot be read as a directory                      |
@@ -86,13 +90,13 @@ size.
 
 ## Environment Variables
 
-| Variable                | Purpose                                   | Required?                                                                 |
-| ----------------------- | ----------------------------------------- | ------------------------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | Management API bearer token               | no (falls back to the stored login)                                       |
-| `SUPABASE_PROFILE`      | built-in profile name or YAML file path   | no (falls back to `~/.supabase/profile` -> `supabase`)                    |
-| `SUPABASE_PROJECT_ID`   | project ref when `--project-ref` is unset | no (falls back to `supabase/.temp/project-ref`, then the picker on a TTY) |
-| `SUPABASE_WORKDIR`      | project directory the command acts on     | no (falls back to `--workdir`, then the ancestor walk)                    |
-| `SUPABASE_HOME`         | directory holding `telemetry.json`        | no (falls back to `~/.supabase`)                                          |
+| Variable                | Purpose                                                                                                          | Required?                                                                 |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | Management API bearer token                                                                                      | no (falls back to the stored login)                                       |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path                                                                          | no (falls back to `~/.supabase/profile` -> `supabase`)                    |
+| `SUPABASE_PROJECT_ID`   | project ref when `--remote=<ref>` is unset; also the parent project that `--remote=<branch>` is resolved against | no (falls back to `supabase/.temp/project-ref`, then the picker on a TTY) |
+| `SUPABASE_WORKDIR`      | project directory the command acts on                                                                            | no (falls back to `--workdir`, then the ancestor walk)                    |
+| `SUPABASE_HOME`         | directory holding `telemetry.json`                                                                               | no (falls back to `~/.supabase`)                                          |
 
 ## Telemetry Events Fired
 
@@ -100,9 +104,9 @@ size.
 | ---------------------- | ---------------------------------------------- | -------------------------------------------------- |
 | `cli_command_executed` | post-handler, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags`, project group |
 
-`--project-ref` is marked telemetry-safe, so its value is recorded verbatim —
-the same call `functions download` makes for the same flag. The notebook id
-argument is not recorded.
+`--remote` is recorded as `true` (bare), the ref, or `<redacted>`; the deprecated
+`--project-ref` is recorded verbatim only when it is ref-shaped, never a branch name.
+The notebook id argument is not recorded.
 
 ## Filename safety and failures
 

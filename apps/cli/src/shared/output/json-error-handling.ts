@@ -14,7 +14,7 @@ export const withJsonErrorHandling = <A, E, R>(
         const processControl = yield* ProcessControl;
         if (output.format === "text") return yield* Effect.fail(error);
         // `Runtime.getErrorExitCode` defaults to 1 unless the error opts in via
-        // `[Runtime.errorExitCode]`, so a delegated child's real exit code still
+        // `[Runtime.errorExitCode]`, so a typed error's custom exit code still
         // reaches the user under json/stream-json, matching the text-mode path.
         yield* processControl.setExitCode(Runtime.getErrorExitCode(error));
         yield* ignoreStdoutClosed(output.fail(normalizeCliError(error)));

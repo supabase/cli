@@ -49,6 +49,12 @@ installs the command span plus the per-invocation analytics context:
 That same context is then inherited by milestone events captured inside the command handler, which
 lets one CLI invocation share a single `command_run_id`.
 
+The wrapper also rejects the removed global `--create-ticket` flag (with any value) before the
+handler runs. The rejection happens inside the instrumented region, so it still emits
+`cli_command_executed` with an `error_fingerprint` ending in `:removed_flag`. A command that fails
+earlier, such as on a missing credential in its runtime layer, or that shows help, reports that
+instead.
+
 ## Event Model
 
 The primary analytics event is:
@@ -79,9 +85,8 @@ and the KPI query semantics (strict recovery, repeat errors, internal/unknown
 bug rate) are documented there in `CliErrorActionabilityMetricDefinitions`.
 A `workflow` property is reserved in the catalog but not emitted yet.
 
-Not every failure is classified: pure Go-proxy commands report through the Go
-binary, which does not emit these fields, and events from CLI versions before
-they existed never carry them. KPI queries therefore scope to
+Not every failure is classified: events from CLI versions before these fields
+existed never carry them. KPI queries therefore scope to
 `error_kind IS NOT NULL`, and the `classificationCoverage` metric definition
 reports the classified share of failures so the covered fraction is explicit
 rather than assumed.
@@ -91,11 +96,11 @@ Local-runtime commands also carry properties that split error rates by runtime:
 - `stack_backend` (`legacy` or `stack`) on commands routed by `experimental.stack`; see
   [backend selection](stack-commands.md)
 - `stack_runtime` (`docker`, `podman`, or `native`): the runtime of the stack a stack-backend
-  command looked up, which for `--db-url` may be the project stack even when the URL targets
+  command looked up, which for `--remote=<url>` may be the project stack even when the URL targets
   another database
 - `orioledb` (boolean) once the command resolves local database config, `true` when the project
   selects an OrioleDB image (`db.orioledb_version` on a 15/17 project). It describes local config
-  only; for linked or `--db-url` targets it says nothing about the remote database
+  only; for `--remote` targets it says nothing about the remote database
 
 Flag capture is intentionally conservative: `flags` records only flags changed on the command
 line, and redacts each value unless it is boolean, a choice flag, or listed in the command's
@@ -120,6 +125,10 @@ The analytics layer attaches a base set of properties to every PostHog event:
 - `is_tty`
 - `is_ci`
 - `is_agent`
+- `agent_name` (the detected agent, such as `claude`, `codex`, or `cursor_cli`; only when
+  `is_agent` is true)
+- `is_eval` (true when `SUPABASE_EVAL` is `1` or `true`, so automated evaluation runs can be
+  excluded from usage metrics)
 - `env_signals` (allowlisted agent and terminal environment variables, when any are set)
 - `os`
 - `arch`

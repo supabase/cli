@@ -1,7 +1,8 @@
 import type { V1CreateAnOrganizationOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
   buildTestRuntime,
@@ -10,6 +11,8 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { orgsCreate } from "./create.handler.ts";
 
@@ -23,9 +26,14 @@ const CREATED: CreatedOrganization = {
 
 const tempRoot = useTempWorkdir("supabase-orgs-create-int-");
 
+const consentLayer = Layer.mergeAll(
+  Layer.succeed(YesFlag, true),
+  Layer.succeed(TargetPolicy, { group: "account", consent: "yes" }),
+);
+
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  readonly outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   readonly response?: CreatedOrganization;
   readonly status?: number;
   readonly network?: "fail";
@@ -38,12 +46,15 @@ function setup(opts: SetupOpts = {}) {
     network: opts.network,
   });
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
-  const layer = buildTestRuntime({
-    out,
-    api,
-    cliSettings,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
-  });
+  const layer = Layer.mergeAll(
+    buildTestRuntime({
+      out,
+      api,
+      cliSettings,
+      outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
+    }),
+    consentLayer,
+  );
   return { layer, out, api };
 }
 
@@ -55,12 +66,15 @@ function setupTracked(opts: SetupOpts = {}) {
   });
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
   const telemetry = mockTelemetryStateTracked();
-  const layer = buildTestRuntime({
-    out,
-    api,
-    cliSettings,
-    telemetry: telemetry.layer,
-  });
+  const layer = Layer.mergeAll(
+    buildTestRuntime({
+      out,
+      api,
+      cliSettings,
+      telemetry: telemetry.layer,
+    }),
+    consentLayer,
+  );
   return { layer, out, api, telemetry };
 }
 
@@ -87,8 +101,8 @@ describe("orgs create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("emits Go-byte-exact preamble + indented JSON for --output json", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+  it.effect("emits byte-exact preamble + indented JSON for --output json", () => {
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* orgsCreate({ name: "Acme" });
       expect(out.stdoutText).toContain("Created organization: combined-fuchsia-lion\n");
@@ -98,7 +112,7 @@ describe("orgs create integration", () => {
   });
 
   it.effect("emits preamble + YAML object for --output yaml", () => {
-    const { layer, out } = setup({ goOutput: "yaml" });
+    const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* orgsCreate({ name: "Acme" });
       expect(out.stdoutText).toContain("Created organization: combined-fuchsia-lion\n");
@@ -107,7 +121,7 @@ describe("orgs create integration", () => {
   });
 
   it.effect("emits preamble + TOML for --output toml", () => {
-    const { layer, out } = setup({ goOutput: "toml" });
+    const { layer, out } = setup({ outputFlag: "toml" });
     return Effect.gen(function* () {
       yield* orgsCreate({ name: "Acme" });
       expect(out.stdoutText).toContain("Created organization: combined-fuchsia-lion\n");
@@ -117,7 +131,7 @@ describe("orgs create integration", () => {
   });
 
   it.effect("emits preamble + env vars for --output env (create-only branch)", () => {
-    const { layer, out } = setup({ goOutput: "env" });
+    const { layer, out } = setup({ outputFlag: "env" });
     return Effect.gen(function* () {
       yield* orgsCreate({ name: "Acme" });
       expect(out.stdoutText).toContain("Created organization: combined-fuchsia-lion\n");
@@ -145,7 +159,7 @@ describe("orgs create integration", () => {
   });
 
   it.effect("treats --output pretty as identical to text mode (preamble + table)", () => {
-    const { layer, out } = setup({ goOutput: "pretty" });
+    const { layer, out } = setup({ outputFlag: "pretty" });
     return Effect.gen(function* () {
       yield* orgsCreate({ name: "Acme" });
       expect(out.stdoutText).toContain("Created organization: combined-fuchsia-lion");
@@ -155,7 +169,7 @@ describe("orgs create integration", () => {
   });
 
   it.effect("--output flag wins over --output-format", () => {
-    const { layer, out } = setup({ format: "json", goOutput: "yaml" });
+    const { layer, out } = setup({ format: "json", outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* orgsCreate({ name: "Acme" });
       expect(out.stdoutText).toContain("name: Acme");
@@ -220,4 +234,9 @@ describe("orgs create integration", () => {
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedConsent("orgs create", {
+  api: { response: { status: 201, body: CREATED } },
+  invoke: () => ({ run: orgsCreate({ name: "Acme" }) }),
 });

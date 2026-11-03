@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Layer, PlatformError, Sink, Stream } from "effect";
+import { Clock, Deferred, Effect, Layer, PlatformError, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/process";
 
 import { runDockerEffect } from "./cli.ts";
@@ -66,11 +66,13 @@ function mockSpawner(
 const IMAGE = "supabase/postgres:17";
 
 describe("resolveDeadline", () => {
-  it("defaults to the shared budget and accepts a caller-sized one", () => {
-    const before = Date.now();
-    expect(resolveDeadline()).toBeGreaterThanOrEqual(before + RESOLVE_BUDGET_MS - 50);
-    expect(resolveDeadline(1_000)).toBeLessThanOrEqual(Date.now() + 1_000);
-  });
+  it.live("defaults to the shared budget and accepts a caller-sized one", () =>
+    Effect.gen(function* () {
+      const before = yield* Clock.currentTimeMillis;
+      expect(resolveDeadline()).toBeGreaterThanOrEqual(before + RESOLVE_BUDGET_MS - 50);
+      expect(resolveDeadline(1_000)).toBeLessThanOrEqual((yield* Clock.currentTimeMillis) + 1_000);
+    }),
+  );
 });
 
 describe("resolveImage", () => {
@@ -172,7 +174,8 @@ describe("resolveImage", () => {
       if (args[0] === "--version") return { exitCode: 0 };
       return { exitCode: 1, stderr: "no such image" };
     });
-    return resolveImage(mock.spawner, IMAGE, Date.now() - 10_000).pipe(
+    return Clock.currentTimeMillis.pipe(
+      Effect.flatMap((now) => resolveImage(mock.spawner, IMAGE, now - 10_000)),
       Effect.flip,
       Effect.map((error) => {
         expect(error.message).toContain("candidate budget exhausted");
@@ -202,46 +205,64 @@ describe("ensureImage", () => {
   const layerFor = (mock: ReturnType<typeof mockSpawner>) =>
     Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, mock.spawner);
 
-  it("memoizes per image, including across differing deadlines", async () => {
-    const mock = mockSpawner(() => ({ exitCode: 0 }));
-    const image = `memo-${Date.now()}-a`;
-    const first = await ensureImage(image, resolveDeadline(5_000), layerFor(mock));
-    const spawnsAfterFirst = mock.spawned.length;
-    const second = await ensureImage(image, resolveDeadline(60_000), layerFor(mock));
-    expect(second).toBe(first);
-    expect(mock.spawned.length).toBe(spawnsAfterFirst);
-  });
+  it.live("memoizes per image, including across differing deadlines", () =>
+    Effect.gen(function* () {
+      const mock = mockSpawner(() => ({ exitCode: 0 }));
+      const image = `memo-${yield* Clock.currentTimeMillis}-a`;
+      const first = yield* Effect.promise(() =>
+        ensureImage(image, resolveDeadline(5_000), layerFor(mock)),
+      );
+      const spawnsAfterFirst = mock.spawned.length;
+      const second = yield* Effect.promise(() =>
+        ensureImage(image, resolveDeadline(60_000), layerFor(mock)),
+      );
+      expect(second).toBe(first);
+      expect(mock.spawned.length).toBe(spawnsAfterFirst);
+    }),
+  );
 
-  it("memoizes failures so the retry ladder is never re-paid", async () => {
-    const mock = mockSpawner((args) =>
-      args[0] === "--version" ? { exitCode: 0 } : { exitCode: 1, stderr: "no such image" },
-    );
-    const image = `memo-${Date.now()}-fail`;
-    await expect(ensureImage(image, Date.now() - 1_000, layerFor(mock))).rejects.toThrow();
-    const spawnsAfterFirst = mock.spawned.length;
-    await expect(ensureImage(image, Date.now() - 1_000, layerFor(mock))).rejects.toThrow();
-    expect(mock.spawned.length).toBe(spawnsAfterFirst);
-  });
+  it.live("memoizes failures so the retry ladder is never re-paid", () =>
+    Effect.gen(function* () {
+      const mock = mockSpawner((args) =>
+        args[0] === "--version" ? { exitCode: 0 } : { exitCode: 1, stderr: "no such image" },
+      );
+      const image = `memo-${yield* Clock.currentTimeMillis}-fail`;
+      const firstDeadline = (yield* Clock.currentTimeMillis) - 1_000;
+      yield* Effect.promise(() =>
+        expect(ensureImage(image, firstDeadline, layerFor(mock))).rejects.toThrow(),
+      );
+      const spawnsAfterFirst = mock.spawned.length;
+      const secondDeadline = (yield* Clock.currentTimeMillis) - 1_000;
+      yield* Effect.promise(() =>
+        expect(ensureImage(image, secondDeadline, layerFor(mock))).rejects.toThrow(),
+      );
+      expect(mock.spawned.length).toBe(spawnsAfterFirst);
+    }),
+  );
 
-  it("serializes distinct images: the second never spawns before the first settles", async () => {
-    const firstSpawnCounts: Array<number> = [];
-    const mock = mockSpawner((args) => {
-      if (args[0] === "--version") return { exitCode: 0 };
-      return { exitCode: 1, stderr: "no such image" };
-    });
-    const imageA = `queue-${Date.now()}-a`;
-    const imageB = `queue-${Date.now()}-b`;
-    // Enqueue both before awaiting either; the queue must fully settle A
-    // (including its failure) before B's first spawn happens.
-    const a = ensureImage(imageA, Date.now() - 1_000, layerFor(mock)).catch(() => "a-done");
-    const spawnsWhenBEnqueued = mock.spawned.length;
-    const b = ensureImage(imageB, Date.now() - 1_000, layerFor(mock)).catch(() => "b-done");
-    expect(mock.spawned.length).toBe(spawnsWhenBEnqueued);
-    await a;
-    firstSpawnCounts.push(mock.spawned.length);
-    await b;
-    expect(firstSpawnCounts[0]).toBeLessThanOrEqual(mock.spawned.length);
-  });
+  it.live("serializes distinct images: the second never spawns before the first settles", () =>
+    Effect.gen(function* () {
+      const firstSpawnCounts: Array<number> = [];
+      const mock = mockSpawner((args) => {
+        if (args[0] === "--version") return { exitCode: 0 };
+        return { exitCode: 1, stderr: "no such image" };
+      });
+      const imageA = `queue-${yield* Clock.currentTimeMillis}-a`;
+      const imageB = `queue-${yield* Clock.currentTimeMillis}-b`;
+      const deadlineA = (yield* Clock.currentTimeMillis) - 1_000;
+      const deadlineB = (yield* Clock.currentTimeMillis) - 1_000;
+      // Enqueue both before awaiting either; the queue must fully settle A
+      // (including its failure) before B's first spawn happens.
+      const a = ensureImage(imageA, deadlineA, layerFor(mock)).catch(() => "a-done");
+      const spawnsWhenBEnqueued = mock.spawned.length;
+      const b = ensureImage(imageB, deadlineB, layerFor(mock)).catch(() => "b-done");
+      expect(mock.spawned.length).toBe(spawnsWhenBEnqueued);
+      yield* Effect.promise(() => a);
+      firstSpawnCounts.push(mock.spawned.length);
+      yield* Effect.promise(() => b);
+      expect(firstSpawnCounts[0]).toBeLessThanOrEqual(mock.spawned.length);
+    }),
+  );
 });
 
 describe("runDockerEffect", () => {

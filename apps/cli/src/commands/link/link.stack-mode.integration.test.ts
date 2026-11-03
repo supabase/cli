@@ -20,14 +20,15 @@ import {
   statusCodeFailure,
   useTempWorkdir,
 } from "../../../tests/helpers/command-mocks.ts";
-import { projectStateModeLayer } from "../../command-internal/project-state-mode.ts";
+import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-values-layer.ts";
+import { projectStateModeLayer } from "../../shared/config/project-state-mode.ts";
 import {
   ProjectLinkIoError,
   ProjectLinkMalformedError,
   readProjectLink,
   writeProjectLink,
-} from "../../command-internal/project-link.ts";
-import { RemoteTarget } from "../../config/remote-target.service.ts";
+} from "../../shared/config/project-link.ts";
+import { ProjectRefResolver } from "../../config/project-ref.service.ts";
 import { link } from "./link.handler.ts";
 import type { LinkFlags } from "./link.command.ts";
 
@@ -126,6 +127,7 @@ function setup(opts: SetupOpts = {}) {
       telemetry: mockTelemetryStateTracked().layer,
       fileSystem: recorder.layer,
     }),
+    cliConfigValuesTestLayer,
     projectStateModeLayer("stack"),
   );
   return { layer, workdir: tempRoot.current, accessed: recorder.accessed };
@@ -177,15 +179,17 @@ describe("link integration in stack mode", () => {
 
   it.effect("never reads or writes supabase/.temp and ignores a legacy link left there", () => {
     const { layer, workdir, accessed } = setup();
-    seedLegacyStateDecoys(workdir);
-    return Effect.gen(function* () {
-      yield* link(flags());
+    return Effect.andThen(
+      seedLegacyStateDecoys(workdir),
+      Effect.gen(function* () {
+        yield* link(flags());
 
-      const document = yield* readProjectLink(workdir);
-      expect(Option.map(document, (value) => value.project.ref)).toEqual(Option.some(VALID_REF));
-      expect(accessed.some((entry) => entry.includes(".link.json"))).toBe(true);
-      expect(legacyStateAccesses(accessed)).toEqual([]);
-    }).pipe(Effect.provide(layer));
+        const document = yield* readProjectLink(workdir);
+        expect(Option.map(document, (value) => value.project.ref)).toEqual(Option.some(VALID_REF));
+        expect(accessed.some((entry) => entry.includes(".link.json"))).toBe(true);
+        expect(legacyStateAccesses(accessed)).toEqual([]);
+      }).pipe(Effect.provide(layer)),
+    );
   });
 
   it.effect("keeps the link, its staged writes, and the stack lease out of version control", () => {
@@ -333,9 +337,9 @@ describe("link integration in stack mode", () => {
         fetchedAt: "2026-01-01T00:00:00.000Z",
       });
 
-      const resolver = yield* RemoteTarget;
+      const resolver = yield* ProjectRefResolver;
 
-      expect((yield* resolver.resolve(Option.none())).ref).toBe(BRANCH_REF);
+      expect(yield* resolver.resolve(Option.none())).toBe(BRANCH_REF);
     }).pipe(Effect.provide(layer));
   });
 
@@ -346,7 +350,7 @@ describe("link integration in stack mode", () => {
       const path = yield* Path.Path;
       yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
       yield* fs.writeFileString(path.join(workdir, "supabase", ".link.json"), "{not json");
-      const resolver = yield* RemoteTarget;
+      const resolver = yield* ProjectRefResolver;
 
       const error = yield* resolver.resolve(Option.none()).pipe(Effect.flip);
 
@@ -361,7 +365,7 @@ describe("link integration in stack mode", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       yield* fs.makeDirectory(path.join(workdir, "supabase", ".link.json"), { recursive: true });
-      const resolver = yield* RemoteTarget;
+      const resolver = yield* ProjectRefResolver;
 
       const error = yield* resolver.resolve(Option.none()).pipe(Effect.flip);
 

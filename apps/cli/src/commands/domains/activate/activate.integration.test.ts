@@ -1,6 +1,6 @@
 import { type V1GetHostnameConfigOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Option, Schema } from "effect";
+import { Cause, Effect, Exit, Layer, Option, FileSystem, Schema } from "effect";
 
 import { mockAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -13,12 +13,16 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   projectResponse,
   realLinkedProjectCache,
 } from "../../../../tests/helpers/permission-real-layers.ts";
 import { domainsActivate } from "./activate.handler.ts";
+import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const HOSTNAME_RESPONSE: typeof V1GetHostnameConfigOutput.Type = {
   status: "5_services_reconfigured",
@@ -38,11 +42,11 @@ const HOSTNAME_RESPONSE: typeof V1GetHostnameConfigOutput.Type = {
   },
 };
 
-type GoOutput = "env" | "pretty" | "json" | "toml" | "yaml";
+type OutputFlagValue = "env" | "pretty" | "json" | "toml" | "yaml";
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: GoOutput;
+  readonly outputFlag?: OutputFlagValue;
   readonly status?: number;
   readonly network?: "fail";
   readonly response?: unknown;
@@ -50,6 +54,12 @@ interface SetupOpts {
 
 const tempRoot = useTempWorkdir("supabase-domains-activate-int-");
 
+const buildRuntime = (opts: Parameters<typeof buildTestRuntime>[0]) =>
+  Layer.mergeAll(
+    buildTestRuntime(opts),
+    Layer.succeed(YesFlag, true),
+    Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+  );
 const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 function setup(opts: SetupOpts = {}) {
@@ -62,21 +72,23 @@ function setup(opts: SetupOpts = {}) {
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
   const telemetry = mockTelemetryStateTracked();
   const linkedProjectCache = mockLinkedProjectCacheTracked();
-  const layer = buildTestRuntime({
+  const layer = buildRuntime({
     out,
     api,
     cliSettings,
     analytics,
     telemetry: telemetry.layer,
     linkedProjectCache: linkedProjectCache.layer,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api, analytics, telemetry, linkedProjectCache };
 }
 
-const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: Option.none<boolean>() };
-
-const DeprecationJsonObject = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
+const baseFlags = {
+  remote: Option.none(),
+  projectRef: Option.none<string>(),
+  includeRawOutput: Option.none<boolean>(),
+};
 
 describe("domains activate integration", () => {
   it.effect("suggests upgrade from entitlement_required envelope on 400", () => {
@@ -132,47 +144,11 @@ describe("domains activate integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("emits indented Go JSON to stdout for -o json", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+  it.effect("emits indented JSON to stdout for -o json", () => {
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* domainsActivate(baseFlags);
       expect(out.stdoutText.startsWith("{")).toBe(true);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect(
-    "warns on stderr and keeps stdout JSON parseable when --include-raw-output is set",
-    () => {
-      const { layer, out } = setup();
-      return Effect.gen(function* () {
-        yield* domainsActivate({ projectRef: Option.none(), includeRawOutput: Option.some(true) });
-        expect(out.stderrText).toBe(
-          "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n",
-        );
-        const parsed = yield* Schema.decodeEffect(DeprecationJsonObject)(out.stdoutText);
-        expect(parsed.custom_hostname).toBe("shop.acme.dev");
-      }).pipe(Effect.provide(layer));
-    },
-  );
-
-  it.effect("warns but does not force JSON when --include-raw-output=false", () => {
-    const { layer, out } = setup();
-    return Effect.gen(function* () {
-      yield* domainsActivate({ projectRef: Option.none(), includeRawOutput: Option.some(false) });
-      expect(
-        out.stderrText.startsWith(
-          "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n",
-        ),
-      ).toBe(true);
-      expect(out.stdoutText).toBe("");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("does not warn when --include-raw-output is not set", () => {
-    const { layer, out } = setup();
-    return Effect.gen(function* () {
-      yield* domainsActivate(baseFlags);
-      expect(out.stderrText).not.toContain("deprecated");
     }).pipe(Effect.provide(layer));
   });
 
@@ -234,7 +210,7 @@ describe("domains activate integration", () => {
         workdir: tempRoot.current,
         projectId: Option.none(),
       });
-      const layer = buildTestRuntime({
+      const layer = buildRuntime({
         out,
         api,
         cliSettings,
@@ -264,4 +240,14 @@ describe("domains activate integration", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+});
+
+describeHostedConsent("domains activate", {
+  api: { response: { status: 201, body: HOSTNAME_RESPONSE } },
+  invoke: () => ({ run: domainsActivate(baseFlags) }),
+});
+
+describeHostedTargetSelection("domains activate", {
+  respond: (request) => Effect.succeed(jsonResponse(request, 201, HOSTNAME_RESPONSE)),
+  run: (flags) => domainsActivate({ ...baseFlags, ...flags }),
 });

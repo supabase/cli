@@ -18,9 +18,10 @@ import {
 import { makeTelemetryIdentity } from "../../../shared/telemetry/identity.ts";
 import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
 import { storageCommand } from "../storage.command.ts";
+import { commandTargetLayer } from "../../../shared/output/command-target.layer.ts";
 
 // Proves `--jobs`'s negative-value rejection is wired into the real command tree, ahead of the
-// `--experimental` gate and the `--linked`/`--local` mutex check in the handler — not just
+// `--experimental` gate and the `--remote`/`--local` mutex check in the handler — not just
 // reachable by calling `storageCp` directly with a handcrafted flags object, which
 // `cp.integration.test.ts` can't exercise since it calls the handler directly.
 const testRoot = Command.make("supabase").pipe(
@@ -34,6 +35,7 @@ function setup(args: ReadonlyArray<string>) {
     BunServices.layer,
     CliOutput.layer(textCliOutputFormatter()),
     out.layer,
+    commandTargetLayer.pipe(Layer.provide(out.layer)),
     Layer.succeed(CliArgs, { args }),
     // The jobs check never reaches `storageGatewayRuntimeLayer`'s lazy cliSettings/credentials
     // factory, but isolate ambient env defensively anyway.
@@ -64,7 +66,7 @@ function setup(args: ReadonlyArray<string>) {
 
 describe("storage cp --jobs negative rejection (command-tree wiring)", () => {
   it.effect(
-    "rejects --jobs=-1 with pflag's exact ParseUint message, ahead of the experimental gate and the --linked/--local mutex conflict",
+    "rejects --jobs=-1 with the exact ParseUint message, ahead of the experimental gate and the --remote/--local mutex conflict",
     () => {
       const args = [
         "storage",
@@ -72,7 +74,7 @@ describe("storage cp --jobs negative rejection (command-tree wiring)", () => {
         "ss:///bucket/a",
         "ss:///bucket/b",
         "--jobs=-1",
-        "--linked",
+        "--remote",
         "--local",
       ];
       const { layer } = setup(args);
@@ -84,10 +86,10 @@ describe("storage cp --jobs negative rejection (command-tree wiring)", () => {
           expect(Option.isSome(failure)).toBe(true);
           const causeText = Cause.pretty(exit.cause);
           expect(causeText).not.toContain("must set the --experimental flag to run this command");
-          expect(causeText).not.toContain("StorageMutuallyExclusiveFlags");
+          expect(causeText).not.toContain("TargetSelectorConflictError");
           // `normalizeCause` is the same rendering path `runCli` uses for parse failures.
           expect(normalizeCause(exit.cause).message).toBe(
-            'invalid argument "-1" for "-j, --jobs" flag: strconv.ParseUint: parsing "-1": invalid syntax',
+            'invalid argument "-1" for "-j, --jobs" flag: expected an unsigned integer',
           );
         }
       }).pipe(Effect.provide(layer));
@@ -95,52 +97,44 @@ describe("storage cp --jobs negative rejection (command-tree wiring)", () => {
   );
 
   // `-0` normalizes to negative zero in a numeric check but must still be rejected with its
-  // original spelling (`-01`, not `-1`); non-numeric tokens get the same exact pflag message.
+  // original spelling (`-01`, not `-1`); non-numeric tokens get the same exact message.
   it.effect.each([
     {
       token: "-0",
-      message:
-        'invalid argument "-0" for "-j, --jobs" flag: strconv.ParseUint: parsing "-0": invalid syntax',
+      message: 'invalid argument "-0" for "-j, --jobs" flag: expected an unsigned integer',
     },
     {
       token: "-01",
-      message:
-        'invalid argument "-01" for "-j, --jobs" flag: strconv.ParseUint: parsing "-01": invalid syntax',
+      message: 'invalid argument "-01" for "-j, --jobs" flag: expected an unsigned integer',
     },
     {
       token: "abc",
-      message:
-        'invalid argument "abc" for "-j, --jobs" flag: strconv.ParseUint: parsing "abc": invalid syntax',
+      message: 'invalid argument "abc" for "-j, --jobs" flag: expected an unsigned integer',
     },
     {
       token: "3.5",
-      message:
-        'invalid argument "3.5" for "-j, --jobs" flag: strconv.ParseUint: parsing "3.5": invalid syntax',
+      message: 'invalid argument "3.5" for "-j, --jobs" flag: expected an unsigned integer',
     },
     {
       token: "18446744073709551616",
-      message:
-        'invalid argument "18446744073709551616" for "-j, --jobs" flag: strconv.ParseUint: parsing "18446744073709551616": value out of range',
+      message: 'invalid argument "18446744073709551616" for "-j, --jobs" flag: value out of range',
     },
     // The value and error both get shell-escaped, so quotes/backslashes/newlines stay one
     // escaped line, never raw, in stderr.
     {
       token: 'a"b',
-      message:
-        'invalid argument "a\\"b" for "-j, --jobs" flag: strconv.ParseUint: parsing "a\\"b": invalid syntax',
+      message: 'invalid argument "a\\"b" for "-j, --jobs" flag: expected an unsigned integer',
     },
     {
       token: "a\\b",
-      message:
-        'invalid argument "a\\\\b" for "-j, --jobs" flag: strconv.ParseUint: parsing "a\\\\b": invalid syntax',
+      message: 'invalid argument "a\\\\b" for "-j, --jobs" flag: expected an unsigned integer',
     },
     {
       token: "1\n2",
-      message:
-        'invalid argument "1\\n2" for "-j, --jobs" flag: strconv.ParseUint: parsing "1\\n2": invalid syntax',
+      message: 'invalid argument "1\\n2" for "-j, --jobs" flag: expected an unsigned integer',
     },
   ])(
-    "rejects --jobs=$token at parse time with pflag's exact raw-token message",
+    "rejects --jobs=$token at parse time with the exact raw-token message",
     ({ token, message }) => {
       const args = ["storage", "cp", "ss:///bucket/a", "ss:///bucket/b", `--jobs=${token}`];
       const { layer } = setup(args);
@@ -159,7 +153,7 @@ describe("storage cp --jobs negative rejection (command-tree wiring)", () => {
 
   // `0x10`→16, `010`→octal 8, `1_0`→10: valid base-0 forms that must clear parsing.
   it.effect.each([{ token: "0x10" }, { token: "010" }, { token: "1_0" }])(
-    "accepts --jobs=$token (Go base-0 form) through flag parsing, reaching the experimental gate",
+    "accepts --jobs=$token (base-0 form) through flag parsing, reaching the experimental gate",
     ({ token }) => {
       const args = ["storage", "cp", "ss:///bucket/a", "ss:///bucket/b", `--jobs=${token}`];
       const { layer } = setup(args);
@@ -188,7 +182,7 @@ describe("storage cp --jobs negative rejection (command-tree wiring)", () => {
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).not.toContain("MissingArgument");
         expect(normalizeCause(exit.cause).message).toBe(
-          'invalid argument "-1" for "-j, --jobs" flag: strconv.ParseUint: parsing "-1": invalid syntax',
+          'invalid argument "-1" for "-j, --jobs" flag: expected an unsigned integer',
         );
       }
     }).pipe(Effect.provide(layer));

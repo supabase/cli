@@ -8,6 +8,7 @@ import {
   computeRoute,
   COMPUTE_PROJECT_REF,
 } from "../../../../../tests/helpers/compute.ts";
+import { describeComputeTargetSelection } from "../../../../../tests/helpers/compute-target-selection.ts";
 import {
   assertBlockDrift,
   assertPermissionDrift,
@@ -60,7 +61,7 @@ describe("compute status", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeStatus({ name: "api", projectRef: Option.none() });
+        yield* computeStatus({ name: "api", remote: Option.none(), projectRef: Option.none() });
 
         const stdout = out.stdoutText;
         expect(stdout).toContain("State");
@@ -112,7 +113,7 @@ describe("compute status", () => {
 
       return yield* Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        yield* computeStatus({ name: "api", projectRef: Option.none() });
+        yield* computeStatus({ name: "api", remote: Option.none(), projectRef: Option.none() });
 
         expect(http.routeKeys).toEqual([
           "GET /v1/projects",
@@ -148,7 +149,7 @@ describe("compute status", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeStatus({ name: "api", projectRef: Option.none() });
+        yield* computeStatus({ name: "api", remote: Option.none(), projectRef: Option.none() });
 
         const runtimeLine = out.stdoutText
           .split("\n")
@@ -173,7 +174,7 @@ describe("compute status", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeStatus({ name: "api", projectRef: Option.none() });
+        yield* computeStatus({ name: "api", remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stdoutText).toContain("2 declared");
       }).pipe(Effect.provide(layer));
@@ -200,7 +201,7 @@ describe("compute status", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeStatus({ name: "api", projectRef: Option.none() });
+        yield* computeStatus({ name: "api", remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stderrText).toContain("backend unreachable");
       }).pipe(Effect.provide(layer));
@@ -231,7 +232,7 @@ describe("compute status", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeStatus({ name: "api", projectRef: Option.none() });
+        yield* computeStatus({ name: "api", remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stdoutText).toContain("3/3 ready");
         expect(out.stdoutText).not.toContain("3/1 ready");
@@ -263,7 +264,7 @@ describe("compute status", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeStatus({ name: "api", projectRef: Option.none() });
+        yield* computeStatus({ name: "api", remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stdoutText).toContain("deleting");
         expect(out.stdoutText).not.toContain("re-run supabase compute push");
@@ -292,7 +293,7 @@ describe("compute status", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeStatus({ name: "api", projectRef: Option.none() });
+        yield* computeStatus({ name: "api", remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stdoutText).toContain("failed");
         expect(out.stdoutText).toContain("exit status 1");
@@ -316,7 +317,7 @@ describe("compute status", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeStatus({ name: "api", projectRef: Option.none() });
+        yield* computeStatus({ name: "api", remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stdoutText).toContain("deleting");
       }).pipe(Effect.provide(layer));
@@ -341,6 +342,7 @@ describe("compute status", () => {
       return yield* Effect.gen(function* () {
         const error = yield* computeStatus({
           name: "api",
+          remote: Option.none(),
           projectRef: Option.none(),
         }).pipe(Effect.flip);
 
@@ -378,6 +380,7 @@ describe("compute status", () => {
       return yield* Effect.gen(function* () {
         const error = yield* computeStatus({
           name: "api",
+          remote: Option.none(),
           projectRef: Option.none(),
         }).pipe(Effect.flip);
 
@@ -404,6 +407,7 @@ describe("compute status", () => {
       return yield* Effect.gen(function* () {
         const error = yield* computeStatus({
           name: "api",
+          remote: Option.none(),
           projectRef: Option.none(),
         }).pipe(Effect.flip);
 
@@ -435,6 +439,7 @@ describe("compute status", () => {
       return yield* Effect.gen(function* () {
         const error = yield* computeStatus({
           name: "api",
+          remote: Option.none(),
           projectRef: Option.none(),
         }).pipe(Effect.flip);
 
@@ -452,6 +457,7 @@ describe("compute status", () => {
       return yield* Effect.gen(function* () {
         const error = yield* computeStatus({
           name: "My_Compute",
+          remote: Option.none(),
           projectRef: Option.none(),
         }).pipe(Effect.flip);
 
@@ -479,7 +485,7 @@ describe("compute status", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeStatus({ name: "api", projectRef: Option.none() });
+        yield* computeStatus({ name: "api", remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stdoutText).toContain(path.join("packages", "api"));
       }).pipe(Effect.provide(layer));
@@ -505,7 +511,7 @@ describe("compute status", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeStatus({ name: "api", projectRef: Option.none() });
+        yield* computeStatus({ name: "api", remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stdoutText).toContain("active");
         expect(out.stdoutText).not.toContain("Source");
@@ -535,7 +541,7 @@ describe("compute status", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeStatus({ name: "api", projectRef: Option.none() });
+        yield* computeStatus({ name: "api", remote: Option.none(), projectRef: Option.none() });
 
         const success = out.messages.findLast(
           (message) => message.type === "success" && message.data !== undefined,
@@ -572,7 +578,7 @@ describe("compute status", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeStatus({ name: "api", projectRef: Option.none() });
+        yield* computeStatus({ name: "api", remote: Option.none(), projectRef: Option.none() });
 
         const results = out.messages.filter(
           (message) => message.type === "success" && message.data !== undefined,
@@ -599,7 +605,7 @@ describe("compute status", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeStatus({ name: "stray", projectRef: Option.none() });
+        yield* computeStatus({ name: "stray", remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stdoutText).not.toContain("compute/stray");
         expect(out.stdoutText).not.toContain("Source");
@@ -624,7 +630,7 @@ describe("compute status", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeStatus({ name: "root", projectRef: Option.none() });
+        yield* computeStatus({ name: "root", remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stdoutText).toContain("active");
         expect(http.routeKeys).toEqual([`GET ${computeRoute("/root")}`]);
@@ -640,7 +646,7 @@ describe("compute status", () => {
       const repo = yield* project();
       const { layer, out } = setupCompute({
         workdir: repo.dir,
-        goOutput: "toml",
+        outputFlag: "toml",
         routes: {
           [getRoute]: {
             status: 200,
@@ -650,7 +656,7 @@ describe("compute status", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeStatus({ name: "api", projectRef: Option.none() });
+        yield* computeStatus({ name: "api", remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stdoutText).toContain("compute_name = ");
         expect(out.stdoutText).not.toContain("undefined");
@@ -676,7 +682,11 @@ describe("compute status", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeStatus({ name: "api", projectRef: Option.some(otherRef) });
+        yield* computeStatus({
+          name: "api",
+          remote: Option.some({ _tag: "Ref", ref: otherRef }),
+          projectRef: Option.none(),
+        });
 
         expect(http.routeKeys).toEqual([`GET /v2/projects/${otherRef}/compute/api`]);
         expect(out.stdoutText).toContain("active");
@@ -703,7 +713,7 @@ describe("compute status", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeStatus({ name: "api", projectRef: Option.none() });
+        yield* computeStatus({ name: "api", remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stdoutText).toContain("private");
         expect(out.stdoutText).not.toContain("URL");
@@ -717,14 +727,16 @@ describe("compute status", () => {
       const repo = yield* project();
       const { layer, http } = setupCompute({
         workdir: repo.dir,
-        goOutput: "env",
+        outputFlag: "env",
         routes: { [getRoute]: { status: 200, body: { data: computeResource({ name: "api" }) } } },
       });
 
       return yield* Effect.gen(function* () {
-        const error = yield* computeStatus({ name: "api", projectRef: Option.none() }).pipe(
-          Effect.flip,
-        );
+        const error = yield* computeStatus({
+          name: "api",
+          remote: Option.none(),
+          projectRef: Option.none(),
+        }).pipe(Effect.flip);
 
         expect(error).toBeInstanceOf(ComputeEnvNotSupportedError);
         expect(http.routeKeys).toEqual([]);
@@ -738,10 +750,25 @@ describe("compute status", () => {
       const { layer, telemetry } = setupCompute({ workdir: repo.dir });
 
       return yield* Effect.gen(function* () {
-        yield* computeStatus({ name: "Not_A_Label", projectRef: Option.none() }).pipe(Effect.flip);
+        yield* computeStatus({
+          name: "Not_A_Label",
+          remote: Option.none(),
+          projectRef: Option.none(),
+        }).pipe(Effect.flip);
 
         expect(telemetry.flushed).toBe(true);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
+});
+
+describeComputeTargetSelection("compute status", {
+  operands: ["api"],
+  routes: (ref) => ({
+    [`GET /v2/projects/${ref}/compute/api`]: {
+      status: 200,
+      body: { data: computeResource({ name: "api", runtime: "node" }) },
+    },
+  }),
+  run: (flags) => computeStatus({ name: "api", ...flags }),
 });

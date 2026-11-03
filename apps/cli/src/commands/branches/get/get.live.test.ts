@@ -20,7 +20,7 @@ test("gets a preview branch by name", ({ cliEffect, project }) =>
         const ref = yield* createLiveBranchEffect(cliEffect, project, name);
         branchRef = ref;
         yield* awaitLiveBranchEffect(cliEffect, project, name);
-        const result = yield* cliEffect(["branches", "get", name, "--project-ref", project.ref]);
+        const result = yield* cliEffect(["branches", "get", name, `--remote=${project.ref}`]);
         expect(result.exitCode, result.stderr).toBe(0);
         // The pretty table prints the branch password and JWT secret, so failures
         // must not echo stdout: assert through booleans with a secret-free message.

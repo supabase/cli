@@ -54,8 +54,8 @@ const PUSH_RESOURCE_PREFIXES: ReadonlyArray<{
   { prefix: ["storage"], resource: "storage" },
 ];
 
-/** Cost-matrix / confirmation-prompt key per resource — the three `db.*` resources share one prompt. */
-export function pushPromptKey(resource: PushResource): string {
+/** Cost-matrix key per resource — the three `db.*` resources share one. */
+export function pushCostKey(resource: PushResource): string {
   switch (resource) {
     case "api":
       return "api";
@@ -184,7 +184,7 @@ export interface PushAddonGate {
   readonly enrollPath: ReadonlyArray<string>;
 }
 
-/** The two paid MFA addons whose enablement is gated behind a cost-aware prompt. */
+/** The two paid MFA addons a push can enable. */
 export const PUSH_ADDON_GATES: ReadonlyArray<PushAddonGate> = [
   {
     costKey: "auth_mfa_phone",
@@ -199,11 +199,11 @@ export const PUSH_ADDON_GATES: ReadonlyArray<PushAddonGate> = [
 ];
 
 /**
- * Whether an addon gate's cost-aware prompt should fire: the routed changes turn on
- * `verify_enabled` or `enroll_enabled` (enrolment alone already starts SMS/WebAuthn charges),
- * unless the addon is already active on the project (`remote`'s `verify_enabled` is `true`).
+ * Whether the routed changes switch a paid addon on: `verify_enabled` or `enroll_enabled` turns
+ * on (enrolment alone already starts SMS/WebAuthn charges), unless the addon is already active
+ * on the project (`remote`'s `verify_enabled` is `true`).
  */
-export function pushAddonPromptNeeded(
+export function pushEnablesAddon(
   changes: ReadonlyArray<ConfigChange>,
   gate: PushAddonGate,
   remote: ProjectConfig,
@@ -222,37 +222,4 @@ export function changesCommunicated(
   encodedPaths: ReadonlyArray<ReadonlyArray<string>>,
 ): ReadonlyArray<ConfigChange> {
   return changes.filter((change) => pathIn(change.path, encodedPaths));
-}
-
-/**
- * Applies a declined paid-MFA-addon prompt to the routed auth change list. Drops the addon's
- * `verify_enabled`/`enroll_enabled` changes; when the remote currently has either flag `true`,
- * replaces them with synthetic `update` changes setting both to `false`, so the request body
- * carries an explicit disable rather than silently omitting a currently-enabled addon.
- */
-export function applyMfaAddonDecline(
-  changes: ReadonlyArray<ConfigChange>,
-  gate: PushAddonGate,
-  remote: ProjectConfig,
-): ReadonlyArray<ConfigChange> {
-  const withoutGate = changes.filter(
-    (change) => !samePath(change.path, gate.verifyPath) && !samePath(change.path, gate.enrollPath),
-  );
-  const remoteVerify = valueAtPath(remote, gate.verifyPath);
-  const remoteEnroll = valueAtPath(remote, gate.enrollPath);
-  if (remoteVerify !== true && remoteEnroll !== true) {
-    return withoutGate;
-  }
-  const disableChange = (path: ReadonlyArray<string>, remoteValue: unknown): ConfigChange => ({
-    path,
-    class: "update",
-    local: false,
-    remote: remoteValue,
-    declared: true,
-  });
-  return [
-    ...withoutGate,
-    disableChange(gate.verifyPath, remoteVerify),
-    disableChange(gate.enrollPath, remoteEnroll),
-  ];
 }

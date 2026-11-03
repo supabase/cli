@@ -1,12 +1,16 @@
 import type { ConfigChange } from "@supabase/config";
 
-import { formatNamedRef, sanitizeInlineName } from "../../../command-internal/http-errors.ts";
+import { sanitizeInlineName } from "../../../command-internal/http-errors.ts";
 import {
+  configEnvOriginList,
+  configEnvOriginPayload,
   configPlural,
   configRenderChangeLines,
   configRenderPath,
   configRenderValue,
   type ConfigApiScope,
+  type ConfigEnvOrigin,
+  type ConfigEnvOriginLookup,
 } from "../config.format.ts";
 import type { ConfigPushTarget } from "./push.branch-target.ts";
 import { comparePaths, pathIn } from "./push.paths.ts";
@@ -47,13 +51,19 @@ export interface PushForced {
   readonly value: unknown;
 }
 
+/** A pushed path whose value an environment variable supplied. */
+export interface PushEnvSourced {
+  readonly path: ReadonlyArray<string>;
+  readonly origin: ConfigEnvOrigin;
+}
+
 const PUSH_UPDATING_PREFIX: Readonly<Record<PushResource, string>> = {
-  api: "Updating API service with config:",
-  "db.settings": "Updating DB service with config:",
-  "db.network_restrictions": "Updating network restrictions with config:",
-  "db.ssl_enforcement": "Updating SSL enforcement with config:",
-  auth: "Updating Auth service with config:",
-  storage: "Updating Storage service with config:",
+  api: "Would update API service with:",
+  "db.settings": "Would update DB service with:",
+  "db.network_restrictions": "Would update network restrictions with:",
+  "db.ssl_enforcement": "Would update SSL enforcement with:",
+  auth: "Would update Auth service with:",
+  storage: "Would update Storage service with:",
 };
 
 const RESOURCE_DISPLAY_NAME: Readonly<Record<PushResource, string>> = {
@@ -85,7 +95,7 @@ function renderBlock(
 }
 
 /**
- * `[secret]` blocks, rendered before the confirmation prompt so a credential that won't be sent
+ * `[secret]` blocks, rendered before the consent question so a credential that won't be sent
  * is disclosed alongside one that will. A `send` status alone doesn't mean the secret reached the
  * request body — check `secretsEncoded`, since its container can still drop it as unencodable.
  */
@@ -160,21 +170,30 @@ export interface PushUpdatingLineInput {
   readonly secretsEncoded: ReadonlyArray<ReadonlyArray<string>>;
   readonly extras: ReadonlyArray<PushExtra>;
   readonly forced: ReadonlyArray<PushForced>;
+  readonly originFor?: ConfigEnvOriginLookup;
 }
 
 /**
- * The `Updating <resource> service with config:` block for a resource with at least one pushable
- * difference. `changes` renders through the same per-property format `config diff` uses; the
- * combined block always ends on a blank line.
+ * The `Would update <resource> service with:` plan block for a resource with at least one pushable
+ * difference, printed before the consent question. `changes` renders through the same per-property
+ * format `config diff` uses; the combined block always ends on a blank line.
  */
 export function pushUpdatingLine(input: PushUpdatingLineInput): string {
   return (
     `${PUSH_UPDATING_PREFIX[input.resource]}\n` +
-    configRenderChangeLines(input.changes) +
+    configRenderChangeLines(input.changes, input.originFor) +
     renderSecretBlocks(input.secrets, input.secretsEncoded) +
     renderExtraBlocks(input.extras) +
     renderForcedBlocks(input.forced)
   );
+}
+
+/** The one stderr line naming every value an environment variable supplied, printed even with `--yes`. */
+export function pushEnvSourcedLine(entries: ReadonlyArray<PushEnvSourced>): string {
+  const rendered = entries
+    .map((entry) => `${configRenderPath(entry.path)} (${configEnvOriginList(entry.origin)})`)
+    .join(", ");
+  return `Pushing ${configPlural(entries.length, "value", "values")} set by environment variables: ${rendered}\n`;
 }
 
 /** The `Remote <resource> config is up to date.` line — no pushable difference existed. */
@@ -184,7 +203,7 @@ export function pushUpToDateLine(resource: PushResource): string {
 
 /**
  * The `Remote <resource> config has N difference(s) config push cannot write...` line — every
- * pushable difference ended up `unencodable`, so nothing was written and no prompt ran.
+ * pushable difference ended up `unencodable`, so nothing was written and no consent was needed.
  */
 export function pushNotPushableLine(resource: PushResource, count: number): string {
   return `Remote ${RESOURCE_DISPLAY_NAME[resource]} config has ${configPlural(count, "difference", "differences")} config push cannot write (see notes below).\n`;
@@ -290,16 +309,16 @@ export interface PushPayloadInput {
    *  buckets below. */
   readonly secrets: ReadonlyArray<PushSecretReport>;
   /** Whether the auth write ran — decides whether a `status: "send"` secret lands in
-   *  `sent`/`unencodable` or `skipped`; reports what was observed, not the pre-prompt decision. */
+   *  `sent`/`unencodable` or `skipped`; reports what was observed, not the planned decision. */
   readonly authWriteRan: boolean;
   /** The auth encoder's own `secretsEncoded` — paths a write actually placed a plaintext for. A
    *  `send` decision can still be dropped as `unencodable`, so `sent` reads from here rather than
    *  the raw decision list. Meaningful only when `authWriteRan`. */
   readonly secretsSent: ReadonlyArray<ReadonlyArray<string>>;
-  /** Addon cost prompts (`auth_mfa_phone`, `auth_mfa_web_authn`) declined this run. */
-  readonly declinedAddons: ReadonlyArray<string>;
   readonly remoteOnly: number;
   readonly scope: ConfigApiScope;
+  /** Pushed paths an environment variable supplied; the payload omits the field when empty. */
+  readonly envSourced?: ReadonlyArray<PushEnvSourced>;
 }
 
 /**
@@ -349,23 +368,10 @@ export function pushSummaryMessage(input: PushPayloadInput): string {
     );
   }
 
-  const skipped = input.services.filter((service) => service.status === "skipped").length;
-  if (skipped > 0) {
-    parts.push(
-      `${configPlural(skipped, "service", "services")} ${skipped === 1 ? "was" : "were"} skipped at the prompt.`,
-    );
-  }
-
   const notSet = input.secrets.filter((secret) => secret.status === "not_set").length;
   if (notSet > 0) {
     parts.push(
       `${configPlural(notSet, "credential value", "credential values")} ${notSet === 1 ? "was" : "were"} not pushed.`,
-    );
-  }
-
-  if (input.declinedAddons.length > 0) {
-    parts.push(
-      `${configPlural(input.declinedAddons.length, "add-on prompt", "add-on prompts")} declined.`,
     );
   }
 
@@ -413,50 +419,56 @@ export function pushPayload(input: PushPayloadInput): Record<string, unknown> {
         : [],
       skipped: input.authWriteRan ? [] : sendDecisions.map((secret) => secret.path),
     },
-    declined_addons: input.declinedAddons,
     remote_only: input.remoteOnly,
     scope: { present: input.scope.present, missing: input.scope.missing },
+    ...(input.envSourced === undefined || input.envSourced.length === 0
+      ? {}
+      : {
+          env_sourced: input.envSourced.map((entry) => ({
+            path: entry.path,
+            origin: configEnvOriginPayload(entry.origin),
+          })),
+        }),
   };
 }
 
-// Every interpolated ref/name goes through `formatNamedRef`, so an API-provided branch/project
-// name can't inject ANSI/OSC/newline controls into the terminal.
+const CONSENT_SERVICE_NAME: Readonly<Record<PushResource | "experimental.webhooks", string>> = {
+  ...RESOURCE_DISPLAY_NAME,
+  "experimental.webhooks": "Webhooks",
+};
 
-/**
- * The target-echo block, printed to stderr before any further network call. The no-name
- * degradation shape (a project whose name could not be resolved) stays exactly
- * `Pushing config to project: <ref>`, pinned by existing tests.
- */
-export function configPushTargetLines(target: ConfigPushTarget): string {
-  if (target.kind === "project") {
-    return `Pushing config to project: ${formatNamedRef(target.name, target.ref)}\n`;
-  }
-  if (target.kind === "unknown") {
-    return `Pushing config to: ${sanitizeInlineName(target.ref)} (could not determine whether this is a branch or the main project)\n`;
-  }
-
-  const lines: Array<string> = [
-    `Pushing config to branch: ${formatNamedRef(target.branch, target.ref)}`,
-  ];
-  if (target.parentRef !== undefined) {
-    lines.push(`  Parent project: ${formatNamedRef(target.parentName, target.parentRef)}`);
-  }
-  return `${lines.join("\n")}\n`;
+/** The consent action for a push that will write `services`. */
+export function pushConsentAction(
+  services: ReadonlyArray<PushResource | "experimental.webhooks">,
+): string {
+  const names = services.map((service) => CONSENT_SERVICE_NAME[service]);
+  const last = names.at(-1);
+  const list =
+    names.length > 1 && last !== undefined ? `${names.slice(0, -1).join(", ")} and ${last}` : last;
+  return `Push config changes to ${list}`;
 }
 
-/**
- * The confirmation-prompt label gating a branch push. Ends with a self-serve
- * hint (`--yes`) so a CI/agent log reading the declined prompt can fix the
- * invocation without digging through docs.
- */
-export function configPushBranchPromptLabel(
-  target: ConfigPushTarget & { readonly kind: "branch" },
-): string {
-  const ref = sanitizeInlineName(target.ref);
-  const hint = " (skip this check with --yes)";
-  return target.branch === undefined
-    ? `Do you want to push config to branch ${ref}?${hint}`
-    : `Do you want to push config to branch "${sanitizeInlineName(target.branch)}" (${ref})?${hint}`;
+/** The price line shown before consent for a paid addon the push would switch on. */
+export function pushCostLine(item: { readonly name: string; readonly price: string }): string {
+  return `Enabling ${item.name} will cost you ${item.price}.\n`;
+}
+
+/** The `target` fields only the live probe can settle, overriding the announced identity. */
+export function configPushTargetFields(target: ConfigPushTarget): {
+  readonly environment?: "production" | "branch";
+  readonly parent_project_ref?: string;
+} {
+  switch (target.kind) {
+    case "project":
+      return { environment: "production" };
+    case "branch":
+      return {
+        environment: "branch",
+        ...(target.parentRef === undefined ? {} : { parent_project_ref: target.parentRef }),
+      };
+    case "unknown":
+      return {};
+  }
 }
 
 /** Additive machine-payload fields describing the resolved target. `is_branch` is omitted, not

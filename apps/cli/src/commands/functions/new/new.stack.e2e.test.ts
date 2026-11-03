@@ -76,8 +76,7 @@ describe("functions new (stack e2e)", () => {
               : {}),
             prefix: `functions-new-stack-${runtime}-`,
           });
-          const home = makeTempHome();
-          yield* Effect.addFinalizer(() => Effect.sync(() => home[Symbol.dispose]()));
+          const home = yield* makeTempHome;
           yield* fs.makeDirectory(path.join(projectDir, "supabase"), { recursive: true });
           yield* fs.writeFileString(
             path.join(projectDir, "supabase", "config.toml"),

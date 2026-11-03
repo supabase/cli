@@ -4,12 +4,14 @@ import type * as CliCommand from "effect/cli/Command";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose, withCondition } from "../../../command-internal/command-permissions/model.ts";
-import { projectRefPicker } from "../../../config/remote-target.layer.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
+import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { postgresConfigRead, postgresConfigWrite } from "../postgres-config.shared.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
-import { RESOURCE_OUTPUT_FORMATS } from "../../../command-internal/go-output-flag.ts";
+import { RESOURCE_OUTPUT_FORMATS } from "../../../command-internal/output-formats.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { stringSliceFlag } from "../../../command-internal/string-slice-flag.ts";
 import {
@@ -17,9 +19,10 @@ import {
   withCommandTelemetry,
 } from "../../../telemetry/command-telemetry.ts";
 import { postgresConfigUpdate } from "./update.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 /**
- * CSV-splits each occurrence into config overrides, failing at parse time with pflag's
+ * CSV-splits each occurrence into config overrides, failing at parse time with a
  * diagnostic on malformed CSV — before the --experimental gate runs.
  */
 export const postgresConfigUpdateConfigFlag = stringSliceFlag(
@@ -28,10 +31,7 @@ export const postgresConfigUpdateConfigFlag = stringSliceFlag(
 );
 
 const config = {
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
   config: postgresConfigUpdateConfigFlag,
   replaceExistingOverrides: Flag.Boolean("replace-existing-overrides").pipe(
     Flag.withDescription(
@@ -57,6 +57,7 @@ export const postgresConfigUpdateCommand = Command.make("update", config).pipe(
       postgresConfigWrite,
       projectRefPicker,
       linkedProjectCache,
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>
@@ -74,4 +75,5 @@ export const postgresConfigUpdateCommand = Command.make("update", config).pipe(
       );
     }).pipe(withJsonErrorHandling),
   ),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

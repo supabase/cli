@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Option, Path, Schema } from "effect";
 import { database15, selection } from "../tests/pins.ts";
 import {
+  HOSTED_LOCK_SCHEMA_URL,
   Lock,
   LOCK_SCHEMA_URL,
   lockSelection,
@@ -11,6 +12,8 @@ import {
   readLock,
   writeLock,
 } from "./Lock.ts";
+
+const V1_LOCK_SCHEMA_URL = "https://supabase.com/docs/cli/supabase-lock/v1.schema.json";
 
 const bundled = (pin: Lock["services"]["rest"]["resolved"]) =>
   ({ specifier: "bundled", resolution: "resolved", resolved: pin }) as const;
@@ -99,6 +102,41 @@ describe("lock", () => {
           expect((yield* fs.stat(lockFile)).mode & 0o777).toBe(0o644 & ~process.umask());
         }),
       ),
+  );
+
+  it.live("a fresh lock is written with the schema URL older CLIs require", () =>
+    inProject((projectRoot, lockFile) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+
+        yield* writeLock(projectRoot, lockOf(selection));
+
+        expect(parse(yield* fs.readFileString(lockFile))).toMatchObject({
+          $schema: V1_LOCK_SCHEMA_URL,
+        });
+      }),
+    ),
+  );
+
+  it.live("a lock naming the hosted schema URL reads and rewrites with the written one", () =>
+    inProject((projectRoot, lockFile) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.makeDirectory(`${projectRoot}/supabase`, { recursive: true });
+        yield* fs.writeFileString(
+          lockFile,
+          stringify({ ...lockOf(selection), $schema: HOSTED_LOCK_SCHEMA_URL }),
+        );
+
+        const read = yield* readLock(projectRoot);
+        yield* writeLock(projectRoot, Option.getOrThrow(read));
+
+        expect(Option.getOrThrow(read).$schema).toBe(V1_LOCK_SCHEMA_URL);
+        expect(parse(yield* fs.readFileString(lockFile))).toMatchObject({
+          $schema: V1_LOCK_SCHEMA_URL,
+        });
+      }),
+    ),
   );
 
   it.live("a lock with a newer lockfileVersion fails with an upgrade error", () =>

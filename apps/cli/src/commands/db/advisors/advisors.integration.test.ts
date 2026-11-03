@@ -10,6 +10,9 @@ vi.mock("node:net", (importOriginal) =>
   ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net)),
 );
 
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import { describeDbTargetSelection } from "../../../../tests/helpers/db-target-selection.ts";
+import { branchRow } from "../../../../tests/helpers/remote-selection.ts";
 import { mockOutput, mockProcessControl } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
@@ -36,12 +39,17 @@ import {
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
+import { DnsResolverFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import { CommandCredentials } from "../../../auth/command-credentials.service.ts";
 import { InvalidAccessTokenError } from "../../../auth/errors.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { DbConfigIpv6Error } from "../../../command-internal/db-config.errors.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
+import type {
+  DbConnectionInput,
+  ResolvedDbConnection,
+} from "../../../command-internal/db-config.types.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import {
   DbConnection,
@@ -57,7 +65,6 @@ import { encodeAdvisorLints, scanAdvisorLintRow } from "./advisors.format.ts";
 import { dbAdvisors } from "./advisors.handler.ts";
 import { splitLintsSql } from "./advisors.lints-sql.ts";
 import type { DbAdvisorsFlags } from "./advisors.command.ts";
-import { stubRemoteTarget } from "../../../../tests/helpers/remote-target.ts";
 
 const LOCAL_CONN: PgConnInput = {
   host: "127.0.0.1",
@@ -87,11 +94,11 @@ function lintRow(over: Partial<Record<string, unknown>> = {}) {
 }
 
 function mockResolver(opts: { ipv6Error?: boolean } = {}) {
-  const resolveFlags: Array<DbConfigFlags> = [];
+  const resolveInputs: Array<DbConnectionInput> = [];
   const layer = Layer.succeed(DbConfigResolver, {
-    resolve: (flags: DbConfigFlags) =>
+    resolveConnection: (input: DbConnectionInput) =>
       Effect.gen(function* () {
-        resolveFlags.push(flags);
+        resolveInputs.push(input);
         if (opts.ipv6Error === true) {
           return yield* new DbConfigIpv6Error({
             message: "IPv6 is not supported on your current network",
@@ -100,15 +107,17 @@ function mockResolver(opts: { ipv6Error?: boolean } = {}) {
         }
         return {
           conn: LOCAL_CONN,
-          isLocal: flags.connType !== "linked",
-        } satisfies ResolvedDbConfig;
+          isLocal: input.target.kind !== "linked",
+          ref: input.target.kind === "linked" ? Option.some(input.target.ref) : Option.none(),
+          target: input.target,
+        } satisfies ResolvedDbConnection;
       }),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
   return {
     layer,
-    get resolveFlags() {
-      return resolveFlags;
+    get resolveInputs() {
+      return resolveInputs;
     },
   };
 }
@@ -116,9 +125,11 @@ function mockResolver(opts: { ipv6Error?: boolean } = {}) {
 function mockConnection(opts: {
   rows?: ReadonlyArray<Record<string, unknown>>;
   setupFails?: boolean;
+  exposureFails?: boolean;
   queryFails?: boolean;
 }) {
   const execs: Array<string> = [];
+  const calls: Array<{ kind: "exec" | "query"; sql: string; params?: ReadonlyArray<unknown> }> = [];
   const layer = Layer.succeed(DbConnection, {
     connect: () => {
       const session: DbSession = {
@@ -128,13 +139,18 @@ function mockConnection(opts: {
         exec: (sql: string) =>
           Effect.suspend(() => {
             execs.push(sql);
+            calls.push({ kind: "exec", sql });
             if (sql === SETUP_SQL && opts.setupFails === true) {
               return Effect.fail(new DbExecError({ message: "syntax error at set" }));
             }
             return Effect.void;
           }),
-        query: (sql: string) =>
+        query: (sql: string, params?: ReadonlyArray<unknown>) =>
           Effect.suspend(() => {
+            calls.push({ kind: "query", sql, params });
+            if (sql.includes("pgrst.db_schemas") && opts.exposureFails === true) {
+              return Effect.fail(new DbExecError({ message: "permission denied" }));
+            }
             if (sql === QUERY_SQL && opts.queryFails === true) {
               return Effect.fail(new DbExecError({ message: "syntax error" }));
             }
@@ -149,6 +165,7 @@ function mockConnection(opts: {
   });
   return {
     layer,
+    calls,
     get execs() {
       return execs;
     },
@@ -157,22 +174,22 @@ function mockConnection(opts: {
 
 function mockProjectRef() {
   const calls: Array<string> = [];
-  const layer = stubRemoteTarget({
-    resolve: () =>
-      Effect.sync(() => {
-        calls.push("resolve");
-        return VALID_REF;
-      }),
+  const layer = Layer.succeed(ProjectRefResolver, {
+    resolve: () => Effect.succeed(VALID_REF),
     resolveForLink: () => Effect.succeed(VALID_REF),
-    resolveOptional: () => Effect.succeed(Option.some(VALID_REF)),
-    // Gives an explicit `--project-ref` flag top precedence, mirroring the real resolver so a
-    // test can prove the flag (not just the hardcoded fallback) drives the linked ref.
-    load: (flagValue: Option.Option<string>) =>
+    // An explicit `--remote=<ref>` wins over the workdir's own ref, so a test can prove the flag
+    // (not just the fallback) drives the linked ref.
+    resolveRef: (flagValue: Option.Option<string>) =>
       Effect.sync(() => {
-        calls.push("load");
-        return Option.isSome(flagValue) && flagValue.value.length > 0 ? flagValue.value : VALID_REF;
+        calls.push("resolveRef");
+        return {
+          ref: Option.getOrElse(flagValue, () => VALID_REF),
+          source: Option.isSome(flagValue) ? ("flag" as const) : ("file" as const),
+          matchesLinkedRef: Option.isNone(flagValue),
+        };
       }),
-    prompt: () => Effect.succeed(VALID_REF),
+    resolveOptional: () => Effect.succeed(Option.some(VALID_REF)),
+    promptProjectRef: () => Effect.succeed(VALID_REF),
   });
   return {
     layer,
@@ -182,7 +199,7 @@ function mockProjectRef() {
   };
 }
 
-/** Validating credentials mock — the advisors `--linked` token gate calls
+/** Validating credentials mock — the advisors hosted token gate calls
  *  `CommandCredentials.getAccessToken`, which fails hard on a malformed token
  *  and returns None when no token is present. */
 function mockCredentials(opts: { token?: "valid" | "none" | "invalid" } = {}) {
@@ -212,6 +229,7 @@ interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   rows?: ReadonlyArray<Record<string, unknown>>;
   setupFails?: boolean;
+  exposureFails?: boolean;
   queryFails?: boolean;
   loggedIn?: boolean;
   invalidToken?: boolean;
@@ -220,11 +238,13 @@ interface SetupOpts {
   securityRawBody?: string;
   securityLints?: ReadonlyArray<Record<string, unknown>>;
   performanceLints?: ReadonlyArray<Record<string, unknown>>;
-  /** Raw CLI args for `CliArgs` — drives DB target selection (Changed-based). */
-  args?: ReadonlyArray<string>;
   /** Runs the real `DbConfigResolver` and linked-project cache against the temp `workdir`. */
-  realLayers?: { readonly workdir: string };
+  realLayers?: boolean;
+  /** Extra environment for the real `DbConfigResolver` (only with `realLayers`). */
+  realEnv?: Readonly<Record<string, string>>;
 }
+
+const tempRoot = useTempWorkdir("supabase-db-advisors-int-");
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
@@ -232,6 +252,7 @@ function setup(opts: SetupOpts = {}) {
   const connection = mockConnection({
     rows: opts.rows,
     setupFails: opts.setupFails,
+    exposureFails: opts.exposureFails,
     queryFails: opts.queryFails,
   });
   const telemetry = mockTelemetryStateTracked();
@@ -266,12 +287,15 @@ function setup(opts: SetupOpts = {}) {
       if (request.method === "GET" && url.endsWith(`/v1/projects/${VALID_REF}`)) {
         return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
       }
+      if (request.method === "GET" && url.endsWith(`/v1/projects/${VALID_REF}/branches`)) {
+        return Effect.succeed(jsonResponse(request, 200, [branchRow("feature-x")]));
+      }
       return Effect.succeed(jsonResponse(request, 404, {}));
     },
   });
 
   const cliSettings = mockCommandSettings({
-    workdir: opts.realLayers?.workdir ?? "/tmp/advisors-int",
+    workdir: tempRoot.current,
     accessToken: opts.loggedIn === false ? Option.none() : undefined,
   });
   const credentials = mockCredentials({
@@ -280,25 +304,29 @@ function setup(opts: SetupOpts = {}) {
 
   const layer = Layer.mergeAll(
     out.layer,
-    opts.realLayers === undefined
+    opts.realLayers !== true
       ? resolver.layer
       : realDbConfigResolver({
-          workdir: opts.realLayers.workdir,
+          workdir: tempRoot.current,
           dbConnection: connection.layer,
-          env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+          env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN, ...opts.realEnv },
         }),
     connection.layer,
     telemetry.layer,
     processControl.layer,
     projectRef.layer,
-    opts.realLayers === undefined
+    opts.realLayers !== true
       ? cache.layer
       : realLinkedProjectCache({ httpClient: api.httpClientLayer, cliSettings }),
     cliSettings,
     credentials.layer,
     api.factoryLayer,
+    cliConfigValuesTestLayer,
+    Layer.succeed(TargetPolicy, { group: "selectable", consent: "none" }),
+    Layer.succeed(YesFlag, false),
     Layer.succeed(DnsResolverFlag, "native"),
-    Layer.succeed(CliArgs, { args: opts.args ?? [] }),
+    Layer.succeed(CliArgs, { args: [] }),
+    BunServices.layer,
   );
   return {
     layer,
@@ -313,8 +341,11 @@ function setup(opts: SetupOpts = {}) {
   };
 }
 
+const REMOTE_LINKED: DbAdvisorsFlags["remote"] = Option.some({ _tag: "Linked" });
+
 const flags = (over: Partial<DbAdvisorsFlags> = {}): DbAdvisorsFlags => ({
   dbUrl: over.dbUrl ?? Option.none<string>(),
+  remote: over.remote ?? Option.none(),
   linked: over.linked ?? false,
   local: over.local ?? false,
   projectRef: over.projectRef ?? Option.none<string>(),
@@ -324,7 +355,55 @@ const flags = (over: Partial<DbAdvisorsFlags> = {}): DbAdvisorsFlags => ({
 });
 
 describe("db advisors — local", () => {
-  it.effect("queries the local database and prints the Go pretty JSON array", () => {
+  it.effect.each([
+    {
+      name: "configured schemas",
+      config: '[api]\nschemas = ["app", "public"]',
+      env: { SUPABASE_API_SCHEMAS: "" },
+      expected: "app,public",
+    },
+    {
+      name: "Data API disabled",
+      config: "[api]\nenabled = false",
+      env: { SUPABASE_API_SCHEMAS: "" },
+      expected: "",
+    },
+    {
+      name: "environment schemas",
+      config: '[api]\nschemas = ["public"]',
+      env: { SUPABASE_API_SCHEMAS: "app,public" },
+      expected: "app,public",
+    },
+    {
+      name: "default schemas",
+      config: undefined,
+      env: { SUPABASE_API_SCHEMAS: "" },
+      expected: "public,graphql_public",
+    },
+  ])("sets exposure before lint setup: $name", ({ config, env, expected }) => {
+    const { layer, connection } = setup({ realLayers: true, realEnv: env });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      if (config !== undefined) {
+        yield* fs.makeDirectory(`${tempRoot.current}/supabase`, { recursive: true });
+        yield* fs.writeFileString(`${tempRoot.current}/supabase/config.toml`, config);
+      }
+      yield* dbAdvisors(flags());
+      expect(connection.calls).toEqual([
+        { kind: "exec", sql: "begin" },
+        {
+          kind: "query",
+          sql: "select set_config('pgrst.db_schemas', $1, true)",
+          params: [expected],
+        },
+        { kind: "exec", sql: SETUP_SQL },
+        { kind: "query", sql: QUERY_SQL, params: undefined },
+        { kind: "exec", sql: "rollback" },
+      ]);
+    }).pipe(Effect.provide(Layer.mergeAll(layer, BunServices.layer)), provideEnv(env));
+  });
+
+  it.effect("queries the local database and prints the pretty JSON array", () => {
     const { layer, out, connection, api } = setup({ rows: [lintRow()] });
     return Effect.gen(function* () {
       yield* dbAdvisors(flags());
@@ -335,7 +414,6 @@ describe("db advisors — local", () => {
       });
       const expected = encodeAdvisorLints([scanAdvisorLintRow(lintRow())]);
       expect(out.stdoutText).toBe(expected);
-      expect(out.stderrText).toContain("Connecting to local database...");
       expect(connection.execs).toEqual(["begin", SETUP_SQL, "rollback"]);
     }).pipe(Effect.provide(layer));
   });
@@ -375,6 +453,26 @@ describe("db advisors — local", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect(
+    "rolls back and fails with 'failed to prepare lint session' when exposure fails",
+    () => {
+      const env = { SUPABASE_API_SCHEMAS: "" };
+      const { layer, connection } = setup({
+        exposureFails: true,
+        realLayers: true,
+        realEnv: env,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(dbAdvisors(flags()));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("failed to prepare lint session");
+        }
+        expect(connection.execs).toEqual(["begin", "rollback"]);
+      }).pipe(Effect.provide(Layer.mergeAll(layer, BunServices.layer)), provideEnv(env));
+    },
+  );
+
   it.effect("fails with 'failed to query lints' on a query error", () => {
     const { layer } = setup({ queryFails: true });
     return Effect.gen(function* () {
@@ -410,20 +508,6 @@ describe("db advisors — local", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("rejects --db-url together with --local (via args Changed detection)", () => {
-    const { layer } = setup({ args: ["--db-url=postgres://x", "--local"] });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(dbAdvisors(flags({ dbUrl: Option.some("postgres://x") })));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain(
-          "if any flags in the group [db-url linked local] are set none of the others can be",
-        );
-      }
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect("emits a success envelope in json mode and writes nothing raw to stdout", () => {
     const { layer, out } = setup({ format: "json", rows: [lintRow()] });
     return Effect.gen(function* () {
@@ -456,66 +540,12 @@ describe("db advisors — local", () => {
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
-
-  it.effect("--linked=false routes to the linked branch (Changed, not value)", () => {
-    // "Changed" fires when the flag appears on the command line regardless of its value.
-    const { layer, projectRef, cache } = setup({
-      args: ["--linked=false"],
-      securityLints: [],
-      performanceLints: [],
-    });
-    return Effect.gen(function* () {
-      yield* dbAdvisors(flags());
-      expect(projectRef.calls).toContain("load");
-      expect(cache.cached).toBe(true);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("--no-linked routes to the linked branch (boolean negation is still Changed)", () => {
-    const { layer, projectRef, cache } = setup({
-      args: ["--no-linked"],
-      securityLints: [],
-      performanceLints: [],
-    });
-    return Effect.gen(function* () {
-      yield* dbAdvisors(flags());
-      expect(projectRef.calls).toContain("load");
-      expect(cache.cached).toBe(true);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect(
-    "--local=false --linked fails with mutual-exclusion (sorted set [linked local])",
-    () => {
-      const { layer } = setup({ args: ["--local=false", "--linked"] });
-      return Effect.gen(function* () {
-        const exit = yield* Effect.exit(dbAdvisors(flags()));
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const causeText = Cause.pretty(exit.cause);
-          expect(causeText).toContain(
-            "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
-          );
-        }
-      }).pipe(Effect.provide(layer));
-    },
-  );
-
-  it.effect(
-    "--local=false alone routes to the local branch (Changed local, connType=local)",
-    () => {
-      const { layer, out, cache } = setup({ rows: [], args: ["--local=false"] });
-      return Effect.gen(function* () {
-        yield* dbAdvisors(flags());
-        expect(out.stderrText).toContain("Connecting to local database...");
-        expect(cache.cached).toBe(false);
-      }).pipe(Effect.provide(layer));
-    },
-  );
 });
 
+const linkedFlags = (over: Partial<DbAdvisorsFlags> = {}) =>
+  flags({ remote: REMOTE_LINKED, ...over });
+
 describe("db advisors — linked", () => {
-  const tempRoot = useTempWorkdir("supabase-db-advisors-int-");
   const securityLint = {
     name: "rls_disabled_in_public",
     title: "RLS disabled",
@@ -540,23 +570,21 @@ describe("db advisors — linked", () => {
   };
 
   it.effect(
-    "mints a login role, fetches both advisors and fills the cache through the real layers",
+    "fetches both advisors and fills the cache through the real layers without minting a login role",
     () => {
       const { layer, api } = setup({
         securityLints: [securityLint],
         performanceLints: [performanceLint],
-        args: ["db", "advisors", "--linked", "--project-ref", VALID_REF],
-        realLayers: { workdir: tempRoot.current },
+        realLayers: true,
       });
       const resolverRequests: Array<StubbedRequest> = [];
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         yield* stubManagementApi(resolverRequests, serveLinkedDatabase(VALID_REF));
-        yield* dbAdvisors(flags({ linked: true, projectRef: Option.some(VALID_REF) }));
-        expect(resolverRequests.map(({ method, path }) => `${method} ${path}`)).toEqual([
-          `GET /v1/projects/${VALID_REF}/config/database/pooler`,
-          `POST /v1/projects/${VALID_REF}/cli/login-role`,
-        ]);
+        yield* dbAdvisors(
+          linkedFlags({ remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const) }),
+        );
+        expect(resolverRequests).toEqual([]);
         expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
           `GET https://api.supabase.com/v1/projects/${VALID_REF}/advisors/security`,
           `GET https://api.supabase.com/v1/projects/${VALID_REF}/advisors/performance`,
@@ -567,7 +595,7 @@ describe("db advisors — linked", () => {
         );
         assertPermissionDrift({
           command: "db advisors",
-          activeFlags: { linked: true, "project-ref": VALID_REF },
+          activeFlags: { remote: VALID_REF },
           requests: [...asRecordedRequests(resolverRequests), ...api.requests],
           exact: true,
         });
@@ -579,41 +607,43 @@ describe("db advisors — linked", () => {
     },
   );
 
-  it.effect("makes no Management API request for --local through the real layers", () => {
-    const { layer, api } = setup({
-      rows: [],
-      args: ["db", "advisors", "--local"],
-      realLayers: { workdir: tempRoot.current },
-    });
-    const resolverRequests: Array<StubbedRequest> = [];
-    return Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      yield* stubManagementApi(resolverRequests, () => undefined);
-      yield* dbAdvisors(flags({ local: true }));
-      expect(resolverRequests).toEqual([]);
-      expect(api.requests).toEqual([]);
-      expect(yield* fs.exists(`${tempRoot.current}/supabase/.temp/linked-project.json`)).toBe(
-        false,
-      );
-      assertPermissionDrift({
-        command: "db advisors",
-        activeFlags: { local: true },
-        requests: [],
-        exact: true,
+  it.effect(
+    "makes no Management API request for the default local target through the real layers",
+    () => {
+      const { layer, api } = setup({
+        rows: [],
+        realLayers: true,
       });
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(Layer.mergeAll(layer, BunServices.layer)),
-      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
-    );
-  });
+      const resolverRequests: Array<StubbedRequest> = [];
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* stubManagementApi(resolverRequests, () => undefined);
+        yield* dbAdvisors(flags());
+        expect(resolverRequests).toEqual([]);
+        expect(api.requests).toEqual([]);
+        expect(yield* fs.exists(`${tempRoot.current}/supabase/.temp/linked-project.json`)).toBe(
+          false,
+        );
+        assertPermissionDrift({
+          command: "db advisors",
+          activeFlags: {},
+          requests: [],
+          exact: true,
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Layer.mergeAll(layer, BunServices.layer)),
+        provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+      );
+    },
+  );
 
   it.effect(
     "fails on a 403 from the security advisors without asking for the performance ones",
     () => {
-      const { layer, api } = setup({ securityStatus: 403, args: ["--linked"] });
+      const { layer, api, cache } = setup({ securityStatus: 403 });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(dbAdvisors(flags({ type: Option.some("all") })));
+        const exit = yield* Effect.exit(dbAdvisors(linkedFlags({ type: Option.some("all") })));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           expect(Cause.pretty(exit.cause)).toContain("unexpected security advisors status 403");
@@ -621,9 +651,10 @@ describe("db advisors — linked", () => {
         expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
           `GET https://api.supabase.com/v1/projects/${VALID_REF}/advisors/security`,
         ]);
+        expect(cache.cached).toBe(true);
         assertPermissionDrift({
           command: "db advisors",
-          activeFlags: { linked: true, type: "all" },
+          activeFlags: { remote: true, type: "all" },
           requests: api.requests,
         });
       }).pipe(Effect.provide(layer));
@@ -634,16 +665,15 @@ describe("db advisors — linked", () => {
     const { layer, out, api, cache } = setup({
       securityLints: [securityLint],
       performanceLints: [performanceLint],
-      args: ["--linked"],
     });
     return Effect.gen(function* () {
-      yield* dbAdvisors(flags({ type: Option.some("all"), level: Option.some("info") }));
+      yield* dbAdvisors(linkedFlags({ type: Option.some("all"), level: Option.some("info") }));
       const urls = api.requests.map((r) => r.url);
       expect(urls.some((u) => u.includes("/advisors/security"))).toBe(true);
       expect(urls.some((u) => u.includes("/advisors/performance"))).toBe(true);
       assertPermissionDrift({
         command: "db advisors",
-        activeFlags: { linked: true, type: "all", level: true },
+        activeFlags: { remote: true, type: "all", level: true },
         requests: api.requests,
         exact: true,
       });
@@ -654,18 +684,20 @@ describe("db advisors — linked", () => {
   });
 
   it.effect(
-    "fetches advisors for the project given via --project-ref, overriding the workdir's own ref",
+    "fetches advisors for the project given via --remote=<ref>, overriding the workdir's own ref",
     () => {
       // The fake resolver's own fallback (VALID_REF) represents whatever the workdir would
       // resolve to absent the flag; the flag must win over it and drive both API and cache.
       const FLAG_REF = "flagflagflagflagflag";
       const { layer, api, cache } = setup({
         securityLints: [securityLint],
-        args: ["--linked"],
       });
       return Effect.gen(function* () {
         yield* dbAdvisors(
-          flags({ type: Option.some("security"), projectRef: Option.some(FLAG_REF) }),
+          flags({
+            type: Option.some("security"),
+            remote: Option.some({ _tag: "Ref", ref: FLAG_REF } as const),
+          }),
         );
         expect(
           api.requests.some((r) => r.url.includes(`/v1/projects/${FLAG_REF}/advisors/security`)),
@@ -677,81 +709,37 @@ describe("db advisors — linked", () => {
     },
   );
 
-  it.effect("rejects --project-ref on the default local target", () => {
-    // The guard fires from the flag alone; no explicit --local/--db-url is needed.
-    const FLAG_REF = "flagflagflagflagflag";
-    const { layer, connection, api, cache } = setup({ rows: [] });
+  it.effect("never resolves a database connection for linked advisors", () => {
+    const { layer, resolver, api, cache } = setup({
+      ipv6Error: true,
+      securityLints: [securityLint],
+    });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(dbAdvisors(flags({ projectRef: Option.some(FLAG_REF) })));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain(
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-        );
-      }
-      expect(connection.execs).toEqual([]);
-      expect(api.requests).toEqual([]);
-      expect(cache.cached).toBe(false);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect(
-    "resolves the linked DB config before fetching advisors (Go root PersistentPreRunE)",
-    () => {
-      // Resolved even though the linked lint-gathering path discards the connection.
-      const { layer, resolver, api } = setup({
-        securityLints: [securityLint],
-        args: ["--linked"],
-      });
-      return Effect.gen(function* () {
-        yield* dbAdvisors(flags({ type: Option.some("security") }));
-        expect(resolver.resolveFlags.some((f) => f.connType === "linked")).toBe(true);
-        expect(api.requests.some((r) => r.url.includes("/advisors/security"))).toBe(true);
-      }).pipe(Effect.provide(layer));
-    },
-  );
-
-  it.effect("fails on the linked DB-config error before any advisor API call", () => {
-    // The DB-config resolve fails before the linked lint-gathering path runs, so the advisors
-    // API is never reached — but the ref was already loaded and cached unconditionally on the
-    // error path.
-    const { layer, api, cache } = setup({ ipv6Error: true, args: ["--linked"] });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(dbAdvisors(flags()));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("IPv6 is not supported");
-      }
-      expect(api.requests).toHaveLength(0);
+      yield* dbAdvisors(linkedFlags({ type: Option.some("security") }));
+      expect(resolver.resolveInputs).toEqual([]);
+      expect(api.requests.some((r) => r.url.includes("/advisors/security"))).toBe(true);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("resolves the linked ref via the non-prompting load (Go LoadProjectRef)", () => {
-    // `resolve` opens an interactive project picker on a TTY; `--linked` must avoid it.
-    const { layer, projectRef } = setup({
-      securityLints: [securityLint],
-      args: ["--linked"],
-    });
+  it.effect("resolves the linked ref through the shared target chain", () => {
+    const { layer, projectRef } = setup({ securityLints: [securityLint] });
     return Effect.gen(function* () {
-      yield* dbAdvisors(flags({ type: Option.some("security") }));
-      expect(projectRef.calls).toContain("load");
-      expect(projectRef.calls).not.toContain("resolve");
+      yield* dbAdvisors(linkedFlags({ type: Option.some("security") }));
+      expect(projectRef.calls).toEqual(["resolveRef"]);
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("fetches only the security endpoint for --type security", () => {
-    const { layer, api } = setup({ securityLints: [securityLint], args: ["--linked"] });
+    const { layer, api } = setup({ securityLints: [securityLint] });
     return Effect.gen(function* () {
-      yield* dbAdvisors(flags({ type: Option.some("security") }));
+      yield* dbAdvisors(linkedFlags({ type: Option.some("security") }));
       const urls = api.requests.map((r) => r.url);
       expect(urls.some((u) => u.includes("/advisors/security"))).toBe(true);
       expect(urls.some((u) => u.includes("/advisors/performance"))).toBe(false);
       assertPermissionDrift({
         command: "db advisors",
-        activeFlags: { linked: true, type: "security" },
+        activeFlags: { remote: true, type: "security" },
         requests: api.requests,
         exact: true,
       });
@@ -759,15 +747,15 @@ describe("db advisors — linked", () => {
   });
 
   it.effect("fetches only the performance endpoint for --type performance", () => {
-    const { layer, api } = setup({ performanceLints: [performanceLint], args: ["--linked"] });
+    const { layer, api } = setup({ performanceLints: [performanceLint] });
     return Effect.gen(function* () {
-      yield* dbAdvisors(flags({ type: Option.some("performance") }));
+      yield* dbAdvisors(linkedFlags({ type: Option.some("performance") }));
       const urls = api.requests.map((r) => r.url);
       expect(urls.some((u) => u.includes("/advisors/performance"))).toBe(true);
       expect(urls.some((u) => u.includes("/advisors/security"))).toBe(false);
       assertPermissionDrift({
         command: "db advisors",
-        activeFlags: { linked: true, type: "performance" },
+        activeFlags: { remote: true, type: "performance" },
         requests: api.requests,
         exact: true,
       });
@@ -775,9 +763,9 @@ describe("db advisors — linked", () => {
   });
 
   it.effect("fails with a login suggestion when no access token is available", () => {
-    const { layer } = setup({ loggedIn: false, args: ["--linked"] });
+    const { layer } = setup({ loggedIn: false });
     return Effect.gen(function* () {
-      const error = yield* Effect.flip(dbAdvisors(flags()));
+      const error = yield* Effect.flip(dbAdvisors(linkedFlags()));
       expect(error).toBeInstanceOf(DbAdvisorsNotLoggedInError);
       expect(error).toMatchObject({
         message: expect.stringContaining("Access token not provided"),
@@ -786,27 +774,24 @@ describe("db advisors — linked", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect(
-    "fails with the invalid-token message before any API call (Go LoadAccessTokenFS)",
-    () => {
-      const { layer, api } = setup({ invalidToken: true, args: ["--linked"] });
-      return Effect.gen(function* () {
-        const error = yield* Effect.flip(dbAdvisors(flags()));
-        expect(error).toBeInstanceOf(DbAdvisorsInvalidTokenError);
-        expect(error).toMatchObject({
-          message: expect.stringContaining("Invalid access token format"),
-          suggestion: expect.stringContaining("supabase login"),
-        });
-        // The token gate fails before any advisors request is made.
-        expect(api.requests).toHaveLength(0);
-      }).pipe(Effect.provide(layer));
-    },
-  );
+  it.effect("fails with the invalid-token message before any API call", () => {
+    const { layer, api } = setup({ invalidToken: true });
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(dbAdvisors(linkedFlags()));
+      expect(error).toBeInstanceOf(DbAdvisorsInvalidTokenError);
+      expect(error).toMatchObject({
+        message: expect.stringContaining("Invalid access token format"),
+        suggestion: expect.stringContaining("supabase login"),
+      });
+      // The token gate fails before any advisors request is made.
+      expect(api.requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("fails with a status-200 error when the advisors body is not JSON", () => {
-    const { layer } = setup({ securityRawBody: "<html>gateway</html>", args: ["--linked"] });
+    const { layer } = setup({ securityRawBody: "<html>gateway</html>" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(dbAdvisors(flags({ type: Option.some("security") })));
+      const exit = yield* Effect.exit(dbAdvisors(linkedFlags({ type: Option.some("security") })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toMatchObject({
@@ -818,9 +803,9 @@ describe("db advisors — linked", () => {
   });
 
   it.effect("fails as a decode error when the advisors body has the wrong shape", () => {
-    const { layer } = setup({ securityRawBody: '{"lints":"nope"}', args: ["--linked"] });
+    const { layer } = setup({ securityRawBody: '{"lints":"nope"}' });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(dbAdvisors(flags({ type: Option.some("security") })));
+      const exit = yield* Effect.exit(dbAdvisors(linkedFlags({ type: Option.some("security") })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toMatchObject({
@@ -842,10 +827,9 @@ describe("db advisors — linked", () => {
           metadata: { name: "avatars", type: "bucket", extra: "dropped" },
         },
       ],
-      args: ["--linked"],
     });
     return Effect.gen(function* () {
-      yield* dbAdvisors(flags({ type: Option.some("security") }));
+      yield* dbAdvisors(linkedFlags({ type: Option.some("security") }));
       expect(out.messages).toContainEqual(
         expect.objectContaining({
           type: "success",
@@ -864,9 +848,9 @@ describe("db advisors — linked", () => {
   });
 
   it.effect("fails when the advisors API returns a non-200 status", () => {
-    const { layer } = setup({ securityStatus: 500, args: ["--linked"] });
+    const { layer } = setup({ securityStatus: 500 });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(dbAdvisors(flags({ type: Option.some("security") })));
+      const exit = yield* Effect.exit(dbAdvisors(linkedFlags({ type: Option.some("security") })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
@@ -879,13 +863,36 @@ describe("db advisors — linked", () => {
     const { layer, out } = setup({
       format: "stream-json",
       securityLints: [securityLint],
-      args: ["--linked"],
     });
     return Effect.gen(function* () {
-      yield* dbAdvisors(flags({ type: Option.some("security") }));
+      yield* dbAdvisors(linkedFlags({ type: Option.some("security") }));
       expect(out.messages).toContainEqual(
         expect.objectContaining({ type: "success", message: "db advisors" }),
       );
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeDbTargetSelection("db advisors", {
+  dbUrl: true,
+  workdir: () => tempRoot.current,
+  attempt: ({ target }) => {
+    const ctx = setup({ rows: [], securityLints: [], performanceLints: [] });
+    return {
+      layer: ctx.layer,
+      out: ctx.out,
+      run: dbAdvisors(flags(target)),
+      target: () => {
+        const hostedRef = ctx.api.requests
+          .map(({ url }) => /\/v1\/projects\/([^/]+)\/advisors\//u.exec(url)?.[1])
+          .find((ref) => ref !== undefined);
+        return hostedRef === undefined
+          ? ctx.resolver.resolveInputs[0]?.target
+          : { kind: "linked", ref: hostedRef };
+      },
+      cachedRef: () => ctx.cache.cachedRef,
+      branchLookups: () => ctx.api.requests.filter(({ url }) => url.endsWith("/branches")),
+      apiRequests: () => ctx.api.requests,
+    };
+  },
 });

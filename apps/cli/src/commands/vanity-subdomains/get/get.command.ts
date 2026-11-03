@@ -1,26 +1,26 @@
 import { Effect } from "effect";
-import { Command, Flag } from "effect/cli";
+import { Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
-import { projectRefPicker } from "../../../config/remote-target.layer.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
+import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
-import { RESOURCE_OUTPUT_FORMATS } from "../../../command-internal/go-output-flag.ts";
+import { RESOURCE_OUTPUT_FORMATS } from "../../../command-internal/output-formats.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import {
   validateOutputFormat,
   withCommandTelemetry,
 } from "../../../telemetry/command-telemetry.ts";
 import { vanitySubdomainsGet } from "./get.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
 };
 
 export type VanitySubdomainsGetFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -35,6 +35,7 @@ export const vanitySubdomainsGetCommand = Command.make("get", config).pipe(
       },
       projectRefPicker,
       linkedProjectCache,
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>
@@ -53,4 +54,5 @@ export const vanitySubdomainsGetCommand = Command.make("get", config).pipe(
       );
     }).pipe(withJsonErrorHandling),
   ),
+  withTargetPolicy({ group: "hosted", consent: "none" }),
 );

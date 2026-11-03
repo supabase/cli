@@ -81,7 +81,7 @@ describe("getRegistryImageUrl", () => {
     ]);
   });
 
-  it("honors a projectEnvValues (dotenv)-only registry override, matching Go's post-Load os.Getenv", () => {
+  it("honors a projectEnvValues (dotenv)-only registry override", () => {
     expect(
       resolveImage(undefined, "supabase/pg_prove:3.36", {
         SUPABASE_INTERNAL_IMAGE_REGISTRY: "my.mirror.example",
@@ -102,12 +102,14 @@ describe("getRegistryImageUrl", () => {
     ).toBe("merged.example/supabase/pg_prove:3.36");
   });
 
-  // Published only under ghcr.io/supabase/cli; rewriting by last path segment would misroute it.
+  // Published under ghcr.io/supabase/cli; rewriting by last path segment would misroute it.
   const SLIM_IMAGE = "ghcr.io/supabase/cli/postgres:17.6.1.165";
+  const SLIM_IMAGE_MIRROR = "public.ecr.aws/supabase/cli/postgres:17.6.1.165";
 
   it("leaves a slim image unrewritten, whatever the registry override says", () => {
     for (const registry of [undefined, "public.ecr.aws", "docker.io", "my.mirror.example"]) {
       expect(resolveImage(registry, SLIM_IMAGE)).toBe(SLIM_IMAGE);
+      expect(resolveImage(registry, SLIM_IMAGE_MIRROR)).toBe(SLIM_IMAGE_MIRROR);
     }
     expect(
       resolveImage(undefined, SLIM_IMAGE, {
@@ -116,15 +118,15 @@ describe("getRegistryImageUrl", () => {
     ).toBe(SLIM_IMAGE);
   });
 
-  it("plans a single pull candidate for a slim image", () => {
+  it("plans the slim image, then its ECR Public mirror, whatever the registry override says", () => {
     for (const registry of [undefined, "public.ecr.aws", "docker.io", "my.mirror.example"]) {
-      expect(resolveCandidates(registry, SLIM_IMAGE)).toEqual([SLIM_IMAGE]);
+      expect(resolveCandidates(registry, SLIM_IMAGE)).toEqual([SLIM_IMAGE, SLIM_IMAGE_MIRROR]);
     }
     expect(
       resolveCandidates(undefined, SLIM_IMAGE, {
         SUPABASE_INTERNAL_IMAGE_REGISTRY: "my.mirror.example",
       }),
-    ).toEqual([SLIM_IMAGE]);
+    ).toEqual([SLIM_IMAGE, SLIM_IMAGE_MIRROR]);
   });
 
   it("still rewrites the non-slim ghcr.io/supabase namespace", () => {

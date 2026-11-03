@@ -84,7 +84,7 @@ describe("config pull CLI surface", () => {
       );
 
       const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
-        ["config", "pull", "--project-ref", TEST_REF],
+        ["config", "pull", `--remote=${TEST_REF}`],
         {
           cwd,
           stdin: "n\n",

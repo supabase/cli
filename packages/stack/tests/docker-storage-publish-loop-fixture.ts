@@ -1,6 +1,7 @@
 import { NodeServices } from "@effect/platform-node";
 import { Console, Crypto, Effect, FileSystem, Layer, Path } from "effect";
 import { ChildProcessSpawner } from "effect/process";
+import { slimImageMirrors } from "../src/Artifacts.ts";
 import { makeContainerRuntime } from "../src/runtime/Container.ts";
 import { makeDockerDatabaseStorage } from "../src/storage/DockerDatabaseStorage.ts";
 import { selection } from "./pins.ts";
@@ -40,6 +41,7 @@ const program = Effect.scoped(
     const container = yield* makeContainerRuntime({
       target,
       root: instanceRoot,
+      imageMirrors: slimImageMirrors,
     });
     const storage = yield* makeDockerDatabaseStorage({
       runtime: "docker",

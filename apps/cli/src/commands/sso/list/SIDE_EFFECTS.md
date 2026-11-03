@@ -1,14 +1,16 @@
 # `supabase sso list`
 
+Target: hosted, no consent — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
-| Path                                           | Format                    | When                                                                                          |
-| ---------------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------- |
-| keyring `"Supabase CLI"` / `<profile>`         | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `CommandSettings.profile` |
-| keyring `"Supabase CLI"` / `access-token`      | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                      |
-| `~/.supabase/access-token`                     | plain text (token string) | last-resort fallback after env + keyring miss                                                 |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | always — `linkedProjectCache` reads to decide whether to write                                |
-| `<workdir>/supabase/.temp/project-ref`         | plain text                | when `--project-ref` flag and `SUPABASE_PROJECT_ID` env are unset                             |
+| Path                                           | Format                    | When                                                                                                            |
+| ---------------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| keyring `"Supabase CLI"` / `<profile>`         | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `CommandSettings.profile`                   |
+| keyring `"Supabase CLI"` / `access-token`      | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                                        |
+| `~/.supabase/access-token`                     | plain text (token string) | last-resort fallback after env + keyring miss                                                                   |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | always — `linkedProjectCache` reads to decide whether to write                                                  |
+| `<workdir>/supabase/.temp/project-ref`         | plain text                | when `--remote=<ref>` and `SUPABASE_PROJECT_ID` env are unset, and as the linked parent for `--remote=<branch>` |
 
 ## Files Written
 
@@ -19,13 +21,15 @@
 
 ## API Routes
 
-| Method | Path                                           | Auth         | Request body | Response (used fields)                                                                                                                                                                                       |
-| ------ | ---------------------------------------------- | ------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `GET`  | `/v1/projects`                                 | Bearer token | none         | project list for the interactive picker — only when no ref comes from `--project-ref`, `SUPABASE_PROJECT_ID` or `.temp/project-ref` and stdin is a TTY with interactive output                               |
-| `GET`  | `/v1/projects/{ref}/config/auth/sso/providers` | Bearer token | none         | `{items: [{id, saml?, domains?, created_at?, updated_at?}]}`                                                                                                                                                 |
-| `GET`  | `/v1/projects/{ref}`                           | Bearer token | none         | `{organization_slug}` — upgrade-gate side-call on a 4xx with no plan-gate error in the body                                                                                                                  |
-| `GET`  | `/v1/organizations/{slug}/entitlements`        | Bearer token | none         | `{entitlements[].feature.key, .hasAccess}` — upgrade-gate side-call on a 4xx with no plan-gate error in the body                                                                                             |
-| `GET`  | `/v1/projects/{ref}`                           | Bearer token | none         | `{ref, name, organization_id, organization_slug}` — `linkedProjectCache` fill, best-effort, skipped when `.temp/linked-project.json` exists, `.temp/project-ref` names another ref, or no token is available |
+| Method | Path                                           | Auth         | Request body | Response (used fields)                                                                                                                                                                                                                                   |
+| ------ | ---------------------------------------------- | ------------ | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/v1/projects`                                 | Bearer token | none         | project list for the interactive picker — only when no ref comes from `--remote=<ref>`, `SUPABASE_PROJECT_ID` or `.temp/project-ref` and stdin is a TTY with interactive output                                                                          |
+| `GET`  | `/v1/projects/{parent}/branches`               | Bearer token | none         | `[{id, name, project_ref, is_default}]` — only for `--remote=<branch>` (or the deprecated `--project-ref=<branch>`), and for a bare `--remote` followed by a word that could name a branch; `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project |
+| `GET`  | `/v1/branches/{id}`                            | Bearer token | none         | `{ref, status, …}` — only for `--remote=<branch UUID>` when no project is linked                                                                                                                                                                         |
+| `GET`  | `/v1/projects/{ref}/config/auth/sso/providers` | Bearer token | none         | `{items: [{id, saml?, domains?, created_at?, updated_at?}]}`                                                                                                                                                                                             |
+| `GET`  | `/v1/projects/{ref}`                           | Bearer token | none         | `{organization_slug}` — upgrade-gate side-call on a 4xx with no plan-gate error in the body                                                                                                                                                              |
+| `GET`  | `/v1/organizations/{slug}/entitlements`        | Bearer token | none         | `{entitlements[].feature.key, .hasAccess}` — upgrade-gate side-call on a 4xx with no plan-gate error in the body                                                                                                                                         |
+| `GET`  | `/v1/projects/{ref}`                           | Bearer token | none         | `{ref, name, organization_id, organization_slug}` — `linkedProjectCache` fill, best-effort, skipped when `.temp/linked-project.json` exists, `.temp/project-ref` names another ref, or no token is available                                             |
 
 ## Environment Variables
 
@@ -45,16 +49,16 @@
 
 ## Telemetry Events Fired
 
-| Event                   | When                                                 | Notable properties                                                     |
-| ----------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------- |
-| `cli_command_executed`  | post-run, success or failure (via wrapper)           | `exit_code`, `duration_ms`, `flags` (`--project-ref` allowed verbatim) |
-| `cli_upgrade_suggested` | 4xx response **and** `auth.saml_2` entitlement gated | `feature_key: "auth.saml_2"`, `org_slug`                               |
+| Event                   | When                                                 | Notable properties                                                                                                                                                      |
+| ----------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cli_command_executed`  | post-run, success or failure (via wrapper)           | `exit_code`, `duration_ms`, `flags` (`--remote` → `true` (bare), the ref, or `<redacted>`; `--project-ref` is recorded only when it is ref-shaped, never a branch name) |
+| `cli_upgrade_suggested` | 4xx response **and** `auth.saml_2` entitlement gated | `feature_key: "auth.saml_2"`, `org_slug`                                                                                                                                |
 
 ## Output
 
 ### `--output-format text` / `--output pretty`
 
-Glamour-styled ASCII table with columns `TYPE`, `IDENTITY PROVIDER ID`, `DOMAINS`, `` SAML 2.0 `EntityID` ``, `CREATED AT (UTC)`, `UPDATED AT (UTC)`.
+Styled ASCII table with columns `TYPE`, `IDENTITY PROVIDER ID`, `DOMAINS`, `` SAML 2.0 `EntityID` ``, `CREATED AT (UTC)`, `UPDATED AT (UTC)`.
 
 ### `--output json` / `--output yaml` / `--output toml`
 
@@ -70,5 +74,5 @@ Single `success` event with `{providers: items}` as data.
 
 ## Notes
 
-- The `SAML 2.0 EntityID` header label is rendered as plain text; the old Go CLI's markdown source wrote `` SAML 2.0 `EntityID` `` and Glamour strips the inline-code backticks. Our flat ASCII renderer drops them at the source for byte parity with Glamour's output.
+- The `SAML 2.0 EntityID` header label is rendered as plain text, without inline-code backticks.
 - Upgrade-gate side calls only fire on 4xx.

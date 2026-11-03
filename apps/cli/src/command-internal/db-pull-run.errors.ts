@@ -30,8 +30,7 @@ export class DbPullInSyncError extends Data.TaggedError("DbPullInSyncError")<{
   /**
    * Explains the non-zero exit instead of letting `Output.fail` append the generic "Try
    * rerunning the command with --debug" footer: an in-sync database is a finding, not a failure
-   * to troubleshoot. See `docs/go-cli-divergences.md` for the established message/exit-code
-   * contract this preserves.
+   * to troubleshoot.
    */
   readonly suggestion: string;
 }> {

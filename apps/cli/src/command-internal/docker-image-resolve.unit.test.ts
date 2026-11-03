@@ -195,6 +195,36 @@ describe("makeDockerImageResolver", () => {
       }),
   );
 
+  it.effect("pulls a slim image from ECR Public once GHCR keeps rate-limiting it", () =>
+    Effect.gen(function* () {
+      const originalWrite = globalThis.process.stderr.write.bind(globalThis.process.stderr);
+      globalThis.process.stderr.write = (() => true) as typeof globalThis.process.stderr.write;
+
+      try {
+        const digest = "sha256:8fb7ae7cd0d8121c460c8756d7f2791ce9a19c3331b46987456dfa4f8b45d701";
+        const slim = `ghcr.io/supabase/cli/postgres:17.11.0.004-r1@${digest}`;
+        const mirror = `public.ecr.aws/supabase/cli/postgres:17.11.0.004-r1@${digest}`;
+        const throttled = {
+          exitCode: 1,
+          stderr: "Error response from daemon: toomanyrequests: retry-after: 173.687µs",
+        };
+        const mock = mockSpawner([throttled, throttled, throttled, { exitCode: 0 }]);
+        const fiber = yield* makeDockerImageResolver(mock.spawner)(slim).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+
+        yield* TestClock.adjust("4 seconds");
+        yield* TestClock.adjust("8 seconds");
+        const image = yield* Fiber.join(fiber);
+
+        expect(mock.pulls).toEqual([slim, slim, slim, mirror]);
+        expect(image).toBe(mirror);
+      } finally {
+        globalThis.process.stderr.write = originalWrite;
+      }
+    }),
+  );
+
   it.effect(
     "does not inject a blank line before the banner when the child error is newline-terminated",
     () =>
