@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  amcheckStatements,
-  buildCollationDriftReport,
-  refreshStatements,
-  reindexStatements,
-} from "./collation-drift.query.ts";
+import { buildCollationDriftReport } from "./collation-drift.query.ts";
 import type { ReportStepsBlock, ReportTableBlock } from "../../../../output/report.types.ts";
 
 const PG17 = 170000;
@@ -105,45 +100,37 @@ describe("buildCollationDriftReport", () => {
   });
 });
 
+function stepSql(rows: ReadonlyArray<Record<string, unknown>>, step: number) {
+  return stepsBlock(buildCollationDriftReport(rows, PG17)).steps[step]?.sql ?? [];
+}
+
 describe("generated statements", () => {
   it("escapes quotes and backslashes in the amcheck literal", () => {
     const crafted = { ...icuRow, name: `public."x\\'::text::regclass) WHERE false;SELECT 1;--"` };
-    const [statement] = amcheckStatements([crafted] as never);
-    expect(statement).toBe(
+    expect(stepSql([crafted], 0)[1]).toBe(
       `SELECT bt_index_check(E'public."x\\\\\\'::text::regclass) WHERE false;SELECT 1;--"'::regclass, heapallindexed => true);`,
     );
   });
 
   it("marks key-backing indexes in the amcheck list", () => {
-    const [keyed, plain] = amcheckStatements([libcRow, icuRow] as never);
+    const [, keyed, plain] = stepSql([libcRow, icuRow], 0);
     expect(keyed).toContain("-- unique");
     expect(plain).not.toContain("--");
   });
 
-  it("reindexes by the already-qualified index name", () => {
-    expect(reindexStatements([icuRow] as never)).toEqual([
+  it("rebuilds concurrently, except exclusion-constraint indexes", () => {
+    const exclusion = { ...icuRow, name: "public.demo_excl", key_type: "EXCLUSION" };
+    expect(stepSql([icuRow, exclusion], 1)).toEqual([
       "REINDEX INDEX CONCURRENTLY public.demo_title_idx;",
+      "REINDEX INDEX public.demo_excl;  -- exclusion constraint: CONCURRENTLY is unsupported, blocks writes while it runs",
     ]);
   });
 
-  it("emits ALTER DATABASE only for default-collation drift", () => {
-    expect(refreshStatements([icuRow] as never)).toEqual([
+  it("refreshes the database only for default-collation drift, and each collation once", () => {
+    const second = { ...icuRow, name: "public.demo_title_uniq" };
+    expect(stepSql([icuRow, second], 2)).toEqual([
       "ALTER COLLATION public.test_stale_icu REFRESH VERSION;",
     ]);
-    expect(refreshStatements([libcRow] as never)).toEqual([
-      'ALTER DATABASE "postgres" REFRESH COLLATION VERSION;',
-    ]);
-  });
-
-  it("rebuilds exclusion-constraint indexes without CONCURRENTLY", () => {
-    expect(reindexStatements([{ ...icuRow, key_type: "EXCLUSION" }] as never)).toEqual([
-      "REINDEX INDEX public.demo_title_idx;  -- exclusion constraint: CONCURRENTLY is unsupported, blocks writes while it runs",
-    ]);
-  });
-
-  it("deduplicates a collation shared by several indexes", () => {
-    const second = { ...icuRow, name: "public.demo_title_uniq" };
-    const statements = refreshStatements([icuRow, second] as never);
-    expect(statements).toHaveLength(1);
+    expect(stepSql([libcRow], 2)).toEqual(['ALTER DATABASE "postgres" REFRESH COLLATION VERSION;']);
   });
 });

@@ -121,7 +121,7 @@ function quoteLiteral(value: string): string {
   return `E'${value.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`;
 }
 
-export function amcheckStatements(rows: ReadonlyArray<DriftRow>): string[] {
+function amcheckStatements(rows: ReadonlyArray<DriftRow>): string[] {
   return rows.map(
     (r) =>
       `SELECT bt_index_check(${quoteLiteral(r.name)}::regclass, heapallindexed => true);` +
@@ -129,7 +129,7 @@ export function amcheckStatements(rows: ReadonlyArray<DriftRow>): string[] {
   );
 }
 
-export function reindexStatements(rows: ReadonlyArray<DriftRow>): string[] {
+function reindexStatements(rows: ReadonlyArray<DriftRow>): string[] {
   return rows.map((r) =>
     r.key_type === "EXCLUSION"
       ? `REINDEX INDEX ${r.name};  -- exclusion constraint: CONCURRENTLY is unsupported, blocks writes while it runs`
@@ -137,7 +137,7 @@ export function reindexStatements(rows: ReadonlyArray<DriftRow>): string[] {
   );
 }
 
-export function refreshStatements(rows: ReadonlyArray<DriftRow>): string[] {
+function refreshStatements(rows: ReadonlyArray<DriftRow>): string[] {
   const out: string[] = [];
   if (rows.some((r) => r.collation === "default")) {
     const database = rows[0]?.database ?? "postgres";
@@ -272,9 +272,8 @@ export function buildCollationDriftReport(
  * version no longer matches the version the operating system provides, with
  * the verify → rebuild → refresh workflow rendered as part of the output.
  *
- * Unlike the sibling commands this does NOT filter the internal Supabase
- * schemas (`auth`, `storage`, …): those hold user data, and a mis-ordered
- * index on `auth.users` is exactly as damaging as one in `public`.
+ * Includes `auth`, `storage` and other Supabase schemas, which the table commands filter,
+ * because their indexes protect user data too.
  */
 export const collationDriftSpec: InspectReportSpec = {
   name: "collation-drift",

@@ -64,26 +64,29 @@ function setup(opts: {
   serverVersionNum: number;
   rows: ReadonlyArray<Record<string, unknown>>;
   format?: "text" | "json";
+  connectFails?: boolean;
 }) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const queries: string[] = [];
   const connection = Layer.succeed(DbConnection, {
     connect: () =>
-      Effect.succeed({
-        exec: () => Effect.void,
-        execBatch: () => Effect.void,
-        extensionExists: () => Effect.succeed(false),
-        queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
-        copyToCsv: () => Effect.succeed(new Uint8Array()),
-        query: (sql: string) => {
-          queries.push(sql);
-          return Effect.succeed(
-            sql.includes("server_version_num")
-              ? [{ server_version_num: opts.serverVersionNum }]
-              : opts.rows,
-          );
-        },
-      }),
+      opts.connectFails === true
+        ? Effect.die("connect must not be reached")
+        : Effect.succeed({
+            exec: () => Effect.void,
+            execBatch: () => Effect.void,
+            extensionExists: () => Effect.succeed(false),
+            queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
+            copyToCsv: () => Effect.succeed(new Uint8Array()),
+            query: (sql: string) => {
+              queries.push(sql);
+              return Effect.succeed(
+                sql.includes("server_version_num")
+                  ? [{ server_version_num: opts.serverVersionNum }]
+                  : opts.rows,
+              );
+            },
+          }),
   });
   const resolver = Layer.succeed(DbConfigResolver, {
     resolveConnection: (input: DbConnectionInput) =>
@@ -173,7 +176,7 @@ describe("inspect db collation-drift", () => {
   });
 
   it.effect("rejects -o/--output before connecting", () => {
-    const { layer, queries } = setup({ serverVersionNum: 170000, rows: [] });
+    const { layer } = setup({ serverVersionNum: 170000, rows: [], connectFails: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(inspectDbCollationDrift(flags));
       expect(Exit.isFailure(exit)).toBe(true);
@@ -181,8 +184,8 @@ describe("inspect db collation-drift", () => {
         expect(Cause.pretty(exit.cause)).toContain(
           "the -o/--output flag is not supported by inspect db collation-drift; use --output-format json|stream-json instead.",
         );
+        expect(Cause.pretty(exit.cause)).not.toContain("connect must not be reached");
       }
-      expect(queries).toHaveLength(0);
     }).pipe(Effect.provide(Layer.mergeAll(layer, Layer.succeed(OutputFlag, Option.some("json")))));
   });
 });
