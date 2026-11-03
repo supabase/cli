@@ -55,6 +55,7 @@ describe("REPORT_QUERIES", () => {
       "traffic_profile",
       "unused_indexes",
       "vacuum_stats",
+      "xid_age",
     ]);
   });
 

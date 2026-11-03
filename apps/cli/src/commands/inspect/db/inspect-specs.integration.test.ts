@@ -33,6 +33,7 @@ import { tableStatsSpec } from "./table-stats/table-stats.query.ts";
 import { toastSizesSpec } from "./toast-sizes/toast-sizes.query.ts";
 import { trafficProfileSpec } from "./traffic-profile/traffic-profile.query.ts";
 import { vacuumStatsSpec } from "./vacuum-stats/vacuum-stats.query.ts";
+import { xidAgeSpec } from "./xid-age/xid-age.query.ts";
 
 const LOCAL_CONN: PgConnInput = {
   host: "127.0.0.1",
@@ -247,6 +248,16 @@ const cases: ReadonlyArray<Case> = [
     expect: ["public.t", "8 kB", "10 kB", "1000"],
   },
   {
+    spec: xidAgeSpec,
+    params: "schemas1",
+    row: {
+      name: "public.users",
+      xid_age: 500000000,
+      transactions_remaining: 1500000000,
+    },
+    expect: ["public.users", "500000000", "1500000000"],
+  },
+  {
     spec: trafficProfileSpec,
     params: "none",
     row: {
@@ -278,8 +289,8 @@ const cases: ReadonlyArray<Case> = [
 ];
 
 describe("inspect db specs (per-subcommand correctness)", () => {
-  it("covers all 14 active subcommands", () => {
-    expect(cases).toHaveLength(14);
+  it("covers all 15 active subcommands", () => {
+    expect(cases).toHaveLength(15);
   });
 
   for (const testCase of cases) {

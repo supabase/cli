@@ -544,7 +544,7 @@ describe("inspect db through the real database-config resolver", () => {
         expect(asLines(requests)).toEqual([poolerRequest, loginRoleRequest]);
         expect(connection.connectCalls[0]?.cfg.host).toBe("aws-0-us-east-1.pooler.supabase.com");
         expect(out.stdoutText).toContain("8192 kB");
-        expect(INSPECT_DB_LEAVES).toHaveLength(26);
+        expect(INSPECT_DB_LEAVES).toHaveLength(27);
         expect(INSPECT_DB_LEAVES).toEqual(expect.arrayContaining(REMOVED_INSPECT_DB_LEAVES));
         for (const command of RUNNER_INSPECT_DB_LEAVES) {
           assertPermissionDrift({
