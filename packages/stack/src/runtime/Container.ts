@@ -134,29 +134,15 @@ const engineKind = (
           ? "port-allocation"
           : undefined;
 
-const MANAGEMENT_COMMANDS = new Set([
-  "container",
-  "context",
-  "image",
-  "network",
-  "system",
-  "volume",
-]);
-
 /** Names the stalled engine subcommand and its latest stderr, never the full argv. */
 const commandTimedOut = (
   args: ReadonlyArray<string>,
   timeout: Duration.Input,
   stderr: string,
 ): Cause.TimeoutError => {
-  const [first = "command", second] = args;
-  const subcommand =
-    MANAGEMENT_COMMANDS.has(first) && second !== undefined && !second.startsWith("-")
-      ? `${first} ${second}`
-      : first;
   const tail = stderr.trim().slice(-2000);
   return new Cause.TimeoutError(
-    `Engine command '${subcommand}' did not finish within ${Duration.format(Duration.fromInputUnsafe(timeout))}${tail.length > 0 ? `; stderr: ${tail}` : ""}`,
+    `Engine command '${args[0] ?? "command"}' did not finish within ${Duration.format(Duration.fromInputUnsafe(timeout))}${tail.length > 0 ? `; stderr: ${tail}` : ""}`,
   );
 };
 
