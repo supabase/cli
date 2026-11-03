@@ -213,7 +213,7 @@ Production releases live in a single `[.github/workflows/release.yml](../../../.
 | next        | push: next (after `Test next` passes) | `next`        | none                                    | prerelease              | `X.Y.Z-next.N` |
 | maintenance | manual dispatch on a `v<N>.x` ref     | `v<N>.stable` | `supabase@<N>` / `supabase-v<N>-stable` | published, never latest | `N.Y.Z`        |
 
-`beta` auto-publishes on every merge to `develop` (CLI). `stable` auto-publishes after a develop→main fast-forward, which itself happens when the weekly `[deploy.yml](../../../.github/workflows/deploy.yml)` cron PR is approved (the FF push to `main` re-fires `release.yml` via the `push: branches: [main]` trigger). `next` auto-publishes on every push to the `next` branch, and `maintenance` is dispatched by hand (see [Maintenance lines](#maintenance-lines)).
+`beta` auto-publishes on every merge to `develop` (CLI). `stable` auto-publishes after a develop→main fast-forward, which itself happens when the weekly `[deploy.yml](../../../.github/workflows/deploy.yml)` cron PR is approved (the FF push to `main` re-fires `release.yml` via the `push: branches: [main]` trigger). `next` auto-publishes on every push to the `next` branch that carries commits beyond `develop` (see [The `next` channel](#the-next-channel)), and `maintenance` is dispatched by hand (see [Maintenance lines](#maintenance-lines)).
 
 Versions are computed by `cycjimmy/semantic-release-action` from the first line of each squash commit (the PR title). Conventional commit titles use `feat:` → minor, `fix:`, `perf:`, or `revert:` → patch, and `!` after the type or scope (`feat!:` / `fix(scope)!:`) → major. Commit bodies, including `BREAKING CHANGE` notes, are ignored for version calculation. The `release` config lives in `apps/cli/package.json`: `develop` is a `beta` prerelease branch, `next` is a `next` prerelease branch, `main` emits plain `X.Y.Z`, and a wildcard entry `v+([0-9]).x` turns every `v<N>.x` branch into a maintenance line on the `v<N>.stable` channel (the entry is ignored while no such branch exists).
 
@@ -245,7 +245,7 @@ flowchart LR
 flowchart TD
     pushDev[push: develop] --> plan
     pushMain[push: main] --> plan
-    pushNext[push: next] --> testNext["Test next<br/>test.yml (reusable)"]
+    pushNext[push: next] -->|"only with commits beyond develop"| testNext["Test next<br/>test.yml (reusable)"]
     testNext -->|passes| plan
     pr["approved PR<br/>develop→main, next→develop, sync/*"] --> ff["fast-forward.yml<br/>checks + git push via App token"]
     ff --> pushMain
@@ -281,11 +281,14 @@ gh workflow run release.yml \
 
 Auto-trigger paths leave `version` empty: semantic-release computes it from commits since the last tag. A dispatch with an empty `version` does the same for the dispatched ref, and fails if the channel does not match the ref or if semantic-release computes no release.
 
+The `develop` and `next` plans wait, up to 60 minutes, until the `publish` job of any in-flight `Release` run on `main` has finished before reading tags: that job pushes the stable tag after the npm publish, so a prerelease planned earlier would miss it and compute a stale version. The rest of the `main` run (Homebrew, Scoop, smoke tests) does not delay the plan. If the wait times out, the plan job fails; re-run it once that job has finished.
+
 The plan job refuses a dispatch when:
 
 - `channel=next` is not on the `next` ref, or `channel=maintenance` is not on a `v<N>.x` ref;
 - `next` or a `v<N>.x` ref is dispatched with `beta` or `stable` (those refs release only their own channel);
 - `channel=stable` is not a dry run and the ref is not `main` (any other ref, including `hotfix/*`, may only dry-run);
+- `channel=next` is dispatched while `next` has no commits beyond `develop` (see [The `next` channel](#the-next-channel));
 - a non-empty `version` is not semver (no `v` prefix, no build metadata) or does not match the channel: `next` needs `X.Y.Z-next.N`, `beta` needs `X.Y.Z-beta.N`, and `stable` and `maintenance` need plain `X.Y.Z`.
 
 ### Hotfix release flow
@@ -315,9 +318,11 @@ Do not use `workflow_dispatch dry_run=false` as a hotfix path. A stable release 
 
 `next` is one long-lived branch reused for every future major. Breaking PRs target `next` instead of `develop`, with a `type(scope)!:` title; they use the same merge queue, required checks, and review as `develop`. The `Lint Pull Request` check fails any `!` title whose base is not `next`, with one exception: the `next` → `develop` cut PR.
 
-Every push to `next` first runs the full `test.yml` suite (the `Test next` job in `release.yml`). Only when it passes does the pipeline plan and publish `X.Y.Z-next.N` to the npm `next` dist-tag and a GitHub prerelease. `next` has no Homebrew, Scoop, or Linear publication. It does get the raw semantic-release changelog on its GitHub Release (`backfill-release-notes`); the LLM-proposed notes PR is stable-only, and `apply-release-notes` still accepts `-next` tags for a manual proposal.
+Every push to `next` that carries commits beyond `develop` first runs the full `test.yml` suite (the `Test next` job in `release.yml`). Only when it passes does the pipeline plan and publish `X.Y.Z-next.N` to the npm `next` dist-tag and a GitHub prerelease. `next` has no Homebrew, Scoop, or Linear publication. It does get the raw semantic-release changelog on its GitHub Release (`backfill-release-notes`); the LLM-proposed notes PR is stable-only, and `apply-release-notes` still accepts `-next` tags for a manual proposal.
 
-`next` publishes use the `next` prerelease identifier so versions never collide with `beta` on npm after a cut. After a stable release, semantic-release on `next` computes past it on the following push. The npm `next` dist-tag is not moved by the stable release, because publishing is OIDC-only and `npm dist-tag add` needs a token the pipeline does not hold; `supabase@next` catches up on the next push to `next`. A release can be re-cut by dispatching `release.yml` with `channel=next` on the `next` ref.
+`next` publishes use the `next` prerelease identifier so versions never collide with `beta` on npm after a cut. After a stable release, semantic-release on `next` computes past it on the following push with commits beyond `develop`. The npm `next` dist-tag is not moved by the stable release, because publishing is OIDC-only and `npm dist-tag add` needs a token the pipeline does not hold; `supabase@next` catches up on the next release from `next`, which needs commits beyond `develop`. A release can be re-cut by dispatching `release.yml` with `channel=next` on the `next` ref.
+
+A push to `next` with no commits beyond `develop` skips `Test next` and the release. That is the usual state between majors, because the sync fast-forwards `next` onto `develop`. semantic-release reads channel notes per commit ([semantic-release#4073](https://github.com/semantic-release/semantic-release/issues/4073)), so a `next` tag on a commit `develop` already tagged misreads both tags. `supabase@next` stays on the last `next` release until a breaking change lands on `next`, and `supabase@beta` carries the newest code meanwhile. A `channel=next` dispatch is refused in that state.
 
 The nightly live e2e run covers `main`, `develop`, and `next`.
 
@@ -529,7 +534,7 @@ Both updaters run automatically from `release-shared.yml`'s `publish-homebrew` a
 
 Once the channels are live, two reusable workflows run automatically (last in `release-shared.yml`, non-gating — by the time they run the artifacts are already published, so a failure surfaces as a red post-release signal rather than blocking distribution):
 
-- `[setup-cli-smoke-test.yml](../../../.github/workflows/setup-cli-smoke-test.yml)` (`setup-cli-smoke` job) — installs the released version through `supabase/setup-cli` v1 and v2 (the GitHub Release download path) and v3 (the npm package) on Linux, macOS, Windows, and Alpine.
+- `[setup-cli-smoke-test.yml](../../../.github/workflows/setup-cli-smoke-test.yml)` (`setup-cli-smoke` job) — installs the released version through `supabase/setup-cli` v1 and v2 (the GitHub Release download path) and v3 (the npm package) on Linux, macOS, Windows, and Alpine. v3 waits on each runner until npm serves the version (up to 15 minutes) and fails unless setup-cli installed from npm; one ubuntu job forces the GitHub release fallback.
 - `[verify-install-channels.yml](../../../.github/workflows/verify-install-channels.yml)` (`verify-install-channels` job) — runs a **real** `brew install` (macOS **and** Linux, so both the `on_macos` and `on_linux` stanzas of the formula are exercised), `scoop install`, and `curl|bash` install of the **published** install script (fetched from the release asset, not the repo checkout) against the just-published Homebrew tap, Scoop bucket, and GitHub Release. Each leg then asserts `supabase --version` matches and runs `supabase --help` to exercise the actual command tree. brew, scoop, and the install script each verify the published `sha256`/`hash` against the downloaded tarball, so this is the signal that would have caught CLI v2.107.0 (where the brew/scoop manifests shipped checksums that did not match the release tarballs and every `brew install` / `scoop install` failed). It only runs for `beta`/`stable`/`maintenance` (the channels that publish brew/scoop) and can be dispatched manually against any already-published version via the Actions tab.
 
 ### Code signing (macOS)

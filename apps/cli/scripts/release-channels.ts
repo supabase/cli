@@ -38,3 +38,33 @@ export function channelForTag(tag: string): "beta" | "next" | "alpha" | "latest"
   if (tag.includes("-alpha.")) return "alpha";
   return "latest";
 }
+
+/** Whether `tag` is a CLI release tag in `channel`'s history: stable tags always, prereleases only on their own channel. */
+export function isInChannelHistory(
+  tag: string,
+  channel: ReturnType<typeof channelForTag>,
+): boolean {
+  return /^v\d/.test(tag) && (!tag.includes("-") || channelForTag(tag) === channel);
+}
+
+function versionBase(version: string): readonly [number, number, number] | undefined {
+  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version);
+  return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : undefined;
+}
+
+/** The smallest release type that takes `lastVersion` to `version`, or null when `version` is not later. */
+export function releaseTypeBetween(
+  lastVersion: string | undefined,
+  version: string,
+): "major" | "minor" | "patch" | null {
+  const last = lastVersion === undefined ? undefined : versionBase(lastVersion);
+  const next = versionBase(version);
+  if (!last || !next) return null;
+
+  const [lastMajor, lastMinor, lastPatch] = last;
+  const [major, minor, patch] = next;
+  if (major !== lastMajor) return major > lastMajor ? "major" : null;
+  if (minor !== lastMinor) return minor > lastMinor ? "minor" : null;
+  if (patch !== lastPatch) return patch > lastPatch ? "patch" : null;
+  return lastVersion !== version ? "patch" : null;
+}
