@@ -76,6 +76,8 @@ WHERE am.amname = 'btree'
   -- Partitioned indexes ('I') hold no data; each partition's index is listed instead.
   AND i.relkind = 'i'
   AND t.relkind IN ('r', 'm')
+  -- Other sessions' temporary tables cannot be rebuilt from this session.
+  AND t.relpersistence <> 't'
   AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
   AND dr.stored_version IS NOT NULL
   AND dr.stored_version IS DISTINCT FROM dr.current_version
@@ -215,7 +217,7 @@ export function buildCollationDriftReport(
       {
         kind: "callout",
         severity,
-        text: "These indexes were built under different sorting rules than the system now provides. Postgres reports no error for this: queries may quietly return missing rows, sort incorrectly, or let duplicates past a unique constraint. Rows below are candidates and running amcheck would confirm which ones are actually mis-ordered.",
+        text: "These indexes were built under different sorting rules than the system now provides. Postgres reports no error for this: queries may quietly return missing rows, sort incorrectly, or let duplicates past a unique constraint. amcheck can detect some ordering problems, but every listed index must still be rebuilt.",
       },
       {
         kind: "table",
