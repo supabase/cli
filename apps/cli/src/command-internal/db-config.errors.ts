@@ -1,6 +1,8 @@
 import { Data } from "effect";
 import {
   actionability,
+  CliErrorCategory,
+  CliErrorKind,
   type CliErrorActionabilityDeclaration,
   CliSuggestionType,
   ErrorActionabilityId,
@@ -71,6 +73,23 @@ export class DbConfigLoginRoleStatusError extends Data.TaggedError("DbConfigLogi
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}
+
+/**
+ * The Management API could not mint a login role because the project database lacks
+ * `supabase_privileged_role` (Postgres `42501`); the dedicated tag isolates these projects in telemetry.
+ */
+export class DbConfigLoginRoleMissingPrivilegedRoleError extends Data.TaggedError(
+  "DbConfigLoginRoleMissingPrivilegedRoleError",
+)<{ readonly message: string; readonly suggestion: string }> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return {
+      error_kind: CliErrorKind.ExternalService,
+      error_category: CliErrorCategory.ApiStatus,
+      has_suggestion: true,
+      suggestion_type: CliSuggestionType.SetEnvVar,
+    };
   }
 }
 

@@ -1929,6 +1929,33 @@ describe("dbConfigResolver (container pooler fallback)", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
   });
 
+  it.effect(
+    "reports a missing supabase_privileged_role when the login-role mint fails with 42501",
+    () => {
+      const requests: Array<{ readonly method: string; readonly path: string }> = [];
+      return Effect.gen(function* () {
+        yield* stubManagementApi(requests, (method, path) => {
+          if (method === "GET" && path === poolerPath)
+            return Response.json(primaryPoolerConfigs(ref));
+          if (method === "POST" && path === loginRolePath) {
+            return Response.json(
+              { message: "Failed to create login role: 42501: permission denied to alter role" },
+              { status: 400 },
+            );
+          }
+          return undefined;
+        });
+        const dir = yield* withWorkdir();
+        const error = yield* resolvePoolerFallback(dir, inputFor(explicitRefTarget(ref)), {
+          dbConnection: connects,
+          configEnv: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+        }).pipe(Effect.flip);
+        expect(error._tag).toBe("DbConfigLoginRoleMissingPrivilegedRoleError");
+        expect(error).toMatchObject({ suggestion: expect.stringContaining("--password") });
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    },
+  );
+
   it.effect("fetches the pooler config but mints no login role when a password is set", () => {
     const requests: Array<{ readonly method: string; readonly path: string }> = [];
     return Effect.gen(function* () {

@@ -198,6 +198,17 @@ const loginRoleErrorMapper = mapHttpError({
   statusMessage: (status, body) => `unexpected login role status ${status}: ${body}`,
 });
 
+const isMissingPrivilegedRole = (error: Errors.DbConfigLoginRoleStatusError): boolean =>
+  error.status === 400 &&
+  (error.body.includes("42501") || /permission denied to alter role/i.test(error.body));
+
+const missingPrivilegedRoleError = (error: Errors.DbConfigLoginRoleStatusError) =>
+  new Errors.DbConfigLoginRoleMissingPrivilegedRoleError({
+    message: `failed to create a temporary login role: the project database is missing supabase_privileged_role: ${error.body}`,
+    suggestion:
+      "Retry with your database password (--password or SUPABASE_DB_PASSWORD), which skips the temporary login role, and contact support at https://supabase.com/dashboard/support/new to repair the project's roles.",
+  });
+
 const listBansErrorMapper = mapHttpError({
   networkError: Errors.DbConfigListBansNetworkError,
   statusError: Errors.DbConfigListBansStatusError,
@@ -264,9 +275,12 @@ const initLoginRole = Effect.fn("DbConfig.initLoginRole")(function* (
   const api = yield* (yield* CommandPlatformApiFactory).make;
   // Written to stderr unconditionally (not gated on --debug).
   yield* output.raw("Initialising login role...\n", "stderr");
-  const role = yield* api.v1
-    .createLoginRole({ ref, read_only: false })
-    .pipe(Effect.catch(loginRoleErrorMapper));
+  const role = yield* api.v1.createLoginRole({ ref, read_only: false }).pipe(
+    Effect.catch(loginRoleErrorMapper),
+    Effect.catchTag("DbConfigLoginRoleStatusError", (error) =>
+      Effect.fail(isMissingPrivilegedRole(error) ? missingPrivilegedRoleError(error) : error),
+    ),
+  );
   return { ...conn, user: role.role, password: role.password };
 });
 
