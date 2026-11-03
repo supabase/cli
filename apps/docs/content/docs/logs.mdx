@@ -11,6 +11,10 @@ supabase logs tail --remote --service postgres --level error
 supabase logs tail --service postgres --no-follow
 ```
 
+In an interactive terminal, `logs query` and `logs tail` open a log browser. Use the up and down arrows to select a row, Enter to read its full details, and the arrows to scroll. Escape returns to the list; `q` exits. Times use UTC. Query rows without a timestamp show `—`.
+
+Live tails follow the newest row while you are at the bottom. Browsing older rows or opening details pauses that movement. Live tails retain up to 1000 rows and approximately 8 MiB, with a visible notice when older rows are discarded. Pipes and JSON output keep their existing formats.
+
 `tail` and `sources` default to the local stack. `--remote` selects the linked project. Use `--remote=<ref>` for another project or `--remote=<branch>` for a branch of the linked project. `query` defaults to the linked hosted project.
 
 Use `--output-format text`, `json`, or `stream-json`. These commands reject the legacy `-o/--output` flag.
@@ -20,14 +24,14 @@ Use `--output-format text`, `json`, or `stream-json`. These commands reject the 
 Pass SQL through one argument, a file, or stdin:
 
 ```sh
-supabase logs query "select id, event_message, log_attributes from logs limit 20" --remote
+supabase logs query "select timestamp, id, event_message, log_attributes from logs limit 20" --remote
 supabase logs query --file errors.sql --since 30m --output-format json
 cat errors.sql | supabase logs query --remote --output-format stream-json
 ```
 
 The query uses ClickHouse SQL over the hosted `logs` table. It does not query Postgres. Select `log_attributes` to keep available correlation IDs and user attributes in the output. For example, `where source = 'postgres_logs'` limits rows to Postgres.
 
-Text output renders a table. JSON output returns an array of rows. Stream JSON output returns a `result` event containing the array.
+Piped text output renders a table. Interactive text preserves your query order and starts at its first row. JSON output returns an array of rows. Stream JSON output returns a `result` event containing the array.
 
 The default range is the last hour. Use `--since 30m` or UTC timestamps with `--from` and `--to`. The range must be at most 24 hours. Do not combine `--since` with `--from` or `--to`.
 

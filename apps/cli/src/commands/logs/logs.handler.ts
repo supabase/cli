@@ -1,3 +1,4 @@
+import { browseLogs, useLogsBrowser, type LogsBrowserSink } from "./logs.browser.ts";
 import { followLogs } from "../../command-internal/logs/follow.ts";
 import { unsupportedOutputFlagMessage } from "../../command-internal/output-formats.ts";
 import { Clock, DateTime, Effect, FileSystem, Option, Path, Schedule, Schema } from "effect";
@@ -96,7 +97,9 @@ export const logsQuery = Effect.fn("logs.query")(function* (flags: LogsQueryFlag
       const task = yield* output.task("Querying logs...");
       const rows = yield* queryLogs(api, ref, sql, window).pipe(Effect.tapError(() => task.fail()));
       yield* task.clear;
-      yield* emitRows(rows);
+      if (yield* useLogsBrowser())
+        yield* browseLogs((sink) => Effect.forEach(rows, sink.entry, { discard: true }), "query");
+      else yield* emitRows(rows);
     }).pipe(Effect.ensuring(cache.cache(ref)));
   }).pipe(Effect.ensuring(telemetry.flush));
 });
@@ -120,6 +123,7 @@ const hostedTail = Effect.fn("logs.tail.remote")(function* (
   flags: LogsTailFlags,
   ref: string,
   computeEnabled: boolean,
+  sink?: LogsBrowserSink,
 ) {
   const output = yield* Output;
   const cache = yield* LinkedProjectCache;
@@ -221,7 +225,8 @@ const hostedTail = Effect.fn("logs.tail.remote")(function* (
         seen.set(row.id, row.ts_ms);
         newest = Math.max(newest, row.ts_ms);
         const payload = { ...row, timestamp: DateTime.formatIso(DateTime.makeUnsafe(row.ts_ms)) };
-        if (output.format === "stream-json")
+        if (sink !== undefined) yield* sink.entry(payload);
+        else if (output.format === "stream-json")
           yield* output.event({
             type: "log-entry",
             timestamp: payload.timestamp,
@@ -251,10 +256,14 @@ const hostedTail = Effect.fn("logs.tail.remote")(function* (
             (a, b) => a.ts_ms - b.ts_ms || a.id.localeCompare(b.id),
           );
     if (flags.tail > 0 && history.length === flags.tail)
-      yield* output.raw(
-        "History reached --tail; older rows may exist. Use logs query to read a wider result.\n",
-        "stderr",
-      );
+      yield* sink === undefined
+        ? output.raw(
+            "History reached --tail; older rows may exist. Use logs query to read a wider result.\n",
+            "stderr",
+          )
+        : sink.notice(
+            "History reached --tail; older rows may exist. Use logs query to read a wider result.",
+          );
     if (output.format === "json")
       return yield* logsResult(
         history.map((row) => ({
@@ -316,7 +325,11 @@ export const logsTail = Effect.fn("logs.tail")(function* (
     const target = yield* resolveTarget(flags);
     if (target.kind === "db-url")
       return yield* new LogsInputError({ message: "Logs do not support database URLs." });
-    if (target.kind === "linked") return yield* hostedTail(flags, target.ref, computeEnabled);
+    const interactive = yield* useLogsBrowser();
+    if (target.kind === "linked")
+      return yield* interactive
+        ? browseLogs((sink) => hostedTail(flags, target.ref, computeEnabled, sink))
+        : hostedTail(flags, target.ref, computeEnabled);
     if (!localEnabled)
       return yield* new LogsInputError({
         message:
@@ -331,24 +344,38 @@ export const logsTail = Effect.fn("logs.tail")(function* (
       return yield* new LogsInputError({
         message: "For local logs, select either --resource (instance ID) or --service.",
       });
-    return yield* stackLogs({
-      stack: flags.stack,
-      stackId: flags.stackId,
-      service: Option.isSome(flags.resource)
-        ? [flags.resource.value]
-        : flags.service.map((service) => (service === "postgres" ? "database" : service)),
-      since: Option.orElse(flags.since, () => Option.some("1h")),
-      tail: flags.tail,
-      follow: !flags.noFollow,
-    }).pipe(
-      Effect.provideService(Output, {
-        ...output,
-        result: (rows) =>
-          output.format === "json"
-            ? output.raw(encodeHtmlSafeJsonIndented(rows))
-            : output.result(rows),
-      }),
-    );
+    const readLocal = (sink?: LogsBrowserSink) =>
+      stackLogs(
+        {
+          stack: flags.stack,
+          stackId: flags.stackId,
+          service: Option.isSome(flags.resource)
+            ? [flags.resource.value]
+            : flags.service.map((service) => (service === "postgres" ? "database" : service)),
+          since: Option.orElse(flags.since, () => Option.some("1h")),
+          tail: flags.tail,
+          follow: !flags.noFollow,
+        },
+        sink === undefined
+          ? undefined
+          : {
+              entry: (record) =>
+                Schema.decodeEffect(Schema.JsonObject)(record).pipe(
+                  Effect.orDie,
+                  Effect.flatMap(sink.entry),
+                ),
+              notice: sink.notice,
+            },
+      ).pipe(
+        Effect.provideService(Output, {
+          ...output,
+          result: (rows) =>
+            output.format === "json"
+              ? output.raw(encodeHtmlSafeJsonIndented(rows))
+              : output.result(rows),
+        }),
+      );
+    return yield* interactive ? browseLogs(readLocal) : readLocal();
   }).pipe(Effect.ensuring(telemetry.flush));
 });
 

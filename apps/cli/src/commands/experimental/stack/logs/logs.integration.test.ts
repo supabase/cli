@@ -24,6 +24,8 @@ import {
   Schema,
   Stdio,
   Stream,
+  Queue,
+  Terminal,
 } from "effect";
 import {
   streamStackLogs,
@@ -35,6 +37,7 @@ import {
 import { LinkedProjectCache } from "../../../../telemetry/linked-project-cache.service.ts";
 import { ProjectRefResolver } from "../../../../config/project-ref.service.ts";
 import { ProcessControl } from "../../../../shared/runtime/process-control.service.ts";
+import { Tty } from "../../../../shared/runtime/tty.service.ts";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
@@ -197,10 +200,39 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
   const run = (
     flags: Partial<StackLogsFlags>,
     format: "text" | "stream-json" | "json" = "text",
-    mode: "reader" | "unified" | "legacy" = "reader",
+    mode: "reader" | "unified" | "legacy" | "browser" = "reader",
   ) =>
     Effect.gen(function* () {
-      const output = mockOutput({ format, interactive: false });
+      const output = mockOutput({ format, interactive: mode === "browser" });
+      const screens: string[] = [];
+      const input = yield* Queue.unbounded<Terminal.UserInput>();
+      let openedDetails = false;
+      const terminal = Terminal.make({
+        columns: Effect.succeed(100),
+        rows: Effect.succeed(30),
+        readInput: Effect.succeed(input),
+        readLine: Effect.die("unused"),
+        display: (text) =>
+          Effect.gen(function* () {
+            screens.push(text);
+            if (
+              !openedDetails &&
+              text.includes(" | complete") &&
+              text.includes("local browser payload")
+            ) {
+              openedDetails = true;
+              yield* Queue.offer(input, {
+                input: Option.none(),
+                key: { name: "return", ctrl: false, meta: false, shift: false },
+              });
+            } else if (text.includes("Log details")) {
+              yield* Queue.offer(input, {
+                input: Option.none(),
+                key: { name: "q", ctrl: false, meta: false, shift: false },
+              });
+            }
+          }),
+      });
       const telemetry = mockTelemetryStateTracked();
       const layer = Layer.mergeAll(
         output.layer,
@@ -226,7 +258,7 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
               ),
             ),
           );
-        if (mode === "unified")
+        if (mode === "unified" || mode === "browser")
           return yield* logsTail(
             {
               remote: Option.none(),
@@ -250,6 +282,12 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
             Effect.provide(
               Layer.mergeAll(
                 Layer.succeed(OutputFlag, Option.none()),
+                Layer.succeed(Tty, {
+                  stdinIsTty: mode === "browser",
+                  stdoutIsTty: mode === "browser",
+                  stdoutIsPipe: false,
+                }),
+                Layer.succeed(Terminal.Terminal, terminal),
                 Layer.mock(LinkedProjectCache, {}),
                 Layer.mock(ProjectRefResolver, {}),
                 Layer.mock(ProcessControl, {}),
@@ -267,7 +305,7 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
         return yield* stackLogs({ ...baseFlags(stack.id), ...flags });
       });
       const exit = yield* runLogs.pipe(Effect.provide(layer), Effect.exit);
-      return { exit, output, telemetry };
+      return { exit, output, telemetry, screens };
     });
   return { stackId: stack.id, stateRoot, opened, writeSegment, run };
 });
@@ -298,6 +336,29 @@ describe("retained local logs", () => {
       expect(output.stderrText).toContain("removed in v4");
       expect(output.stdoutText).not.toContain("deprecated");
       expect(yield* Ref.get(f.opened)).toBe(0);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("browses real retained local records with full positions and instance details", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({ instances: [database("db-browser")], members: ["db-browser"] });
+      yield* f.writeSegment("database", "db-browser", [
+        launch(t0),
+        line(t0 + 1, "stdout", "local browser payload"),
+      ]);
+      const { exit, output, screens } = yield* f.run({}, "text", "browser");
+      expect(Exit.isSuccess(exit), Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "").toBe(true);
+      const details = screens.find((screen) => screen.includes("Log details"));
+      expect(details).toContain("local browser payload");
+      expect(details).toContain("db-browser");
+      expect(details).toContain('"byteOffset"');
+      expect(
+        screens.some((screen) =>
+          screen.includes("2026-09-29 10:00:00.001 UTC database local browser payload"),
+        ),
+      ).toBe(true);
+      expect(screens.at(-1)).toContain("?1049l");
+      expect(output.stdoutText).toBe("");
     }).pipe(Effect.scoped, Effect.provide(live)),
   );
 

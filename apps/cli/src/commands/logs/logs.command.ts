@@ -1,3 +1,4 @@
+import { BunTerminal } from "@effect/platform-bun";
 import { GLOBAL_OUTPUT_FORMATS } from "../../command-internal/global-flags.ts";
 import { Layer } from "effect";
 import { identityStitchLayer } from "../../command-internal/identity-stitch.ts";
@@ -131,7 +132,7 @@ export const logsCommandFor = (localEnabled: boolean, computeEnabled = false) =>
     Command.withSubcommands([
       Command.make("query", queryConfig).pipe(
         Command.withDescription(
-          "Run hosted log SQL from one argument, --file, or stdin. Ranges are limited to 24 hours. Use --output-format text, json, or stream-json.",
+          "Run hosted log SQL from one argument, --file, or stdin. Ranges are limited to 24 hours. Interactive text opens a UTC log browser: arrows select, Enter details, Esc back, q quit. Pipes print rows; --output-format accepts text, json, or stream-json.",
         ),
         withPermissions(readPermissions(["file", "since", "from", "to"])),
         Command.withHandler((flags) =>
@@ -144,6 +145,7 @@ export const logsCommandFor = (localEnabled: boolean, computeEnabled = false) =>
             withJsonErrorHandling,
           ),
         ),
+        Command.provide(BunTerminal.layer),
         Command.provide(stdinLayer),
         Command.provide(
           linkedDbResolverRuntimeLayer(["logs", "query"]).pipe(Layer.provide(identityStitchLayer)),
@@ -156,7 +158,7 @@ export const logsCommandFor = (localEnabled: boolean, computeEnabled = false) =>
       ),
       Command.make("tail", tailConfig).pipe(
         Command.withDescription(
-          "Print recent logs and follow until interrupted. Defaults to local, the last hour, and 100 lines. Use --no-follow to exit after history, or --output-format stream-json to follow structured events.",
+          "Browse recent logs and follow until interrupted. Defaults to local, the last hour, and 100 lines. Interactive text uses UTC times: arrows select, Enter details, Esc back, q quit. Pipes print lines. --no-follow reads history only; --output-format stream-json follows structured events.",
         ),
         withPermissions(
           readPermissions([
@@ -182,6 +184,7 @@ export const logsCommandFor = (localEnabled: boolean, computeEnabled = false) =>
             withJsonErrorHandling,
           ),
         ),
+        Command.provide(BunTerminal.layer),
         Command.provide(stackTargetResolverLayer.pipe(Layer.provideMerge(stackApiLayer))),
         Command.provide(
           linkedDbResolverRuntimeLayer(["logs", "tail"]).pipe(Layer.provide(identityStitchLayer)),

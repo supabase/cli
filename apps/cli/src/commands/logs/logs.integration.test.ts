@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Fiber, Layer, Option, Stream, Schema } from "effect";
+import { Deferred, Effect, Fiber, Layer, Option, Stream, Schema, Queue, Terminal } from "effect";
 import { DebugFlag, ProfileFlag, WorkdirFlag } from "../../command-internal/global-flags.ts";
 import {
   mockContextualAnalytics,
@@ -11,6 +11,7 @@ import { TestClock } from "effect/testing";
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
 import { CommandPlatformApiFactory } from "../../auth/command-platform-api-factory.service.ts";
 import { TargetPolicy } from "../../command-internal/target/target-policy.ts";
+import { Tty } from "../../shared/runtime/tty.service.ts";
 import { Stdin } from "../../shared/runtime/stdin.service.ts";
 import {
   makeComputeProject,
@@ -77,7 +78,7 @@ const prepare = Effect.fnUntraced(function* (
   options: Parameters<typeof setupCompute>[0],
   piped?: string,
 ) {
-  const setup = setupCompute(options);
+  const setup = setupCompute({ interactive: false, ...options });
   const api = yield* CommandPlatformApi.pipe(Effect.provide(setup.layer));
   const layer = Layer.mergeAll(
     setup.layer,
@@ -100,6 +101,88 @@ const prepare = Effect.fnUntraced(function* (
 });
 
 describe("unified logs", () => {
+  it.effect("routes terminal query rows into details and leaves piped stdin on normal output", () =>
+    Effect.gen(function* () {
+      const repo = yield* makeComputeProject();
+      for (const stdinIsTty of [true, false]) {
+        const setup = yield* prepare({
+          workdir: repo.dir,
+          interactive: true,
+          routes: {
+            [route]: {
+              status: 200,
+              body: {
+                result: [
+                  {
+                    timestamp: "2026-11-02T12:00:00Z",
+                    service: "postgres",
+                    event_message: "first query row",
+                    private_field: "first full detail",
+                  },
+                  {
+                    timestamp: "2026-11-01T12:00:00Z",
+                    service: "auth",
+                    event_message: "second query row",
+                  },
+                ],
+                error: null,
+              },
+            },
+          },
+        });
+        const input = yield* Queue.unbounded<Terminal.UserInput>();
+        const screens: string[] = [];
+        let opened = false;
+        const terminal = Terminal.make({
+          columns: Effect.succeed(100),
+          rows: Effect.succeed(20),
+          readInput: stdinIsTty
+            ? Effect.succeed(input)
+            : Effect.die("piped stdin must not acquire terminal input"),
+          readLine: Effect.die("unused"),
+          display: (text) =>
+            Effect.gen(function* () {
+              screens.push(text);
+              if (!opened && text.includes("first query row")) {
+                opened = true;
+                yield* Queue.offer(input, {
+                  input: Option.none(),
+                  key: { name: "return", ctrl: false, meta: false, shift: false },
+                });
+              } else if (text.includes("Log details")) {
+                yield* Queue.offer(input, {
+                  input: Option.none(),
+                  key: { name: "q", ctrl: false, meta: false, shift: false },
+                });
+              }
+            }),
+        });
+        const sql =
+          "select timestamp, service, event_message, private_field from logs order by timestamp desc";
+        yield* logsQuery(queryFlags({ sql: Option.some(sql) })).pipe(
+          Effect.provideService(Terminal.Terminal, terminal),
+          Effect.provideService(Tty, { stdinIsTty, stdoutIsTty: true, stdoutIsPipe: false }),
+          Effect.provide(setup.layer),
+        );
+        expect(setup.http.requests[0]?.urlParams.sql).toBe(sql);
+        if (stdinIsTty) {
+          expect(
+            screens.some((screen) =>
+              screen.includes("> 2026-11-02 12:00:00.000 UTC postgres first query row"),
+            ),
+          ).toBe(true);
+          expect(screens.find((screen) => screen.includes("Log details"))).toContain(
+            "first full detail",
+          );
+          expect(screens.at(-1)).toContain("?1049l");
+        } else {
+          expect(screens).toEqual([]);
+          expect(setup.out.stdoutText).toContain("first full detail");
+        }
+      }
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
   it.effect("queries arbitrary hosted SQL from a file with exact bounds and raw attributes", () =>
     Effect.gen(function* () {
       const repo = yield* makeComputeProject({

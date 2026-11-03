@@ -100,7 +100,13 @@ const select = (
   ]);
 };
 
-export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: RetainedLogsFlags) {
+export const stackLogs = Effect.fn("experimental.stack.logs")(function* (
+  flags: RetainedLogsFlags,
+  sink?: {
+    readonly entry: (record: StackLogRecord) => Effect.Effect<void>;
+    readonly notice: (message: string) => Effect.Effect<void>;
+  },
+) {
   const telemetry = yield* TelemetryState;
   return yield* Effect.gen(function* () {
     const output = yield* Output;
@@ -179,16 +185,20 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: 
     const terminal = output.interactive;
     const text = makeTextFormatter(selected, terminal ? process.stdout : {});
     const emit = (record: StackLogRecord, source: LogSource) =>
-      output.format === "stream-json"
-        ? Effect.gen(function* () {
-            const data = yield* Schema.decodeEffect(Schema.JsonObject)(record);
-            yield* output.event({ ...logEvent(record, source), data });
-          })
-        : output.raw(text(record));
+      sink !== undefined
+        ? sink.entry(record)
+        : output.format === "stream-json"
+          ? Effect.gen(function* () {
+              const data = yield* Schema.decodeEffect(Schema.JsonObject)(record);
+              yield* output.event({ ...logEvent(record, source), data });
+            })
+          : output.raw(text(record));
     yield* Effect.forEach(window.records, (record) => emit(record, "history"), { discard: true });
     if (output.format === "text" && flags.tail > 0) {
       const note = (message: string) =>
-        output.raw(`${dim(message, terminal ? process.stderr : {})}\n`, "stderr");
+        sink !== undefined
+          ? sink.notice(message)
+          : output.raw(`${dim(message, terminal ? process.stderr : {})}\n`, "stderr");
       if (window.shown < window.total) yield* note(truncationFooter(window));
       else if (window.total === 0 && !flags.follow)
         yield* note("No retained log lines for the selected services.");
@@ -217,7 +227,7 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: 
             suggestion: "Run supabase logs tail --no-follow to read retained logs.",
           });
         if (missing.length > 0)
-          yield* output.warn(
+          yield* (sink?.notice ?? output.warn)(
             `Not following ${missing.join(", ")}, which the running stack does not serve.`,
           );
         const streams = selected.flatMap(({ id, service }) => {
