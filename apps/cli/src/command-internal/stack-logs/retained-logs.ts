@@ -26,6 +26,7 @@ import {
   makeTextFormatter,
   parseSince,
   truncationFooter,
+  type SinceBound,
 } from "./retained-logs.format.ts";
 import { logEvent, type LogSource } from "../stack-log-events.ts";
 
@@ -103,6 +104,7 @@ const select = (
 export const stackLogs = Effect.fn("experimental.stack.logs")(function* (
   flags: RetainedLogsFlags,
   sink?: {
+    readonly since?: (bound: SinceBound | undefined) => Effect.Effect<void>;
     readonly entry: (record: StackLogRecord) => Effect.Effect<void>;
     readonly notice: (message: string) => Effect.Effect<void>;
   },
@@ -138,6 +140,7 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (
         message: `Invalid --since value ${flags.since.value}.`,
         suggestion: "Use a duration such as 10m or 1h30m, an ISO-8601 time, or start.",
       });
+    yield* sink?.since?.(since) ?? Effect.void;
     const target = yield* resolver
       .resolve({
         projectRoot: settings.workdir,

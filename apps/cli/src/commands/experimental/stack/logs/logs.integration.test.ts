@@ -218,7 +218,7 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
             screens.push(text);
             if (
               !openedDetails &&
-              text.includes(" | complete") &&
+              (text.includes(" | complete") || flags.follow === true) &&
               text.includes("local browser payload")
             ) {
               openedDetails = true;
@@ -269,14 +269,14 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
               linked: false,
               stack: Option.none(),
               stackId: Option.some(stack.id),
-              service: ["postgres"],
+              service: flags.service ?? ["postgres"],
               resource: Option.none(),
               kind: Option.none(),
               level: [],
               search: Option.none(),
-              since: Option.some("start"),
-              tail: 100,
-              noFollow: true,
+              since: flags.since ?? Option.some("start"),
+              tail: flags.tail ?? 100,
+              noFollow: !(flags.follow ?? false),
             },
             true,
             false,
@@ -362,6 +362,78 @@ describe("retained local logs", () => {
       expect(screens.at(-1)).toContain("?1049l");
       expect(output.stdoutText).toBe("");
     }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect.each([
+    { since: Option.none<string>(), expected: "Window: since Nov 03 2026 11:00:00 UTC" },
+    {
+      since: Option.some("2026-11-03T10:00:00Z"),
+      expected: "Window: since Nov 03 2026 10:00:00 UTC",
+    },
+    { since: Option.some("start"), expected: "Window: since each service's latest launch" },
+  ])(
+    "uses the resolved retained-reader lower bound without inventing an end: $expected",
+    ({ since, expected }) =>
+      Effect.gen(function* () {
+        const readTime = Date.parse("2026-11-03T12:00:00Z");
+        yield* TestClock.setTime(readTime);
+        const f = yield* fixture({ instances: [database("db-window")], members: ["db-window"] });
+        yield* f.writeSegment("database", "db-window", [
+          launch(readTime - 2000),
+          line(readTime - 1000, "stdout", "local browser payload"),
+        ]);
+        const { exit, screens } = yield* f.run({ since }, "text", "browser");
+        expect(Exit.isSuccess(exit)).toBe(true);
+        const windows = screens
+          .filter((screen) => screen.includes("Window:") && !screen.includes("resolving…"))
+          .map((screen) => screen.split("\r\n")[1]);
+        expect(windows.length).toBeGreaterThan(0);
+        expect(windows.every((window) => window === expected)).toBe(true);
+      }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect(
+    "labels new local entries with the actual since bound even for delayed timestamps",
+    () =>
+      Effect.gen(function* () {
+        const readTime = Date.parse("2026-11-03T12:00:00Z");
+        yield* TestClock.setTime(readTime);
+        let requestedSince: string | undefined;
+        const f = yield* fixture({
+          instances: [mail("mail-window")],
+          members: ["mail-window"],
+          running: true,
+          handles: () => [
+            followingMail("mail-window", (options) => {
+              requestedSince = options?.since;
+              return Stream.make({
+                kind: "stdout",
+                timestamp: "2026-11-03T11:30:00Z",
+                text: "local browser payload",
+              }).pipe(Stream.concat(Stream.never));
+            }),
+          ],
+        });
+        const { exit, screens } = yield* f.run(
+          { service: ["mail"], since: Option.none(), tail: 0, follow: true },
+          "text",
+          "browser",
+        );
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(requestedSince).toBe("2026-11-03T11:00:00.000Z");
+        expect(
+          screens.some((screen) =>
+            screen.includes(
+              "Window: new entries only; since Nov 03 2026 11:00:00 UTC → now (live)",
+            ),
+          ),
+        ).toBe(true);
+        expect(
+          screens.some((screen) =>
+            screen.includes("Nov 03 - 11:30:00 UTC mail local browser payload"),
+          ),
+        ).toBe(true);
+      }).pipe(Effect.scoped, Effect.provide(live)),
   );
 
   it.effect("preserves full retained records and markers in native JSON while stopped", () =>

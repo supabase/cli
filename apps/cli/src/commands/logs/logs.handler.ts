@@ -1,3 +1,5 @@
+import type { LogsBrowserWindow } from "./logs.browser.format.ts";
+import type { SinceBound } from "../../command-internal/stack-logs/retained-logs.format.ts";
 import { browseLogs, useLogsBrowser, type LogsBrowserSink } from "./logs.browser.ts";
 import { followLogs } from "../../command-internal/logs/follow.ts";
 import { unsupportedOutputFlagMessage } from "../../command-internal/output-formats.ts";
@@ -98,7 +100,13 @@ export const logsQuery = Effect.fn("logs.query")(function* (flags: LogsQueryFlag
       const rows = yield* queryLogs(api, ref, sql, window).pipe(Effect.tapError(() => task.fail()));
       yield* task.clear;
       if (yield* useLogsBrowser())
-        yield* browseLogs((sink) => Effect.forEach(rows, sink.entry, { discard: true }), "query");
+        yield* browseLogs(
+          (sink) =>
+            sink
+              .window({ kind: "range", ...window })
+              .pipe(Effect.andThen(Effect.forEach(rows, sink.entry, { discard: true }))),
+          "query",
+        );
       else yield* emitRows(rows);
     }).pipe(Effect.ensuring(cache.cache(ref)));
   }).pipe(Effect.ensuring(telemetry.flush));
@@ -197,6 +205,17 @@ const hostedTail = Effect.fn("logs.tail.remote")(function* (
     const base = `select id, toUnixTimestamp64Milli(timestamp) as ts_ms, source, severity_text, ${hostedSeveritySql} as level, event_message, log_attributes from logs where ${conditions.join(" and ")} order by timestamp desc, id desc`;
     const started = yield* Clock.currentTimeMillis;
     const window = yield* logsWindow({ since: flags.since }, started);
+    if (sink !== undefined)
+      yield* sink.window(
+        flags.noFollow
+          ? { kind: "range", ...window }
+          : {
+              kind: "since",
+              start:
+                flags.tail === 0 ? DateTime.formatIso(DateTime.makeUnsafe(started)) : window.start,
+              live: true,
+            },
+      );
     const seen = new Map<string, number>();
     let newest = flags.tail === 0 ? started : Date.parse(window.start);
     const api = yield* (yield* CommandPlatformApiFactory).make;
@@ -308,6 +327,16 @@ const hostedTail = Effect.fn("logs.tail.remote")(function* (
   }).pipe(Effect.ensuring(cache.cache(ref)));
 });
 
+const localBrowserWindow = (
+  since: SinceBound | undefined,
+  flags: LogsTailFlags,
+): LogsBrowserWindow => {
+  const options = { live: !flags.noFollow, newEntriesOnly: flags.tail === 0 && !flags.noFollow };
+  if (since?.kind === "start") return { kind: "launch", ...options };
+  if (since?.kind === "time") return { kind: "since", start: since.iso, ...options };
+  return { kind: "all", ...options };
+};
+
 export const logsTail = Effect.fn("logs.tail")(function* (
   flags: LogsTailFlags,
   localEnabled: boolean,
@@ -365,6 +394,7 @@ export const logsTail = Effect.fn("logs.tail")(function* (
                   Effect.flatMap(sink.entry),
                 ),
               notice: sink.notice,
+              since: (bound) => sink.window(localBrowserWindow(bound, flags)),
             },
       ).pipe(
         Effect.provideService(Output, {

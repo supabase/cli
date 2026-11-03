@@ -103,6 +103,158 @@ const prepare = Effect.fnUntraced(function* (
 });
 
 describe("unified logs", () => {
+  it.effect.each([
+    {
+      from: Option.none<string>(),
+      to: Option.none<string>(),
+      start: "2026-11-02T11:00:00.000Z",
+      end: "2026-11-02T12:00:00.000Z",
+      header: "Window: Nov 02 11:00:00–12:00:00 UTC",
+    },
+    {
+      from: Option.some("2027-01-01T08:00:00Z"),
+      to: Option.some("2027-01-01T09:00:00Z"),
+      start: "2027-01-01T08:00:00.000Z",
+      end: "2027-01-01T09:00:00.000Z",
+      header: "Window: Jan 01 08:00:00–09:00:00 UTC",
+    },
+  ])(
+    "shows the exact query request window after time advances and undated results arrive: $header",
+    (test) =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(now);
+        const repo = yield* makeComputeProject();
+        const setup = yield* prepare({
+          workdir: repo.dir,
+          interactive: true,
+          routes: {
+            [route]: {
+              status: 200,
+              body: { result: [{ count: 8 }, { timestamp: "2000-01-01T00:00:00Z" }], error: null },
+            },
+          },
+        });
+        const input = yield* Queue.unbounded<Terminal.UserInput>();
+        const screens: string[] = [];
+        let advanced = false;
+        yield* logsQuery(queryFlags({ from: test.from, to: test.to })).pipe(
+          Effect.provideService(
+            Terminal.Terminal,
+            Terminal.make({
+              columns: Effect.succeed(80),
+              rows: Effect.succeed(12),
+              readInput: Effect.succeed(input),
+              readLine: Effect.die("unused"),
+              display: (text) =>
+                Effect.gen(function* () {
+                  screens.push(text);
+                  if (!advanced && text.includes("Window:")) {
+                    advanced = true;
+                    yield* TestClock.adjust("5 minutes");
+                  }
+                  if (text.includes(" | complete"))
+                    yield* Queue.offer(input, {
+                      input: Option.none(),
+                      key: { name: "q", ctrl: false, meta: false, shift: false },
+                    });
+                }),
+            }),
+          ),
+          Effect.provide(setup.layer),
+        );
+        expect(setup.http.requests[0]?.urlParams).toMatchObject({
+          iso_timestamp_start: test.start,
+          iso_timestamp_end: test.end,
+        });
+        const headers = screens
+          .filter((screen) => screen.includes("Window:") && !screen.includes("resolving…"))
+          .map((screen) => screen.split("\r\n")[1]);
+        expect(headers.length).toBeGreaterThan(0);
+        expect(headers.every((header) => header === test.header)).toBe(true);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect.each([
+    {
+      noFollow: true,
+      tail: 100,
+      header: "Window: Nov 02 11:00:00–12:00:00 UTC",
+      start: "2026-11-02T11:00:00.000Z",
+    },
+    {
+      noFollow: false,
+      tail: 100,
+      header: "Window: since Nov 02 2026 11:00:00 UTC → now (live)",
+      start: "2026-11-02T11:00:00.000Z",
+    },
+    {
+      noFollow: false,
+      tail: 0,
+      header: "Window: since Nov 02 2026 12:00:00 UTC → now (live)",
+      start: "2026-11-02T12:00:00.000Z",
+    },
+  ])("keeps the hosted tail request window distinct from poll overlap: $header", (test) =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(now);
+      const repo = yield* makeComputeProject();
+      const page = (phase: string, time: number) => ({
+        status: 200,
+        body: { result: [{ ...row(phase, time), event_message: phase }], error: null },
+      });
+      const setup = yield* prepare({
+        workdir: repo.dir,
+        interactive: true,
+        routes: {
+          [route]:
+            test.tail === 0
+              ? [page("phase-b", now), page("phase-c", now + 10000)]
+              : [page("phase-a", now - 1000), page("phase-b", now), page("phase-c", now + 10000)],
+        },
+      });
+      const input = yield* Queue.unbounded<Terminal.UserInput>();
+      const frames = yield* Queue.unbounded<string>();
+      const browser = yield* logsTail(
+        tailFlags({ noFollow: test.noFollow, tail: test.tail }),
+        false,
+        false,
+      ).pipe(
+        Effect.provideService(
+          Terminal.Terminal,
+          Terminal.make({
+            columns: Effect.succeed(80),
+            rows: Effect.succeed(12),
+            readInput: Effect.succeed(input),
+            readLine: Effect.die("unused"),
+            display: (text) => Queue.offer(frames, text).pipe(Effect.asVoid),
+          }),
+        ),
+        Effect.provide(setup.layer),
+        Effect.forkScoped,
+      );
+      let frame = "";
+      const ready = test.noFollow ? " | complete" : "phase-b";
+      while (!frame.includes(ready)) frame = yield* Queue.take(frames);
+      expect(frame.split("\r\n")[1]).toBe(test.header);
+      expect(setup.http.requests[0]?.urlParams.iso_timestamp_start).toBe(test.start);
+      expect(setup.http.requests[0]?.urlParams.iso_timestamp_end).toBe("2026-11-02T12:00:00.000Z");
+      if (!test.noFollow) {
+        yield* TestClock.adjust("10 seconds");
+        while (!frame.includes("phase-c")) frame = yield* Queue.take(frames);
+        expect(frame.split("\r\n")[1]).toBe(test.header);
+        expect(setup.http.requests.at(-1)?.urlParams.iso_timestamp_end).toBe(
+          "2026-11-02T12:00:10.000Z",
+        );
+        if (test.tail > 0)
+          expect(setup.http.requests.at(-1)?.urlParams.iso_timestamp_start).not.toBe(test.start);
+      }
+      yield* Queue.offer(input, {
+        input: Option.none(),
+        key: { name: "q", ctrl: false, meta: false, shift: false },
+      });
+      yield* Fiber.join(browser);
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
   it.effect("routes terminal query rows into details and leaves piped stdin on normal output", () =>
     Effect.gen(function* () {
       const repo = yield* makeComputeProject();
