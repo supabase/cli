@@ -91,7 +91,7 @@ const clip = (value: string, width: number): string => {
   return result;
 };
 
-export function browserDetailLines(row: Schema.JsonObject, width: number): ReadonlyArray<string> {
+function browserDetailLines(row: Schema.JsonObject, width: number): ReadonlyArray<string> {
   return wrapLogsText(renderLogsRows([row], Math.max(2, width)), Math.max(2, width)).split("\n");
 }
 
