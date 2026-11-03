@@ -11,6 +11,7 @@ import {
   Option,
   Path,
   PlatformError,
+  Ref,
   Sink,
   Stream,
 } from "effect";
@@ -18,6 +19,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { TestClock } from "effect/testing";
 import { vi } from "vitest";
 
+import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-values-layer.ts";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
@@ -25,6 +27,7 @@ import {
   useTempWorkdir,
   withEnvVar,
 } from "../../../tests/helpers/command-mocks.ts";
+import { CONTAINER_CLI_CONCURRENCY } from "../../command-internal/container-cli.ts";
 import { DebugFlag } from "../../command-internal/global-flags.ts";
 import { runtimeInfoLayer } from "../../shared/runtime/runtime-info.layer.ts";
 import { stop } from "./stop.handler.ts";
@@ -89,6 +92,7 @@ function mockRoutedContainerCliSpawner(
     // Fails both docker and podman spawn attempts matching this predicate, simulating a
     // runtime that cannot be spawned at all (vs. a spawned process exiting non-zero).
     readonly failSpawnFor?: (args: ReadonlyArray<string>) => boolean;
+    readonly onSpawn?: (args: ReadonlyArray<string>) => Effect.Effect<void>;
   } = {},
 ) {
   const spawned: Array<SpawnRecord> = [];
@@ -101,6 +105,7 @@ function mockRoutedContainerCliSpawner(
         const cmd = standard ? command.command : "";
         const args = standard ? command.args : [];
         spawned.push({ command: cmd, args });
+        if (opts.onSpawn !== undefined) yield* opts.onSpawn(args);
 
         if (opts.dockerMissing === true && cmd === "docker") {
           return yield* PlatformError.systemError({
@@ -183,6 +188,7 @@ function defaultRoute(
       return {
         stdout: [
           format
+            .replaceAll("{{.Client.DefaultAPIVersion}}", dockerClientApiVersion)
             .replaceAll("{{.Client.APIVersion}}", dockerClientApiVersion)
             .replaceAll("{{.Server.APIVersion}}", dockerServerApiVersion),
         ],
@@ -197,6 +203,7 @@ interface SetupOpts {
   readonly route?: (args: ReadonlyArray<string>) => RouteResult;
   readonly dockerMissing?: boolean;
   readonly failSpawnFor?: (args: ReadonlyArray<string>) => boolean;
+  readonly onSpawn?: (args: ReadonlyArray<string>) => Effect.Effect<void>;
   readonly configuredProjectId?: string;
   readonly skipConfig?: boolean;
   /** Defaults to `tempRoot.current` — override for `--workdir`-resolution tests. */
@@ -220,9 +227,11 @@ const setup = (opts: SetupOpts = {}) =>
     const child = mockRoutedContainerCliSpawner(opts.route ?? defaultRoute(), {
       dockerMissing: opts.dockerMissing,
       failSpawnFor: opts.failSpawnFor,
+      onSpawn: opts.onSpawn,
     });
 
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       runtimeInfoLayer,
       out.layer,
       cliSettings,
@@ -358,7 +367,7 @@ describe("stop integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("keeps an explicit --project-id raw, unsanitized (Go's bypass)", () =>
+  it.effect("keeps an explicit --project-id raw, unsanitized", () =>
     Effect.gen(function* () {
       const { layer, child } = yield* setup({ skipConfig: true, route: defaultRoute() });
       yield* stop(flags({ projectId: Option.some("Raw Value!!") })).pipe(Effect.provide(layer));
@@ -720,28 +729,26 @@ describe("stop integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect(
-    "omits --all from docker's volume prune on a pre-1.42 API host, matching Go's gate",
-    () =>
-      Effect.gen(function* () {
-        // Docker's own `volume prune --all` requires API >= 1.42 and hard-fails (pruning
-        // nothing) on an older daemon.
-        const { layer, child } = yield* setup({
-          configuredProjectId: "demo",
-          route: defaultRoute({ dockerServerApiVersion: "1.41" }),
-        });
-        yield* stop(flags({ noBackup: true })).pipe(Effect.provide(layer));
-        const volumePrune = child.spawned.find(
-          (s) => s.command === "docker" && s.args[0] === "volume" && s.args[1] === "prune",
-        );
-        expect(volumePrune?.args).toEqual([
-          "volume",
-          "prune",
-          "--force",
-          "--filter",
-          "label=com.supabase.cli.project=demo",
-        ]);
-      }).pipe(Effect.provide(BunServices.layer)),
+  it.effect("omits --all from docker's volume prune on a pre-1.42 API host", () =>
+    Effect.gen(function* () {
+      // Docker's own `volume prune --all` requires API >= 1.42 and hard-fails (pruning
+      // nothing) on an older daemon.
+      const { layer, child } = yield* setup({
+        configuredProjectId: "demo",
+        route: defaultRoute({ dockerServerApiVersion: "1.41" }),
+      });
+      yield* stop(flags({ noBackup: true })).pipe(Effect.provide(layer));
+      const volumePrune = child.spawned.find(
+        (s) => s.command === "docker" && s.args[0] === "volume" && s.args[1] === "prune",
+      );
+      expect(volumePrune?.args).toEqual([
+        "volume",
+        "prune",
+        "--force",
+        "--filter",
+        "label=com.supabase.cli.project=demo",
+      ]);
+    }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.effect("omits --all from docker's volume prune when an old client talks to a new daemon", () =>
@@ -785,7 +792,7 @@ describe("stop integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("--backup=false alone does not delete data volumes, matching Go's dead flag", () =>
+  it.effect("--backup=false alone does not delete data volumes", () =>
     Effect.gen(function* () {
       const { layer, child } = yield* setup({
         configuredProjectId: "demo",
@@ -842,6 +849,22 @@ describe("stop integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("StopConfigLoadError");
+      }
+      expect(child.spawned).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("fails naming the source when a config value is invalid", () =>
+    Effect.gen(function* () {
+      yield* writeSupabaseFile(tempRoot.current, ".env", "SUPABASE_API_PORT=notaport\n");
+      const { layer, child } = yield* setup({ route: defaultRoute() });
+      const exit = yield* Effect.exit(stop(flags()).pipe(Effect.provide(layer)));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("CliConfigValueError");
+        expect(causeText).toContain('Invalid SUPABASE_API_PORT="notaport"');
+        expect(causeText).not.toContain("StopConfigLoadError");
       }
       expect(child.spawned).toEqual([]);
     }).pipe(Effect.provide(BunServices.layer)),
@@ -917,42 +940,6 @@ additional_redirect_urls = "http://a,http://b"
           '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
         ]);
       }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.effect("warns on stderr for a deprecated auth.external provider", () =>
-    Effect.gen(function* () {
-      // `normalizeDeprecatedExternalProviders` (packages/config/src/io.ts) emits this warning via
-      // `Console.error` only when `goViperCompat` is set.
-      yield* writeSupabaseFile(
-        tempRoot.current,
-        "config.toml",
-        `project_id = "demo"
-
-[auth.external.slack]
-enabled = true
-`,
-      );
-      const { layer } = yield* setup({ skipConfig: true, route: defaultRoute() });
-      const warnings: Array<string> = [];
-      yield* Effect.acquireUseRelease(
-        Effect.sync(() =>
-          vi.spyOn(console, "error").mockImplementation((...args) => {
-            warnings.push(args.map((a) => String(a)).join(" "));
-          }),
-        ),
-        () =>
-          Effect.gen(function* () {
-            yield* stop(flags()).pipe(Effect.provide(layer));
-            expect(
-              warnings.some((m) => m.includes('WARN: disabling deprecated "slack" provider')),
-            ).toBe(true);
-          }),
-        (errorSpy) =>
-          Effect.sync(() => {
-            errorSpy.mockRestore();
-          }),
-      );
-    }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.effect(
@@ -1195,6 +1182,41 @@ enabled = true
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.live("stops many containers in order, at most CONTAINER_CLI_CONCURRENCY at a time", () =>
+    Effect.gen(function* () {
+      const containerIds = Array.from(
+        { length: CONTAINER_CLI_CONCURRENCY + 6 },
+        (_, index) => `c${index + 1}`,
+      );
+      const inFlight = yield* Ref.make(0);
+      const peak = yield* Ref.make(0);
+      const capReached = yield* Deferred.make<void>();
+      const { layer, out, child } = yield* setup({
+        configuredProjectId: "demo",
+        route: defaultRoute({ containerIds }),
+        onSpawn: (args) =>
+          args[0] !== "stop"
+            ? Effect.void
+            : Effect.gen(function* () {
+                const count = yield* Ref.updateAndGet(inFlight, (n) => n + 1);
+                yield* Ref.update(peak, (n) => Math.max(n, count));
+                if (count === CONTAINER_CLI_CONCURRENCY) {
+                  yield* Deferred.succeed(capReached, undefined);
+                }
+                yield* Deferred.await(capReached);
+                /* Yield before decrementing so an unbounded fan-out exceeds the cap. */
+                yield* Effect.yieldNow;
+                yield* Ref.update(inFlight, (n) => n - 1);
+              }),
+      });
+      yield* stop(flags()).pipe(Effect.provide(layer));
+      const stopCalls = child.spawned.filter((s) => s.args[0] === "stop");
+      expect(stopCalls.map((s) => s.args)).toEqual(containerIds.map((id) => ["stop", id]));
+      expect(yield* Ref.get(peak)).toBe(CONTAINER_CLI_CONCURRENCY);
+      expect(out.stdoutText).toContain("Stopped");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.effect("falls back to podman when docker is absent", () =>
     Effect.gen(function* () {
       const { layer, child } = yield* setup({
@@ -1354,7 +1376,7 @@ enabled = true
     vi.spyOn(process.stderr, "write").mockImplementation(() => true),
   );
 
-  it.effect("reports Go's --debug Pruned lines to stderr, in stage order", () =>
+  it.effect("reports the --debug Pruned lines to stderr, in stage order", () =>
     Effect.gen(function* () {
       const { layer } = yield* setup({
         debug: true,
@@ -1385,7 +1407,7 @@ enabled = true
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("never writes Go's Pruned lines to stderr without --debug", () =>
+  it.effect("never writes the Pruned lines to stderr without --debug", () =>
     Effect.gen(function* () {
       const { layer } = yield* setup({
         configuredProjectId: "demo",

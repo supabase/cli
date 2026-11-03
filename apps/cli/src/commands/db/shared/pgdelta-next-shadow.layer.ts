@@ -10,6 +10,7 @@ import {
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
+import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { DockerRun } from "../../../command-internal/docker-run.service.ts";
 import { toPostgresURL } from "../../../command-internal/postgres-url.ts";
@@ -17,7 +18,7 @@ import {
   buildLocalDbContainerInputs,
   type LocalDbContainerInputs,
 } from "../../../command-internal/db-bootstrap/local-container-inputs.ts";
-import { waitForShadowReady } from "../../../command-internal/db-bootstrap/health-check.ts";
+import { waitForPostgresReady } from "../../../command-internal/db-bootstrap/health-check.ts";
 import {
   acquireShadowDatabase,
   peekShadowBaseline,
@@ -153,6 +154,7 @@ export const pgDeltaNextShadowLayer = Layer.effect(
     const httpClient = yield* HttpClient.HttpClient;
     const cliSettings = yield* CommandSettings;
     const stackApi = yield* StackApi;
+    const cliConfigValues = yield* CliConfigValues;
 
     const runtimeWith = (outputService: typeof Output.Service) => {
       const deps = Layer.mergeAll(
@@ -170,6 +172,7 @@ export const pgDeltaNextShadowLayer = Layer.effect(
         Layer.succeed(HttpClient.HttpClient, httpClient),
         Layer.succeed(CommandSettings, cliSettings),
         Layer.succeed(StackApi, stackApi),
+        Layer.succeed(CliConfigValues, cliConfigValues),
         Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
       return stackCatalogSetupLayer.pipe(Layer.provideMerge(deps));
@@ -203,7 +206,6 @@ export const pgDeltaNextShadowLayer = Layer.effect(
           runtimeInfo.platform,
           debug,
           request.projectRef,
-          request.toml.remoteOverrideKeys,
         );
         const image =
           (yield* currentStackBackend).kind === "stack"
@@ -249,7 +251,7 @@ export const pgDeltaNextShadowLayer = Layer.effect(
       );
 
     const awaitShadowReady = (input: NativeShadowInput, handle: ShadowAcquiredHandle) =>
-      waitForShadowReady(input.spawner, handle.containerId, shadowConnConfig(input.base), {
+      waitForPostgresReady(input.spawner, handle.containerId, shadowConnConfig(input.base), {
         timeoutSeconds: input.base.healthTimeoutSeconds,
         image: input.base.image,
       });

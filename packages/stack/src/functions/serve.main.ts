@@ -460,7 +460,9 @@ Deno.serve({
               workerTimeoutMs: Number.isFinite(WALLCLOCK_LIMIT_SEC)
                 ? WALLCLOCK_LIMIT_SEC * 1000
                 : 400_000,
-              noModuleCache: true,
+              // Edge Runtime's reload mode re-extracts npm packages in place in the shared Deno cache,
+              // where concurrent worker boots race on the same files.
+              noModuleCache: false,
               noNpm,
               envVars,
               forceCreate: true,

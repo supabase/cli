@@ -3,7 +3,7 @@ import { Effect, Option } from "effect";
 import * as HttpClientError from "effect/http/HttpClientError";
 
 import { CommandSettings } from "../config/command-settings.service.ts";
-import type { ProjectLink } from "./project-link.ts";
+import type { ProjectLink } from "../shared/config/project-link.ts";
 import type { HostedProbe } from "./stack-lock.ts";
 import { extractServiceKeys } from "./tenant-keys.ts";
 import { probeFailure, probeTenantVersions, type HostedObservation } from "./tenant-versions.ts";

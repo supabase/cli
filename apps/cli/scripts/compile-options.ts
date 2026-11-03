@@ -20,8 +20,7 @@ export const compileOptions = {
  * Embeds the stack release of the sources being compiled, so the binary drives exactly the owners
  * started from the same stack sources, whether compiled or run from source.
  */
-export const stackReleaseDefine = async () => ({
-  SUPABASE_STACK_BUILD_ID: JSON.stringify(
-    await Effect.runPromise(stackSourceDigest.pipe(Effect.provide(BunServices.layer))),
-  ),
-});
+export const stackReleaseDefine = () =>
+  Effect.runPromise(stackSourceDigest.pipe(Effect.provide(BunServices.layer))).then((digest) => ({
+    SUPABASE_STACK_BUILD_ID: JSON.stringify(digest),
+  }));

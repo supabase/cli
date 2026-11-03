@@ -1,4 +1,4 @@
-import { Effect, type Exit, Layer, Option } from "effect";
+import { Effect, type Exit, Layer } from "effect";
 import { Command } from "effect/cli";
 import { backupsCommand } from "../commands/backups/backups.command.ts";
 import { bootstrapCommand } from "../commands/bootstrap/bootstrap.command.ts";
@@ -18,11 +18,11 @@ import { stackStopCommand } from "../commands/experimental/stack/stop/stop.comma
 import { stackStatusCommand } from "../commands/experimental/stack/status/status.command.ts";
 import type { StackBackend } from "../command-internal/stack-backend.ts";
 import { isFunctionsServePath, stackBackendLayer } from "../command-internal/stack-backend.ts";
-import type { ExperimentalFeatureFlagError } from "../command-internal/experimental-feature.ts";
+import type { ExperimentalFeatureFlagError } from "../shared/config/experimental-feature.ts";
 import {
   type ProjectStateMode,
   projectStateModeLayer,
-} from "../command-internal/project-state-mode.ts";
+} from "../shared/config/project-state-mode.ts";
 import { computeCommand } from "../commands/experimental/compute/compute.command.ts";
 import { feedbackCommand } from "../commands/feedback/feedback.command.ts";
 import { functionsCommand } from "../commands/functions/functions.command.ts";
@@ -57,9 +57,11 @@ import { unlinkCommand } from "../commands/unlink/unlink.command.ts";
 import { vanitySubdomainsCommand } from "../commands/vanity-subdomains/vanity-subdomains.command.ts";
 import { whoamiCommand } from "../commands/whoami/whoami.command.ts";
 import { CLI_VERSION, cliBuildChannel } from "../shared/cli/version.ts";
+import { commandTargetLayer } from "../shared/output/command-target.layer.ts";
+import { machineErrorContextLayer } from "../shared/output/machine-error-context.layer.ts";
 import { outputLayerFor } from "../shared/output/output.layer.ts";
+import { isMachineResourceFormat } from "../shared/output/resource-format.ts";
 import { quietProgressTextOutputLayer } from "../output/quiet-progress-text-output.layer.ts";
-import { makeGoProxyLayer } from "../command-internal/go-proxy.layer.ts";
 import { AiTool } from "../shared/telemetry/ai-tool.service.ts";
 import { aiToolLayer } from "../shared/telemetry/ai-tool.layer.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
@@ -70,16 +72,8 @@ import type { OutputFormat } from "../shared/output/types.ts";
 import {
   ROOT_GLOBAL_FLAGS,
   AgentFlag,
-  CreateTicketFlag,
-  DebugFlag,
-  DnsResolverFlag,
-  ExperimentalFlag,
-  NetworkIdFlag,
   OutputFlag,
   OutputFormatFlag,
-  ProfileFlag,
-  WorkdirFlag,
-  YesFlag,
 } from "../command-internal/global-flags.ts";
 
 // The stack backend's `start`/`status`/`stop` are the same commands as `stack
@@ -214,15 +208,7 @@ export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
       Layer.unwrap(
         Effect.gen(function* () {
           const explicitOutputFormat = yield* OutputFormatFlag;
-          const goOutput = yield* OutputFlag;
-          const profile = yield* ProfileFlag;
-          const debug = yield* DebugFlag;
-          const workdir = yield* WorkdirFlag;
-          const experimental = yield* ExperimentalFlag;
-          const networkId = yield* NetworkIdFlag;
-          const yes = yield* YesFlag;
-          const dnsResolver = yield* DnsResolverFlag;
-          const createTicket = yield* CreateTicketFlag;
+          const resourceOutput = yield* OutputFlag;
           const agent = yield* AgentFlag;
           const cliArgs = yield* CliArgs;
 
@@ -232,37 +218,20 @@ export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
           const outputFormat = resolveAgentOutputFormat({
             explicitOutputFormat,
             agentDefaultOutputFormat: agentDefaultOutputFormatFor(options, cliArgs.args),
-            goOutputFormat: goOutput,
+            outputFlagFormat: resourceOutput,
             agentOverride: agent,
             detectedAgentName: aiTool.name,
             isBuiltInTextRequest: isBuiltInTextRequest(cliArgs.args),
           });
 
-          const globalArgs: string[] = [];
-          if (Option.isSome(goOutput)) {
-            globalArgs.push("--output", goOutput.value);
-          } else if (outputFormat !== "text") {
-            globalArgs.push("--output", "json");
-          }
-          if (profile !== "supabase") globalArgs.push("--profile", profile);
-          if (debug) globalArgs.push("--debug");
-          if (Option.isSome(workdir)) globalArgs.push("--workdir", workdir.value);
-          if (experimental) globalArgs.push("--experimental");
-          if (Option.isSome(networkId)) globalArgs.push("--network-id", networkId.value);
-          if (yes) globalArgs.push("--yes");
-          if (dnsResolver !== "native") globalArgs.push("--dns-resolver", dnsResolver);
-          if (createTicket) globalArgs.push("--create-ticket");
-          if (agent !== "auto") globalArgs.push("--agent", agent);
-
           // Machine formats keep the text layer's error rendering but suppress the progress
           // spinner, which would otherwise corrupt the stdout payload. `-o pretty`/`-o table`
           // (db query's human default) and no `-o` keep the normal text/json layers.
-          const goFmt = Option.getOrUndefined(goOutput);
-          const isGoMachineFormat = goFmt !== undefined && goFmt !== "pretty" && goFmt !== "table";
-          const outputLayer = isGoMachineFormat
+          const outputLayer = isMachineResourceFormat(resourceOutput)
             ? quietProgressTextOutputLayer
             : outputLayerFor(outputFormat);
 
+          // A command that provides its own `machineErrorContextLayer` shadows the default cell.
           return Layer.mergeAll(
             options.projectState === undefined
               ? Layer.empty
@@ -270,8 +239,9 @@ export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
             options.stackBackend === undefined
               ? Layer.empty
               : stackBackendLayer(options.stackBackend),
-            outputLayer,
-            makeGoProxyLayer({ globalArgs, workdir, parentOwnsCapturedSuccessTail: true }),
+            commandTargetLayer.pipe(Layer.provideMerge(outputLayer)),
+            machineErrorContextLayer,
+            Layer.succeed(AiTool, aiTool),
           );
         }),
       ),

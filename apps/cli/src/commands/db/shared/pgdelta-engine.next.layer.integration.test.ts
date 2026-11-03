@@ -4,7 +4,7 @@ import { Effect, Layer, Option } from "effect";
 
 import { mockCommandSettings } from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
-import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
+import { DebugLogger } from "../../../shared/output/debug-logger.service.ts";
 import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
 import { pgDeltaNextEngineLayer } from "./pgdelta-engine.next.layer.ts";
 import { PgDeltaEngine } from "./pgdelta-engine.service.ts";
@@ -27,12 +27,12 @@ const common = {
 
 const toml: DbTomlValues = {
   projectEnv: {},
-  envLookup: () => undefined,
   apiSchemas: ["public", "graphql_public"],
+  exposedSchemas: ["public", "graphql_public"],
   port: 54322,
   shadowPort: 54320,
   password: "postgres",
-  projectId: Option.none(),
+  projectId: "test",
   majorVersion: 17,
   orioledbVersion: Option.none(),
   denoVersion: 2,
@@ -55,7 +55,6 @@ const toml: DbTomlValues = {
   seed: { enabled: true, sqlPaths: [] },
   vault: [],
   appliedRemote: undefined,
-  remoteOverrideKeys: new Set(),
 };
 
 function setup() {

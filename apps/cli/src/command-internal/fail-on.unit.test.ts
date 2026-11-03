@@ -35,7 +35,7 @@ describe("makeLevelEnum (exact-ci matcher — db advisors)", () => {
     expect(advisors.toEnum("ERROR")).toBe(2);
   });
 
-  it("does NOT match a mixed-case level (Go's switch is exact)", () => {
+  it("does NOT match a mixed-case level (matching is exact)", () => {
     expect(advisors.toEnum("Info")).toBe(-1);
     expect(advisors.toEnum("warning")).toBe(-1);
   });

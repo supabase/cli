@@ -40,6 +40,48 @@ describe("toDumpEnv", () => {
       PGDATABASE: "postgres",
     });
   });
+
+  it("forwards a remote sslmode=disable without any PEM path", () => {
+    const env = toDumpEnv(
+      {
+        ...CONN,
+        sslmode: "disable",
+        sslcert: "/certs/client.crt",
+        sslkey: "/certs/client.key",
+        connectTimeoutSeconds: 3,
+      },
+      true,
+    );
+    expect(env["PGSSLMODE"]).toBe("disable");
+    expect(env["PGCONNECT_TIMEOUT"]).toBe("3");
+    expect(env["PGSSLCERT"]).toBeUndefined();
+    expect(env["PGSSLKEY"]).toBeUndefined();
+  });
+
+  it("pins verify-full for libpq's system root cert", () => {
+    for (const sslmode of [undefined, "require", "verify-ca"])
+      expect(toDumpEnv({ ...CONN, sslmode, sslrootcert: "system" }, true)).toMatchObject({
+        PGSSLMODE: "verify-full",
+        PGSSLROOTCERT: "system",
+      });
+  });
+
+  it("keeps the root cert and an encrypted key out of a remote dump", () => {
+    const env = toDumpEnv(
+      {
+        ...CONN,
+        sslmode: "prefer",
+        sslrootcert: "/certs/root.crt",
+        sslcert: "/certs/client.crt",
+        sslkey: "/certs/client.key",
+        sslpassword: "secret",
+      },
+      true,
+    );
+    expect(env["PGSSLROOTCERT"]).toBeUndefined();
+    expect(env["PGSSLCERT"]).toBeUndefined();
+    expect(env["PGSSLKEY"]).toBeUndefined();
+  });
 });
 
 describe("buildSchemaDumpEnv", () => {

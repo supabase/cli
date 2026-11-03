@@ -1,6 +1,6 @@
 import { type V1GetHostnameConfigOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Deferred, Effect, Exit, FileSystem, Fiber, Option, Schema } from "effect";
+import { Cause, Deferred, Effect, Exit, FileSystem, Fiber, Layer, Option, Schema } from "effect";
 import { TestClock } from "effect/testing";
 
 import { mockAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
@@ -12,16 +12,22 @@ import {
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
+  type MockCommandPlatformApiOpts,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { DomainsCnameError } from "../domains.errors.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   projectResponse,
   realLinkedProjectCache,
 } from "../../../../tests/helpers/permission-real-layers.ts";
 import { domainsCreate } from "./create.handler.ts";
+import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const CUSTOM_HOSTNAME = "shop.acme.dev";
 const EXPECTED_CNAME = `${VALID_REF}.supabase.co.`;
@@ -44,11 +50,11 @@ const HOSTNAME_RESPONSE: typeof V1GetHostnameConfigOutput.Type = {
   },
 };
 
-type GoOutput = "env" | "pretty" | "json" | "toml" | "yaml";
+type OutputFlagValue = "env" | "pretty" | "json" | "toml" | "yaml";
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: GoOutput;
+  readonly outputFlag?: OutputFlagValue;
   readonly cname?: "ok" | "transport-fail" | "no-cname" | "mismatch" | "status-error";
   readonly apiStatus?: number;
   readonly apiNetwork?: "fail";
@@ -58,12 +64,20 @@ interface SetupOpts {
 
 const tempRoot = useTempWorkdir("supabase-domains-create-int-");
 
+const buildRuntime = (opts: Parameters<typeof buildTestRuntime>[0]) =>
+  Layer.mergeAll(
+    buildTestRuntime(opts),
+    Layer.succeed(YesFlag, true),
+    Layer.succeed(TargetPolicy, { group: "hosted", consent: "yes" }),
+  );
+
 const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
-function setup(opts: SetupOpts = {}) {
+const confirmed = `Confirmed by --yes: Create custom hostname ${CUSTOM_HOSTNAME} on project ${VALID_REF}\n`;
+
+function apiOptions(opts: SetupOpts): MockCommandPlatformApiOpts {
   const cname = opts.cname ?? "ok";
-  const out = mockOutput({ format: opts.format ?? "text" });
-  const api = mockCommandPlatformApi({
+  return {
     handler: (request) => {
       if (request.url.includes("1.1.1.1")) {
         if (opts.dnsRequested !== undefined) {
@@ -88,36 +102,40 @@ function setup(opts: SetupOpts = {}) {
         jsonResponse(request, opts.apiStatus ?? 201, opts.apiResponse ?? HOSTNAME_RESPONSE),
       );
     },
-  });
+  };
+}
+
+function setup(opts: SetupOpts = {}) {
+  const out = mockOutput({ format: opts.format ?? "text" });
+  const api = mockCommandPlatformApi(apiOptions(opts));
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
   const analytics = mockAnalytics();
   const telemetry = mockTelemetryStateTracked();
   const linkedProjectCache = mockLinkedProjectCacheTracked();
-  const layer = buildTestRuntime({
+  const layer = buildRuntime({
     out,
     api,
     cliSettings,
     analytics,
     telemetry: telemetry.layer,
     linkedProjectCache: linkedProjectCache.layer,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api, analytics, telemetry, linkedProjectCache };
 }
 
-function flags(over: Partial<{ includeRawOutput: Option.Option<boolean> }> = {}) {
+function flags() {
   return {
+    remote: Option.none(),
     projectRef: Option.none<string>(),
     customHostname: CUSTOM_HOSTNAME,
-    includeRawOutput: over.includeRawOutput ?? Option.none<boolean>(),
+    includeRawOutput: Option.none<boolean>(),
   };
 }
 
 function postedToInitialize(api: { requests: ReadonlyArray<{ url: string }> }): boolean {
   return api.requests.some((r) => r.url.includes("/custom-hostname/initialize"));
 }
-
-const DeprecationJsonObject = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
 
 describe("domains create integration", () => {
   it.effect("verifies the CNAME, creates the hostname, and prints status to stderr", () => {
@@ -254,58 +272,22 @@ describe("domains create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("emits indented Go JSON to stdout with no status on stderr for -o json", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+  it.effect("emits indented JSON to stdout with no status on stderr for -o json", () => {
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* domainsCreate(flags());
       expect(out.stdoutText.startsWith("{")).toBe(true);
-      expect(out.stderrText).toBe("");
+      expect(out.stderrText).toBe(unverifiedTargetBanner() + confirmed);
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("emits YAML to stdout with no status on stderr for -o yaml", () => {
-    const { layer, out } = setup({ goOutput: "yaml" });
+    const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* domainsCreate(flags());
-      // yaml.v3 lowercases the whole field name.
+      // YAML output lowercases the whole field name.
       expect(out.stdoutText).toContain(`customhostname: ${CUSTOM_HOSTNAME}`);
-      expect(out.stderrText).toBe("");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect(
-    "warns on stderr and keeps stdout JSON parseable when --include-raw-output is set",
-    () => {
-      const { layer, out } = setup();
-      return Effect.gen(function* () {
-        yield* domainsCreate(flags({ includeRawOutput: Option.some(true) }));
-        expect(out.stderrText).toBe(
-          "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n",
-        );
-        const parsed = yield* Schema.decodeEffect(DeprecationJsonObject)(out.stdoutText);
-        expect(parsed.custom_hostname).toBe(CUSTOM_HOSTNAME);
-      }).pipe(Effect.provide(layer));
-    },
-  );
-
-  it.effect("warns but does not force JSON when --include-raw-output=false", () => {
-    const { layer, out } = setup();
-    return Effect.gen(function* () {
-      yield* domainsCreate(flags({ includeRawOutput: Option.some(false) }));
-      expect(
-        out.stderrText.startsWith(
-          "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n",
-        ),
-      ).toBe(true);
-      expect(out.stdoutText).toBe("");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("does not warn when --include-raw-output is not set", () => {
-    const { layer, out } = setup();
-    return Effect.gen(function* () {
-      yield* domainsCreate(flags());
-      expect(out.stderrText).not.toContain("deprecated");
+      expect(out.stderrText).toBe(unverifiedTargetBanner() + confirmed);
     }).pipe(Effect.provide(layer));
   });
 
@@ -380,7 +362,7 @@ describe("domains create integration", () => {
         workdir: tempRoot.current,
         projectId: Option.none(),
       });
-      const layer = buildTestRuntime({
+      const layer = buildRuntime({
         out,
         api,
         cliSettings,
@@ -409,4 +391,19 @@ describe("domains create integration", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+});
+
+describeHostedConsent("domains create", {
+  api: apiOptions({}),
+  invoke: () => ({ run: domainsCreate(flags()) }),
+});
+
+describeHostedTargetSelection("domains create", {
+  respond: (request, ref) =>
+    Effect.succeed(
+      request.url.includes("1.1.1.1")
+        ? jsonResponse(request, 200, { Answer: [{ type: 5, data: `${ref}.supabase.co.` }] })
+        : jsonResponse(request, 201, HOSTNAME_RESPONSE),
+    ),
+  run: (selection) => domainsCreate({ ...flags(), ...selection }),
 });

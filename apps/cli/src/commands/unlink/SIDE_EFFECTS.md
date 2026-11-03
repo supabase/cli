@@ -67,8 +67,7 @@ and exit code `1` before the link or the credential is touched. A document that 
 can be cleared; the ref is then unknown, so no credential is deleted and the structured success
 carries `project_ref: null`.
 
-## Known divergence
+## Notes
 
-The `Finished supabase unlink.` line is emitted as **plain text**; the old Go CLI rendered
-`supabase unlink` in ANSI cyan. This matches the established port convention (color
-helpers are rendered plain); ANSI-stripping scripts are unaffected.
+The `Finished supabase unlink.` line is emitted as **plain text**, with no ANSI color on
+`supabase unlink` (color helpers are rendered plain); ANSI-stripping scripts are unaffected.

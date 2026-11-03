@@ -8,8 +8,7 @@
  * version is a semantic-release placeholder and is never used here.
  */
 import { BunServices } from "@effect/platform-bun";
-import { Effect } from "effect";
-import path from "node:path";
+import { Effect, Path } from "effect";
 import process from "node:process";
 import { readDocsContent } from "../src/docs/docs-spec.content.ts";
 import { buildDocsSpec, stringifyDocsSpec } from "../src/docs/docs-spec.ts";
@@ -22,7 +21,8 @@ function resolveVersion(): string {
 }
 
 const content = await Effect.runPromise(
-  readDocsContent(path.resolve(import.meta.dir, "../docs")).pipe(
+  Path.Path.pipe(
+    Effect.flatMap((path) => readDocsContent(path.resolve(import.meta.dir, "../docs"))),
     Effect.provide(BunServices.layer),
     Effect.mapError((error) => error.cause ?? error),
   ),

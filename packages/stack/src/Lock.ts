@@ -8,8 +8,11 @@ import {
 import { SLIM_IMAGE_GHCR_REGISTRY } from "./preparation/SlimEndpoints.ts";
 import { publish } from "./StackNamespace.ts";
 
-/** The `$schema` URL of lock format v1; it never changes once published. */
+/** The `$schema` value every v1 lock is written with, because older CLIs require it. */
 export const LOCK_SCHEMA_URL = "https://supabase.com/docs/cli/supabase-lock/v1.schema.json";
+
+/** Where the v1 lock schema is hosted; reads accept it as `$schema` so a later release can write it. */
+export const HOSTED_LOCK_SCHEMA_URL = "https://supabase.com/schemas/supabase-lock/v1.json";
 
 const LOCK_VERSION = 1;
 
@@ -129,6 +132,11 @@ const decodeVersion = Schema.decodeUnknownOption(
 );
 const decodeLock = Schema.decodeUnknownEffect(Lock);
 
+const withWrittenSchemaUrl = (document: unknown): unknown =>
+  Predicate.isObject(document) && document["$schema"] === HOSTED_LOCK_SCHEMA_URL
+    ? { ...document, $schema: LOCK_SCHEMA_URL }
+    : document;
+
 const sortedKeysReplacer = (_key: string, value: unknown): unknown =>
   Predicate.isObject(value) && !Array.isArray(value)
     ? Object.fromEntries(Object.entries(value).toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
@@ -179,7 +187,7 @@ export const readLock = Effect.fn("Lock.read")(function* (projectRoot: string) {
       message: `${file} has lockfileVersion ${newer.value.lockfileVersion}, but this CLI reads version ${LOCK_VERSION}; upgrade the CLI.`,
     });
   }
-  const lock = yield* decodeLock(document).pipe(
+  const lock = yield* decodeLock(withWrittenSchemaUrl(document)).pipe(
     Effect.mapError(
       (cause) =>
         new LockInvalidError({

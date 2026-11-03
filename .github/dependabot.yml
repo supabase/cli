@@ -37,28 +37,6 @@ updates:
         # — never bundle it into the actions-major group.
     cooldown:
       default-days: 7
-  - package-ecosystem: "gomod"
-    directories:
-      - "/apps/cli-go"
-      - "/apps/cli-go/pkg"
-    schedule:
-      interval: "cron"
-      cronjob: "0 0 * * *"
-    commit-message:
-      prefix: "chore(cli-go): "
-    groups:
-      go-minor:
-        update-types:
-          - minor
-          - patch
-        exclude-patterns:
-          - github.com/compose-spec/compose-go/v2
-    ignore:
-      - dependency-name: "github.com/compose-spec/compose-go/v2"
-      - dependency-name: "github.com/docker/cli"
-      - dependency-name: "github.com/docker/docker"
-    cooldown:
-      default-days: 7
   - package-ecosystem: "npm"
     directory: "/"
     schedule:

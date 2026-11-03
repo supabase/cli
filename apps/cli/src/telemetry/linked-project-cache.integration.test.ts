@@ -14,12 +14,12 @@ import { assertBlockDrift } from "../../tests/helpers/permission-drift.ts";
 import { linkedProjectCache, linkedProjectCacheLayer } from "./linked-project-cache.layer.ts";
 import { identityStitchLayer } from "../command-internal/identity-stitch.ts";
 import { LinkedProjectCache } from "./linked-project-cache.service.ts";
-import { projectStateModeLayer } from "../command-internal/project-state-mode.ts";
+import { projectStateModeLayer } from "../shared/config/project-state-mode.ts";
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 describe("linkedProjectCacheLayer", () => {
-  it.live("stitches session identity from the cache GET's X-Gotrue-Id (Go identityTransport)", () =>
+  it.live("stitches session identity from the cache GET's X-Gotrue-Id", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;

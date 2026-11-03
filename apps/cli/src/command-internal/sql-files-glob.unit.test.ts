@@ -46,7 +46,7 @@ const withMode = <A, E, R>(target: string, mode: number, body: Effect.Effect<A, 
   );
 
 layer(BunServices.layer)("sqlFilesGlob", (it) => {
-  it.effect("treats an empty pattern as no match, not the workdir itself (Go fs.Glob parity)", () =>
+  it.effect("treats an empty pattern as no match, not the workdir itself", () =>
     Effect.gen(function* () {
       const { dir } = yield* tempWorkdir("sql-glob-empty-");
       const result = yield* run([""], dir);
@@ -55,44 +55,40 @@ layer(BunServices.layer)("sqlFilesGlob", (it) => {
     }),
   );
 
-  it.effect(
-    "does not follow a symlinked .sql file below a matched directory (Go WalkDir parity)",
-    () =>
-      Effect.gen(function* () {
-        const { fs, path, dir } = yield* tempWorkdir("sql-glob-symlink-file-");
-        const schemasDir = path.join(dir, "schemas");
-        yield* fs.makeDirectory(schemasDir);
-        yield* fs.writeFileString(path.join(schemasDir, "real.sql"), "select 1;");
-        const outsideDir = path.join(dir, "outside");
-        yield* fs.makeDirectory(outsideDir);
-        yield* fs.writeFileString(path.join(outsideDir, "evil.sql"), "select 2;");
-        yield* fs.symlink(path.join(outsideDir, "evil.sql"), path.join(schemasDir, "linked.sql"));
-        const result = yield* run(["schemas"], dir);
-        expect(result.files).toEqual(["schemas/real.sql"]);
-        expect(result.warnings).toEqual([]);
-      }),
+  it.effect("does not follow a symlinked .sql file below a matched directory", () =>
+    Effect.gen(function* () {
+      const { fs, path, dir } = yield* tempWorkdir("sql-glob-symlink-file-");
+      const schemasDir = path.join(dir, "schemas");
+      yield* fs.makeDirectory(schemasDir);
+      yield* fs.writeFileString(path.join(schemasDir, "real.sql"), "select 1;");
+      const outsideDir = path.join(dir, "outside");
+      yield* fs.makeDirectory(outsideDir);
+      yield* fs.writeFileString(path.join(outsideDir, "evil.sql"), "select 2;");
+      yield* fs.symlink(path.join(outsideDir, "evil.sql"), path.join(schemasDir, "linked.sql"));
+      const result = yield* run(["schemas"], dir);
+      expect(result.files).toEqual(["schemas/real.sql"]);
+      expect(result.warnings).toEqual([]);
+    }),
+  );
+
+  it.effect("does not recurse into a symlinked subdirectory below a matched directory", () =>
+    Effect.gen(function* () {
+      const { fs, path, dir } = yield* tempWorkdir("sql-glob-symlink-dir-");
+      const schemasDir = path.join(dir, "schemas");
+      yield* fs.makeDirectory(schemasDir);
+      yield* fs.writeFileString(path.join(schemasDir, "real.sql"), "select 1;");
+      const outsideSubdir = path.join(dir, "outside-subdir");
+      yield* fs.makeDirectory(outsideSubdir);
+      yield* fs.writeFileString(path.join(outsideSubdir, "nested.sql"), "select 3;");
+      yield* fs.symlink(outsideSubdir, path.join(schemasDir, "linked-dir"));
+      const result = yield* run(["schemas"], dir);
+      expect(result.files).toEqual(["schemas/real.sql"]);
+      expect(result.warnings).toEqual([]);
+    }),
   );
 
   it.effect(
-    "does not recurse into a symlinked subdirectory below a matched directory (Go WalkDir parity)",
-    () =>
-      Effect.gen(function* () {
-        const { fs, path, dir } = yield* tempWorkdir("sql-glob-symlink-dir-");
-        const schemasDir = path.join(dir, "schemas");
-        yield* fs.makeDirectory(schemasDir);
-        yield* fs.writeFileString(path.join(schemasDir, "real.sql"), "select 1;");
-        const outsideSubdir = path.join(dir, "outside-subdir");
-        yield* fs.makeDirectory(outsideSubdir);
-        yield* fs.writeFileString(path.join(outsideSubdir, "nested.sql"), "select 3;");
-        yield* fs.symlink(outsideSubdir, path.join(schemasDir, "linked-dir"));
-        const result = yield* run(["schemas"], dir);
-        expect(result.files).toEqual(["schemas/real.sql"]);
-        expect(result.warnings).toEqual([]);
-      }),
-  );
-
-  it.effect(
-    "surfaces a stat failure on a matched file as a warning instead of treating it as a regular file (Go parity)",
+    "surfaces a stat failure on a matched file as a warning instead of treating it as a regular file",
     () =>
       Effect.gen(function* () {
         const { fs, path, dir } = yield* tempWorkdir("sql-glob-stat-fail-");
@@ -113,7 +109,7 @@ layer(BunServices.layer)("sqlFilesGlob", (it) => {
   );
 
   it.effect(
-    "surfaces a stat failure for a LITERAL (no-metacharacter) pattern naming a broken symlink, instead of reporting no match (Go afero.Glob Lstat parity)",
+    "surfaces a stat failure for a LITERAL (no-metacharacter) pattern naming a broken symlink, instead of reporting no match",
     () =>
       Effect.gen(function* () {
         const { fs, path, dir } = yield* tempWorkdir("sql-glob-literal-symlink-");
@@ -132,7 +128,7 @@ layer(BunServices.layer)("sqlFilesGlob", (it) => {
   );
 
   it.effect(
-    "keeps a bare root ('/') as the directory when a glob pattern's meta character is in the first path component (Go afero.Glob parity)",
+    "keeps a bare root ('/') as the directory when a glob pattern's meta character is in the first path component",
     () =>
       Effect.gen(function* () {
         // The canary file lives in the workdir (never the real "/"), proving this doesn't
@@ -148,7 +144,7 @@ layer(BunServices.layer)("sqlFilesGlob", (it) => {
   );
 
   it.effect(
-    "recurses through a root-anchored directory component without falling back to the workdir (Go afero.Glob parity)",
+    "recurses through a root-anchored directory component without falling back to the workdir",
     () =>
       Effect.gen(function* () {
         // The workdir here contains a subdirectory that would match "foo*" only if the
@@ -166,7 +162,7 @@ layer(BunServices.layer)("sqlFilesGlob", (it) => {
   );
 
   it.effect(
-    "preserves a Windows drive root ('C:/') as the directory when splitting a glob pattern (Go filepath.Split parity)",
+    "preserves a Windows drive root ('C:/') as the directory when splitting a glob pattern",
     () =>
       Effect.gen(function* () {
         const { fs, path, dir } = yield* tempWorkdir("sql-glob-drive-root-");
@@ -190,7 +186,7 @@ layer(BunServices.layer)("sqlFilesGlob", (it) => {
   );
 
   it.effect(
-    "reports the raw backslash pattern in a 'no files matched' warning on Windows, not the slashed form used for matching (Go filepath.ToSlash parity)",
+    "reports the raw backslash pattern in a 'no files matched' warning on Windows, not the slashed form used for matching",
     () =>
       Effect.gen(function* () {
         const { fs, dir } = yield* tempWorkdir("sql-glob-win-warn-");
@@ -202,41 +198,39 @@ layer(BunServices.layer)("sqlFilesGlob", (it) => {
       }),
   );
 
-  it.effect(
-    "sorts raw backslash-joined Windows matches BEFORE slashing, not after (Go afero.Glob/filepath.ToSlash ordering parity)",
-    () =>
-      Effect.gen(function* () {
-        // For `a\x.sql` vs `a0\x.sql`, sorting the raw backslash bytes puts `a0\x.sql` first
-        // (`\` is `0x5C` > `0`'s `0x30`), while sorting the slashed form would put `a/x.sql`
-        // first instead — a fully faked filesystem supplies canned results keyed by the exact
-        // backslash-joined paths `BunPath.layerWin32`'s `path.join` computes.
-        const { fs, path, dir } = yield* tempWorkdir("sql-glob-win-sort-");
-        const canaryFile = path.join(dir, "canary.sql");
-        yield* fs.writeFileString(canaryFile, "select 1;");
-        const fileInfo = yield* fs.stat(canaryFile);
-        const workdir = "/workdir";
-        const winFs: FileSystem.FileSystem = {
-          ...fs,
-          readDirectory: (p: string) => {
-            if (p === workdir) return Effect.succeed(["a", "a0"]);
-            if (p === "\\workdir\\a" || p === "\\workdir\\a0") return Effect.succeed(["x.sql"]);
-            return fs.readDirectory(p);
-          },
-          stat: (p: string) =>
-            p === "\\workdir\\a\\x.sql" || p === "\\workdir\\a0\\x.sql"
-              ? Effect.succeed(fileInfo)
-              : fs.stat(p),
-        };
-        const result = yield* withWin32Path((win32Path) =>
-          sqlFilesGlob(winFs, win32Path, ["a*/x.sql"], workdir),
-        );
-        expect(result.files).toEqual(["a0/x.sql", "a/x.sql"]);
-        expect(result.warnings).toEqual([]);
-      }),
+  it.effect("sorts raw backslash-joined Windows matches BEFORE slashing, not after", () =>
+    Effect.gen(function* () {
+      // For `a\x.sql` vs `a0\x.sql`, sorting the raw backslash bytes puts `a0\x.sql` first
+      // (`\` is `0x5C` > `0`'s `0x30`), while sorting the slashed form would put `a/x.sql`
+      // first instead — a fully faked filesystem supplies canned results keyed by the exact
+      // backslash-joined paths `BunPath.layerWin32`'s `path.join` computes.
+      const { fs, path, dir } = yield* tempWorkdir("sql-glob-win-sort-");
+      const canaryFile = path.join(dir, "canary.sql");
+      yield* fs.writeFileString(canaryFile, "select 1;");
+      const fileInfo = yield* fs.stat(canaryFile);
+      const workdir = "/workdir";
+      const winFs: FileSystem.FileSystem = {
+        ...fs,
+        readDirectory: (p: string) => {
+          if (p === workdir) return Effect.succeed(["a", "a0"]);
+          if (p === "\\workdir\\a" || p === "\\workdir\\a0") return Effect.succeed(["x.sql"]);
+          return fs.readDirectory(p);
+        },
+        stat: (p: string) =>
+          p === "\\workdir\\a\\x.sql" || p === "\\workdir\\a0\\x.sql"
+            ? Effect.succeed(fileInfo)
+            : fs.stat(p),
+      };
+      const result = yield* withWin32Path((win32Path) =>
+        sqlFilesGlob(winFs, win32Path, ["a*/x.sql"], workdir),
+      );
+      expect(result.files).toEqual(["a0/x.sql", "a/x.sql"]);
+      expect(result.warnings).toEqual([]);
+    }),
   );
 
   it.effect(
-    "normalizes a doubled slash when the matched directory itself has a trailing slash (Go path.Join parity)",
+    "normalizes a doubled slash when the matched directory itself has a trailing slash",
     () =>
       Effect.gen(function* () {
         const { fs, path, dir } = yield* tempWorkdir("sql-glob-trailing-slash-");
@@ -249,69 +243,61 @@ layer(BunServices.layer)("sqlFilesGlob", (it) => {
       }),
   );
 
-  it.effect(
-    "drops the './' prefix when the matched directory cleans to '.' (Go path.Join parity)",
-    () =>
-      Effect.gen(function* () {
-        const { fs, path, dir } = yield* tempWorkdir("sql-glob-dot-root-");
-        yield* fs.writeFileString(path.join(dir, "a.sql"), "select 1;");
-        const nestedDir = path.join(dir, "nested");
-        yield* fs.makeDirectory(nestedDir);
-        yield* fs.writeFileString(path.join(nestedDir, "b.sql"), "select 2;");
-        const result = yield* run(["."], dir);
-        expect(result.files).toEqual(["a.sql", "nested/b.sql"]);
-        expect(result.warnings).toEqual([]);
-      }),
+  it.effect("drops the './' prefix when the matched directory cleans to '.'", () =>
+    Effect.gen(function* () {
+      const { fs, path, dir } = yield* tempWorkdir("sql-glob-dot-root-");
+      yield* fs.writeFileString(path.join(dir, "a.sql"), "select 1;");
+      const nestedDir = path.join(dir, "nested");
+      yield* fs.makeDirectory(nestedDir);
+      yield* fs.writeFileString(path.join(nestedDir, "b.sql"), "select 2;");
+      const result = yield* run(["."], dir);
+      expect(result.files).toEqual(["a.sql", "nested/b.sql"]);
+      expect(result.warnings).toEqual([]);
+    }),
+  );
+
+  it.effect("cleans a '..'-segment matched directory when walking its children", () =>
+    Effect.gen(function* () {
+      const { fs, path, dir } = yield* tempWorkdir("sql-glob-dotdot-segment-");
+      const schemasDir = path.join(dir, "schemas");
+      yield* fs.makeDirectory(schemasDir);
+      yield* fs.writeFileString(path.join(schemasDir, "a.sql"), "select 1;");
+      const result = yield* run(["nested/../schemas"], dir);
+      expect(result.files).toEqual(["schemas/a.sql"]);
+      expect(result.warnings).toEqual([]);
+    }),
+  );
+
+  it.effect("cleans a direct glob match whose directory portion has a '.' segment", () =>
+    Effect.gen(function* () {
+      // Distinct from the walked-child cleaning tests above: the glob metacharacter is in
+      // the final component, so this matches directly via `globOne`, never `walkSqlFiles`.
+      const { fs, path, dir } = yield* tempWorkdir("sql-glob-direct-dot-segment-");
+      const schemasDir = path.join(dir, "schemas");
+      yield* fs.makeDirectory(schemasDir);
+      yield* fs.writeFileString(path.join(schemasDir, "a.sql"), "select 1;");
+      const result = yield* run(["schemas/./*.sql"], dir);
+      expect(result.files).toEqual(["schemas/a.sql"]);
+      expect(result.warnings).toEqual([]);
+    }),
+  );
+
+  it.effect("cleans a direct glob match whose directory portion has a '..' segment", () =>
+    Effect.gen(function* () {
+      // Same distinction as above (a direct match via `globOne`), but for an embedded `..`
+      // segment instead of `.`.
+      const { fs, path, dir } = yield* tempWorkdir("sql-glob-direct-dotdot-segment-");
+      const schemasDir = path.join(dir, "schemas");
+      yield* fs.makeDirectory(schemasDir);
+      yield* fs.writeFileString(path.join(schemasDir, "a.sql"), "select 1;");
+      const result = yield* run(["nested/../schemas/*.sql"], dir);
+      expect(result.files).toEqual(["schemas/a.sql"]);
+      expect(result.warnings).toEqual([]);
+    }),
   );
 
   it.effect(
-    "cleans a '..'-segment matched directory when walking its children (Go path.Join parity)",
-    () =>
-      Effect.gen(function* () {
-        const { fs, path, dir } = yield* tempWorkdir("sql-glob-dotdot-segment-");
-        const schemasDir = path.join(dir, "schemas");
-        yield* fs.makeDirectory(schemasDir);
-        yield* fs.writeFileString(path.join(schemasDir, "a.sql"), "select 1;");
-        const result = yield* run(["nested/../schemas"], dir);
-        expect(result.files).toEqual(["schemas/a.sql"]);
-        expect(result.warnings).toEqual([]);
-      }),
-  );
-
-  it.effect(
-    "cleans a direct glob match whose directory portion has a '.' segment (Go afero.Glob parity)",
-    () =>
-      Effect.gen(function* () {
-        // Distinct from the walked-child cleaning tests above: the glob metacharacter is in
-        // the final component, so this matches directly via `globOne`, never `walkSqlFiles`.
-        const { fs, path, dir } = yield* tempWorkdir("sql-glob-direct-dot-segment-");
-        const schemasDir = path.join(dir, "schemas");
-        yield* fs.makeDirectory(schemasDir);
-        yield* fs.writeFileString(path.join(schemasDir, "a.sql"), "select 1;");
-        const result = yield* run(["schemas/./*.sql"], dir);
-        expect(result.files).toEqual(["schemas/a.sql"]);
-        expect(result.warnings).toEqual([]);
-      }),
-  );
-
-  it.effect(
-    "cleans a direct glob match whose directory portion has a '..' segment (Go afero.Glob parity)",
-    () =>
-      Effect.gen(function* () {
-        // Same distinction as above (a direct match via `globOne`), but for an embedded `..`
-        // segment instead of `.`.
-        const { fs, path, dir } = yield* tempWorkdir("sql-glob-direct-dotdot-segment-");
-        const schemasDir = path.join(dir, "schemas");
-        yield* fs.makeDirectory(schemasDir);
-        yield* fs.writeFileString(path.join(schemasDir, "a.sql"), "select 1;");
-        const result = yield* run(["nested/../schemas/*.sql"], dir);
-        expect(result.files).toEqual(["schemas/a.sql"]);
-        expect(result.warnings).toEqual([]);
-      }),
-  );
-
-  it.effect(
-    "normalizes a doubled slash for a direct glob match under a trailing-slash directory component (Go afero.Glob parity)",
+    "normalizes a doubled slash for a direct glob match under a trailing-slash directory component",
     () =>
       Effect.gen(function* () {
         // `splitPath` on `"schemas//*.sql"` yields `dir: "schemas/"` (the trailing slash
@@ -326,30 +312,28 @@ layer(BunServices.layer)("sqlFilesGlob", (it) => {
       }),
   );
 
-  it.effect(
-    "still includes a '.sql' child whose stat fails after it's already listed (Go WalkDir parity)",
-    () =>
-      Effect.gen(function* () {
-        // Simulates the race by deleting the file the instant after `readDirectory` returns
-        // it, via a `FileSystem` layer that removes on the first `stat` call for that path.
-        const { fs, path, dir } = yield* tempWorkdir("sql-glob-stat-race-");
-        const schemasDir = path.join(dir, "schemas");
-        yield* fs.makeDirectory(schemasDir);
-        const racyFile = path.join(schemasDir, "racy.sql");
-        yield* fs.writeFileString(racyFile, "select 1;");
-        const racyFs: FileSystem.FileSystem = {
-          ...fs,
-          stat: (p: string) =>
-            p === racyFile ? fs.remove(racyFile).pipe(Effect.andThen(fs.stat(p))) : fs.stat(p),
-        };
-        const result = yield* sqlFilesGlob(racyFs, path, ["schemas"], dir);
-        expect(result.files).toEqual(["schemas/racy.sql"]);
-        expect(result.warnings).toEqual([]);
-      }),
+  it.effect("still includes a '.sql' child whose stat fails after it's already listed", () =>
+    Effect.gen(function* () {
+      // Simulates the race by deleting the file the instant after `readDirectory` returns
+      // it, via a `FileSystem` layer that removes on the first `stat` call for that path.
+      const { fs, path, dir } = yield* tempWorkdir("sql-glob-stat-race-");
+      const schemasDir = path.join(dir, "schemas");
+      yield* fs.makeDirectory(schemasDir);
+      const racyFile = path.join(schemasDir, "racy.sql");
+      yield* fs.writeFileString(racyFile, "select 1;");
+      const racyFs: FileSystem.FileSystem = {
+        ...fs,
+        stat: (p: string) =>
+          p === racyFile ? fs.remove(racyFile).pipe(Effect.andThen(fs.stat(p))) : fs.stat(p),
+      };
+      const result = yield* sqlFilesGlob(racyFs, path, ["schemas"], dir);
+      expect(result.files).toEqual(["schemas/racy.sql"]);
+      expect(result.warnings).toEqual([]);
+    }),
   );
 
   it.effect(
-    "fails the whole walk when a non-'.sql' child whose stat fails could have been a subdirectory (Go WalkDir parity)",
+    "fails the whole walk when a non-'.sql' child whose stat fails could have been a subdirectory",
     () =>
       Effect.gen(function* () {
         const { fs, path, dir } = yield* tempWorkdir("sql-glob-dir-race-");
@@ -392,7 +376,7 @@ layer(BunServices.layer)("sqlFilesGlob", (it) => {
   const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
 
   it.effect.skipIf(isRoot)(
-    "surfaces a directory-read failure during walk as a warning instead of an empty match (Go WalkDir parity)",
+    "surfaces a directory-read failure during walk as a warning instead of an empty match",
     () =>
       Effect.gen(function* () {
         const { fs, path, dir } = yield* tempWorkdir("sql-glob-walk-fail-");
@@ -409,7 +393,7 @@ layer(BunServices.layer)("sqlFilesGlob", (it) => {
   );
 
   it.effect.skipIf(isRoot)(
-    "surfaces a NESTED directory-read failure during walk with a workdir-relative path, not the matched root's (Go WalkDir parity)",
+    "surfaces a NESTED directory-read failure during walk with a workdir-relative path, not the matched root's",
     () =>
       Effect.gen(function* () {
         const { fs, path, dir } = yield* tempWorkdir("sql-glob-walk-fail-nested-");
@@ -446,7 +430,7 @@ layer(BunServices.layer)("sqlFilesGlob", (it) => {
   );
 
   it.effect.skipIf(isRoot)(
-    "picks the lexically-first failing subdirectory as the fatal error, matching Go's fs.WalkDir sorted-visit order (review CLI-1958)",
+    "picks the lexically-first failing subdirectory as the fatal error",
     () =>
       Effect.gen(function* () {
         // The fake `readDirectory` returns "schemas"'s children in reverse
@@ -478,21 +462,19 @@ layer(BunServices.layer)("sqlFilesGlob", (it) => {
       }),
   );
 
-  it.effect(
-    "sorts direct wildcard matches by UTF-8 byte order, not UTF-16 code units (Go sort.Strings parity)",
-    () =>
-      Effect.gen(function* () {
-        // The emoji (4-byte UTF-8, lead byte 0xF0) sorts after the fullwidth exclamation mark
-        // (3-byte UTF-8, lead byte 0xEF) in byte order, but before it in UTF-16 code-unit
-        // order (0xD83D surrogate lead vs 0xFF01) — these two characters expose the difference.
-        const { fs, path, dir } = yield* tempWorkdir("sql-glob-utf8-sort-");
-        const schemasDir = path.join(dir, "schemas");
-        yield* fs.makeDirectory(schemasDir);
-        yield* fs.writeFileString(path.join(schemasDir, "\u{1F600}.sql"), "select 1;"); // 😀
-        yield* fs.writeFileString(path.join(schemasDir, "！.sql"), "select 2;"); // ！
-        const result = yield* run(["schemas/*.sql"], dir);
-        expect(result.files).toEqual(["schemas/！.sql", "schemas/\u{1F600}.sql"]);
-        expect(result.warnings).toEqual([]);
-      }),
+  it.effect("sorts direct wildcard matches by UTF-8 byte order, not UTF-16 code units", () =>
+    Effect.gen(function* () {
+      // The emoji (4-byte UTF-8, lead byte 0xF0) sorts after the fullwidth exclamation mark
+      // (3-byte UTF-8, lead byte 0xEF) in byte order, but before it in UTF-16 code-unit
+      // order (0xD83D surrogate lead vs 0xFF01) — these two characters expose the difference.
+      const { fs, path, dir } = yield* tempWorkdir("sql-glob-utf8-sort-");
+      const schemasDir = path.join(dir, "schemas");
+      yield* fs.makeDirectory(schemasDir);
+      yield* fs.writeFileString(path.join(schemasDir, "\u{1F600}.sql"), "select 1;"); // 😀
+      yield* fs.writeFileString(path.join(schemasDir, "！.sql"), "select 2;"); // ！
+      const result = yield* run(["schemas/*.sql"], dir);
+      expect(result.files).toEqual(["schemas/！.sql", "schemas/\u{1F600}.sql"]);
+      expect(result.warnings).toEqual([]);
+    }),
   );
 });

@@ -173,12 +173,3 @@ export class ProjectsDeleteRefRequiredError extends Data.TaggedError(
     return actionability.provideFlags;
   }
 }
-
-/** User declined the delete confirmation prompt. */
-export class ProjectsDeleteCancelledError extends Data.TaggedError("ProjectsDeleteCancelledError")<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.cancelled;
-  }
-}

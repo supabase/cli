@@ -8,10 +8,12 @@ import { makeHttpProxy, type HttpAccessSink, type HttpProxy, type HttpRoute } fr
 
 export type NetworkRuntime = "native" | "docker" | "podman";
 
+/* `target` serves a route from another backend than its endpoint's, like PostgREST's admin port. */
 type RouteContribution = Pick<
   HttpRoute,
-  "prefix" | "upstreamPrefix" | "upstreamHost" | "keyRewrite"
->;
+  "prefix" | "upstreamPrefix" | "upstreamHost" | "addHeaders" | "forwardedPrefix" | "keyRewrite"
+> &
+  Partial<Pick<HttpRoute, "target">>;
 
 export interface NetworkEndpoint {
   readonly protocol: "tcp" | "http";
@@ -122,20 +124,19 @@ const makeNetwork = (options: {
 
     const routeKey = (route: Pick<HttpRoute, "id" | "prefix">) => `${route.id}:${route.prefix}`;
 
-    /** Maps one endpoint's route contributions to `HttpRoute`s on a dedicated, shared or joined listener. */
+    /** Maps one endpoint's route contributions to `HttpRoute`s; shared and joined ones are `gateway` routes. */
     const toHttpRoutes = (
       id: string,
       contributions: ReadonlyArray<RouteContribution>,
       endpoint: Pick<NetworkEndpoint, "backend" | "freshWrites">,
+      gateway: boolean,
     ): ReadonlyArray<HttpRoute> =>
       contributions.map((route) => ({
+        ...route,
         id,
-        prefix: route.prefix,
-        upstreamPrefix: route.upstreamPrefix,
-        upstreamHost: route.upstreamHost,
-        ...(route.keyRewrite === undefined ? {} : { keyRewrite: route.keyRewrite }),
+        ...(gateway ? { gateway: true } : {}),
         ...(endpoint.freshWrites === true ? { freshWrites: true } : {}),
-        target: endpoint.backend,
+        target: route.target ?? endpoint.backend,
       }));
 
     /** Installs a namespace's joined routes onto the shared listener, or queues them if it does not exist yet. */
@@ -144,7 +145,7 @@ const makeNetwork = (options: {
       join: NonNullable<NetworkEndpoint["join"]>,
       endpoint: NetworkEndpoint,
     ) {
-      const routes = toHttpRoutes(routeId, join, endpoint);
+      const routes = toHttpRoutes(routeId, join, endpoint, true);
       const ownKeys = new Set(routes.map(routeKey));
       const current = yield* Ref.get(shared);
       if (current === undefined) {
@@ -209,7 +210,7 @@ const makeNetwork = (options: {
                                   yield* probe(key, host, port);
                                   const proxy = yield* makeHttpProxy({ host, port });
                                   yield* proxy.setRoutes(
-                                    toHttpRoutes(id, [{ prefix: "/" }], endpoint),
+                                    toHttpRoutes(id, [{ prefix: "/" }], endpoint, false),
                                   );
                                   return { proxy };
                                 }
@@ -248,7 +249,7 @@ const makeNetwork = (options: {
                     else if (seeded.length > 0) yield* Ref.set(pendingJoins, []);
                     const routes = [
                       ...current.routes,
-                      ...toHttpRoutes(id, endpoint.shared, endpoint),
+                      ...toHttpRoutes(id, endpoint.shared, endpoint, true),
                     ];
                     yield* current.proxy.setRoutes(routes);
                     yield* Ref.set(shared, { ...current, routes });

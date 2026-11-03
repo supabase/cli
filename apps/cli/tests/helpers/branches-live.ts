@@ -139,19 +139,59 @@ function branchRefFromCreate(
   );
 }
 
+// The platform rejects `branches create` with a 400 when the database it configures restarts, or its
+// TLS connection drops while setting the database password, mid-create.
+const PLATFORM_TRANSIENT_CREATE_REJECTION =
+  /\b57P01\b|the database system is shutting down|Failed to update password: Client network socket disconnected before secure TLS connection was established/u;
+
+function isPlatformTransientCreateRejection(error: unknown): boolean {
+  return (
+    error instanceof BranchCommandFailed &&
+    PLATFORM_TRANSIENT_CREATE_REJECTION.test(`${error.stdout ?? ""}\n${error.stderr}`)
+  );
+}
+
+/** Runs `branches create`, re-issuing it once when the platform rejected it with a transient mid-create failure. */
+export function runLiveBranchCreateEffect<E>(
+  cli: BranchCli<E>,
+  project: LiveProject,
+  name: string,
+): Effect.Effect<BranchCliResult, BranchError<E>, never> {
+  const create = Effect.suspend(() =>
+    command(
+      cli,
+      ["branches", "create", name, `--remote=${project.ref}`, "--output-format", "json", "--yes"],
+      "branches create",
+      undefined,
+    ),
+  );
+  const clearRejected = branchIsListed(cli, project, name, "name").pipe(
+    Effect.flatMap((listed) =>
+      listed ? removeLiveBranchByNameEffect(cli, project, name) : Effect.succeed(true as const),
+    ),
+  );
+  return create.pipe(
+    Effect.catch((rejected) =>
+      isPlatformTransientCreateRejection(rejected)
+        ? clearRejected.pipe(
+            Effect.mapError(
+              (cleanup) =>
+                new AggregateError([rejected, cleanup], "Branch create retry cleanup failed"),
+            ),
+            Effect.flatMap(() => create),
+          )
+        : Effect.fail(rejected),
+    ),
+  );
+}
+
 /** Creates one named branch and captures its immutable reference before polling readiness. */
 export function createLiveBranchEffect<E>(
   cli: BranchCli<E>,
   project: LiveProject,
   name: string,
 ): Effect.Effect<string, BranchError<E>, never> {
-  const created = command(
-    cli,
-    ["branches", "create", name, "--project-ref", project.ref, "--output-format", "json"],
-    "branches create",
-    undefined,
-  );
-  return created.pipe(
+  return runLiveBranchCreateEffect(cli, project, name).pipe(
     Effect.flatMap((result) => branchRefFromCreate(result)),
     Effect.catch((primary) =>
       removeLiveBranchByNameEffect(cli, project, name).pipe(
@@ -171,7 +211,7 @@ function getBranchReady<E>(
   name: string,
 ): Effect.Effect<true, BranchError<E>, never> {
   const response: Effect.Effect<BranchCliResult, E, never> = cli(
-    ["branches", "get", name, "--project-ref", project.ref],
+    ["branches", "get", name, `--remote=${project.ref}`],
     {
       exitTimeoutMs: COMMAND_TIMEOUT,
     },
@@ -212,7 +252,7 @@ function listBranches<E>(
 ): Effect.Effect<ReadonlyArray<Schema.Schema.Type<typeof BranchListItem>>, BranchError<E>, never> {
   return command(
     cli,
-    ["branches", "list", "--output", "json", "--project-ref", project.ref],
+    ["branches", "list", "--output", "json", `--remote=${project.ref}`],
     phase,
     COMMAND_TIMEOUT,
   ).pipe(
@@ -251,7 +291,7 @@ function deleteBranch<E>(
   phase: string,
 ): Effect.Effect<true, BranchError<E>, never> {
   const response: Effect.Effect<BranchCliResult, E, never> = cli(
-    ["branches", "delete", target, "--project-ref", project.ref, "--yes"],
+    ["branches", "delete", target, `--remote=${project.ref}`, "--yes"],
     {
       exitTimeoutMs: COMMAND_TIMEOUT,
     },

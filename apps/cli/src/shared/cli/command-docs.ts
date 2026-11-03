@@ -1,4 +1,5 @@
 import type { Command, HelpDoc } from "effect/cli";
+import { withRemoteFlagUsage } from "../output/target-help.ts";
 import { helpDocFor } from "./subcommand-flag-suggestions.ts";
 
 // Get HelpDoc from a command (uses internal buildHelpDoc)
@@ -8,7 +9,7 @@ export function getHelpDoc(
 ): HelpDoc.HelpDoc {
   const helpDoc = helpDocFor(command, commandPath);
   if (helpDoc === undefined) throw new Error(`Command ${command.name} has no help doc`);
-  return helpDoc;
+  return withRemoteFlagUsage(helpDoc);
 }
 
 // Navigate to a subcommand by path segments

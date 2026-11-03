@@ -76,33 +76,31 @@ layer(BunServices.layer)("applySeedFiles seed glob", (it) => {
     }),
   );
 
-  it.effect(
-    "expands a matched directory to its sorted, regular .sql files (Go's Glob.SQLFiles)",
-    () =>
-      Effect.gen(function* () {
-        const { fs, path, dir } = yield* tempDir("seed-");
-        yield* fs.makeDirectory(path.join(dir, "seeds"));
-        yield* fs.writeFileString(path.join(dir, "seeds", "b.sql"), "insert into t values (2);");
-        yield* fs.writeFileString(path.join(dir, "seeds", "a.sql"), "insert into t values (1);");
-        yield* fs.writeFileString(path.join(dir, "seeds", "README.md"), "not a seed file");
-        const { session, queries } = fakeSession();
-        const out = mockOutput();
-        yield* run(session, dir, ["seeds"], out);
-        const upserts = queries.filter((q) =>
-          q.sql.includes("INSERT INTO supabase_migrations.seed_files"),
-        );
-        expect(upserts.map((q) => q.params?.[0])).toEqual(["seeds/a.sql", "seeds/b.sql"]);
-        expect(out.rawChunks.map((c) => c.text)).toEqual([
-          "Seeding data from seeds/a.sql...\n",
-          "Seeding data from seeds/b.sql...\n",
-        ]);
-      }),
+  it.effect("expands a matched directory to its sorted, regular .sql files", () =>
+    Effect.gen(function* () {
+      const { fs, path, dir } = yield* tempDir("seed-");
+      yield* fs.makeDirectory(path.join(dir, "seeds"));
+      yield* fs.writeFileString(path.join(dir, "seeds", "b.sql"), "insert into t values (2);");
+      yield* fs.writeFileString(path.join(dir, "seeds", "a.sql"), "insert into t values (1);");
+      yield* fs.writeFileString(path.join(dir, "seeds", "README.md"), "not a seed file");
+      const { session, queries } = fakeSession();
+      const out = mockOutput();
+      yield* run(session, dir, ["seeds"], out);
+      const upserts = queries.filter((q) =>
+        q.sql.includes("INSERT INTO supabase_migrations.seed_files"),
+      );
+      expect(upserts.map((q) => q.params?.[0])).toEqual(["seeds/a.sql", "seeds/b.sql"]);
+      expect(out.rawChunks.map((c) => c.text)).toEqual([
+        "Seeding data from seeds/a.sql...\n",
+        "Seeding data from seeds/b.sql...\n",
+      ]);
+    }),
   );
 });
 
 layer(BunServices.layer)("applySeedFiles scanner buffer size", (it) => {
   it.effect(
-    "rejects an oversized seed statement when SUPABASE_SCANNER_BUFFER_SIZE is configured (Go SeedFile.ExecBatchWithCache parity)",
+    "rejects an oversized seed statement when SUPABASE_SCANNER_BUFFER_SIZE is configured",
     () =>
       Effect.gen(function* () {
         const { fs, path, dir } = yield* tempDir("seed-scanner-");
@@ -116,7 +114,7 @@ layer(BunServices.layer)("applySeedFiles scanner buffer size", (it) => {
         const error = yield* run(session, dir, ["big.sql"], mockOutput()).pipe(Effect.flip);
         expect(error).toBeInstanceOf(MigrationSeedError);
         expect(error.message).toBe(
-          "bufio.Scanner: token too long\nAfter statement 0: \nTry setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is 0KB)",
+          "scanner: token too long\nAfter statement 0: \nTry setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is 0KB)",
         );
         expect(queries.some((q) => q.sql.includes("insert into t"))).toBe(false);
       }).pipe((body) => withConfigEnv({ SUPABASE_SCANNER_BUFFER_SIZE: "100b" }, body)),

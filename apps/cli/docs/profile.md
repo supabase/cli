@@ -4,8 +4,8 @@ This document captures the intended design for advanced non-default backend rout
 CLI.
 
 The file is intentionally named `profile.md` to preserve continuity with the earlier discussion
-and the old Go CLI concept. The design in this document does **not** recommend carrying the old
-`profile` abstraction forward. The preferred term in the new CLI is **platform**.
+and the previous `profile` concept. The design in this document does **not** recommend carrying the
+previous `profile` abstraction forward. The preferred term in the new CLI is **platform**.
 
 ## Overview
 
@@ -21,9 +21,9 @@ A much smaller group of users needs to point the CLI somewhere else:
 The goal is to support those cases cleanly without turning non-default backend routing into a
 first-class everyday feature.
 
-## Why Not Go-Style Profiles
+## Why Not Profiles
 
-The old Go CLI `profile` abstraction became too broad.
+The previous `profile` abstraction became too broad.
 
 It started as a way to switch API endpoints, but it ended up bundling multiple unrelated concerns:
 
@@ -195,7 +195,7 @@ This design does not propose:
 - a built-in first-party staging alias in the public UX
 - customer-specific platform definitions baked into the CLI
 - plugin or product behavior encoded directly inside platform config
-- backward compatibility with Go CLI `profile` names or storage behavior
+- backward compatibility with previous `profile` names or storage behavior
 
 ## Open Follow-up Work
 

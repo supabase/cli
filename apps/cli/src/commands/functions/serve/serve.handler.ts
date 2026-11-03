@@ -1,6 +1,6 @@
 import { Effect, Path } from "effect";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { functionsGoConfigCompat } from "../../../command-internal/functions-go-config.ts";
+import { functionsLocalConfigLoader } from "../../../command-internal/functions-local-config.ts";
 import { DebugFlag, NetworkIdFlag } from "../../../command-internal/global-flags.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -27,7 +27,6 @@ export const functionsServe = Effect.fn("functions.serve")(function* (flags: Fun
     debug,
     networkId,
     projectIdOverride: cliSettings.projectId,
-    goViperCompat: true,
-    goConfigCompat: functionsGoConfigCompat,
+    localConfigLoader: functionsLocalConfigLoader,
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

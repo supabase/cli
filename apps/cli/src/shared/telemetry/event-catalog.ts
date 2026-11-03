@@ -22,6 +22,8 @@ export const PropIsFirstRun = "is_first_run";
 export const PropIsTty = "is_tty";
 export const PropIsCi = "is_ci";
 export const PropIsAgent = "is_agent";
+export const PropIsEval = "is_eval";
+export const PropAgentName = "agent_name";
 export const PropOs = "os";
 export const PropArch = "arch";
 export const PropCliVersion = "cli_version";
@@ -101,6 +103,7 @@ export const EnvSignalPresenceKeys: ReadonlyArray<string> = [
 export const EnvSignalValueKeys: ReadonlyArray<string> = [
   "AI_AGENT",
   "CURSOR_EXTENSION_HOST_ROLE",
+  "SUPABASE_API_MAX_RETRIES",
   "TERM",
   "TERM_PROGRAM",
   "TERM_PROGRAM_VERSION",

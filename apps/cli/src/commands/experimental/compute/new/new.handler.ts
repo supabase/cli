@@ -4,6 +4,7 @@ import { emitSuccessTrailer } from "../../../../shared/cli/success-trailer.ts";
 import { aqua, bold } from "../../../../command-internal/colors.ts";
 import { validateWorkdirIsDirectory } from "../../../../command-internal/workdir-validation.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
+import { CliConfigValues } from "../../../../config/cli-config-values.service.ts";
 import { renderComputeDetails } from "../compute.format.ts";
 import { emitComputeMachineOutput, computeMachineOutputRequested } from "../compute.output.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
@@ -239,6 +240,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
   const telemetryState = yield* TelemetryState;
   const runtimeInfo = yield* RuntimeInfo;
   const cliSettings = yield* CommandSettings;
+  const configValues = yield* CliConfigValues;
 
   // The telemetry state file is written on every invocation, success or failure.
   yield* Effect.gen(function* () {
@@ -364,7 +366,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
         yield* fs.writeFileString(path.join(destination, filename), contents);
       }
 
-      yield* commitComputeEntry(configWrite);
+      yield* configValues.writeThrough(commitComputeEntry(configWrite));
     }).pipe(Effect.onError(() => removeScaffold));
 
     // Relative to the project root when the workdir was defaulted, since it also

@@ -6,7 +6,7 @@ name: Mirror template images
 # Dockerfile changes on develop — most often via a merged catalog bump or
 # hotfix PR from slim-release-published.yml, or a Dependabot `docker` bump for
 # an upstream-only image — this workflow detects any tag that is not yet
-# mirrored and backfills it the same way `cli-go-mirror-image.yml` does.
+# mirrored and backfills it the same way `mirror-image.yml` does.
 #
 # It runs on `push` to develop (not on the PR) on purpose: mirroring needs the
 # AWS role + packages:write, which a dependabot-triggered `pull_request` run
@@ -14,10 +14,9 @@ name: Mirror template images
 # backfill runs as soon as the bump lands on develop, repopulating ghcr.io/ECR
 # so anyone pinning SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io doesn't inherit a
 # `manifest unknown` failure. (No CI job pins that registry anymore -- the
-# `cli-go-ci.yml` `Start` job that used to made it CI-observable was removed in
-# CLI-1966 along with `internal/start`; this mirror now only serves users who
-# opt into the mirror directly, and a mirroring failure no longer turns any
-# check red.)
+# `Start` job that used to make it CI-observable was removed in CLI-1966 along
+# with `internal/start`; this mirror now only serves users who opt into the
+# mirror directly, and a mirroring failure no longer turns any check red.)
 
 on:
   push:
@@ -41,6 +40,7 @@ jobs:
     permissions:
       contents: read
       packages: read
+      id-token: write
     outputs:
       missing: ${{ steps.detect.outputs.missing }}
     steps:
@@ -54,6 +54,19 @@ jobs:
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
+      # Anonymous public.ecr.aws pulls share a per-IP data quota with every
+      # other GitHub-hosted runner user, which is often exhausted already.
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: ${{ secrets.PROD_AWS_ROLE }}
+          aws-region: us-east-1
+
+      - name: Log in to public.ecr.aws
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: public.ecr.aws
+
       - name: Log in to ghcr.io
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -66,7 +79,7 @@ jobs:
       # are skipped, so a re-run produces an empty list.
       - name: Detect images missing from the mirror
         id: detect
-        run: pnpm exec bun apps/cli/scripts/detect-unmirrored-images.ts
+        run: bun apps/cli/scripts/detect-unmirrored-images.ts
 
   mirror:
     name: Mirror image
@@ -81,7 +94,7 @@ jobs:
       matrix:
         image: ${{ fromJson(needs.detect.outputs.missing) }}
     # Reuse the existing mirror logic (docker.io -> public.ecr.aws + ghcr.io).
-    uses: ./.github/workflows/cli-go-mirror-image.yml
+    uses: ./.github/workflows/mirror-image.yml
     with:
       image: ${{ matrix.image }}
     secrets:

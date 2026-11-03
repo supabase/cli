@@ -64,7 +64,7 @@ function setup() {
   return { layer, api };
 }
 
-describe("vanity-subdomains experimental gate (Go PersistentPreRunE parity)", () => {
+describe("vanity-subdomains experimental gate", () => {
   // `check-availability` and `activate` omit `--desired-subdomain`: it's optional at parse
   // time, so the experimental gate error wins when both flags are missing.
   const leaves: ReadonlyArray<{ readonly name: string; readonly args: ReadonlyArray<string> }> = [

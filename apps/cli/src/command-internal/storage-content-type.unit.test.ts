@@ -68,13 +68,11 @@ layer(BunPath.layer)("contentTypeForUpload", (it) => {
 });
 
 layer(BunPath.layer)("refineUploadContentType", (it) => {
-  it.effect(
-    "refines an explicit text/plain content-type by extension (Go refines the flag too)",
-    () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        expect(refineUploadContentType(path, "text/plain", "/x/a.json")).toBe("application/json");
-      }),
+  it.effect("refines an explicit text/plain content-type by extension", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      expect(refineUploadContentType(path, "text/plain", "/x/a.json")).toBe("application/json");
+    }),
   );
 
   it.effect("leaves a non-text content-type untouched", () =>

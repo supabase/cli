@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Fiber } from "effect";
+import { Cause, Data, Effect, Exit, Fiber, Schema } from "effect";
 import * as TestClock from "effect/testing/TestClock";
 
 import {
@@ -31,30 +31,34 @@ type State = {
   deleteAttempts: number;
 };
 
+class FakeCliError extends Data.TaggedError("FakeCliError")<{ readonly message: string }> {}
+
+const json = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+
 function result(stdout = "", stderr = "", exitCode = 0) {
   return { stdout, stderr, exitCode };
 }
 
 function statefulCli(state: State): BranchCli {
   return (args) =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
       state.calls.push(args.join(" "));
       if (args[1] === "create") {
-        return result(JSON.stringify({ ...branch, project_ref: branchRef }));
+        return result(yield* json({ ...branch, project_ref: branchRef }));
       }
       if (args[1] === "get") {
         return state.getReady
-          ? result(JSON.stringify(branch))
+          ? result(yield* json(branch))
           : result("", "Request failed with status 404", 1);
       }
       if (args[1] === "list") {
-        return result(JSON.stringify(state.listed ? [defaultBranch, branch] : [defaultBranch]));
+        return result(yield* json(state.listed ? [defaultBranch, branch] : [defaultBranch]));
       }
       if (args[1] === "delete") {
         state.deleteAttempts += 1;
         if (state.deleteAttempts === 1) return result("", "Request failed with status 404", 1);
         state.listed = false;
-        return result(JSON.stringify(branch));
+        return result(yield* json(branch));
       }
       return result("", "unexpected command", 1);
     });
@@ -108,13 +112,13 @@ describe("live branch lifecycle helpers", () => {
     Effect.gen(function* () {
       const state: State = { calls: [], listed: true, getReady: true, deleteAttempts: 0 };
       const cli: BranchCli = (args) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           state.calls.push(args.join(" "));
           if (args[1] === "list") {
             if (state.calls.filter((call) => call.includes("branches list")).length > 1) {
               state.listed = false;
             }
-            return result(JSON.stringify(state.listed ? [defaultBranch, branch] : [defaultBranch]));
+            return result(yield* json(state.listed ? [defaultBranch, branch] : [defaultBranch]));
           }
           return result();
         });
@@ -146,9 +150,9 @@ describe("live branch lifecycle helpers", () => {
     Effect.gen(function* () {
       let attempts = 0;
       const cli: BranchCli = () =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           attempts += 1;
-          return result(JSON.stringify([{}]));
+          return result(yield* json([{}]));
         });
       const exit = yield* Effect.exit(awaitLiveBranchListedEffect(cli, project, branch.name));
       if (!Exit.isFailure(exit)) throw new Error("expected malformed list failure");
@@ -174,16 +178,16 @@ describe("live branch lifecycle helpers", () => {
     Effect.gen(function* () {
       const state: State = { calls: [], listed: true, getReady: false, deleteAttempts: 0 };
       const cli: BranchCli = (args) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           state.calls.push(args.join(" "));
           if (args[1] === "create")
-            return result(JSON.stringify({ message: "Created preview branch" }));
+            return result(yield* json({ message: "Created preview branch" }));
           if (args[1] === "delete") {
             state.listed = false;
             return result();
           }
           if (args[1] === "list")
-            return result(JSON.stringify(state.listed ? [defaultBranch, branch] : [defaultBranch]));
+            return result(yield* json(state.listed ? [defaultBranch, branch] : [defaultBranch]));
           return result();
         });
       const exit = yield* Effect.exit(createLiveBranchEffect(cli, project, branch.name));
@@ -200,11 +204,11 @@ describe("live branch lifecycle helpers", () => {
     Effect.gen(function* () {
       const state: State = { calls: [], listed: true, getReady: false, deleteAttempts: 0 };
       const cli: BranchCli = (args) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           state.calls.push(args.join(" "));
           if (args[1] === "create")
             return result(
-              JSON.stringify({ _tag: "Error", error: { message: "branch quota exceeded" } }),
+              yield* json({ _tag: "Error", error: { message: "branch quota exceeded" } }),
               "",
               1,
             );
@@ -213,16 +217,126 @@ describe("live branch lifecycle helpers", () => {
             return result();
           }
           if (args[1] === "list")
-            return result(JSON.stringify(state.listed ? [defaultBranch, branch] : [defaultBranch]));
+            return result(yield* json(state.listed ? [defaultBranch, branch] : [defaultBranch]));
           return result();
         });
       const exit = yield* Effect.exit(createLiveBranchEffect(cli, project, branch.name));
       if (!Exit.isFailure(exit)) throw new Error("expected create failure");
       expect(String(exit.cause)).toContain("branch quota exceeded");
-      expect(state.calls).toContain(
-        `branches delete ${branch.name} --project-ref ${project.ref} --yes`,
-      );
+      expect(state.calls).toContain(`branches delete ${branch.name} --remote=${project.ref} --yes`);
       expect(state.listed).toBe(false);
+    }),
+  );
+
+  it.effect(
+    "re-issues create once after a platform database restart, clearing the half-made branch",
+    () =>
+      Effect.gen(function* () {
+        const state: State = { calls: [], listed: false, getReady: false, deleteAttempts: 0 };
+        let creates = 0;
+        const cli: BranchCli = (args) =>
+          Effect.gen(function* () {
+            state.calls.push(args.join(" "));
+            if (args[1] === "create") {
+              creates += 1;
+              state.listed = true;
+              return creates === 1
+                ? result(
+                    yield* json({
+                      _tag: "Error",
+                      error: {
+                        message:
+                          "unexpected create branch status 400: FATAL:  57P01: terminating connection due to administrator command",
+                      },
+                    }),
+                    "",
+                    1,
+                  )
+                : result(yield* json(branch));
+            }
+            if (args[1] === "delete") {
+              state.listed = false;
+              return result();
+            }
+            if (args[1] === "list")
+              return result(yield* json(state.listed ? [defaultBranch, branch] : [defaultBranch]));
+            return result();
+          });
+        const ref = yield* createLiveBranchEffect(cli, project, branch.name);
+        expect(ref).toBe(branchRef);
+        expect(creates).toBe(2);
+        const deleteIndex = state.calls.indexOf(
+          `branches delete ${branch.name} --remote=${project.ref} --yes`,
+        );
+        expect(deleteIndex).toBeGreaterThan(-1);
+        expect(
+          state.calls.findLastIndex((call) => call.includes("branches create")),
+        ).toBeGreaterThan(deleteIndex);
+      }),
+  );
+
+  it.effect("re-issues create once after the platform drops TLS while setting the password", () =>
+    Effect.gen(function* () {
+      let creates = 0;
+      const cli: BranchCli = (args) =>
+        Effect.gen(function* () {
+          if (args[1] === "create") {
+            creates += 1;
+            return creates === 1
+              ? result(
+                  yield* json({
+                    _tag: "Error",
+                    error: {
+                      message:
+                        'unexpected create branch status 400: {"message":"Failed to update password: Client network socket disconnected before secure TLS connection was established"}',
+                    },
+                  }),
+                  "",
+                  1,
+                )
+              : result(yield* json(branch));
+          }
+          return result(yield* json([defaultBranch]));
+        });
+      const ref = yield* createLiveBranchEffect(cli, project, branch.name);
+      expect(ref).toBe(branchRef);
+      expect(creates).toBe(2);
+    }),
+  );
+
+  it.effect("fails a create rejected by a second platform database restart", () =>
+    Effect.gen(function* () {
+      let creates = 0;
+      const cli: BranchCli = (args) =>
+        Effect.gen(function* () {
+          if (args[1] === "create") {
+            creates += 1;
+            return result("", "status 400: the database system is shutting down", 1);
+          }
+          return result(yield* json([defaultBranch]));
+        });
+      const exit = yield* Effect.exit(createLiveBranchEffect(cli, project, branch.name));
+      if (!Exit.isFailure(exit)) throw new Error("expected create failure");
+      expect(String(exit.cause)).toContain("the database system is shutting down");
+      expect(creates).toBe(2);
+    }),
+  );
+
+  it.effect("keeps the restart rejection when cleanup before the retry fails", () =>
+    Effect.gen(function* () {
+      const cli: BranchCli = (args) =>
+        Effect.sync(() =>
+          args[1] === "create"
+            ? result("", "status 400: FATAL:  57P01: terminating connection", 1)
+            : result("", "list forbidden", 1),
+        );
+      const exit = yield* Effect.exit(createLiveBranchEffect(cli, project, branch.name));
+      if (!Exit.isFailure(exit)) throw new Error("expected create failure");
+      const flatten = (error: unknown): string[] =>
+        error instanceof AggregateError ? error.errors.flatMap(flatten) : [String(error)];
+      const causes = flatten(Cause.squash(exit.cause)).join("\n");
+      expect(causes).toContain("57P01");
+      expect(causes).toContain("list forbidden");
     }),
   );
 
@@ -232,7 +346,7 @@ describe("live branch lifecycle helpers", () => {
       const exit = yield* Effect.exit(awaitLiveBranchEffect(cli, project, branch.name));
       if (!Exit.isFailure(exit)) throw new Error("expected get failure");
       expect(String(exit.cause)).not.toContain("sentinel-secret");
-      expect(JSON.stringify(Cause.squash(exit.cause))).not.toContain("sentinel-secret");
+      expect(yield* json(Cause.squash(exit.cause))).not.toContain("sentinel-secret");
     }),
   );
 
@@ -241,9 +355,10 @@ describe("live branch lifecycle helpers", () => {
       const calls: string[] = [];
       const cli: BranchCli = (args) => {
         calls.push(args.join(" "));
-        if (args[1] === "create") return Effect.fail(new Error("invocation failed"));
+        if (args[1] === "create")
+          return Effect.fail(new FakeCliError({ message: "invocation failed" }));
         if (args[1] === "delete") return Effect.succeed(result());
-        if (args[1] === "list") return Effect.succeed(result(JSON.stringify([defaultBranch])));
+        if (args[1] === "list") return json([defaultBranch]).pipe(Effect.map(result));
         return Effect.succeed(result());
       };
       const exit = yield* Effect.exit(createLiveBranchEffect(cli, project, branch.name));
@@ -257,7 +372,7 @@ describe("live branch lifecycle helpers", () => {
     Effect.gen(function* () {
       const cli: BranchCli = (args) =>
         args[1] === "create"
-          ? Effect.fail(new Error("create invocation failed"))
+          ? Effect.fail(new FakeCliError({ message: "create invocation failed" }))
           : Effect.succeed(result("", "cleanup forbidden", 1));
       const exit = yield* Effect.exit(createLiveBranchEffect(cli, project, branch.name));
       if (!Exit.isFailure(exit)) throw new Error("expected aggregate failure");
@@ -274,10 +389,10 @@ describe("live branch lifecycle helpers", () => {
     Effect.gen(function* () {
       const cli: BranchCli = (args) =>
         args[1] === "create"
-          ? Effect.fail(new Error("create invocation failed"))
+          ? Effect.fail(new FakeCliError({ message: "create invocation failed" }))
           : args[1] === "delete"
             ? Effect.succeed(result("", "Request failed with status 404", 1))
-            : Effect.succeed(result(JSON.stringify([defaultBranch])));
+            : json([defaultBranch]).pipe(Effect.map(result));
       const cleanup = yield* createLiveBranchEffect(cli, project, branch.name).pipe(
         Effect.forkChild({ startImmediately: true }),
       );
@@ -297,7 +412,7 @@ describe("live branch lifecycle helpers", () => {
       const cli: BranchCli = (args) =>
         args[1] === "delete"
           ? Effect.sleep("60 seconds").pipe(Effect.as(result()))
-          : Effect.succeed(result(JSON.stringify([defaultBranch, branch])));
+          : json([defaultBranch, branch]).pipe(Effect.map(result));
       const waiting = yield* awaitLiveBranchRemovedEffect(cli, project, branchRef).pipe(
         Effect.forkChild({ startImmediately: true }),
       );

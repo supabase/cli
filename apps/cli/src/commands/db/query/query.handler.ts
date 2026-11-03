@@ -5,30 +5,40 @@ import * as HttpClientError from "effect/http/HttpClientError";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { CommandCredentials } from "../../../auth/command-credentials.service.ts";
-import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { TelemetryOutputFormat } from "../../../telemetry/telemetry-output-format.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
+import type {
+  ResolvedDbConfig,
+  ResolvedDbConnection,
+} from "../../../command-internal/db-config.types.ts";
 import {
   sanitizeErrorBody,
   unexpectedStatusMessage,
 } from "../../../command-internal/http-errors.ts";
-import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
+import { DbConnection, type DbSession } from "../../../command-internal/db-connection.service.ts";
 import { AgentFlag, DnsResolverFlag, OutputFlag } from "../../../command-internal/global-flags.ts";
+import {
+  hostedMutationPreapproval,
+  requireTargetMutationConsent,
+} from "../../../command-internal/hosted-consent/hosted-consent.ts";
+import { resolveTarget } from "../../../command-internal/target/resolve-target.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Random } from "../../../shared/runtime/random.service.ts";
 import { Stdin } from "../../../shared/runtime/stdin.service.ts";
 import { AiTool } from "../../../shared/telemetry/ai-tool.service.ts";
 import type { DbQueryFlags } from "./query.command.ts";
 import { RLS_CHECK_SQL, buildRlsAdvisory } from "./query.advisory.ts";
+import { findReadOnlyViolation, READ_ONLY_STATEMENT_KEYWORDS } from "./query.read-only.ts";
 import {
   DbQueryExecError,
   DbQueryLoginRequiredError,
-  DbQueryMutuallyExclusiveFlagsError,
   DbQueryNoSqlError,
   DbQueryNoStdinSqlError,
   DbQueryReadFileError,
+  DbQueryReadOnlyStatementError,
+  DbQuerySqlSourceConflictError,
   DbQueryUnexpectedStatusError,
 } from "./query.errors.ts";
 import {
@@ -53,10 +63,40 @@ const MISSING_TOKEN_MESSAGE =
 
 const BOUNDARY_BYTES = 16;
 
+const SQL_PREVIEW_LENGTH = 120;
+
+const sqlPreview = (sql: string): string => {
+  const oneLine = sql.replaceAll(/\s+/gu, " ").trim();
+  return oneLine.length > SQL_PREVIEW_LENGTH
+    ? `${oneLine.slice(0, SQL_PREVIEW_LENGTH)}...`
+    : oneLine;
+};
+
 const decodeJsonBody = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const isRowObject = (element: unknown): element is { readonly [key: string]: unknown } | null =>
   element === null || Predicate.isObject(element);
+
+const toExecError = (cause: { readonly message: string }) =>
+  new DbQueryExecError({ message: cause.message });
+
+const READ_ONLY_LOCK_TIMEOUT = "5s";
+
+// `queryRaw` runs every statement on one dedicated connection, so BEGIN/ROLLBACK issued through
+// it bracket the user's statement. The lock timeout keeps a read from queuing behind heavy locks.
+const inReadOnlyTransaction = <A, E, R>(session: DbSession, body: Effect.Effect<A, E, R>) =>
+  Effect.acquireUseRelease(
+    session.queryRaw("BEGIN READ ONLY").pipe(Effect.mapError(toExecError)),
+    () =>
+      session
+        .queryRaw(`SET LOCAL lock_timeout = '${READ_ONLY_LOCK_TIMEOUT}'`)
+        .pipe(Effect.mapError(toExecError), Effect.andThen(body)),
+    () => session.queryRaw("ROLLBACK").pipe(Effect.ignore),
+  );
+
+type QueryRoute =
+  | { readonly kind: "linked"; readonly ref: string }
+  | { readonly kind: "direct"; readonly connection: ResolvedDbConnection };
 
 export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
   const output = yield* Output;
@@ -122,20 +162,19 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
     });
 
   const runLocal = (
-    target: { readonly conn: PgConnInput; readonly isLocal: boolean },
+    target: Pick<ResolvedDbConfig, "conn" | "isLocal" | "exposedSchemas">,
     sql: string,
     format: ResolvedFormat,
     agentMode: boolean,
+    readOnly: boolean,
   ) => {
     const { conn, isLocal } = target;
     return Effect.scoped(
       Effect.gen(function* () {
-        yield* output.raw(`Connecting to ${isLocal ? "local" : "remote"} database...\n`, "stderr");
         const session = yield* dbConn.connect(conn, { isLocal, dnsResolver });
 
-        const result = yield* session
-          .queryRaw(sql)
-          .pipe(Effect.mapError((cause) => new DbQueryExecError({ message: cause.message })));
+        const execute = session.queryRaw(sql).pipe(Effect.mapError(toExecError));
+        const result = yield* readOnly ? inReadOnlyTransaction(session, execute) : execute;
 
         yield* Effect.annotateCurrentSpan({
           "query.row_count": result.rows.length,
@@ -147,12 +186,16 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
         }
 
         // Agent mode runs a best-effort RLS advisory check (only rendered in JSON).
-        const advisory = agentMode
-          ? yield* session.queryRaw(RLS_CHECK_SQL).pipe(
-              Effect.map((rls) => buildRlsAdvisory(rls.rows.map((row) => String(row[0] ?? "")))),
-              Effect.orElseSucceed(() => Option.none<Advisory>()),
-            )
-          : Option.none<Advisory>();
+        const schemas = target.exposedSchemas;
+        const advisory =
+          agentMode && schemas !== undefined && schemas.length > 0
+            ? yield* session.query(RLS_CHECK_SQL, [schemas]).pipe(
+                Effect.map((rows) =>
+                  buildRlsAdvisory(rows.map((row) => String(row["table_name"] ?? ""))),
+                ),
+                Effect.orElseSucceed(() => Option.none<Advisory>()),
+              )
+            : Option.none<Advisory>();
 
         yield* emit(
           format,
@@ -167,7 +210,13 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
     );
   };
 
-  const runLinked = (sql: string, format: ResolvedFormat, agentMode: boolean, ref: string) =>
+  const runLinked = (
+    sql: string,
+    format: ResolvedFormat,
+    agentMode: boolean,
+    ref: string,
+    readOnly: boolean,
+  ) =>
     Effect.gen(function* () {
       const apiFactory = yield* CommandPlatformApiFactory;
       const api = yield* apiFactory.make;
@@ -177,7 +226,7 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
       const response = yield* api
         .executeRaw(
           operationDefinitions.v1RunAQuery,
-          { ref, query: sql },
+          { ref, query: sql, ...(readOnly ? { read_only: true } : {}) },
           { retry: { requestTimeoutMs: Number.POSITIVE_INFINITY } },
         )
         .pipe(
@@ -223,77 +272,48 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
     });
 
   yield* Effect.gen(function* () {
-    // 0. The db-url/linked/local group is mutually exclusive, checked before resolving SQL.
-    //    "Set" means explicitly set (Option `Some`, or boolean literally `true`).
-    const exclusive: Array<string> = [];
-    if (Option.isSome(flags.dbUrl)) exclusive.push("db-url");
-    if (Option.isSome(flags.linked)) exclusive.push("linked");
-    if (Option.isSome(flags.local)) exclusive.push("local");
-    if (exclusive.length > 1) {
-      return yield* new DbQueryMutuallyExclusiveFlagsError({
-        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${exclusive.join(" ")}] were all set`,
+    // Checked before the target resolves: `--file` would silently override the positional SQL,
+    // which is how `-f x.sql --remote <branch>` would otherwise target the linked project.
+    if (Option.isSome(flags.file) && Option.isSome(flags.sql)) {
+      const bareRemote = Option.exists(flags.remote, (remote) => remote._tag === "Linked");
+      return yield* new DbQuerySqlSourceConflictError({
+        message: "Pass SQL as an argument or with --file, not both.",
+        ...(bareRemote
+          ? { suggestion: "To select a branch or project with --remote, write --remote=<value>." }
+          : {}),
       });
     }
+    const target = yield* resolveTarget(flags);
+    // Recorded now so the cache finalizer still fires if a later step fails.
+    if (target.kind === "linked") yield* Ref.set(linkedRefForCache, target.ref);
 
-    // `--project-ref` only applies to the linked target; it must not be silently ignored when
-    // targeting `--local`/`--db-url`.
-    if (Option.isSome(flags.projectRef) && Option.isNone(flags.linked)) {
-      return yield* new DbQueryMutuallyExclusiveFlagsError({
-        message:
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      });
-    }
-
-    // For `--linked`, the access token is checked and the project ref is loaded before SQL is
-    // resolved, so a missing `--file` or a blocking stdin pipe doesn't mask a login/not-linked
-    // error.
-    let linkedRef: string | undefined;
-    if (Option.isSome(flags.linked)) {
-      const credentials = yield* CommandCredentials;
-      const projectRef = yield* RemoteTarget;
-      // Config is resolved before the token check, so an unlinked-project/invalid-config/pooler
-      // failure isn't masked behind a generic "supabase login" error. `RemoteTarget.load` is the
-      // strict loader: a real ref-file read error surfaces instead of being treated as not-linked.
-      const linkedTarget = yield* projectRef.load(flags.projectRef);
-      const { ref } = linkedTarget;
-      // Recorded now so the cache finalizer still fires if a later step fails.
-      yield* Ref.set(linkedRefForCache, ref);
-      // Loads and validates the remote-merged config and resolves the live DB connection (TCP
-      // probe, pooler fallback, temp login-role mint) purely to surface early failures — the
-      // linked query itself uses the Management API, so this resolved connection is discarded.
-      yield* resolver.resolve({
-        dbUrl: Option.none(),
-        connType: "linked",
-        dnsResolver,
-        linkedProjectRef: flags.projectRef,
-        target: linkedTarget,
-      });
-      // The Management API still needs a token even when config resolved without minting a login
-      // role. Route through `credentials.getAccessToken`, which validates it against `sbp_...`,
-      // rather than trusting env presence alone and surfacing a confusing status error later.
-      const tokenOpt = yield* credentials.getAccessToken;
-      if (Option.isNone(tokenOpt)) {
-        return yield* new DbQueryLoginRequiredError({
-          message: MISSING_TOKEN_MESSAGE,
-          suggestion: "Run supabase login first.",
-        });
+    // Resolved before `--file`/stdin are read, so a bad `--db-url`, an invalid merged config, a
+    // connection failure or a missing login surfaces ahead of a missing-file error. A linked query
+    // goes through the Management API and never opens a database connection.
+    const route: QueryRoute = yield* Effect.gen(function* () {
+      if (target.kind === "linked") {
+        const credentials = yield* CommandCredentials;
+        // Routed through `credentials.getAccessToken`, which validates the `sbp_...` shape, rather
+        // than trusting env presence alone and surfacing a confusing status error later.
+        const tokenOpt = yield* credentials.getAccessToken;
+        if (Option.isNone(tokenOpt)) {
+          return yield* new DbQueryLoginRequiredError({
+            message: MISSING_TOKEN_MESSAGE,
+            suggestion: "Run supabase login first.",
+          });
+        }
+        return { kind: "linked", ref: target.ref } satisfies QueryRoute;
       }
-      linkedRef = ref;
-    }
+      const connection = yield* resolver.resolveConnection({
+        target,
+        dnsResolver,
+        password: Option.none(),
+        networkBanRemoval: yield* hostedMutationPreapproval,
+      });
+      return { kind: "direct", connection } satisfies QueryRoute;
+    });
 
-    // Resolves the `--db-url`/local connection target before reading `--file`/stdin, so a bad
-    // `--db-url` or config error surfaces ahead of a missing-file error or a blocking stdin read.
-    const localTarget =
-      linkedRef === undefined
-        ? yield* resolver.resolve({
-            dbUrl: flags.dbUrl,
-            // linkedRef handles `--linked`, so this branch's target is `--db-url` or local.
-            connType: Option.isSome(flags.dbUrl) ? "db-url" : "local",
-            dnsResolver,
-          })
-        : undefined;
-
-    // 1. Resolve SQL: --file > positional arg > piped stdin.
+    // 1. Resolve SQL: --file or the positional arg (never both), else piped stdin.
     const sql = yield* Effect.gen(function* () {
       if (Option.isSome(flags.file)) {
         // A relative `--file` path resolves against the workdir, not the
@@ -343,23 +363,41 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
     // report the table/human default as `text`.
     yield* telemetryOutputFormat.set(format);
     yield* Effect.annotateCurrentSpan({
-      "db.conn_type":
-        linkedRef !== undefined ? "linked" : Option.isSome(flags.dbUrl) ? "db-url" : "local",
+      "db.conn_type": target.kind,
       "query.format": format,
       "query.agent_mode": agentMode,
+      "query.read_only": flags.readOnly,
     });
 
-    // 3. Linked queries go through the Management API; local/--db-url connect directly.
-    if (linkedRef !== undefined) {
-      return yield* runLinked(sql, format, agentMode, linkedRef).pipe(
+    // `--read-only` skips consent only because the statement cannot write, so anything but a read
+    // statement is refused before anything connects or prompts.
+    if (flags.readOnly) {
+      const violation = findReadOnlyViolation(sql);
+      if (violation !== undefined) {
+        return yield* new DbQueryReadOnlyStatementError({
+          message: `--read-only only allows ${READ_ONLY_STATEMENT_KEYWORDS.join(", ")} statements (found: ${violation})`,
+          suggestion:
+            "Drop --read-only to run this statement; a hosted database then asks you to confirm the write.",
+        });
+      }
+    }
+
+    // 3. A hosted statement may write, so it needs consent unless `--read-only` confines it.
+    if (!flags.readOnly) {
+      yield* requireTargetMutationConsent(route.kind === "direct" ? route.connection : target, {
+        action: "Run a SQL statement",
+        readOnlyAlternative: true,
+        details: [`sql: ${sqlPreview(sql)}`],
+      });
+    }
+
+    // 4. Linked queries go through the Management API; local/--db-url connect directly.
+    if (route.kind === "linked") {
+      return yield* runLinked(sql, format, agentMode, route.ref, flags.readOnly).pipe(
         Effect.withSpan("db.query.runLinked"),
       );
     }
-    if (localTarget === undefined) {
-      // Unreachable: the non-linked branch always resolves a target above.
-      return yield* Effect.die(new Error("db query: connection target was not resolved"));
-    }
-    return yield* runLocal(localTarget, sql, format, agentMode).pipe(
+    return yield* runLocal(route.connection, sql, format, agentMode, flags.readOnly).pipe(
       Effect.withSpan("db.query.runLocal"),
     );
   }).pipe(
