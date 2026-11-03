@@ -1,11 +1,19 @@
 import { Context, Effect } from "effect";
 import type { StackRuntime } from "../command-internal/stack-runtime.ts";
-import { PropOrioleDb, PropStackRuntime } from "../shared/telemetry/event-catalog.ts";
+import type { ServeEndReason } from "../shared/functions/serve.ts";
+import {
+  PropEdgeRuntimeExitCode,
+  PropOrioleDb,
+  PropServeEndReason,
+  PropStackRuntime,
+} from "../shared/telemetry/event-catalog.ts";
 
 /** Properties that code below a command handler adds to its `cli_command_executed` event. */
 export interface CommandTelemetryAttributeValues {
   readonly [PropOrioleDb]?: boolean;
   readonly [PropStackRuntime]?: StackRuntime;
+  readonly [PropServeEndReason]?: ServeEndReason;
+  readonly [PropEdgeRuntimeExitCode]?: number;
 }
 
 /** Command-scoped attribute sink; `withCommandTelemetry` provides one, otherwise records are dropped. */
