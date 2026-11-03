@@ -60,7 +60,7 @@ Local follow preserves the existing stack process-signal behavior.
 
 `tail` and `sources` use implicit local targeting. `--remote` selects the linked hosted project; `--remote=<ref|branch>` selects another project or a branch. Hidden deprecated selector aliases follow the shared v3 target conventions. `query` uses hosted target flags and has no `--local` flag.
 
-Compute feature discovery resolves project config and environment overrides for `logs tail` and `logs sources`. A disabled feature excludes Compute capabilities; a true override includes them. Generic `logs query` does not resolve or require the Compute feature. The retired experimental `compute logs` and `stack logs` leaves are not registered.
+Compute feature discovery resolves project config and environment overrides for `logs tail` and `logs sources`. A disabled feature excludes Compute capabilities; a true override includes them. Generic `logs query` does not resolve or require the Compute feature. The experimental `compute logs` and `stack logs` entrypoints remain registered with their original flags, defaults, output modes, and feature gates. They warn once on stderr that they are deprecated and will be removed in v4. Both use the shared logs transport and follow lifecycle; stack logs also uses the same retained reader as local tail.
 
 ## Notes
 
