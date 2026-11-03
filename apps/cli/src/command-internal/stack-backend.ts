@@ -113,11 +113,14 @@ export const resolveProjectStateSelection = Effect.fn("ProjectState.resolveSelec
         : commandPath;
     const routedPath = completePath[0] === "help" ? completePath.slice(1) : completePath;
     const command = routedPath[0];
+    const logsCapability =
+      command === "logs" && (routedPath[1] === "tail" || routedPath[1] === "sources");
     const routed =
       command === undefined ||
       command === "stack" ||
       STACK_BACKEND_COMMANDS.has(command) ||
-      isFunctionsServePath(routedPath);
+      isFunctionsServePath(routedPath) ||
+      logsCapability;
 
     const projectState = yield* Effect.exit(projectStateMode({ ...input, args: routingArgs }));
     const stackBackend = routed

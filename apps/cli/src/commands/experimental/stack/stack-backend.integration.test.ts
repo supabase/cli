@@ -51,7 +51,7 @@ describe("resolveProjectStateSelection", () => {
     }),
   );
 
-  it.effect("selects the configured backend for top-level start, stop, and status", () => {
+  it.effect("selects the configured backend for managed local commands", () => {
     return withServices(
       Effect.gen(function* () {
         const root = yield* project(`project_id = "stack-routing-test"
@@ -82,6 +82,8 @@ stack = true
         expect(yield* resolve({ args: ["storage", "ls"], cwd: root, env: {} })).toBe("stack");
         expect(yield* resolve({ args: ["seed", "buckets"], cwd: root, env: {} })).toBe("stack");
         expect(yield* resolve({ args: ["services"], cwd: root, env: {} })).toBe("stack");
+        expect(yield* resolve({ args: ["logs", "tail"], cwd: root, env: {} })).toBe("stack");
+        expect(yield* resolve({ args: ["logs", "sources"], cwd: root, env: {} })).toBe("stack");
       }),
     );
   });
@@ -97,6 +99,15 @@ stack = true
             env: { SUPABASE_EXPERIMENTAL_STACK: "0" },
           }),
         ).toBe("legacy");
+        for (const leaf of ["tail", "sources"]) {
+          expect(
+            yield* resolve({
+              args: ["logs", leaf],
+              cwd: root,
+              env: { SUPABASE_EXPERIMENTAL_STACK: "0" },
+            }),
+          ).toBe("legacy");
+        }
       }),
     );
   });
@@ -106,6 +117,7 @@ stack = true
       Effect.gen(function* () {
         const root = yield* project("[experimental]\nstack = true\n");
         expect(yield* resolve({ args: ["link"], cwd: root, env: {} })).toBeUndefined();
+        expect(yield* resolve({ args: ["logs", "query"], cwd: root, env: {} })).toBeUndefined();
       }),
     );
   });
@@ -327,10 +339,14 @@ stack = true
           ["help", "status"],
           ["help", "stop"],
           ["help", "stack"],
+          ["help", "logs", "tail"],
+          ["help", "logs", "sources"],
           ["stack", "--help"],
           ["__complete", "st"],
           ["__complete", "start", "--"],
           ["__complete", "status", "--"],
+          ["__complete", "logs", "tail", "--"],
+          ["__complete", "logs", "sources", "--"],
         ]) {
           expect(yield* resolve({ args, cwd: root, env: {} })).toBe("stack");
         }
@@ -414,7 +430,6 @@ stack = true
               "destroy",
               "install",
               "list",
-              "logs",
               "outdated",
               "restart",
               "start",
