@@ -3,8 +3,10 @@ import {
   channelForTag,
   homebrewClassName,
   homebrewConflictsLine,
+  isInChannelHistory,
   isPublishableNpmTag,
   releaseBranchForTag,
+  releaseTypeBetween,
 } from "./release-channels.ts";
 
 describe("isPublishableNpmTag", () => {
@@ -70,5 +72,47 @@ describe("channelForTag", () => {
     ["v2.151.1", "latest"],
   ])("%s -> %s", (tag, expected) => {
     expect(channelForTag(tag)).toBe(expected);
+  });
+});
+
+describe("isInChannelHistory", () => {
+  test.each([
+    ["v3.1.0-beta.1", "beta", true],
+    ["v3.0.0", "beta", true],
+    ["v3.1.0-next.1", "beta", false],
+    ["v2.99.0-alpha.1", "beta", false],
+    ["v3.1.0-next.1", "next", true],
+    ["v3.0.0", "next", true],
+    ["v3.1.0-beta.1", "next", false],
+    ["v2.99.0-alpha.1", "next", false],
+    ["v3.0.0", "latest", true],
+    ["v2.151.1", "latest", true],
+    ["v3.1.0-beta.1", "latest", false],
+    ["v3.1.0-next.1", "latest", false],
+    ["v2.99.0-alpha.1", "latest", false],
+    ["config-v1.2.0", "latest", false],
+    ["apps/cli-go/pkg/v1.0.0", "latest", false],
+    ["config-v1.2.0", "beta", false],
+  ] as const)("%s in the %s history -> %s", (tag, channel, expected) => {
+    expect(isInChannelHistory(tag, channel)).toBe(expected);
+  });
+});
+
+describe("releaseTypeBetween", () => {
+  test.each([
+    ["2.122.0", "2.122.1", "patch"],
+    ["2.122.1", "2.123.0", "minor"],
+    ["2.123.4", "3.0.0", "major"],
+    ["3.1.0-beta.4", "3.1.0-beta.5", "patch"],
+    ["3.0.0", "3.1.0-beta.1", "minor"],
+    ["2.151.0", "3.0.0-beta.1", "major"],
+    [undefined, "3.0.0", null],
+    ["2.122.1", "2.122.1", null],
+    ["2.122.1", "2.122.0", null],
+    ["3.1.0", "2.151.0", null],
+    ["3.1.0-beta.5", "3.1.0-beta.4", null],
+    ["3.1.0", "3.1.0-beta.1", null],
+  ] as const)("%s -> %s requires %s", (lastVersion, version, expected) => {
+    expect(releaseTypeBetween(lastVersion, version)).toBe(expected);
   });
 });
