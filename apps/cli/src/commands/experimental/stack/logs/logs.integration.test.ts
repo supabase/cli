@@ -430,6 +430,21 @@ describe("retained local logs", () => {
       const text = yield* f.run({});
 
       expect(streamed.output.events.map(({ data: _data, ...event }) => event)).toEqual(expected);
+      expect(streamed.output.events).toMatchObject([
+        { data: { kind: "launch", launchId: 1, instanceId: "mail-a", service: "mail" } },
+        {
+          data: {
+            kind: "stdout",
+            text: "hello",
+            launchId: 1,
+            instanceId: "mail-a",
+            service: "mail",
+            position: { generation: 1 },
+          },
+        },
+        { data: { kind: "stderr", text: "oops", launchId: 1 } },
+        { data: { kind: "lost", count: 3 } },
+      ]);
       expect(
         yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(finite.output.stdoutText),
       ).toMatchObject([
