@@ -15,12 +15,12 @@ import {
   Redacted,
   Scope,
   Stdio,
-  Stream,
   Tracer,
 } from "effect";
 import { Headers, HttpTraceContext } from "effect/http";
 import { CLI_VERSION } from "../cli/version.ts";
 import { CliSettings } from "../config/cli-settings.service.ts";
+import { writeStdio } from "../output/output.layer.ts";
 import { RuntimeInfo } from "../runtime/runtime-info.service.ts";
 import { makeDebugConsoleExporter } from "./exporters/debug-console.ts";
 import { detectCi } from "./runtime.layer.ts";
@@ -33,10 +33,7 @@ const OTLP_TRACES_PATH = "/v1/traces";
 /** Tracing never stops a command: a setup problem prints one warning and the run continues untraced. */
 const warnTracingDisabled = (reason: string) =>
   Effect.flatMap(Stdio.Stdio, (stdio) =>
-    Stream.make(`Warning: tracing disabled: ${reason}\n`).pipe(
-      Stream.run(stdio.stderr()),
-      Effect.ignore,
-    ),
+    writeStdio(stdio, "stderr", `Warning: tracing disabled: ${reason}\n`).pipe(Effect.ignore),
   );
 
 type TraceSink =
@@ -226,7 +223,7 @@ const debugConsoleTracer = Effect.fnUntraced(function* (
 ) {
   const stdio = yield* Stdio.Stdio;
   const exportSpan = makeDebugConsoleExporter(
-    (line) => Stream.make(line).pipe(Stream.run(stdio.stderr()), Effect.asVoid),
+    (line) => writeStdio(stdio, "stderr", line),
     yield* makeTraceSanitizer,
     root,
   );
