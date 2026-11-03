@@ -5,6 +5,7 @@ import { describe, expect, test } from "vitest";
 
 import type { OpenApiDocument, OpenApiOperation } from "./generate.ts";
 import {
+  expandSchemaShorthands,
   extractOperations,
   normalizeNullableJsonSchema,
   normalizeQueryParameterSchema,
@@ -436,5 +437,23 @@ describe("generate", () => {
     expect(source).toContain('"v2ListOrganizationMembers": {');
     expect(source).toContain('  "v1-list-organization-members": "v1ListOrganizationMembers",');
     expect(source).toContain('  "v2-list-organization-members": "v2ListOrganizationMembers",');
+  });
+});
+
+describe("expandSchemaShorthands", () => {
+  test("expands shorthands in code but leaves string literals and comments intact", () => {
+    const code = [
+      "const a = Schema.Int;",
+      "const b = Schema.Literal(\"Schema.Int\", 'Schema.Finite', `Schema.Int`);",
+      "// Schema.Finite stays",
+      "const c = Schema.Finite;",
+    ].join("\n");
+
+    const out = expandSchemaShorthands(code);
+
+    expect(out).toContain("Schema.Literal(\"Schema.Int\", 'Schema.Finite', `Schema.Int`)");
+    expect(out).toContain("// Schema.Finite stays");
+    expect(out).toContain("const a = Schema.Number.check(Schema.isInt()");
+    expect(out).toContain("const c = Schema.Number.check(Schema.isFinite()");
   });
 });

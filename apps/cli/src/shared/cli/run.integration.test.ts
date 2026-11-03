@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Console, Effect, Exit, Layer, Schema, Stdio } from "effect";
+import { Cause, Console, Effect, Exit, Layer, Schema, Stdio } from "effect";
 import { Argument, CliOutput, Command, Flag } from "effect/cli";
 import { branchesCommand } from "../../commands/branches/branches.command.ts";
 import { GLOBAL_FLAGS, OutputFormatFlag } from "../../command-internal/global-flags.ts";
@@ -218,6 +218,12 @@ describe("withoutParseErrorHelpDump (CLI-1901)", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (!Exit.isFailure(exit)) return;
       expect(exitCodeForFailure(exit.cause)).toBe(1);
+      expect(Cause.hasDies(exit.cause)).toBe(false);
+      expect(Cause.squash(exit.cause)).toMatchObject({
+        _tag: "InvalidValue",
+        option: "output-format",
+        value: "xml",
+      });
     }),
   );
 
