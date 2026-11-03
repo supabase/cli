@@ -24,7 +24,6 @@ import {
   PlatformError,
   References,
   Schema,
-  Sink,
   Stdio,
   Stream,
 } from "effect";
@@ -92,32 +91,29 @@ const isBrokenPipe = (error: PlatformError.PlatformError): boolean => {
 };
 
 /* A direct write (clack's progress lines, `--debug`) can meet the closed pipe first and leave the
-   process stream errored; the sink would then wait forever for `drain`, so the write fails instead. */
-const stdioSink = (stdio: typeof Stdio.Stdio.Service, stream: "stdout" | "stderr") => {
-  const errored = process[stream].errored;
-  if (errored !== null) {
-    return Sink.fail(
-      PlatformError.systemError({
-        module: "Stdio",
-        method: stream,
-        _tag: "Unknown",
-        cause: errored,
-      }),
-    );
-  }
-  return stream === "stderr" ? stdio.stderr() : stdio.stdout();
-};
-
-/* Every Stdio write goes through here. A failing direct write sets `errored` a tick later, so the
-   write must not yield before the sink listens for `error`, or that event passes unseen. */
+   process stream errored, and the sink would then wait forever for `drain`. Bun sets `errored` a
+   tick after that write, so nothing may yield between this check and the sink's `error` listener. */
 export const writeStdio = (
   stdio: typeof Stdio.Stdio.Service,
   stream: "stdout" | "stderr",
   chunk: string | Uint8Array,
 ) =>
-  Effect.suspend(() => Stream.make(chunk).pipe(Stream.run(stdioSink(stdio, stream)))).pipe(
-    Effect.provideService(References.PreventSchedulerYield, true),
-  );
+  Effect.suspend(() => {
+    const errored = process[stream].errored;
+    if (errored !== null) {
+      return Effect.fail(
+        PlatformError.systemError({
+          module: "Stdio",
+          method: stream,
+          _tag: "Unknown",
+          cause: errored,
+        }),
+      );
+    }
+    return Stream.make(chunk).pipe(
+      Stream.run(stream === "stderr" ? stdio.stderr() : stdio.stdout()),
+    );
+  }).pipe(Effect.provideService(References.PreventSchedulerYield, true));
 
 /* Keyed by the Stdio service so output layers sharing one skip a stream any of them saw close.
    Layers on another Stdio (run.ts builds the final-error layer on its own) see it via `errored`. */
