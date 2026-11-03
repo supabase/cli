@@ -42,7 +42,8 @@ settings may read project configuration and the selected profile. Communicates
 only with local owner endpoints; no hosted API requests. Shutdown updates owned
 runtime resources but preserves persistent instance definitions, data and automatic
 port reservations in the per-user registry at `<passwd home>/.supabase/ports.sqlite`
-(unaffected by `SUPABASE_HOME`); configured ports are released with their listeners.
+(unaffected by `SUPABASE_HOME`; WAL mode, with `ports.sqlite-wal` and `ports.sqlite-shm`
+alongside while open); configured ports are released with their listeners.
 Killing the owner process preserves every reservation, but another stack may take over
 a configured port while no owner runs. No caller-owned upload files are removed.
 

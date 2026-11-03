@@ -76,6 +76,19 @@ higher than `minor`. These findings are advisory and never block the PR. Do not
 flag ordinary merge conflicts or style differences, and report nothing when the
 file does not exist.
 
+## Breaking changes
+
+Only when `pr.json` has `baseRefName` `develop` or `next`, a `headRefName` other
+than `next` or `sync/*`, and no `!` before the title's colon: report any change
+that makes existing use of a released command, flag, config key, env var or exit
+code fail or change meaning, for example removing a fallback so a command now
+errors, even when that is the fix the PR set out to make. Use category
+`breaking-change`, with severity `major`, and end the `claim` by asking for a
+`type(scope)!:` title, a `BREAKING CHANGE:` line in the PR description and, on
+`develop`, a retarget to `next`. Do not report internal code, tests, CI,
+additive changes, experimental commands, newly rejected values that never had a
+meaning, or fixes that match the old `SIDE_EFFECTS.md`.
+
 ## Output
 
 Your final response must be ONLY the JSON object described by the provided

@@ -1549,6 +1549,34 @@ describe("container process adapter", { timeout: 120_000 }, () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect(
+    "names the stalled engine subcommand and its stderr when an engine command times out",
+    () =>
+      Effect.gen(function* () {
+        const engine = yield* makeStalledStartSpawner("Error: waiting for network sandbox");
+        const runtime = yield* makeContainerRuntime({
+          target: containerTarget,
+          root: ".",
+          hostGateway: sharedHostGateway,
+        }).pipe(Effect.provide(engine.layer));
+        const launch = yield* Effect.scoped(
+          runtime.launch({ image, stackId: "s".repeat(64), instanceId: "stalled-start", env: {} }),
+        ).pipe(Effect.provide(engine.layer), Effect.exit, Effect.forkChild);
+        yield* Deferred.await(engine.stderrRead);
+        yield* TestClock.adjust("30 seconds");
+        const result = yield* Fiber.join(launch);
+
+        const failure = Exit.isFailure(result)
+          ? Option.getOrUndefined(Cause.findErrorOption(result.cause))
+          : undefined;
+        expect(failure instanceof ContainerLaunchError).toBe(true);
+        expect(failureKind(failure)).toBe("engine-timeout");
+        expect(failure instanceof ContainerLaunchError ? failure.failure.message : undefined).toBe(
+          "Engine command 'start' did not finish within 30s; stderr: Error: waiting for network sandbox",
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("removes the container a hung docker create may still create when interrupted", () =>
     Effect.gen(function* () {
       const engine = yield* makeHangingCreateSpawner();
@@ -2201,6 +2229,39 @@ const successfulHandle = (stdout = "") =>
     getOutputFd: () => Stream.empty,
     unref: Effect.succeed(Effect.void),
   });
+
+/** Answers every engine command except `start`, which writes `stderr` and never exits. */
+const makeStalledStartSpawner = Effect.fn("ContainerTest.stalledStartSpawner")(function* (
+  stderr: string,
+) {
+  const stderrRead = yield* Deferred.make<void>();
+  const spawner = ChildProcessSpawner.make((command) => {
+    if (!ChildProcess.isStandardCommand(command)) return Effect.die("unexpected piped command");
+    if (command.args[0] === "info") return Effect.succeed(successfulHandle("fake-daemon-id"));
+    if (command.args[0] !== "start") return Effect.succeed(successfulHandle());
+    // The second pull only happens once the reader has consumed the stderr line.
+    const stalledStderr = Stream.succeed(new TextEncoder().encode(stderr)).pipe(
+      Stream.concat(Stream.fromEffectDrain(Deferred.succeed(stderrRead, undefined))),
+      Stream.concat(Stream.never),
+    );
+    return Effect.succeed(
+      ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(0),
+        exitCode: Effect.never,
+        isRunning: Effect.succeed(true),
+        kill: () => Effect.void,
+        stdin: Sink.drain,
+        stdout: Stream.empty,
+        stderr: stalledStderr,
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+        unref: Effect.succeed(Effect.void),
+      }),
+    );
+  });
+  return { stderrRead, layer: Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner) };
+});
 
 const makeHangingCreateSpawner = Effect.fn("ContainerTest.hangingCreateSpawner")(function* () {
   const commands: string[][] = [];
