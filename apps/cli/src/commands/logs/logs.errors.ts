@@ -21,3 +21,17 @@ export class LogsApiError extends Schema.TaggedError<LogsApiError>()("LogsApiErr
     return statusCodeActionability(this.status);
   }
 }
+
+export class LogsClipboardError extends Schema.TaggedError<LogsClipboardError>()(
+  "LogsClipboardError",
+  {
+    reason: Schema.Literals(["unavailable", "failed", "timeout"]),
+    message: Schema.String,
+  },
+) {
+  get [ErrorActionabilityId]() {
+    return this.reason === "unavailable"
+      ? actionability.toolNotInstalled
+      : actionability.toolFailed;
+  }
+}
