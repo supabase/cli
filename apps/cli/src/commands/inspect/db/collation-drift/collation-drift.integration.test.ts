@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { ConfigProvider, Effect, Layer, Option } from "effect";
+import { Cause, ConfigProvider, Effect, Exit, Layer, Option } from "effect";
 import { vi } from "vitest";
 
 vi.mock("node:net", (importOriginal) =>
@@ -27,7 +27,7 @@ import {
   DbConnection,
   type PgConnInput,
 } from "../../../../command-internal/db-connection.service.ts";
-import { DnsResolverFlag, YesFlag } from "../../../../command-internal/global-flags.ts";
+import { DnsResolverFlag, OutputFlag, YesFlag } from "../../../../command-internal/global-flags.ts";
 import { TargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 import type { InspectConnectionFlags } from "../inspect-query.ts";
 import { inspectDbCollationDrift } from "./collation-drift.handler.ts";
@@ -143,6 +143,7 @@ describe("inspect db collation-drift", () => {
       yield* inspectDbCollationDrift(flags);
       expect(queries[1]).not.toContain("datcollversion");
       expect(out.stdoutText).toContain("No recorded collation version mismatch");
+      expect(out.stdoutText.replace(/\s+/g, " ")).toContain("not checked before PostgreSQL 15");
     }).pipe(Effect.provide(layer));
   });
 
@@ -169,5 +170,19 @@ describe("inspect db collation-drift", () => {
       );
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("rejects -o/--output before connecting", () => {
+    const { layer, queries } = setup({ serverVersionNum: 170000, rows: [] });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(inspectDbCollationDrift(flags));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain(
+          "the -o/--output flag is not supported by inspect db collation-drift; use --output-format json|stream-json instead.",
+        );
+      }
+      expect(queries).toHaveLength(0);
+    }).pipe(Effect.provide(Layer.mergeAll(layer, Layer.succeed(OutputFlag, Option.some("json")))));
   });
 });

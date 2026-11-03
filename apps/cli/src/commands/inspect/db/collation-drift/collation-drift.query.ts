@@ -19,7 +19,8 @@ function collationDriftSql(serverVersionNum: number): string {
     ix.indrelid,
     k.colloid,
     ix.indisprimary AS is_primary,
-    ix.indisunique AS is_unique
+    ix.indisunique AS is_unique,
+    ix.indisexclusion AS is_exclusion
   FROM pg_index ix
   -- indkey holds 0 for expression columns, which have no pg_attribute row.
   JOIN LATERAL unnest(ix.indkey, ix.indcollation) AS k(attnum, colloid) ON k.attnum <> 0
@@ -62,6 +63,7 @@ SELECT
   CASE
     WHEN dr.is_primary THEN 'PRIMARY KEY'
     WHEN dr.is_unique THEN 'UNIQUE'
+    WHEN dr.is_exclusion THEN 'EXCLUSION'
     ELSE ''
   END AS key_type,
   pg_size_pretty(pg_relation_size(i.oid)) AS size
@@ -79,7 +81,7 @@ WHERE am.amname = 'btree'
   AND dr.stored_version IS DISTINCT FROM dr.current_version
 -- Constraint-backing indexes first: a wrong sort order there can let
 -- duplicate rows past a unique check, not merely return wrong results.
-ORDER BY dr.is_primary DESC, dr.is_unique DESC, pg_relation_size(i.oid) DESC, name`;
+ORDER BY dr.is_primary DESC, dr.is_unique DESC, dr.is_exclusion DESC, pg_relation_size(i.oid) DESC, name`;
 }
 
 interface DriftRow {
@@ -128,7 +130,11 @@ export function amcheckStatements(rows: ReadonlyArray<DriftRow>): string[] {
 }
 
 export function reindexStatements(rows: ReadonlyArray<DriftRow>): string[] {
-  return rows.map((r) => `REINDEX INDEX CONCURRENTLY ${r.name};`);
+  return rows.map((r) =>
+    r.key_type === "EXCLUSION"
+      ? `REINDEX INDEX ${r.name};  -- exclusion constraint: CONCURRENTLY is unsupported, blocks writes while it runs`
+      : `REINDEX INDEX CONCURRENTLY ${r.name};`,
+  );
 }
 
 export function refreshStatements(rows: ReadonlyArray<DriftRow>): string[] {
@@ -147,7 +153,14 @@ export function refreshStatements(rows: ReadonlyArray<DriftRow>): string[] {
   return out;
 }
 
-export function buildCollationDriftReport(rawRows: ReadonlyArray<Record<string, unknown>>): Report {
+export function buildCollationDriftReport(
+  rawRows: ReadonlyArray<Record<string, unknown>>,
+  serverVersionNum: number,
+): Report {
+  const defaultScope =
+    serverVersionNum >= 150000
+      ? ""
+      : " The database default collation is not checked before PostgreSQL 15; only named collations were.";
   if (rawRows.length === 0) {
     return {
       command: "collation-drift",
@@ -156,7 +169,7 @@ export function buildCollationDriftReport(rawRows: ReadonlyArray<Record<string, 
         {
           kind: "callout",
           severity: "ok",
-          text: "No recorded collation version mismatch on btree index key columns. This compares version labels and does not verify index ordering or expression indexes. Re-run this check after a PostgreSQL upgrade or instance migration.",
+          text: `No recorded collation version mismatch on btree index key columns. This compares version labels and does not verify index ordering or expression indexes.${defaultScope} Re-run this check after a PostgreSQL upgrade or instance migration.`,
         },
       ],
     };
@@ -168,7 +181,7 @@ export function buildCollationDriftReport(rawRows: ReadonlyArray<Record<string, 
   const keyRows = indexes.filter((r) => r.key_type !== "");
   const severity: ReportSeverity = keyRows.length > 0 ? "critical" : "warn";
 
-  const libcDrift = rows.find((r) => r.collation === "default");
+  const defaultDrift = rows.find((r) => r.collation === "default");
   const namedCollations = [...new Set(rows.map((r) => r.collation))].filter((c) => c !== "default");
 
   const environment: Array<{ key: string; value: string }> = [
@@ -181,11 +194,14 @@ export function buildCollationDriftReport(rawRows: ReadonlyArray<Record<string, 
       value: `${keyRows.length} (a wrong sort order here can admit duplicate rows)`,
     });
   }
-  if (libcDrift !== undefined) {
+  if (defaultDrift !== undefined) {
     environment.push({
       key: "Default collation",
-      value: `${libcDrift.stored_version} (recorded)  →  ${libcDrift.current_version} (current)`,
+      value: `${defaultDrift.stored_version} (recorded)  →  ${defaultDrift.current_version} (current)`,
     });
+  }
+  if (serverVersionNum < 150000) {
+    environment.push({ key: "Default collation", value: "not checked before PostgreSQL 15" });
   }
   if (namedCollations.length > 0) {
     environment.push({ key: "Drifted collations", value: namedCollations.join(", ") });

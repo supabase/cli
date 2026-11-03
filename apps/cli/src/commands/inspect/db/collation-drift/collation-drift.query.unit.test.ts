@@ -8,6 +8,8 @@ import {
 } from "./collation-drift.query.ts";
 import type { ReportStepsBlock, ReportTableBlock } from "../../../../output/report.types.ts";
 
+const PG17 = 170000;
+
 const libcRow = {
   database: "postgres",
   name: "public.t_key",
@@ -40,7 +42,7 @@ function stepsBlock(report: ReturnType<typeof buildCollationDriftReport>): Repor
 
 describe("buildCollationDriftReport", () => {
   it("renders the healthy state as an ok callout with no remediation", () => {
-    const report = buildCollationDriftReport([]);
+    const report = buildCollationDriftReport([], PG17);
 
     expect(report.severity).toBe("ok");
     expect(report.blocks).toHaveLength(1);
@@ -51,17 +53,17 @@ describe("buildCollationDriftReport", () => {
   });
 
   it("is critical when a key or unique index is affected, warn otherwise", () => {
-    expect(buildCollationDriftReport([libcRow]).severity).toBe("critical");
-    expect(buildCollationDriftReport([icuRow]).severity).toBe("warn");
+    expect(buildCollationDriftReport([libcRow], PG17).severity).toBe("critical");
+    expect(buildCollationDriftReport([icuRow], PG17).severity).toBe("warn");
   });
 
   it("includes environment, callout, table, and steps blocks when drift exists", () => {
-    const kinds = buildCollationDriftReport([libcRow, icuRow]).blocks.map((b) => b.kind);
+    const kinds = buildCollationDriftReport([libcRow, icuRow], PG17).blocks.map((b) => b.kind);
     expect(kinds).toEqual(["keyValue", "callout", "table", "steps"]);
   });
 
   it("keeps the row order the SQL produced (keys first)", () => {
-    const report = buildCollationDriftReport([libcRow, icuRow]);
+    const report = buildCollationDriftReport([libcRow, icuRow], PG17);
     const table = report.blocks.find((b) => b.kind === "table") as ReportTableBlock;
     expect(table.rows[0]?.cells[0]).toBe("public.t_key");
     expect(table.rows[0]?.severity).toBe("critical");
@@ -69,7 +71,7 @@ describe("buildCollationDriftReport", () => {
   });
 
   it("orders the workflow verify → rebuild → refresh", () => {
-    const steps = stepsBlock(buildCollationDriftReport([libcRow])).steps;
+    const steps = stepsBlock(buildCollationDriftReport([libcRow], PG17)).steps;
     expect(steps.map((s) => s.title)).toEqual([
       "Diagnose the listed indexes (optional)",
       "Rebuild every listed index",
@@ -82,7 +84,7 @@ describe("buildCollationDriftReport", () => {
       { ...libcRow, name: "public.m_ab", key_type: "", columns: "a" },
       { ...icuRow, name: "public.m_ab", columns: "b" },
     ];
-    const report = buildCollationDriftReport(multi);
+    const report = buildCollationDriftReport(multi, PG17);
     const [, rebuild, refresh] = stepsBlock(report).steps;
 
     expect(report.blocks[0]).toMatchObject({
@@ -97,7 +99,7 @@ describe("buildCollationDriftReport", () => {
   });
 
   it("degrades null cells instead of throwing", () => {
-    const report = buildCollationDriftReport([{ ...libcRow, current_version: null }]);
+    const report = buildCollationDriftReport([{ ...libcRow, current_version: null }], PG17);
     const table = report.blocks.find((b) => b.kind === "table") as ReportTableBlock;
     expect(table.rows[0]?.cells[5]).toBe("");
   });
@@ -130,6 +132,12 @@ describe("generated statements", () => {
     ]);
     expect(refreshStatements([libcRow] as never)).toEqual([
       'ALTER DATABASE "postgres" REFRESH COLLATION VERSION;',
+    ]);
+  });
+
+  it("rebuilds exclusion-constraint indexes without CONCURRENTLY", () => {
+    expect(reindexStatements([{ ...icuRow, key_type: "EXCLUSION" }] as never)).toEqual([
+      "REINDEX INDEX public.demo_title_idx;  -- exclusion constraint: CONCURRENTLY is unsupported, blocks writes while it runs",
     ]);
   });
 

@@ -284,6 +284,7 @@ InitConfigExistsError
 InitParseSettingsError
 InspectCsvqError
 InspectReportMkdirError
+InspectReportOutputFlagUnsupportedError
 InspectReportWriteError
 InvalidAccessTokenError
 InvalidComputeExcludeError

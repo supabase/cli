@@ -1,18 +1,23 @@
-import { Effect } from "effect";
+import { Effect, Option } from "effect";
 
-import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
+import { DnsResolverFlag, OutputFlag } from "../../../command-internal/global-flags.ts";
+import { unsupportedOutputFlagMessage } from "../../../command-internal/output-formats.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { renderReportText } from "../../../output/report-render-text.ts";
 import type { Report } from "../../../output/report.types.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { InspectReportOutputFlagUnsupportedError } from "./inspect-report.errors.ts";
 import { resolveInspectConnection, type InspectConnectionFlags } from "./inspect-query.ts";
 
 /** A report-producing `inspect db` subcommand: its version-specific SQL and a pure rows-to-`Report` mapping. */
 export interface InspectReportSpec {
   readonly name: string;
   readonly sql: (serverVersionNum: number) => string;
-  readonly report: (rows: ReadonlyArray<Record<string, unknown>>) => Report;
+  readonly report: (
+    rows: ReadonlyArray<Record<string, unknown>>,
+    serverVersionNum: number,
+  ) => Report;
 }
 
 const runInspectReport = Effect.fn("Inspect.runReport")(function* (
@@ -20,23 +25,29 @@ const runInspectReport = Effect.fn("Inspect.runReport")(function* (
   flags: InspectConnectionFlags,
   dnsResolver: "native" | "https",
 ) {
+  if (Option.isSome(yield* OutputFlag)) {
+    return yield* new InspectReportOutputFlagUnsupportedError({
+      message: unsupportedOutputFlagMessage(`inspect db ${spec.name}`),
+    });
+  }
   const output = yield* Output;
   const dbConn = yield* DbConnection;
   const cfg = yield* resolveInspectConnection(flags, dnsResolver);
 
-  const rows = yield* Effect.scoped(
+  const { serverVersionNum, rows } = yield* Effect.scoped(
     Effect.gen(function* () {
       const session = yield* dbConn.connect(cfg.conn, { isLocal: cfg.isLocal, dnsResolver });
       const [version] = yield* session.query(
         "SELECT current_setting('server_version_num')::int AS server_version_num",
         [],
       );
-      return yield* session.query(spec.sql(Number(version?.["server_version_num"])), []);
+      const serverVersionNum = Number(version?.["server_version_num"]);
+      return { serverVersionNum, rows: yield* session.query(spec.sql(serverVersionNum), []) };
     }),
   );
   yield* Effect.annotateCurrentSpan({ "query.row_count": rows.length });
 
-  const report = spec.report(rows);
+  const report = spec.report(rows, serverVersionNum);
 
   if (output.format === "text") {
     yield* output.raw(renderReportText(report));

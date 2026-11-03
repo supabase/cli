@@ -102,6 +102,9 @@ flags, run no query and open no connection, and exit 1 with
 | `0`  | success                                  |
 | `1`  | resolution, connection, or query failure |
 
+`collation-drift` also exits `1` before connecting when `-o/--output` is passed; it supports
+`--output-format` only.
+
 ## Telemetry Events Fired
 
 | Event                  | When                                       | Notable properties                  |
