@@ -101,6 +101,15 @@ Local-runtime commands also carry properties that split error rates by runtime:
 - `orioledb` (boolean) once the command resolves local database config, `true` when the project
   selects an OrioleDB image (`db.orioledb_version` on a 15/17 project). It describes local config
   only; for `--remote` targets it says nothing about the remote database
+- `serve_end_reason` on the Docker-runtime `functions serve`, set once its final outcome is known:
+  `signal` (the CLI received a shutdown signal), `container_stopped` (an external supervisor
+  stopped the Edge Runtime container, e.g. `supabase stop`), `container_exited` (the container
+  exited on its own with code 0), `container_removed` (the container disappeared), or
+  `container_crashed` (the container exited with a crash code, which also fails the command). A
+  restart records nothing; only the final end does
+- `edge_runtime_exit_code` (number) alongside `serve_end_reason` when the container's exit code is
+  known: its stop code for `container_stopped`, `0` for `container_exited`, its crash code for
+  `container_crashed`
 
 Flag capture is intentionally conservative: `flags` records only flags changed on the command
 line, and redacts each value unless it is boolean, a choice flag, or listed in the command's

@@ -45,6 +45,10 @@ export const PropStackBackend = "stack_backend";
 export const PropOrioleDb = "orioledb";
 // Set only once a stack-backend command resolves its stack's runtime.
 export const PropStackRuntime = "stack_runtime";
+// Set only once `functions serve` on the Docker runtime reaches its final outcome.
+export const PropServeEndReason = "serve_end_reason";
+// Set only when the Edge Runtime container's exit code is known at that outcome.
+export const PropEdgeRuntimeExitCode = "edge_runtime_exit_code";
 // Reserved for a closed workflow label; nothing emits it until a closed
 // vocabulary is agreed (tests assert its absence on failure events).
 export const PropWorkflow = "workflow";
