@@ -354,7 +354,7 @@ describe("retained local logs", () => {
       expect(details).toContain('"byteOffset"');
       expect(
         screens.some((screen) =>
-          screen.includes("2026-09-29 10:00:00.001 UTC database local browser payload"),
+          screen.includes("Sep 29 - 10:00:00 UTC database local browser payload"),
         ),
       ).toBe(true);
       expect(screens.at(-1)).toContain("?1049l");

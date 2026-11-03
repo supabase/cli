@@ -168,7 +168,7 @@ describe("unified logs", () => {
         if (stdinIsTty) {
           expect(
             screens.some((screen) =>
-              screen.includes("> 2026-11-02 12:00:00.000 UTC postgres first query row"),
+              screen.includes("> Nov 02 - 12:00:00 UTC postgres first query row"),
             ),
           ).toBe(true);
           expect(screens.find((screen) => screen.includes("Log details"))).toContain(

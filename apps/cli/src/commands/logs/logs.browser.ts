@@ -8,6 +8,7 @@ import {
   browserKey,
   initialBrowserState,
   renderBrowser,
+  resizeBrowser,
 } from "./logs.browser.format.ts";
 
 export interface LogsBrowserSink {
@@ -79,7 +80,10 @@ export const browseLogs = Effect.fn("Logs.browser")(function* <E, R>(
       while (true) {
         const columns = yield* terminal.columns;
         const rows = yield* terminal.rows;
-        yield* terminal.display(`\u001b[H\u001b[2J${renderBrowser(state, columns, rows)}`);
+        state = resizeBrowser(state, rows);
+        yield* terminal.display(
+          `\u001b[H\u001b[2J${renderBrowser(state, columns, rows, process.stdout)}`,
+        );
         const event = yield* Queue.take(events);
         switch (event.kind) {
           case "entry":

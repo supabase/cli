@@ -53,9 +53,9 @@ it.effect("navigates full details, resizes, and interrupts the live producer on 
     expect(yield* Queue.take(screens)).toContain("?1049h");
     expect(yield* Queue.take(screens)).toContain("Waiting for logs");
     expect(yield* Queue.take(screens)).toContain("first");
-    expect(yield* Queue.take(screens)).toContain("> 1970-01-01 00:00:00.001 UTC auth second");
+    expect(yield* Queue.take(screens)).toContain("> Jan 01 - 00:00:00 UTC auth second");
     yield* Queue.offer(input, key("up"));
-    expect(yield* Queue.take(screens)).toContain("> 1970-01-01 00:00:00.000 UTC postgres first");
+    expect(yield* Queue.take(screens)).toContain("> Jan 01 - 00:00:00 UTC postgres first");
     yield* Queue.offer(input, key("return"));
     expect(yield* Queue.take(screens)).toContain("full first detail");
     yield* Queue.offer(input, key("escape"));
@@ -63,7 +63,7 @@ it.effect("navigates full details, resizes, and interrupts the live producer on 
     columns = 25;
     process.stdout.emit("resize");
     const resized = yield* Queue.take(screens);
-    expect(resized).not.toContain("1970-01-01 00:00:00.000 UTC postgres first");
+    expect(resized).not.toContain("Jan 01 - 00:00:00 UTC postgres first");
     expect(
       resized
         .split("\r\n")
@@ -75,6 +75,60 @@ it.effect("navigates full details, resizes, and interrupts the live producer on 
     yield* Deferred.await(stopped);
     expect(yield* Queue.take(screens)).toContain("?1049l");
     expect(process.stdout.listenerCount("resize")).toBe(listeners);
+  }),
+);
+
+it.effect("persists a resized live viewport when more rows arrive while browsing", () =>
+  Effect.gen(function* () {
+    const input = yield* Queue.unbounded<Terminal.UserInput>();
+    const screens = yield* Queue.unbounded<string>();
+    const append = yield* Deferred.make<void>();
+    let height = 10;
+    const browser = yield* browseLogs((sink) =>
+      Effect.gen(function* () {
+        for (let index = 0; index < 20; index++) yield* sink.entry({ message: `runtime-${index}` });
+        yield* Deferred.await(append);
+        yield* sink.entry({ message: "runtime-20" });
+        return yield* Effect.never;
+      }),
+    ).pipe(
+      Effect.provideService(
+        Terminal.Terminal,
+        Terminal.make({
+          columns: Effect.succeed(80),
+          rows: Effect.sync(() => height),
+          readInput: Effect.succeed(input),
+          readLine: Effect.die("unused"),
+          display: (text) => Queue.offer(screens, text).pipe(Effect.asVoid),
+        }),
+      ),
+      Effect.provide(Layer.mergeAll(mockOutput().layer, mockProcessControl().layer)),
+      Effect.forkScoped,
+    );
+    yield* Queue.take(screens);
+    yield* Queue.take(screens);
+    let frame = "";
+    for (let index = 0; index < 20; index++) frame = yield* Queue.take(screens);
+    expect(frame.split("\r\n")[1]).toContain("runtime-12");
+    for (let index = 0; index < 3; index++) {
+      yield* Queue.offer(input, key("up"));
+      frame = yield* Queue.take(screens);
+    }
+    expect(frame.split("\r\n")[1]).toContain("runtime-12");
+    height = 14;
+    process.stdout.emit("resize");
+    frame = yield* Queue.take(screens);
+    const before = frame.split("\r\n").slice(1, 13);
+    expect(before[0]).toContain("runtime-8");
+    yield* Deferred.succeed(append, undefined);
+    frame = yield* Queue.take(screens);
+    expect(frame.split("\r\n").slice(1, 13)).toEqual(before);
+    yield* Queue.offer(input, key("return"));
+    expect(yield* Queue.take(screens)).toContain("Log details");
+    yield* Queue.offer(input, key("escape"));
+    expect((yield* Queue.take(screens)).split("\r\n").slice(1, 13)).toEqual(before);
+    yield* Queue.offer(input, key("q"));
+    yield* Fiber.join(browser);
   }),
 );
 
