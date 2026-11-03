@@ -10,7 +10,7 @@ import {
   Layer,
   Option,
   PlatformError,
-  References,
+  Scheduler,
   Schema,
   Sink,
   Stdio,
@@ -874,19 +874,56 @@ describe("Output", () => {
       }).pipe(provideLayer(stdio.layer));
     });
 
-    it.effect("checks the stream with scheduler yields prevented", () => {
-      const stdio = mockStdio();
-      const preventYield: Array<boolean | undefined> = [];
+    it.effect("never yields between the stream check and the write", () => {
+      let inWindow = false;
+      let windows = 0;
+      let yieldChecks = 0;
+      let suspensions = 0;
+      const stdio = Layer.succeed(
+        Stdio.Stdio,
+        Stdio.make({
+          args: Effect.succeed([]),
+          stdin: Stream.empty,
+          stdout: () =>
+            Sink.forEach((_item: string | Uint8Array) =>
+              Effect.sync(() => {
+                inWindow = false;
+              }),
+            ),
+          stderr: () => Sink.drain,
+        }),
+      );
       return Effect.gen(function* () {
         yield* overrideStreamErrored(process.stdout, () => {
-          preventYield.push(Fiber.getCurrent()?.getRef(References.PreventSchedulerYield));
+          inWindow = true;
+          windows++;
+          /* Bun delivers the pending error in a microtask; it runs inside the window only if the
+             write suspends there. */
+          queueMicrotask(() => {
+            if (inWindow) suspensions++;
+          });
           return null;
         });
+        const scheduler = yield* Scheduler.Scheduler;
         const out = yield* Output;
-        yield* out.raw("payload\n");
+        yield* out.raw("payload\n").pipe(
+          Effect.provideService(Scheduler.Scheduler, {
+            executionMode: scheduler.executionMode,
+            shouldYield: (fiber) => {
+              if (inWindow) yieldChecks++;
+              return scheduler.shouldYield(fiber);
+            },
+            makeDispatcher: () => scheduler.makeDispatcher(),
+          }),
+        );
 
-        expect(preventYield).toEqual([true]);
-      }).pipe(provideLayer(stdio.layer));
+        expect({ windows, inWindow, yieldChecks, suspensions }).toEqual({
+          windows: 1,
+          inWindow: false,
+          yieldChecks: 0,
+          suspensions: 0,
+        });
+      }).pipe(provideLayer(stdio));
     });
 
     it.effect("keeps writing stdout once the stderr reader has closed", () => {
