@@ -40,7 +40,6 @@ import {
   SsoAddMetadataFileError,
   SsoAddNetworkError,
   SsoAddRequiredFlagError,
-  SsoAddSamlDisabledError,
   SsoAddUnexpectedStatusError,
   SsoFlagNeedsArgumentError,
   SsoInvalidFlagValueError,
@@ -57,9 +56,6 @@ import {
   toNameIdFormat,
 } from "../sso.saml.ts";
 import type { SsoAddFlags } from "./add.command.ts";
-
-const SAML_DISABLED_MESSAGE =
-  "SAML 2.0 support is not enabled for this project. Please enable it through the dashboard";
 
 type SsoAddBody = Types.Mutable<
   Omit<Schema.Schema.Type<typeof operationDefinitions.v1CreateASsoProvider.inputSchema>, "ref">
@@ -86,33 +82,15 @@ const readAttributeMapping = readAttributeMappingFile({
   openError: (args) => new SsoAddAttributeMappingFileError(args),
 });
 
-type TokenForAux<R> = Effect.Effect<Option.Option<Redacted.Redacted<string>> | undefined, never, R>;
-
-const handleAddError = <R>(
-  ref: string,
-  apiUrl: string,
-  tokenForAux: TokenForAux<R>,
-  cause: SupabaseApiError,
-) =>
+const handleAddError = (ref: string, cause: SupabaseApiError) =>
   mapStatusOrNetwork(cause).pipe(
     Effect.catchTag("SsoAddUnexpectedStatusError", (mapped) =>
       Effect.gen(function* () {
         const upgradeSuggested = yield* suggestUpgrade({
           projectRef: ref,
-          featureKey: "auth.saml_2",
           statusCode: mapped.status,
           response: gateResponse(cause),
-          apiUrl,
-          ...(yield* Effect.map(tokenForAux, (token) =>
-            token !== undefined ? { accessToken: token } : {},
-          )),
         });
-        if (mapped.status === 404) {
-          return yield* new SsoAddSamlDisabledError({
-            message: SAML_DISABLED_MESSAGE,
-            upgradeSuggested,
-          });
-        }
         return yield* new SsoAddUnexpectedStatusError({
           status: mapped.status,
           body: mapped.body,
@@ -194,8 +172,8 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
     const profileApiUrl = Option.map(reconciledProfile, (profile) => profile.apiUrl);
     // Resolved once (memoized) so the token read happens after
     // required/mutex/workdir validation — a missing or invalid reconciled
-    // token must not preempt those errors. Auxiliary calls (cache fill,
-    // upgrade-gate GETs) use the failure-absorbing variant below instead.
+    // token must not preempt those errors. The auxiliary cache fill uses
+    // the failure-absorbing variant below instead.
     const reconciledTokenCached = Option.isSome(reconciledProfile)
       ? yield* Effect.cached(accessTokenForProfile(reconciledProfile.value.name))
       : undefined;
@@ -331,7 +309,7 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
         const rawBody: unknown = yield* response.json;
         return { rawBody, provider: yield* decodeProvider(rawBody) };
       }).pipe(
-        Effect.catch((cause) => handleAddError(ref, apiUrl, reconciledTokenForAux, cause)),
+        Effect.catch((cause) => handleAddError(ref, cause)),
         Effect.tapError(() => creating?.fail() ?? Effect.void),
       );
       yield* creating?.clear ?? Effect.void;

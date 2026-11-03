@@ -15,7 +15,6 @@ import { SSO_PROVIDER_RESPONSE_SHAPE } from "../sso.response-shape.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
-import { gateResponse, suggestUpgrade } from "../../../command-internal/upgrade-suggest.ts";
 import {
   SsoRemoveNetworkError,
   SsoRemoveNotFoundError,
@@ -32,29 +31,16 @@ const mapStatusOrNetwork = mapHttpError({
   statusMessage: (_status, body) => `Unexpected error removing identity provider: ${body}`,
 });
 
-const handleRemoveError = (ref: string, providerId: string, cause: SupabaseApiError) =>
+const handleRemoveError = (providerId: string, cause: SupabaseApiError) =>
   mapStatusOrNetwork(cause).pipe(
     Effect.catchTag("SsoRemoveUnexpectedStatusError", (mapped) =>
       Effect.gen(function* () {
-        const upgradeSuggested = yield* suggestUpgrade({
-          projectRef: ref,
-          featureKey: "auth.saml_2",
-          statusCode: mapped.status,
-          response: gateResponse(cause),
-        });
         if (mapped.status === 404) {
           return yield* new SsoRemoveNotFoundError({
             message: `An identity provider with ID ${quoteSsoString(providerId)} could not be found.`,
-            upgradeSuggested,
           });
         }
-        return yield* new SsoRemoveUnexpectedStatusError({
-          status: mapped.status,
-          body: mapped.body,
-          message: mapped.message,
-          upgradeSuggested,
-          entitlement: mapped.entitlement,
-        });
+        return yield* mapped;
       }),
     ),
   );
@@ -78,7 +64,7 @@ export const ssoRemove = Effect.fn("sso.remove")(function* (flags: SsoRemoveFlag
         output.format === "text" ? yield* output.task("Removing SSO provider...") : undefined;
       const response = yield* api.v1.deleteASsoProvider({ ref, provider_id: providerId }).pipe(
         Effect.tapError(() => removing?.fail() ?? Effect.void),
-        Effect.catch((cause) => handleRemoveError(ref, providerId, cause)),
+        Effect.catch((cause) => handleRemoveError(providerId, cause)),
       );
       yield* removing?.clear ?? Effect.void;
 

@@ -161,7 +161,6 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "request_encoding",
   "request_input",
   "runtime_stopped",
-  "saml_disabled",
   "saved_stack_changes",
   "seed_buckets",
   "service_config",
@@ -644,7 +643,7 @@ function stackKindDeclaration(value: unknown): CliErrorActionabilityDeclaration 
  * check (`suggestUpgrade`). Shared so every gated surface groups under
  * the same fingerprint family.
  */
-export const planLimitGatedActionability: CliErrorActionabilityDeclaration = {
+const planLimitGatedActionability: CliErrorActionabilityDeclaration = {
   ...actionability.planLimit,
   fingerprint_suffix: "plan_limit",
 };

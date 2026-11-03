@@ -468,13 +468,11 @@ SsoAddAttributeMappingFileError
 SsoAddMetadataFileError
 SsoAddNetworkError
 SsoAddRequiredFlagError
-SsoAddSamlDisabledError
 SsoAddUnexpectedStatusError
 SsoFlagNeedsArgumentError
 SsoInvalidFlagValueError
 SsoInvalidUuidError
 SsoListNetworkError
-SsoListSamlDisabledError
 SsoListUnexpectedStatusError
 SsoMetadataUrlInvalidError
 SsoMetadataUrlNetworkError

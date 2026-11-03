@@ -43,7 +43,6 @@ interface SetupOpts {
   body?: unknown;
   rawBody?: string;
   network?: "fail";
-  upgradeGate?: "gated" | "notGated";
 }
 
 function jsonResponse(
@@ -69,7 +68,6 @@ function setup(opts: SetupOpts = {}) {
 
   const status = opts.status ?? 200;
   const body = opts.body ?? PROVIDER;
-  const gate = opts.upgradeGate;
 
   const api = mockCommandPlatformApi({
     network: opts.network,
@@ -77,41 +75,6 @@ function setup(opts: SetupOpts = {}) {
       const url = request.url;
       if (url.includes("/config/auth/sso/providers/") && request.method === "DELETE") {
         return Effect.succeed(jsonResponse(request, status, body, opts.rawBody));
-      }
-      if (url.endsWith(`/v1/projects/${VALID_REF}`)) {
-        if (gate === undefined) return Effect.succeed(jsonResponse(request, 404, {}));
-        return Effect.succeed(
-          jsonResponse(request, 200, {
-            id: VALID_REF,
-            ref: VALID_REF,
-            organization_id: "org-id",
-            organization_slug: "acme",
-            name: "Test",
-            region: "us-east-1",
-            created_at: "2023-01-01T00:00:00Z",
-            status: "ACTIVE_HEALTHY",
-            database: {
-              host: "db.example.com",
-              version: "15",
-              postgres_engine: "15",
-              release_channel: "ga",
-            },
-          }),
-        );
-      }
-      if (url.includes("/v1/organizations/acme/entitlements")) {
-        return Effect.succeed(
-          jsonResponse(request, 200, {
-            entitlements: [
-              {
-                feature: { key: "auth.saml_2", type: "boolean" },
-                hasAccess: gate === "notGated",
-                type: "boolean",
-                config: { enabled: false },
-              },
-            ],
-          }),
-        );
       }
       return Effect.succeed(jsonResponse(request, 404, {}));
     },
@@ -202,8 +165,8 @@ describe("sso remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("fires cli_upgrade_suggested when gated on 4xx", () => {
-    const { layer, analytics, api } = setup({ status: 404, body: {}, upgradeGate: "gated" });
+  it.effect("a 4xx makes no entitlement lookup and suggests no upgrade", () => {
+    const { layer, analytics, api } = setup({ status: 404, body: {} });
     return Effect.gen(function* () {
       yield* Effect.exit(
         ssoRemove({
@@ -212,11 +175,9 @@ describe("sso remove integration", () => {
           providerId: VALID_PROVIDER_ID,
         }),
       );
-      expect(analytics.captured.some((c) => c.event === EventUpgradeSuggested)).toBe(true);
+      expect(analytics.captured.some((c) => c.event === EventUpgradeSuggested)).toBe(false);
       expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         `DELETE https://api.supabase.com/v1/projects/${VALID_REF}/config/auth/sso/providers/${VALID_PROVIDER_ID}`,
-        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
-        "GET https://api.supabase.com/v1/organizations/acme/entitlements",
       ]);
       assertPermissionDrift({ command: "sso remove", requests: api.requests });
     }).pipe(Effect.provide(layer));

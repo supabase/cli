@@ -1,4 +1,3 @@
-import type { SupabaseApiError } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
@@ -14,18 +13,13 @@ import { SSO_PROVIDERS_WRAPPER_SHAPE } from "../sso.response-shape.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
-import { gateResponse, suggestUpgrade } from "../../../command-internal/upgrade-suggest.ts";
 import {
   SsoListNetworkError,
-  SsoListSamlDisabledError,
   SsoListUnexpectedStatusError,
   SsoTomlEncodeError,
 } from "../sso.errors.ts";
 import { renderListProviders } from "../sso.format.ts";
 import type { SsoListFlags } from "./list.command.ts";
-
-const SAML_DISABLED_MESSAGE =
-  "Looks like SAML 2.0 support is not enabled for this project. Please use the dashboard to enable it.";
 
 const mapStatusOrNetwork = mapHttpError({
   networkError: SsoListNetworkError,
@@ -33,33 +27,6 @@ const mapStatusOrNetwork = mapHttpError({
   networkMessage: (cause) => `failed to list sso providers: ${cause}`,
   statusMessage: (_status, body) => `unexpected error listing identity providers: ${body}`,
 });
-
-const handleListError = (ref: string, cause: SupabaseApiError) =>
-  mapStatusOrNetwork(cause).pipe(
-    Effect.catchTag("SsoListUnexpectedStatusError", (mapped) =>
-      Effect.gen(function* () {
-        const upgradeSuggested = yield* suggestUpgrade({
-          projectRef: ref,
-          featureKey: "auth.saml_2",
-          statusCode: mapped.status,
-          response: gateResponse(cause),
-        });
-        if (mapped.status === 404) {
-          return yield* new SsoListSamlDisabledError({
-            message: SAML_DISABLED_MESSAGE,
-            upgradeSuggested,
-          });
-        }
-        return yield* new SsoListUnexpectedStatusError({
-          status: mapped.status,
-          body: mapped.body,
-          message: mapped.message,
-          upgradeSuggested,
-          entitlement: mapped.entitlement,
-        });
-      }),
-    ),
-  );
 
 export const ssoList = Effect.fn("sso.list")(function* (flags: SsoListFlags) {
   const output = yield* Output;
@@ -76,7 +43,7 @@ export const ssoList = Effect.fn("sso.list")(function* (flags: SsoListFlags) {
         output.format === "text" ? yield* output.task("Fetching SSO providers...") : undefined;
       const response = yield* api.v1.listAllSsoProvider({ ref }).pipe(
         Effect.tapError(() => fetching?.fail() ?? Effect.void),
-        Effect.catch((cause) => handleListError(ref, cause)),
+        Effect.catch(mapStatusOrNetwork),
       );
       yield* fetching?.clear ?? Effect.void;
 

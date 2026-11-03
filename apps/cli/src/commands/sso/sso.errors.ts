@@ -3,7 +3,6 @@ import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
-  planLimitGatedActionability,
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
 import type { PlanGateEntitlement } from "../../shared/output/normalize-error.ts";
@@ -24,22 +23,6 @@ function ssoFileActionability(reason: SsoFileErrorReason): CliErrorActionability
   }
   return { ...actionability.unknown, fingerprint_suffix: "platform_error" };
 }
-
-/**
- * SAML is entitlement-gated: `upgradeSuggested` lets telemetry distinguish
- * plan-gated failures from ordinary API failures without parsing message text.
- */
-const samlDisabledActionability = (
-  upgradeSuggested: boolean | undefined,
-): CliErrorActionabilityDeclaration =>
-  upgradeSuggested === true
-    ? planLimitGatedActionability
-    : { ...actionability.invalidConfig, fingerprint_suffix: "saml_disabled" };
-
-const gatedNotFoundActionability = (
-  upgradeSuggested: boolean | undefined,
-): CliErrorActionabilityDeclaration =>
-  upgradeSuggested === true ? planLimitGatedActionability : actionability.invalidInput;
 
 // Shared across show/update/remove. Message: `identity provider ID "<id>" is not a UUID`.
 export class SsoInvalidUuidError extends Data.TaggedError("SsoInvalidUuidError")<{
@@ -72,24 +55,14 @@ export class SsoListNetworkError extends Data.TaggedError("SsoListNetworkError")
   }
 }
 
-export class SsoListSamlDisabledError extends Data.TaggedError("SsoListSamlDisabledError")<{
-  readonly message: string;
-  readonly upgradeSuggested?: boolean;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return samlDisabledActionability(this.upgradeSuggested);
-  }
-}
-
 export class SsoListUnexpectedStatusError extends Data.TaggedError("SsoListUnexpectedStatusError")<{
   readonly status: number;
   readonly body: string;
   readonly message: string;
-  readonly upgradeSuggested?: boolean;
   readonly entitlement?: PlanGateEntitlement;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status, { upgradeSuggested: this.upgradeSuggested });
+    return statusCodeActionability(this.status);
   }
 }
 
@@ -101,15 +74,6 @@ export class SsoAddNetworkError extends Data.TaggedError("SsoAddNetworkError")<{
     return this.decode === true
       ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
       : actionability.externalNetwork;
-  }
-}
-
-export class SsoAddSamlDisabledError extends Data.TaggedError("SsoAddSamlDisabledError")<{
-  readonly message: string;
-  readonly upgradeSuggested?: boolean;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return samlDisabledActionability(this.upgradeSuggested);
   }
 }
 
@@ -274,10 +238,9 @@ export class SsoUpdateNetworkError extends Data.TaggedError("SsoUpdateNetworkErr
 
 export class SsoUpdateNotFoundError extends Data.TaggedError("SsoUpdateNotFoundError")<{
   readonly message: string;
-  readonly upgradeSuggested?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return gatedNotFoundActionability(this.upgradeSuggested);
+    return actionability.invalidInput;
   }
 }
 
@@ -287,14 +250,10 @@ export class SsoUpdateUnexpectedStatusError extends Data.TaggedError(
   readonly status: number;
   readonly body: string;
   readonly message: string;
-  readonly upgradeSuggested?: boolean;
   readonly entitlement?: PlanGateEntitlement;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status, {
-      upgradeSuggested: this.upgradeSuggested,
-      notFoundIsInvalidInput: true,
-    });
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 
@@ -331,10 +290,9 @@ export class SsoRemoveNetworkError extends Data.TaggedError("SsoRemoveNetworkErr
 
 export class SsoRemoveNotFoundError extends Data.TaggedError("SsoRemoveNotFoundError")<{
   readonly message: string;
-  readonly upgradeSuggested?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return gatedNotFoundActionability(this.upgradeSuggested);
+    return actionability.invalidInput;
   }
 }
 
@@ -344,11 +302,10 @@ export class SsoRemoveUnexpectedStatusError extends Data.TaggedError(
   readonly status: number;
   readonly body: string;
   readonly message: string;
-  readonly upgradeSuggested?: boolean;
   readonly entitlement?: PlanGateEntitlement;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status, { upgradeSuggested: this.upgradeSuggested });
+    return statusCodeActionability(this.status);
   }
 }
 

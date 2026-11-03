@@ -26,7 +26,6 @@ import { accessTokenForProfile } from "../../../auth/command-credentials.layer.t
 import { missingAccessTokenMessage } from "../../../auth/access-token.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
-import { gateResponse, suggestUpgrade } from "../../../command-internal/upgrade-suggest.ts";
 import {
   argvBoolValue,
   argvEnumValue,
@@ -129,61 +128,16 @@ const SSO_UPDATE_SCAN_SPEC = {
   valueFlagShorthands: PERSISTENT_VALUE_FLAG_SHORTHANDS,
 } as const;
 
-type TokenForAux<R> = Effect.Effect<Option.Option<Redacted.Redacted<string>> | undefined, never, R>;
-
-interface GateContext<R> {
-  readonly ref: string;
-  readonly apiUrl: string;
-  readonly tokenForAux: TokenForAux<R>;
-}
-
-const suggestUpgradeFor = <R>(gate: GateContext<R>, cause: SupabaseApiError, statusCode: number) =>
-  Effect.gen(function* () {
-    const token = yield* gate.tokenForAux;
-    return yield* suggestUpgrade({
-      projectRef: gate.ref,
-      featureKey: "auth.saml_2",
-      statusCode,
-      response: gateResponse(cause),
-      apiUrl: gate.apiUrl,
-      ...(token !== undefined ? { accessToken: token } : {}),
-    });
-  });
-
-const handleGetError = <R>(gate: GateContext<R>, providerId: string, cause: SupabaseApiError) =>
+const handleGetError = (providerId: string, cause: SupabaseApiError) =>
   mapGetStatusOrNetwork(cause).pipe(
     Effect.catchTag("SsoUpdateUnexpectedStatusError", (mapped) =>
       Effect.gen(function* () {
-        const upgradeSuggested = yield* suggestUpgradeFor(gate, cause, mapped.status);
         if (mapped.status === 404) {
           return yield* new SsoUpdateNotFoundError({
             message: `An identity provider with ID ${quoteSsoString(providerId)} could not be found.`,
-            upgradeSuggested,
           });
         }
-        return yield* new SsoUpdateUnexpectedStatusError({
-          status: mapped.status,
-          body: mapped.body,
-          message: mapped.message,
-          upgradeSuggested,
-          entitlement: mapped.entitlement,
-        });
-      }),
-    ),
-  );
-
-const handlePutError = <R>(gate: GateContext<R>, cause: SupabaseApiError) =>
-  mapPutStatusOrNetwork(cause).pipe(
-    Effect.catchTag("SsoUpdateUnexpectedStatusError", (mapped) =>
-      Effect.gen(function* () {
-        const upgradeSuggested = yield* suggestUpgradeFor(gate, cause, mapped.status);
-        return yield* new SsoUpdateUnexpectedStatusError({
-          status: mapped.status,
-          body: mapped.body,
-          message: mapped.message,
-          upgradeSuggested,
-          entitlement: mapped.entitlement,
-        });
+        return yield* mapped;
       }),
     ),
   );
@@ -270,8 +224,8 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
     const profileApiUrl = Option.map(reconciledProfile, (profile) => profile.apiUrl);
     // Resolved once (memoized) so the token read happens after
     // required/mutex/workdir validation — a missing or invalid reconciled
-    // token must not preempt those errors. Auxiliary calls (cache fill,
-    // upgrade-gate GETs) use the failure-absorbing variant below instead.
+    // token must not preempt those errors. The auxiliary cache fill uses
+    // the failure-absorbing variant below instead.
     const reconciledTokenCached = Option.isSome(reconciledProfile)
       ? yield* Effect.cached(accessTokenForProfile(reconciledProfile.value.name))
       : undefined;
@@ -337,7 +291,6 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
         reconciledToken === undefined
           ? undefined
           : { baseUrl: apiUrl, accessToken: reconciledToken };
-      const gate = { ref, apiUrl, tokenForAux: reconciledTokenForAux };
 
       const startTask = Effect.suspend((): Effect.Effect<OutputTask | undefined> =>
         output.format === "text" ? output.task("Updating SSO provider...") : Effect.undefined,
@@ -349,7 +302,7 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
         .getASsoProvider({ ref, provider_id: providerId }, requestOptions)
         .pipe(
           Effect.tapError(() => fetching?.fail() ?? Effect.void),
-          Effect.catch((cause) => handleGetError(gate, providerId, cause)),
+          Effect.catch((cause) => handleGetError(providerId, cause)),
         );
 
       const body: SsoUpdateBody = {};
@@ -417,7 +370,7 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
         const rawBody: unknown = yield* response.json;
         return { rawBody, provider: yield* decodeProvider(rawBody) };
       }).pipe(
-        Effect.catch((cause) => handlePutError(gate, cause)),
+        Effect.catch(mapPutStatusOrNetwork),
         Effect.tapError(() => updating?.fail() ?? Effect.void),
       );
       yield* updating?.clear ?? Effect.void;

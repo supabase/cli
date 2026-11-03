@@ -54,11 +54,6 @@ interface SetupOpts {
   body?: unknown;
   network?: "fail";
   projectId?: Option.Option<string>;
-  // Configures the upgrade-gate side-call branches:
-  //   "gated"     → entitlement says auth.saml_2 has_access=false
-  //   "notGated"  → entitlement says auth.saml_2 has_access=true
-  //   undefined   → no extra handlers wired; project lookup 404s
-  upgradeGate?: "gated" | "notGated";
 }
 
 function jsonResponse(
@@ -83,7 +78,6 @@ function setup(opts: SetupOpts = {}) {
 
   const status = opts.status ?? 200;
   const body = opts.body ?? { items: [PROVIDER_ITEM] };
-  const gate = opts.upgradeGate;
 
   const api = mockCommandPlatformApi({
     network: opts.network,
@@ -91,43 +85,6 @@ function setup(opts: SetupOpts = {}) {
       const url = request.url;
       if (url.includes("/config/auth/sso/providers")) {
         return Effect.succeed(jsonResponse(request, status, body));
-      }
-      if (url.endsWith(`/v1/projects/${VALID_REF}`)) {
-        if (gate === undefined) {
-          return Effect.succeed(jsonResponse(request, 404, {}));
-        }
-        return Effect.succeed(
-          jsonResponse(request, 200, {
-            id: VALID_REF,
-            ref: VALID_REF,
-            organization_id: "org-id",
-            organization_slug: "acme",
-            name: "Test",
-            region: "us-east-1",
-            created_at: "2023-01-01T00:00:00Z",
-            status: "ACTIVE_HEALTHY",
-            database: {
-              host: "db.example.com",
-              version: "15",
-              postgres_engine: "15",
-              release_channel: "ga",
-            },
-          }),
-        );
-      }
-      if (url.includes("/v1/organizations/acme/entitlements")) {
-        return Effect.succeed(
-          jsonResponse(request, 200, {
-            entitlements: [
-              {
-                feature: { key: "auth.saml_2", type: "boolean" },
-                hasAccess: gate === "notGated",
-                type: "boolean",
-                config: { enabled: false },
-              },
-            ],
-          }),
-        );
       }
       return Effect.succeed(jsonResponse(request, 404, {}));
     },
@@ -320,38 +277,19 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("reports SAML-disabled error on 404", () => {
-    const { layer } = setup({ status: 404, body: {} });
+  it.effect("reports a 404 as an unexpected status without an entitlement lookup", () => {
+    const { layer, analytics, api } = setup({ status: 404, body: {} });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         ssoList({ remote: Option.none(), projectRef: Option.none() }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = Cause.pretty(exit.cause);
-        expect(dump).toContain("SsoListSamlDisabledError");
-        expect(dump).toContain("Looks like SAML 2.0 support is not enabled");
+        expect(Cause.pretty(exit.cause)).toContain("SsoListUnexpectedStatusError");
       }
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("fires cli_upgrade_suggested on 404 when entitlement is gated", () => {
-    const { layer, analytics } = setup({ status: 404, body: {}, upgradeGate: "gated" });
-    return Effect.gen(function* () {
-      yield* Effect.exit(ssoList({ remote: Option.none(), projectRef: Option.none() }));
-      expect(analytics.captured.some((c) => c.event === EventUpgradeSuggested)).toBe(true);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("does NOT fire cli_upgrade_suggested when entitlement is not gated", () => {
-    const { layer, analytics, api } = setup({ status: 404, body: {}, upgradeGate: "notGated" });
-    return Effect.gen(function* () {
-      yield* Effect.exit(ssoList({ remote: Option.none(), projectRef: Option.none() }));
       expect(analytics.captured.some((c) => c.event === EventUpgradeSuggested)).toBe(false);
       expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         `GET https://api.supabase.com/v1/projects/${VALID_REF}/config/auth/sso/providers`,
-        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
-        "GET https://api.supabase.com/v1/organizations/acme/entitlements",
       ]);
       assertPermissionDrift({ command: "sso list", requests: api.requests });
     }).pipe(Effect.provide(layer));
