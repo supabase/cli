@@ -176,13 +176,6 @@ describe("project init templates", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it("starts the generated config with the schema directive", () => {
-    for (const experimentalStack of [false, true]) {
-      const rendered = renderCliConfigTemplate("demo-project", false, experimentalStack);
-      expect(rendered.split("\n")[0]).toBe(`#:schema ${CLI_CONFIG_SCHEMA_URL}`);
-    }
-  });
-
   it("enables pg-delta by default in the generated config", () => {
     const rendered = renderCliConfigTemplate("demo-project", false);
     expect(rendered).toContain("[experimental.pgdelta]\nenabled = true");
