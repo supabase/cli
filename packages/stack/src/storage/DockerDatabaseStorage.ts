@@ -643,31 +643,55 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           )
           .pipe(Effect.mapError((cause) => errorFor("helper", cause)));
         const stderr = yield* stderrTail(child);
+        const diagnosticProbe = (command: Effect.Effect<string, DockerDatabaseStorageError>) =>
+          command.pipe(
+            Effect.map((output) => ({ outcome: "ok" as const, output })),
+            Effect.timeoutOrElse({
+              duration: "5 seconds",
+              orElse: () =>
+                Effect.succeed({
+                  outcome: "timeout" as const,
+                  output: "unavailable: timed out after 5 seconds",
+                }),
+            }),
+            Effect.catch((cause) =>
+              Effect.succeed({
+                outcome: "error" as const,
+                output: `unavailable: ${cause.message}`,
+              }),
+            ),
+          );
         const stalledHelperState = Effect.fn("DockerDatabaseStorage.stalledHelperState")(
           function* () {
-            const [state, logs] = yield* Effect.all(
+            const [inspected, logs] = yield* Effect.all(
               [
-                engineCommand([
-                  "inspect",
-                  "--format",
-                  "{{.State.Status}} (exit {{.State.ExitCode}}){{if .State.Error}}: {{.State.Error}}{{end}}",
-                  name,
-                ]),
-                // `logs` relays the helper's stderr on the engine's own stderr.
-                engineCommand(["logs", "--tail", "20", name], "all"),
-              ].map((command) =>
-                command.pipe(
-                  Effect.timeoutOrElse({
-                    duration: "5 seconds",
-                    orElse: () => Effect.succeed("unavailable: timed out after 5 seconds"),
-                  }),
-                  Effect.catch((cause) => Effect.succeed(`unavailable: ${cause.message}`)),
+                diagnosticProbe(
+                  engineCommand([
+                    "inspect",
+                    "--format",
+                    "{{.State.Status}}\t{{.State.ExitCode}}\t{{.State.Error}}",
+                    name,
+                  ]),
                 ),
-              ),
+                // `logs` relays the helper's stderr on the engine's own stderr.
+                diagnosticProbe(engineCommand(["logs", "--tail", "20", name], "all")),
+              ],
               { concurrency: "unbounded" },
             );
-            yield* Effect.annotateCurrentSpan("helper.state", state);
-            return `helper state: ${state}\nhelper logs: ${logs || "(empty)"}`;
+            yield* Effect.annotateCurrentSpan({
+              "helper.inspect.outcome": inspected.outcome,
+              "helper.logs.outcome": logs.outcome,
+            });
+            let state = inspected.output;
+            if (inspected.outcome === "ok") {
+              const [status = "", exitCode = "", engineError = ""] = inspected.output.split("\t");
+              yield* Effect.annotateCurrentSpan({
+                "helper.status": status,
+                "helper.exit_code": Number(exitCode),
+              });
+              state = `${status} (exit ${exitCode})${engineError === "" ? "" : `: ${engineError}`}`;
+            }
+            return `helper state: ${state}\nhelper logs: ${logs.output || "(empty)"}`;
           },
         );
         return yield* child.stdout.pipe(

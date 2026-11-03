@@ -450,7 +450,7 @@ describe.runIf(testEngine === "docker")(
                       Stream.concat(Stream.never),
                     )
                   : command.args[0] === "inspect" && !removed
-                    ? encode("running (exit 0)\n")
+                    ? encode("running\t0\t\n")
                     : command.args[0] === "logs"
                       ? encode("supabase-helper-ready\n")
                       : Stream.empty,
