@@ -18,34 +18,17 @@ import {
 } from "../../../tests/helpers/mocks.ts";
 
 const root = rootCommandForFeatures();
-const cases = [
-  {
-    leaf: "query",
-    formats: ["pretty", "table", "json", "csv"],
-    message:
-      "SQL log queries are available for hosted projects only. Use logs tail --local for retained local logs.",
-  },
-  {
-    leaf: "sources",
-    formats: ["pretty", "table", "json", "csv"],
-    message: "Local log discovery requires the experimental stack backend.",
-  },
-  {
-    leaf: "tail",
-    formats: ["pretty", "table", "json"],
-    message:
-      "Local logs require the experimental stack backend. Enable experimental.stack in your CLI config.",
-  },
-];
+const cases = ["query", "sources", "tail"];
+const formats = ["pretty", "table", "json", "csv", "env", "yaml", "toml"];
 
 describe("logs output format parsing", () => {
-  for (const { leaf, formats, message } of cases) {
+  for (const leaf of cases) {
     for (const format of formats) {
-      it.effect(`runs logs ${leaf} validation with -o ${format}`, () =>
+      it.effect(`rejects legacy -o ${format} for logs ${leaf}`, () =>
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const home = yield* fs.makeTempDirectoryScoped({ prefix: "logs-output-" });
-          const args = ["logs", leaf, "--local", "--workdir", home, "-o", format];
+          const args = ["logs", leaf, "--workdir", home, "-o", format];
           const exit = yield* Command.runWith(root, { version: "0.0.0-test" })(args).pipe(
             Effect.provide(
               Layer.mergeAll(
@@ -66,7 +49,9 @@ describe("logs output format parsing", () => {
           );
           const error = Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
           expect(error).toBeInstanceOf(LogsInputError);
-          expect(error).toMatchObject({ message });
+          expect(error).toMatchObject({
+            message: `the -o/--output flag is not supported by logs ${leaf}; use --output-format json|stream-json instead.`,
+          });
         }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
       );
     }

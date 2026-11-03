@@ -1,4 +1,4 @@
-import { outputFormatsForCommand } from "../../command-internal/output-formats.ts";
+import { unsupportedOutputFlagMessage } from "../../command-internal/output-formats.ts";
 import { Clock, DateTime, Effect, FileSystem, Option, Path, Schedule, Schema } from "effect";
 import { Output } from "../../shared/output/output.service.ts";
 import { OutputFlag } from "../../command-internal/global-flags.ts";
@@ -13,11 +13,11 @@ import { stackLogs } from "../../command-internal/stack-logs/retained-logs.ts";
 import { gatewayLog, sharesApiEndpoint } from "@supabase/stack/effect";
 import { StackTargetResolver, validateStackTarget } from "../../command-internal/stack-target.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
-import { toCsv, renderTablewriter } from "../../command-internal/tabular-output.ts";
+import { renderTablewriter } from "../../command-internal/tabular-output.ts";
 import { stripControlSequences } from "../../shared/output/strip-control-sequences.ts";
-import { COMPUTE_LOG_STREAMS } from "../../shared/compute/compute-logs.sql.ts";
 import { queryLogs } from "./logs.api.ts";
 import {
+  COMPUTE_LOG_STREAMS,
   hostedSources,
   quoteLogValue,
   hostedSeveritySql,
@@ -34,42 +34,23 @@ const formatValue = (value: unknown) =>
       ? stripControlSequences(value)
       : JSON.stringify(value);
 
-const validateQueryOutput = Effect.fnUntraced(function* (leaf: "query" | "sources") {
-  const flag = yield* OutputFlag;
-  const format = Option.getOrUndefined(flag);
-  if (format !== undefined && !outputFormatsForCommand(["logs", leaf]).includes(format))
-    return yield* new LogsInputError({
-      message: "Logs support -o table, -o pretty, -o json, and -o csv.",
-    });
+const rejectLegacyOutput = Effect.fnUntraced(function* (leaf: "query" | "sources" | "tail") {
+  if (Option.isSome(yield* OutputFlag))
+    return yield* new LogsInputError({ message: unsupportedOutputFlagMessage(`logs ${leaf}`) });
 });
 
 const emitRows = Effect.fnUntraced(function* (rows: ReadonlyArray<Schema.JsonObject>) {
   const output = yield* Output;
-  const flag = yield* OutputFlag;
-  const format = Option.getOrUndefined(flag);
-  if (format === "json")
-    return yield* output.raw(
-      `${yield* Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(rows)}\n`,
-    );
-  if (format === undefined && output.format !== "text") return yield* output.result(rows);
+  if (output.format !== "text") return yield* output.result(rows);
   const columns = [...new Set(rows.flatMap((row) => Object.keys(row)))];
   const values = rows.map((row) => columns.map((column) => row[column]));
-  yield* output.raw(
-    format === "csv"
-      ? toCsv(columns, values, formatValue)
-      : renderTablewriter(columns, values, formatValue),
-  );
+  yield* output.raw(renderTablewriter(columns, values, formatValue));
 });
 
 export const logsQuery = Effect.fn("logs.query")(function* (flags: LogsQueryFlags) {
   const telemetry = yield* TelemetryState;
   return yield* Effect.gen(function* () {
-    yield* validateQueryOutput("query");
-    if (flags.local)
-      return yield* new LogsInputError({
-        message:
-          "SQL log queries are available for hosted projects only. Use logs tail --local for retained local logs.",
-      });
+    yield* rejectLegacyOutput("query");
     const stdin = yield* Stdin;
     if (Option.isSome(flags.sql) && Option.isSome(flags.file))
       return yield* new LogsInputError({
@@ -198,12 +179,6 @@ const hostedTail = Effect.fn("logs.tail.remote")(function* (
     const base = `select id, toUnixTimestamp64Milli(timestamp) as ts_ms, source, severity_text, ${hostedSeveritySql} as level, event_message, log_attributes from logs where ${conditions.join(" and ")} order by timestamp desc, id desc`;
     const started = yield* Clock.currentTimeMillis;
     const window = yield* logsWindow({ since: flags.since }, started);
-    const format = yield* OutputFlag;
-    if (Option.isSome(format) && !outputFormatsForCommand(["logs", "tail"]).includes(format.value))
-      return yield* new LogsInputError({
-        message: "Log tails support -o json (JSON Lines) or -o pretty.",
-      });
-    const json = Option.isSome(format) ? format.value === "json" : output.format !== "text";
     const seen = new Map<string, number>();
     let newest = flags.tail === 0 ? started : Date.parse(window.start);
     const api = yield* (yield* CommandPlatformApiFactory).make;
@@ -222,17 +197,29 @@ const hostedTail = Effect.fn("logs.tail.remote")(function* (
         ),
       );
     });
-    const emit = Effect.fnUntraced(function* (rows: ReadonlyArray<typeof tailRow.Type>) {
+    const emit = Effect.fnUntraced(function* (
+      rows: ReadonlyArray<typeof tailRow.Type>,
+      origin: "history" | "live",
+    ) {
       for (const row of [...rows].sort((a, b) => a.ts_ms - b.ts_ms || a.id.localeCompare(b.id))) {
         if (seen.has(row.id) || (flags.tail === 0 && row.ts_ms < started)) continue;
         seen.set(row.id, row.ts_ms);
         newest = Math.max(newest, row.ts_ms);
         const payload = { ...row, timestamp: DateTime.formatIso(DateTime.makeUnsafe(row.ts_ms)) };
-        yield* output.raw(
-          json
-            ? `${yield* Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(payload)}\n`
-            : `${payload.timestamp} ${stripControlSequences(row.source || row.log_attributes["subservice"] || "compute")} ${stripControlSequences(row.event_message)}\n`,
-        );
+        if (output.format === "stream-json")
+          yield* output.event({
+            type: "log-entry",
+            timestamp: payload.timestamp,
+            service: row.source || "compute",
+            stream: row.level === "error" || row.level === "warn" ? "stderr" : "stdout",
+            line: row.event_message,
+            source: origin,
+            data: payload,
+          });
+        else
+          yield* output.raw(
+            `${payload.timestamp} ${stripControlSequences(row.source || row.log_attributes["subservice"] || "compute")} ${stripControlSequences(row.event_message)}\n`,
+          );
       }
       const floor = Math.max(Date.parse(window.start), newest - 120_000);
       for (const [id, timestamp] of seen) if (timestamp < floor) seen.delete(id);
@@ -242,15 +229,25 @@ const hostedTail = Effect.fn("logs.tail.remote")(function* (
             "More than 10000 logs arrived inside the overlap window. Narrow the filters and restart the tail.",
         });
     });
-    if (flags.tail > 0) {
-      const rows = yield* read(window, flags.tail);
-      yield* emit(rows);
-      if (rows.length === flags.tail)
-        yield* output.raw(
-          "History reached --tail; older rows may exist. Use logs query to read a wider result.\n",
-          "stderr",
-        );
-    }
+    const history =
+      flags.tail === 0
+        ? []
+        : [...(yield* read(window, flags.tail))].sort(
+            (a, b) => a.ts_ms - b.ts_ms || a.id.localeCompare(b.id),
+          );
+    if (flags.tail > 0 && history.length === flags.tail)
+      yield* output.raw(
+        "History reached --tail; older rows may exist. Use logs query to read a wider result.\n",
+        "stderr",
+      );
+    if (output.format === "json")
+      return yield* output.result(
+        history.map((row) => ({
+          ...row,
+          timestamp: DateTime.formatIso(DateTime.makeUnsafe(row.ts_ms)),
+        })),
+      );
+    yield* emit(history, "history");
     if (flags.noFollow) return;
     const poll = Effect.fn("Logs.tail.poll")(function* () {
       const end = yield* Clock.currentTimeMillis;
@@ -271,7 +268,7 @@ const hostedTail = Effect.fn("logs.tail.remote")(function* (
           message:
             "The poll reached 1000 rows; some logs may be missing. Narrow --service or --search, or use logs query.",
         });
-      yield* emit(rows);
+      yield* emit(rows, "live");
       newest = Math.max(newest, end - 60_000);
     });
     yield* Effect.raceFirst(
@@ -299,7 +296,14 @@ export const logsTail = Effect.fn("logs.tail")(function* (
 ) {
   const telemetry = yield* TelemetryState;
   return yield* Effect.gen(function* () {
-    const target = yield* resolveTarget(flags, { localIsSupported: true });
+    yield* rejectLegacyOutput("tail");
+    const output = yield* Output;
+    if (!flags.noFollow && output.format === "json")
+      return yield* new LogsInputError({
+        message:
+          "Following logs requires text or stream-json output. Use --output-format stream-json, or --no-follow.",
+      });
+    const target = yield* resolveTarget(flags);
     if (target.kind === "db-url")
       return yield* new LogsInputError({ message: "Logs do not support database URLs." });
     if (target.kind === "linked") return yield* hostedTail(flags, target.ref, computeEnabled);
@@ -317,19 +321,16 @@ export const logsTail = Effect.fn("logs.tail")(function* (
       return yield* new LogsInputError({
         message: "For local logs, select either --resource (instance ID) or --service.",
       });
-    return yield* stackLogs(
-      {
-        stack: flags.stack,
-        stackId: flags.stackId,
-        service: Option.isSome(flags.resource)
-          ? [flags.resource.value]
-          : flags.service.map((service) => (service === "postgres" ? "database" : service)),
-        since: Option.orElse(flags.since, () => Option.some("1h")),
-        tail: flags.tail,
-        follow: !flags.noFollow,
-      },
-      { unified: true },
-    );
+    return yield* stackLogs({
+      stack: flags.stack,
+      stackId: flags.stackId,
+      service: Option.isSome(flags.resource)
+        ? [flags.resource.value]
+        : flags.service.map((service) => (service === "postgres" ? "database" : service)),
+      since: Option.orElse(flags.since, () => Option.some("1h")),
+      tail: flags.tail,
+      follow: !flags.noFollow,
+    });
   }).pipe(Effect.ensuring(telemetry.flush));
 });
 
@@ -340,8 +341,8 @@ export const logsSources = Effect.fn("logs.sources")(function* (
 ) {
   const telemetry = yield* TelemetryState;
   return yield* Effect.gen(function* () {
-    yield* validateQueryOutput("sources");
-    const target = yield* resolveTarget(flags, { localIsSupported: true });
+    yield* rejectLegacyOutput("sources");
+    const target = yield* resolveTarget(flags);
     if (target.kind === "linked") {
       if (Option.isSome(flags.stack) || Option.isSome(flags.stackId))
         return yield* new LogsInputError({
@@ -429,7 +430,7 @@ export const logsSources = Effect.fn("logs.sources")(function* (
         !(requested === "gateway" && gateway)
       )
         return yield* new LogsInputError({
-          message: "Unknown local service. Use logs sources --local.",
+          message: "Unknown local service. Use logs sources.",
         });
       const rows = instances
         .filter(

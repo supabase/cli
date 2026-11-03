@@ -530,11 +530,11 @@ describe("respondToComplete", () => {
 
   describe("--output's choice values are validated per-command, not the widened global union (CLI-1965 review)", () => {
     it.each([
-      { leaf: "query", format: "table", accepted: true },
-      { leaf: "query", format: "csv", accepted: true },
-      { leaf: "sources", format: "table", accepted: true },
-      { leaf: "sources", format: "csv", accepted: true },
-      { leaf: "tail", format: "table", accepted: true },
+      { leaf: "query", format: "table", accepted: false },
+      { leaf: "query", format: "csv", accepted: false },
+      { leaf: "sources", format: "table", accepted: false },
+      { leaf: "sources", format: "csv", accepted: false },
+      { leaf: "tail", format: "table", accepted: false },
       { leaf: "tail", format: "csv", accepted: false },
       { leaf: "query", format: "env", accepted: false },
     ])(

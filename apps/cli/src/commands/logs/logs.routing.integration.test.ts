@@ -33,7 +33,8 @@ it.effect.each([
         `${home}/supabase/config.toml`,
         `[experimental]\ncompute = ${configured}\n`,
       );
-      const env = override === undefined ? {} : { SUPABASE_EXPERIMENTAL_COMPUTE: override };
+      const env: Readonly<Record<string, string>> =
+        override === undefined ? {} : { SUPABASE_EXPERIMENTAL_COMPUTE: override };
       const args = [
         "logs",
         "sources",

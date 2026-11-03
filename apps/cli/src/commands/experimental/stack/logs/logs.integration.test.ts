@@ -37,7 +37,7 @@ import {
   stackApiLayer,
   stackTargetResolverLayer,
 } from "../../../../command-internal/stack-target.ts";
-import type { StackLogsFlags } from "./logs.command.ts";
+import type { RetainedLogsFlags as StackLogsFlags } from "../../../../command-internal/stack-logs/retained-logs.ts";
 import { stackLogs } from "../../../../command-internal/stack-logs/retained-logs.ts";
 import { logsTail } from "../../../logs/logs.handler.ts";
 import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api-factory.service.ts";
@@ -45,7 +45,7 @@ import { TargetPolicy } from "../../../../command-internal/target/target-policy.
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 import { selection } from "../../../../../tests/helpers/pins.ts";
 
-const decodeRow = Schema.decodeSync(Schema.fromJsonString(Schema.JsonObject));
+const decodeRows = Schema.decodeSync(Schema.fromJsonString(Schema.Array(Schema.JsonObject)));
 const live = Layer.provideMerge(stackApiLayer, BunServices.layer);
 
 type SavedInstance = SavedStack["instances"][number];
@@ -204,7 +204,7 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
             {
               remote: Option.none(),
               projectRef: Option.none(),
-              local: true,
+              local: false,
               linked: false,
               stack: Option.none(),
               stackId: Option.some(stack.id),
@@ -222,7 +222,7 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
           ).pipe(
             Effect.provide(
               Layer.mergeAll(
-                Layer.succeed(OutputFlag, Option.some("json")),
+                Layer.succeed(OutputFlag, Option.none()),
                 Layer.mock(LinkedProjectCache, {}),
                 Layer.mock(ProjectRefResolver, {}),
                 Layer.mock(ProcessControl, {}),
@@ -250,10 +250,10 @@ const lines = (text: string) => text.split("\n").filter((value) => value.length 
 const eventLines = (events: ReadonlyArray<{ readonly type: string; readonly line?: unknown }>) =>
   events.filter(({ type }) => type === "log-entry").map(({ line: text }) => text);
 
-describe("stack logs", () => {
+describe("retained local logs", () => {
   const t0 = Date.parse("2026-09-29T10:00:00.000Z");
 
-  it.effect("preserves full retained records and markers in unified JSON Lines while stopped", () =>
+  it.effect("preserves full retained records and markers in native JSON while stopped", () =>
     Effect.gen(function* () {
       const f = yield* fixture({ instances: [database("db-a")], members: ["db-a"] });
       yield* f.writeSegment("database", "db-a", [
@@ -263,17 +263,13 @@ describe("stack logs", () => {
       ]);
       const { exit, output } = yield* f.run({}, "json", true);
       expect(Exit.isSuccess(exit)).toBe(true);
-      const rows = output.stdoutText
-        .trim()
-        .split("\n")
-        .map((text) => decodeRow(text));
+      const rows = decodeRows(output.stdoutText);
       expect(rows.map((row) => row.kind)).toEqual(["launch", "stdout", "lost"]);
       expect(rows[1]).toMatchObject({
         instanceId: "db-a",
         service: "database",
         launchId: 1,
         text: "retained",
-        source: "history",
       });
       expect(rows[1]?.position).toMatchObject({ generation: 1 });
       expect(rows[2]).toMatchObject({ count: 3 });
@@ -433,10 +429,15 @@ describe("stack logs", () => {
       const finite = yield* f.run({}, "json");
       const text = yield* f.run({});
 
-      expect(streamed.output.events).toEqual(expected);
+      expect(streamed.output.events.map(({ data: _data, ...event }) => event)).toEqual(expected);
       expect(
         yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(finite.output.stdoutText),
-      ).toEqual(expected);
+      ).toMatchObject([
+        { kind: "launch" },
+        { kind: "stdout", text: "hello" },
+        { kind: "stderr", text: "oops" },
+        { kind: "lost", count: 3 },
+      ]);
       expect(
         lines(text.output.stdoutText).map((value) => value.replace(/\d{2}:\S+ /u, "")),
       ).toEqual([
@@ -459,7 +460,7 @@ describe("stack logs", () => {
       expect(failure(followed.exit)).toMatchObject({
         reason: "lifecycle",
         suggestion:
-          "Run supabase stack logs without --follow to read retained logs, or supabase stack start first.",
+          "Run supabase logs tail --no-follow to read retained logs, or supabase stack start first.",
       });
       expect(followed.output.stdoutText).toBe("");
       expect(followed.output.stderrText).toBe("");

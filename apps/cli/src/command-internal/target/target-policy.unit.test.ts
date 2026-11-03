@@ -110,9 +110,9 @@ describe.each(leavesByVariant)(
       const offenders = withPolicy
         .filter(({ policy }) => ["local-only", "account", "hosted"].includes(policy.group))
         .flatMap(({ path, node }) =>
-          TARGET_SELECTOR_FLAGS.filter(
-            (flag) => node.flags.has(flag) && !(path === "logs query" && flag === "local"),
-          ).map((flag) => `${path} --${flag}`),
+          TARGET_SELECTOR_FLAGS.filter((flag) => node.flags.has(flag)).map(
+            (flag) => `${path} --${flag}`,
+          ),
         );
       expect(offenders).toEqual([]);
     });

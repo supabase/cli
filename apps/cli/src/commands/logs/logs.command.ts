@@ -1,4 +1,4 @@
-import { outputFormatsForCommand } from "../../command-internal/output-formats.ts";
+import { GLOBAL_OUTPUT_FORMATS } from "../../command-internal/global-flags.ts";
 import { Layer } from "effect";
 import { identityStitchLayer } from "../../command-internal/identity-stitch.ts";
 import { Argument, Command, Flag } from "effect/cli";
@@ -33,7 +33,6 @@ const stackFlags = {
 };
 const queryConfig = {
   ...projectTargetFlags(),
-  local: targetFlags({ subject: "log source", dbUrl: false, visibleLocal: true }).local,
   sql: Argument.String("sql").pipe(
     Argument.withDescription("SQL for hosted logs, not Postgres."),
     Argument.optional,
@@ -54,7 +53,7 @@ const queryConfig = {
   ),
 };
 const tailConfig = {
-  ...targetFlags({ subject: "log source", dbUrl: false, visibleLocal: true }),
+  ...targetFlags({ subject: "log source", dbUrl: false }),
   ...stackFlags,
   service: Flag.String("service").pipe(
     Flag.withDescription("Service selector; repeat for multiple services. See logs sources."),
@@ -96,7 +95,7 @@ const tailConfig = {
   ),
 };
 const sourcesConfig = {
-  ...targetFlags({ subject: "log source", dbUrl: false, visibleLocal: true }),
+  ...targetFlags({ subject: "log source", dbUrl: false }),
   ...stackFlags,
   service: Flag.String("service").pipe(
     Flag.withDescription("Describe one service."),
@@ -132,15 +131,15 @@ export const logsCommandFor = (localEnabled: boolean, computeEnabled = false) =>
     Command.withSubcommands([
       Command.make("query", queryConfig).pipe(
         Command.withDescription(
-          "Run hosted log SQL from one argument, --file, or stdin. Ranges are limited to 24 hours. Use -o table, json, or csv.",
+          "Run hosted log SQL from one argument, --file, or stdin. Ranges are limited to 24 hours. Use --output-format text, json, or stream-json.",
         ),
-        withPermissions(readPermissions(["local", "file", "since", "from", "to"])),
+        withPermissions(readPermissions(["file", "since", "from", "to"])),
         Command.withHandler((flags) =>
           logsQuery(flags).pipe(
             withCommandTelemetry({
               flags,
               config: queryConfig,
-              outputFormats: outputFormatsForCommand(["logs", "query"]),
+              outputFormats: GLOBAL_OUTPUT_FORMATS,
             }),
             withJsonErrorHandling,
           ),
@@ -157,7 +156,7 @@ export const logsCommandFor = (localEnabled: boolean, computeEnabled = false) =>
       ),
       Command.make("tail", tailConfig).pipe(
         Command.withDescription(
-          "Print recent logs and follow until interrupted. Defaults to local, the last hour, and 100 lines. Use --no-follow to exit after history, -o json for JSON Lines.",
+          "Print recent logs and follow until interrupted. Defaults to local, the last hour, and 100 lines. Use --no-follow to exit after history, or --output-format stream-json to follow structured events.",
         ),
         withPermissions(
           readPermissions([
@@ -178,7 +177,7 @@ export const logsCommandFor = (localEnabled: boolean, computeEnabled = false) =>
             withCommandTelemetry({
               flags,
               config: tailConfig,
-              outputFormats: outputFormatsForCommand(["logs", "tail"]),
+              outputFormats: GLOBAL_OUTPUT_FORMATS,
             }),
             withJsonErrorHandling,
           ),
@@ -209,7 +208,7 @@ export const logsCommandFor = (localEnabled: boolean, computeEnabled = false) =>
             withCommandTelemetry({
               flags,
               config: sourcesConfig,
-              outputFormats: outputFormatsForCommand(["logs", "sources"]),
+              outputFormats: GLOBAL_OUTPUT_FORMATS,
             }),
             withJsonErrorHandling,
           ),

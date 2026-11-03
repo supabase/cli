@@ -24,14 +24,13 @@ import type { LogsQueryFlags, LogsTailFlags } from "./logs.command.ts";
 import { LogsApiError, LogsInputError } from "./logs.errors.ts";
 
 const decodeRows = Schema.decodeSync(Schema.fromJsonString(Schema.Array(Schema.JsonObject)));
-const decodeRow = Schema.decodeSync(Schema.fromJsonString(Schema.JsonObject));
+const decodeData = Schema.decodeUnknownSync(Schema.JsonObject);
 
 const route = `GET /v1/projects/${COMPUTE_PROJECT_REF}/analytics/endpoints/logs`;
 const now = Date.parse("2026-11-02T12:00:00Z");
 const queryFlags = (overrides: Partial<LogsQueryFlags> = {}): LogsQueryFlags => ({
   remote: Option.none(),
   projectRef: Option.none(),
-  local: false,
   sql: Option.some("select event_message, log_attributes from logs limit 2"),
   file: Option.none(),
   since: Option.none(),
@@ -108,7 +107,7 @@ describe("unified logs", () => {
       });
       const setup = yield* prepare({
         workdir: repo.dir,
-        outputFlag: "json",
+        format: "json",
         routes: {
           [route]: {
             status: 200,
@@ -140,13 +139,12 @@ describe("unified logs", () => {
   );
 
   it.effect(
-    "rejects conflicting SQL inputs, local SQL, oversized ranges, and invalid formats before querying",
+    "rejects conflicting SQL inputs, oversized ranges, and invalid formats before querying",
     () =>
       Effect.gen(function* () {
         const repo = yield* makeComputeProject();
         for (const test of [
           { flags: queryFlags({ file: Option.some("query.sql") }) },
-          { flags: queryFlags({ local: true }) },
           { flags: queryFlags({ since: Option.some("25h") }) },
           { flags: queryFlags(), format: "env" as const },
         ]) {
@@ -171,7 +169,7 @@ describe("unified logs", () => {
       expect(Schema.is(LogsApiError)(error) && error.message).toContain("Unknown field");
       const empty = yield* prepare({
         workdir: repo.dir,
-        outputFlag: "json",
+        format: "json",
         routes: { [route]: { status: 200, body: { result: null, error: null } } },
       });
       yield* logsQuery(queryFlags()).pipe(Effect.provide(empty.layer));
@@ -187,7 +185,7 @@ describe("unified logs", () => {
         const repo = yield* makeComputeProject();
         const setup = yield* prepare({
           workdir: repo.dir,
-          outputFlag: "json",
+          format: "json",
           routes: {
             [route]: {
               status: 200,
@@ -200,10 +198,7 @@ describe("unified logs", () => {
           false,
           false,
         ).pipe(Effect.provide(setup.layer));
-        const lines = setup.out.stdoutText
-          .trim()
-          .split("\n")
-          .map((line) => decodeRow(line));
+        const lines = decodeRows(setup.out.stdoutText);
         expect(lines.map((line) => line.id)).toEqual(["old", "new"]);
         expect(lines[0]?.log_attributes).toMatchObject({ trace_id: "correlation" });
         const sql = setup.http.requests[0]?.urlParams.sql;
@@ -216,7 +211,7 @@ describe("unified logs", () => {
   it.effect("discovers truthful hosted capabilities without querying logs", () =>
     Effect.gen(function* () {
       const repo = yield* makeComputeProject();
-      const setup = yield* prepare({ workdir: repo.dir, outputFlag: "json", routes: {} });
+      const setup = yield* prepare({ workdir: repo.dir, format: "json", routes: {} });
       yield* logsSources({ ...tailFlags(), service: Option.some("storage") }, false, false).pipe(
         Effect.provide(setup.layer),
       );
@@ -235,7 +230,7 @@ describe("unified logs", () => {
         const repo = yield* makeComputeProject();
         const setup = yield* prepare({
           workdir: repo.dir,
-          outputFlag: "json",
+          format: "stream-json",
           routes: {
             [route]: [
               { status: 200, body: { result: [row("a")], error: null } },
@@ -255,16 +250,16 @@ describe("unified logs", () => {
         const control = mockProcessControl({ awaitSignal: Deferred.await(stop) });
         const observed = Layer.succeed(Output, {
           ...output,
-          raw: (line, stream) =>
+          event: (event) =>
             output
-              .raw(line, stream)
+              .event(event)
               .pipe(
                 Effect.andThen(
-                  line.includes('"id":"c"')
+                  event.type === "log-entry" && event.data?.id === "c"
                     ? Deferred.succeed(stop, "SIGINT")
-                    : line.includes('"id":"b"')
+                    : event.type === "log-entry" && event.data?.id === "b"
                       ? Deferred.succeed(second, undefined)
-                      : line.includes('"id":"a"')
+                      : event.type === "log-entry" && event.data?.id === "a"
                         ? Deferred.succeed(first, undefined)
                         : Effect.void,
                 ),
@@ -281,10 +276,9 @@ describe("unified logs", () => {
         yield* TestClock.adjust("10 seconds");
         yield* Fiber.join(fiber);
         expect(
-          setup.out.stdoutText
-            .trim()
-            .split("\n")
-            .map((line) => decodeRow(line).id),
+          setup.out.events
+            .filter((event) => event.type === "log-entry")
+            .map((event) => decodeData(event.data).id),
         ).toEqual(["a", "b", "c"]);
         expect(setup.http.requests).toHaveLength(4);
         expect(control.exitCode).toBe(130);
@@ -300,7 +294,7 @@ describe("unified logs", () => {
         const repo = yield* makeComputeProject();
         const setup = yield* prepare({
           workdir: repo.dir,
-          outputFlag: "json",
+          format: "stream-json",
           routes: {
             [route]: { status: 200, body: { result: [row("new", now + 1000)], error: null } },
           },
@@ -310,9 +304,9 @@ describe("unified logs", () => {
         const control = mockProcessControl({ awaitSignal: Deferred.await(stop) });
         const observed = Layer.succeed(Output, {
           ...output,
-          raw: (line, stream) =>
+          event: (event) =>
             output
-              .raw(line, stream)
+              .event(event)
               .pipe(Effect.andThen(Deferred.succeed(stop, "SIGINT")), Effect.asVoid),
         });
         yield* logsTail(tailFlags({ tail: 0, noFollow: false }), false, false).pipe(
@@ -323,7 +317,13 @@ describe("unified logs", () => {
           "2026-11-02T12:00:00.000Z",
         );
         expect(setup.http.requests[0]?.urlParams.sql).toContain("limit 1000");
-        expect(setup.out.stdoutText).toContain('"id":"new"');
+        expect(setup.out.events).toContainEqual(
+          expect.objectContaining({
+            type: "log-entry",
+            source: "live",
+            data: expect.objectContaining({ id: "new" }),
+          }),
+        );
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
@@ -360,7 +360,7 @@ describe("unified logs", () => {
       const setup = yield* prepare(
         {
           workdir: repo.dir,
-          outputFlag: "json",
+          format: "json",
           routes: { [route]: { status: 200, body: { result: [], error: null } } },
         },
         "select count() from logs",
@@ -376,6 +376,74 @@ describe("unified logs", () => {
       });
       yield* logsQuery(queryFlags()).pipe(Effect.provide(Layer.merge(setup.layer, failOnRead)));
       expect(setup.http.requests[1]?.urlParams.sql).toContain("select event_message");
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+  it.effect("rejects native JSON follow before querying and points to stream-json", () =>
+    Effect.gen(function* () {
+      const repo = yield* makeComputeProject();
+      const setup = yield* prepare({ workdir: repo.dir, format: "json", routes: {} });
+      const error = yield* logsTail(tailFlags({ noFollow: false }), false, false).pipe(
+        Effect.flip,
+        Effect.provide(setup.layer),
+      );
+      expect(error).toMatchObject({
+        _tag: "LogsInputError",
+        message:
+          "Following logs requires text or stream-json output. Use --output-format stream-json, or --no-follow.",
+      });
+      expect(setup.http.requests).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect.each([402, 404, 429, 500])(
+    "surfaces hosted query HTTP %s as a typed API failure",
+    (status) =>
+      Effect.gen(function* () {
+        const repo = yield* makeComputeProject();
+        const setup = yield* prepare({ workdir: repo.dir, routes: { [route]: { status } } });
+        const error = yield* logsQuery(queryFlags()).pipe(Effect.flip, Effect.provide(setup.layer));
+        expect(error).toMatchObject({ _tag: "LogsApiError", status });
+        expect(setup.http.requests).toHaveLength(1);
+        expect(setup.telemetry.flushed).toBe(true);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("fails typed for an out-of-range log timestamp", () =>
+    Effect.gen(function* () {
+      const repo = yield* makeComputeProject();
+      const setup = yield* prepare({
+        workdir: repo.dir,
+        routes: { [route]: { status: 200, body: { result: [row("bad", 8.7e15)], error: null } } },
+      });
+      const error = yield* logsTail(tailFlags(), false, false).pipe(
+        Effect.flip,
+        Effect.provide(setup.layer),
+      );
+      expect(error).toMatchObject({
+        _tag: "LogsApiError",
+        status: 502,
+        message: "The logs API returned an unreadable log row.",
+      });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("does not retry a definitive follow failure", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(now);
+      const repo = yield* makeComputeProject();
+      const setup = yield* prepare({
+        workdir: repo.dir,
+        format: "stream-json",
+        routes: {
+          [route]: [{ status: 200, body: { result: [row("seed")], error: null } }, { status: 404 }],
+        },
+      });
+      const error = yield* logsTail(tailFlags({ noFollow: false }), false, false).pipe(
+        Effect.flip,
+        Effect.provide(setup.layer),
+      );
+      expect(error).toMatchObject({ _tag: "LogsApiError", status: 404 });
+      expect(setup.http.requests).toHaveLength(2);
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 });

@@ -1,5 +1,5 @@
-import { outputFormatsForCommand } from "../output-formats.ts";
-import { Clock, Effect, Option, Path, Stream } from "effect";
+import { unsupportedOutputFlagMessage } from "../output-formats.ts";
+import { Clock, Effect, Option, Path, Schema, Stream } from "effect";
 import {
   gatewayLog,
   sharesApiEndpoint,
@@ -16,7 +16,6 @@ import {
   StackApi,
   mapTargetError,
   StackTargetResolver,
-  rejectStackOutput,
   validateStackTarget,
 } from "../stack-target.ts";
 import { StackCommandLogsError } from "./retained-logs.errors.ts";
@@ -101,10 +100,7 @@ const select = (
   ]);
 };
 
-export const stackLogs = Effect.fn("experimental.stack.logs")(function* (
-  flags: RetainedLogsFlags,
-  options: { readonly unified?: boolean } = {},
-) {
+export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: RetainedLogsFlags) {
   const telemetry = yield* TelemetryState;
   return yield* Effect.gen(function* () {
     const output = yield* Output;
@@ -113,27 +109,16 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (
     const api = yield* StackApi;
     const resolver = yield* StackTargetResolver;
     const outputFlag = Option.flatten(yield* Effect.serviceOption(OutputFlag));
-    if (!options.unified)
-      yield* rejectStackOutput(yield* Effect.serviceOption(OutputFlag)).pipe(
-        Effect.mapError(targetError),
-      );
-    if (
-      options.unified &&
-      Option.isSome(outputFlag) &&
-      !outputFormatsForCommand(["logs", "tail"]).includes(outputFlag.value)
-    )
+    if (Option.isSome(outputFlag))
       return yield* new StackCommandLogsError({
         reason: "flags",
-        message: "Log tails support -o json (JSON Lines) or -o pretty.",
+        message: unsupportedOutputFlagMessage("logs tail"),
       });
-    const jsonLines =
-      options.unified &&
-      (Option.isSome(outputFlag) ? outputFlag.value === "json" : output.format !== "text");
     yield* validateStackTarget({
       stack: Option.getOrUndefined(flags.stack),
       stackId: Option.getOrUndefined(flags.stackId),
     }).pipe(Effect.mapError(targetError));
-    if (!options.unified && flags.follow && output.format === "json")
+    if (flags.follow && output.format === "json")
       return yield* new StackCommandLogsError({
         reason: "flags",
         message: "Following logs requires text or stream-json output.",
@@ -166,7 +151,7 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (
         reason: "lifecycle",
         message: "The stack is not running, so there are no new lines to follow.",
         suggestion:
-          "Run supabase stack logs without --follow to read retained logs, or supabase stack start first.",
+          "Run supabase logs tail --no-follow to read retained logs, or supabase stack start first.",
       });
     const selected = yield* select(target.definition, flags.service);
     yield* Effect.annotateCurrentSpan({ "stack.service_count": selected.length });
@@ -189,17 +174,17 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (
       );
     const { window, positions: printed, launches } = collector.finish();
 
-    if (!options.unified && output.format === "json")
-      return yield* output.result(window.records.map((record) => logEvent(record, "history")));
+    if (output.format === "json") return yield* output.result(window.records);
     // Colour follows the terminal only when stdout is one, so piped logs stay plain.
     const terminal = output.interactive;
     const text = makeTextFormatter(selected, terminal ? process.stdout : {});
     const emit = (record: StackLogRecord, source: LogSource) =>
-      jsonLines
-        ? output.raw(`${JSON.stringify({ ...record, source })}\n`)
-        : output.format === "stream-json" && !options.unified
-          ? output.event(logEvent(record, source))
-          : output.raw(text(record));
+      output.format === "stream-json"
+        ? Effect.gen(function* () {
+            const data = yield* Schema.decodeEffect(Schema.JsonObject)(record);
+            yield* output.event({ ...logEvent(record, source), data });
+          })
+        : output.raw(text(record));
     yield* Effect.forEach(window.records, (record) => emit(record, "history"), { discard: true });
     if (output.format === "text" && flags.tail > 0) {
       const note = (message: string) =>
@@ -229,7 +214,7 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (
             reason: "lifecycle",
             message:
               "The running stack serves none of the selected services, so there are no new lines to follow.",
-            suggestion: "Run supabase stack logs without --follow to read retained logs.",
+            suggestion: "Run supabase logs tail --no-follow to read retained logs.",
           });
         if (missing.length > 0)
           yield* output.warn(
