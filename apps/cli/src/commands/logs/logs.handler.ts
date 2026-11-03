@@ -13,8 +13,9 @@ import { stackLogs } from "../../command-internal/stack-logs/retained-logs.ts";
 import { gatewayLog, sharesApiEndpoint } from "@supabase/stack/effect";
 import { StackTargetResolver, validateStackTarget } from "../../command-internal/stack-target.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
-import { renderTablewriter } from "../../command-internal/tabular-output.ts";
-import { stripControlSequences } from "../../shared/output/strip-control-sequences.ts";
+import { encodeHtmlSafeJsonIndented } from "../../command-internal/html-safe-json.ts";
+import { Tty } from "../../shared/runtime/tty.service.ts";
+import { renderLogsRows, renderLogsSources, wrapLogsText } from "./logs.display.ts";
 import { queryLogs } from "./logs.api.ts";
 import {
   COMPUTE_LOG_STREAMS,
@@ -27,24 +28,38 @@ import { logsWindow } from "./logs.format.ts";
 import { LogsApiError, LogsInputError } from "./logs.errors.ts";
 import type { LogsQueryFlags, LogsTailFlags, LogsSourcesFlags } from "./logs.command.ts";
 
-const formatValue = (value: unknown) =>
-  value === null || value === undefined
-    ? ""
-    : typeof value === "string"
-      ? stripControlSequences(value)
-      : JSON.stringify(value);
+const logsWidth = Effect.fnUntraced(function* () {
+  const tty = yield* Effect.serviceOption(Tty);
+  const columns = Option.isSome(tty) ? tty.value.stdoutColumns : undefined;
+  return columns !== undefined && Number.isFinite(columns) && columns >= 20
+    ? Math.floor(columns)
+    : 80;
+});
+
+const logsResult = Effect.fnUntraced(function* (rows: ReadonlyArray<Schema.JsonObject>) {
+  const output = yield* Output;
+  return yield* output.format === "json"
+    ? output.raw(encodeHtmlSafeJsonIndented(rows))
+    : output.result(rows);
+});
 
 const rejectLegacyOutput = Effect.fnUntraced(function* (leaf: "query" | "sources" | "tail") {
   if (Option.isSome(yield* OutputFlag))
     return yield* new LogsInputError({ message: unsupportedOutputFlagMessage(`logs ${leaf}`) });
 });
 
-const emitRows = Effect.fnUntraced(function* (rows: ReadonlyArray<Schema.JsonObject>) {
+const emitRows = Effect.fnUntraced(function* (
+  rows: ReadonlyArray<Schema.JsonObject>,
+  sourceDetail?: boolean,
+) {
   const output = yield* Output;
-  if (output.format !== "text") return yield* output.result(rows);
-  const columns = [...new Set(rows.flatMap((row) => Object.keys(row)))];
-  const values = rows.map((row) => columns.map((column) => row[column]));
-  yield* output.raw(renderTablewriter(columns, values, formatValue));
+  if (output.format !== "text") return yield* logsResult(rows);
+  const width = yield* logsWidth();
+  yield* output.raw(
+    sourceDetail === undefined
+      ? renderLogsRows(rows, width)
+      : renderLogsSources(rows, sourceDetail, width),
+  );
 });
 
 export const logsQuery = Effect.fn("logs.query")(function* (flags: LogsQueryFlags) {
@@ -196,6 +211,7 @@ const hostedTail = Effect.fn("logs.tail.remote")(function* (
         ),
       );
     });
+    const width = yield* logsWidth();
     const emit = Effect.fnUntraced(function* (
       rows: ReadonlyArray<typeof tailRow.Type>,
       origin: "history" | "live",
@@ -217,7 +233,7 @@ const hostedTail = Effect.fn("logs.tail.remote")(function* (
           });
         else
           yield* output.raw(
-            `${payload.timestamp} ${stripControlSequences(row.source || row.log_attributes["subservice"] || "compute")} ${stripControlSequences(row.event_message)}\n`,
+            `${wrapLogsText(`${payload.timestamp} ${row.source || row.log_attributes["subservice"] || "compute"} ${row.event_message}`, width)}\n`,
           );
       }
       const floor = Math.max(Date.parse(window.start), newest - 120_000);
@@ -240,7 +256,7 @@ const hostedTail = Effect.fn("logs.tail.remote")(function* (
         "stderr",
       );
     if (output.format === "json")
-      return yield* output.result(
+      return yield* logsResult(
         history.map((row) => ({
           ...row,
           timestamp: DateTime.formatIso(DateTime.makeUnsafe(row.ts_ms)),
@@ -324,7 +340,15 @@ export const logsTail = Effect.fn("logs.tail")(function* (
       since: Option.orElse(flags.since, () => Option.some("1h")),
       tail: flags.tail,
       follow: !flags.noFollow,
-    });
+    }).pipe(
+      Effect.provideService(Output, {
+        ...output,
+        result: (rows) =>
+          output.format === "json"
+            ? output.raw(encodeHtmlSafeJsonIndented(rows))
+            : output.result(rows),
+      }),
+    );
   }).pipe(Effect.ensuring(telemetry.flush));
 });
 
@@ -390,6 +414,7 @@ export const logsSources = Effect.fn("logs.sources")(function* (
               : null,
             kinds: "kinds" in entry ? entry.kinds : [],
           })),
+        Option.isSome(flags.service),
       );
     }
     if (!localEnabled)
@@ -441,21 +466,24 @@ export const logsSources = Effect.fn("logs.sources")(function* (
           kinds: ["stdout", "stderr", "launch", "lost"],
           severity: null,
         }));
-      yield* emitRows([
-        ...rows,
-        ...(gateway && (requested === undefined || requested === "gateway")
-          ? [
-              {
-                service: gatewayLog.service,
-                resource: gatewayLog.instanceId,
-                sql: null,
-                filters: ["service", "since", "tail"],
-                kinds: ["stdout", "stderr", "launch", "lost"],
-                severity: null,
-              },
-            ]
-          : []),
-      ]);
+      yield* emitRows(
+        [
+          ...rows,
+          ...(gateway && (requested === undefined || requested === "gateway")
+            ? [
+                {
+                  service: gatewayLog.service,
+                  resource: gatewayLog.instanceId,
+                  sql: null,
+                  filters: ["service", "since", "tail"],
+                  kinds: ["stdout", "stderr", "launch", "lost"],
+                  severity: null,
+                },
+              ]
+            : []),
+        ],
+        Option.isSome(flags.service),
+      );
     });
   }).pipe(Effect.ensuring(telemetry.flush));
 });

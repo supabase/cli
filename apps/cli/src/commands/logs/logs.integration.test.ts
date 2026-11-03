@@ -126,6 +126,7 @@ describe("unified logs", () => {
           to: Option.some("2026-11-02T12:00:00Z"),
         }),
       ).pipe(Effect.provide(setup.layer));
+      expect(setup.out.stdoutText).toContain('\n    "log_attributes": {\n');
       expect(decodeRows(setup.out.stdoutText)).toEqual([
         { id: "a", log_attributes: { "user.id": "123", trace_id: "abc" } },
       ]);
@@ -222,6 +223,26 @@ describe("unified logs", () => {
       expect(setup.http.requests).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
+  it.effect("renders source summaries and full selected-service details in text", () =>
+    Effect.gen(function* () {
+      const repo = yield* makeComputeProject();
+      const overview = yield* prepare({ workdir: repo.dir, format: "text", routes: {} });
+      yield* logsSources({ ...tailFlags(), service: Option.none() }, false, true).pipe(
+        Effect.provide(overview.layer),
+      );
+      expect(overview.out.stdoutText).toContain("Use --service <service>");
+      expect(overview.out.stdoutText).not.toContain("log_attributes");
+      const detail = yield* prepare({ workdir: repo.dir, format: "text", routes: {} });
+      yield* logsSources({ ...tailFlags(), service: Option.some("compute") }, false, true).pipe(
+        Effect.provide(detail.layer),
+      );
+      expect(detail.out.stdoutText).toContain("Service:\n  compute");
+      expect(detail.out.stdoutText).toContain("Kinds:\n  app, requests, builds");
+      expect(detail.out.stdoutText).toContain("worker_api_logs");
+      expect(detail.out.stdoutText.split("\n").every((line) => line.length <= 80)).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
   it.effect(
     "follows overlapping windows once, retries rate limits, and preserves finalizers on interruption",
     () =>

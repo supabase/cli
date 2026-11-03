@@ -290,6 +290,7 @@ describe("retained local logs", () => {
       ]);
       const { exit, output } = yield* f.run({}, "json", "legacy");
       expect(Exit.isSuccess(exit), Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "").toBe(true);
+      expect(output.stdoutText.startsWith("[{")).toBe(true);
       const rows = decodeRows(output.stdoutText);
       expect(rows).toHaveLength(200);
       expect(rows[0]).toMatchObject({ text: "retained 1" });
@@ -310,6 +311,7 @@ describe("retained local logs", () => {
       ]);
       const { exit, output } = yield* f.run({}, "json", "unified");
       expect(Exit.isSuccess(exit)).toBe(true);
+      expect(output.stdoutText.startsWith("[\n  {\n")).toBe(true);
       const rows = decodeRows(output.stdoutText);
       expect(rows.map((row) => row.kind)).toEqual(["launch", "stdout", "lost"]);
       expect(rows[1]).toMatchObject({
