@@ -26,6 +26,8 @@ import { CliConfigLoadError } from "../shared/config/cli-config-load.errors.ts";
 import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 import { escapeControlCharacters } from "../shared/output/escape-control-characters.ts";
 import { Output } from "../shared/output/output.service.ts";
+import { PropConfigKey } from "../shared/telemetry/event-catalog.ts";
+import { recordCommandTelemetry } from "../telemetry/command-telemetry-attributes.ts";
 import { CLI_CONFIG_FAMILIES, CLI_CONFIG_REMOVED_ENV_NAMES } from "./cli-config-key-annotations.ts";
 import {
   cloneDocumentRecord,
@@ -37,6 +39,7 @@ import {
   sameDocumentValue,
   setDocumentValue,
 } from "./cli-config-document.ts";
+import { cliConfigFailureKey } from "./cli-config-failure-key.ts";
 import { CliConfigFlagInputs, cliConfigFlagConflictError } from "./cli-config-flags.ts";
 import {
   decodingFailedMessage,
@@ -64,6 +67,11 @@ import {
   type CliConfigWithheldEnv,
 } from "./cli-config-values.service.ts";
 import { CliConfigRemovedEnvError, CliConfigValueError } from "./cli-config.errors.ts";
+
+const recordConfigFailureKey = (error: unknown): Effect.Effect<void> => {
+  const key = cliConfigFailureKey(error);
+  return key === undefined ? Effect.void : recordCommandTelemetry({ [PropConfigKey]: key });
+};
 
 class LoadKey extends Data.Class<{
   readonly workdir: string;
@@ -534,7 +542,7 @@ export const cliConfigValuesLayer = Layer.effect(
           const picked = pickCliConfigKey(key, sources);
           if (Result.isFailure(picked)) return yield* picked.failure;
           return picked.success;
-        });
+        }).pipe(Effect.tapError(recordConfigFailureKey));
 
       for (const message of overrideWarnings) yield* warnOnce(message);
       if (Option.isSome(debugLogger)) {
@@ -600,7 +608,7 @@ export const cliConfigValuesLayer = Layer.effect(
             tolerateUnreadableLinkedRef: target.tolerateUnreadableLinkedRef === true,
             tolerateInvalid: target.tolerateInvalid === true,
           }),
-        ),
+        ).pipe(Effect.tapError(recordConfigFailureKey)),
       writeThrough: (write) => Effect.ensuring(write, invalidate),
       invalidate,
     });

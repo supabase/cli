@@ -78,8 +78,12 @@ sanitized error classification:
 - `has_suggestion`
 - `suggestion_type`
 - `suggested_command` (only when the remediation is an allowlisted command)
+- `config_key` (only on `invalid_config` failures from config resolution: the failing config key
+  path, such as `inbucket` or `auth.email.smtp.port`, comma-joined when several removed keys fail;
+  keys only, never values, file paths or user-chosen names, which collapse to their nearest known
+  parent key)
 
-These values come exclusively from the closed taxonomy in
+Apart from `config_key`, these values come exclusively from the closed taxonomy in
 `src/shared/telemetry/error-actionability.ts` — never from raw error text —
 and the KPI query semantics (strict recovery, repeat errors, internal/unknown
 bug rate) are documented there in `CliErrorActionabilityMetricDefinitions`.

@@ -1,9 +1,14 @@
 import { Context, Effect } from "effect";
 import type { StackRuntime } from "../command-internal/stack-runtime.ts";
-import { PropOrioleDb, PropStackRuntime } from "../shared/telemetry/event-catalog.ts";
+import {
+  PropConfigKey,
+  PropOrioleDb,
+  PropStackRuntime,
+} from "../shared/telemetry/event-catalog.ts";
 
 /** Properties that code below a command handler adds to its `cli_command_executed` event. */
 export interface CommandTelemetryAttributeValues {
+  readonly [PropConfigKey]?: string;
   readonly [PropOrioleDb]?: boolean;
   readonly [PropStackRuntime]?: StackRuntime;
 }

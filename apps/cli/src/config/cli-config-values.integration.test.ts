@@ -18,6 +18,10 @@ import { CliEnvNameSource } from "../shared/config/cli-config-provider.layer.ts"
 import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
 import {
+  CommandTelemetryAttributes,
+  type CommandTelemetryAttributeValues,
+} from "../telemetry/command-telemetry-attributes.ts";
+import {
   CliConfigFlagInputs,
   makeCliConfigFlagInputs,
   type CliConfigFlagAssignment,
@@ -2025,5 +2029,60 @@ project_id = "${OTHER}"
       expect(resolvedConfig.appliedRemote).toEqual(Option.some("staging"));
       expect(resolvedConfig.materialized.config.auth.captcha?.secret).toBe("value");
     }).pipe(Effect.provide(BunServices.layer), Effect.scoped),
+  );
+});
+
+describe("CliConfigValues failure telemetry", () => {
+  const recordingSink = () => {
+    const recorded: Array<CommandTelemetryAttributeValues> = [];
+    return {
+      recorded,
+      sink: {
+        record: (values: CommandTelemetryAttributeValues) =>
+          Effect.sync(() => {
+            recorded.push(values);
+          }),
+      },
+    };
+  };
+
+  it.live("records the key of a tolerated invalid value when it is read", () =>
+    Effect.gen(function* () {
+      const root = yield* project('[db]\nport = "not-a-port"\n');
+      const { recorded, sink } = recordingSink();
+
+      const resolvedConfig = yield* CliConfigValues.use((values) =>
+        values.load({ workdir: root, projectRef: Option.none(), tolerateInvalid: true }),
+      ).pipe(
+        Effect.provide(configValuesLayer()),
+        Effect.provideService(CommandTelemetryAttributes, sink),
+      );
+      expect(recorded).toEqual([]);
+
+      const error = yield* resolvedConfig
+        .get(CliConfigKeys.db.port)
+        .pipe(Effect.flip, Effect.provideService(CommandTelemetryAttributes, sink));
+
+      expect(error).toMatchObject({ _tag: "CliConfigValueError", path: "db.port" });
+      expect(recorded).toEqual([{ config_key: "db.port" }]);
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("records no key when the load failure names no config key", () =>
+    Effect.gen(function* () {
+      const root = yield* project("[db\nport = ");
+      const { recorded, sink } = recordingSink();
+
+      const error = yield* CliConfigValues.use((values) =>
+        values.load({ workdir: root, projectRef: Option.none() }),
+      ).pipe(
+        Effect.provide(configValuesLayer()),
+        Effect.provideService(CommandTelemetryAttributes, sink),
+        Effect.flip,
+      );
+
+      expect(error._tag).toBe("CliConfigParseError");
+      expect(recorded).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 });
