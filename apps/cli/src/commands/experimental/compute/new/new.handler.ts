@@ -4,6 +4,7 @@ import { emitSuccessTrailer } from "../../../../shared/cli/success-trailer.ts";
 import { aqua, bold } from "../../../../command-internal/colors.ts";
 import { validateWorkdirIsDirectory } from "../../../../command-internal/workdir-validation.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
+import { CliConfigValues } from "../../../../config/cli-config-values.service.ts";
 import { renderComputeDetails } from "../compute.format.ts";
 import { emitComputeMachineOutput, computeMachineOutputRequested } from "../compute.output.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
@@ -32,6 +33,7 @@ import {
   COMPUTE_EXPOSURE_DESCRIPTIONS,
   COMPUTE_EXPOSURES,
   COMPUTE_RUNTIME_DESCRIPTIONS,
+  COMPUTE_RUNTIME_EXCLUSIONS,
   COMPUTE_RUNTIMES,
   COMPUTE_SIZES,
   type ComputeExposure,
@@ -238,6 +240,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
   const telemetryState = yield* TelemetryState;
   const runtimeInfo = yield* RuntimeInfo;
   const cliSettings = yield* CommandSettings;
+  const configValues = yield* CliConfigValues;
 
   // The telemetry state file is written on every invocation, success or failure.
   yield* Effect.gen(function* () {
@@ -273,6 +276,8 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
     const size = yield* resolveSize({ explicit: flags.size, canPrompt });
     const exposure = yield* resolveExposure({ explicit: flags.exposure, canPrompt });
     const instances = recordedInstances(flags.instances);
+    // Recorded in `config.toml` rather than applied at push time; see ./SIDE_EFFECTS.md.
+    const exclude = COMPUTE_RUNTIME_EXCLUSIONS[runtime];
 
     // Validated before anything is written: this is the directory the starter files
     // land in, so a value naming the project root, `supabase/`, or anywhere outside
@@ -331,18 +336,38 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
         exposure,
         ...(instances === undefined ? {} : { instances }),
         ...(source === undefined ? {} : { source }),
+        ...(exclude.length === 0 ? {} : { exclude }),
       },
     });
 
     // Everything below this line changes the user's disk, and nothing below it
     // can fail for a reason the plan above could have caught.
+    const starters = Object.entries(COMPUTE_STACKS[runtime]);
+    yield* Effect.annotateCurrentSpan({
+      "compute.runtime": runtime,
+      "compute.size": size,
+      "compute.exposure": exposure,
+      "compute.starter_file_count": starters.length,
+    });
+    const destinationExisted = yield* fs.exists(destination);
+    const removeScaffold = Effect.gen(function* () {
+      for (const [filename] of starters) {
+        yield* fs.remove(path.join(destination, filename)).pipe(Effect.ignore);
+      }
+      if (!destinationExisted && (yield* destinationIsFree(destination))) {
+        yield* fs.remove(destination, { recursive: true }).pipe(Effect.ignore);
+      }
+    });
+
     yield* fs.makeDirectory(destination, { recursive: true });
 
-    for (const [filename, contents] of Object.entries(COMPUTE_STACKS[runtime])) {
-      yield* fs.writeFileString(path.join(destination, filename), contents);
-    }
+    yield* Effect.gen(function* () {
+      for (const [filename, contents] of starters) {
+        yield* fs.writeFileString(path.join(destination, filename), contents);
+      }
 
-    yield* commitComputeEntry(configWrite);
+      yield* configValues.writeThrough(commitComputeEntry(configWrite));
+    }).pipe(Effect.onError(() => removeScaffold));
 
     // Relative to the project root when the workdir was defaulted, since it also
     // reads as relative to the terminal the command ran from. An explicit
@@ -363,6 +388,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
       // than "one".
       instances: instances ?? DEFAULT_COMPUTE_INSTANCES,
       source: sourceDisplay,
+      exclude,
       config_path: project.configPath,
     };
 
@@ -391,6 +417,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
         // `declared`, the way `compute status` labels the same number: nothing
         // is running yet, so a bare count would read as a live tally.
         ["Instances", `${instances ?? DEFAULT_COMPUTE_INSTANCES} declared`],
+        ["Excluded", exclude.join(", ")],
       ]),
     );
     // On the success trailer rather than inline, the way `bootstrap` emits its

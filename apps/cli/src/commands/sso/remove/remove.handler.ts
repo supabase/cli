@@ -1,13 +1,17 @@
 import type { SupabaseApiError } from "@supabase/api/effect";
-import { Effect, Option, Result } from "effect";
+import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
-import { encodeGoToml, encodeGoYaml } from "../../../command-internal/go-struct-output.encoders.ts";
-import { GO_SSO_PROVIDER_RESPONSE } from "../sso.go-payload.ts";
+import { encodeSortedJson } from "../../../command-internal/output.encoders.ts";
+import {
+  encodeStructToml,
+  encodeStructYaml,
+} from "../../../command-internal/struct-output.encoders.ts";
+import { SSO_PROVIDER_RESPONSE_SHAPE } from "../sso.response-shape.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -18,7 +22,7 @@ import {
   SsoRemoveUnexpectedStatusError,
   SsoTomlEncodeError,
 } from "../sso.errors.ts";
-import { renderSingleProvider, validateUuid } from "../sso.format.ts";
+import { quoteSsoString, renderSingleProvider, validateUuid } from "../sso.format.ts";
 import type { SsoRemoveFlags } from "./remove.command.ts";
 
 const mapStatusOrNetwork = mapHttpError({
@@ -29,73 +33,69 @@ const mapStatusOrNetwork = mapHttpError({
 });
 
 const handleRemoveError = (ref: string, providerId: string, cause: SupabaseApiError) =>
-  Effect.gen(function* () {
-    const mapped = yield* Effect.flip(mapStatusOrNetwork(cause));
-    if (mapped._tag === "SsoRemoveUnexpectedStatusError") {
-      const upgradeSuggested = yield* suggestUpgrade({
-        projectRef: ref,
-        featureKey: "auth.saml_2",
-        statusCode: mapped.status,
-        response: gateResponse(cause),
-      });
-      if (mapped.status === 404) {
-        return yield* Effect.fail(
-          new SsoRemoveNotFoundError({
-            message: `An identity provider with ID ${JSON.stringify(providerId)} could not be found.`,
+  mapStatusOrNetwork(cause).pipe(
+    Effect.catchTag("SsoRemoveUnexpectedStatusError", (mapped) =>
+      Effect.gen(function* () {
+        const upgradeSuggested = yield* suggestUpgrade({
+          projectRef: ref,
+          featureKey: "auth.saml_2",
+          statusCode: mapped.status,
+          response: gateResponse(cause),
+        });
+        if (mapped.status === 404) {
+          return yield* new SsoRemoveNotFoundError({
+            message: `An identity provider with ID ${quoteSsoString(providerId)} could not be found.`,
             upgradeSuggested,
-          }),
-        );
-      }
-      return yield* Effect.fail(
-        new SsoRemoveUnexpectedStatusError({
+          });
+        }
+        return yield* new SsoRemoveUnexpectedStatusError({
           status: mapped.status,
           body: mapped.body,
           message: mapped.message,
           upgradeSuggested,
-        }),
-      );
-    }
-    return yield* Effect.fail(mapped);
-  });
+          entitlement: mapped.entitlement,
+        });
+      }),
+    ),
+  );
 
 export const ssoRemove = Effect.fn("sso.remove")(function* (flags: SsoRemoveFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
-    const providerId = yield* validateUuid(flags.providerId).pipe(
-      Result.match({ onFailure: Effect.fail, onSuccess: Effect.succeed }),
-    );
+    const providerId = yield* Effect.fromResult(validateUuid(flags.providerId));
 
-    const ref = yield* resolver.resolve(flags.projectRef);
+    const ref = yield* resolveProjectTarget(flags);
 
     yield* Effect.gen(function* () {
+      yield* requireHostedMutationConsent({ action: `Remove SSO provider ${providerId}` });
+
       const removing =
         output.format === "text" ? yield* output.task("Removing SSO provider...") : undefined;
       const response = yield* api.v1.deleteASsoProvider({ ref, provider_id: providerId }).pipe(
         Effect.tapError(() => removing?.fail() ?? Effect.void),
         Effect.catch((cause) => handleRemoveError(ref, providerId, cause)),
       );
-      yield* removing?.clear() ?? Effect.void;
+      yield* removing?.clear ?? Effect.void;
 
-      const goFmt = Option.getOrUndefined(goOutputFlag);
+      const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
-      if (goFmt === "json") {
-        yield* output.raw(encodeGoJson(response));
+      if (outputFlagFormat === "json") {
+        yield* output.raw(encodeSortedJson(response));
         return;
       }
-      if (goFmt === "yaml") {
-        yield* output.raw(encodeGoYaml(response, GO_SSO_PROVIDER_RESPONSE));
+      if (outputFlagFormat === "yaml") {
+        yield* output.raw(encodeStructYaml(response, SSO_PROVIDER_RESPONSE_SHAPE));
         return;
       }
-      if (goFmt === "toml") {
+      if (outputFlagFormat === "toml") {
         // TOML encode failure wrapping — same pattern as list/show.
         const toml = yield* Effect.try({
-          try: () => encodeGoToml(response, GO_SSO_PROVIDER_RESPONSE),
+          try: () => encodeStructToml(response, SSO_PROVIDER_RESPONSE_SHAPE),
           catch: (cause) =>
             new SsoTomlEncodeError({
               message: `failed to output toml: ${cause instanceof Error ? cause.message : String(cause)}`,
@@ -104,7 +104,7 @@ export const ssoRemove = Effect.fn("sso.remove")(function* (flags: SsoRemoveFlag
         yield* output.raw(toml);
         return;
       }
-      if (goFmt === "env") {
+      if (outputFlagFormat === "env") {
         return;
       }
 

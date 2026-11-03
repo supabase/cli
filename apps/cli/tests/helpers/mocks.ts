@@ -1,19 +1,29 @@
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import process from "node:process";
-import { BunServices } from "@effect/platform-bun";
-import { ConfigProvider, Deferred, Effect, Layer, Option, Stream } from "effect";
+import { BunPath, BunServices } from "@effect/platform-bun";
+import { ConfigEnvPins, definedEnv } from "./config-env-pins.ts";
+import {
+  Console,
+  ConfigProvider,
+  DateTime,
+  Deferred,
+  Effect,
+  Layer,
+  Option,
+  Path,
+  Random,
+  Schema,
+  Stream,
+} from "effect";
 import type { CliProjectEnvironment, CliProjectPaths } from "@supabase/config";
+import { testRunEnvVar as stackTestRunEnvVar } from "@supabase/stack/internal/test-run-label";
 import { cliSettingsLayer } from "../../src/shared/config/cli-settings.layer.ts";
 import { CliProjectHome } from "../../src/shared/config/cli-project-home.service.ts";
-import {
-  CliProjectLocalServiceVersions,
-  type LocalServiceVersionsState,
-} from "../../src/shared/config/cli-project-local-service-versions.service.ts";
 import {
   ProjectLinkState,
   type ProjectLinkStateValue,
 } from "../../src/shared/config/project-link-state.service.ts";
+import { legacyProjectStateLayer } from "../../src/shared/config/legacy-project-state.layer.ts";
 import { CliProjectContext } from "../../src/shared/config/cli-project-context.service.ts";
 import { NonInteractiveError } from "../../src/shared/output/errors.ts";
 import { Output } from "../../src/shared/output/output.service.ts";
@@ -53,16 +63,33 @@ type OutputEvent = {
 // created on disk, so a test combining it with a real FileSystem layer can't collide
 // with another run's files. Tests that read/write real files under homeDir should use
 // `useTempWorkdir` in `command-mocks.ts` instead.
-const defaultTestHomeDir = join(
-  tmpdir(),
-  `supabase-cli-test-home-${process.pid.toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+const { defaultTestHomeDir, defaultTestConfigDir } = Effect.runSync(
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const suffix = (yield* Random.next).toString(36).slice(2, 8);
+    const homeDir = path.join(
+      tmpdir(),
+      `supabase-cli-test-home-${process.pid.toString(36)}-${suffix}`,
+    );
+    return { defaultTestHomeDir: homeDir, defaultTestConfigDir: path.join(homeDir, ".supabase") };
+  }).pipe(Effect.provide(BunPath.layer)),
 );
 
-export function mockBrowser(): Layer.Layer<Browser> {
-  return Layer.succeed(Browser, {
-    open: () => Effect.void,
-  });
-}
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+/* JSON.stringify returns undefined for undefined, functions and symbols; those print "undefined". */
+const jsonText = (value: unknown): Effect.Effect<string> =>
+  encodeJson(value).pipe(
+    Effect.catch((error) =>
+      value === undefined || typeof value === "function" || typeof value === "symbol"
+        ? Effect.succeed("undefined")
+        : Effect.die(error),
+    ),
+  );
+
+export const mockBrowser: Layer.Layer<Browser> = Layer.succeed(Browser, {
+  open: () => Effect.void,
+});
 
 export function mockStdin(isTTY: boolean, pipedInput?: string | Uint8Array): Layer.Layer<Stdin> {
   const pipedBytes =
@@ -89,15 +116,14 @@ export function mockStdin(isTTY: boolean, pipedInput?: string | Uint8Array): Lay
       ? Stream.fromIterable([pipedBytes.value])
       : Stream.empty,
     readPipedText: Effect.succeed(pipedText),
-    // Ignores any timeout argument; dispenses piped lines one per call (trimmed),
-    // then None once exhausted.
+    // Ignores any timeout argument; dispenses piped lines one per call, then None once
+    // exhausted.
     readLine: () =>
       Effect.sync(() => {
         if (lineIndex >= lines.length) {
           return Option.none<string>();
         }
-        const line = (lines[lineIndex++] ?? "").trim();
-        return line.length > 0 ? Option.some(line) : Option.none<string>();
+        return Option.some(lines[lineIndex++] ?? "");
       }),
   });
 }
@@ -285,29 +311,29 @@ export function mockOutput(
                   messages.push({ type: "warn", message: nextMessage });
                 }
               }),
-            clear: () => Effect.void,
+            clear: Effect.void,
           };
         }),
       event: (event) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           events.push(event as OutputEvent);
           messages.push({
             type: "info",
             message:
               event.type === "log-entry"
                 ? `[${event.service}] ${event.line}`
-                : JSON.stringify(event),
+                : yield* jsonText(event),
           });
         }),
       result: (data: unknown) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           if (opts.format === "json") {
-            rawChunks.push({ text: `${JSON.stringify(data)}\n`, stream: "stdout" });
+            rawChunks.push({ text: `${yield* jsonText(data)}\n`, stream: "stdout" });
           } else if (opts.format === "stream-json") {
             events.push({
               type: "result",
               data,
-              timestamp: new Date().toISOString(),
+              timestamp: DateTime.formatIso(DateTime.nowUnsafe()),
             });
           }
         }),
@@ -522,9 +548,7 @@ export function mockAnalytics() {
 export function mockTelemetryRuntime(
   opts: Partial<{
     configDir: string;
-    tracesDir: string;
     consent: "granted" | "denied";
-    showDebug: boolean;
     deviceId: string;
     sessionId: string;
     distinctId: string | undefined;
@@ -539,10 +563,8 @@ export function mockTelemetryRuntime(
   return Layer.succeed(
     TelemetryRuntime,
     TelemetryRuntime.of({
-      configDir: opts.configDir ?? join(defaultTestHomeDir, ".supabase"),
-      tracesDir: opts.tracesDir ?? join(defaultTestHomeDir, ".supabase", "traces"),
+      configDir: opts.configDir ?? defaultTestConfigDir,
       consent: opts.consent ?? "granted",
-      showDebug: opts.showDebug ?? false,
       deviceId: opts.deviceId ?? "test-device-id",
       sessionId: opts.sessionId ?? "test-session-id",
       identity: makeTelemetryIdentity(opts.distinctId),
@@ -556,29 +578,43 @@ export function mockTelemetryRuntime(
   );
 }
 
-function applyProcessEnv(values: Readonly<Record<string, string | undefined>>) {
-  const snapshot = { ...process.env };
+function applyProcessEnv(
+  env: NodeJS.ProcessEnv,
+  values: Readonly<Record<string, string | undefined>>,
+) {
+  const snapshot = { ...env };
 
-  for (const key of Object.keys(process.env)) {
-    delete process.env[key];
+  for (const key of Object.keys(env)) {
+    delete env[key];
   }
 
   for (const [key, value] of Object.entries(values)) {
     if (value !== undefined) {
-      process.env[key] = value;
+      env[key] = value;
     }
   }
 
   return snapshot;
 }
 
+/* Keeps the ambient stack test-run label unless `values` pins its own. */
+function withAmbientTestRun(
+  env: NodeJS.ProcessEnv,
+  values: Readonly<Record<string, string | undefined>>,
+): Readonly<Record<string, string | undefined>> {
+  const ambientTestRun = env[stackTestRunEnvVar];
+  return stackTestRunEnvVar in values || ambientTestRun === undefined
+    ? values
+    : { [stackTestRunEnvVar]: ambientTestRun, ...values };
+}
+
 export function processEnvLayer(
   values: Readonly<Record<string, string | undefined>> = {},
 ): Layer.Layer<never> {
-  return ConfigProvider.layer(
+  const providerLayer = ConfigProvider.layer(
     Effect.acquireRelease(
       Effect.sync(() => {
-        const snapshot = applyProcessEnv(values);
+        const snapshot = applyProcessEnv(process.env, withAmbientTestRun(process.env, values));
         return {
           provider: ConfigProvider.fromEnvRecord(process.env, { preserveEmptyStrings: true }),
           snapshot,
@@ -586,10 +622,15 @@ export function processEnvLayer(
       }),
       ({ snapshot }) =>
         Effect.sync(() => {
-          applyProcessEnv(snapshot);
+          applyProcessEnv(process.env, snapshot);
         }),
     ).pipe(Effect.map(({ provider }) => provider)),
   );
+  const pinsLayer = Layer.effect(
+    ConfigEnvPins,
+    Effect.sync(() => definedEnv(process.env)),
+  );
+  return pinsLayer.pipe(Layer.provideMerge(providerLayer));
 }
 
 export function mockCliProjectContext(
@@ -662,27 +703,12 @@ function mockProjectLinkState(
   );
 }
 
-function mockCliProjectLocalServiceVersions(
-  initialState?: LocalServiceVersionsState,
-): Layer.Layer<CliProjectLocalServiceVersions, never, never> {
-  let state = initialState;
-  return Layer.succeed(
-    CliProjectLocalServiceVersions,
-    CliProjectLocalServiceVersions.of({
-      load: Effect.sync(() =>
-        state === undefined ? Option.none<LocalServiceVersionsState>() : Option.some(state),
-      ),
-    }),
-  );
-}
-
-export function emptyEnv() {
+export function emptyEnv(env: Readonly<Record<string, string | undefined>> = {}) {
   const runtimeInfoLayer = mockRuntimeInfo();
   const cliProjectContextLayer = mockCliProjectContext();
-  const envLayer = processEnvLayer();
+  const envLayer = processEnvLayer(env);
   const cliProjectHomeLayer = mockCliProjectHome();
   const projectLinkStateLayer = mockProjectLinkState();
-  const cliProjectLocalServiceVersionsLayer = mockCliProjectLocalServiceVersions();
   const analytics = mockAnalytics();
   return Layer.mergeAll(
     BunServices.layer,
@@ -690,7 +716,7 @@ export function emptyEnv() {
     cliProjectContextLayer,
     cliProjectHomeLayer,
     projectLinkStateLayer,
-    cliProjectLocalServiceVersionsLayer,
+    legacyProjectStateLayer.pipe(Layer.provide(BunServices.layer)),
     analytics.layer,
     mockTelemetryRuntime(),
     mockTty(),
@@ -699,6 +725,48 @@ export function emptyEnv() {
       Layer.provide(runtimeInfoLayer),
       Layer.provide(cliProjectContextLayer),
       Layer.provide(envLayer),
+      Layer.provide(BunServices.layer),
     ),
   );
+}
+
+/**
+ * A `Console.Console` test double recording `log`/`error` calls — `--help` and parse-error
+ * output render through it. Not `vi.spyOn`-based: spying on `console.*` here unreliably breaks
+ * call detection under this repo's Bun + Vitest combination.
+ */
+export function fakeConsole(): {
+  readonly console: Console.Console;
+  readonly calls: Array<string>;
+} {
+  const calls: Array<string> = [];
+  const unused = () => {};
+  return {
+    calls,
+    console: {
+      assert: unused,
+      clear: unused,
+      count: unused,
+      countReset: unused,
+      debug: unused,
+      dir: unused,
+      dirxml: unused,
+      error: (...args: ReadonlyArray<unknown>) => {
+        calls.push(`error:${args.join(" ")}`);
+      },
+      group: unused,
+      groupCollapsed: unused,
+      groupEnd: unused,
+      info: unused,
+      log: (...args: ReadonlyArray<unknown>) => {
+        calls.push(`log:${args.join(" ")}`);
+      },
+      table: unused,
+      time: unused,
+      timeEnd: unused,
+      timeLog: unused,
+      trace: unused,
+      warn: unused,
+    },
+  };
 }

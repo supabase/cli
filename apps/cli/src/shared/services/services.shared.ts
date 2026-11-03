@@ -1,8 +1,8 @@
 import { styleText } from "node:util";
 import { makeApiClient, type ApiClient } from "@supabase/api/effect";
 import { Data, Duration, Effect, Exit, Redacted } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { renderGlamourTable } from "../../output/glamour-table.ts";
 import {
   actionability,
@@ -10,11 +10,33 @@ import {
   ErrorActionabilityId,
 } from "../telemetry/error-actionability.ts";
 import {
+  dockerfileServiceImageRaw,
   dockerfileServiceImages,
   parseDockerfileServiceImages,
   type DockerfileImageSpec,
 } from "./dockerfile-images.ts";
-import { slimImageForAlias, slimImageForCurrentPin, slimImagesEnabled } from "./slim-images.ts";
+import {
+  imageRepository,
+  imageTag,
+  replaceImageTag,
+  slimImageForAlias,
+  slimImageForCurrentPin,
+} from "./slim-images.ts";
+import { block } from "../../command-internal/command-permissions/model.ts";
+
+/** `fetchLinkedServiceVersions`, behind `services`. */
+export const linkedServiceVersions = block("linked-service-versions", [
+  {
+    operationId: "v1-get-project-api-keys",
+    kind: "best-effort",
+    request: { query: { reveal: "true" } },
+  },
+  {
+    operationId: "v1-get-project",
+    kind: "best-effort",
+    context: "the api-keys lookup returned a usable key",
+  },
+]);
 
 export { parseDockerfileServiceImages } from "./dockerfile-images.ts";
 
@@ -36,6 +58,8 @@ export type LocalServiceVersionOverrides = Partial<Record<LocalServiceVersionNam
 export type LocalServiceImageOverrides = Partial<Record<LocalServiceVersionName, string>>;
 
 export interface LocalServiceImageOptions {
+  /** The resolved `SUPABASE_USE_SLIM_IMAGES` flag. */
+  readonly slim: boolean;
   readonly imageOverrides?: LocalServiceImageOverrides;
   readonly normalizeVersionTags?: boolean;
   readonly serviceVersions?: LocalServiceVersionOverrides;
@@ -114,33 +138,27 @@ export function localServiceImagesFromDockerfile(
 
 const LOCAL_SERVICE_IMAGES = localServiceImagesFromSpecs(dockerfileServiceImages);
 
-export const POSTGRES_FALLBACK_IMAGE_PG14 = "supabase/postgres:14.1.0.89";
-/** Flag-off PG13/15 docker.io pin. */
-export const POSTGRES_FALLBACK_IMAGE_PG15 = "supabase/postgres:15.8.1.085";
-/** Published slim PG15 pin; flag-on majors 13/15 slim-translate this, not 15.8. */
-export const POSTGRES_FALLBACK_IMAGE_PG15_SLIM = "supabase/postgres:15.14.1.167";
-
+/**
+ * Resolves PG13/14/15 against the Dockerfile's `pg15`/`pg14` stages — the single version table,
+ * generated (`pg15`) or hand-pinned (`pg14`, no slim build) from the stack catalog. Always the
+ * raw docker.io reference; slim translation happens downstream via the same `toSlimImage("pg",
+ * …)` path every other slim-capable service uses, since a slim-capable service's Dockerfile tag
+ * always matches a catalog upstream version by construction.
+ */
 export function postgresImageForDbMajorVersion(majorVersion: number): string | undefined {
   switch (majorVersion) {
     case 13:
     case 15:
-      return slimImagesEnabled() ? POSTGRES_FALLBACK_IMAGE_PG15_SLIM : POSTGRES_FALLBACK_IMAGE_PG15;
+      return dockerfileServiceImageRaw("pg15");
     case 14:
-      return POSTGRES_FALLBACK_IMAGE_PG14;
+      return dockerfileServiceImageRaw("pg14");
     default:
       return undefined;
   }
 }
 
-function replaceImageTag(image: string, tag: string): string {
-  const index = image.lastIndexOf(":");
-  if (index === -1) {
-    return image;
-  }
-  return `${image.slice(0, index + 1)}${tag.trim()}`;
-}
-
-function tagForServiceVersion(service: LocalServiceVersionName, version: string): string {
+/** Applies that service's image-tag prefix when the version does not already start with it. */
+export function tagForServiceVersion(service: LocalServiceVersionName, version: string): string {
   const trimmed = version.trim();
   const prefix = SERVICE_VERSION_TAG_PREFIX[service];
   if (prefix === "v" && !trimmed.toLowerCase().startsWith("v")) {
@@ -149,28 +167,45 @@ function tagForServiceVersion(service: LocalServiceVersionName, version: string)
   return trimmed;
 }
 
+const DOCKER_TAG_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/;
+
+/**
+ * A pin can be used as an image tag. A doubled `v` (`vv1.2.3`) is rejected:
+ * that pin is left on disk and the caller fails instead of rewriting it.
+ */
+export function isUsableServiceVersionTag(
+  service: LocalServiceVersionName,
+  version: string,
+): boolean {
+  const tag = tagForServiceVersion(service, version);
+  if (!DOCKER_TAG_PATTERN.test(tag)) return false;
+  return !(SERVICE_VERSION_TAG_PREFIX[service] === "v" && /^vv/i.test(tag));
+}
+
 function localServiceImagesForOptions(
-  options: LocalServiceImageOptions = {},
+  options: LocalServiceImageOptions,
 ): ReadonlyArray<ServiceImageSpec> {
   const normalizeVersionTags = options.normalizeVersionTags ?? true;
-  const slim = slimImagesEnabled();
+  const slim = options.slim;
   return LOCAL_SERVICE_IMAGES.map((service) => {
     // Explicit overrides are used verbatim; the caller decides slim vs docker.io.
     const override = options.imageOverrides?.[service.localService];
-    const baseImage = override ?? slimImageForAlias(service.alias, service.image);
+    const baseImage = override ?? slimImageForAlias(service.alias, service.image, slim);
     const version = options.serviceVersions?.[service.localService];
     if (version === undefined || version.trim().length === 0) {
       return baseImage === service.image ? service : { ...service, image: baseImage };
     }
+    // `slim-images.ts`'s `replaceImageTag` doesn't trim (its own callers already do), so this
+    // path — the only one that skips `tagForServiceVersion`'s trim — trims here.
     const pin = normalizeVersionTags
       ? tagForServiceVersion(service.localService, version)
-      : version;
+      : version.trim();
     if (override === undefined && slim) {
       return {
         ...service,
         image: options.slimCurrentPinOnly
-          ? slimImageForCurrentPin(service.alias, service.image, pin)
-          : slimImageForAlias(service.alias, replaceImageTag(service.image, pin)),
+          ? slimImageForCurrentPin(service.alias, service.image, pin, slim)
+          : slimImageForAlias(service.alias, replaceImageTag(service.image, pin), slim),
       };
     }
     return {
@@ -184,7 +219,7 @@ const TABLE_HEADERS = ["SERVICE IMAGE", "LOCAL", "LINKED"] as const;
 
 type ProjectApiKey = {
   readonly name: string;
-  readonly type?: "legacy" | "publishable" | "secret" | null;
+  readonly type?: string | null;
   readonly api_key?: string | null;
   readonly secret_jwt_template?: Record<string, unknown> | null;
 };
@@ -195,17 +230,26 @@ export interface ServiceVersionRow {
   readonly remote: string;
 }
 
+/** A release tag's `-r<N>` suffix, matching the slim-services revision grammar. */
+const RELEASE_REVISION_SUFFIX = /^(?<upstream>.+)-r(?:0|[1-9][0-9]*)$/;
+
+/** Strips a slim release tag's `-r<N>` suffix, if any, back to its upstream version. */
+export function upstreamVersionFromTag(tag: string): string {
+  return RELEASE_REVISION_SUFFIX.exec(tag)?.groups?.upstream ?? tag;
+}
+
 function toServiceVersionRow(
   service: ServiceImageSpec,
   remote: Partial<Record<RemoteServiceName, string>> = {},
 ): ServiceVersionRow {
-  const tagSeparator = service.image.lastIndexOf(":");
-  if (tagSeparator === -1) {
+  // `@`-aware (via `imageTag`/`imageRepository`): a slim catalog pin's image carries a
+  // `@sha256:…` digest after the tag.
+  const name = imageRepository(service.image);
+  const tag = imageTag(service.image);
+  if (name === undefined || tag === undefined) {
     throw new Error(`Invalid service image entry: ${service.image}`);
   }
-
-  const name = service.image.slice(0, tagSeparator);
-  const local = service.image.slice(tagSeparator + 1);
+  const local = upstreamVersionFromTag(tag);
 
   return {
     name,
@@ -223,6 +267,7 @@ export interface ServiceFetchConfig {
   readonly headers?: Readonly<Record<string, string | undefined>>;
   readonly api?: ApiClient;
   readonly tenantBaseUrlOverride?: string;
+  readonly maxRetries?: number;
 }
 
 /** @public */
@@ -329,7 +374,7 @@ const fetchText = Effect.fnUntraced(function* (
   return yield* response.text;
 });
 
-const fetchPostgrestVersion = Effect.fnUntraced(function* (
+const fetchPostgrestVersion = Effect.fn("Services.fetchPostgrestVersion")(function* (
   client: HttpClient.HttpClient,
   baseUrl: string,
   accessKey: Redacted.Redacted<string>,
@@ -348,13 +393,15 @@ const fetchPostgrestVersion = Effect.fnUntraced(function* (
 
   const normalized = version?.trim().split(/\s+/)[0];
   if (normalized === undefined || normalized.length === 0) {
-    return yield* Effect.fail(new ServiceVersionNotFoundError({ service: "postgrest" }));
+    return yield* new ServiceVersionNotFoundError({ service: "postgrest" });
   }
 
-  return normalized.startsWith("v") ? normalized : `v${normalized}`;
+  const tag = tagForServiceVersion("postgrest", normalized);
+  yield* Effect.annotateCurrentSpan({ "service.version": tag });
+  return tag;
 });
 
-const fetchAuthVersion = Effect.fnUntraced(function* (
+const fetchAuthVersion = Effect.fn("Services.fetchAuthVersion")(function* (
   client: HttpClient.HttpClient,
   baseUrl: string,
   accessKey: Redacted.Redacted<string>,
@@ -363,55 +410,63 @@ const fetchAuthVersion = Effect.fnUntraced(function* (
   const version = stringField(body, "version")?.trim();
 
   if (version === undefined || version.length === 0) {
-    return yield* Effect.fail(new ServiceVersionNotFoundError({ service: "auth" }));
+    return yield* new ServiceVersionNotFoundError({ service: "auth" });
   }
 
+  yield* Effect.annotateCurrentSpan({ "service.version": version });
   return version;
 });
 
-const fetchStorageVersion = Effect.fnUntraced(function* (
+const fetchStorageVersion = Effect.fn("Services.fetchStorageVersion")(function* (
   client: HttpClient.HttpClient,
   baseUrl: string,
   accessKey: Redacted.Redacted<string>,
 ) {
   const version = (yield* fetchText(client, `${baseUrl}/storage/v1/version`, accessKey)).trim();
   if (version.length === 0 || version === "0.0.0") {
-    return yield* Effect.fail(new ServiceVersionNotFoundError({ service: "storage" }));
+    return yield* new ServiceVersionNotFoundError({ service: "storage" });
   }
 
-  return version.startsWith("v") ? version : `v${version}`;
+  const tag = tagForServiceVersion("storage", version);
+  yield* Effect.annotateCurrentSpan({ "service.version": tag });
+  return tag;
 });
 
-const fetchOptionalVersion = (
+const fetchOptionalVersion = <E>(
   service: OptionalRemoteServiceName,
-  effect: Effect.Effect<string, unknown>,
+  effect: Effect.Effect<string, E>,
 ) =>
   effect.pipe(
     Effect.exit,
     Effect.map((exit) => ({ service, exit }) as const),
   );
 
-const makeConfiguredApiClient = Effect.fnUntraced(function* (input: ServiceFetchConfig) {
+const makeConfiguredApiClient = Effect.fn("Services.buildApiClient")(function* (
+  input: ServiceFetchConfig,
+) {
   return (
     input.api ??
-    (yield* makeApiClient({
-      baseUrl: input.apiUrl,
-      accessToken: input.accessToken,
-      userAgent: input.userAgent,
-      headers: input.headers,
-    }))
+    (yield* makeApiClient(
+      {
+        baseUrl: input.apiUrl,
+        accessToken: input.accessToken,
+        userAgent: input.userAgent,
+        headers: input.headers,
+      },
+      { retry: { maxRetries: input.maxRetries } },
+    ))
   );
 });
 
 export function listLocalServiceVersions(
-  options: LocalServiceImageOptions = {},
+  options: LocalServiceImageOptions,
 ): ReadonlyArray<ServiceVersionRow> {
   return localServiceImagesForOptions(options).map((service) => toServiceVersionRow(service));
 }
 
 export function mergeRemoteServiceVersions(
   remote: Partial<Record<RemoteServiceName, string>>,
-  options: LocalServiceImageOptions = {},
+  options: LocalServiceImageOptions,
 ): ReadonlyArray<ServiceVersionRow> {
   return localServiceImagesForOptions(options).map((service) =>
     toServiceVersionRow(service, remote),
@@ -425,16 +480,23 @@ export function renderServicesTable(rows: ReadonlyArray<ServiceVersionRow>): str
   );
 }
 
-export function renderServicesWarning(rows: ReadonlyArray<ServiceVersionRow>): string | undefined {
+export function renderServicesWarning(
+  rows: ReadonlyArray<ServiceVersionRow>,
+  options: {
+    readonly heading?: string;
+    readonly recommendation?: string;
+  } = {},
+): string | undefined {
   const mismatches = rows.filter((row) => row.remote.length > 0 && row.remote !== row.local);
   if (mismatches.length === 0) {
     return undefined;
   }
 
   return [
-    "You are running different service versions locally than your linked project:",
+    options.heading ??
+      "You are running different service versions locally than your linked project:",
     ...mismatches.map((row) => `${row.name}:${row.local} => ${row.remote}`),
-    "Run supabase link to update them.",
+    options.recommendation ?? "Run supabase link to update them.",
   ].join("\n");
 }
 
@@ -451,6 +513,7 @@ export function formatServicesWarning(message: string, textMode: boolean): strin
 
 export function fetchLinkedServiceVersions(input: ServiceFetchConfig) {
   return Effect.gen(function* () {
+    const noLinkedVersions: Partial<Record<RemoteServiceName, string>> = {};
     const exit = yield* Effect.gen(function* () {
       // Malformed refs are rejected before reaching the management API path param or the
       // tenant gateway hostname; the test-only override bypasses this check.
@@ -458,7 +521,7 @@ export function fetchLinkedServiceVersions(input: ServiceFetchConfig) {
         input.tenantBaseUrlOverride === undefined &&
         !PROJECT_REF_PATTERN.test(input.projectRef)
       ) {
-        return {} as Partial<Record<RemoteServiceName, string>>;
+        return noLinkedVersions;
       }
 
       const client = yield* makeConfiguredApiClient(input);
@@ -468,7 +531,7 @@ export function fetchLinkedServiceVersions(input: ServiceFetchConfig) {
         .getProjectApiKeys({ ref: input.projectRef, reveal: true })
         .pipe(Effect.exit);
       if (!Exit.isSuccess(apiKeysExit) || !hasProjectAccessKey(apiKeysExit.value)) {
-        return {} as Partial<Record<RemoteServiceName, string>>;
+        return noLinkedVersions;
       }
 
       let versions: Partial<Record<RemoteServiceName, string>> = {};
@@ -519,6 +582,10 @@ export function fetchLinkedServiceVersions(input: ServiceFetchConfig) {
 
       return versions;
     }).pipe(Effect.exit);
-    return Exit.isSuccess(exit) ? exit.value : ({} as Partial<Record<RemoteServiceName, string>>);
-  });
+    return Exit.isSuccess(exit) ? exit.value : noLinkedVersions;
+  }).pipe(
+    Effect.withSpan("Services.fetchLinkedVersions", {
+      attributes: { "project.ref": input.projectRef },
+    }),
+  );
 }

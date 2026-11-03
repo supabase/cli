@@ -1,11 +1,11 @@
-import { Clock, DateTime, Effect, Option, Ref, Schedule } from "effect";
+import { Clock, DateTime, Effect, Option, Ref, Schedule, Stream } from "effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../../shared/cli/success-trailer.ts";
 import { aqua } from "../../../../command-internal/colors.ts";
 import {
   emitComputeMachineOutput,
   rejectComputeEnvOutput,
-  computeProjectRefSuffix,
+  computeRemoteSuffix,
 } from "../compute.output.ts";
 import { renderComputeLogLine, computeLogLevel, computeLogText } from "../compute-logs.format.ts";
 import { ProcessControl } from "../../../../shared/runtime/process-control.service.ts";
@@ -30,7 +30,7 @@ import {
   ComputeApiNetworkError,
   ComputeApiUnexpectedStatusError,
 } from "../../../../shared/compute/compute.errors.ts";
-import { ProjectRefResolver } from "../../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../../command-internal/target/resolve-project-target.ts";
 import { LinkedProjectCache } from "../../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import { validateComputeName } from "../compute.shared.ts";
@@ -110,6 +110,16 @@ export interface ComputeLogsOptions {
   readonly retrySchedule?: Schedule.Schedule<unknown>;
 }
 
+interface FollowPage {
+  readonly rows: ReadonlyArray<ComputeLogEntry>;
+  readonly drained: boolean;
+}
+
+interface FollowCursor {
+  readonly end: DateTime.Utc;
+  readonly page: number;
+}
+
 /** The machine-format row for one line. */
 function toPayloadEntry(entry: ComputeLogEntry) {
   const level = computeLogLevel(entry);
@@ -132,7 +142,6 @@ export const computeLogs = Effect.fn("compute.logs")(function* (
 ) {
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const processControl = yield* ProcessControl;
@@ -141,8 +150,8 @@ export const computeLogs = Effect.fn("compute.logs")(function* (
   // checkout fails inside `resolve` after the command has already run. Only the
   // linked-project cache stays under the ref, since it has nothing to write without one.
   yield* Effect.gen(function* () {
-    const projectRef = yield* resolver.resolve(flags.projectRef);
-    const refSuffix = computeProjectRefSuffix(flags.projectRef);
+    const projectRef = yield* resolveProjectTarget(flags);
+    const refSuffix = computeRemoteSuffix(flags, projectRef);
 
     yield* Effect.gen(function* () {
       const name = yield* validateComputeName(flags.name);
@@ -236,7 +245,7 @@ export const computeLogs = Effect.fn("compute.logs")(function* (
                 tail: flags.tail,
                 window: logWindow(yield* DateTime.now),
               }).pipe(Effect.tapError(() => fetching.fail()));
-              yield* fetching.clear();
+              yield* fetching.clear;
               return rows;
             });
 
@@ -256,7 +265,7 @@ export const computeLogs = Effect.fn("compute.logs")(function* (
         const deployed = yield* getCompute(api, projectRef, name).pipe(
           Effect.tapError(() => checking.fail()),
         );
-        yield* checking.clear();
+        yield* checking.clear;
         if (Option.isNone(deployed)) {
           return yield* new ComputeNotDeployedError({
             detail: `Nothing is deployed for "${name}" in project ${projectRef}.`,
@@ -264,6 +273,11 @@ export const computeLogs = Effect.fn("compute.logs")(function* (
           });
         }
       }
+
+      yield* Effect.annotateCurrentSpan({
+        "compute.log_count": entries.length,
+        "compute.follow": flags.follow,
+      });
 
       const payload = {
         compute_name: name,
@@ -317,10 +331,11 @@ export const computeLogs = Effect.fn("compute.logs")(function* (
       const seenIds = yield* Ref.make(new Set(entries.map((entry) => entry.id)));
       // Same reason: a notice already shown on a previous run would stay silent on the next.
       const skipNoticeShown = yield* Ref.make(false);
+      const newestEntry = entries.at(-1);
       const newestSeen = yield* Ref.make<DateTime.Utc>(
-        entries.length === 0
+        newestEntry === undefined
           ? yield* DateTime.now
-          : DateTime.makeUnsafe(entries[entries.length - 1]!.timestampMs),
+          : DateTime.makeUnsafe(newestEntry.timestampMs),
       );
 
       // `--tail 0` asked for no history, but `followWindow` still reaches a grace
@@ -328,39 +343,52 @@ export const computeLogs = Effect.fn("compute.logs")(function* (
       // window and filtering by actual timestamp lets both cases coexist.
       const followFloorMs = flags.tail === 0 ? startedAtMs : Number.NEGATIVE_INFINITY;
 
+      const pollAttempts = yield* Ref.make(0);
       const pollOnce = Effect.gen(function* () {
+        yield* Ref.update(pollAttempts, (attempts) => attempts + 1);
         const cursor = yield* Ref.get(newestSeen);
 
         // One request only ever answers with the newest page of its window, so a
         // burst bigger than a page needs several. Walk `end` backwards while
         // pages come back full; a short page means the window is drained.
-        const collected: Array<ComputeLogEntry> = [];
-        let end = yield* DateTime.now;
-        // A short page is the only proof the window is empty below this point.
-        // Both other exits — the page budget running out, and a full page too
-        // narrow to walk past — leave rows unfetched underneath.
-        let drained = false;
-        for (let page = 0; page < FOLLOW_MAX_PAGES; page += 1) {
-          const rows = yield* fetchComputeLogs(api, projectRef, {
-            name,
-            streams,
-            tail: FOLLOW_PAGE_SIZE,
-            window: followWindow(end, cursor),
-          });
-          collected.push(...rows);
-          if (rows.length < FOLLOW_PAGE_SIZE) {
-            drained = true;
-            break;
-          }
-          // Rows arrive oldest-first, so the next page ends where this one began.
-          const nextEnd = DateTime.makeUnsafe(rows[0]!.timestampMs);
-          // A full page whose rows all share one timestamp cannot narrow the
-          // window: re-requesting it would return the same page forever.
-          if (DateTime.toEpochMillis(nextEnd) >= DateTime.toEpochMillis(end)) {
-            break;
-          }
-          end = nextEnd;
-        }
+        const pages = yield* Stream.paginate(
+          { end: yield* DateTime.now, page: 0 },
+          ({ end, page }) =>
+            fetchComputeLogs(api, projectRef, {
+              name,
+              streams,
+              tail: FOLLOW_PAGE_SIZE,
+              window: followWindow(end, cursor),
+            }).pipe(
+              Effect.map(
+                (rows): readonly [ReadonlyArray<FollowPage>, Option.Option<FollowCursor>] => {
+                  const oldestRow = rows[0];
+                  // A short page is the only proof the window is empty below this point.
+                  // Both other exits — the page budget running out, and a full page too
+                  // narrow to walk past — leave rows unfetched underneath.
+                  if (rows.length < FOLLOW_PAGE_SIZE || oldestRow === undefined) {
+                    return [[{ rows, drained: true }], Option.none()];
+                  }
+                  // Rows arrive oldest-first, so the next page ends where this one began.
+                  const nextEnd = DateTime.makeUnsafe(oldestRow.timestampMs);
+                  // A full page whose rows all share one timestamp cannot narrow the
+                  // window: re-requesting it would return the same page forever.
+                  if (
+                    page + 1 >= FOLLOW_MAX_PAGES ||
+                    DateTime.toEpochMillis(nextEnd) >= DateTime.toEpochMillis(end)
+                  ) {
+                    return [[{ rows, drained: false }], Option.none()];
+                  }
+                  return [
+                    [{ rows, drained: false }],
+                    Option.some({ end: nextEnd, page: page + 1 }),
+                  ];
+                },
+              ),
+            ),
+        ).pipe(Stream.runCollect);
+        const collected = pages.flatMap(({ rows }) => rows);
+        const drained = pages.at(-1)?.drained === true;
 
         // Shown once per run, not once per poll, so a sustained burst doesn't repeat
         // this every interval. Emitted in every format (unlike the "Waiting for new
@@ -416,8 +444,10 @@ export const computeLogs = Effect.fn("compute.logs")(function* (
       // A 429 or a blip should not end a tail the user is watching; the spaced
       // schedule rides out a transient failure without spending the rate limit.
       // Anything definitive surfaces on the first attempt.
+      // A tail can run for hours, so polls emit no request spans; the attempt count stands in.
       const poll = pollOnce.pipe(
         Effect.retry({ schedule: readRetrySchedule, while: isRetryableFollowFailure }),
+        Effect.withTracerEnabled(false),
       );
 
       // `repeat` runs the body before applying the schedule, so the first poll is
@@ -436,6 +466,14 @@ export const computeLogs = Effect.fn("compute.logs")(function* (
           .pipe(
             Effect.flatMap((signal) => processControl.setExitCode(signal === "SIGINT" ? 130 : 0)),
           ),
+      ).pipe(
+        Effect.ensuring(
+          Ref.get(pollAttempts).pipe(
+            Effect.flatMap((attempts) =>
+              Effect.annotateCurrentSpan({ "poll.attempt_count": attempts }),
+            ),
+          ),
+        ),
       );
     }).pipe(Effect.ensuring(linkedProjectCache.cache(projectRef)));
   }).pipe(Effect.ensuring(telemetryState.flush));

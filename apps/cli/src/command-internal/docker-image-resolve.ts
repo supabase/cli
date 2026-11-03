@@ -1,5 +1,5 @@
-import { Effect, Exit, Stream } from "effect";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import { Clock, Effect, Exit, Stream } from "effect";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 import { ContainerRuntimeNotFoundError, spawnContainerCli } from "./container-cli.ts";
 import { DockerRunError } from "./docker-run.errors.ts";
 import { SUGGEST_DOCKER_INSTALL, isDockerDaemonUnreachable } from "./docker-suggest.ts";
@@ -96,13 +96,11 @@ export function makeDockerImageResolver(
       if (isImageNotFoundMessage(stderr)) return false;
       const daemonDown = isDockerDaemonUnreachable(stderr);
       const hint = daemonDown ? `\n\n${SUGGEST_DOCKER_INSTALL}` : "";
-      return yield* Effect.fail(
-        new DockerRunError({
-          message: `failed to inspect docker image: ${stderr}${hint}`,
-          reason: "inspect",
-          daemonDown,
-        }),
-      );
+      return yield* new DockerRunError({
+        message: `failed to inspect docker image: ${stderr}${hint}`,
+        reason: "inspect",
+        daemonDown,
+      });
     }).pipe(Effect.scoped);
 
   const pullImage = (
@@ -132,14 +130,14 @@ export function makeDockerImageResolver(
           Stream.runForEach(handle.stdout, (chunk) =>
             Effect.sync(() => {
               stdoutChunks.push(chunk);
-              globalThis.process.stderr.write(chunk);
+              process.stderr.write(chunk);
               if (chunk.length > 0) endedWithNewline = chunk[chunk.length - 1] === 0x0a;
             }),
           ),
           Stream.runForEach(handle.stderr, (chunk) =>
             Effect.sync(() => {
               stderrChunks.push(chunk);
-              globalThis.process.stderr.write(chunk);
+              process.stderr.write(chunk);
               if (chunk.length > 0) endedWithNewline = chunk[chunk.length - 1] === 0x0a;
             }),
           ),
@@ -178,11 +176,12 @@ export function makeDockerImageResolver(
         let candidateShareMs: number | undefined;
         let candidateDeadline: number | undefined;
         if (deadline !== undefined) {
+          const now = yield* Clock.currentTimeMillis;
           candidateShareMs = Math.max(
             1,
-            Math.floor((deadline - Date.now()) / (candidates.length - candidateIndex)),
+            Math.floor((deadline - now) / (candidates.length - candidateIndex)),
           );
-          candidateDeadline = Math.min(Date.now() + candidateShareMs, deadline);
+          candidateDeadline = Math.min(now + candidateShareMs, deadline);
         }
         let lastPullEndedWithNewline = true;
         for (
@@ -192,7 +191,9 @@ export function makeDockerImageResolver(
         ) {
           const attempt = attemptIndex + 1;
           const remainingMs =
-            candidateDeadline === undefined ? undefined : candidateDeadline - Date.now();
+            candidateDeadline === undefined
+              ? undefined
+              : candidateDeadline - (yield* Clock.currentTimeMillis);
           if (remainingMs !== undefined && remainingMs <= 0) {
             failures.push(
               `${candidate} attempt ${attempt}: candidate budget exhausted (${candidateShareMs}ms share)`,
@@ -239,27 +240,28 @@ export function makeDockerImageResolver(
           }
           // Never sleep past this candidate's share — the backoff would spend
           // budget the remaining registries still need.
-          if (candidateDeadline !== undefined && Date.now() + delay >= candidateDeadline) {
+          if (
+            candidateDeadline !== undefined &&
+            (yield* Clock.currentTimeMillis) + delay >= candidateDeadline
+          ) {
             break;
           }
           // Add a newline before the banner only when the child's own output didn't end with
           // one, so the two don't glue together.
           yield* Effect.sync(() => {
             if (!lastPullEndedWithNewline) {
-              globalThis.process.stderr.write("\n");
+              process.stderr.write("\n");
             }
-            globalThis.process.stderr.write(`Retrying after ${delay / 1000}s: ${candidate}\n`);
+            process.stderr.write(`Retrying after ${delay / 1000}s: ${candidate}\n`);
           });
           yield* Effect.sleep(`${delay} millis`);
         }
       }
 
-      return yield* Effect.fail(
-        new DockerRunError({
-          message: `failed to pull docker image from all registries: ${failures.join("; ")}`,
-          reason: "pull",
-          daemonDown: failures.some(isDockerDaemonUnreachable),
-        }),
-      );
+      return yield* new DockerRunError({
+        message: `failed to pull docker image from all registries: ${failures.join("; ")}`,
+        reason: "pull",
+        daemonDown: failures.some(isDockerDaemonUnreachable),
+      });
     });
 }

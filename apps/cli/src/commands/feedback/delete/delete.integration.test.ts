@@ -7,13 +7,15 @@ import {
   FeedbackClient,
 } from "../../../shared/feedback/feedback-client.service.ts";
 import { OutputFlag, YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import {
   mockContextualAnalytics,
   mockOutput,
   mockProcessControl,
-  mockStdin,
   mockTelemetryRuntime,
+  mockTty,
 } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
@@ -100,11 +102,10 @@ function mockFeedbackClient(opts: MockClientOpts = {}) {
 function setupFeedbackDelete(
   opts: {
     output?: Parameters<typeof mockOutput>[0];
-    stdinIsTTY?: boolean;
     client?: MockClientOpts;
     yes?: boolean;
-    /** Simulates the Go-compat `-o`/`--output` global flag. */
-    goOutput?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
+    /** Simulates the `-o`/`--output` global flag. */
+    outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
     /** Simulates `SUPABASE_PROJECT_ID`, the only source `CommandSettings` reads. */
     projectIdEnv?: string;
     /** Simulates the gotrue user id persisted to telemetry.json at login. */
@@ -119,7 +120,7 @@ function setupFeedbackDelete(
     out.layer,
     client.layer,
     telemetryState.layer,
-    mockStdin(opts.stdinIsTTY ?? true),
+    mockTty({ stdinIsTty: true, stdoutIsTty: true }),
     mockTelemetryRuntime({
       cliVersion: "9.9.9",
       distinctId: opts.distinctId,
@@ -131,8 +132,9 @@ function setupFeedbackDelete(
       projectId: opts.projectIdEnv === undefined ? Option.none() : Option.some(opts.projectIdEnv),
     }),
     Layer.succeed(YesFlag, opts.yes ?? false),
-    Layer.succeed(OutputFlag, Option.fromNullishOr(opts.goOutput)),
+    Layer.succeed(OutputFlag, Option.fromNullishOr(opts.outputFlag)),
     Layer.succeed(CliArgs, { args: [] }),
+    Layer.succeed(TargetPolicy, { group: "account", consent: "no" }),
     // Real filesystem: the handler reads `supabase/.temp/project-ref` from the
     // temp workdir, so this must not be stubbed out.
     BunServices.layer,
@@ -152,14 +154,14 @@ function setupFeedbackDeleteHandler(
     base.layer,
     analytics.layer,
     processControl.layer,
-    commandRuntimeLayer(["feedback", "delete"]),
+    commandRuntimeLayer(["feedback", "delete"]).pipe(Layer.provide(BunServices.layer)),
     Stdio.layerTest({ args: Effect.succeed([...(opts.args ?? ["feedback", "delete", TOKEN])]) }),
   );
   return { ...base, layer, analytics, processControl };
 }
 
 describe("feedback delete", () => {
-  it.live("confirms and deletes the feedback", () => {
+  it.effect("confirms and deletes the feedback", () => {
     const { layer, out, client, telemetryState } = setupFeedbackDelete();
     return Effect.gen(function* () {
       yield* feedbackDelete(deleteArgs());
@@ -179,7 +181,7 @@ describe("feedback delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects a token that is not a UUID before contacting the backend", () => {
+  it.effect("rejects a token that is not a UUID before contacting the backend", () => {
     const { layer, client } = setupFeedbackDelete();
     return Effect.gen(function* () {
       const error = yield* feedbackDelete(deleteArgs({ token: "not-a-uuid" })).pipe(Effect.flip);
@@ -192,7 +194,7 @@ describe("feedback delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("accepts an uppercase token and lowercases it for the backend", () => {
+  it.effect("accepts an uppercase token and lowercases it for the backend", () => {
     const { layer, client } = setupFeedbackDelete({ yes: true });
     return Effect.gen(function* () {
       yield* feedbackDelete(deleteArgs({ token: TOKEN.toUpperCase() }));
@@ -201,70 +203,7 @@ describe("feedback delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("cancels without deleting when the confirmation is declined", () => {
-    const { layer, client } = setupFeedbackDelete({
-      output: { promptConfirmResponses: [false] },
-    });
-    return Effect.gen(function* () {
-      const error = yield* feedbackDelete(deleteArgs()).pipe(Effect.flip);
-
-      expect(error).toMatchObject({ _tag: "FeedbackDeleteCancelledError" });
-      expect(client.deleteCalls).toHaveLength(0);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("--yes skips the confirmation prompt", () => {
-    const { layer, out, client } = setupFeedbackDelete({ yes: true });
-    return Effect.gen(function* () {
-      yield* feedbackDelete(deleteArgs());
-
-      expect(out.promptConfirmCalls).toHaveLength(0);
-      expect(client.deleteCalls).toHaveLength(1);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("refuses to confirm from piped stdin, even with a TTY stdout", () => {
-    // `printf 'y' | supabase feedback delete <token>` in a terminal: stdout is
-    // a TTY (so `output.interactive` is true) but the confirm would answer on a
-    // single keypress read from the pipe, deleting without --yes. It must fail
-    // as non-interactive instead of consuming the piped byte.
-    const { layer, out, client } = setupFeedbackDelete({ stdinIsTTY: false });
-    return Effect.gen(function* () {
-      const error = yield* feedbackDelete(deleteArgs()).pipe(Effect.flip);
-
-      expect(error).toMatchObject({
-        _tag: "NonInteractiveError",
-        detail: "Cannot prompt for confirmation in a non-interactive context",
-        suggestion: "Pass --yes to delete without confirmation",
-      });
-      expect(out.promptConfirmCalls).toHaveLength(0);
-      expect(client.deleteCalls).toHaveLength(0);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("refuses to confirm when stdout is not interactive, even on a TTY stdin", () => {
-    const { layer, out, client } = setupFeedbackDelete({ output: { interactive: false } });
-    return Effect.gen(function* () {
-      const error = yield* feedbackDelete(deleteArgs()).pipe(Effect.flip);
-
-      expect(error).toMatchObject({ _tag: "NonInteractiveError" });
-      expect(out.promptConfirmCalls).toHaveLength(0);
-      expect(client.deleteCalls).toHaveLength(0);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("--yes deletes without prompting when stdin is piped", () => {
-    // The documented escape hatch for non-interactive contexts.
-    const { layer, out, client } = setupFeedbackDelete({ yes: true, stdinIsTTY: false });
-    return Effect.gen(function* () {
-      yield* feedbackDelete(deleteArgs());
-
-      expect(out.promptConfirmCalls).toHaveLength(0);
-      expect(client.deleteCalls).toHaveLength(1);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("fails with a remediation hint when the delete matches no feedback", () => {
+  it.effect("fails with a remediation hint when the delete matches no feedback", () => {
     // Wrong token, already deleted, or a project-ref/user-id context mismatch:
     // the backend cannot tell these apart, and the CLI never reads the row, so
     // the zero-row DELETE is the first (and only) signal.
@@ -282,7 +221,7 @@ describe("feedback delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("sends the linked project ref written by supabase link", () => {
+  it.effect("sends the linked project ref written by supabase link", () => {
     const { layer, client } = setupFeedbackDelete({ yes: true });
     return Effect.gen(function* () {
       yield* writeLinkedProjectRef(tempRoot.current, VALID_REF);
@@ -292,7 +231,7 @@ describe("feedback delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prefers --project-ref over SUPABASE_PROJECT_ID and the linked ref file", () => {
+  it.effect("prefers --project-ref over SUPABASE_PROJECT_ID and the linked ref file", () => {
     const { layer, client } = setupFeedbackDelete({
       yes: true,
       projectIdEnv: "envenvenvenvenvenvre",
@@ -305,7 +244,7 @@ describe("feedback delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects a malformed --project-ref instead of falling through", () => {
+  it.effect("rejects a malformed --project-ref instead of falling through", () => {
     // The user typed the ref: report the typo (the same InvalidProjectRefError
     // every other command raises) rather than silently sending the linked
     // checkout's context and reporting a misleading "not found".
@@ -325,7 +264,7 @@ describe("feedback delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects a malformed SUPABASE_PROJECT_ID instead of falling through", () => {
+  it.effect("rejects a malformed SUPABASE_PROJECT_ID instead of falling through", () => {
     const { layer, client } = setupFeedbackDelete({ yes: true, projectIdEnv: "not-a-valid-ref!" });
     return Effect.gen(function* () {
       yield* writeLinkedProjectRef(tempRoot.current, VALID_REF);
@@ -336,7 +275,7 @@ describe("feedback delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("treats an empty --project-ref as unset, like ProjectRefResolver", () => {
+  it.effect("treats an empty --project-ref as unset, like ProjectRefResolver", () => {
     const { layer, client } = setupFeedbackDelete({
       yes: true,
       projectIdEnv: "envenvenvenvenvenvre",
@@ -348,7 +287,7 @@ describe("feedback delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prefers SUPABASE_PROJECT_ID over the linked ref file", () => {
+  it.effect("prefers SUPABASE_PROJECT_ID over the linked ref file", () => {
     const { layer, client } = setupFeedbackDelete({
       yes: true,
       projectIdEnv: "envenvenvenvenvenvre",
@@ -361,7 +300,7 @@ describe("feedback delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("presents the persisted gotrue user id with the delete", () => {
+  it.effect("presents the persisted gotrue user id with the delete", () => {
     // Rows submitted while logged in carry a user_id, and the RLS only
     // matches them when the same id arrives as the x-feedback-user-id header.
     const { layer, client } = setupFeedbackDelete({
@@ -380,7 +319,7 @@ describe("feedback delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("still presents the user id when telemetry consent is denied", () => {
+  it.effect("still presents the user id when telemetry consent is denied", () => {
     // Unlike submit-side attribution, the header is functional auth context —
     // gating it on consent would strand rows submitted before an opt-out.
     const { layer, client } = setupFeedbackDelete({
@@ -395,7 +334,7 @@ describe("feedback delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("sends no user id when not logged in", () => {
+  it.effect("sends no user id when not logged in", () => {
     const { layer, client } = setupFeedbackDelete({ yes: true });
     return Effect.gen(function* () {
       yield* feedbackDelete(deleteArgs());
@@ -404,7 +343,7 @@ describe("feedback delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("degrades to no project ref when the linked ref file cannot be read", () => {
+  it.effect("degrades to no project ref when the linked ref file cannot be read", () => {
     const { layer, client } = setupFeedbackDelete({ yes: true });
     return Effect.gen(function* () {
       yield* writeLinkedProjectRef(tempRoot.current, VALID_REF, { asDirectory: true });
@@ -414,7 +353,7 @@ describe("feedback delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("acknowledges the deletion in json output format", () => {
+  it.effect("acknowledges the deletion in json output format", () => {
     const { layer, out } = setupFeedbackDelete({ output: { format: "json" }, yes: true });
     return Effect.gen(function* () {
       yield* feedbackDelete(deleteArgs());
@@ -427,14 +366,14 @@ describe("feedback delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits only the machine payload on stdout with -o json", () => {
-    const { layer, out } = setupFeedbackDelete({ goOutput: "json", yes: true });
+  it.effect("emits only the machine payload on stdout with -o json", () => {
+    const { layer, out } = setupFeedbackDelete({ outputFlag: "json", yes: true });
     return Effect.gen(function* () {
       yield* feedbackDelete(deleteArgs());
 
-      expect(out.rawChunks).toHaveLength(1);
-      expect(out.rawChunks[0]?.stream).toBe("stdout");
-      const payload: unknown = yield* jsonValue(out.rawChunks[0]!.text);
+      const stdoutChunks = out.rawChunks.filter((chunk) => chunk.stream === "stdout");
+      expect(stdoutChunks).toHaveLength(1);
+      const payload: unknown = yield* jsonValue(stdoutChunks[0]?.text ?? "");
       expect(payload).toEqual({ deleted: true });
       // No human-readable acknowledgement — stdout is payload-only.
       expect(out.messages).not.toContainEqual(expect.objectContaining({ type: "info" }));
@@ -442,29 +381,9 @@ describe("feedback delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("refuses to prompt under -o json without --yes, even on a TTY", () => {
-    // `-o json` leaves output.format === "text", so the interactive text layer
-    // would render the clack confirm onto stdout ahead of the raw JSON payload.
-    // Machine mode must fail loudly instead — the same contract as
-    // --output-format json.
-    const { layer, out, client } = setupFeedbackDelete({ goOutput: "json" });
-    return Effect.gen(function* () {
-      const error = yield* feedbackDelete(deleteArgs()).pipe(Effect.flip);
-
-      expect(error).toMatchObject({
-        _tag: "NonInteractiveError",
-        detail: "Cannot prompt for confirmation with -o json",
-        suggestion: "Pass --yes to delete without confirmation",
-      });
-      expect(out.promptConfirmCalls).toHaveLength(0);
-      expect(client.deleteCalls).toHaveLength(0);
-      expect(out.rawChunks).toHaveLength(0);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("fails loudly in json mode without --yes instead of silently deleting", () => {
+  it.effect("fails loudly in json mode without --yes instead of silently deleting", () => {
     const { layer, out, client, processControl } = setupFeedbackDeleteHandler({
-      output: { format: "json", promptConfirmFail: true },
+      output: { format: "json" },
     });
     return Effect.gen(function* () {
       yield* feedbackDeleteHandler(deleteArgs());
@@ -475,7 +394,7 @@ describe("feedback delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("surfaces a backend failure during the delete", () => {
+  it.effect("surfaces a backend failure during the delete", () => {
     const { layer, out, telemetryState } = setupFeedbackDelete({
       client: { deleteFailWith: "backend unavailable" },
       yes: true,
@@ -490,7 +409,7 @@ describe("feedback delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("never sends the token or project ref value to PostHog", () => {
+  it.effect("never sends the token or project ref value to PostHog", () => {
     const { layer, analytics, client } = setupFeedbackDeleteHandler({
       yes: true,
       args: ["feedback", "delete", TOKEN, "--project-ref", "abcdefghijklmnopqrst"],
@@ -510,4 +429,16 @@ describe("feedback delete", () => {
       expect(Object.keys(events[0]?.properties.flags ?? {})).toEqual(["project-ref"]);
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedConsent("feedback delete", {
+  invoke: () => {
+    const client = mockFeedbackClient();
+    return {
+      run: feedbackDelete(deleteArgs()).pipe(
+        Effect.provide(Layer.mergeAll(client.layer, mockTelemetryRuntime({ cliVersion: "9.9.9" }))),
+      ),
+      mutations: () => client.deleteCalls.length,
+    };
+  },
 });

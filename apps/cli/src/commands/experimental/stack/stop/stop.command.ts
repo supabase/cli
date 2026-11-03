@@ -1,20 +1,22 @@
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { stackStop } from "./stop.handler.ts";
+import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 
 const config = {
-  all: Flag.boolean("all").pipe(
+  all: Flag.Boolean("all").pipe(
     Flag.withDescription("Stop every readable managed stack."),
     Flag.optional,
   ),
-  stack: Flag.string("stack").pipe(
+  stack: Flag.String("stack").pipe(
     Flag.withDescription("Stop the stack with this name (defaults to the current project stack)."),
     Flag.optional,
   ),
-  stackId: Flag.string("stack-id").pipe(
-    Flag.withDescription("Stop an existing stack by id."),
+  stackId: Flag.String("stack-id").pipe(
+    Flag.withDescription("Stop an existing stack by id or unique id prefix."),
     Flag.optional,
   ),
 } as const;
@@ -30,7 +32,9 @@ export const stackStopCommand = Command.make("stop", config).pipe(
       description: "Stop the existing feature-a stack",
     },
   ]),
+  withPermissions({ operations: [], noApiEffectFlags: ["all", "stack", "stack-id"] }),
   Command.withHandler((flags) =>
     stackStop(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

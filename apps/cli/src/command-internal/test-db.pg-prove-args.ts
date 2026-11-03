@@ -1,8 +1,16 @@
-import * as nodePath from "node:path";
-import { Option } from "effect";
-import type { PostgresClientMount } from "@supabase/stack/effect";
-
+import { BunPath } from "@effect/platform-bun";
+import { Effect, Option, Path } from "effect";
+import { postgresMajor } from "@supabase/stack/internal/artifacts";
 import { toDockerMountPath } from "./docker-path.ts";
+
+const nodePath = Effect.runSync(Effect.provide(Path.Path, BunPath.layer));
+const posixPath = Effect.runSync(Effect.provide(Path.Path, BunPath.layerPosix));
+
+interface PostgresClientMount {
+  readonly source: string;
+  readonly target: string;
+  readonly readOnly: boolean;
+}
 
 export interface PgProveArgs {
   /** Full `pg_prove` argv (without the leading binary, which the image provides). */
@@ -19,6 +27,12 @@ export interface PgProveArgs {
   /** Container working directory (dir of the first test path). */
   readonly workingDir: Option.Option<string>;
 }
+
+/** Catalog `pg_prove` major for a stack database artifact version, including OrioleDB builds. */
+export const pgProveMajor = (version: string): 15 | 17 | undefined => {
+  const major = postgresMajor(version);
+  return major === "15" ? 15 : major === "17" ? 17 : undefined;
+};
 
 /**
  * Builds the `pg_prove` command, volume binds, and working directory for a
@@ -60,7 +74,7 @@ export function buildPgProveArgs(opts: {
     // `\ir ./sibling.sql` includes resolve relative to the test file's own
     // directory; a single-file bind would leave siblings absent in the
     // container. Directories are mounted as-is.
-    const isFile = nodePath.posix.extname(dockerPath) !== "";
+    const isFile = posixPath.extname(dockerPath) !== "";
     const hostMount = isFile ? nodePath.dirname(fp) : fp;
     const dockerMount = toDockerMountPath(hostMount);
 

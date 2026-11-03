@@ -1,7 +1,8 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Redacted } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
+import { TestClock } from "effect/testing";
 
 import {
   mockAnalytics,
@@ -13,9 +14,14 @@ import {
 } from "../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { ProfileFlag } from "../../command-internal/global-flags.ts";
+import { loginApiLayer } from "../../command-internal/login-api.layer.ts";
+import { loginCryptoLayer } from "../../command-internal/login-crypto.layer.ts";
+import { assertPermissionDrift } from "../../../tests/helpers/permission-drift.ts";
 import {
   VALID_TOKEN,
   buildTestRuntime,
+  jsonResponse,
+  mockCommandPlatformApi,
   mockCommandSettings,
   mockCommandCredentialsTracked,
   mockLoginApi,
@@ -26,6 +32,7 @@ import {
   withEnvVar,
 } from "../../../tests/helpers/command-mocks.ts";
 import { EventLoginCompleted } from "../../shared/telemetry/event-catalog.ts";
+import { LoginCrypto } from "./login-crypto.service.ts";
 import { login } from "./login.handler.ts";
 import type { LoginFlags } from "./login.command.ts";
 
@@ -44,6 +51,8 @@ interface SetupOpts {
   readonly pipedStdin?: string;
   readonly gotrueId?: string;
   readonly profileFails?: boolean;
+  /** Runs the real login API layer against this recorded HTTP mock instead of the service-level mock. */
+  readonly httpApi?: Parameters<typeof mockCommandPlatformApi>[0];
   readonly failTimes?: number;
   readonly decryptFails?: boolean;
   readonly keygenFails?: boolean;
@@ -82,6 +91,7 @@ function setupLogin(opts: SetupOpts = {}) {
     profileFails: opts.profileFails,
   });
   const analytics = mockAnalytics();
+  const httpApi = opts.httpApi === undefined ? undefined : mockCommandPlatformApi(opts.httpApi);
   const cliSettings = mockCommandSettings({
     workdir: tempRoot.current,
     profileEnvValue: opts.profileEnvValue,
@@ -108,17 +118,19 @@ function setupLogin(opts: SetupOpts = {}) {
     }),
     credentials.layer,
     crypto.layer,
-    loginApi.layer,
+    httpApi === undefined
+      ? loginApi.layer
+      : loginApiLayer.pipe(Layer.provide(httpApi.httpClientLayer), Layer.provide(cliSettings)),
     mockStdin(isTTY, opts.pipedStdin),
-    mockBrowser(),
+    mockBrowser,
     Layer.succeed(ProfileFlag, opts.profileFlag ?? "supabase"),
     ...(opts.argv !== undefined ? [Layer.succeed(CliArgs, { args: opts.argv })] : []),
   );
-  return { layer, out, credentials, crypto, loginApi, telemetry, analytics };
+  return { layer, out, credentials, crypto, loginApi, telemetry, analytics, httpApi };
 }
 
 describe("login integration", () => {
-  it.live("saves the token from --token and reports logged in", () => {
+  it.effect("saves the token from --token and reports logged in", () => {
     const { layer, out, credentials, analytics } = setupLogin();
     return Effect.gen(function* () {
       yield* login(flags({ token: Option.some(VALID_TOKEN) }));
@@ -128,7 +140,7 @@ describe("login integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("saves the token from SUPABASE_ACCESS_TOKEN env when no flag is given", () => {
+  it.effect("saves the token from SUPABASE_ACCESS_TOKEN env when no flag is given", () => {
     const { layer, credentials } = setupLogin({ accessTokenEnv: VALID_TOKEN });
     return Effect.gen(function* () {
       yield* login(flags());
@@ -136,7 +148,7 @@ describe("login integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("saves the token piped via stdin in non-TTY", () => {
+  it.effect("saves the token piped via stdin in non-TTY", () => {
     const { layer, credentials } = setupLogin({
       isTTY: false,
       pipedStdin: VALID_TOKEN,
@@ -147,7 +159,7 @@ describe("login integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects an invalid --token with 'cannot save provided token:'", () => {
+  it.effect("rejects an invalid --token with 'cannot save provided token:'", () => {
     const { layer } = setupLogin({ saveFails: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(login(flags({ token: Option.some("not-a-token") })));
@@ -160,7 +172,7 @@ describe("login integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails in non-TTY with no token", () => {
+  it.effect("fails in non-TTY with no token", () => {
     const { layer } = setupLogin({ isTTY: false });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(login(flags()));
@@ -173,7 +185,7 @@ describe("login integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("browser flow: generates link, opens browser, decrypts, saves, prints created", () => {
+  it.effect("browser flow: generates link, opens browser, decrypts, saves, prints created", () => {
     const { layer, out, credentials } = setupLogin({ isTTY: true, tokenName: "my-machine" });
     return Effect.gen(function* () {
       yield* login(flags());
@@ -187,16 +199,19 @@ describe("login integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("browser flow with --no-browser prints the link without the open-browser banner", () => {
-    const { layer, out } = setupLogin({ isTTY: true });
-    return Effect.gen(function* () {
-      yield* login(flags({ noBrowser: true }));
-      expect(out.stdoutText).toContain("Here is your login link, open it in the browser");
-      expect(out.stdoutText).not.toContain("Press Enter to open browser");
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect(
+    "browser flow with --no-browser prints the link without the open-browser banner",
+    () => {
+      const { layer, out } = setupLogin({ isTTY: true });
+      return Effect.gen(function* () {
+        yield* login(flags({ noBrowser: true }));
+        expect(out.stdoutText).toContain("Here is your login link, open it in the browser");
+        expect(out.stdoutText).not.toContain("Press Enter to open browser");
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.live("browser flow uses the default token name when --name is absent", () => {
+  it.effect("browser flow uses the default token name when --name is absent", () => {
     const { layer, out } = setupLogin({ isTTY: true });
     return Effect.gen(function* () {
       yield* login(flags());
@@ -204,7 +219,15 @@ describe("login integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("retries verification on poll failure then succeeds", () => {
+  it.effect("the default token name ends in unix seconds from the clock", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1_700_000_000_500);
+      const crypto = yield* LoginCrypto;
+      expect(yield* crypto.defaultTokenName).toMatch(/^cli_(.+@.+_)?1700000000$/);
+    }).pipe(Effect.provide(loginCryptoLayer)),
+  );
+
+  it.effect("retries verification on poll failure then succeeds", () => {
     const { layer, out, loginApi } = setupLogin({ isTTY: true, failTimes: 2 });
     return Effect.gen(function* () {
       yield* login(flags());
@@ -215,7 +238,7 @@ describe("login integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails after 2 retries are exhausted", () => {
+  it.effect("fails after 2 retries are exhausted", () => {
     const { layer, out } = setupLogin({ isTTY: true, failTimes: 3 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(login(flags()));
@@ -228,7 +251,7 @@ describe("login integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("decrypt failure surfaces 'cannot decrypt access token'", () => {
+  it.effect("decrypt failure surfaces 'cannot decrypt access token'", () => {
     const { layer } = setupLogin({ isTTY: true, decryptFails: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(login(flags()));
@@ -241,7 +264,7 @@ describe("login integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("telemetry: successful profile fetch stitches the gotrue_id", () => {
+  it.effect("telemetry: successful profile fetch stitches the gotrue_id", () => {
     const { layer, telemetry, analytics } = setupLogin({ gotrueId: "gotrue-abc" });
     return Effect.gen(function* () {
       yield* login(flags({ token: Option.some(VALID_TOKEN) }));
@@ -251,7 +274,7 @@ describe("login integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "telemetry: profile fetch failure clears distinct_id but login still succeeds + still captures",
     () => {
       const { layer, out, telemetry, analytics } = setupLogin({ profileFails: true });
@@ -265,7 +288,84 @@ describe("login integration", () => {
     },
   );
 
-  it.live("flushes telemetry state via ensuring", () => {
+  describe("profile lookup over the real login API", () => {
+    const PROFILE = { gotrue_id: "gotrue-abc", primary_email: "a@b.co", username: "ab" };
+    const SESSION = {
+      access_token: "656e6372797074656420746f6b656e",
+      public_key: "04abcd",
+      nonce: "0102030405060708090a0b0c",
+    };
+
+    it.effect("looks up the profile once with the new token after a --token login", () => {
+      const { layer, out, credentials, telemetry, httpApi } = setupLogin({
+        httpApi: { response: { status: 200, body: PROFILE } },
+      });
+      return Effect.gen(function* () {
+        yield* login(flags({ token: Option.some(VALID_TOKEN) }));
+        const requests = httpApi?.requests ?? [];
+
+        expect(credentials.savedToken).toBe(VALID_TOKEN);
+        expect(out.stdoutText).toContain("You are now logged in. Happy coding!");
+        expect(requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          "GET https://api.supabase.com/v1/profile",
+        ]);
+        expect(requests[0]?.headers["authorization"]).toBe(`Bearer ${VALID_TOKEN}`);
+        expect(telemetry.stitchedDistinctId).toBe("gotrue-abc");
+        assertPermissionDrift({ command: "login", activeFlags: { token: true }, requests });
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect(
+      "still logs in and clears the distinct id when the profile lookup is forbidden",
+      () => {
+        const { layer, out, credentials, telemetry, analytics, httpApi } = setupLogin({
+          httpApi: { response: { status: 403, body: { message: "Forbidden" } } },
+        });
+        return Effect.gen(function* () {
+          yield* login(flags({ token: Option.some(VALID_TOKEN) }));
+          const requests = httpApi?.requests ?? [];
+
+          expect(requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+            "GET https://api.supabase.com/v1/profile",
+          ]);
+          expect(credentials.savedToken).toBe(VALID_TOKEN);
+          expect(out.stdoutText).toContain("You are now logged in. Happy coding!");
+          expect(telemetry.clearedDistinctId).toBe(true);
+          expect(telemetry.stitchedDistinctId).toBeUndefined();
+          expect(analytics.captured.map((c) => c.event)).toContain(EventLoginCompleted);
+          assertPermissionDrift({ command: "login", activeFlags: { token: true }, requests });
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.effect("polls the login session, then looks up the profile in the browser flow", () => {
+      const { layer, credentials, httpApi } = setupLogin({
+        isTTY: true,
+        httpApi: {
+          handler: (request) =>
+            Effect.succeed(
+              request.url.includes("/platform/cli/login/")
+                ? jsonResponse(request, 200, SESSION)
+                : jsonResponse(request, 200, PROFILE),
+            ),
+        },
+      });
+      return Effect.gen(function* () {
+        yield* login(flags());
+        const requests = httpApi?.requests ?? [];
+
+        expect(credentials.savedToken).toBe(VALID_TOKEN);
+        expect(requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          "GET https://api.supabase.com/platform/cli/login/test-session-id?device_code=123456",
+          "GET https://api.supabase.com/v1/profile",
+        ]);
+        expect(requests[1]?.headers["authorization"]).toBe(`Bearer ${VALID_TOKEN}`);
+        assertPermissionDrift({ command: "login", requests });
+      }).pipe(Effect.provide(layer));
+    });
+  });
+
+  it.effect("flushes telemetry state via ensuring", () => {
     const { layer, telemetry } = setupLogin();
     return Effect.gen(function* () {
       yield* login(flags({ token: Option.some(VALID_TOKEN) }));
@@ -274,7 +374,7 @@ describe("login integration", () => {
   });
 
   for (const format of ["json", "stream-json"] as const) {
-    it.live(`${format}: --token emits a single success result with no human banner`, () => {
+    it.effect(`${format}: --token emits a single success result with no human banner`, () => {
       const { layer, out } = setupLogin({ format });
       return Effect.gen(function* () {
         yield* login(flags({ token: Option.some(VALID_TOKEN) }));
@@ -285,7 +385,7 @@ describe("login integration", () => {
     });
   }
 
-  it.live("browser flow: keygen failure exits with LoginCryptoError", () => {
+  it.effect("browser flow: keygen failure exits with LoginCryptoError", () => {
     const { layer } = setupLogin({ isTTY: true, keygenFails: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(login(flags()));
@@ -297,7 +397,7 @@ describe("login integration", () => {
   });
 
   for (const format of ["json", "stream-json"] as const) {
-    it.live(`${format}: browser flow emits a success result with token_name`, () => {
+    it.effect(`${format}: browser flow emits a success result with token_name`, () => {
       const { layer, out } = setupLogin({ format, isTTY: true, tokenName: "my-machine" });
       return Effect.gen(function* () {
         yield* login(flags());
@@ -309,7 +409,7 @@ describe("login integration", () => {
     });
   }
 
-  it.live(
+  it.effect(
     "prints the Claude Code plugin hint to stderr when in Claude Code with a TTY stdout",
     () => {
       const { layer, out } = setupLogin({ stdoutIsTty: true });
@@ -324,7 +424,7 @@ describe("login integration", () => {
     },
   );
 
-  it.live("persists ~/.supabase/profile on success when --profile is set", () => {
+  it.effect("persists ~/.supabase/profile on success when --profile is set", () => {
     const { layer } = setupLogin({
       profileFlag: "supabase-staging",
       homeDir: tempRoot.current,
@@ -347,7 +447,7 @@ describe("login integration", () => {
     );
   });
 
-  it.live("persists SUPABASE_PROFILE verbatim when neither --profile nor argv names one", () => {
+  it.effect("persists SUPABASE_PROFILE verbatim when neither --profile nor argv names one", () => {
     const { layer } = setupLogin({
       argv: ["login", "--token", VALID_TOKEN],
       homeDir: tempRoot.current,
@@ -368,7 +468,7 @@ describe("login integration", () => {
     );
   });
 
-  it.live("explicit --profile supabase persists 'supabase', shadowing SUPABASE_PROFILE", () => {
+  it.effect("explicit --profile supabase persists 'supabase', shadowing SUPABASE_PROFILE", () => {
     const { layer } = setupLogin({
       argv: ["login", "--profile", "supabase", "--token", VALID_TOKEN],
       homeDir: tempRoot.current,
@@ -388,7 +488,7 @@ describe("login integration", () => {
     );
   });
 
-  it.live("persists the raw YAML path selected by SUPABASE_PROFILE", () =>
+  it.effect("persists the raw YAML path selected by SUPABASE_PROFILE", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -404,7 +504,7 @@ describe("login integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("explicit --profile supabase heals a stale persisted profile file", () => {
+  it.effect("explicit --profile supabase heals a stale persisted profile file", () => {
     const { layer } = setupLogin({
       argv: ["login", "--profile=supabase"],
       homeDir: tempRoot.current,
@@ -426,7 +526,7 @@ describe("login integration", () => {
     );
   });
 
-  it.live("browser flow in json mode fails cleanly at the prompt", () => {
+  it.effect("browser flow in json mode fails cleanly at the prompt", () => {
     const { layer } = setupLogin({ format: "json", isTTY: true, promptTextFail: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(login(flags()));

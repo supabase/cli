@@ -1,17 +1,19 @@
-import { Clock, Effect, FileSystem, Option, Path } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { Clock, Effect, FileSystem, Option, Path, Ref } from "effect";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   DebugFlag,
   DnsResolverFlag,
   NetworkIdFlag,
 } from "../../../command-internal/global-flags.ts";
-import { GoProxy } from "../../../command-internal/go-proxy.service.ts";
-import { detectGitBranch } from "../../../shared/git/git-branch.ts";
+import { removedFlag } from "../../../command-internal/removed-command.ts";
+import { branchClause, detectGitBranch } from "../../../shared/git/git-branch.ts";
+import { announceTarget } from "../../../shared/output/command-target.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { CliConfigKeys } from "../../../config/cli-config-keys.ts";
+import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { aqua, yellow } from "../../../command-internal/colors.ts";
 import {
   readDbToml,
@@ -19,12 +21,30 @@ import {
   type DbTomlValues,
 } from "../../../command-internal/db-config.toml-read.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import type { DbConnType } from "../../../command-internal/db-target-flags.ts";
+import { hostedMutationPreapproval } from "../../../command-internal/hosted-consent/hosted-consent.ts";
+import {
+  resolveTarget,
+  type LinkedTarget,
+} from "../../../command-internal/target/resolve-target.ts";
+import type { RemoteValue } from "../../../command-internal/target/remote-value.ts";
+import {
+  resolveRemoteTarget,
+  warnTarget,
+} from "../../../command-internal/target/remote-resolution.ts";
+import {
+  renderDbUrlTarget,
+  renderLocalTarget,
+} from "../../../command-internal/target/target-identity.ts";
+import { parseTargetSelector } from "../../../command-internal/target/target-selector.ts";
+import { withUnresolvedBranchSuggestion } from "../../../command-internal/target/unresolved-branch-suggestion.ts";
 import { getHostname } from "../../../command-internal/hostname.ts";
 import { makeDir } from "../../../command-internal/make-dir.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
+import {
+  rewriteDumpHostForToolContainer,
+  toolContainerUsesHostNetwork,
+} from "../../../command-internal/postgres-client.run.ts";
 import { toPostgresURL } from "../../../command-internal/postgres-url.ts";
-import { schemaToCsvField } from "../../../command-internal/schema-flags.ts";
 import { findDropStatements } from "../../../command-internal/sql-split.ts";
 import { buildLocalDbContainerInputs } from "../../../command-internal/db-bootstrap/local-container-inputs.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
@@ -38,7 +58,7 @@ import {
   stackWithShadowDatabase,
 } from "../../../command-internal/stack-shadow.ts";
 import { isLocalDbRunning } from "../../../command-internal/db-bootstrap/local-db-running.ts";
-import { waitForHealthyServices } from "../../../command-internal/db-bootstrap/health-check.ts";
+import { waitForPostgresReady } from "../../../command-internal/db-bootstrap/health-check.ts";
 import { withShadowDatabase } from "../../../command-internal/db-bootstrap/shadow-cache.ts";
 import {
   createShadowDatabase,
@@ -49,10 +69,8 @@ import {
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import {
-  parseBoolEnv,
   resolveDiffEngine,
   schemaPathsTransitionWarning,
-  shouldUsePgDelta,
 } from "../../../command-internal/diff-engine.ts";
 import {
   formatMigrationTimestamp,
@@ -66,34 +84,29 @@ import {
   type PgDeltaEndpoint,
   type PgDeltaRenderedFile,
 } from "../shared/pgdelta-engine.service.ts";
+import { parsePgDeltaNextEndpoint } from "../shared/pgdelta-engine.next.layer.ts";
 import { LoadPgDeltaSqlFiles } from "../shared/pgdelta-files.ts";
 import { writePgDeltaMigrations } from "../shared/pgdelta-migrations.write.ts";
-import {
-  type PgDeltaContext,
-  isPgDeltaDebugEnabled,
-  resolvePgDeltaProjectId,
-} from "../../../command-internal/pgdelta.ts";
+import { type PgDeltaContext, isPgDeltaDebugEnabled } from "../../../command-internal/pgdelta.ts";
 import { prepareShadowSource } from "../shared/shadow-source.ts";
 import type { DbDiffFlags } from "./diff.command.ts";
-import { classifyExplicitRef, unknownTargetMessage } from "./diff.explicit.ts";
+import {
+  classifyExplicitRef,
+  explicitDeprecationMessages,
+  explicitIpv6Error,
+  explicitSelectorError,
+  unresolvedBranchSuggestion,
+} from "./diff.explicit.ts";
 import {
   DbDiffDbNotRunningError,
   DbDiffEngineConflictError,
   DbDiffExplicitFlagsError,
-  DbDiffTargetFlagsError,
-  DbDiffUnknownTargetError,
   DbDiffWriteError,
 } from "./diff.errors.ts";
 import { diffSchemaPgAdmin } from "./pgadmin-diff.ts";
 
 const warnDiff = `WARNING: The diff tool is not foolproof, so you may need to manually rearrange and modify the generated migration.
 Run ${aqua("supabase db reset")} to verify that the new migration does not generate errors.`;
-
-// `--use-pg-schema` delegates to the bundled Go binary's in-process `stripe/pg-schema-diff`
-// library, which has no TS/container equivalent (see SIDE_EFFECTS.md); the flag is deprecated in
-// favor of the pg-delta engine. This warning prints before the delegated child's own unchanged
-// "experimental" warning.
-const warnPgSchemaDeprecated = `${yellow("WARNING:")} "--use-pg-schema" is deprecated. Use the pg-delta engine ([experimental.pgdelta] enabled = true / --use-pg-delta) or the default migra engine instead.`;
 
 const declarativeBaselineAdvisory = (declarativePath: string | null) => ({
   code: "DeclarativeSchemaNotUsedAsDiffBaseline",
@@ -106,38 +119,25 @@ const declarativeBaselineAdvisory = (declarativePath: string | null) => ({
   },
 });
 
-const declarativeBaselineNote = (displayPath: string) =>
-  `Note: db diff -f uses supabase/migrations as its baseline. Declarative schema files in ${displayPath} are not part of that baseline. If migrations are empty or outdated, the generated migration may include existing declarative objects. -f names the migration; it does not filter objects.\n`;
+const declarativeNextSteps = (suggestMigra: boolean, syncNeedsExperimental: boolean) =>
+  `Run ${aqua(`supabase db schema declarative sync${syncNeedsExperimental ? " --experimental" : ""}`)} to generate a migration from them${suggestMigra ? `, or pass ${aqua("--use-migra")} to diff them with migra` : ""}.`;
 
-/**
- * Rebuilds the `db diff` argv for the `--use-pg-schema` delegate path — the CLI's sole remaining
- * Go delegation on this command, since the in-process `stripe/pg-schema-diff` library has no
- * TS/container equivalent. The explicit `--from`/`--to` and engine mutex are already handled
- * before this runs, so it just forwards `--use-pg-schema` plus the target/schema/file flags.
- */
-const rebuildPgSchemaDelegateArgs = (flags: DbDiffFlags): Array<string> => {
-  const args = ["db", "diff", "--use-pg-schema"];
-  const pushTarget = (name: string, value: Option.Option<boolean>) => {
-    // The child binary treats an explicitly passed `--flag=false` as selecting that target, so
-    // forward every explicitly set flag, not just the true ones.
-    if (Option.isSome(value)) args.push(value.value ? `--${name}` : `--${name}=false`);
-  };
-  if (Option.isSome(flags.dbUrl)) args.push("--db-url", flags.dbUrl.value);
-  pushTarget("linked", flags.linked);
-  pushTarget("local", flags.local);
-  if (Option.isSome(flags.file)) args.push("--file", flags.file.value);
-  if (Option.isSome(flags.output)) args.push("--output", flags.output.value);
-  // Re-encoded as a CSV field so the child's pflag CSV parser doesn't re-split a
-  // comma-containing schema (e.g. "tenant,one").
-  for (const s of flags.schema) args.push("--schema", schemaToCsvField(s));
-  return args;
-};
+const declarativeBaselineNote = (displayPath: string, nextSteps: string) =>
+  `Note: db diff -f uses supabase/migrations as its baseline. Declarative schema files in ${displayPath} are not part of that baseline. If migrations are empty or outdated, the generated migration may include existing declarative objects. -f names the migration; it does not filter objects. ${nextSteps}\n`;
+
+const declarativeFilesIgnoredNote = (displayPath: string, nextSteps: string) =>
+  `Note: db diff compares supabase/migrations with the target database; declarative schema files in ${displayPath} are not read. ${nextSteps}\n`;
+
+const EXPLICIT_REF_VALUES_MESSAGE = (flag: "--from" | "--to") =>
+  `${flag} takes local, migrations, remote, a project ref, a branch name or a postgresql:// URL`;
 
 export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
+  if (Option.isSome(flags.usePgSchema)) {
+    return yield* removedFlag("--use-pg-schema", "Use the default pg-delta engine or --use-migra.");
+  }
   const output = yield* Output;
   const resolver = yield* DbConfigResolver;
   const pgDelta = yield* PgDeltaEngine;
-  const proxy = yield* GoProxy;
   const cliSettings = yield* CommandSettings;
   const telemetryState = yield* TelemetryState;
   const linkedProjectCache = yield* LinkedProjectCache;
@@ -147,54 +147,35 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
   const dnsResolver = yield* DnsResolverFlag;
   const debug = yield* DebugFlag;
   const stackApi = yield* Effect.serviceOption(StackApi);
+  const configValues = yield* CliConfigValues;
 
   // Resolved linked ref, captured so the post-run finalizer caches the project
   // (GET /v1/projects/{ref}).
-  let linkedRefForCache: string | undefined;
+  const linkedRefForCache = yield* Ref.make(Option.none<string>());
 
   yield* Effect.gen(function* () {
-    // The engine flags (`use-migra use-pgadmin use-pg-schema use-pg-delta`) and the target flags
-    // (`db-url linked local`) are each mutually exclusive groups; "set" means the flag was
-    // explicitly passed (`Option.isSome`).
+    // The engine flags (`use-migra use-pgadmin use-pg-delta`) are a mutually exclusive group;
+    // "set" means the flag was explicitly passed (`Option.isSome`). `use-pg-schema` is rejected
+    // unconditionally above, so it never reaches `engineSet`.
     const engineSet: Array<string> = [];
     if (Option.isSome(flags.useMigra)) engineSet.push("use-migra");
     if (Option.isSome(flags.usePgAdmin)) engineSet.push("use-pgadmin");
-    if (Option.isSome(flags.usePgSchema)) engineSet.push("use-pg-schema");
     if (Option.isSome(flags.usePgDelta)) engineSet.push("use-pg-delta");
     if (engineSet.length > 1) {
-      return yield* Effect.fail(
-        new DbDiffEngineConflictError({
-          message: `if any flags in the group [use-migra use-pgadmin use-pg-schema use-pg-delta] are set none of the others can be; [${[...engineSet].sort().join(" ")}] were all set`,
-        }),
-      );
+      return yield* new DbDiffEngineConflictError({
+        message: `if any flags in the group [use-migra use-pgadmin use-pg-delta] are set none of the others can be; [${[...engineSet].sort().join(" ")}] were all set`,
+      });
     }
-    const targetSet: Array<string> = [];
-    if (Option.isSome(flags.dbUrl)) targetSet.push("db-url");
-    if (Option.isSome(flags.linked)) targetSet.push("linked");
-    if (Option.isSome(flags.local)) targetSet.push("local");
-    if (targetSet.length > 1) {
-      return yield* Effect.fail(
-        new DbDiffTargetFlagsError({
-          message: `if any flags in the group [db-url linked local] are set none of the others can be; [${[...targetSet].sort().join(" ")}] were all set`,
-        }),
-      );
-    }
-    if (
-      Option.isSome(flags.useMigra) ||
-      Option.isSome(flags.usePgAdmin) ||
-      Option.isSome(flags.usePgSchema)
-    ) {
-      const flag = Option.isSome(flags.useMigra)
-        ? "--use-migra"
-        : Option.isSome(flags.usePgAdmin)
-          ? "--use-pgadmin"
-          : "--use-pg-schema";
-      yield* stackRejectNativeDockerDiffEngine(flag);
+    // `--use-migra=false` / `--use-pgadmin=false` keep the pg-delta default, which the stack
+    // backend supports, so only a true value is rejected there.
+    const useMigra = Option.getOrElse(flags.useMigra, () => false);
+    if (useMigra || Option.getOrElse(flags.usePgAdmin, () => false)) {
+      yield* stackRejectNativeDockerDiffEngine(useMigra ? "--use-migra" : "--use-pgadmin");
     }
 
     // Config is read lazily per path, not unconditionally up front: reading the base config
     // before the ref is known would validate fields a `[remotes.<ref>]` block overrides, which
-    // would fail a linked diff that should succeed. The delegate paths load config themselves.
+    // would fail a linked diff that should succeed. Explicit mode loads its own config below.
 
     // Explicit `--from`/`--to` mode: both required, always pg-delta. An empty value
     // (a shell var expanding to `""`) counts as unset — `--from "" --to ""` falls
@@ -204,87 +185,126 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
     const fromSet = from.length > 0;
     const toSet = to.length > 0;
     if (fromSet || toSet) {
+      yield* Effect.annotateCurrentSpan({ "diff.mode": "explicit", "diff.engine": "pg-delta" });
       if (!fromSet || !toSet) {
-        return yield* Effect.fail(
-          new DbDiffExplicitFlagsError({
-            message: "must set both --from and --to when using explicit diff mode",
-          }),
-        );
+        return yield* new DbDiffExplicitFlagsError({
+          message: "must set both --from and --to when using explicit diff mode",
+        });
       }
-      // `--project-ref` never implies `--linked` and must not be silently discarded (see
-      // push.handler.ts's identical guard). Two exceptions in explicit mode: `--from`/`--to
-      // linked` resolves a linked ref without any `--linked`/target flag, so the guard must not
-      // fire when either side is the literal ref "linked"; and a changed `--linked` (even
-      // `--linked=false`) genuinely consumes `--project-ref` via the preflight below.
-      if (
-        Option.isSome(flags.projectRef) &&
-        Option.isNone(flags.linked) &&
-        classifyExplicitRef(from) !== "linked" &&
-        classifyExplicitRef(to) !== "linked"
-      ) {
-        return yield* Effect.fail(
-          new DbDiffTargetFlagsError({
+      if (Option.isSome(flags.remote)) {
+        return yield* new DbDiffExplicitFlagsError({
+          message: "--remote doesn't apply with --from/--to; use --from=remote or --to=remote.",
+        });
+      }
+      const { selection, deprecations } = yield* Effect.fromResult(parseTargetSelector(flags)).pipe(
+        Effect.mapError(explicitSelectorError),
+      );
+      const projectRefTarget =
+        selection._tag === "Ref" || selection._tag === "Branch" ? selection : undefined;
+      if (Option.isSome(flags.projectRef)) {
+        if (projectRefTarget === undefined) {
+          return yield* new DbDiffExplicitFlagsError({
+            message: "--project-ref takes a project ref or a branch name, not a URL.",
+          });
+        }
+        if (
+          classifyExplicitRef(from)._tag !== "Remote" &&
+          classifyExplicitRef(to)._tag !== "Remote"
+        ) {
+          return yield* new DbDiffExplicitFlagsError({
             message:
-              "--project-ref only applies when targeting the linked project; use it with --linked, or --from/--to linked, in explicit mode",
-          }),
-        );
+              "--project-ref only applies when --from or --to is remote; to diff another project, use --from=<ref> or --to=<ref>.",
+          });
+        }
       }
-      // `mergedLinkedRef` tracks the linked ref resolved so far (preflight or cascade) so the
-      // config read below and a later `migrations` catalog export merge the matching
-      // `[remotes.<ref>]` override. Undefined until a linked ref resolves, so a `migrations` ref
-      // resolved before any linked ref uses base.
+      for (const message of explicitDeprecationMessages(deprecations)) {
+        yield* warnTarget(message);
+      }
+      // The linked ref resolved so far: later config reads and `migrations` catalog exports merge
+      // its `[remotes.<ref>]` override; endpoints resolved before any linked ref use the base.
       let mergedLinkedRef: string | undefined;
       // The first migrations endpoint resolved wins: the engine provisions a single migrations
       // shadow/catalog, so only refs resolved before that point should influence it.
       let migrationsToml: DbTomlValues | undefined;
-      // The preflight target resolve below validates a changed target flag and is stateful: a
-      // changed `--linked` resolves the project ref and merges `[remotes.<ref>]`, so the
-      // explicit `local`/`migrations` refs below see that override. `--local`/`--db-url` load
-      // base config (no merge).
-      if (Option.isSome(flags.dbUrl) || Option.isSome(flags.linked) || Option.isSome(flags.local)) {
-        const preflightConnType: DbConnType = Option.isSome(flags.dbUrl)
-          ? "db-url"
-          : Option.isSome(flags.linked)
-            ? "linked"
-            : "local";
-        const preflight = yield* resolver.resolve({
-          dbUrl: flags.dbUrl,
-          connType: preflightConnType,
-          dnsResolver,
-          password: Option.none(),
-          linkedProjectRef: flags.projectRef,
-        });
-        if (preflightConnType === "linked") {
-          const preflightRef = Option.getOrUndefined(preflight.ref ?? Option.none());
-          if (preflightRef !== undefined) {
-            linkedRefForCache = preflightRef;
-            mergedLinkedRef = preflightRef;
-          }
+      // The project `remote` names resolves once, so `--from remote --to remote` announces it once.
+      let linkedTarget: LinkedTarget | undefined;
+      const namedTargets = new Map<string, LinkedTarget>();
+      // Each hosted resolution mints a temporary login role that invalidates the previous one for
+      // that project, so every ref to a project shares a single connection.
+      const hostedEndpoints = new Map<string, PgDeltaDatabaseEndpoint>();
+      let loadedCfg: { readonly ref: string | undefined; readonly toml: DbTomlValues } | undefined;
+      const loadCfg = Effect.fnUntraced(function* () {
+        const ref = mergedLinkedRef;
+        if (loadedCfg !== undefined && loadedCfg.ref === ref) return loadedCfg.toml;
+        const toml = yield* readDbToml(fs, path, cliSettings.workdir, ref);
+        loadedCfg = { ref, toml };
+        return toml;
+      });
+      const hostedTarget = Effect.fnUntraced(function* (
+        remote: Exclude<RemoteValue, { readonly _tag: "DbUrl" }>,
+      ) {
+        if (remote._tag === "Linked") {
+          linkedTarget ??= yield* resolveRemoteTarget(remote);
+          return linkedTarget;
         }
-      }
-      // Read config once, after the preflight: the `[remotes.<ref>]`-merged config
-      // when a changed `--linked` resolved a ref (so base config isn't validated
-      // before the merge), else the base config.
-      let cfg =
-        mergedLinkedRef !== undefined
-          ? yield* readDbToml(fs, path, cliSettings.workdir, mergedLinkedRef)
-          : yield* readDbToml(fs, path, cliSettings.workdir);
-      // Each ref resolves in order; the `linked` branch re-merges the matching
-      // `[remotes.<ref>]` block so a later `local` ref read and the trailing
-      // `pgDeltaFormatOptions()` see the override. Thread the merged config through.
-      const resolveRef = (ref: string) =>
+        const key = remote._tag === "Ref" ? remote.ref : `branch:${remote.name}`;
+        const known = namedTargets.get(key);
+        if (known !== undefined) return known;
+        const resolvedTarget = yield* resolveRemoteTarget(remote);
+        namedTargets.set(key, resolvedTarget);
+        return resolvedTarget;
+      });
+      const hostedEndpoint = Effect.fnUntraced(function* (
+        remote: Exclude<RemoteValue, { readonly _tag: "DbUrl" }>,
+      ) {
+        const target = yield* hostedTarget(remote);
+        const existing = hostedEndpoints.get(target.ref);
+        if (existing !== undefined) return existing;
+        yield* Ref.set(linkedRefForCache, Option.some(target.ref));
+        mergedLinkedRef ??= target.ref;
+        // Loaded before the temp-role mint, so a config error surfaces before that side effect.
+        yield* loadCfg();
+        const resolved = yield* resolver
+          .resolveConnection({
+            target,
+            dnsResolver,
+            password: Option.none(),
+            networkBanRemoval: yield* hostedMutationPreapproval,
+          })
+          .pipe(
+            Effect.catchTag("DbConfigIpv6Error", (error) => Effect.fail(explicitIpv6Error(error))),
+          );
+        const endpoint = {
+          kind: "database",
+          ref: toPostgresURL(resolved.conn),
+          connection: resolved.conn,
+          connectOptions: { isLocal: resolved.isLocal, dnsResolver },
+        } satisfies PgDeltaDatabaseEndpoint;
+        hostedEndpoints.set(target.ref, endpoint);
+        return endpoint;
+      });
+      // Each ref resolves in order; the first hosted project's `[remotes.<ref>]` block applies to
+      // every config read after it, so a later `local` ref and the trailing context see it.
+      const resolveRef = (ref: string, flag: "--from" | "--to") =>
         Effect.gen(function* () {
-          switch (classifyExplicitRef(ref)) {
-            case "local": {
+          const explicit = classifyExplicitRef(ref);
+          switch (explicit._tag) {
+            case "Local": {
               const backend = yield* currentStackBackend;
               if (backend.kind !== "stack") {
+                const cfg = yield* loadCfg();
+                const hostConfig = yield* configValues.load({
+                  workdir: cliSettings.workdir,
+                  projectRef: Option.fromNullishOr(mergedLinkedRef),
+                });
                 const connection = {
-                  host: yield* getHostname(),
+                  host: yield* getHostname(hostConfig),
                   port: cfg.port,
                   user: "postgres",
                   password: cfg.password,
                   database: "postgres",
                 };
+                yield* announceTarget(renderLocalTarget(connection.host, connection.port));
                 return {
                   kind: "database",
                   ref: toPostgresURL(connection),
@@ -293,11 +313,9 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
                 } satisfies PgDeltaDatabaseEndpoint;
               }
               if (Option.isNone(stackApi)) {
-                return yield* Effect.fail(
-                  new DbDiffDbNotRunningError({
-                    message: "The local stack is not running.",
-                  }),
-                );
+                return yield* new DbDiffDbNotRunningError({
+                  message: "The local stack is not running.",
+                });
               }
               const connection = yield* stackLocalDatabaseConn.pipe(
                 Effect.provideService(CommandSettings, cliSettings),
@@ -308,9 +326,11 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
                       message: cause.message,
                       daemonDown: cause.daemonDown,
                       suggestion: cause.suggestion,
+                      cause,
                     }),
                 ),
               );
+              yield* announceTarget(renderLocalTarget(connection.host, connection.port));
               return {
                 kind: "database",
                 ref: toPostgresURL(connection),
@@ -318,53 +338,65 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
                 connectOptions: { isLocal: true, dnsResolver },
               } satisfies PgDeltaDatabaseEndpoint;
             }
-            case "linked": {
-              const resolved = yield* resolver.resolve({
-                dbUrl: Option.none(),
-                connType: "linked",
-                dnsResolver,
-                password: Option.none(),
-                linkedProjectRef: flags.projectRef,
-              });
-              const ref2 = Option.getOrUndefined(resolved.ref ?? Option.none());
-              if (ref2 !== undefined) {
-                linkedRefForCache = ref2;
-                mergedLinkedRef = ref2;
-                cfg = yield* readDbToml(fs, path, cliSettings.workdir, ref2);
+            case "Remote":
+              if (explicit.viaDeprecatedLinked) {
+                yield* warnTarget(
+                  `${flag} linked is deprecated and will be removed in v4. Use ${flag}=remote instead`,
+                );
               }
-              return {
-                kind: "database",
-                ref: toPostgresURL(resolved.conn),
-                connection: resolved.conn,
-                connectOptions: { isLocal: resolved.isLocal, dnsResolver },
-              } satisfies PgDeltaDatabaseEndpoint;
-            }
-            case "migrations":
+              return yield* hostedEndpoint(projectRefTarget ?? { _tag: "Linked" });
+            case "Ref":
+              return yield* hostedEndpoint(explicit);
+            case "Branch":
+              return yield* hostedEndpoint(explicit).pipe(
+                withUnresolvedBranchSuggestion(unresolvedBranchSuggestion(flag, explicit.name)),
+              );
+            case "ForeignUrl":
+              return yield* new DbDiffExplicitFlagsError({
+                message: `${EXPLICIT_REF_VALUES_MESSAGE(flag)}${
+                  explicit.ref === undefined
+                    ? "."
+                    : `; to target that project, use ${flag}=${explicit.ref}.`
+                }`,
+              });
+            case "KeywordDsn":
+              return yield* new DbDiffExplicitFlagsError({
+                message: `${EXPLICIT_REF_VALUES_MESSAGE(flag)}; convert a connection string to a postgresql:// URL and pass ${flag}=<url>.`,
+              });
+            case "Migrations":
               // Preserve resolution order: the migrations shadow/catalog config must reflect
               // only refs resolved before this endpoint.
-              migrationsToml ??= cfg;
+              migrationsToml ??= yield* loadCfg();
               return {
                 kind: "migrations",
                 ...(mergedLinkedRef !== undefined ? { projectRef: mergedLinkedRef } : {}),
               } satisfies PgDeltaEndpoint;
-            case "url":
-              return {
+            case "DbUrl": {
+              const { projectEnvValues } = yield* configValues.load({
+                workdir: cliSettings.workdir,
+                projectRef: Option.fromNullishOr(mergedLinkedRef),
+              });
+              const endpoint = {
                 kind: "database",
-                ref,
-                // The next engine parses arbitrary explicit URLs itself; they connect as remote
-                // by default, so TLS is used.
+                ref: explicit.url,
+                // Explicit URLs connect as remote, so TLS is used.
                 connectOptions: { isLocal: false, dnsResolver },
               } satisfies PgDeltaDatabaseEndpoint;
-            default:
-              return yield* Effect.fail(
-                new DbDiffUnknownTargetError({ message: unknownTargetMessage(ref) }),
-              );
+              const connection = yield* parsePgDeltaNextEndpoint(endpoint, projectEnvValues);
+              yield* announceTarget(renderDbUrlTarget(connection.host, connection.port));
+              return { ...endpoint, connection } satisfies PgDeltaDatabaseEndpoint;
+            }
           }
         });
-      const source = yield* resolveRef(from);
-      const desired = yield* resolveRef(to);
+      const source = yield* resolveRef(from, "--from");
+      const desired = yield* resolveRef(to, "--to");
+      const cfg = yield* loadCfg();
+      const explicitResolvedConfig = yield* configValues.load({
+        workdir: cliSettings.workdir,
+        projectRef: Option.fromNullishOr(mergedLinkedRef),
+      });
       const explicitCtx: PgDeltaContext = {
-        projectId: resolvePgDeltaProjectId(cliSettings.projectId, cfg, cliSettings.workdir),
+        projectId: (yield* explicitResolvedConfig.get(CliConfigKeys.projectId)).value,
         cwd: cliSettings.workdir,
         denoVersion: cfg.denoVersion,
         projectEnv: cfg.projectEnv,
@@ -376,7 +408,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
         desired,
         schema: flags.schema,
         formatOptions: Option.getOrElse(cfg.pgDelta.formatOptions, () => ""),
-        debug: isPgDeltaDebugEnabled(),
+        debug: yield* isPgDeltaDebugEnabled,
         strictCoverage: flags.strictCoverage,
       });
       // Explicit-mode output: `--output` file, or stdout with no trailing newline
@@ -416,87 +448,32 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       return;
     }
 
-    // `--use-pg-schema` is an explicit engine selection that doesn't depend on config, so it
-    // short-circuits before the target resolve (disabling the child's telemetry so only this
-    // command's instrumentation fires). `--use-pgadmin` doesn't short-circuit: it needs the same
-    // config validation and target resolve as the other native engines, further down.
     const usePgAdmin = Option.getOrElse(flags.usePgAdmin, () => false);
-    const usePgSchema = Option.getOrElse(flags.usePgSchema, () => false);
-    // The pg-schema engine delegates to the bundled Go binary, whose `db diff` never registered
-    // `--project-ref`, so forwarding it would silently drop the flag and diff the workdir's own
-    // linked ref instead. Fail up front rather than risk the wrong project.
-    if (usePgSchema && Option.isSome(flags.projectRef)) {
-      return yield* Effect.fail(
-        new DbDiffTargetFlagsError({
-          message: "--project-ref is not supported with --use-pg-schema",
-        }),
-      );
-    }
-    if (usePgSchema) {
-      // TS-only deprecation notice, printed before delegating (diagnostics stay stderr-only in
-      // every mode). The delegated Go `db diff --use-pg-schema` still prints its own
-      // experimental warning; this is additive, not a replacement, so don't drop it.
-      yield* output.raw(`${warnPgSchemaDeprecated}\n`, "stderr");
-      const env = { SUPABASE_TELEMETRY_DISABLED: "1" };
-      // In machine-output mode the child's stdout is captured and re-emitted as a structured
-      // envelope, so scripted callers get valid JSON instead of the raw SQL. The delegated
-      // child owns any `--file` write, so the written path isn't introspectable here (`file:
-      // null`).
-      if (output.format !== "text") {
-        const captured = yield* proxy.execCapture(rebuildPgSchemaDelegateArgs(flags), {
-          env,
-          suppressChildTelemetry: true,
-        });
-        yield* output.success("Diff complete.", {
-          diff: captured,
-          file: null,
-          schemas: flags.schema,
-          engine: "pg-schema",
-        });
-        return;
-      }
-      yield* proxy.exec(rebuildPgSchemaDelegateArgs(flags), { env, suppressChildTelemetry: true });
-      return;
-    }
 
     // Native path: resolve the target, provision a live shadow source, then diff.
-    const connType: DbConnType = Option.isSome(flags.dbUrl)
-      ? "db-url"
-      : Option.isSome(flags.linked)
-        ? "linked"
-        : "local";
+    const diffTarget = yield* resolveTarget(flags);
 
-    // `--project-ref` never implies `--linked` and must not be silently discarded on a
-    // non-linked target (see push.handler.ts's identical guard; explicit mode has its own).
-    if (Option.isSome(flags.projectRef) && connType !== "linked") {
-      return yield* Effect.fail(
-        new DbDiffTargetFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-        }),
-      );
-    }
-
-    // The ref is resolved and config read here, before `resolver.resolve()` below, so the
-    // "Loading config override" print and merged-config validation happen before the actual
-    // connection work (TCP probe / temp-role mint). Only the linked path pre-resolves a ref; the
-    // default local/db-url target never merges a remote block.
-    let linkedRef: string | undefined;
-    if (connType === "linked") {
-      const projectRefResolver = yield* ProjectRefResolver;
-      linkedRef = yield* projectRefResolver.loadProjectRef(flags.projectRef);
+    // The config is read before `resolver.resolveConnection()` below, so the "Loading config
+    // override" print and merged-config validation happen before the actual connection work
+    // (TCP probe / temp-role mint). Only the linked target merges a remote block.
+    const linkedRef = diffTarget.kind === "linked" ? diffTarget.ref : undefined;
+    if (linkedRef !== undefined) {
       // Cached the moment the ref is known, not after `cfg`/`localInputs` below (both
       // fallible) resolve, so the project cache is still written even if a later step fails.
-      linkedRefForCache = linkedRef;
+      yield* Ref.set(linkedRefForCache, Option.some(linkedRef));
     }
     const cfg = yield* readDbToml(fs, path, cliSettings.workdir, linkedRef);
     if (cfg.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${cfg.appliedRemote}]\n`, "stderr");
     }
+    const resolvedConfig = yield* configValues.load({
+      workdir: cliSettings.workdir,
+      projectRef: Option.fromNullishOr(linkedRef),
+    });
 
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const networkIdFlag = yield* NetworkIdFlag;
-    // Built before `resolver.resolve()` below, not just before the "Creating shadow
+    // Built before `resolver.resolveConnection()` below, not just before the "Creating shadow
     // database..." banner: this performs a second config load (distinct from `cfg` above) with
     // its own validation, which can print a warning or fail outright. All config loading should
     // happen before a linked target's temp-role mint over the Management API, so a config error
@@ -510,48 +487,30 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       // So the shadow's own container spec (image/JWT secret/root key/db.settings/service
       // enabled-for-setup flags) reflects the matching `[remotes.<ref>]` override too, same
       // as `cfg` above (`readDbToml(..., linkedRef)`).
-      connType === "linked" ? linkedRef : undefined,
-      // `cfg`'s own remote-override-key tracking (same matched block), so a remote-set
-      // bootstrap field isn't re-overridden by a conflicting `SUPABASE_*` env var.
-      cfg.remoteOverrideKeys,
+      linkedRef,
     );
 
-    const resolved = yield* resolver.resolve({
-      dbUrl: flags.dbUrl,
-      connType,
+    const resolved = yield* resolver.resolveConnection({
+      target: diffTarget,
       dnsResolver,
       password: Option.none(),
-      linkedProjectRef: flags.projectRef,
+      networkBanRemoval: yield* hostedMutationPreapproval,
     });
-    if (linkedRef === undefined) {
-      linkedRef = Option.getOrUndefined(resolved.ref ?? Option.none());
-    }
-    if (linkedRef !== undefined) linkedRefForCache = linkedRef;
     const targetUrl = toPostgresURL(resolved.conn);
     const ctx: PgDeltaContext = {
-      // `SUPABASE_PROJECT_ID` env override wins, then config.toml's `project_id`, then the
-      // workdir basename fallback; the matched `[remotes.<ref>]` block's own `project_id`
-      // suppresses the raw env argument on the linked path — see `readDbToml`'s doc comment.
-      projectId: resolvePgDeltaProjectId(cliSettings.projectId, cfg, cliSettings.workdir),
+      projectId: (yield* resolvedConfig.get(CliConfigKeys.projectId)).value,
       cwd: cliSettings.workdir,
       denoVersion: cfg.denoVersion,
       projectEnv: cfg.projectEnv,
     };
     const formatOptions = Option.getOrElse(cfg.pgDelta.formatOptions, () => "");
 
-    // Engine resolution: the pg-delta env/config/flag gate, read from the
-    // (possibly remote-merged) config.
-    const pgDeltaDefault =
-      (yield* currentStackBackend).kind === "stack" ||
-      shouldUsePgDelta({
-        configEnabled: cfg.pgDelta.enabled,
-        usePgDeltaFlag: Option.getOrElse(flags.usePgDelta, () => false),
-        envEnabled: parseBoolEnv(cfg.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")),
-      });
+    const onStackBackend = (yield* currentStackBackend).kind === "stack";
+    const pgDeltaSetting = yield* resolvedConfig.get(CliConfigKeys.experimental.pgdelta.enabled);
+    const pgDeltaDefault = onStackBackend || pgDeltaSetting.value;
     const useDelta = resolveDiffEngine({
-      useMigraChanged: Option.isSome(flags.useMigra),
+      useMigra,
       usePgAdmin,
-      usePgSchema,
       pgDeltaDefault,
     });
     // pg-delta ignores schema_paths when building its migrations baseline.
@@ -582,86 +541,93 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       );
     });
 
-    let diffResult: {
+    const engine = usePgAdmin ? "pgadmin" : useDelta ? "pg-delta" : "migra";
+    yield* Effect.annotateCurrentSpan("diff.engine", engine);
+    const diffResult: {
       readonly sql: string;
       readonly files: ReadonlyArray<PgDeltaRenderedFile> | undefined;
       readonly hazards?: PgDeltaDiffResult["hazards"];
-    };
-    if (usePgAdmin) {
-      // The running-db check runs after the config load + target resolve above, and — unlike
-      // every other engine on this command — runs for `--linked`/`--db-url` too, not just the
-      // local target. Uses `ctx.projectId` (already remote-merge-resolved), not the raw
-      // `cliSettings.projectId` env reader, so it reflects a resolved remote merge.
-      const running = yield* isLocalDbRunning(
-        spawner,
-        fs,
-        path,
-        cliSettings.workdir,
-        ctx.projectId,
-      ).pipe(
-        Effect.mapError(
-          (cause) =>
-            new DbDiffDbNotRunningError({
-              message: cause.message,
-              daemonDown: cause.daemonDown,
-              suggestion: cause.suggestion,
-            }),
-        ),
-      );
-      if (!running) {
-        return yield* Effect.fail(
-          new DbDiffDbNotRunningError({
-            message: `${aqua("supabase start")} is not running.`,
-          }),
+    } = yield* Effect.gen(function* () {
+      if (usePgAdmin) {
+        // The running-db check runs after the config load + target resolve above, and — unlike
+        // every other engine on this command — runs for `--linked`/`--db-url` too, not just the
+        // local target. Uses `ctx.projectId` (already remote-merge-resolved), not the raw
+        // `cliSettings.projectId` env reader, so it reflects a resolved remote merge.
+        const running = yield* isLocalDbRunning(
+          spawner,
+          fs,
+          path,
+          cliSettings.workdir,
+          ctx.projectId,
+        ).pipe(
+          Effect.mapError(
+            (cause) =>
+              new DbDiffDbNotRunningError({
+                message: cause.message,
+                daemonDown: cause.daemonDown,
+                suggestion: cause.suggestion,
+              }),
+          ),
         );
+        if (!running) {
+          return yield* new DbDiffDbNotRunningError({
+            message: `${aqua("supabase start")} is not running.`,
+          });
+        }
+        yield* emitStatus("Creating shadow database...");
+        const shadowBase = yield* resolveShadowRunInput();
+        const shadowConnConfig: PgConnInput = {
+          host: shadowBase.hostname,
+          port: shadowBase.shadowPort,
+          user: "postgres",
+          password: shadowBase.password,
+          database: "postgres",
+        };
+        // Register cleanup atomically with shadow creation; preparation stays interruptible.
+        const sql = yield* Effect.acquireUseRelease(
+          createShadowDatabase(spawner, shadowBase),
+          (handle) =>
+            Effect.gen(function* () {
+              yield* waitForPostgresReady(spawner, handle.containerId, shadowConnConfig, {
+                timeoutSeconds: shadowBase.healthTimeoutSeconds,
+              });
+              yield* migrateShadowDatabase(spawner, {
+                fs,
+                path,
+                workdir: cliSettings.workdir,
+                projectId: shadowBase.projectId,
+                container: handle.containerId,
+                networkId: shadowBase.networkId,
+                connConfig: shadowConnConfig,
+                setup: shadowBase.setup,
+              });
+              yield* emitStatus("Diffing local database with current migrations...");
+              const differHost = (host: string) =>
+                toolContainerUsesHostNetwork(shadowBase.networkId)
+                  ? host
+                  : rewriteDumpHostForToolContainer(host, {
+                      platform: runtimeInfo.platform,
+                      usesHostNetwork: false,
+                    });
+              return yield* diffSchemaPgAdmin({
+                // `source`/`target` are inverted relative to the migra/pg-delta path below:
+                // `source` is the user's db, `target` is the shadow.
+                source: toPostgresURL({ ...resolved.conn, host: differHost(resolved.conn.host) }),
+                // Hardcoded, not built via `toPostgresURL`: this ignores
+                // `SUPABASE_SERVICES_HOSTNAME`/`[db] password` by design, not a bug to fix.
+                target: `postgresql://postgres:postgres@${differHost("127.0.0.1")}:${shadowBase.shadowPort}/postgres`,
+                schema: flags.schema,
+                projectEnvValues: cfg.projectEnv,
+                projectId: shadowBase.projectId,
+                networkId: shadowBase.networkId,
+                extraHosts: shadowBase.extraHosts,
+                emitStatus,
+              });
+            }),
+          (handle) => removeShadowDatabase(spawner, handle.containerId),
+        );
+        return { sql, files: undefined };
       }
-      yield* emitStatus("Creating shadow database...");
-      const shadowBase = yield* resolveShadowRunInput();
-      const shadowConnConfig: PgConnInput = {
-        host: shadowBase.hostname,
-        port: shadowBase.shadowPort,
-        user: "postgres",
-        password: shadowBase.password,
-        database: "postgres",
-      };
-      // Register cleanup atomically with shadow creation; preparation stays interruptible.
-      const sql = yield* Effect.acquireUseRelease(
-        createShadowDatabase(spawner, shadowBase),
-        (handle) =>
-          Effect.gen(function* () {
-            yield* waitForHealthyServices(spawner, [handle.containerId], {
-              timeoutSeconds: shadowBase.healthTimeoutSeconds,
-            });
-            yield* migrateShadowDatabase(spawner, {
-              fs,
-              path,
-              workdir: cliSettings.workdir,
-              projectId: shadowBase.projectId,
-              container: handle.containerId,
-              networkId: shadowBase.networkId,
-              connConfig: shadowConnConfig,
-              setup: shadowBase.setup,
-            });
-            yield* emitStatus("Diffing local database with current migrations...");
-            return yield* diffSchemaPgAdmin({
-              // `source`/`target` are inverted relative to the migra/pg-delta path below:
-              // `source` is the user's db, `target` is the shadow.
-              source: targetUrl,
-              // Hardcoded, not built via `toPostgresURL`: this ignores
-              // `SUPABASE_SERVICES_HOSTNAME`/`[db] password` by design, not a bug to fix.
-              target: `postgresql://postgres:postgres@127.0.0.1:${shadowBase.shadowPort}/postgres`,
-              schema: flags.schema,
-              projectEnvValues: cfg.projectEnv,
-              projectId: shadowBase.projectId,
-              networkId: shadowBase.networkId,
-              extraHosts: shadowBase.extraHosts,
-              emitStatus,
-            });
-          }),
-        (handle) => removeShadowDatabase(spawner, handle.containerId),
-      );
-      diffResult = { sql, files: undefined };
-    } else {
       yield* output.raw("Creating shadow database...\n", "stderr");
       const migrationMode: "legacy" | "pgdelta-next" = useDelta ? "pgdelta-next" : "legacy";
       const shadowInput = {
@@ -707,7 +673,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
               },
               schema: flags.schema,
               formatOptions,
-              debug: isPgDeltaDebugEnabled(),
+              debug: yield* isPgDeltaDebugEnabled,
               strictCoverage: flags.strictCoverage,
             });
             return { sql: result.sql, files: result.files, hazards: result.hazards };
@@ -726,7 +692,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       // `prepareShadowSource` selects for this mode (legacy migrate forces `pg_net` on,
       // next follows config), or the two engines could restore each other's tars.
       const stackBackend = (yield* currentStackBackend).kind === "stack";
-      diffResult = stackBackend
+      return stackBackend
         ? yield* stackWithShadowDatabase(shadowInput, (handle) =>
             stackPrepareShadowSource(handle, shadowInput).pipe(Effect.flatMap(runDiff)),
           )
@@ -740,7 +706,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
               }),
             { webhooks: migrationMode === "pgdelta-next" ? "config" : "enabled" },
           );
-    }
+    }).pipe(Effect.withSpan("db.diff.shadowDatabase"));
     const out = diffResult.sql;
 
     // The pgAdmin path skips the branch banner and drop-statement scan below entirely.
@@ -748,23 +714,30 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       // Detect the branch from the resolved workdir, not the caller's CWD, so
       // `supabase --workdir … db diff` reports the project's branch, not the
       // directory the command was invoked from.
-      const branch = Option.getOrElse(yield* detectGitBranch(cliSettings.workdir), () => "main");
+      const branch = yield* detectGitBranch(cliSettings.workdir);
       yield* output.raw(
-        `Finished ${aqua("supabase db diff")} on branch ${aqua(branch)}.\n\n`,
+        `Finished ${aqua("supabase db diff")}${branchClause(branch, aqua)}.\n\n`,
         "stderr",
       );
     }
 
     // The file-write + drop-statement warning below is bypassed by the pgadmin path.
-    const engine = usePgAdmin ? "pgadmin" : useDelta ? "pg-delta" : "migra";
     const drops: ReadonlyArray<string> = usePgAdmin
       ? []
       : diffResult.hazards !== undefined
         ? diffResult.hazards.dataLoss.map((action) => action.sql)
         : findDropStatements(out);
     const writtenFiles: Array<string> = [];
+    yield* Effect.annotateCurrentSpan({
+      "schema.count": flags.schema.length,
+      "diff.drop_statement_count": drops.length,
+    });
     let ignoredDeclarativeAdvisory: ReturnType<typeof declarativeBaselineAdvisory> | undefined;
-    if (out.length >= 2 && useDelta && Option.isSome(flags.file) && flags.file.value.length > 0) {
+    const fileRequested = Option.isSome(flags.file) && flags.file.value.length > 0;
+    const writesMigration = out.length >= 2 && fileRequested;
+    // `db diff -f` after editing declarative files is the migra-era workflow pg-delta no longer
+    // serves, so only `-f` runs get a text note; local runs keep the structured advisory.
+    if (useDelta && (fileRequested || resolved.isLocal)) {
       // This is an informational, best-effort probe only. Declarative files are
       // intentionally not inputs to normal db diff, so an unreadable or changing
       // directory must never turn a previously successful diff into a failure.
@@ -780,7 +753,38 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
           ? "the configured declarative schema directory"
           : declarativeDir.split("\\").join("/");
         ignoredDeclarativeAdvisory = declarativeBaselineAdvisory(isAbsolute ? null : displayPath);
-        yield* output.raw(declarativeBaselineNote(displayPath), "stderr");
+        // A per-run `--use-pg-delta` says nothing about what `--use-migra` or `declarative sync`
+        // would resolve, so fall back to what the config file declares.
+        const pgDeltaEnabled =
+          pgDeltaSetting.origin.tier === "flag"
+            ? yield* resolvedConfig.fileDeclared.pipe(
+                Effect.map((declared) => declared.config.experimental.pgdelta?.enabled ?? true),
+                Effect.orElseSucceed(() => pgDeltaSetting.value),
+              )
+            : pgDeltaSetting.value;
+        // Mirrors migra's declarative source precedence (`loadDeclaredSchemas`), which applies
+        // only to local targets: schema_paths first, then this dir while pg-delta stays enabled
+        // in config, then supabase/schemas. The stack backend rejects migra outright.
+        const migraReadsDeclarativeDir =
+          resolved.isLocal &&
+          cfg.schemaPathPatterns.length === 0 &&
+          (pgDeltaEnabled ||
+            declarativeDirAbsolute === path.resolve(cliSettings.workdir, "supabase", "schemas"));
+        const suggestMigra = migraReadsDeclarativeDir && !onStackBackend;
+        if (fileRequested) {
+          // `declarative sync` gates on the base config, which a `[remotes.<ref>]` override may
+          // contradict, so suggest the always-accepted flag whenever an override was applied.
+          const nextSteps = declarativeNextSteps(
+            suggestMigra,
+            !pgDeltaEnabled || cfg.appliedRemote !== undefined,
+          );
+          yield* output.raw(
+            writesMigration
+              ? declarativeBaselineNote(displayPath, nextSteps)
+              : declarativeFilesIgnoredNote(displayPath, nextSteps),
+            "stderr",
+          );
+        }
       }
     }
     if (out.length < 2) {
@@ -851,8 +855,13 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
     }
   }).pipe(
     Effect.ensuring(
-      Effect.suspend(() =>
-        linkedRefForCache !== undefined ? linkedProjectCache.cache(linkedRefForCache) : Effect.void,
+      Ref.get(linkedRefForCache).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (ref) => linkedProjectCache.cache(ref),
+          }),
+        ),
       ),
     ),
     Effect.ensuring(telemetryState.flush),

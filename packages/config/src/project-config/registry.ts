@@ -26,13 +26,16 @@ const apiExtraSearchPathPath = ["api", "db_extra_search_path"];
 const apiMaxRowsPath = ["api", "max_rows"];
 
 /**
- * True when the remote reports the Data API disabled: an explicit `""` `db_schema`, not an
- * absent one (which means the sparse input simply didn't mention it). The rows below gate on
- * this so a disabled remote maps to exactly `{ api: { enabled: false } }`.
+ * True when the remote reports the Data API disabled: an explicit `""` `db_schema` or the
+ * platform's `pg_pgrst_no_exposed_schemas` marker, not an absent one (which means the sparse
+ * input simply didn't mention it). The marker can't name a real schema because Postgres
+ * reserves the `pg_` prefix. The rows below gate on this so a disabled remote maps to exactly
+ * `{ api: { enabled: false } }`.
  */
 function remoteDataApiDisabled(attributes: Record<string, unknown>): boolean {
   const api = attributes["api"];
-  return isObject(api) && api["db_schema"] === "";
+  const dbSchema = isObject(api) ? api["db_schema"] : undefined;
+  return dbSchema === "" || dbSchema === "pg_pgrst_no_exposed_schemas";
 }
 
 /**
@@ -48,8 +51,9 @@ function clampDocumentUint(value: unknown): unknown {
  * Omits (rather than clamps) `api.max_rows` when the document value is non-positive
  * (including `0` and `NaN`): push only ever sends `max_rows` when it is strictly positive,
  * so any other value never round-trips and asserting it would be drift. Uses `!(value > 0)`
- * rather than `value <= 0` specifically because `NaN <= 0` is `false` — a TOML `nan` value
- * would otherwise ride through and poison every downstream comparison.
+ * rather than `value <= 0` specifically because `NaN <= 0` is `false` — a `NaN` in a caller-built
+ * `EffectiveConfig` (config decode already rejects TOML `nan`) would otherwise ride through and
+ * poison every downstream comparison.
  */
 function normalizeDocumentMaxRows(value: unknown): unknown {
   return typeof value === "number" && !(value > 0) ? undefined : value;
@@ -79,7 +83,10 @@ const apiSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
     // `apiPath` (see registry-row.ts).
     configPath: ["api", "enabled"],
     apiPath: apiDbSchemaPath,
-    transform: (value) => expectString(value, apiDbSchemaPath).length > 0,
+    transform: (value, attributes) => {
+      expectString(value, apiDbSchemaPath);
+      return !remoteDataApiDisabled(attributes);
+    },
   },
   {
     configPath: ["api", "extra_search_path"],
@@ -100,7 +107,8 @@ const apiSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
     },
     normalizeDocument: normalizeDocumentMaxRows,
   },
-  // Unmapped (no config counterpart): api.db_pool, api.db_pool_acquisition_timeout.
+  // Unmapped (no config counterpart): api.db_pool, api.db_pool_acquisition_timeout,
+  // api.db_pool_max_lifetime, api.db_pool_max_idletime.
 ];
 
 /** Settings fields whose remote value is a signed int, clamped to uint. */

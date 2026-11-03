@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { parse } from "dotenv";
 import { Effect } from "effect";
-import { encodeStackEnv } from "./status.env.ts";
+import { encodeStackEnv, stackEnvOverrides, stackEnvValues } from "./status.env.ts";
 
 describe("stack dotenv encoding", () => {
   it.effect("round-trips literal credentials without expanding or changing characters", () =>
@@ -37,6 +37,110 @@ describe("stack dotenv encoding", () => {
         const error = yield* encodeStackEnv({ SECRET: value }).pipe(Effect.flip);
         expect(error.reason).toBe("output");
       }
+    }),
+  );
+});
+
+describe("stack environment overrides", () => {
+  it.effect("exports the saved effective API credentials unchanged", () =>
+    Effect.gen(function* () {
+      const names = yield* stackEnvOverrides([]);
+      const values = stackEnvValues(
+        {},
+        {
+          publishableKey: "sb_publishable_saved",
+          secretKey: "sb_secret_saved",
+          anonKey: "asymmetric-anon-token",
+          serviceRoleKey: "asymmetric-service-token",
+        },
+        names,
+      );
+      expect(values).toEqual({
+        PUBLISHABLE_KEY: "sb_publishable_saved",
+        SECRET_KEY: "sb_secret_saved",
+        ANON_KEY: "asymmetric-anon-token",
+        SERVICE_ROLE_KEY: "asymmetric-service-token",
+      });
+    }),
+  );
+
+  it.effect("emits MAILPIT_URL without an INBUCKET_URL alias", () =>
+    Effect.gen(function* () {
+      const names = yield* stackEnvOverrides([]);
+      expect(stackEnvValues({ mailpit: "http://127.0.0.1:54324" }, undefined, names)).toEqual({
+        MAILPIT_URL: "http://127.0.0.1:54324",
+      });
+    }),
+  );
+
+  it.effect("accepts renames and rejects malformed or colliding destinations", () =>
+    Effect.gen(function* () {
+      const names = yield* stackEnvOverrides(["API_URL=NEXT_PUBLIC_API_URL"]);
+      expect(names.get("API_URL")).toBe("NEXT_PUBLIC_API_URL");
+      expect(stackEnvValues({ api: "http://127.0.0.1:54321" }, undefined, names)).toEqual({
+        NEXT_PUBLIC_API_URL: "http://127.0.0.1:54321",
+      });
+
+      for (const entries of [
+        ["UNKNOWN=value"],
+        ["API_URL="],
+        ["API_URL=ONE=two"],
+        ["API_URL=NAME", "API_URL=OTHER"],
+        ["API_URL=DB_URL"],
+      ]) {
+        const error = yield* stackEnvOverrides(entries).pipe(Effect.flip);
+        expect(error.reason).toBe("flags");
+      }
+    }),
+  );
+
+  it.effect("accepts every current variable name and rejects removed ones", () =>
+    Effect.gen(function* () {
+      for (const name of [
+        "API_URL",
+        "REST_URL",
+        "FUNCTIONS_URL",
+        "DB_URL",
+        "STUDIO_URL",
+        "MCP_URL",
+        "MAILPIT_URL",
+        "PUBLISHABLE_KEY",
+        "SECRET_KEY",
+        "ANON_KEY",
+        "SERVICE_ROLE_KEY",
+        "STORAGE_S3_URL",
+        "S3_PROTOCOL_ACCESS_KEY_ID",
+        "S3_PROTOCOL_ACCESS_KEY_SECRET",
+        "S3_PROTOCOL_REGION",
+      ]) {
+        const names = yield* stackEnvOverrides([`${name}=RENAMED_${name}`]);
+        expect(names.get(name)).toBe(`RENAMED_${name}`);
+      }
+      for (const removed of ["S3_PROTOCOL_URL", "INBUCKET_URL", "JWT_SECRET"]) {
+        const error = yield* stackEnvOverrides([`${removed}=RENAMED`]).pipe(Effect.flip);
+        expect(error.reason).toBe("flags");
+      }
+    }),
+  );
+
+  it.effect("names the offending entry in --override-name error messages", () =>
+    Effect.gen(function* () {
+      const malformed = yield* stackEnvOverrides(["API_URL="]).pipe(Effect.flip);
+      expect(malformed.message).toContain('"API_URL="');
+
+      const removed = yield* stackEnvOverrides(["S3_PROTOCOL_URL=RENAMED"]).pipe(Effect.flip);
+      expect(removed.message).toContain("S3_PROTOCOL_URL");
+      expect(removed.message).toContain("not exported by the stack backend");
+
+      const inbucket = yield* stackEnvOverrides(["INBUCKET_URL=RENAMED"]).pipe(Effect.flip);
+      expect(inbucket.message).toContain("INBUCKET_URL");
+      expect(inbucket.message).toContain("use MAILPIT_URL instead");
+
+      const unknown = yield* stackEnvOverrides(["UNKNOWN=RENAMED"]).pipe(Effect.flip);
+      expect(unknown.message).toContain("UNKNOWN");
+      expect(unknown.message).toContain("API_URL");
+      expect(unknown.message).toContain("REST_URL");
+      expect(unknown.message).toContain("FUNCTIONS_URL");
     }),
   );
 });

@@ -10,6 +10,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { orgsList } from "./list.handler.ts";
 
 type Organizations = typeof V1ListAllOrganizationsOutput.Type;
@@ -30,7 +31,7 @@ const tempRoot = useTempWorkdir("supabase-orgs-list-int-");
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  readonly outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   readonly response?: Organizations;
   readonly status?: number;
   readonly network?: "fail";
@@ -47,7 +48,7 @@ function setup(opts: SetupOpts = {}) {
     out,
     api,
     cliSettings,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api };
 }
@@ -70,7 +71,7 @@ function setupTracked(opts: SetupOpts = {}) {
 }
 
 describe("orgs list integration", () => {
-  it.live("renders a Glamour table with ID and NAME columns in text mode", () => {
+  it.effect("renders a Glamour table with ID and NAME columns in text mode", () => {
     const { layer, out } = setup({ response: [SAMPLE_ORG] });
     return Effect.gen(function* () {
       yield* orgsList({});
@@ -81,7 +82,7 @@ describe("orgs list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders an empty table when the API returns []", () => {
+  it.effect("renders an empty table when the API returns []", () => {
     const { layer, out } = setup({ response: [] });
     return Effect.gen(function* () {
       yield* orgsList({});
@@ -90,7 +91,7 @@ describe("orgs list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders literal | characters in organization names (Go parity)", () => {
+  it.effect("renders literal | characters in organization names", () => {
     const { layer, out } = setup({ response: [SAMPLE_ORG_PIPE] });
     return Effect.gen(function* () {
       yield* orgsList({});
@@ -98,7 +99,7 @@ describe("orgs list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a success event with { organizations } for --output-format=json", () => {
+  it.effect("emits a success event with { organizations } for --output-format=json", () => {
     const { layer, out } = setup({ format: "json", response: [SAMPLE_ORG] });
     return Effect.gen(function* () {
       yield* orgsList({});
@@ -108,7 +109,7 @@ describe("orgs list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a success event for --output-format=stream-json", () => {
+  it.effect("emits a success event for --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json", response: [SAMPLE_ORG] });
     return Effect.gen(function* () {
       yield* orgsList({});
@@ -116,8 +117,8 @@ describe("orgs list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-byte-exact indented JSON for --output json", () => {
-    const { layer, out } = setup({ goOutput: "json", response: [SAMPLE_ORG] });
+  it.effect("emits byte-exact indented JSON for --output json", () => {
+    const { layer, out } = setup({ outputFlag: "json", response: [SAMPLE_ORG] });
     return Effect.gen(function* () {
       yield* orgsList({});
       expect(out.stdoutText.startsWith("[\n  {\n")).toBe(true);
@@ -126,26 +127,26 @@ describe("orgs list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a YAML array for --output yaml", () => {
-    const { layer, out } = setup({ goOutput: "yaml", response: [SAMPLE_ORG] });
+  it.effect("emits a YAML array for --output yaml", () => {
+    const { layer, out } = setup({ outputFlag: "yaml", response: [SAMPLE_ORG] });
     return Effect.gen(function* () {
       yield* orgsList({});
       expect(out.stdoutText).toContain("name: Test Org");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("wraps result as { organizations = [...] } for --output toml", () => {
-    const { layer, out } = setup({ goOutput: "toml", response: [SAMPLE_ORG] });
+  it.effect("wraps result as { organizations = [...] } for --output toml", () => {
+    const { layer, out } = setup({ outputFlag: "toml", response: [SAMPLE_ORG] });
     return Effect.gen(function* () {
       yield* orgsList({});
       expect(out.stdoutText).toContain("[[organizations]]");
-      // PascalCase field names with BurntSushi's 2-space indent.
+      // PascalCase field names with a 2-space indent.
       expect(out.stdoutText).toContain('  Name = "Test Org"');
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with OrgsEnvNotSupportedError for --output env", () => {
-    const { layer } = setup({ goOutput: "env", response: [SAMPLE_ORG] });
+  it.effect("fails with OrgsEnvNotSupportedError for --output env", () => {
+    const { layer } = setup({ outputFlag: "env", response: [SAMPLE_ORG] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(orgsList({}));
       expect(Exit.isFailure(exit)).toBe(true);
@@ -157,8 +158,8 @@ describe("orgs list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("treats --output pretty as identical to text mode (table render)", () => {
-    const { layer, out } = setup({ goOutput: "pretty", response: [SAMPLE_ORG] });
+  it.effect("treats --output pretty as identical to text mode (table render)", () => {
+    const { layer, out } = setup({ outputFlag: "pretty", response: [SAMPLE_ORG] });
     return Effect.gen(function* () {
       yield* orgsList({});
       expect(out.stdoutText).toContain("NAME");
@@ -166,10 +167,10 @@ describe("orgs list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output flag wins over --output-format", () => {
+  it.effect("--output flag wins over --output-format", () => {
     const { layer, out } = setup({
       format: "json",
-      goOutput: "yaml",
+      outputFlag: "yaml",
       response: [SAMPLE_ORG],
     });
     return Effect.gen(function* () {
@@ -178,17 +179,18 @@ describe("orgs list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("calls GET /v1/organizations with no path params", () => {
+  it.effect("calls GET /v1/organizations with no path params", () => {
     const { layer, api } = setup({ response: [SAMPLE_ORG] });
     return Effect.gen(function* () {
       yield* orgsList({});
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.method).toBe("GET");
       expect(api.requests[0]?.url).toContain("/v1/organizations");
+      assertPermissionDrift({ command: "orgs list", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with OrgsListUnexpectedStatusError on HTTP 503", () => {
+  it.effect("fails with OrgsListUnexpectedStatusError on HTTP 503", () => {
     const { layer } = setup({ status: 503, response: [] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(orgsList({}));
@@ -201,7 +203,7 @@ describe("orgs list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with OrgsListNetworkError on transport failure", () => {
+  it.effect("fails with OrgsListNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(orgsList({}));
@@ -216,19 +218,22 @@ describe("orgs list integration", () => {
 
   // Exercises the `fetching?.fail() ?? Effect.void` undefined branch — when
   // --output-format != "text", no spinner exists, so the `??` fallback fires.
-  it.live("propagates a transport failure when --output-format=json suppresses the spinner", () => {
-    const { layer } = setup({ format: "json", network: "fail" });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(orgsList({}));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("OrgsListNetworkError");
-      }
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect(
+    "propagates a transport failure when --output-format=json suppresses the spinner",
+    () => {
+      const { layer } = setup({ format: "json", network: "fail" });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(orgsList({}));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("OrgsListNetworkError");
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.live("flushes telemetry state on success", () => {
+  it.effect("flushes telemetry state on success", () => {
     const { layer, telemetry } = setupTracked();
     return Effect.gen(function* () {
       yield* orgsList({});
@@ -236,7 +241,7 @@ describe("orgs list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry state on failure", () => {
+  it.effect("flushes telemetry state on failure", () => {
     const { layer, telemetry } = setupTracked({ status: 503 });
     return Effect.gen(function* () {
       yield* Effect.exit(orgsList({}));

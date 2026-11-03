@@ -5,7 +5,7 @@ const tags = ["compute"];
 
 // Compute names end up in hostnames, so they must be valid DNS labels, matching the
 // Management API's own validation.
-const computeName = Schema.String.check(Schema.isPattern(/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/));
+const computeName = Schema.String.check(Schema.isPattern(/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/u));
 
 const computeEntry = Schema.Struct({
   runtime: Schema.optionalKey(
@@ -47,18 +47,17 @@ const computeEntry = Schema.Struct({
   instances: Schema.optionalKey(
     // Bounded to match the Management API's input schema; an out-of-range value would
     // be dropped rather than sent, deploying a different count than the config asked for.
-    Schema.Number.check(
-      Schema.isInt().annotate({ expected: "a whole number of instances" }),
-      Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "zero or more instances" }),
-    ).annotate({
-      description: dedent`
+    Schema.Int.annotate({ expected: "a whole number of instances" })
+      .check(Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "zero or more instances" }))
+      .annotate({
+        description: dedent`
         Number of instances to run. Every deploy sends a complete spec, so a count
         recorded here is what keeps a scaled compute scaled; \`--instances\` overrides
         it for one deploy. Defaults to 1.
       `,
-      examples: [3],
-      tags,
-    }),
+        examples: [3],
+        tags,
+      }),
   ),
   source: Schema.optionalKey(
     Schema.String.annotate({
@@ -67,6 +66,24 @@ const computeEntry = Schema.Struct({
         does not live at \`supabase/compute/<name>/\`.
       `,
       examples: ["packages/api"],
+      tags,
+    }),
+  ),
+  exclude: Schema.optionalKey(
+    // Patterns are left unvalidated here so that `push` can refuse a specific one by name
+    // instead of failing the whole config load: unlike `instances`, a pattern the CLI cannot
+    // read is never silently dropped, so there is nothing for this layer to protect.
+    Schema.Array(Schema.String).annotate({
+      description: dedent`
+        Patterns for paths to leave out of the uploaded build context, read the way
+        \`.gitignore\` reads them: a pattern without \`/\` matches that name at any depth,
+        one with \`/\` is anchored at the compute's source directory, a trailing \`/\`
+        matches directories only, and \`**\` spans directories. Excluding a directory
+        excludes everything under it; re-inclusion (\`!\`) is not supported. Only the
+        patterns recorded here are excluded, so a compute with no list uploads its source
+        directory whole.
+      `,
+      examples: [["node_modules", ".env"]],
       tags,
     }),
   ),

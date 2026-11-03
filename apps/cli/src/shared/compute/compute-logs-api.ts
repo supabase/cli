@@ -1,10 +1,21 @@
 import { operationDefinitions, type ApiClient } from "@supabase/api/effect";
 import { Effect, Option, Predicate, Schema } from "effect";
-import { decodeBody, mapRequestError, unexpectedStatus } from "./compute-api-status.ts";
+import {
+  bodyText,
+  decodeBody,
+  decodeJsonBody,
+  hasErrorCode,
+  mapRequestError,
+  parse404,
+  projectNotFound,
+  unexpectedStatus,
+  unroutedPath,
+} from "./compute-api-status.ts";
 import {
   ComputeLogsQueryFailedError,
   ComputeLogsRateLimitedError,
   ComputeLogsUsageExceededError,
+  ComputeRouteNotFoundError,
   ComputeUnavailableError,
 } from "./compute.errors.ts";
 import { computeLogsQuery } from "./compute-logs.sql.ts";
@@ -149,27 +160,34 @@ export const fetchComputeLogs = Effect.fnUntraced(function* (
       suggestion: "Wait a minute before retrying, and avoid running several tails at once.",
     });
   }
-  // The route gates on the same private-alpha allow-list as the rest of the
-  // family, and answers 404 for a project outside it.
+  // Unlike the compute routes this one is not gated on the alpha's allow-list,
+  // so its 404 is about the project or the route, and only an unrecognized body
+  // is left to read as the family's usual refusal.
   if (response.status === 404) {
+    const parsed = yield* parse404(yield* bodyText(response));
+    const route = unroutedPath(parsed);
+
+    if (Option.isSome(route)) {
+      return yield* new ComputeRouteNotFoundError({
+        detail: `The Management API does not serve ${route.value}, so this CLI cannot read logs for project ${projectRef}.`,
+        suggestion: "Report it with `supabase issue`, including the route named above.",
+      });
+    }
+    if (hasErrorCode(parsed, "not_found")) {
+      return yield* projectNotFound(projectRef);
+    }
     return yield* new ComputeUnavailableError({
       detail: `Logs are not available for project ${projectRef}.`,
-      suggestion:
-        "Compute is in private alpha. Ask in the Supabase dashboard to have this project enrolled.",
+      suggestion: "Compute is in private alpha. Stay tuned for the public alpha coming soon.",
     });
   }
   if (response.status !== 200) {
     // A rejected query or the server's 30-second timeout lands here rather than
     // in the 200-with-`error` branch below, so both paths have to exist.
-    return yield* unexpectedStatus({
-      operation,
-      status: response.status,
-      body: yield* response.text.pipe(Effect.orElseSucceed(() => "")),
-    });
+    return yield* unexpectedStatus(operation, response);
   }
 
-  const body = yield* response.json.pipe(Effect.mapError(mapRequestError(operation)));
-  const decoded = yield* decodeBody(LogsResponse, operation, body, response.status);
+  const decoded = yield* decodeJsonBody(LogsResponse, operation, response);
 
   // Checked before `result`: this endpoint reports a failed query with a 200 and
   // a populated `error`, so reading `result` first reports success on a failure.

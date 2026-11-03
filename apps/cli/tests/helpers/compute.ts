@@ -1,20 +1,26 @@
 import { BunServices } from "@effect/platform-bun";
 import { makeApiClient } from "@supabase/api/effect";
 import { Effect, FileSystem, Layer, Option, Path, Predicate, Redacted, Schema } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
+import type * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import { CommandPlatformApiFactory } from "../../src/auth/command-platform-api-factory.service.ts";
 import { CommandPlatformApi } from "../../src/auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../src/config/command-settings.service.ts";
+import { projectRefLayer } from "../../src/config/project-ref.layer.ts";
+import { commandTargetLayer } from "../../src/shared/output/command-target.layer.ts";
 import { ProjectRefResolver } from "../../src/config/project-ref.service.ts";
 import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
 import { OutputFlag, YesFlag } from "../../src/command-internal/global-flags.ts";
+import { TargetPolicy } from "../../src/command-internal/target/target-policy.ts";
 import { randomLayer } from "../../src/shared/runtime/random.layer.ts";
 import { ProjectRefNotLinkedError } from "../../src/config/project-ref.errors.ts";
 import { mockLinkedProjectCacheLayer } from "./command-mocks.ts";
+import { configValuesLayer } from "./config-values-layer.ts";
 import { TelemetryState } from "../../src/telemetry/telemetry-state.service.ts";
 import { mockOutput, mockProcessControl, mockRuntimeInfo, mockTty } from "./mocks.ts";
+import { realLinkedProjectCache } from "./permission-real-layers.ts";
 
 /**
  * Shared scaffolding for the `supabase compute` command integration tests.
@@ -179,22 +185,35 @@ function mockComputeHttp(routes: ComputeHttpRoutes) {
 
   const apiLayer = Layer.effect(
     CommandPlatformApi,
-    makeApiClient({
-      baseUrl: "https://api.supabase.com",
-      accessToken: "test-token",
-      userAgent: "supabase",
-      headers: {
-        "X-Supabase-Command": "compute",
-        "X-Supabase-Command-Run-ID": "run-123",
+    // The commands' own retry schedules are under test; the client's backoff must not hide them.
+    makeApiClient(
+      {
+        baseUrl: "https://api.supabase.com",
+        accessToken: "test-token",
+        userAgent: "supabase",
+        headers: {
+          "X-Supabase-Command": "compute",
+          "X-Supabase-Command-Run-ID": "run-123",
+        },
       },
-    }),
+      { retry: { maxRetries: 0 } },
+    ),
   ).pipe(Layer.provide(httpClientLayer));
 
   return {
     layer: Layer.mergeAll(apiLayer, httpClientLayer),
+    httpClientLayer,
     requests,
     get routeKeys(): Array<string> {
       return requests.map((request) => `${request.method} ${new URL(request.url).pathname}`);
+    },
+    /** The requests in the shape the permission drift helpers take. */
+    get driftRequests() {
+      return requests.map(({ method, url, urlParams }) => ({
+        method,
+        url,
+        urlParams: new URLSearchParams(urlParams).toString(),
+      }));
     },
   };
 }
@@ -270,7 +289,7 @@ export function computeLogRow(options: {
     stream,
     event_message: options.message ?? "compute shim: listening on :8080 (serving)",
     log_attributes: {
-      source: stream,
+      subservice: stream,
       worker: options.compute ?? "api",
       project: COMPUTE_PROJECT_REF,
       ...options.attributes,
@@ -343,6 +362,26 @@ export function makeComputeProject(files: Readonly<Record<string, string>> = {})
 }
 
 /**
+ * Writes `files` under `workdir` and links it to {@link COMPUTE_PROJECT_REF}, for
+ * `describeHostedConsent` scenarios whose runtime resolves the project from the real filesystem.
+ */
+export const seedLinkedComputeProject = (
+  workdir: string,
+  files: Readonly<Record<string, string>>,
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const all = { ...files, "supabase/.temp/project-ref": COMPUTE_PROJECT_REF };
+    for (const [relativePath, contents] of Object.entries(all)) {
+      const absolutePath = `${workdir}/${relativePath}`;
+      yield* fs.makeDirectory(absolutePath.slice(0, absolutePath.lastIndexOf("/")), {
+        recursive: true,
+      });
+      yield* fs.writeFileString(absolutePath, contents);
+    }
+  });
+
+/**
  * `CommandSettings` for the compute commands: the workdir they treat as the
  * project, and the host their URLs are built on, plus every other field
  * `CommandSettingsShape` requires.
@@ -356,7 +395,6 @@ const testCliConfigLayer = (workdir: string, explicitWorkdir: boolean) =>
         profile: "supabase",
         profileEnvValue: Option.none(),
         supabaseHome: path.join(workdir, ".supabase"),
-        dbPassword: Option.none(),
         githubToken: Option.none(),
         apiUrl: "https://api.supabase.com",
         projectHost: "supabase.co",
@@ -368,32 +406,39 @@ const testCliConfigLayer = (workdir: string, explicitWorkdir: boolean) =>
         explicitWorkdir,
         workdirEnvValue: Option.none(),
         userAgent: "supabase",
+        apiMaxRetries: Option.none(),
       });
     }),
   ).pipe(Layer.provide(BunServices.layer));
 
 /** The resolver, stubbed: `--project-ref` wins, else the linked project. */
-const testProjectRefLayer = (linked: boolean) =>
-  Layer.succeed(ProjectRefResolver, {
-    resolve: (flagValue: Option.Option<string>) =>
-      Option.isSome(flagValue)
-        ? Effect.succeed(flagValue.value)
-        : linked
-          ? Effect.succeed(COMPUTE_PROJECT_REF)
-          : Effect.fail(
-              new ProjectRefNotLinkedError({
-                message: "Cannot find project ref. Have you run supabase link?",
-              }),
-            ),
+const testProjectRefLayer = (linked: boolean) => {
+  const resolve = (
+    flagValue: Option.Option<string>,
+  ): Effect.Effect<string, ProjectRefNotLinkedError> =>
+    Option.isSome(flagValue)
+      ? Effect.succeed(flagValue.value)
+      : linked
+        ? Effect.succeed(COMPUTE_PROJECT_REF)
+        : Effect.fail(
+            new ProjectRefNotLinkedError({
+              message: "Cannot find project ref. Have you run supabase link?",
+            }),
+          );
+  return Layer.succeed(ProjectRefResolver, {
+    resolve,
+    resolveRef: (flagValue: Option.Option<string>) =>
+      resolve(flagValue).pipe(
+        Effect.map((ref) => ({ ref, source: "file" as const, matchesLinkedRef: true })),
+      ),
     resolveForLink: () =>
       Effect.fail(new ProjectRefNotLinkedError({ message: "Not available in compute tests" })),
     resolveOptional: () =>
       Effect.succeed(linked ? Option.some(COMPUTE_PROJECT_REF) : Option.none()),
-    loadProjectRef: () =>
-      Effect.fail(new ProjectRefNotLinkedError({ message: "Not available in compute tests" })),
     promptProjectRef: () =>
       Effect.fail(new ProjectRefNotLinkedError({ message: "Not available in compute tests" })),
   });
+};
 
 export interface ComputeSetupOptions {
   readonly workdir: string;
@@ -412,6 +457,7 @@ export interface ComputeSetupOptions {
    * delete api`.
    */
   readonly stdinIsTty?: boolean;
+  /** Picks the mock resolver's linkage; ignored with `realLayers`, where the workdir's ref file decides. */
   readonly linked?: boolean;
   readonly promptTextResponses?: ReadonlyArray<string>;
   readonly promptSelectResponses?: ReadonlyArray<string>;
@@ -421,8 +467,8 @@ export interface ComputeSetupOptions {
    * including `table` and `csv`, which these commands are meant to ignore and
    * render text for.
    */
-  readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
-  /** The root `--yes`, read by `delete` through `resolveYes`. */
+  readonly outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
+  /** The root `--yes`, which `push` and `delete` read through `resolveYes`. */
   readonly yes?: boolean;
   /** Raw argv, which `resolveYes` scans for an explicit `--yes=false`. */
   readonly cliArgs?: ReadonlyArray<string>;
@@ -432,6 +478,12 @@ export interface ComputeSetupOptions {
    * never fires, modelling a terminal nobody has interrupted.
    */
   readonly signal?: "SIGINT" | "SIGTERM" | "SIGHUP";
+  /**
+   * Runs the real `projectRefLayer` (an unlinked workdir reaches its picker) and the real
+   * linked-project cache, so their `GET /v1/projects` and `GET /v1/projects/{ref}` calls go
+   * through `routes`. Linkage then comes from the workdir's `.temp/project-ref`, not `linked`.
+   */
+  readonly realLayers?: boolean;
 }
 
 /**
@@ -475,6 +527,27 @@ export function setupCompute(options: ComputeSetupOptions) {
   const processControl = mockProcessControl(
     options.signal === undefined ? {} : { signal: options.signal },
   );
+  const tty = mockTty({ stdinIsTty: options.stdinIsTty ?? interactive, stdoutIsTty: interactive });
+  const cliSettings = testCliConfigLayer(options.workdir, options.explicitWorkdir ?? false);
+  const projectRef =
+    options.realLayers === true
+      ? projectRefLayer.pipe(
+          Layer.provide(
+            Layer.succeed(CommandPlatformApiFactory, {
+              make: CommandPlatformApi.pipe(Effect.provide(http.layer)),
+            }),
+          ),
+          Layer.provide(cliSettings),
+          Layer.provide(tty),
+          Layer.provide(commandTargetLayer.pipe(Layer.provide(out.layer))),
+          Layer.provide(out.layer),
+          Layer.provide(BunServices.layer),
+        )
+      : testProjectRefLayer(options.linked !== false);
+  const linkedProjectCache =
+    options.realLayers === true
+      ? realLinkedProjectCache({ httpClient: http.httpClientLayer, cliSettings })
+      : mockLinkedProjectCacheLayer;
 
   return {
     out,
@@ -485,17 +558,19 @@ export function setupCompute(options: ComputeSetupOptions) {
       out.layer,
       http.layer,
       mockRuntimeInfo({ cwd: options.cwd ?? options.workdir }),
-      mockTty({ stdinIsTty: options.stdinIsTty ?? interactive, stdoutIsTty: interactive }),
-      testCliConfigLayer(options.workdir, options.explicitWorkdir ?? false),
-      testProjectRefLayer(options.linked !== false),
+      tty,
+      cliSettings,
+      configValuesLayer(),
+      projectRef,
       telemetry.layer,
-      mockLinkedProjectCacheLayer,
+      linkedProjectCache,
       randomLayer,
       Layer.succeed(
         OutputFlag,
-        options.goOutput === undefined ? Option.none() : Option.some(options.goOutput),
+        options.outputFlag === undefined ? Option.none() : Option.some(options.outputFlag),
       ),
       Layer.succeed(YesFlag, options.yes ?? false),
+      Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
       Layer.succeed(CliArgs, { args: options.cliArgs ?? [] }),
       processControl.layer,
       BunServices.layer,

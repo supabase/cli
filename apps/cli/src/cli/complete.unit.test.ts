@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { Cause } from "effect";
+import { describe, expect, it, vi } from "@effect/vitest";
+import { Cause, Effect } from "effect";
 
 import { rootCommand } from "./root.ts";
 import { StackRoutingError } from "../command-internal/stack-backend.ts";
@@ -92,15 +92,11 @@ describe("respondToComplete", () => {
   });
 
   it("offers a non-root command's own declared global flags from a nested subcommand (Command.withGlobalFlags)", () => {
-    const atGroup = respondToComplete(rootCommand, ["__complete", "seed", "--l"]);
-    expect(atGroup?.candidates.map((c) => c.name)).toEqual(
-      expect.arrayContaining(["--linked", "--local"]),
-    );
+    const atGroup = respondToComplete(rootCommand, ["__complete", "seed", "--rem"]);
+    expect(atGroup?.candidates.map((c) => c.name)).toEqual(expect.arrayContaining(["--remote="]));
 
-    const atLeaf = respondToComplete(rootCommand, ["__complete", "seed", "buckets", "--l"]);
-    expect(atLeaf?.candidates.map((c) => c.name)).toEqual(
-      expect.arrayContaining(["--linked", "--local"]),
-    );
+    const atLeaf = respondToComplete(rootCommand, ["__complete", "seed", "buckets", "--rem"]);
+    expect(atLeaf?.candidates.map((c) => c.name)).toEqual(expect.arrayContaining(["--remote="]));
   });
 
   it("does not duplicate a flag name that exists both globally and as a command's own local flag", () => {
@@ -178,9 +174,9 @@ describe("respondToComplete", () => {
         "squash",
         "--version",
         "20240101000000",
-        "--l",
+        "--rem",
       ]);
-      expect(result?.candidates.map((c) => c.name)).toContain("--linked");
+      expect(result?.candidates.map((c) => c.name)).toContain("--remote=");
     });
 
     it("does not short-circuit on --help positioned after a genuine `--` terminator (it is positional, not a flag)", () => {
@@ -228,7 +224,7 @@ describe("respondToComplete", () => {
       );
     });
 
-    it("does not treat a surviving bare `-` leftover as an unmatched command (pflag's stripFlags drops it)", () => {
+    it("does not treat a surviving bare `-` leftover as an unmatched command (it is dropped)", () => {
       const result = respondToComplete(rootCommand, ["__complete", "-", "--d"]);
       expect(result?.candidates.map((c) => c.name)).toEqual(
         expect.arrayContaining(["--debug", "--dns-resolver"]),
@@ -257,7 +253,7 @@ describe("respondToComplete", () => {
       });
     });
 
-    it("short-circuits on a flag Go marks required even though this port made it optional at parse time", () => {
+    it("short-circuits on a flag marked required even though it is optional at parse time", () => {
       // Required-ness comes from the explicit `COMPLETION_REQUIRED_FLAGS` table, not from
       // inferring it off `Flag.optional`.
       const result = respondToComplete(rootCommand, [
@@ -378,7 +374,7 @@ describe("respondToComplete", () => {
     });
   });
 
-  describe("attached shorthand values resolve via pflag's real strict parser (CLI-1965 review)", () => {
+  describe("attached shorthand values resolve via the strict flag parser (CLI-1965 review)", () => {
     it("parses a non-boolean shorthand's attached value instead of treating the token as unknown", () => {
       const result = respondToComplete(rootCommand, [
         "__complete",
@@ -388,7 +384,7 @@ describe("respondToComplete", () => {
         "--p",
       ]);
       expect(result?.candidates.map((c) => c.name)).toEqual(
-        expect.arrayContaining(["--profile", "--project-ref", "--prune"]),
+        expect.arrayContaining(["--profile", "--prune"]),
       );
       expect(result?.directive).toBe(CompletionDirective.NoFileComp);
     });
@@ -504,14 +500,14 @@ describe("respondToComplete", () => {
     });
   });
 
-  describe("uint-backed flags reject a leading sign like real pflag's ParseUint (CLI-1965 review)", () => {
+  describe("uint-backed flags reject a leading sign (CLI-1965 review)", () => {
     it.each([
       { path: ["functions", "deploy"], flag: "jobs" },
       { path: ["migration", "down"], flag: "last" },
       { path: ["db", "reset"], flag: "last" },
     ])("rejects a negative value for $path --$flag", ({ path, flag }) => {
       // These flags are validated as unsigned integers, which reject a leading sign,
-      // unlike this tree's plain signed Flag.integer regex.
+      // unlike this tree's plain signed Flag.Int regex.
       const result = respondToComplete(rootCommand, ["__complete", ...path, `--${flag}`, "-1", ""]);
       expect(result).toEqual({ candidates: [], directive: CompletionDirective.Default });
     });
@@ -527,7 +523,7 @@ describe("respondToComplete", () => {
       ]);
       expect(result?.directive).toBe(CompletionDirective.NoFileComp);
       expect(result?.candidates.map((c) => c.name)).toEqual(
-        expect.arrayContaining(["--debug", "--dns-resolver", "--db-url"]),
+        expect.arrayContaining(["--debug", "--dns-resolver"]),
       );
     });
   });
@@ -557,9 +553,9 @@ describe("respondToComplete", () => {
         "query",
         "--output",
         "table",
-        "--li",
+        "--rem",
       ]);
-      expect(result?.candidates.map((c) => c.name)).toContain("--linked");
+      expect(result?.candidates.map((c) => c.name)).toContain("--remote=");
     });
 
     it("accepts the resource-command values (env/pretty/toml/yaml) outside db query", () => {
@@ -568,14 +564,14 @@ describe("respondToComplete", () => {
       expect(result?.candidates.map((c) => c.name)).toContain("branches");
     });
 
-    it("still accepts json everywhere — the one value both Go enums share", () => {
+    it("still accepts json everywhere — the one value every output format enum shares", () => {
       const result = respondToComplete(rootCommand, ["__complete", "--output", "json", ""]);
       expect(result?.directive).toBe(CompletionDirective.NoFileComp);
       expect(result?.candidates.map((c) => c.name)).toContain("branches");
     });
   });
 
-  describe("flag values are validated the way real pflag parses them (CLI-1965 review)", () => {
+  describe("flag values are validated with the strict flag parser (CLI-1965 review)", () => {
     it("accepts a base-0 hex value for a plain (non-uint) integer flag", () => {
       const result = respondToComplete(rootCommand, [
         "__complete",
@@ -583,17 +579,15 @@ describe("respondToComplete", () => {
         "restore",
         "--timestamp",
         "0x10",
-        "--p",
+        "--r",
       ]);
-      expect(result?.directive).toBe(CompletionDirective.NoFileComp);
-      expect(result?.candidates.map((c) => c.name)).toEqual(
-        expect.arrayContaining(["--profile", "--project-ref"]),
-      );
+      expect(result?.directive).toBe(CompletionDirective.NoFileComp | CompletionDirective.NoSpace);
+      expect(result?.candidates.map((c) => c.name)).toEqual(expect.arrayContaining(["--remote="]));
     });
 
     it("rejects a value one past int64 max for a plain (non-uint) integer flag", () => {
       // Validated against the signed int64 range, which is narrower than the uint64
-      // bound `Flag.integer` alone would suggest.
+      // bound `Flag.Int` alone would suggest.
       const overflow = respondToComplete(rootCommand, [
         "__complete",
         "backups",
@@ -625,14 +619,14 @@ describe("respondToComplete", () => {
       expect(min?.candidates.map((c) => c.name)).toContain("--profile");
     });
 
-    it("rejects a malformed value for Go's DurationVar flags (gen types --query-timeout, gen bearer-jwt --valid-for)", () => {
+    it("rejects a malformed value for duration flags (gen types --query-timeout, gen bearer-jwt --valid-for)", () => {
       const queryTimeout = respondToComplete(rootCommand, [
         "__complete",
         "gen",
         "types",
         "--query-timeout",
         "bogus",
-        "--l",
+        "--rem",
       ]);
       expect(queryTimeout).toEqual({
         candidates: [],
@@ -645,9 +639,9 @@ describe("respondToComplete", () => {
         "types",
         "--query-timeout",
         "5s",
-        "--l",
+        "--rem",
       ]);
-      expect(queryTimeoutValid?.candidates.map((c) => c.name)).toContain("--local");
+      expect(queryTimeoutValid?.candidates.map((c) => c.name)).toContain("--remote=");
 
       const validFor = respondToComplete(rootCommand, [
         "__complete",
@@ -674,14 +668,14 @@ describe("respondToComplete", () => {
       expect(validForValid?.candidates.map((c) => c.name)).toContain("--profile");
     });
 
-    it("rejects a duration one unit past Go's int64 nanosecond range for Go's DurationVar flags", () => {
+    it("rejects a duration one unit past the int64 nanosecond range for duration flags", () => {
       const overflow = respondToComplete(rootCommand, [
         "__complete",
         "gen",
         "types",
         "--query-timeout",
         "2562048h",
-        "--l",
+        "--rem",
       ]);
       expect(overflow).toEqual({ candidates: [], directive: CompletionDirective.Default });
 
@@ -691,12 +685,12 @@ describe("respondToComplete", () => {
         "types",
         "--query-timeout",
         "2562047h47m16.854775807s",
-        "--l",
+        "--rem",
       ]);
-      expect(max?.candidates.map((c) => c.name)).toContain("--local");
+      expect(max?.candidates.map((c) => c.name)).toContain("--remote=");
     });
 
-    it("rejects a malformed value for Go's TimeVar flag (gen bearer-jwt --exp, RFC3339 only)", () => {
+    it("rejects a malformed value for the time flag (gen bearer-jwt --exp, RFC3339 only)", () => {
       const invalid = respondToComplete(rootCommand, [
         "__complete",
         "gen",
@@ -811,6 +805,26 @@ describe("respondToComplete", () => {
         candidates: [],
         directive: CompletionDirective.Default,
       });
+    });
+
+    it("checks the calendar date for gen bearer-jwt --exp, years below 100 included", () => {
+      const complete = (exp: string) =>
+        respondToComplete(rootCommand, [
+          "__complete",
+          "gen",
+          "bearer-jwt",
+          "--role",
+          "anon",
+          "--exp",
+          exp,
+          "--p",
+        ]);
+      for (const exp of ["2024-02-30T00:00:00Z", "2023-02-29T00:00:00Z"]) {
+        expect(complete(exp)).toEqual({ candidates: [], directive: CompletionDirective.Default });
+      }
+      for (const exp of ["2024-02-29T00:00:00Z", "0099-01-01T00:00:00Z"]) {
+        expect(complete(exp)?.candidates.map((c) => c.name)).toContain("--profile");
+      }
     });
 
     it("rejects a negative value for storage cp --jobs even though it's a string-typed flag in TS", () => {
@@ -950,7 +964,7 @@ describe("respondToComplete", () => {
     });
   });
 
-  it("returns undefined for zero completion args (mirrors cobra's MinimumNArgs(1) failure)", () => {
+  it("returns undefined for zero completion args", () => {
     expect(respondToComplete(rootCommand, ["__complete"])).toBeUndefined();
   });
 
@@ -1059,7 +1073,7 @@ describe("collectInScopeFlags", () => {
     );
   });
 
-  it("orders flags like cobra's InheritedFlags().VisitAll then NonInheritedFlags().VisitAll — alphabetical within each block, not declaration order (CLI-1965 review)", () => {
+  it("orders inherited flags before the command's own flags — alphabetical within each block, not declaration order (CLI-1965 review)", () => {
     const { commandChain } = resolveCommandPath(rootCommand, ["db", "dump"]);
     const names = collectInScopeFlags(rootCommand, commandChain).map((flag) => flag.name);
 
@@ -1076,7 +1090,7 @@ describe("collectInScopeFlags", () => {
     expect(ownBlock).toContain("help");
   });
 
-  it("orders root's own flags alphabetically end-to-end (InheritedFlags() is empty at root)", () => {
+  it("orders root's own flags alphabetically end-to-end (no inherited flags at root)", () => {
     const atRoot = collectInScopeFlags(
       rootCommand,
       resolveCommandPath(rootCommand, []).commandChain,
@@ -1119,7 +1133,6 @@ describe("resolveIncludeDescriptions", () => {
     expect(
       resolveIncludeDescriptions("__completeNoDesc", {
         SUPABASE_COMPLETION_DESCRIPTIONS: "true",
-        COBRA_COMPLETION_DESCRIPTIONS: "true",
       }),
     ).toBe(false);
   });
@@ -1130,9 +1143,9 @@ describe("resolveIncludeDescriptions", () => {
     ).toBe(false);
   });
 
-  it("falls back to the generic COBRA_COMPLETION_DESCRIPTIONS when the program-specific var is unset", () => {
+  it("ignores COBRA_COMPLETION_DESCRIPTIONS", () => {
     expect(resolveIncludeDescriptions("__complete", { COBRA_COMPLETION_DESCRIPTIONS: "0" })).toBe(
-      false,
+      true,
     );
   });
 
@@ -1140,15 +1153,6 @@ describe("resolveIncludeDescriptions", () => {
     expect(
       resolveIncludeDescriptions("__complete", {
         SUPABASE_COMPLETION_DESCRIPTIONS: "nonsense",
-      }),
-    ).toBe(true);
-  });
-
-  it("prioritizes the program-specific var over the generic one when both are set and conflict", () => {
-    expect(
-      resolveIncludeDescriptions("__complete", {
-        SUPABASE_COMPLETION_DESCRIPTIONS: "true",
-        COBRA_COMPLETION_DESCRIPTIONS: "false",
       }),
     ).toBe(true);
   });
@@ -1217,71 +1221,90 @@ describe("tryComplete", () => {
         exits.push(code);
       },
       // No-op: telemetry capture is covered separately in complete.integration.test.ts.
-      captureTelemetry: async () => {},
+      captureTelemetry: () => Effect.void,
       ...overrides,
     };
     return { deps, stdoutWrites, stderrWrites, exits };
   }
 
-  // `tryComplete` awaits `deps.captureTelemetry` before calling `deps.exit`.
-  it("returns false and does nothing for non-__complete argv", async () => {
-    const { deps, stdoutWrites, exits } = makeDeps({ argv: ["migration", "list"] });
-    expect(await tryComplete(deps)).toBe(false);
-    expect(stdoutWrites).toEqual([]);
-    expect(exits).toEqual([]);
-  });
+  /* `tryComplete` runs `deps.captureTelemetry` before calling `deps.exit`. */
+  it.effect("returns false and does nothing for non-__complete argv", () =>
+    Effect.gen(function* () {
+      const { deps, stdoutWrites, exits } = makeDeps({ argv: ["migration", "list"] });
+      expect(yield* tryComplete(deps)).toBe(false);
+      expect(stdoutWrites).toEqual([]);
+      expect(exits).toEqual([]);
+    }),
+  );
 
-  it("writes the formatted response to stdout and exits 0 for a real completion request", async () => {
-    const { deps, stdoutWrites, exits } = makeDeps();
-    expect(await tryComplete(deps)).toBe(true);
-    expect(stdoutWrites).toHaveLength(1);
-    expect(stdoutWrites[0]).toContain("list\t");
-    expect(stdoutWrites[0]).toMatch(/:4\n$/);
-    expect(exits).toEqual([0]);
-  });
+  it.effect(
+    "writes the formatted response to stdout and exits 0 for a real completion request",
+    () =>
+      Effect.gen(function* () {
+        const { deps, stdoutWrites, exits } = makeDeps();
+        expect(yield* tryComplete(deps)).toBe(true);
+        expect(stdoutWrites).toHaveLength(1);
+        expect(stdoutWrites[0]).toContain("list\t");
+        expect(stdoutWrites[0]).toMatch(/:4\n$/);
+        expect(exits).toEqual([0]);
+      }),
+  );
 
-  it("respects __completeNoDesc by stripping descriptions from the written response", async () => {
-    const { deps, stdoutWrites } = makeDeps({ argv: ["__completeNoDesc", "migration", "li"] });
-    await tryComplete(deps);
-    expect(stdoutWrites[0]).toBe("list\n:4\n");
-  });
+  it.effect("respects __completeNoDesc by stripping descriptions from the written response", () =>
+    Effect.gen(function* () {
+      const { deps, stdoutWrites } = makeDeps({ argv: ["__completeNoDesc", "migration", "li"] });
+      yield* tryComplete(deps);
+      expect(stdoutWrites[0]).toBe("list\n:4\n");
+    }),
+  );
 
-  it("exits 1 and does not write anything to stdout for zero completion args", async () => {
-    const { deps, stdoutWrites, exits } = makeDeps({ argv: ["__complete"] });
-    expect(await tryComplete(deps)).toBe(true);
-    expect(stdoutWrites).toEqual([]);
-    expect(exits).toEqual([1]);
-  });
+  it.effect("exits 1 and does not write anything to stdout for zero completion args", () =>
+    Effect.gen(function* () {
+      const { deps, stdoutWrites, exits } = makeDeps({ argv: ["__complete"] });
+      expect(yield* tryComplete(deps)).toBe(true);
+      expect(stdoutWrites).toEqual([]);
+      expect(exits).toEqual([1]);
+    }),
+  );
 
-  it("writes invalid environment routing failures to stderr without emitting completion stdout", async () => {
-    const { deps, stdoutWrites, stderrWrites, exits } = makeDeps({
-      root: undefined,
-      routingFailure: Cause.fail(
-        new StackRoutingError({
-          message: "SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set",
-        }),
-      ),
-    });
-    expect(await tryComplete(deps)).toBe(true);
-    expect(stdoutWrites).toEqual([]);
-    expect(stderrWrites).toHaveLength(1);
-    expect(stderrWrites[0]).toContain("SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set");
-    expect(stderrWrites[0]).toContain(
-      "Suggestion: Set SUPABASE_EXPERIMENTAL_STACK=1 to enable stack commands, or 0 to use legacy start/stop/status.",
-    );
-    expect(exits).toEqual([1]);
-  });
+  it.effect(
+    "writes invalid environment routing failures to stderr without emitting completion stdout",
+    () =>
+      Effect.gen(function* () {
+        const { deps, stdoutWrites, stderrWrites, exits } = makeDeps({
+          root: undefined,
+          routingFailure: Cause.fail(
+            new StackRoutingError({
+              message:
+                'Invalid SUPABASE_EXPERIMENTAL_STACK="yes" (sets experimental.stack): expected true or false.',
+            }),
+          ),
+        });
+        expect(yield* tryComplete(deps)).toBe(true);
+        expect(stdoutWrites).toEqual([]);
+        expect(stderrWrites).toHaveLength(1);
+        expect(stderrWrites[0]).toContain(
+          'Invalid SUPABASE_EXPERIMENTAL_STACK="yes" (sets experimental.stack): expected true or false.',
+        );
+        expect(stderrWrites[0]).toContain(
+          "Suggestion: Set SUPABASE_EXPERIMENTAL_STACK=1 to enable stack commands, or 0 to use legacy start/stop/status.",
+        );
+        expect(exits).toEqual([1]);
+      }),
+  );
 
-  it("preserves a defect diagnostic when routing fails with a defect cause", async () => {
-    const { deps, stdoutWrites, stderrWrites, exits } = makeDeps({
-      root: undefined,
-      routingFailure: Cause.die(new Error("completion routing defect")),
-    });
-    expect(await tryComplete(deps)).toBe(true);
-    expect(stdoutWrites).toEqual([]);
-    expect(stderrWrites[0]).toContain("completion routing defect");
-    expect(exits).toEqual([1]);
-  });
+  it.effect("preserves a defect diagnostic when routing fails with a defect cause", () =>
+    Effect.gen(function* () {
+      const { deps, stdoutWrites, stderrWrites, exits } = makeDeps({
+        root: undefined,
+        routingFailure: Cause.die(new Error("completion routing defect")),
+      });
+      expect(yield* tryComplete(deps)).toBe(true);
+      expect(stdoutWrites).toEqual([]);
+      expect(stderrWrites[0]).toContain("completion routing defect");
+      expect(exits).toEqual([1]);
+    }),
+  );
 });
 
 describe("defaultCompleteDeps", () => {

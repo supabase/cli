@@ -25,7 +25,7 @@ const NO_MIGRATIONS: ReadonlyArray<string> = [];
  * fires for the `db diff/pull/schema declarative` paths too, not only the `migration`
  * commands.
  */
-export const listLocalMigrations = Effect.fnUntraced(function* (
+export const listLocalMigrations = Effect.fn("MigrationList.local")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   migrationsDir: string,
@@ -80,5 +80,6 @@ export const listLocalMigrations = Effect.fnUntraced(function* (
     }
     result.push(entryPath);
   }
+  yield* Effect.annotateCurrentSpan("migration.count", result.length);
   return result;
 });

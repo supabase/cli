@@ -4,7 +4,9 @@ import { gunzipSync } from "node:zlib";
 import { Cause, DateTime, Effect, Exit, FileSystem, Option, Path } from "effect";
 import { describe, expect, test } from "vitest";
 import { ComputeSourceEscapingLinkError } from "./compute.errors.ts";
+import { compileComputeExclude } from "./compute-exclude.ts";
 import { formatBytes, packageComputeDirectory } from "./compute-package.ts";
+import { COMPUTE_RUNTIME_EXCLUSIONS } from "./compute-runtimes.ts";
 import { TarFieldOutOfRangeError, TarPathTooLongError } from "./tar.ts";
 
 /**
@@ -62,7 +64,7 @@ describe("packageComputeDirectory", () => {
   const pack = (root: string) =>
     packageComputeDirectory(root).pipe(Effect.provide(BunServices.layer));
 
-  it.live("packages files and nested directories in a stable order", () =>
+  it.effect("packages files and nested directories in a stable order", () =>
     withTemp("supabase-compute-package-", (dir, fs, path) =>
       Effect.gen(function* () {
         yield* fs.makeDirectory(path.join(dir, "nested"));
@@ -86,7 +88,7 @@ describe("packageComputeDirectory", () => {
   // Anything pnpm installs is symlink-dense, so following links would inline
   // every dependency's real contents — and a link pointing at an ancestor would
   // be walked into until the OS refused.
-  it.live("stores symlinks as links rather than following them", () =>
+  it.effect("stores symlinks as links rather than following them", () =>
     withTemp("supabase-compute-package-", (dir, fs, path) =>
       Effect.gen(function* () {
         yield* fs.writeFileString(path.join(dir, "target.txt"), "hello");
@@ -104,7 +106,7 @@ describe("packageComputeDirectory", () => {
   // Broken, but pointing at a name inside the tree: whether the target exists is
   // the server's problem once the archive is extracted, and dropping the link
   // would change the tree the build sees.
-  it.live("keeps a broken symlink instead of dropping it", () =>
+  it.effect("keeps a broken symlink instead of dropping it", () =>
     withTemp("supabase-compute-package-", (dir, fs, path) =>
       Effect.gen(function* () {
         yield* fs.symlink("nowhere-at-all.txt", path.join(dir, "broken.txt"));
@@ -119,7 +121,7 @@ describe("packageComputeDirectory", () => {
   // The archive is the whole of what the server gets, so a link out of it
   // arrives dangling however valid it is here. Refused while the user is still
   // at the terminal, rather than surfacing as a remote build failure.
-  it.live.each([
+  it.effect.each([
     { label: "a relative escape", target: "../../outside.txt" },
     { label: "an absolute escape", target: "/nowhere-at-all" },
     {
@@ -142,13 +144,18 @@ describe("packageComputeDirectory", () => {
         expect(Option.isSome(failure) ? failure.value : undefined).toBeInstanceOf(
           ComputeSourceEscapingLinkError,
         );
+        // Naming the escape hatch is the whole value of the refusal: excluding the link is
+        // cheaper than vendoring whatever it points at, and is the recovery `exclude` added.
+        expect(Option.isSome(failure) ? failure.value : undefined).toMatchObject({
+          suggestion: expect.stringContaining("`exclude`"),
+        });
       }),
     ),
   );
 
   // An absolute target that lands back inside the tree is a path on this
   // machine; stored verbatim it would resolve to nothing on the other end.
-  it.live("rewrites an absolute in-tree link target as a relative one", () =>
+  it.effect("rewrites an absolute in-tree link target as a relative one", () =>
     withTemp("supabase-compute-package-", (dir, fs, path) =>
       Effect.gen(function* () {
         yield* fs.writeFileString(path.join(dir, "target.txt"), "t");
@@ -164,7 +171,7 @@ describe("packageComputeDirectory", () => {
     ),
   );
 
-  it.live("does not recurse through a directory symlink that points at an ancestor", () =>
+  it.effect("does not recurse through a directory symlink that points at an ancestor", () =>
     withTemp("supabase-compute-package-", (dir, fs, path) =>
       Effect.gen(function* () {
         yield* fs.makeDirectory(path.join(dir, "sub"));
@@ -179,12 +186,117 @@ describe("packageComputeDirectory", () => {
     ),
   );
 
+  describe("with [compute.<name>] exclude patterns", () => {
+    const packExcluding = (root: string, patterns: ReadonlyArray<string>) =>
+      Effect.gen(function* () {
+        const exclude = yield* compileComputeExclude({ name: "api", patterns });
+        return yield* packageComputeDirectory(root, exclude);
+      }).pipe(Effect.provide(BunServices.layer));
+
+    it.effect("leaves a matched file out of the archive", () =>
+      withTemp("supabase-compute-package-", (dir, fs, path) =>
+        Effect.gen(function* () {
+          yield* fs.writeFileString(path.join(dir, "index.js"), "x");
+          yield* fs.writeFileString(path.join(dir, ".env"), "SECRET=1");
+
+          const result = yield* packExcluding(dir, [".env"]);
+
+          expect(readEntries(result.archive).map((entry) => entry.path)).toEqual(["index.js"]);
+          expect(result.fileCount).toBe(1);
+          expect(result.excludedCount).toBe(1);
+        }),
+      ),
+    );
+
+    // The walk turns back at the directory, so nothing underneath is read at all — which is
+    // the point for a dependency tree, and is also why the count is one rather than three.
+    it.effect("leaves an excluded directory's whole subtree out, counted once", () =>
+      withTemp("supabase-compute-package-", (dir, fs, path) =>
+        Effect.gen(function* () {
+          yield* fs.writeFileString(path.join(dir, "index.js"), "x");
+          yield* fs.makeDirectory(path.join(dir, "node_modules", "left-pad"), { recursive: true });
+          yield* fs.writeFileString(path.join(dir, "node_modules", "left-pad", "index.js"), "p");
+          yield* fs.writeFileString(path.join(dir, "node_modules", ".package-lock.json"), "{}");
+
+          const result = yield* packExcluding(dir, ["node_modules"]);
+
+          expect(readEntries(result.archive).map((entry) => entry.path)).toEqual(["index.js"]);
+          expect(result.excludedCount).toBe(1);
+        }),
+      ),
+    );
+
+    it.effect("matches an unanchored pattern at every depth", () =>
+      withTemp("supabase-compute-package-", (dir, fs, path) =>
+        Effect.gen(function* () {
+          yield* fs.makeDirectory(path.join(dir, "packages", "api"), { recursive: true });
+          yield* fs.writeFileString(path.join(dir, "packages", "api", ".env"), "SECRET=1");
+          yield* fs.writeFileString(path.join(dir, "packages", "api", "index.js"), "x");
+
+          const result = yield* packExcluding(dir, [".env"]);
+
+          expect(readEntries(result.archive).map((entry) => entry.path)).toEqual([
+            "packages/",
+            "packages/api/",
+            "packages/api/index.js",
+          ]);
+        }),
+      ),
+    );
+
+    it.effect("keeps a file an anchored pattern only matches elsewhere", () =>
+      withTemp("supabase-compute-package-", (dir, fs, path) =>
+        Effect.gen(function* () {
+          yield* fs.makeDirectory(path.join(dir, "nested"));
+          yield* fs.writeFileString(path.join(dir, "keep.txt"), "k");
+          yield* fs.writeFileString(path.join(dir, "nested", "keep.txt"), "n");
+
+          const result = yield* packExcluding(dir, ["/keep.txt"]);
+
+          expect(readEntries(result.archive).map((entry) => entry.path)).toEqual([
+            "nested/",
+            "nested/keep.txt",
+          ]);
+        }),
+      ),
+    );
+
+    // The link is excluded before it is vetted, so excluding it is a real answer to the
+    // hoisted-dependency failure rather than something that failure pre-empts.
+    it.effect("excludes a symlinked node_modules with the node runtime's defaults", () =>
+      withTemp("supabase-compute-package-", (dir, fs, path) =>
+        Effect.gen(function* () {
+          yield* fs.writeFileString(path.join(dir, "index.js"), "x");
+          yield* fs.symlink("../../elsewhere", path.join(dir, "node_modules"));
+
+          const result = yield* packExcluding(dir, COMPUTE_RUNTIME_EXCLUSIONS.node);
+
+          expect(readEntries(result.archive).map((entry) => entry.path)).toEqual(["index.js"]);
+          expect(result.excludedCount).toBe(1);
+        }),
+      ),
+    );
+
+    it.effect("reports nothing excluded when no pattern matches", () =>
+      withTemp("supabase-compute-package-", (dir, fs, path) =>
+        Effect.gen(function* () {
+          yield* fs.writeFileString(path.join(dir, "index.js"), "x");
+
+          const result = yield* packExcluding(dir, ["node_modules"]);
+
+          expect(result.fileCount).toBe(1);
+          expect(result.excludedCount).toBe(0);
+        }),
+      ),
+    );
+  });
+
   // A pre-1970 mtime is negative, and a negative number is not representable in
   // a USTAR octal field: `(-1).toString(8)` renders to exactly the field width,
   // so it would sail past the width check and ship a header GNU tar rejects
   // after the upload. A botched `touch` is not worth failing a deploy over, so
   // the timestamp collapses to the epoch instead.
-  it.live("packages a file with a pre-epoch mtime, timestamped at the epoch", () =>
+  it.effect("packages a file with a pre-epoch mtime, timestamped at the epoch", () =>
     withTemp("supabase-compute-package-", (dir, fs, path) =>
       Effect.gen(function* () {
         const file = path.join(dir, "a.txt");
@@ -206,7 +318,7 @@ describe("packageComputeDirectory", () => {
     ),
   );
 
-  it.live("packages an empty directory to an archive with no entries", () =>
+  it.effect("packages an empty directory to an archive with no entries", () =>
     withTemp("supabase-compute-package-", (dir, _fs, _path) =>
       Effect.gen(function* () {
         const result = yield* pack(dir);
@@ -220,7 +332,7 @@ describe("packageComputeDirectory", () => {
   // Archiving an unreadable file as zero bytes would report success for a deploy
   // carrying an empty file. Failing is the only honest answer: the archive is the
   // application.
-  it.live("fails rather than archiving a file it cannot read as empty", () =>
+  it.effect("fails rather than archiving a file it cannot read as empty", () =>
     withTemp("supabase-compute-package-", (dir, fs, path) =>
       Effect.gen(function* () {
         const unreadable = path.join(dir, "secret.txt");
@@ -250,7 +362,7 @@ describe("packageComputeDirectory", () => {
     ),
   );
 
-  it.live("fails rather than silently dropping a directory it cannot read", () =>
+  it.effect("fails rather than silently dropping a directory it cannot read", () =>
     withTemp("supabase-compute-package-", (dir, fs, path) =>
       Effect.gen(function* () {
         const locked = path.join(dir, "locked");
@@ -284,7 +396,7 @@ describe("packageComputeDirectory", () => {
 // Tar validation stays in the Effect failure channel, so structured output can
 // render an actionable error instead of treating it as an uncaught defect.
 describe("packageComputeDirectory tar limits", () => {
-  it.live("reports an unrepresentable path as a failure rather than a defect", () =>
+  it.effect("reports an unrepresentable path as a failure rather than a defect", () =>
     withTemp("supabase-compute-tar-", (dir, fs, path) =>
       Effect.gen(function* () {
         // One component over 100 bytes, with no directory boundary to split on.
@@ -314,7 +426,7 @@ describe("packageComputeDirectory tar limits", () => {
   // reaches the failure channel rather than being rethrown as a defect. An 8 GiB
   // file trips it through the size field; a far-future mtime is the same check
   // for the price of a `utimes` call.
-  it.live("reports an out-of-range header field as a failure rather than a defect", () =>
+  it.effect("reports an out-of-range header field as a failure rather than a defect", () =>
     withTemp("supabase-compute-tar-", (dir, fs, path) =>
       Effect.gen(function* () {
         const file = path.join(dir, "a.txt");

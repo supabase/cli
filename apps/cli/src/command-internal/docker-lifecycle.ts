@@ -1,6 +1,6 @@
 import { isDockerDaemonDownMessage } from "../shared/stack-constants.ts";
-import { Data, Effect, Stream } from "effect";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import { Data, Effect } from "effect";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import {
   actionability,
@@ -8,10 +8,12 @@ import {
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
 import {
+  collectText,
   ContainerRuntimeNotFoundError,
   describeContainerCliFailure,
   spawnContainerCli,
 } from "./container-cli.ts";
+import { ChildTracePropagation } from "../shared/telemetry/spans.ts";
 import { CLI_WORKDIR_LABEL } from "./docker-ids.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
@@ -46,15 +48,6 @@ export class DockerLifecycleInspectError extends Data.TaggedError("DockerLifecyc
     }
     return actionability.startStack;
   }
-}
-
-function collectByteStream(stream: Stream.Stream<Uint8Array, unknown>) {
-  const decoder = new TextDecoder();
-  return Stream.runFold(
-    stream,
-    () => "",
-    (text, chunk) => text + decoder.decode(chunk, { stream: true }),
-  ).pipe(Effect.map((text) => text + decoder.decode()));
 }
 
 function splitNonEmptyLines(text: string): ReadonlyArray<string> {
@@ -105,8 +98,8 @@ function spawnDockerPsLines(
       const [exitCode, stdout, stderr] = yield* Effect.all(
         [
           child.exitCode.pipe(Effect.map(Number)),
-          collectByteStream(child.stdout),
-          collectByteStream(child.stderr),
+          collectText(child.stdout),
+          collectText(child.stderr),
         ],
         { concurrency: "unbounded" },
       ).pipe(
@@ -116,14 +109,12 @@ function spawnDockerPsLines(
       );
       if (exitCode !== 0) {
         const message = stderr.trim();
-        return yield* Effect.fail(
-          new DockerLifecycleListError({
-            message:
-              message.length > 0
-                ? `failed to list containers: ${message}`
-                : "failed to list containers",
-          }),
-        );
+        return yield* new DockerLifecycleListError({
+          message:
+            message.length > 0
+              ? `failed to list containers: ${message}`
+              : "failed to list containers",
+        });
       }
       return splitNonEmptyLines(stdout);
     }),
@@ -190,6 +181,7 @@ export const listContainerIdsAndNames = (
  * Inspects a container's state via `docker container inspect <id> --format {{json .State}}`.
  * A missing container isn't special-cased — every non-zero exit, including "no such container",
  * propagates as {@link DockerLifecycleInspectError} carrying the real Docker stderr text.
+ * Emits no spans: wait loops poll it, and their wait span records the attempt count.
  */
 export const inspectContainerState = (spawner: Spawner, containerId: string) =>
   Effect.scoped(
@@ -217,8 +209,8 @@ export const inspectContainerState = (spawner: Spawner, containerId: string) =>
       const [exitCode, stdout, stderr] = yield* Effect.all(
         [
           child.exitCode.pipe(Effect.map(Number)),
-          collectByteStream(child.stdout),
-          collectByteStream(child.stderr),
+          collectText(child.stdout),
+          collectText(child.stderr),
         ],
         { concurrency: "unbounded" },
       ).pipe(
@@ -231,26 +223,89 @@ export const inspectContainerState = (spawner: Spawner, containerId: string) =>
       );
       if (exitCode !== 0) {
         const message = stderr.trim();
-        return yield* Effect.fail(
-          new DockerLifecycleInspectError({
-            message:
-              message.length > 0
-                ? `failed to inspect container health: ${message}`
-                : "failed to inspect container health",
-            daemonDown: isDockerDaemonDownMessage(message),
-          }),
-        );
+        return yield* new DockerLifecycleInspectError({
+          message:
+            message.length > 0
+              ? `failed to inspect container health: ${message}`
+              : "failed to inspect container health",
+          daemonDown: isDockerDaemonDownMessage(message),
+        });
       }
       return parseContainerState(stdout);
     }),
-  );
+  ).pipe(Effect.withTracerEnabled(false), Effect.provideService(ChildTracePropagation, false));
 
-function parseContainerState(stdout: string): {
+/** The most recent health-check probe Docker recorded for a container. */
+interface ContainerHealthProbe {
+  readonly exitCode: number;
+  readonly output: string;
+}
+
+export interface ContainerState {
   readonly running: boolean;
   readonly status: string;
   readonly exitCode: number;
+  readonly oomKilled: boolean;
   readonly health?: string;
-} {
+  readonly lastHealthProbe?: ContainerHealthProbe;
+}
+
+const HEALTH_PROBE_OUTPUT_MAX = 300;
+
+function parseLastHealthProbe(health: unknown): ContainerHealthProbe | undefined {
+  if (!isJsonRecord(health)) return undefined;
+  const log = health["Log"];
+  if (!Array.isArray(log)) return undefined;
+  const last: unknown = log[log.length - 1];
+  if (!isJsonRecord(last)) return undefined;
+  const exitCode = last["ExitCode"];
+  const output = last["Output"];
+  if (typeof exitCode !== "number" || typeof output !== "string") return undefined;
+  return { exitCode, output: output.replace(/\s+/gu, " ").trim() };
+}
+
+// runc reports a bad healthcheck command as a Go `exec.Error`, an `os.PathError`, or (before
+// runc 1.1) wrapped in "exec user process caused".
+const EXEC_IMAGE_FAULT_PATTERNS: ReadonlyArray<RegExp> = [
+  /exec: \\?"[^"]*": (?:executable file not found in \$PATH|stat \S+: no such file or directory|permission denied)/u,
+  /(?:^|: )exec [^\s:]+: (?:no such file or directory|exec format error|permission denied)/u,
+  /exec user process caused:? \\?"?(?:no such file or directory|exec format error|permission denied)/u,
+];
+
+/**
+ * True when Docker could not launch the health check inside a running container. moby records an
+ * exec-start failure as probe exit code -1 with the runtime error as output; a probe timeout also
+ * uses -1 but its output never names the OCI runtime. Image faults in the healthcheck command are
+ * excluded: they are the image's problem, not the host's.
+ */
+export function healthCheckCannotExec(state: ContainerState): boolean {
+  const probe = state.lastHealthProbe;
+  if (!state.running || state.status !== "running" || state.health === "healthy") return false;
+  if (probe === undefined || probe.exitCode !== -1) return false;
+  const out = probe.output;
+  return (
+    out.includes("OCI runtime exec failed") &&
+    (out.includes("unable to start container process") ||
+      out.includes("starting container process caused")) &&
+    !EXEC_IMAGE_FAULT_PATTERNS.some((pattern) => pattern.test(out))
+  );
+}
+
+/** The not-ready reason for an unhealthy container, naming its last health-check probe. */
+export function formatNotReadyReason(state: ContainerState): string {
+  const base = `container is not ready: ${state.health}`;
+  const probe = state.lastHealthProbe;
+  if (probe === undefined) return base;
+  const output =
+    probe.output.length > HEALTH_PROBE_OUTPUT_MAX
+      ? `${probe.output.slice(0, HEALTH_PROBE_OUTPUT_MAX - 1)}…`
+      : probe.output;
+  return output.length > 0
+    ? `${base} (last health check exit code ${probe.exitCode}: ${output})`
+    : `${base} (last health check exit code ${probe.exitCode})`;
+}
+
+function parseContainerState(stdout: string): ContainerState {
   const trimmed = stdout.trim();
   let parsed: unknown;
   try {
@@ -265,12 +320,21 @@ function parseContainerState(stdout: string): {
   const status = typeof state["Status"] === "string" ? state["Status"] : "";
   const running = state["Running"] === true;
   const exitCode = typeof state["ExitCode"] === "number" ? state["ExitCode"] : 0;
+  // Docker sets `OOMKilled` only when the container's own memory limit was hit; a host-level
+  // out-of-memory kill reports the same exit code with `OOMKilled: false`.
+  const oomKilled = state["OOMKilled"] === true;
   const health = state["Health"];
   const healthStatus =
     isJsonRecord(health) && typeof health["Status"] === "string" ? health["Status"] : undefined;
-  return healthStatus !== undefined
-    ? { running, status, exitCode, health: healthStatus }
-    : { running, status, exitCode };
+  const lastHealthProbe = parseLastHealthProbe(health);
+  return {
+    running,
+    status,
+    exitCode,
+    oomKilled,
+    ...(healthStatus === undefined ? {} : { health: healthStatus }),
+    ...(lastHealthProbe === undefined ? {} : { lastHealthProbe }),
+  };
 }
 
 function isJsonRecord(value: unknown): value is { readonly [key: string]: unknown } {
@@ -305,8 +369,8 @@ export const listVolumesByLabel = (spawner: Spawner, projectIdFilter: string) =>
       const [exitCode, stdout, stderr] = yield* Effect.all(
         [
           child.exitCode.pipe(Effect.map(Number)),
-          collectByteStream(child.stdout),
-          collectByteStream(child.stderr),
+          collectText(child.stdout),
+          collectText(child.stderr),
         ],
         { concurrency: "unbounded" },
       ).pipe(
@@ -314,12 +378,10 @@ export const listVolumesByLabel = (spawner: Spawner, projectIdFilter: string) =>
       );
       if (exitCode !== 0) {
         const message = stderr.trim();
-        return yield* Effect.fail(
-          new DockerLifecycleListError({
-            message:
-              message.length > 0 ? `failed to list volumes: ${message}` : "failed to list volumes",
-          }),
-        );
+        return yield* new DockerLifecycleListError({
+          message:
+            message.length > 0 ? `failed to list volumes: ${message}` : "failed to list volumes",
+        });
       }
       return splitNonEmptyLines(stdout);
     }),

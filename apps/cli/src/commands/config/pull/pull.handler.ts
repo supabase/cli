@@ -1,22 +1,16 @@
-import { Effect, FileSystem, Option } from "effect";
+import { Effect, FileSystem, Option, Ref } from "effect";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { pathHasUncommittedChanges } from "../../../command-internal/git-status.ts";
-import {
-  mapHttpError,
-  sanitizeInlineName,
-  unexpectedStatusMessage,
-} from "../../../command-internal/http-errors.ts";
-import {
-  configTargetErrorsFor,
-  resolveConfigTarget,
-  type ConfigTarget,
-} from "../../../command-internal/project-target.ts";
+import { sanitizeInlineName } from "../../../command-internal/http-errors.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
+import type { LinkedTarget } from "../../../command-internal/target/resolve-target.ts";
+import { targetIsBranchAttribute } from "../../../command-internal/target/target-identity.ts";
 import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { resolveYes, OutputFlag } from "../../../command-internal/global-flags.ts";
-import { unsupportedOutputFlagMessage } from "../../../command-internal/go-output-flag.ts";
+import { unsupportedOutputFlagMessage } from "../../../command-internal/output-formats.ts";
 import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
@@ -29,16 +23,11 @@ import {
   type ConfigPullOutcome,
   type ConfigPullSource,
 } from "../../../command-internal/config-pull-run.ts";
+import { withAnnouncedTarget } from "../../../shared/output/command-target.service.ts";
 import { configPullCreatedBlockLabel, configPullSummaryMessage } from "./pull.format.ts";
 import type { ConfigPullPlan } from "./pull.plan.ts";
 import {
-  ConfigPullBranchNotFoundError,
-  ConfigPullBranchNotLinkedError,
-  ConfigPullBranchNotReadyError,
   ConfigPullOutputFlagUnsupportedError,
-  ConfigPullParentRefInvalidError,
-  ConfigPullReadNetworkError,
-  ConfigPullReadStatusError,
   ConfigPullUncommittedChangesError,
   ConfigPullWorkdirError,
 } from "./pull.errors.ts";
@@ -55,25 +44,10 @@ import type { ConfigPullFlags } from "./pull.command.ts";
 export { openConfigPullSource };
 export type { ConfigPullSource };
 
-const mapBranchResolveError = mapHttpError({
-  networkError: ConfigPullReadNetworkError,
-  statusError: ConfigPullReadStatusError,
-  networkMessage: (cause) => `failed to resolve branch: ${cause}`,
-  statusMessage: unexpectedStatusMessage,
-});
-
-// Maps resolveConfigTarget's generic errors onto config pull's own tagged error classes.
-const configTargetErrors = configTargetErrorsFor({
-  notLinked: ConfigPullBranchNotLinkedError,
-  parentRefInvalid: ConfigPullParentRefInvalidError,
-  branchNotFound: ConfigPullBranchNotFoundError,
-  branchNotReady: ConfigPullBranchNotReadyError,
-});
-
 /** Everything `config pull` does once the target is known, reusable independently of the CLI
  *  flag surface. */
 export interface ConfigPullInput {
-  readonly target: ConfigTarget;
+  readonly target: Pick<LinkedTarget, "ref" | "branch">;
   /** `--remote-label`, already filtered so an empty value reads as absent. */
   readonly remoteLabel: string | undefined;
   readonly dryRun: boolean;
@@ -89,7 +63,7 @@ export interface ConfigPullInput {
   readonly source: ConfigPullSource;
 }
 
-export const runConfigPull = Effect.fnUntraced(function* (input: ConfigPullInput) {
+export const runConfigPull = Effect.fn("config.pull.run")(function* (input: ConfigPullInput) {
   const output = yield* Output;
 
   const runPlan = yield* planConfigPullRun({
@@ -99,15 +73,27 @@ export const runConfigPull = Effect.fnUntraced(function* (input: ConfigPullInput
   });
   const { changeSet, scope, plan: finalPlan, context, configFilePath } = runPlan;
   const ref = context.projectRef;
+  yield* Effect.annotateCurrentSpan({
+    "project.ref": ref,
+    "config.dry_run": input.dryRun,
+    "change.count": changeSet.counts.total,
+    "config.write_count": finalPlan.writes.length,
+  });
 
   // The text one-line disposition drops the caveats (opts.withCaveats: false) since the
   // change-by-change body above already rendered the same Note: lines; the machine-mode message
   // keeps them.
   const emitOutcome = (planForOutput: ConfigPullPlan, outcome: ConfigPullOutcome) =>
     output.format !== "text"
-      ? output.success(
-          configPullSummaryMessage(changeSet, scope, planForOutput, outcome),
+      ? withAnnouncedTarget(
           configPullPayload(changeSet, scope, planForOutput, context, outcome),
+        ).pipe(
+          Effect.flatMap((payload) =>
+            output.success(
+              configPullSummaryMessage(changeSet, scope, planForOutput, outcome),
+              payload,
+            ),
+          ),
         )
       : output.raw(
           `${configPullSummaryMessage(changeSet, scope, planForOutput, outcome, { withCaveats: false })}\n`,
@@ -205,28 +191,26 @@ export const runConfigPull = Effect.fnUntraced(function* (input: ConfigPullInput
  * {@link runConfigPull}.
  */
 export const configPull = Effect.fn("config.pull")(function* (flags: ConfigPullFlags) {
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const yes = yield* resolveYes;
   const cliSettings = yield* CommandSettings;
   const fs = yield* FileSystem.FileSystem;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
-  // An empty `--project-ref`/`--remote-label` value is absent, mirroring the
-  // target resolver's own rule.
-  const requested = Option.filter(flags.projectRef, (value) => value.length > 0);
+  // An empty `--remote-label` value is absent.
   const remoteLabel = Option.getOrUndefined(
     Option.filter(flags.remoteLabel, (value) => value.length > 0),
   );
 
   // Set once the target resolves, so the linked-project cache write below only fires for
   // invocations that got that far.
-  let resolvedRef: string | undefined;
+  const resolvedRef = yield* Ref.make(Option.none<string>());
 
   yield* Effect.gen(function* () {
     // Reject -o/--output outright, before anything else: this command only supports
     // --output-format.
-    if (Option.isSome(goOutputFlag)) {
+    if (Option.isSome(outputFlag)) {
       return yield* new ConfigPullOutputFlagUnsupportedError({
         message: unsupportedOutputFlagMessage("config pull"),
       });
@@ -243,13 +227,9 @@ export const configPull = Effect.fn("config.pull")(function* (flags: ConfigPullF
     // and a malformed document doesn't burn a branch-resolution round trip.
     const source = yield* openConfigPullSource();
 
-    // Resolves the pull target via resolveConfigTarget, shared with config diff/config push.
-    const { ref, branch } = yield* resolveConfigTarget(
-      requested,
-      configTargetErrors,
-      mapBranchResolveError,
-    );
-    resolvedRef = ref;
+    const { ref, branch, isDefault } = yield* resolveProjectTarget(flags, { detail: true });
+    yield* Ref.set(resolvedRef, Option.some(ref));
+    yield* Effect.annotateCurrentSpan(targetIsBranchAttribute({ branch, isDefault }));
 
     yield* runConfigPull({
       target: { ref, branch },
@@ -263,8 +243,13 @@ export const configPull = Effect.fn("config.pull")(function* (flags: ConfigPullF
     // Telemetry flushes on every invocation; the linked-project cache write only fires once a
     // ref has resolved.
     Effect.ensuring(
-      Effect.suspend(() =>
-        resolvedRef === undefined ? Effect.void : linkedProjectCache.cache(resolvedRef),
+      Ref.get(resolvedRef).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (ref) => linkedProjectCache.cache(ref),
+          }),
+        ),
       ),
     ),
     Effect.ensuring(telemetryState.flush),

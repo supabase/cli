@@ -1,8 +1,8 @@
-import { basename, dirname } from "node:path";
-import { Effect, Option } from "effect";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import { Effect, Option, Path } from "effect";
+import * as ChildProcess from "effect/process/ChildProcess";
+import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
+import { withChildTraceEnv, withProcessSpan } from "../shared/telemetry/spans.ts";
 import { collectText } from "./container-cli.ts";
 
 /**
@@ -16,25 +16,43 @@ import { collectText } from "./container-cli.ts";
  * Returns `Option.none()` whenever the answer can't be determined (not a git working tree, `git`
  * missing, a non-zero exit, or any other failure) rather than treating that as "clean".
  */
-export function pathHasUncommittedChanges(
-  path: string,
-): Effect.Effect<Option.Option<boolean>, never, ChildProcessSpawner> {
-  return Effect.scoped(
-    Effect.gen(function* () {
-      const spawner = yield* ChildProcessSpawner;
-      const handle = yield* spawner.spawn(
-        ChildProcess.make("git", ["status", "--porcelain", "--", basename(path)], {
-          cwd: dirname(path),
-          stdin: "ignore",
-          stdout: "pipe",
-          stderr: "ignore",
+export const pathHasUncommittedChanges = Effect.fnUntraced(function* (path: string) {
+  const pathService = yield* Path.Path;
+  const args = ["status", "--porcelain", "--", pathService.basename(path)];
+  return yield* withProcessSpan(
+    "Git.status",
+    { executable: "git", argCount: args.length },
+    (traceEnv) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const spawner = yield* ChildProcessSpawner;
+          const handle = yield* spawner.spawn(
+            ChildProcess.make(
+              "git",
+              args,
+              withChildTraceEnv(
+                {
+                  cwd: pathService.dirname(path),
+                  stdin: "ignore",
+                  stdout: "pipe",
+                  stderr: "ignore",
+                },
+                traceEnv,
+              ),
+            ),
+          );
+          const [exitCode, stdout] = yield* Effect.all(
+            [handle.exitCode.pipe(Effect.map(Number)), collectText(handle.stdout)],
+            { concurrency: "unbounded" },
+          );
+          return { exitCode, stdout };
         }),
-      );
-      const [exitCode, stdout] = yield* Effect.all(
-        [handle.exitCode.pipe(Effect.map(Number)), collectText(handle.stdout)],
-        { concurrency: "unbounded" },
-      );
-      return exitCode === 0 ? Option.some(stdout.trim().length > 0) : Option.none<boolean>();
-    }),
-  ).pipe(Effect.orElseSucceed(() => Option.none<boolean>()));
-}
+      ),
+    (result) => result.exitCode,
+  ).pipe(
+    Effect.map(({ exitCode, stdout }) =>
+      exitCode === 0 ? Option.some(stdout.trim().length > 0) : Option.none<boolean>(),
+    ),
+    Effect.orElseSucceed(() => Option.none<boolean>()),
+  );
+});

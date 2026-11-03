@@ -2,14 +2,15 @@ import { Data } from "effect";
 
 import {
   actionability,
+  causeDeclaration,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../../../shared/telemetry/error-actionability.ts";
 import type { DeclarativeLoadCompatibilityFinding } from "./declarative.flow.ts";
 
 /**
- * Declarative commands were invoked without `--experimental` and without
- * `[experimental.pgdelta] enabled = true`; message text and suggestion are an established
+ * Declarative commands were invoked without `--experimental` while config sets
+ * `[experimental.pgdelta] enabled = false`; message text and suggestion are an established
  * output contract.
  */
 export class DeclarativeNotEnabledError extends Data.TaggedError("DeclarativeNotEnabledError")<{
@@ -21,10 +22,7 @@ export class DeclarativeNotEnabledError extends Data.TaggedError("DeclarativeNot
   }
 }
 
-/**
- * A target could not be resolved in non-interactive mode; message text is an established output
- * contract, shared by `generate` and the `sync` variants requiring `generate` first.
- */
+/** `sync` found no declarative schema and cannot offer to generate one without a terminal. */
 export class DeclarativeNonInteractiveError extends Data.TaggedError(
   "DeclarativeNonInteractiveError",
 )<{
@@ -35,26 +33,10 @@ export class DeclarativeNonInteractiveError extends Data.TaggedError(
   }
 }
 
-/**
- * A mutually-exclusive flag group was violated: `generate`'s `db-url`/`linked`/`local`, or
- * `sync`'s `apply`/`no-apply`. Message text is an established output contract; both fail before
- * any side effects run.
- */
+/** `sync`'s `--apply` and `--no-apply` were both set; fails before any side effects run. */
 export class DeclarativeMutuallyExclusiveFlagsError extends Data.TaggedError(
   "DeclarativeMutuallyExclusiveFlagsError",
 )<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
-/**
- * The interactive custom-database-URL prompt was empty or unparseable; message text is an
- * established output contract.
- */
-export class DeclarativeInvalidDbUrlError extends Data.TaggedError("DeclarativeInvalidDbUrlError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -119,10 +101,14 @@ export class DeclarativeApplyError extends Data.TaggedError("DeclarativeApplyErr
    * hint) when the local-reset recovery path fails, so the wrap doesn't drop it.
    */
   readonly suggestion?: string;
+  readonly cause?: unknown;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     if (this.connect === true) {
-      return { ...actionability.dbConnection, fingerprint_suffix: "connect" };
+      const declared = causeDeclaration(this.cause);
+      return declared === undefined
+        ? { ...actionability.dbConnection, fingerprint_suffix: "connect" }
+        : { ...declared, fingerprint_suffix: declared.fingerprint_suffix ?? "connect" };
     }
     return actionability.dbFinding;
   }
@@ -135,6 +121,6 @@ export class DeclarativeApplyError extends Data.TaggedError("DeclarativeApplyErr
  */
 export function readErrorSuggestion(error: unknown): string | undefined {
   if (typeof error !== "object" || error === null || !("suggestion" in error)) return undefined;
-  const { suggestion } = error as { suggestion: unknown };
+  const { suggestion } = error;
   return typeof suggestion === "string" ? suggestion : undefined;
 }

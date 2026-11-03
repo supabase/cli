@@ -1,7 +1,8 @@
 import { Layer } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { commandSettingsLayer } from "../../config/command-settings.layer.ts";
@@ -9,26 +10,29 @@ import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
 import { telemetryStateLayer } from "../../telemetry/telemetry-state.layer.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { stop } from "./stop.handler.ts";
+import { withCliConfigFlags } from "../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
+import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
 
 const config = {
-  projectId: Flag.string("project-id").pipe(
+  projectId: Flag.String("project-id").pipe(
     Flag.withDescription("Local project ID to stop."),
     Flag.optional,
   ),
   // Hidden for backward compatibility: `--backup=false` is equivalent to `--no-backup`.
-  backup: Flag.boolean("backup").pipe(
+  backup: Flag.Boolean("backup").pipe(
     Flag.withDescription("Backs up the current database before stopping."),
     Flag.withDefault(true),
     Flag.withHidden,
   ),
-  noBackup: Flag.boolean("no-backup").pipe(
+  noBackup: Flag.Boolean("no-backup").pipe(
     Flag.withDescription("Deletes all data volumes after stopping."),
     Flag.withDefault(false),
   ),
   // `Option<boolean>` so presence means "explicitly set": `--project-id`/`--all` are mutually
   // exclusive whenever both were explicitly set, regardless of `--all`'s value. A plain
-  // `Flag.boolean` couldn't distinguish `--project-id x --all=false` from `--project-id x` alone.
-  all: Flag.boolean("all").pipe(
+  // `Flag.Boolean` couldn't distinguish `--project-id x --all=false` from `--project-id x` alone.
+  all: Flag.Boolean("all").pipe(
     Flag.withDescription("Stop all local Supabase instances from all projects across the machine."),
     Flag.optional,
   ),
@@ -50,8 +54,15 @@ const stopRuntimeLayer = Layer.mergeAll(
 export const stopCommand = Command.make("stop", config).pipe(
   Command.withDescription("Stop all local Supabase containers."),
   Command.withShortDescription("Stop all local Supabase containers"),
+  withPermissions({
+    operations: [],
+    noApiEffectFlags: ["project-id", "backup", "no-backup", "all"],
+  }),
   Command.withHandler((flags) =>
     stop(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(stopRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

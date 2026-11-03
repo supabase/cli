@@ -1,6 +1,6 @@
+import type { V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { Cause, Effect, Exit, Layer, Option, FileSystem, Schema } from "effect";
 
 import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -10,17 +10,52 @@ import {
   mockCommandSettings,
   mockCommandPlatformApi,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
 import { backupsRestore } from "./restore.handler.ts";
+import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+const PROJECT: (typeof V1ListAllProjectsOutput.Type)[number] = {
+  id: VALID_REF,
+  ref: VALID_REF,
+  organization_id: "org_123",
+  organization_slug: "acme",
+  name: "alpha",
+  region: "us-east-1",
+  created_at: "2026-01-01T00:00:00Z",
+  status: "ACTIVE_HEALTHY",
+  database: {
+    host: "db.example.com",
+    version: "15.0",
+    postgres_engine: "supabase-postgres",
+    release_channel: "ga",
+  },
+};
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   status?: number;
   network?: "fail";
 }
 
 const tempRoot = useTempWorkdir("supabase-backups-restore-int-");
+
+const buildRuntime = (opts: Parameters<typeof buildTestRuntime>[0]) =>
+  Layer.mergeAll(
+    buildTestRuntime(opts),
+    Layer.succeed(YesFlag, true),
+    Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+  );
+
+const confirmed = `Confirmed by --yes: Start a PITR restore without a recovery time target on project ${VALID_REF}\n`;
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
@@ -30,55 +65,68 @@ function setup(opts: SetupOpts = {}) {
     network: opts.network,
   });
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
-  const layer = buildTestRuntime({
+  const layer = buildRuntime({
     out,
     api,
     cliSettings,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api };
 }
 
 describe("backups restore integration", () => {
-  it.live("sends recovery_time_target_unix=0 when --timestamp is omitted", () => {
+  it.effect("sends recovery_time_target_unix=0 when --timestamp is omitted", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* backupsRestore({
+        remote: Option.none(),
         projectRef: Option.none(),
         timestamp: Option.none(),
       });
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.body).toEqual({ recovery_time_target_unix: 0 });
+      assertPermissionDrift({ command: "backups restore", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("sends the supplied timestamp when --timestamp is provided", () => {
+  it.effect("sends the supplied timestamp when --timestamp is provided", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* backupsRestore({
+        remote: Option.none(),
         projectRef: Option.none(),
         timestamp: Option.some(1_707_407_047),
       });
       expect(api.requests[0]?.body).toEqual({ recovery_time_target_unix: 1_707_407_047 });
+      assertPermissionDrift({
+        command: "backups restore",
+        activeFlags: { timestamp: true },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes 'Started PITR restore: <ref>\\n' to stderr in text mode (Go parity)", () => {
+  it.effect("writes 'Started PITR restore: <ref>\\n' to stderr in text mode", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* backupsRestore({
+        remote: Option.none(),
         projectRef: Option.none(),
         timestamp: Option.none(),
       });
-      expect(out.stderrText).toBe(`Started PITR restore: ${VALID_REF}\n`);
+      expect(out.stderrText).toBe(
+        `${unverifiedTargetBanner()}${confirmed}Started PITR restore: ${VALID_REF}\n`,
+      );
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a JSON success event for --output-format=json", () => {
+  it.effect("emits a JSON success event for --output-format=json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* backupsRestore({
+        remote: Option.none(),
         projectRef: Option.none(),
         timestamp: Option.none(),
       });
@@ -88,10 +136,11 @@ describe("backups restore integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a result event for --output-format=stream-json", () => {
+  it.effect("emits a result event for --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
       yield* backupsRestore({
+        remote: Option.none(),
         projectRef: Option.none(),
         timestamp: Option.none(),
       });
@@ -100,10 +149,11 @@ describe("backups restore integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits indented JSON to stdout for --output json (Go-compat)", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+  it.effect("emits indented JSON to stdout for --output json", () => {
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* backupsRestore({
+        remote: Option.none(),
         projectRef: Option.none(),
         timestamp: Option.none(),
       });
@@ -113,38 +163,52 @@ describe("backups restore integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
-    "renders the stderr text line for --output {pretty,yaml,toml,env} (Go ignores --output)",
+  it.effect(
+    "renders the stderr text line for --output {pretty,yaml,toml,env} (--output is ignored)",
     () => {
-      const { layer, out } = setup({ goOutput: "yaml" });
+      const { layer, out } = setup({ outputFlag: "yaml" });
       return Effect.gen(function* () {
         yield* backupsRestore({
+          remote: Option.none(),
           projectRef: Option.none(),
           timestamp: Option.none(),
         });
-        expect(out.stderrText).toBe(`Started PITR restore: ${VALID_REF}\n`);
+        expect(out.stderrText).toBe(
+          `${unverifiedTargetBanner()}${confirmed}Started PITR restore: ${VALID_REF}\n`,
+        );
         expect(out.stdoutText).toBe("");
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live("uses --project-ref flag over CommandSettings.projectId", () => {
+  it.effect("uses the --remote=<ref> value over CommandSettings.projectId", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* backupsRestore({
-        projectRef: Option.some(flagRef),
+        remote: Option.some({ _tag: "Ref", ref: flagRef }),
+        projectRef: Option.none(),
         timestamp: Option.none(),
       });
       expect(api.requests[0]?.url).toContain(`/v1/projects/${flagRef}/`);
+      assertPermissionDrift({
+        command: "backups restore",
+        activeFlags: { remote: flagRef },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with BackupRestoreUnexpectedStatusError on HTTP 503", () => {
+  it.effect("fails with BackupRestoreUnexpectedStatusError on HTTP 503", () => {
     const { layer } = setup({ status: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        backupsRestore({ projectRef: Option.none(), timestamp: Option.none() }),
+        backupsRestore({
+          remote: Option.none(),
+          projectRef: Option.none(),
+          timestamp: Option.none(),
+        }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -155,11 +219,15 @@ describe("backups restore integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with BackupRestoreNetworkError on transport failure", () => {
+  it.effect("fails with BackupRestoreNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        backupsRestore({ projectRef: Option.none(), timestamp: Option.none() }),
+        backupsRestore({
+          remote: Option.none(),
+          projectRef: Option.none(),
+          timestamp: Option.none(),
+        }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -170,20 +238,22 @@ describe("backups restore integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with ProjectRefNotLinkedError non-interactively when no ref source", () => {
+  it.effect("fails with ProjectRefNotLinkedError non-interactively when no ref source", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({});
     const cliSettings = mockCommandSettings({
       workdir: tempRoot.current,
       projectId: Option.none(),
     });
-    const layer = buildTestRuntime({ out, api, cliSettings });
+    const layer = buildRuntime({ out, api, cliSettings });
 
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        backupsRestore({ projectRef: Option.none(), timestamp: Option.none() }).pipe(
-          Effect.provide(layer),
-        ),
+        backupsRestore({
+          remote: Option.none(),
+          projectRef: Option.none(),
+          timestamp: Option.none(),
+        }).pipe(Effect.provide(layer)),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -192,73 +262,91 @@ describe("backups restore integration", () => {
     });
   });
 
-  it.live("prompts via TTY when no ref source matches and stdin is a TTY", () => {
-    const out = mockOutput({
-      format: "text",
-      promptSelectResponses: [VALID_REF],
-    });
-    // Branches on path: the resolver's list call gets a project array, the restore call gets 201.
-    const api = mockCommandPlatformApi({
-      handler: (request) => {
-        if (request.url.includes("/v1/projects") && !request.url.includes("/database/backups")) {
+  it.effect(
+    "prompts via TTY, restores, and fills the linked-project cache through the real layer",
+    () => {
+      const out = mockOutput({
+        format: "text",
+        promptSelectResponses: [VALID_REF],
+      });
+      const api = mockCommandPlatformApi({
+        handler: (request) => {
+          if (request.method === "POST") {
+            return Effect.succeed(jsonResponse(request, 201, null));
+          }
           return Effect.succeed(
-            HttpClientResponse.fromWeb(
+            jsonResponse(
               request,
-              new Response(
-                JSON.stringify([
-                  {
-                    id: VALID_REF,
-                    ref: VALID_REF,
-                    organization_id: "org_123",
-                    organization_slug: "acme",
-                    name: "alpha",
-                    region: "us-east-1",
-                    created_at: "2026-01-01T00:00:00Z",
-                    status: "ACTIVE_HEALTHY",
-                    database: {
-                      host: "db.example.com",
-                      version: "15.0",
-                      postgres_engine: "supabase-postgres",
-                      release_channel: "ga",
-                    },
-                  },
-                ]),
-                { status: 200, headers: { "content-type": "application/json" } },
-              ),
+              200,
+              request.url === "https://api.supabase.com/v1/projects" ? [PROJECT] : PROJECT,
             ),
           );
-        }
-        return Effect.succeed(jsonResponse(request, 201, null));
-      },
-    });
-    const cliSettings = mockCommandSettings({
-      workdir: tempRoot.current,
-      projectId: Option.none(),
-    });
-    const layer = buildTestRuntime({
-      out,
-      api,
-      cliSettings,
-      tty: mockTty({ stdinIsTty: true, stdoutIsTty: true }),
-    });
+        },
+      });
+      const cliSettings = mockCommandSettings({
+        workdir: tempRoot.current,
+        projectId: Option.none(),
+      });
+      const layer = buildRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true, stdoutIsTty: true }),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      });
 
-    return Effect.gen(function* () {
-      yield* backupsRestore({ projectRef: Option.none(), timestamp: Option.none() }).pipe(
-        Effect.provide(layer),
-      );
-      expect(out.promptSelectCalls).toHaveLength(1);
-      expect(out.stderrText).toContain(`Started PITR restore: ${VALID_REF}\n`);
-    });
-  });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+        expect(yield* fs.exists(cachePath)).toBe(false);
+        yield* backupsRestore({
+          remote: Option.none(),
+          projectRef: Option.none(),
+          timestamp: Option.none(),
+        });
+        expect(out.promptSelectCalls).toHaveLength(1);
+        expect(out.stderrText).toContain(`Started PITR restore: ${VALID_REF}\n`);
+        expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          "GET https://api.supabase.com/v1/projects",
+          `POST https://api.supabase.com/v1/projects/${VALID_REF}/database/backups/restore-pitr`,
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+        ]);
+        expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+          ref: VALID_REF,
+        });
+        assertPermissionDrift({ command: "backups restore", requests: api.requests, exact: true });
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.live("accepts --timestamp short alias -t in the same way (no separate parse path)", () => {
+  it.effect("accepts --timestamp short alias -t in the same way (no separate parse path)", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* backupsRestore({
+        remote: Option.none(),
         projectRef: Option.none(),
         timestamp: Option.some(42),
       });
       expect(api.requests[0]?.body).toEqual({ recovery_time_target_unix: 42 });
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedConsent("backups restore", {
+  api: { response: { status: 201, body: null } },
+  invoke: () => ({
+    run: backupsRestore({
+      remote: Option.none(),
+      projectRef: Option.none(),
+      timestamp: Option.some(1_707_407_047),
+    }),
+  }),
+});
+
+describeHostedTargetSelection("backups restore", {
+  respond: (request) => Effect.succeed(jsonResponse(request, 201, null)),
+  run: (flags) => backupsRestore({ ...flags, timestamp: Option.none() }),
 });

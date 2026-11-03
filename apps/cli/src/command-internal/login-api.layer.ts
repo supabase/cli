@@ -1,10 +1,17 @@
+import { makeApiClient } from "@supabase/api/effect";
 import { Effect, Layer, Option } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { LoginApi, type LoginApiSessionResponse } from "../commands/login/login-api.service.ts";
 import { LoginVerificationError } from "../commands/login/login.errors.ts";
+import { block } from "./command-permissions/model.ts";
+
+/** The profile lookup that stitches the account identity after login. */
+export const loginProfile = block("login-profile", [
+  { operationId: "v1-get-profile", kind: "best-effort" },
+]);
 
 const POLL_TIMEOUT = "10 seconds";
 
@@ -29,19 +36,18 @@ export const loginApiLayer = Layer.effect(
     return LoginApi.of({
       fetchLoginSession: (apiHost: string, sessionId: string, deviceCode: string) =>
         Effect.gen(function* () {
-          const url = `${apiHost}/platform/cli/login/${sessionId}?device_code=${deviceCode}`;
+          // oxlint-disable-next-line supabase/no-raw-management-api-url -- not in the Management API OpenAPI spec, so no typed operation exists
+          const url = `${apiHost}/platform/cli/login/${encodeURIComponent(sessionId)}?device_code=${encodeURIComponent(deviceCode)}`;
           const request = HttpClientRequest.get(url).pipe(
             HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
           );
           const response = yield* httpClient.execute(request);
           if (response.status !== 200) {
             const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-            return yield* Effect.fail(
-              new LoginVerificationError({
-                message: `Error status ${response.status}: ${body}`,
-                statusCode: response.status,
-              }),
-            );
+            return yield* new LoginVerificationError({
+              message: `Error status ${response.status}: ${body}`,
+              statusCode: response.status,
+            });
           }
           const body = yield* response.json;
           const session: LoginApiSessionResponse = {
@@ -78,18 +84,22 @@ export const loginApiLayer = Layer.effect(
           }),
         ),
 
+      // No client is configured yet at login (the token was just obtained), so build one for this
+      // host and token.
       fetchGotrueId: (apiHost: string, token: string) =>
         Effect.gen(function* () {
-          const request = HttpClientRequest.get(`${apiHost}/v1/profile`).pipe(
-            HttpClientRequest.setHeader("Authorization", `Bearer ${token}`),
-            HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
+          const api = yield* makeApiClient(
+            { baseUrl: apiHost, accessToken: token, userAgent: cliSettings.userAgent },
+            { retry: { maxRetries: Option.getOrUndefined(cliSettings.apiMaxRetries) } },
           );
-          const response = yield* httpClient.execute(request);
-          if (response.status !== 200) return Option.none<string>();
-          const body = yield* response.json;
-          const gotrueId = readString(body, "gotrue_id");
-          return gotrueId.length > 0 ? Option.some(gotrueId) : Option.none<string>();
-        }).pipe(Effect.orElseSucceed(() => Option.none<string>())),
+          const profile = yield* api.v1.getProfile();
+          return profile.gotrue_id.length > 0
+            ? Option.some(profile.gotrue_id)
+            : Option.none<string>();
+        }).pipe(
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.orElseSucceed(() => Option.none<string>()),
+        ),
     });
   }),
 );

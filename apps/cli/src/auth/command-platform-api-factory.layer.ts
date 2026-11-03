@@ -1,4 +1,4 @@
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { Effect, Layer } from "effect";
 
 import { dohFetchLayer } from "../command-internal/http-dns.ts";
@@ -25,7 +25,7 @@ export const commandPlatformApiFactoryLayer = Layer.effect(
       make,
     });
   }),
-).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(dohFetchLayer));
+).pipe(Layer.provide(Layer.fresh(FetchHttpClient.layer)), Layer.provide(dohFetchLayer));
 
 /**
  * Adapts an already-built eager `CommandPlatformApi` into a factory. Use this in

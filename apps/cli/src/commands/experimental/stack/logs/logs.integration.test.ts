@@ -1,623 +1,666 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
+import { TestClock } from "effect/testing";
 import {
+  Clock,
+  DateTime,
   Deferred,
   Effect,
-  FileSystem,
+  Exit,
   Fiber,
+  FileSystem,
   Layer,
   Option,
+  Path,
+  Redacted,
+  Ref,
   Schema,
-  Sink,
-  Stdio,
   Stream,
 } from "effect";
-import { CliError, CliOutput, Command } from "effect/unstable/cli";
 import {
-  InvalidProjectRootError,
-  StackIdSchema,
-  StackNotFoundError,
-  StackOwnershipConflictError,
-  StackUpgradeRequiredError,
+  streamStackLogs,
+  type LogRecord,
+  type ReadLogsOptions,
+  type SavedStack,
+  type ServiceInstance,
 } from "@supabase/stack/effect";
-import type {
-  EffectStack,
-  OpenStackError,
-  StackLogBatch,
-  StackLogEntry,
-  StackDiscoveryError,
-  StackStatus,
-} from "@supabase/stack/effect";
+import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
-  mockTelemetryStateLayer,
+  mockTelemetryStateTracked,
 } from "../../../../../tests/helpers/command-mocks.ts";
-import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
-import { OutputFlag } from "../../../../command-internal/global-flags.ts";
-import {
-  ErrorActionabilityId,
-  actionability,
-} from "../../../../shared/telemetry/error-actionability.ts";
-import { StackApi } from "../stack.shared.ts";
+import { StackApi, stackApiLayer, stackTargetResolverLayer } from "../stack.shared.ts";
+import type { StackLogsFlags } from "./logs.command.ts";
 import { stackLogs } from "./logs.handler.ts";
-import { StackCommandLogsError } from "./logs.errors.ts";
-import { stackLogsCommand } from "./logs.command.ts";
-import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
-import { streamJsonOutputLayer } from "../../../../shared/output/output.layer.ts";
+import { selection } from "../../../../../tests/helpers/pins.ts";
 
-const id = StackIdSchema.make("a".repeat(64));
-const streamResultSchema = Schema.Struct({
-  type: Schema.Literal("result"),
-  data: Schema.Unknown,
-  timestamp: Schema.String,
-});
-const entries: ReadonlyArray<StackLogEntry> = [
-  {
-    cursor: { opaque: "1" },
-    timestamp: "2026-09-08T00:00:00.000Z",
-    source: "database",
-    stream: "stdout",
-    message: "database ready",
-  },
-  {
-    cursor: { opaque: "2" },
-    timestamp: "2026-09-08T00:00:01.000Z",
-    source: "functions",
-    stream: "stderr",
-    message: "function failed",
-  },
-];
-const internalEntry: StackLogEntry = {
-  cursor: { opaque: "internal-1" },
-  timestamp: "2026-09-08T00:00:02.000Z",
-  source: "supervisor",
-  stream: "internal",
-  message: "stack supervisor ready",
-};
+const live = Layer.provideMerge(stackApiLayer, BunServices.layer);
 
-const status: StackStatus = {
+type SavedInstance = SavedStack["instances"][number];
+const mail = (id: string): SavedInstance => ({
   id,
-  lifecycle: "running",
-  desiredLifecycle: "running",
-  runtime: { kind: "native" },
-  endpoints: {},
-  versions: {},
-  capabilities: [],
-  artifacts: [],
-};
-
-const flags = (overrides: Partial<Parameters<typeof stackLogs>[0]> = {}) => ({
-  stack: Option.none<string>(),
-  stackId: Option.none<string>(),
-  service: Option.none<"database" | "functions">(),
-  tail: 100,
-  follow: false,
-  ...overrides,
+  creation: { service: "mail", pin: selection.mail, config: {}, endpoints: {} },
+});
+const rest = (id: string): SavedInstance => ({
+  id,
+  creation: {
+    service: "rest",
+    pin: selection.rest,
+    config: {},
+    endpoints: { http: { port: "auto" } },
+  },
+});
+const database = (id: string): SavedInstance => ({
+  id,
+  creation: {
+    service: "database",
+    pin: selection.database,
+    config: {
+      databasePassword: Redacted.make("stack-logs-test"),
+      jwtSecret: Redacted.make("stack-logs-test-jwt-secret"),
+      jwtExpiry: 3600,
+    },
+    endpoints: {},
+  },
 });
 
-const parseErrorMessages = (error: CliError.CliError): ReadonlyArray<string> =>
-  Schema.is(CliError.ShowHelp)(error) ? error.errors.map(({ message }) => message) : [];
+const iso = (millis: number) => DateTime.formatIso(DateTime.makeUnsafe(millis));
+const line = (millis: number, kind: "stdout" | "stderr", text: string, launchId = 1) =>
+  `${iso(millis)} ${kind} ${launchId} | ${text}`;
+const launch = (millis: number, launchId = 1) => `${iso(millis)} launch ${launchId} | `;
+const lost = (millis: number, count: number, launchId = 1) =>
+  `${iso(millis)} lost ${launchId} | ${count} output`;
 
-function setup(opts: {
-  root?: string;
-  logs?: (query: unknown) => Effect.Effect<StackLogBatch, never>;
-  followLogs?: (query: unknown) => Stream.Stream<StackLogEntry>;
-  openFailure?: OpenStackError;
-  findFailure?: StackDiscoveryError;
-  noDefault?: boolean;
+const baseFlags = (stackId: string): StackLogsFlags => ({
+  stack: Option.none(),
+  stackId: Option.some(stackId),
+  service: [],
+  follow: false,
+  tail: 200,
+  since: Option.none(),
+});
+
+const followingMail = (
+  id: string,
+  readLogs: (options?: ReadLogsOptions) => Stream.Stream<LogRecord, never>,
+): ServiceInstance<"mail"> => ({
+  id,
+  service: "mail",
+  start: Effect.die("unused"),
+  ready: Effect.die("unused"),
+  stop: Effect.die("unused"),
+  restart: () => Effect.die("unused"),
+  destroy: Effect.die("unused"),
+  prepare: Effect.die("unused"),
+  status: Effect.die("unused"),
+  followStatus: Stream.die("unused"),
+  readLogs,
+  credentials: () => Effect.die("unused"),
+});
+
+/** A saved stack with fixed definitions, a fake owner, and log segments written to disk. */
+const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
+  readonly instances: ReadonlyArray<SavedInstance>;
+  readonly members: ReadonlyArray<string>;
+  readonly running?: boolean;
+  readonly handles?: (stack: {
+    readonly stateRoot: string;
+    readonly stackId: string;
+  }) => ReadonlyArray<ServiceInstance<"mail">>;
+  readonly gatewayLogs?: (options?: ReadLogsOptions) => Stream.Stream<LogRecord, never>;
 }) {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const root =
-      opts.root ?? (yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-logs-" }));
-    const out = mockOutput();
-    const calls: {
-      readonly queries: unknown[];
-      opened: string[];
-      stopCalls: number;
-      destroyCalls: number;
-    } = { queries: [], opened: [], stopCalls: 0, destroyCalls: 0 };
-    const stack = {
-      id,
-      status: Effect.succeed(status),
-      credentials: Effect.die("unused"),
-      prepare: () => Effect.die("unused"),
-      start: () => Effect.die("must not start"),
-      stop: Effect.sync(() => void calls.stopCalls++),
-      destroy: Effect.sync(() => void calls.destroyCalls++),
-      resetDatabase: Effect.die("unused"),
-      logs: (query?: unknown) => {
-        calls.queries.push(query);
-        return (
-          opts.logs?.(query) ?? Effect.succeed({ entries, cursor: { opaque: "2" }, running: false })
-        );
-      },
-      followLogs: (query?: unknown) => {
-        calls.queries.push(query);
-        return opts.followLogs?.(query) ?? Stream.fromIterable(entries);
-      },
-    } satisfies EffectStack;
-    const descriptor = {
-      id,
-      projectRoot: root,
-      name: "feature-a",
-      branchContext: "ordinary-workspace",
-      runtime: { kind: "native" as const },
-      desiredLifecycle: "running" as const,
-    };
-    const layer = Layer.mergeAll(
-      out.layer,
-      mockCommandSettings({ workdir: root }),
-      mockTelemetryStateLayer,
-      Layer.succeed(StackApi, {
-        createStack: () => Effect.die("must not create"),
-        findStack: (query) =>
-          opts.findFailure === undefined
-            ? Effect.succeed(
-                query.name === "missing" || (query.name === undefined && opts.noDefault)
-                  ? Option.none()
-                  : Option.some(descriptor),
-              )
-            : Effect.fail(opts.findFailure),
-        discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
-        openStack: (stackId) =>
-          opts.openFailure === undefined
-            ? Effect.sync(() => {
-                calls.opened.push(stackId);
-                return stack;
-              })
-            : Effect.fail(opts.openFailure),
-        inspectStack: () => Effect.die("must not inspect"),
-      }),
-      BunServices.layer,
-    );
-    return { layer, out, calls, root };
-  }).pipe(Effect.provide(BunServices.layer));
-}
-
-function capturedStdio() {
-  const stdout: string[] = [];
-  const layer = Layer.succeed(
-    Stdio.Stdio,
-    Stdio.make({
-      args: Effect.succeed([]),
-      stdin: Stream.empty,
-      stdout: () =>
-        Sink.forEach((item: string | Uint8Array) =>
-          Effect.sync(() =>
-            stdout.push(typeof item === "string" ? item : new TextDecoder().decode(item)),
-          ),
-        ),
-      stderr: () => Sink.forEach(() => Effect.void),
-    }),
-  );
-  return { layer, stdout };
-}
-
-describe("experimental stack logs", () => {
-  it.live("parses --service as a value-consuming flag", () => {
-    let parsed: { service: Option.Option<string>; tail: number } | undefined;
-    const command = stackLogsCommand.pipe(
-      Command.withHandler((flags) =>
-        Effect.sync(() => {
-          parsed = { service: flags.service, tail: flags.tail };
-        }),
-      ),
-    );
-    return Effect.gen(function* () {
-      yield* Command.runWith(command, { version: "0.0.0-test" })([
-        "--service",
-        "database",
-        "--tail",
-        "4",
-      ]);
-      expect(parsed?.service).toEqual(Option.some("database"));
-      expect(parsed?.tail).toBe(4);
-    }).pipe(
-      Effect.provide(Layer.mergeAll(BunServices.layer, CliOutput.layer(textCliOutputFormatter()))),
-    );
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-logs-" });
+  const api = yield* StackApi;
+  const stateRoot = path.join(root, "stacks");
+  const stack = yield* api.create({
+    stateRoot,
+    cacheRoot: path.join(root, "cache"),
+    projectRoot: root,
+    runtime: "native",
   });
-
-  it.live(
-    "accepts zero and maximum tail with the follow alias and rejects out-of-range tails",
-    () => {
-      let parsed: { tail: number; follow: boolean } | undefined;
-      const command = stackLogsCommand.pipe(
-        Command.withHandler((flags) =>
-          Effect.sync(() => {
-            parsed = { tail: flags.tail, follow: flags.follow };
+  const found = yield* api.find({ stateRoot, id: stack.id });
+  if (Option.isNone(found)) return yield* Effect.die("created stack missing");
+  const definition: SavedStack = {
+    ...found.value.definition,
+    instances: options.instances,
+    composition: {
+      members: options.members.map((id) => ({ id, activation: "eager" as const })),
+      dependencies: [],
+    },
+  };
+  const opened = yield* Ref.make(0);
+  const fakeApi = Layer.succeed(
+    StackApi,
+    StackApi.of({
+      ...api,
+      find: () =>
+        Effect.succeed(
+          Option.some({
+            definition,
+            host:
+              options.running === true
+                ? {
+                    stackId: stack.id,
+                    identity: definition.identity,
+                    pid: 1,
+                    port: 1,
+                    release: "test",
+                  }
+                : undefined,
           }),
         ),
-      );
-      const outputLayer = Layer.mergeAll(
-        BunServices.layer,
-        CliOutput.layer(textCliOutputFormatter()),
-      );
-      return Effect.gen(function* () {
-        yield* Command.runWith(command, { version: "0.0.0-test" })(["--tail", "0", "-f"]);
-        expect(parsed).toEqual({ tail: 0, follow: true });
-        yield* Command.runWith(command, { version: "0.0.0-test" })(["--tail", "1000"]);
-        expect(parsed).toEqual({ tail: 1000, follow: false });
-        const belowMinimum = yield* Command.runWith(command, { version: "0.0.0-test" })([
-          "--tail=-1",
-        ]).pipe(Effect.flip);
-        const aboveMaximum = yield* Command.runWith(command, { version: "0.0.0-test" })([
-          "--tail=1001",
-        ]).pipe(Effect.flip);
-        expect(belowMinimum).toBeInstanceOf(CliError.ShowHelp);
-        expect(aboveMaximum).toBeInstanceOf(CliError.ShowHelp);
-        expect(parseErrorMessages(belowMinimum)).toContain(
-          'Invalid value for flag --tail: "-1". Expected --tail between 0 and 1000, got -1',
-        );
-        expect(parseErrorMessages(aboveMaximum)).toContain(
-          'Invalid value for flag --tail: "1001". Expected --tail between 0 and 1000, got 1001',
-        );
-      }).pipe(Effect.provide(outputLayer));
-    },
-  );
-
-  it.live("reads a finite tail and passes the service filter without starting or stopping", () => {
-    return setup({}).pipe(
-      Effect.flatMap((setupResult) =>
-        Effect.gen(function* () {
-          yield* stackLogs(flags({ service: Option.some("database"), tail: 2 }));
-          expect(setupResult.calls.queries).toEqual([{ capabilities: ["database"], tail: 2 }]);
-          expect(setupResult.calls.opened).toEqual([id]);
-          expect(setupResult.out.stdoutText).toContain("database ready");
-          expect(setupResult.out.stdoutText).toContain("function failed");
-        }).pipe(Effect.provide(setupResult.layer)),
-      ),
-    );
-  });
-
-  it.live("sanitizes text messages while preserving structured log content", () => {
-    const message =
-      "safe\u009d0;bel\u0007-red\u009d0;c1\u009c-blue\u009d0;esc\u001b\\\u009b38:2::255:0:0m-color\u009b0m\tcolumn\rnext\u0000\u000b\u0085end";
-    const sanitized = "safe-red-blue-color\tcolumnnextend";
-    return setup({
-      logs: () =>
-        Effect.succeed({
-          entries: [{ ...entries[0]!, message }],
-          cursor: { opaque: "1" },
-          running: false,
-        }),
-    }).pipe(
-      Effect.flatMap((setupResult) => {
-        const text = mockOutput();
-        const json = mockOutput({ format: "json" });
-        const structured = mockOutput({ format: "stream-json" });
-        return Effect.gen(function* () {
-          yield* stackLogs(flags()).pipe(
-            Effect.provide(Layer.mergeAll(setupResult.layer, text.layer)),
-          );
-          expect(text.stdoutText).toContain(sanitized);
-          expect(text.stdoutText).not.toContain("\u001b");
-
-          yield* stackLogs(flags()).pipe(
-            Effect.provide(Layer.mergeAll(setupResult.layer, json.layer)),
-          );
-          const jsonResult = json.messages.find((entry) => entry.type === "success")?.data;
-          expect(jsonResult).toEqual(
-            expect.objectContaining({ entries: [expect.objectContaining({ message })] }),
-          );
-
-          yield* stackLogs(flags()).pipe(
-            Effect.provide(Layer.mergeAll(setupResult.layer, structured.layer)),
-          );
-          const streamResult = structured.messages.find((entry) => entry.type === "success")?.data;
-          expect(streamResult).toEqual(
-            expect.objectContaining({ entries: [expect.objectContaining({ message })] }),
-          );
-        }).pipe(Effect.provide(setupResult.layer));
-      }),
-    );
-  });
-
-  it.live("rejects conflicting targets before resolving a stack", () => {
-    return setup({}).pipe(
-      Effect.flatMap((setupResult) =>
-        Effect.gen(function* () {
-          const failure = yield* stackLogs(
-            flags({ stack: Option.some("feature-a"), stackId: Option.some(id) }),
-          ).pipe(Effect.flip);
-          expect(failure.reason).toBe("flags");
-          expect(setupResult.calls.queries).toEqual([]);
-          expect(setupResult.calls.opened).toEqual([]);
-        }).pipe(Effect.provide(setupResult.layer)),
-      ),
-    );
-  });
-
-  it.live("distinguishes an absent default stack from a missing named stack", () => {
-    return Effect.gen(function* () {
-      const absent = yield* setup({ noDefault: true });
-      const named = yield* setup({});
-      yield* stackLogs(flags()).pipe(Effect.provide(absent.layer));
-      expect(absent.out.messages).toContainEqual(
-        expect.objectContaining({
-          type: "success",
-          message: "No managed stack found for this context.",
-        }),
-      );
-      const absentStream = capturedStdio();
-      yield* stackLogs(flags()).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            absent.layer,
-            absentStream.layer,
-            streamJsonOutputLayer.pipe(Layer.provide(absentStream.layer)),
-          ),
-        ),
-      );
-      const absentResult = yield* Schema.decodeEffect(Schema.fromJsonString(streamResultSchema))(
-        absentStream.stdout.join(""),
-      );
-      expect(absentResult).toEqual({
-        type: "result",
-        data: {
-          found: false,
-          entries: [],
-          message: "No managed stack found for this context.",
-        },
-        timestamp: expect.any(String),
-      });
-      const failure = yield* stackLogs(flags({ stack: Option.some("missing") })).pipe(
-        Effect.flip,
-        Effect.provide(named.layer),
-      );
-      expect(failure.reason).toBe("flags");
-      expect(failure.message).toContain("No managed stack named");
-    });
-  });
-
-  it.live(
-    "streams finite follow output and supports interruption without owner lifecycle calls",
-    () => {
-      return setup({
-        logs: () =>
-          Effect.succeed({ entries: [entries[0]!], cursor: { opaque: "1" }, running: true }),
-        followLogs: (query) => {
-          expect(query).toEqual({ cursor: { opaque: "1" } });
-          return Stream.fromIterable([
-            { ...entries[1]!, message: "function\u001b[2K failed\rretry" },
-          ]);
-        },
-      }).pipe(
-        Effect.flatMap((setupResult) =>
-          Effect.gen(function* () {
-            yield* stackLogs(flags({ follow: true }));
-            expect(setupResult.out.stdoutText).toContain("function failedretry");
-            const followStarted = yield* Deferred.make<void>();
-            let finalized = false;
-            const interrupted = yield* setup({
-              root: setupResult.root,
-              logs: () =>
-                Effect.succeed({ entries: [entries[0]!], cursor: { opaque: "1" }, running: true }),
-              followLogs: (): Stream.Stream<StackLogEntry> =>
-                Stream.fromEffect(
-                  Effect.as(Deferred.succeed(followStarted, undefined), undefined),
-                ).pipe(
-                  Stream.flatMap(() => Stream.empty),
-                  Stream.concat(Stream.never),
-                  Stream.ensuring(Effect.sync(() => void (finalized = true))),
-                ),
-            });
-            const fiber = yield* Effect.forkChild(
-              stackLogs(flags({ follow: true })).pipe(Effect.provide(interrupted.layer)),
-            );
-            yield* Deferred.await(followStarted);
-            expect(interrupted.calls.opened).toEqual([id]);
-            yield* Fiber.interrupt(fiber);
-            expect(finalized).toBe(true);
-            expect(interrupted.calls.stopCalls).toBe(0);
-            expect(interrupted.calls.destroyCalls).toBe(0);
-          }).pipe(Effect.provide(setupResult.layer)),
-        ),
-      );
-    },
-  );
-
-  it.live("emits a bounded JSON result", () => {
-    const output = mockOutput({ format: "json" });
-    return setup({}).pipe(
-      Effect.flatMap((setupResult) =>
-        Effect.gen(function* () {
-          yield* stackLogs(flags({ tail: 2 }));
-          expect(output.messages.find((message) => message.type === "success")?.data).toEqual({
-            found: true,
-            id,
-            entries,
-            cursor: { opaque: "2" },
-            running: false,
-          });
-        }).pipe(Effect.provide(Layer.mergeAll(setupResult.layer, output.layer))),
-      ),
-    );
-  });
-
-  it.live("emits one bounded stream-json result", () => {
-    return setup({
-      logs: () =>
-        Effect.succeed({
-          entries: [internalEntry],
-          cursor: { opaque: "internal-1" },
-          running: false,
-        }),
-    }).pipe(
-      Effect.flatMap((setupResult) => {
-        const output = capturedStdio();
-        return Effect.gen(function* () {
-          yield* stackLogs(flags({ tail: 2 }));
-          const result = yield* Schema.decodeEffect(Schema.fromJsonString(streamResultSchema))(
-            output.stdout.join(""),
-          );
-          expect(result).toEqual({
-            type: "result",
-            data: {
-              found: true,
-              id,
-              entries: [internalEntry],
-              cursor: { opaque: "internal-1" },
-              running: false,
-              message: "",
+      open: () =>
+        Ref.update(opened, (count) => count + 1).pipe(
+          Effect.as({
+            ...stack,
+            services: {
+              ...stack.services,
+              list: Effect.succeed(options.handles?.({ stateRoot, stackId: stack.id }) ?? []),
             },
-            timestamp: expect.any(String),
-          });
-          expect(output.stdout.join("")).not.toContain('"type":"log-entry"');
-        }).pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              setupResult.layer,
-              output.layer,
-              streamJsonOutputLayer.pipe(Layer.provide(output.layer)),
-            ),
-          ),
-        );
-      }),
-    );
-  });
-
-  it.live("emits history and live events while following stream-json", () => {
-    return setup({
-      logs: () =>
-        Effect.succeed({ entries: [entries[0]!], cursor: { opaque: "1" }, running: true }),
-      followLogs: () => Stream.fromIterable([entries[1]!]),
-    }).pipe(
-      Effect.flatMap((setupResult) => {
-        const output = mockOutput({ format: "stream-json" });
-        return Effect.gen(function* () {
-          yield* stackLogs(flags({ follow: true })).pipe(
-            Effect.provide(Layer.mergeAll(setupResult.layer, output.layer)),
-          );
-          expect(output.events).toEqual([
-            expect.objectContaining({
-              type: "log-entry",
-              source: "history",
-              line: entries[0]!.message,
-            }),
-            expect.objectContaining({
-              type: "log-entry",
-              source: "live",
-              line: entries[1]!.message,
-            }),
-          ]);
-        });
-      }),
-    );
-  });
-
-  it.live("finishes follow after printing retained history when the stack is stopped", () => {
-    return setup({
-      logs: () =>
-        Effect.succeed({ entries: [entries[0]!], cursor: { opaque: "1" }, running: false }),
-      followLogs: () => Stream.die("follow must not be opened for a stopped stack"),
-    }).pipe(
-      Effect.flatMap((setupResult) =>
-        Effect.gen(function* () {
-          yield* stackLogs(flags({ follow: true }));
-          expect(setupResult.out.stdoutText).toContain("database ready");
-          expect(setupResult.calls.queries).toEqual([{ tail: 100 }]);
-        }).pipe(Effect.provide(setupResult.layer)),
-      ),
-    );
-  });
-
-  it.live("rejects legacy output before selecting a stack", () => {
-    return setup({}).pipe(
-      Effect.flatMap((setupResult) =>
-        Effect.gen(function* () {
-          const failure = yield* stackLogs(flags()).pipe(Effect.flip);
-          expect(failure[ErrorActionabilityId]).toEqual(actionability.provideFlags);
-          expect(setupResult.calls.opened).toEqual([]);
-        }).pipe(
-          Effect.provide(
-            Layer.mergeAll(setupResult.layer, Layer.succeed(OutputFlag, Option.some("json"))),
-          ),
+            gateway: { readLogs: options.gatewayLogs ?? stack.gateway.readLogs },
+          }),
         ),
-      ),
-    );
-  });
-
-  it.live("rejects JSON follow mode before selecting a stack", () => {
-    const out = mockOutput({ format: "json" });
-    return setup({}).pipe(
-      Effect.flatMap((setupResult) => {
-        const layer = Layer.mergeAll(setupResult.layer, out.layer);
-        return Effect.gen(function* () {
-          const failure = yield* stackLogs(flags({ follow: true })).pipe(Effect.flip);
-          expect(failure).toBeInstanceOf(StackCommandLogsError);
-          expect(failure[ErrorActionabilityId]).toEqual(actionability.provideFlags);
-          expect(failure.suggestion).toContain("stream-json");
-          expect(setupResult.calls.opened).toEqual([]);
-        }).pipe(Effect.provide(layer));
-      }),
-    );
-  });
-
-  it.live("rejects invalid targets without package calls", () =>
-    Effect.gen(function* () {
-      const result = yield* setup({});
-      const failure = yield* stackLogs(flags({ stackId: Option.some("invalid") })).pipe(
-        Effect.flip,
-        Effect.provide(result.layer),
-      );
-      expect(failure[ErrorActionabilityId]).toEqual(actionability.provideFlags);
-      expect(result.calls.queries).toEqual([]);
-      expect(result.calls.opened).toEqual([]);
     }),
   );
-
-  it.live("classifies an invalid project root as invalid config", () => {
-    return setup({
-      findFailure: new InvalidProjectRootError({ message: "Project root is invalid" }),
-    }).pipe(
-      Effect.flatMap((setupResult) =>
-        Effect.gen(function* () {
-          const failure = yield* stackLogs(flags()).pipe(Effect.flip);
-          expect(failure.reason).toBe("invalid-config");
-          expect(failure[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
-          expect(setupResult.calls.opened).toEqual([]);
-        }).pipe(Effect.provide(setupResult.layer)),
-      ),
-    );
-  });
-
-  it.live("gives retry guidance for busy owners and upgrade guidance for old owners", () => {
-    return Effect.gen(function* () {
-      const busy = yield* setup({
-        openFailure: new StackOwnershipConflictError({ message: "Stack owner is busy" }),
-      });
-      const upgrade = yield* setup({
-        openFailure: new StackUpgradeRequiredError({
-          expectedRelease: "next",
-          actualRelease: "current",
-          message: "Stack upgrade required",
-        }),
-      });
-      const busyFailure = yield* stackLogs(flags()).pipe(Effect.flip, Effect.provide(busy.layer));
-      const upgradeFailure = yield* stackLogs(flags({ stack: Option.some("feature-a") })).pipe(
-        Effect.flip,
-        Effect.provide(upgrade.layer),
+  const settings = mockCommandSettings({ workdir: root, supabaseHome: root });
+  const writeSegment = (service: string, instanceId: string, records: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      const directory = path.join(stateRoot, stack.id, "logs", service, instanceId);
+      yield* fs.makeDirectory(directory, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(directory, "0000000001.log"),
+        records.map((record) => `${record}\n`).join(""),
       );
-      expect(busyFailure.suggestion).toContain("no longer running");
-      expect(busyFailure.suggestion).toContain("reconcile");
-      expect(upgradeFailure.suggestion).toContain("Stop and restart the selected stack");
-      expect(upgradeFailure.suggestion).toContain("matches this release");
     });
-  });
+  const run = (flags: Partial<StackLogsFlags>, format: "text" | "stream-json" | "json" = "text") =>
+    Effect.gen(function* () {
+      const output = mockOutput({ format, interactive: false });
+      const telemetry = mockTelemetryStateTracked();
+      const layer = Layer.mergeAll(
+        output.layer,
+        telemetry.layer,
+        Layer.provideMerge(stackTargetResolverLayer, Layer.merge(settings, fakeApi)),
+      );
+      const exit = yield* stackLogs({ ...baseFlags(stack.id), ...flags }).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+      return { exit, output, telemetry };
+    });
+  return { stackId: stack.id, stateRoot, opened, writeSegment, run };
+});
 
-  it.live("suggests an explicit target when an addressed stack is missing", () => {
-    return setup({
-      openFailure: new StackNotFoundError({ message: "Stack state was not found" }),
-    }).pipe(
-      Effect.flatMap((setupResult) =>
-        Effect.gen(function* () {
-          const failure = yield* stackLogs(flags({ stackId: Option.some(id) })).pipe(Effect.flip);
-          expect(failure.suggestion).toBe(
-            "Choose an existing stack with --stack or --stack-id, or omit both to use the current project.",
+const failure = <E>(exit: Exit.Exit<void, E>) =>
+  Exit.isFailure(exit) ? Option.getOrUndefined(Exit.findErrorOption(exit)) : undefined;
+const lines = (text: string) => text.split("\n").filter((value) => value.length > 0);
+const eventLines = (events: ReadonlyArray<{ readonly type: string; readonly line?: unknown }>) =>
+  events.filter(({ type }) => type === "log-entry").map(({ line: text }) => text);
+
+describe("stack logs", () => {
+  const t0 = Date.parse("2026-09-29T10:00:00.000Z");
+
+  it.effect("prints the newest lines across services with aligned labels, offline", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({
+        instances: [mail("mail-a"), database("db-a")],
+        members: ["mail-a", "db-a"],
+      });
+      yield* f.writeSegment("mail", "mail-a", [
+        launch(t0 - 1),
+        ...Array.from({ length: 149 }, (_, index) =>
+          line(t0 + index * 2, "stdout", `mail line ${index}`),
+        ),
+        line(t0 + 149 * 2, "stderr", "\u001b[31mwarning\u001b[0m"),
+      ]);
+      yield* f.writeSegment("database", "db-a", [
+        launch(t0 - 1),
+        ...Array.from({ length: 100 }, (_, index) =>
+          line(t0 + index * 2 + 1, "stdout", `database line ${index}`),
+        ),
+      ]);
+
+      const { exit, output, telemetry } = yield* f.run({});
+
+      expect(Exit.isSuccess(exit)).toBe(true);
+      const printed = lines(output.stdoutText);
+      expect(printed).toHaveLength(200);
+      expect(printed[0]).toMatch(/^mail {5}\| \d{2}:\d{2}:\d{2}\.\d{3} mail line 25$/u);
+      expect(printed[1]).toMatch(/^database \| \d{2}:\d{2}:\d{2}\.\d{3} database line 25$/u);
+      expect(printed.at(-1)).toMatch(/^mail {5}\| \S+ warning$/u);
+      expect(output.stdoutText).not.toContain("\u001b");
+      expect(output.stderrText).toBe("showing last 200 of 250 lines, use --tail/--since\n");
+      expect(yield* Ref.get(f.opened)).toBe(0);
+      expect(telemetry.flushed).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("selects history with --tail, --since, and repeated --service", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1_767_225_600_000);
+      const now = yield* Clock.currentTimeMillis;
+      const minutes = (count: number) => now - count * 60_000;
+      const f = yield* fixture({
+        instances: [mail("mail-a"), mail("mail-b"), mail("mail-c"), database("db-a")],
+        members: ["mail-a", "db-a"],
+      });
+      yield* f.writeSegment("mail", "mail-a", [
+        launch(minutes(180)),
+        line(minutes(120), "stdout", "a old"),
+        launch(minutes(30), 2),
+        line(minutes(20), "stdout", "a new", 2),
+      ]);
+      yield* f.writeSegment("database", "db-a", [
+        launch(minutes(10)),
+        line(minutes(5), "stdout", "d recent"),
+      ]);
+      yield* f.writeSegment("mail", "mail-b", [
+        launch(minutes(3)),
+        line(minutes(1), "stdout", "b standalone"),
+      ]);
+      // Retention removed this instance's launch record along with its oldest segment.
+      yield* f.writeSegment("mail", "mail-c", [line(minutes(2), "stdout", "c retained")]);
+      const read = (flags: Partial<StackLogsFlags>) =>
+        f.run(flags, "stream-json").pipe(Effect.map(({ output }) => eventLines(output.events)));
+
+      expect(yield* read({})).toEqual(["a old", "a new", "d recent"]);
+      expect(yield* read({ since: Option.some("1h") })).toEqual(["a new", "d recent"]);
+      expect(yield* read({ since: Option.some(iso(minutes(25))) })).toEqual(["a new", "d recent"]);
+      expect(yield* read({ since: Option.some("start") })).toEqual(["a new", "d recent"]);
+      expect(yield* read({ service: ["mail-c"], since: Option.some("start") })).toEqual([
+        "c retained",
+      ]);
+      expect(yield* read({ service: ["mail"], tail: 1 })).toEqual(["b standalone"]);
+      expect(yield* read({ service: ["mail-b", "database"] })).toEqual([
+        "d recent",
+        "b standalone",
+      ]);
+      const truncated = yield* f.run({ service: ["mail"], tail: 1 });
+      expect(truncated.output.stderrText).toBe("showing last 1 of 4 lines, use --tail/--since\n");
+      const unknown = yield* f.run({ service: ["mail", "missing"] });
+      expect(failure(unknown.exit)).toMatchObject({
+        reason: "flags",
+        message: "No service matches missing.",
+      });
+      const invalid = yield* f.run({ since: Option.some("soon") });
+      expect(failure(invalid.exit)).toMatchObject({ reason: "flags" });
+      expect(invalid.output.stdoutText).toBe("");
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("starts --since start at each instance's highest launch record", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({
+        instances: [mail("mail-a"), mail("mail-b")],
+        members: ["mail-a", "mail-b"],
+      });
+      yield* f.writeSegment("mail", "mail-a", [
+        launch(t0, 2),
+        line(t0 + 1, "stdout", "a only launch", 2),
+      ]);
+      yield* f.writeSegment("mail", "mail-b", [
+        launch(t0 + 2, 1),
+        line(t0 + 3, "stdout", "b previous launch", 1),
+        launch(t0 + 4, 2),
+        line(t0 + 5, "stdout", "b current launch", 2),
+      ]);
+
+      const { output } = yield* f.run({ since: Option.some("start") }, "stream-json");
+
+      expect(
+        output.events.map(({ instance_id, kind, line: text }) => [instance_id, kind ?? text]),
+      ).toEqual([
+        ["mail-a", "launch"],
+        ["mail-a", "a only launch"],
+        ["mail-b", "launch"],
+        ["mail-b", "b current launch"],
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("keeps the log-entry fields and reports markers in every output mode", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({ instances: [mail("mail-a")], members: ["mail-a"] });
+      yield* f.writeSegment("mail", "mail-a", [
+        launch(t0),
+        line(t0 + 1, "stdout", "hello"),
+        line(t0 + 2, "stderr", "oops"),
+        lost(t0 + 3, 3),
+      ]);
+      const subject = { service: "mail", instance_id: "mail-a", source: "history" };
+      const expected = [
+        { type: "log-marker", timestamp: iso(t0), ...subject, kind: "launch" },
+        {
+          type: "log-entry",
+          timestamp: iso(t0 + 1),
+          ...subject,
+          stream: "stdout",
+          line: "hello",
+        },
+        { type: "log-entry", timestamp: iso(t0 + 2), ...subject, stream: "stderr", line: "oops" },
+        {
+          type: "log-marker",
+          timestamp: iso(t0 + 3),
+          ...subject,
+          kind: "lost",
+          count: 3,
+        },
+      ];
+
+      const streamed = yield* f.run({}, "stream-json");
+      const finite = yield* f.run({}, "json");
+      const text = yield* f.run({});
+
+      expect(streamed.output.events).toEqual(expected);
+      expect(
+        yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(finite.output.stdoutText),
+      ).toEqual(expected);
+      expect(
+        lines(text.output.stdoutText).map((value) => value.replace(/\d{2}:\S+ /u, "")),
+      ).toEqual([
+        "mail | --- launch 1 ---",
+        "mail | hello",
+        "mail | oops",
+        "mail | --- 3 output chunks lost ---",
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("fails --follow without a running owner before printing anything", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({ instances: [mail("mail-a")], members: ["mail-a"] });
+      yield* f.writeSegment("mail", "mail-a", [launch(t0), line(t0 + 1, "stdout", "retained")]);
+
+      const followed = yield* f.run({ follow: true });
+      const finite = yield* f.run({ follow: true }, "json");
+
+      expect(failure(followed.exit)).toMatchObject({
+        reason: "lifecycle",
+        suggestion:
+          "Run supabase stack logs without --follow to read retained logs, or supabase stack start first.",
+      });
+      expect(followed.output.stdoutText).toBe("");
+      expect(followed.output.stderrText).toBe("");
+      expect(followed.telemetry.flushed).toBe(true);
+      expect(failure(finite.exit)).toMatchObject({
+        reason: "flags",
+        suggestion: "Use --output-format stream-json, or omit --follow.",
+      });
+      expect(yield* Ref.get(f.opened)).toBe(0);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("follows each service after its printed history without repeating it", () =>
+    Effect.gen(function* () {
+      // Serves the history like an owner, from `from` inclusive or none for `tail: 0`, then one new record.
+      const owner =
+        (stack: { readonly stateRoot: string; readonly stackId: string }) =>
+        (id: string, text: string) =>
+          followingMail(id, (options) =>
+            streamStackLogs({ ...stack, instances: [id] }).pipe(
+              Stream.orDie,
+              Stream.filter(
+                ({ position }) =>
+                  options?.tail !== 0 &&
+                  (options?.from === undefined ||
+                    (position !== undefined && position.byteOffset >= options.from.byteOffset)),
+              ),
+              Stream.concat(
+                Stream.make({
+                  kind: "stdout" as const,
+                  timestamp: iso(t0 + 100),
+                  launchId: 1,
+                  text,
+                  position: { generation: 1, byteOffset: 1_000_000 },
+                }),
+              ),
+              Stream.provide(BunServices.layer),
+            ),
           );
-        }).pipe(Effect.provide(setupResult.layer)),
-      ),
-    );
-  });
+      const f = yield* fixture({
+        instances: [mail("mail-a"), mail("mail-b")],
+        members: ["mail-a", "mail-b"],
+        running: true,
+        handles: (stack) => [owner(stack)("mail-a", "a live"), owner(stack)("mail-b", "b live")],
+      });
+      yield* f.writeSegment("mail", "mail-a", [
+        launch(t0),
+        line(t0 + 1, "stdout", "a first"),
+        line(t0 + 2, "stdout", "a second"),
+      ]);
+
+      const { exit, output } = yield* f.run({ follow: true }, "stream-json");
+
+      expect(Exit.isSuccess(exit)).toBe(true);
+      const entries = output.events.filter(({ type }) => type === "log-entry");
+      expect(entries.map(({ line: text, source }) => [text, source])).toEqual(
+        expect.arrayContaining([
+          ["a first", "history"],
+          ["a second", "history"],
+          ["a live", "live"],
+          ["b live", "live"],
+        ]),
+      );
+      expect(entries).toHaveLength(4);
+      expect(entries.slice(0, 2).map(({ line: text }) => text)).toEqual(["a first", "a second"]);
+      expect(yield* Ref.get(f.opened)).toBe(1);
+
+      const liveOnly = yield* f.run({ follow: true, tail: 0 });
+
+      expect(Exit.isSuccess(liveOnly.exit)).toBe(true);
+      expect(
+        lines(liveOnly.output.stdoutText)
+          .map((value) => value.replace(/^\S+\s+\| \S+ /u, ""))
+          .toSorted(),
+      ).toEqual(["a live", "b live"]);
+      expect(liveOnly.output.stderrText).toBe("");
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  const request =
+    '127.0.0.1 - - [29/Sep/2026:10:00:00 +0000] "GET /rest/v1/ HTTP/1.1" 200 2 "-" "curl/8.7.1" 3ms';
+
+  it.effect("includes the gateway's requests by default and selects them with --service", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({
+        instances: [mail("mail-a"), rest("rest-a")],
+        members: ["mail-a", "rest-a"],
+      });
+      yield* f.writeSegment("mail", "mail-a", [launch(t0), line(t0 + 1, "stdout", "mail up")]);
+      yield* f.writeSegment("gateway", "gateway", [launch(t0), line(t0 + 2, "stdout", request)]);
+
+      const all = yield* f.run({});
+      const gateway = yield* f.run({ service: ["gateway"] }, "stream-json");
+
+      expect(lines(all.output.stdoutText).map((value) => value.replace(/\d{2}:\S+ /u, ""))).toEqual(
+        [
+          "gateway | --- launch 1 ---",
+          "mail    | --- launch 1 ---",
+          "mail    | mail up",
+          `gateway | ${request}`,
+        ],
+      );
+      expect(eventLines(gateway.output.events)).toEqual([request]);
+      expect(gateway.output.events.at(-1)).toMatchObject({
+        service: "gateway",
+        instance_id: "gateway",
+      });
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("rejects --service gateway when the stack has no shared API listener", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({ instances: [mail("mail-a")], members: ["mail-a"] });
+      yield* f.writeSegment("mail", "mail-a", [launch(t0), line(t0 + 1, "stdout", "mail up")]);
+
+      const selected = yield* f.run({ service: ["gateway"] });
+      const all = yield* f.run({}, "stream-json");
+
+      expect(failure(selected.exit)).toMatchObject({
+        reason: "flags",
+        message: "No service matches gateway.",
+      });
+      expect(eventLines(all.output.events)).toEqual(["mail up"]);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("follows the gateway's new requests through the owner", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({
+        instances: [rest("rest-a")],
+        members: ["rest-a"],
+        running: true,
+        gatewayLogs: () =>
+          Stream.make({
+            kind: "stdout" as const,
+            timestamp: iso(t0 + 100),
+            launchId: 1,
+            text: request,
+            position: { generation: 1, byteOffset: 1_000 },
+          }),
+      });
+
+      const { exit, output } = yield* f.run({ follow: true, tail: 0 }, "stream-json");
+
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(output.events).toEqual([
+        expect.objectContaining({ service: "gateway", line: request, source: "live" }),
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("keeps only the current owner run's gateway requests with --since start", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({
+        instances: [mail("mail-a"), rest("rest-a")],
+        members: ["mail-a", "rest-a"],
+      });
+      yield* f.writeSegment("mail", "mail-a", [
+        launch(t0, 1),
+        line(t0 + 1, "stdout", "mail old", 1),
+        launch(t0 + 10, 2),
+        line(t0 + 11, "stdout", "mail new", 2),
+      ]);
+      yield* f.writeSegment("gateway", "gateway", [
+        launch(t0, 1),
+        line(t0 + 2, "stdout", "first run request", 1),
+        launch(t0 + 10, 2),
+        line(t0 + 12, "stdout", "second run request", 2),
+      ]);
+
+      const { output } = yield* f.run({ since: Option.some("start") }, "stream-json");
+
+      expect(eventLines(output.events)).toEqual(["mail new", "second run request"]);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("follows --since start without delayed records of an earlier launch", () =>
+    Effect.gen(function* () {
+      const record = (offset: number, launchId: number, text: string): LogRecord => ({
+        kind: "stdout",
+        timestamp: iso(t0 + offset),
+        launchId,
+        text,
+        position: { generation: 1, byteOffset: offset },
+      });
+      const f = yield* fixture({
+        instances: [mail("mail-a")],
+        members: ["mail-a"],
+        running: true,
+        handles: () => [
+          followingMail("mail-a", () =>
+            Stream.make(
+              record(100, 3, "current launch"),
+              record(101, 2, "delayed earlier launch"),
+              record(102, 4, "newer launch"),
+            ),
+          ),
+        ],
+      });
+      yield* f.writeSegment("mail", "mail-a", [launch(t0 - 1, 3)]);
+
+      const { exit, output } = yield* f.run(
+        { follow: true, since: Option.some("start") },
+        "stream-json",
+      );
+
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(eventLines(output.events)).toEqual(["current launch", "newer launch"]);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("follows the services the running stack serves and names the others", () =>
+    Effect.gen(function* () {
+      const served = (text: string) =>
+        Stream.make({
+          kind: "stdout" as const,
+          timestamp: iso(t0),
+          launchId: 1,
+          text,
+          position: { generation: 1, byteOffset: 0 },
+        });
+      const f = yield* fixture({
+        instances: [mail("mail-a"), mail("mail-b")],
+        members: ["mail-a", "mail-b"],
+        running: true,
+        handles: () => [followingMail("mail-a", () => served("a live"))],
+      });
+
+      const { exit, output } = yield* f.run({ follow: true, tail: 0 }, "stream-json");
+
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(eventLines(output.events)).toEqual(["a live"]);
+      expect(output.messages).toContainEqual({
+        type: "warn",
+        message: "Not following mail (mail-b), which the running stack does not serve.",
+      });
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("fails --follow when the running stack serves none of the selected services", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({
+        instances: [mail("mail-a")],
+        members: ["mail-a"],
+        running: true,
+        handles: () => [],
+      });
+
+      const { exit } = yield* f.run({ follow: true, tail: 0 });
+
+      expect(failure(exit)).toMatchObject({
+        reason: "lifecycle",
+        message:
+          "The running stack serves none of the selected services, so there are no new lines to follow.",
+      });
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("interrupts a follow and releases its subscriptions", () =>
+    Effect.gen(function* () {
+      const subscribed = yield* Deferred.make<void>();
+      const released = yield* Ref.make(false);
+      const f = yield* fixture({
+        instances: [mail("mail-a")],
+        members: ["mail-a"],
+        running: true,
+        handles: () => [
+          followingMail("mail-a", () =>
+            Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
+              Stream.drain,
+              Stream.concat(Stream.never),
+              Stream.ensuring(Ref.set(released, true)),
+            ),
+          ),
+        ],
+      });
+
+      const fiber = yield* f.run({ follow: true }).pipe(Effect.forkChild);
+      yield* Deferred.await(subscribed);
+      yield* Fiber.interrupt(fiber);
+
+      expect(yield* Ref.get(released)).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
 });

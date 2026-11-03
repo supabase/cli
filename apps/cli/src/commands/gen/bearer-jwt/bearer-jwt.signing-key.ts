@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect";
+import { Effect, Option, Predicate } from "effect";
 import {
   assertNoMalformedDuplicateJwkField,
   readSigningKeysFile,
@@ -12,8 +12,8 @@ import {
   assertDecodableJwkAlgorithm,
   DEFAULT_SIGNING_KEY,
   type Jwk,
-} from "../../../command-internal/go-jwt.ts";
-import { goJsonKindName } from "../../../command-internal/go-json.ts";
+} from "../../../command-internal/local-jwt.ts";
+import { jsonKindName } from "../../../command-internal/html-safe-json.ts";
 import { textOutputLayer } from "../../../shared/output/output.layer.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Stdin } from "../../../shared/runtime/stdin.service.ts";
@@ -29,8 +29,8 @@ import {
 } from "./bearer-jwt.errors.ts";
 
 /** Console read-line timeouts. */
-const GO_CONSOLE_TTY_TIMEOUT_MILLIS = 10 * 60 * 1000;
-const GO_CONSOLE_NON_TTY_TIMEOUT_MILLIS = 100;
+const CONSOLE_TTY_TIMEOUT_MILLIS = 10 * 60 * 1000;
+const CONSOLE_NON_TTY_TIMEOUT_MILLIS = 100;
 
 /**
  * Writes `label` to stderr with no trailing newline, reads one line bounded
@@ -43,9 +43,9 @@ const consolePromptText = Effect.fnUntraced(function* (label: string) {
   const stdin = yield* Stdin;
   yield* output.raw(label, "stderr");
   const line = yield* stdin.readLine(
-    tty.stdinIsTty ? GO_CONSOLE_TTY_TIMEOUT_MILLIS : GO_CONSOLE_NON_TTY_TIMEOUT_MILLIS,
+    tty.stdinIsTty ? CONSOLE_TTY_TIMEOUT_MILLIS : CONSOLE_NON_TTY_TIMEOUT_MILLIS,
   );
-  const input = Option.getOrElse(line, () => "");
+  const input = Option.getOrElse(line, () => "").trim();
   if (!tty.stdinIsTty) {
     yield* output.raw(`${input}\n`, "stderr");
   }
@@ -82,6 +82,11 @@ function normalizeStoredJwk(record: Record<string, unknown>): Jwk {
   };
 }
 
+// Native parser errors are CLI output; schema decoding discards their messages.
+function parseJwkInput(input: string): unknown {
+  return JSON.parse(input);
+}
+
 /**
  * Branch A (reached when `[auth].signing_keys_path` is NOT configured):
  * prompt for a raw JWK, falling back to the built-in default ES256 dev key
@@ -94,16 +99,13 @@ const resolveSigningKeyFromStdinJwk = Effect.fnUntraced(function* () {
   if (input.length === 0) {
     return DEFAULT_SIGNING_KEY;
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(input);
-  } catch (cause) {
-    return yield* Effect.fail(
+  const parsed = yield* Effect.try({
+    try: () => parseJwkInput(input),
+    catch: (cause) =>
       new GenBearerJwtKeyParseError({
         message: `failed to parse JWK: ${bearerJwtErrorMessage(cause)}`,
       }),
-    );
-  }
+  });
   // A JSON `null` answer decodes to a zero-value JWK (same as `{}`), which
   // fails downstream at sign time with "unsupported key type: " — distinct
   // from a truly blank answer (handled above), which falls back to the
@@ -111,35 +113,30 @@ const resolveSigningKeyFromStdinJwk = Effect.fnUntraced(function* () {
   if (parsed === null) {
     return normalizeStoredJwk({});
   }
-  if (typeof parsed !== "object" || Array.isArray(parsed)) {
-    return yield* Effect.fail(
-      new GenBearerJwtKeyParseError({
-        message: `failed to parse JWK: json: cannot unmarshal ${goJsonKindName(parsed)} into Go value of type config.JWK`,
-      }),
-    );
+  if (!Predicate.isObject(parsed)) {
+    return yield* new GenBearerJwtKeyParseError({
+      message: `failed to parse JWK: expected a JSON object, got ${jsonKindName(parsed)}`,
+    });
   }
-  const record = parsed as Record<string, unknown>;
   // Case-insensitive lookup: the `alg` allowlist check runs regardless of
   // the key's casing; see `resolveJwkFieldValue` in `gen.signing-keys-config.ts`.
-  const alg = resolveJwkFieldValue(record, "alg");
-  try {
-    assertDecodableJwkAlgorithm(typeof alg === "string" ? alg : undefined);
-  } catch (cause) {
-    return yield* Effect.fail(
+  const alg = resolveJwkFieldValue(parsed, "alg");
+  yield* Effect.try({
+    try: () => assertDecodableJwkAlgorithm(typeof alg === "string" ? alg : undefined),
+    catch: (cause) =>
       new GenBearerJwtKeyParseError({
         message: `failed to parse JWK: ${bearerJwtErrorMessage(cause)}`,
       }),
-    );
-  }
+  });
   // `assertNoMalformedDuplicateJwkField` checks the raw `input` text, not
-  // `record`: `JSON.parse` already collapsed any duplicate top-level key to
+  // `parsed`: `JSON.parse` already collapsed any duplicate top-level key to
   // its last occurrence, silently discarding evidence (e.g. `{"kid":1,"kid":"k"}`
-  // parses to `record.kid === "k"` with no trace `1` was ever there) that
+  // parses to `parsed.kid === "k"` with no trace `1` was ever there) that
   // must still be rejected.
   return yield* Effect.try({
     try: () => {
       assertNoMalformedDuplicateJwkField(input);
-      return normalizeStoredJwk(record);
+      return normalizeStoredJwk(parsed);
     },
     catch: (cause) =>
       new GenBearerJwtKeyParseError({
@@ -172,19 +169,18 @@ const resolveSigningKeyFromConfigured = Effect.fnUntraced(function* (
     if (found !== undefined) {
       return found;
     }
-    if (kid.length === 0 && availableKeys.length > 0) {
-      return availableKeys[0]!;
+    const firstKey = availableKeys[0];
+    if (kid.length === 0 && firstKey !== undefined) {
+      return firstKey;
     }
-    return yield* Effect.fail(
-      new GenBearerJwtKeyNotFoundError({ message: `signing key not found: ${kid}` }),
-    );
+    return yield* new GenBearerJwtKeyNotFoundError({ message: `signing key not found: ${kid}` });
   }
 
   if (availableKeys.length === 0) {
     // A zero-item list must quit immediately: `@clack/prompts`' own
     // `select()` has no "quit on empty options" behavior, and calling it
     // with zero options would crash with a raw `TypeError` instead.
-    return yield* Effect.fail(new GenBearerJwtKeyPickerAbortedError({ message: "user aborted" }));
+    return yield* new GenBearerJwtKeyPickerAbortedError({ message: "user aborted" });
   }
 
   const output = yield* Output;
@@ -199,7 +195,10 @@ const resolveSigningKeyFromConfigured = Effect.fnUntraced(function* (
       const chosen = yield* pickerOutput.promptSelect("Select a signing key:", options, {
         stream: "stderr",
       });
-      const chosenKey = availableKeys[Number(chosen)]!;
+      const chosenKey = availableKeys[Number(chosen)];
+      if (chosenKey === undefined) {
+        return yield* Effect.die(`selected signing key index out of range: ${chosen}`);
+      }
       // `output.raw`, not `output.info` (clack's `log.info` defaults to stdout).
       yield* pickerOutput.raw(`Selected key ID: ${chosenKey.kid ?? ""}\n`, "stderr");
       return chosenKey;

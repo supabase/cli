@@ -10,17 +10,19 @@
  */
 
 import { Effect, Stream } from "effect";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/process/ChildProcess";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import type { StartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
 import {
   slimWgetHealthcheck,
   slimWgetWaitCommand,
 } from "../../../command-internal/db-bootstrap/slim-runtime.ts";
+import { withChildTraceEnv, withProcessSpanScoped } from "../../../shared/telemetry/spans.ts";
 import { usesSlimImageRuntime } from "../../../shared/services/slim-images.ts";
 import { platformDefaultDockerHost } from "../../../command-internal/hostname.ts";
 import { renderStartVectorYaml } from "../lib/template-render.ts";
+import { ambientEnvironment } from "../../../shared/config/cli-config-provider.layer.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
@@ -149,13 +151,15 @@ export function resolveVectorDockerSocketPlan(
   return { env, binds, securityOpt, isNpipe: parsed.scheme === "npipe" };
 }
 
-function collectText(stream: Stream.Stream<Uint8Array, unknown>) {
-  const decoder = new TextDecoder();
-  return Stream.runFold(
-    stream,
-    () => "",
-    (text, chunk) => text + decoder.decode(chunk, { stream: true }),
-  ).pipe(Effect.map((text) => text + decoder.decode()));
+function collectText<E, R>(stream: Stream.Stream<Uint8Array, E, R>) {
+  return Effect.suspend(() => {
+    const decoder = new TextDecoder();
+    return Stream.runFold(
+      stream,
+      () => "",
+      (text, chunk) => text + decoder.decode(chunk, { stream: true }),
+    ).pipe(Effect.map((text) => text + decoder.decode()));
+  });
 }
 
 /**
@@ -168,15 +172,19 @@ function collectText(stream: Stream.Stream<Uint8Array, unknown>) {
 function inspectDockerContextHost(spawner: Spawner): Effect.Effect<string, string> {
   return Effect.scoped(
     Effect.gen(function* () {
-      const child = yield* spawner
-        .spawn(
-          ChildProcess.make(
-            "docker",
-            ["context", "inspect", "--format", "{{ .Endpoints.docker.Host }}"],
-            { stdin: "ignore", stdout: "pipe", stderr: "ignore" },
+      const args = ["context", "inspect", "--format", "{{ .Endpoints.docker.Host }}"];
+      const child = yield* withProcessSpanScoped(
+        "Vector.inspectDockerContext",
+        { executable: "docker", argCount: args.length },
+        (traceEnv) =>
+          spawner.spawn(
+            ChildProcess.make(
+              "docker",
+              args,
+              withChildTraceEnv({ stdin: "ignore", stdout: "pipe", stderr: "ignore" }, traceEnv),
+            ),
           ),
-        )
-        .pipe(Effect.mapError(() => "failed to spawn docker"));
+      ).pipe(Effect.mapError(() => "failed to spawn docker"));
       const [exitCode, stdout] = yield* Effect.all(
         [child.exitCode.pipe(Effect.map(Number)), collectText(child.stdout)],
         { concurrency: "unbounded" },
@@ -202,7 +210,7 @@ function inspectDockerContextHost(spawner: Spawner): Effect.Effect<string, strin
  */
 export function resolveDockerDaemonHost(
   spawner: Spawner,
-  env: Readonly<Record<string, string | undefined>> = process.env,
+  env: Readonly<Record<string, string | undefined>> = ambientEnvironment(),
   platform: NodeJS.Platform = process.platform,
 ): Effect.Effect<string> {
   const fromEnv = env.DOCKER_HOST;
@@ -222,11 +230,9 @@ const VECTOR_HEALTHCHECK = {
 } as const;
 
 /**
- * Writes the rendered `vector.yaml` via a `cat <<'EOF'` heredoc, waits on Logflare's `/health`
- * (sinks would otherwise start too early), then `exec`s Vector so it stays PID 1. A TERM trap
- * covers the wait so `docker stop` does not burn 10s if Logflare is still down; `-T 2` bounds each
- * probe so a hung health endpoint can't defer the trap. Slim Vector ships BusyBox wget, so the
- * wait uses `-q --spider` instead of GNU's `--no-verbose --tries`.
+ * Vector 0.58's images (slim and upstream) have no `/etc/vector`, so the script creates it. The
+ * TERM trap keeps `docker stop` fast while Logflare's `/health` is still down, and `-T 2` bounds
+ * each probe so a hung endpoint can't defer the trap.
  */
 export function buildVectorEntrypointScript(
   vectorYaml: string,
@@ -237,7 +243,7 @@ export function buildVectorEntrypointScript(
     ? slimWgetWaitCommand(`http://${logflareId}:4000/health`)
     : `wget --no-verbose --tries=1 -T 2 --spider http://${logflareId}:4000/health`;
   return (
-    "cat <<'EOF' > /etc/vector/vector.yaml\n" +
+    "mkdir -p /etc/vector\ncat <<'EOF' > /etc/vector/vector.yaml\n" +
     vectorYaml +
     "\nEOF\ntrap 'exit 143' TERM\nuntil " +
     wget +
@@ -246,6 +252,8 @@ export function buildVectorEntrypointScript(
 }
 
 export interface VectorContainerSpecInput {
+  /** The resolved `SUPABASE_USE_SLIM_IMAGES` flag. */
+  readonly slim: boolean;
   /** `config.analytics.vector_image`, already resolved/pulled by the caller. */
   readonly image: string;
   /** `serviceContainerName("vector", projectId)`, also used as the `vector.yaml` template's `vectorId` field. */
@@ -276,7 +284,7 @@ export interface VectorContainerSpecInput {
 
 /** Builds Vector's {@link StartContainerSpec}. */
 export function buildVectorContainerSpec(input: VectorContainerSpecInput): StartContainerSpec {
-  const slim = usesSlimImageRuntime(input.image);
+  const slim = usesSlimImageRuntime(input.image, input.slim);
   const vectorYaml = renderStartVectorYaml({
     apiKey: input.apiKey,
     vectorId: input.containerName,

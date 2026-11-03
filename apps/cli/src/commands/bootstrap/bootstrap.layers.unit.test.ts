@@ -16,6 +16,7 @@ import {
 import {
   VALID_TOKEN,
   isolatedHomeLayer,
+  mockCommandPlatformApiService,
   mockCommandSettings,
   mockCommandCredentialsLayer,
   mockLinkedProjectCacheLayer,
@@ -25,6 +26,7 @@ import {
   useTempWorkdir,
 } from "../../../tests/helpers/command-mocks.ts";
 
+import { CliConfigFlagInputs, makeCliConfigFlagInputs } from "../../config/cli-config-flags.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import {
   DebugFlag,
@@ -36,12 +38,12 @@ import {
 } from "../../command-internal/global-flags.ts";
 
 import { CommandPlatformApiFactory } from "../../auth/command-platform-api-factory.service.ts";
-import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
 import { ProjectRefResolver } from "../../config/project-ref.service.ts";
 import { IdentityStitch } from "../../command-internal/identity-stitch.ts";
 import { TemplateService } from "./bootstrap.templates.ts";
 
 import { bootstrapRuntimeLayer } from "./bootstrap.layers.ts";
+import { commandTargetLayer } from "../../shared/output/command-target.layer.ts";
 
 const tempRoot = useTempWorkdir("supabase-bootstrap-layers-");
 
@@ -59,24 +61,22 @@ function ambientStubs() {
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(NetworkIdFlag, Option.none()),
     Layer.succeed(CliArgs, { args: [] }),
+    Layer.succeed(CliConfigFlagInputs, makeCliConfigFlagInputs()),
   );
 
   // These stubs exist only so the Effect type system sees CommandPlatformApi,
   // CommandPlatformApiFactory, and ProjectRefResolver as satisfiable in the outer context; the
   // runtime layer's own provisions take precedence at runtime.
   const heavyServiceStubs = Layer.mergeAll(
-    Layer.succeed(CommandPlatformApi, {
-      v1: new Proxy({}, { get: () => () => Effect.die("not needed for layer-exposure test") }),
-      executeRaw: () => Effect.die("not needed for layer-exposure test"),
-    } as unknown as import("@supabase/api/effect").ApiClient),
+    mockCommandPlatformApiService().layer,
     Layer.succeed(CommandPlatformApiFactory, {
       make: Effect.die("platform-api-factory not needed for layer-exposure test"),
     }),
     Layer.succeed(ProjectRefResolver, {
       resolve: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       resolveForLink: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
+      resolveRef: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       resolveOptional: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
-      loadProjectRef: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       promptProjectRef: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
     }),
     Layer.succeed(TemplateService, {
@@ -95,11 +95,12 @@ function ambientStubs() {
     isolatedHomeLayer(tempRoot.current, { SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     mockTty(),
     mockProcessControl().layer,
-    mockBrowser(),
+    mockBrowser,
     mockStdin(false),
     analytics.layer,
     mockTelemetryRuntime(),
     out.layer,
+    commandTargetLayer.pipe(Layer.provide(out.layer)),
     flagLayers,
     mockCommandSettings({ workdir: "/tmp/bootstrap-layers-test" }),
     mockCommandCredentialsLayer,
@@ -110,7 +111,7 @@ function ambientStubs() {
 }
 
 describe("bootstrapRuntimeLayer — IdentityStitch exposure", () => {
-  it.live(
+  it.effect(
     "exposes IdentityStitch at top level so withCommandTelemetry can read stitchedDistinctId()",
     () => {
       return Effect.gen(function* () {

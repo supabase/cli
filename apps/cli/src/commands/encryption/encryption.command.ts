@@ -1,4 +1,4 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { encryptionGetRootKeyCommand } from "./get-root-key/get-root-key.command.ts";
 import { encryptionUpdateRootKeyCommand } from "./update-root-key/update-root-key.command.ts";
 

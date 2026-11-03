@@ -16,12 +16,13 @@ import {
   type Path,
   type Scope,
 } from "effect";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import { Output } from "../../shared/output/output.service.ts";
 import type { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import {
   actionability,
+  causeDeclaration,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
@@ -82,6 +83,7 @@ export class ShadowDbError extends Data.TaggedError("ShadowDbError")<{
     | "port_conflict"
     | "filesystem"
     | "database";
+  readonly cause?: unknown;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     switch (this.reason) {
@@ -98,7 +100,12 @@ export class ShadowDbError extends Data.TaggedError("ShadowDbError")<{
       case "database":
         return { ...actionability.dbFinding, fingerprint_suffix: "database" };
       default:
-        return { ...actionability.invalidConfig, fingerprint_suffix: "container_configuration" };
+        return (
+          causeDeclaration(this.cause) ?? {
+            ...actionability.invalidConfig,
+            fingerprint_suffix: "container_configuration",
+          }
+        );
     }
   }
 }
@@ -143,11 +150,18 @@ export const connectShadowDatabase = (
 ): Effect.Effect<DbSession, ShadowDbError, DbConnection | Scope.Scope> =>
   Effect.gen(function* () {
     const dbConnection = yield* DbConnection;
-    return yield* dbConnection.connect(cfg, { isLocal: true, dnsResolver: "native" }).pipe(
+    let attempts = 0;
+    return yield* Effect.suspend(() => {
+      attempts += 1;
+      return dbConnection.connect(cfg, { isLocal: true, dnsResolver: "native" });
+    }).pipe(
       Effect.mapError((cause) => new ShadowDbError({ message: cause.message, reason: "connect" })),
       Effect.retry({ schedule: SHADOW_CONNECT_SCHEDULE }),
+      Effect.ensuring(
+        Effect.suspend(() => Effect.annotateCurrentSpan("retry.attempt_count", attempts)),
+      ),
     );
-  });
+  }).pipe(Effect.withSpan("ShadowDatabase.connect"));
 
 /**
  * Input to {@link createShadowDatabase} — the subset of the real `db` container's own bootstrap
@@ -201,15 +215,7 @@ export const createShadowDatabase = (
       [CLI_PROJECT_LABEL]: input.projectId,
       [COMPOSE_PROJECT_LABEL]: input.projectId,
     };
-    yield* ensureNetwork(spawner, input.networkId, labels).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ShadowDbError({
-            message: cause.message,
-            reason: shadowContainerReason(cause.reason),
-          }),
-      ),
-    );
+    yield* ensureNetwork(spawner, input.networkId, labels);
     // Both overrides are the shadow baseline cache's and nobody else's — see each field's doc
     // comment on {@link CreateShadowDatabaseInput}.
     const baseSpec = buildShadowPostgresContainerSpec(input);
@@ -227,17 +233,20 @@ export const createShadowDatabase = (
       workdir: input.workdir,
       extraHosts: input.extraHosts,
     };
-    const containerId = yield* createContainer(spawner, spec, containerOpts).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ShadowDbError({
-            message: cause.message,
-            reason: shadowContainerReason(cause.reason),
-          }),
-      ),
-    );
+    const containerId = yield* createContainer(spawner, spec, containerOpts);
     return { containerId };
-  });
+  }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ShadowDbError({
+          message: cause.message,
+          reason: shadowContainerReason(cause.reason),
+        }),
+    ),
+    Effect.withSpan("ShadowDatabase.create", {
+      attributes: { "shadow.restore_archive": input.restoreArchive !== undefined },
+    }),
+  );
 
 /**
  * `docker rm -f -v <id>`. Best-effort for the overall operation — a removal failure must never
@@ -279,10 +288,9 @@ export interface ShadowSourceResult {
   /** The diff source Postgres URL (the provisioned shadow). */
   readonly sourceUrl: string;
   /**
-   * When set, replaces the diff target with a second database on the same shadow container
-   * (`contrib_regression`, cloned from `postgres` during shadow setup — see
-   * {@link setupShadowConn}) with declarative schemas applied, so the user's local DB is never
-   * diffed directly in that branch.
+   * Legacy migra only. When set, replaces the diff target with `contrib_regression` on the
+   * same shadow container (cloned from `postgres` by {@link setupShadowConn}) after declarative
+   * schemas are applied. pg-delta leaves this unset and diffs `postgres`.
    */
   readonly targetUrlOverride: string | undefined;
 }
@@ -358,6 +366,7 @@ export function shadowRunInputFromLocalContainerInputs(
   return {
     db: {
       major_version: postgresSpecBase.db.major_version,
+      orioledb_version: postgresSpecBase.db.orioledb_version,
       settings: postgresSpecBase.db.settings,
     },
     experimental: postgresSpecBase.experimental,
@@ -461,10 +470,9 @@ export const setupShadowConn = (
   });
 
 /**
- * {@link setupShadowConn}'s trailing {@link SHADOW_CREATE_TEMPLATE_SQL} step on its own. Split
- * out because it's the one part a warm shadow-cache hit still has to run: the cache's PGDATA
- * snapshot is taken before this statement, so a restored cluster carries the platform baseline
- * but no `contrib_regression`.
+ * Clones `contrib_regression` for the legacy migra shadow. The cache snapshot is taken
+ * before this statement, so a warm hit still runs it when that caller asks for the clone.
+ * pg-delta does not call this.
  */
 const createShadowTemplateDatabase = (
   session: DbSession,
@@ -546,14 +554,13 @@ export const buildShadowSetupDatabaseInput = <E>(
 });
 
 /**
- * Connects to the shadow, then resolves the setup prelude (JWKS/pinned image names) and runs
- * {@link setupShadowConn} — the platform baseline plus the template database, no user
- * migrations. Connect-then-setup so an unconnectable shadow surfaces a connect error immediately
- * rather than paying for JWKS work first. The connection closes once this resolves.
+ * Connects to the shadow, resolves the setup prelude, and applies the platform baseline.
+ * No user migrations. Does not create `contrib_regression`: pg-delta diffs this database,
+ * and `CREATE DATABASE … TEMPLATE` crashes OrioleDB when the baseline has an enum-indexed
+ * OrioleDB table.
  *
- * `baseline` defaults to {@link SHADOW_BASELINE_COLD}. A warm cache hit skips the prelude and
- * setup (the restored cluster already has them) and only recreates `contrib_regression`; a
- * cache-enabled cold provision snapshots between the baseline and the template.
+ * `baseline` defaults to {@link SHADOW_BASELINE_COLD}. A warm cache hit returns immediately.
+ * A cache-enabled cold provision snapshots after the baseline and does not reconnect.
  */
 export const setupShadowDatabase = <E>(
   spawner: Spawner,
@@ -567,7 +574,8 @@ export const setupShadowDatabase = <E>(
 > =>
   Effect.scoped(
     Effect.gen(function* () {
-      if (!baseline.baselinePresent && baseline.snapshotRequired) {
+      if (baseline.baselinePresent) return;
+      if (baseline.snapshotRequired) {
         yield* Effect.scoped(
           Effect.gen(function* () {
             const setupSession = yield* connectShadowDatabase(input.connConfig);
@@ -586,22 +594,24 @@ export const setupShadowDatabase = <E>(
           }),
         );
         yield* baseline.snapshotBaseline;
+        return;
       }
       const session = yield* connectShadowDatabase(input.connConfig);
-      if (!baseline.baselinePresent && !baseline.snapshotRequired) {
-        const resolved = yield* resolveDbSetupPrelude(input.setup);
-        yield* setupDatabase(
-          spawner,
-          buildShadowSetupDatabaseInput(input, session, resolved),
-          options,
-        ).pipe(
-          // Same connect-failure classification as the snapshot branch above.
-          Effect.catchTag("DbConnectError", (cause) =>
-            Effect.fail(new ShadowDbError({ message: cause.message, reason: "connect" })),
-          ),
-        );
-      }
-      yield* createShadowTemplateDatabase(session);
+      const resolved = yield* resolveDbSetupPrelude(input.setup);
+      yield* setupDatabase(
+        spawner,
+        buildShadowSetupDatabaseInput(input, session, resolved),
+        options,
+      ).pipe(
+        // Same connect-failure classification as the snapshot branch above.
+        Effect.catchTag("DbConnectError", (cause) =>
+          Effect.fail(new ShadowDbError({ message: cause.message, reason: "connect" })),
+        ),
+      );
+    }),
+  ).pipe(
+    Effect.withSpan("ShadowDatabase.setup", {
+      attributes: { "shadow.baseline_state": shadowBaselineStateName(baseline) },
     }),
   );
 
@@ -643,14 +653,17 @@ const SHADOW_BASELINE_COLD: ShadowBaselineState = {
   snapshotBaseline: Effect.void,
 };
 
+const shadowBaselineStateName = (baseline: ShadowBaselineState): string =>
+  baseline.baselinePresent ? "warm" : baseline.snapshotRequired ? "cold_snapshot" : "cold";
+
 /**
  * Lists local migrations first, so a bad migrations directory fails before any DB connection,
- * then connects, resolves the setup prelude, and runs {@link setupShadowConn} (platform baseline
- * plus template database) before applying every listed migration. Connect-then-setup for the
- * same reason as {@link setupShadowDatabase}.
+ * then connects, resolves the setup prelude, and runs the platform baseline before applying
+ * every listed migration. `options.createTemplateDatabase` clones `contrib_regression` for the
+ * legacy engine only. Connect-then-setup for the same reason as {@link setupShadowDatabase}.
  *
  * `baseline` defaults to {@link SHADOW_BASELINE_COLD}. A warm hit skips the prelude and setup; a
- * cold cache-enabled provision snapshots between the baseline and the template. Only that
+ * cold cache-enabled provision snapshots between the baseline and later steps. Only that
  * snapshotting branch splits sessions — see {@link ShadowBaselineState.snapshotRequired}.
  */
 const migrateShadowDatabaseWith = <E>(
@@ -658,6 +671,7 @@ const migrateShadowDatabaseWith = <E>(
   input: ShadowSetupRunInput<E>,
   setupOptions: SetupDatabaseOptions,
   baseline: ShadowBaselineState = SHADOW_BASELINE_COLD,
+  options: { readonly createTemplateDatabase?: boolean } = {},
 ): Effect.Effect<
   void,
   StartSetupLocalDatabaseError | ShadowDbError | ImagePrepullError | E,
@@ -671,6 +685,7 @@ const migrateShadowDatabaseWith = <E>(
           (cause) => new ShadowDbError({ message: cause.message, reason: "filesystem" }),
         ),
       );
+      yield* Effect.annotateCurrentSpan("migration.count", pending.length);
 
       if (!baseline.baselinePresent && baseline.snapshotRequired) {
         // Own scope: the baseline session must be closed before `snapshotBaseline` — see this
@@ -696,8 +711,8 @@ const migrateShadowDatabaseWith = <E>(
       }
       const session = yield* connectShadowDatabase(input.connConfig);
       if (!baseline.baselinePresent && !baseline.snapshotRequired) {
-        // The established single-session flow: baseline + template + migrations all on this
-        // one session — see this function's own doc comment.
+        // The established single-session flow: baseline and migrations share this session.
+        // A reconnect would pick up role-level defaults `roles.sql` just installed.
         const resolved = yield* resolveDbSetupPrelude(input.setup);
         yield* setupDatabase(
           spawner,
@@ -710,7 +725,9 @@ const migrateShadowDatabaseWith = <E>(
           ),
         );
       }
-      yield* createShadowTemplateDatabase(session);
+      if (options.createTemplateDatabase !== false) {
+        yield* createShadowTemplateDatabase(session);
+      }
       yield* applyMigrations(
         session,
         input.fs,
@@ -725,11 +742,15 @@ const migrateShadowDatabaseWith = <E>(
         ),
       );
     }),
+  ).pipe(
+    Effect.withSpan("ShadowDatabase.migrate", {
+      attributes: { "shadow.baseline_state": shadowBaselineStateName(baseline) },
+    }),
   );
 
 /**
- * Migrates a shadow for migra and the legacy pg-delta engine. Those Go-backed
- * workflows historically include `pg_net` in the platform baseline regardless of
+ * Migrates a shadow for migra and the legacy pg-delta engine. Those
+ * workflows include `pg_net` in the platform baseline regardless of
  * project config, so preserve that baseline while sharing the native TS setup path.
  */
 export const migrateShadowDatabase = <E>(
@@ -743,9 +764,9 @@ export const migrateShadowDatabase = <E>(
 > => migrateShadowDatabaseWith(spawner, input, { webhooks: "enabled" }, baseline);
 
 /**
- * Migrates a shadow for the in-process pg-delta engine. Unlike the legacy engine,
- * extension activation follows project config through `setupDatabase`'s
- * default options.
+ * Migrates a shadow for the in-process pg-delta engine. Extension activation follows
+ * project config. Does not create `contrib_regression`: pg-delta never connects to it,
+ * and the clone crashes OrioleDB when the baseline has an enum-indexed OrioleDB table.
  */
 export const migrateNextShadowDatabase = <E>(
   spawner: Spawner,
@@ -755,4 +776,4 @@ export const migrateNextShadowDatabase = <E>(
   void,
   StartSetupLocalDatabaseError | ShadowDbError | ImagePrepullError | E,
   Output | DockerRun | RuntimeInfo | DbConnection
-> => migrateShadowDatabaseWith(spawner, input, {}, baseline);
+> => migrateShadowDatabaseWith(spawner, input, {}, baseline, { createTemplateDatabase: false });

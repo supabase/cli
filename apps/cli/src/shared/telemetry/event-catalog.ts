@@ -22,6 +22,8 @@ export const PropIsFirstRun = "is_first_run";
 export const PropIsTty = "is_tty";
 export const PropIsCi = "is_ci";
 export const PropIsAgent = "is_agent";
+export const PropIsEval = "is_eval";
+export const PropAgentName = "agent_name";
 export const PropOs = "os";
 export const PropArch = "arch";
 export const PropCliVersion = "cli_version";
@@ -37,6 +39,12 @@ export const PropErrorFingerprint = "error_fingerprint";
 export const PropHasSuggestion = "has_suggestion";
 export const PropSuggestionType = "suggestion_type";
 export const PropSuggestedCommand = "suggested_command";
+// Set only for commands routed by `experimental.stack`.
+export const PropStackBackend = "stack_backend";
+// Set only once a command resolves local database config.
+export const PropOrioleDb = "orioledb";
+// Set only once a stack-backend command resolves its stack's runtime.
+export const PropStackRuntime = "stack_runtime";
 // Reserved for a closed workflow label; nothing emits it until a closed
 // vocabulary is agreed (tests assert its absence on failure events).
 export const PropWorkflow = "workflow";
@@ -95,6 +103,7 @@ export const EnvSignalPresenceKeys: ReadonlyArray<string> = [
 export const EnvSignalValueKeys: ReadonlyArray<string> = [
   "AI_AGENT",
   "CURSOR_EXTENSION_HOST_ROLE",
+  "SUPABASE_API_MAX_RETRIES",
   "TERM",
   "TERM_PROGRAM",
   "TERM_PROGRAM_VERSION",

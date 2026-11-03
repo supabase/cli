@@ -1,8 +1,11 @@
 import { Layer } from "effect";
 
+import { commandCredentialsLayer } from "../auth/command-credentials.layer.ts";
+import { commandPlatformApiFactoryLayer } from "../auth/command-platform-api-factory.layer.ts";
 import { commandSettingsLayer } from "../config/command-settings.layer.ts";
+import { projectRefLayer } from "../config/project-ref.layer.ts";
 import { dbConfigLayer } from "./db-config.layer.ts";
-import { dbConnectionLayer } from "./db-connection.layer.ts";
+import { dbConnectionLayer } from "./db-connection.sql-pg.layer.ts";
 import { dockerRunLayer } from "./docker-run.layer.ts";
 import { identityStitchLayer } from "./identity-stitch.ts";
 import { debugLoggerLayer } from "./debug-logger.layer.ts";
@@ -27,6 +30,23 @@ import { bundledPostgresClientLayer } from "./bundled-postgres-client.ts";
  */
 const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 
+const credentials = commandCredentialsLayer.pipe(
+  Layer.provide(cliSettings),
+  Layer.provide(debugLoggerLayer),
+);
+
+const platformApiFactory = commandPlatformApiFactoryLayer.pipe(
+  Layer.provide(credentials),
+  Layer.provide(cliSettings),
+  Layer.provide(debugLoggerLayer),
+  Layer.provide(identityStitchLayer),
+);
+
+const projectRef = projectRefLayer.pipe(
+  Layer.provide(platformApiFactory),
+  Layer.provide(cliSettings),
+);
+
 const dbConfig = dbConfigLayer.pipe(
   Layer.provide(cliSettings),
   Layer.provide(dbConnectionLayer),
@@ -41,12 +61,14 @@ export const testDbRuntimeLayer = (commandPath: ReadonlyArray<string>) =>
     dbConnectionLayer,
     dockerRunLayer,
     cliSettings,
+    projectRef,
+    platformApiFactory,
     // Exposed at top level so `withCommandTelemetry` can read
     // `stitchedDistinctId()`. The same reference is provided to `dbConfig`
     // above, so the lazy linked stack shares a single stitch attempt.
     identityStitchLayer,
     telemetryStateLayer,
     stackApiLayer,
-    bundledPostgresClientLayer,
+    bundledPostgresClientLayer.pipe(Layer.provide(dockerRunLayer), Layer.provide(cliSettings)),
     commandRuntimeLayer(commandPath),
   );

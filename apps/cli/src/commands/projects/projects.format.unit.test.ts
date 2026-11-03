@@ -5,7 +5,6 @@ import { apiKeyValue, apiKeysToEnv } from "../../command-internal/api-keys.forma
 import {
   type LinkedProject,
   dashboardUrlForProfile,
-  formatRegion,
   renderProjectApiKeysTable,
   renderProjectCreateTable,
   renderProjectsListTable,
@@ -43,17 +42,6 @@ const CREATED: CreatedProject = {
   created_at: "2026-05-27T01:02:03Z",
   status: "COMING_UP",
 };
-
-describe("formatRegion", () => {
-  it("maps a known region code to its display name", () => {
-    expect(formatRegion("us-east-1")).toBe("East US (North Virginia)");
-    expect(formatRegion("ap-southeast-2")).toBe("Oceania (Sydney)");
-  });
-
-  it("passes an unknown region code through unchanged", () => {
-    expect(formatRegion("mars-west-9")).toBe("mars-west-9");
-  });
-});
 
 describe("dashboardUrlForProfile", () => {
   it("resolves the built-in profile dashboard URLs", () => {

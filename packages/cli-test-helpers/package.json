@@ -4,13 +4,17 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/harness.ts"
   },
   "scripts": {
     "test": "pnpm run test:unit",
     "test:unit": "pnpm exec turbo run @supabase/cli-test-helpers#test:unit:run --",
     "test:unit:run": "bun --bun vitest run --project unit --coverage.reportsDirectory=coverage/unit",
     "types:check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@effect/platform-bun": "catalog:",
+    "effect": "catalog:"
   },
   "devDependencies": {
     "@tsconfig/bun": "catalog:",

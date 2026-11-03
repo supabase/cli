@@ -2,14 +2,15 @@
  * Given a fully-resolved {@link StartContainerSpec}, sets the two project-identity labels,
  * provisions the container's own named volumes, builds the `docker create` argv, spawns `docker
  * create`, copies any `secretFiles` in via `docker cp` (see
- * {@link copyStartSecretFilesIntoContainer}), then spawns `docker start`.
+ * {@link copyStartSecretFilesIntoContainer}), runs the caller's optional `beforeStart` hook, then
+ * spawns `docker start`.
  *
  * Network creation is not part of this per-container function; see {@link ensureNetwork} for why
  * it runs once instead of once per container.
  */
 
 import { Data, Effect, Stream } from "effect";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import {
   actionability,
@@ -33,9 +34,11 @@ import {
 import {
   buildStartContainerCreateArgs,
   applyBitbucketStartContainerFilter,
+  applyHealthStartInterval,
   isDockerClientEnvKey,
   type StartContainerSpec,
 } from "./docker-create-args.ts";
+import { POSTGRES_DATA_DIR } from "./postgres.service.ts";
 
 type StartSecretFileSpec = NonNullable<StartContainerSpec["secretFiles"]>[number];
 
@@ -123,6 +126,11 @@ export interface ContainerOpts {
   /** Passed in (rather than read via env here) so this module stays a pure effect orchestrator. */
   readonly isBitbucketPipeline: boolean;
   /**
+   * Whether the engine takes `--health-start-interval`, probed once per run by each command that
+   * reads Docker's health status. Shadow databases leave it unset: nothing reads theirs.
+   */
+  readonly healthStartInterval?: boolean;
+  /**
    * Stamped onto every created container as {@link CLI_WORKDIR_LABEL} so a later `stop` or
    * {@link rollbackStart} can find this directory from the container's own label alone, without
    * depending on the invoking cwd/`--workdir` matching `start`'s.
@@ -189,10 +197,10 @@ function portConflictSuggestion(hostPort: string, serviceLabel: string): string 
  * Creates the shared docker network for this project via `docker network create --label ...`,
  * treating "already exists" as success.
  *
- * Called once per `start` run rather than once per container: the network can't be deleted
- * externally mid-run, so it's guaranteed to still exist for every later {@link createContainer}
- * call. Returns immediately for a built-in network name (`default`, `bridge`, `host`, `none`),
- * which already exists and cannot be created.
+ * Called once per `start` run rather than once per container: callers holding the project lifecycle
+ * lock keep other lifecycle commands from pruning it before every {@link createContainer} call has run.
+ * Returns immediately for a built-in network name (`default`, `bridge`, `host`, `none`), which
+ * already exists and cannot be created.
  */
 export function ensureNetwork(
   spawner: Spawner,
@@ -245,15 +253,13 @@ export function ensureNetwork(
       );
       if (exitCode !== 0 && !isNetworkAlreadyExistsError(stderr)) {
         const message = stderr.trim();
-        return yield* Effect.fail(
-          new NetworkCreateError({
-            message:
-              message.length > 0
-                ? `failed to create docker network: ${message}`
-                : "failed to create docker network",
-            reason: containerCliReason(message),
-          }),
-        );
+        return yield* new NetworkCreateError({
+          message:
+            message.length > 0
+              ? `failed to create docker network: ${message}`
+              : "failed to create docker network",
+          reason: containerCliReason(message),
+        });
       }
     }),
   );
@@ -316,15 +322,11 @@ export function ensureVolume(
       );
       if (exitCode !== 0 && !isVolumeAlreadyExistsError(stderr)) {
         const message = stderr.trim();
-        return yield* Effect.fail(
-          new VolumeCreateError({
-            message:
-              message.length > 0
-                ? `failed to create volume: ${message}`
-                : "failed to create volume",
-            reason: containerCliReason(message),
-          }),
-        );
+        return yield* new VolumeCreateError({
+          message:
+            message.length > 0 ? `failed to create volume: ${message}` : "failed to create volume",
+          reason: containerCliReason(message),
+        });
       }
     }),
   );
@@ -340,7 +342,7 @@ export class VolumeInspectError extends Data.TaggedError("VolumeInspectError")<{
 }
 
 /** Docker's/Podman's "no such volume" stderr shape for `volume inspect`. */
-function isVolumeNotFoundMessage(message: string): boolean {
+export function isVolumeNotFoundMessage(message: string): boolean {
   return /no such volume/iu.test(message);
 }
 
@@ -483,15 +485,13 @@ function dockerCreateContainer(
       );
       if (exitCode !== 0) {
         const message = stderr.trim();
-        return yield* Effect.fail(
-          new ContainerCreateError({
-            message:
-              message.length > 0
-                ? `failed to create docker container: ${message}`
-                : "failed to create docker container",
-            reason: containerCliReason(message),
-          }),
-        );
+        return yield* new ContainerCreateError({
+          message:
+            message.length > 0
+              ? `failed to create docker container: ${message}`
+              : "failed to create docker container",
+          reason: containerCliReason(message),
+        });
       }
       return stdout.trim();
     }),
@@ -537,20 +537,16 @@ function dockerStartContainer(
         }`;
         const hostPort = parsePortBindError(trimmed);
         if (hostPort === undefined) {
-          return yield* Effect.fail(
-            new ContainerStartError({
-              message: base,
-              reason: containerCliReason(trimmed),
-            }),
-          );
+          return yield* new ContainerStartError({
+            message: base,
+            reason: containerCliReason(trimmed),
+          });
         }
         const serviceLabel = spec.networkAliases?.[0] ?? spec.containerName;
-        return yield* Effect.fail(
-          new ContainerStartError({
-            message: `${base}${portConflictSuggestion(hostPort, serviceLabel)}`,
-            reason: "port_conflict",
-          }),
-        );
+        return yield* new ContainerStartError({
+          message: `${base}${portConflictSuggestion(hostPort, serviceLabel)}`,
+          reason: "port_conflict",
+        });
       }
     }),
   );
@@ -657,10 +653,42 @@ function extractPreStartArchiveIntoContainer(
   );
 }
 
+/** Docker's, Podman's and older Docker clients' `cp` diagnostics for a missing `PG_VERSION`. */
+const PG_VERSION_MISSING_PATTERN =
+  /could not find the file \S*\/PG_VERSION in container|"\S*\/PG_VERSION" could not be found on container|no such container:path: \S+:\S*\/PG_VERSION/iu;
+
+/**
+ * Whether the Postgres data directory of a created, not-yet-started container already holds a
+ * cluster (`PG_VERSION`, written by `initdb`). Only a diagnostic reporting `PG_VERSION` itself
+ * as missing resolves `false`; every other outcome resolves `true`, so an ambiguous probe never
+ * runs setup over real data.
+ */
+export const postgresDataInitialized = Effect.fn("ContainerLifecycle.postgresDataInitialized")(
+  function* (spawner: Spawner, containerId: string) {
+    const initialized = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const child = yield* spawnContainerCli(
+          spawner,
+          ["cp", `${containerId}:${POSTGRES_DATA_DIR}/PG_VERSION`, "-"],
+          { stdin: "ignore", stdout: "ignore", stderr: "pipe" },
+        );
+        const [exitCode, stderr] = yield* Effect.all(
+          [child.exitCode.pipe(Effect.map(Number)), collectText(child.stderr)],
+          { concurrency: "unbounded" },
+        );
+        return exitCode === 0 || !PG_VERSION_MISSING_PATTERN.test(stderr);
+      }),
+    ).pipe(Effect.orElseSucceed(() => true));
+    yield* Effect.annotateCurrentSpan({ "db.data_initialized": initialized });
+    return initialized;
+  },
+);
+
 /**
  * Provisions this container's named volumes (skipped under Bitbucket Pipelines), creates it,
  * copies any `secretFiles` and `preStartArchives` in via `docker cp` while it's created but not
- * yet running (so its entrypoint never races the copy), then starts it.
+ * yet running (so its entrypoint never races the copy), runs `beforeStart` with the container id
+ * while it is still stopped, then starts it.
  *
  * Resolves to the created container's id/name on success.
  */
@@ -668,6 +696,7 @@ export function createContainer(
   spawner: Spawner,
   spec: StartContainerSpec,
   opts: ContainerOpts,
+  beforeStart?: (containerId: string) => Effect.Effect<void>,
 ): Effect.Effect<string, ContainerError> {
   return Effect.gen(function* () {
     const labels: Record<string, string> = {
@@ -693,7 +722,10 @@ export function createContainer(
       }
     }
 
-    const finalSpec = applyBitbucketStartContainerFilter(labeledSpec, opts.isBitbucketPipeline);
+    const finalSpec = applyHealthStartInterval(
+      applyBitbucketStartContainerFilter(labeledSpec, opts.isBitbucketPipeline),
+      opts.healthStartInterval === true,
+    );
 
     const createArgs = buildStartContainerCreateArgs(finalSpec);
     // `isDockerClientEnvKey` keys are already emitted inline as `-e KEY=value` above; see
@@ -723,7 +755,18 @@ export function createContainer(
         }).pipe(Effect.orElseSucceed(() => 0)),
       ),
     );
+    if (beforeStart !== undefined) {
+      yield* beforeStart(containerId);
+    }
     yield* dockerStartContainer(spawner, containerId, finalSpec);
     return containerId;
-  });
+  }).pipe(
+    Effect.withSpan("ContainerLifecycle.createContainer", {
+      attributes: {
+        "container.name": spec.containerName,
+        "image.name": spec.image,
+        "container.pre_start_archive_count": spec.preStartArchives?.length ?? 0,
+      },
+    }),
+  );
 }

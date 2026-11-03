@@ -1,5 +1,4 @@
-import { Effect, FileSystem, Option, Path, Predicate, type Schedule } from "effect";
-import type { PlatformError } from "effect/PlatformError";
+import { Effect, FileSystem, Option, Path, type Schedule } from "effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../../shared/cli/success-trailer.ts";
 import { renderComputeDetails } from "../compute.format.ts";
@@ -7,7 +6,7 @@ import {
   emitComputeMachineOutput,
   rejectComputeEnvOutput,
   computeMachineOutputRequested,
-  computeProjectRefSuffix,
+  computeRemoteSuffix,
 } from "../compute.output.ts";
 import { aqua } from "../../../../command-internal/colors.ts";
 import { CommandPlatformApi } from "../../../../auth/command-platform-api.service.ts";
@@ -17,6 +16,7 @@ import {
   formatBytes,
   packageComputeDirectory,
 } from "../../../../shared/compute/compute-package.ts";
+import { compileComputeExclude } from "../../../../shared/compute/compute-exclude.ts";
 import { displayPath } from "../../../../shared/compute/compute-paths.ts";
 import type { ComputeEntry } from "../../../../shared/compute/compute-config.ts";
 import {
@@ -50,7 +50,8 @@ import {
   ComputeSourceMissingError,
   MissingComputeExposureError,
 } from "../../../../shared/compute/compute.errors.ts";
-import { ProjectRefResolver } from "../../../../config/project-ref.service.ts";
+import { requireHostedMutationConsent } from "../../../../command-internal/hosted-consent/hosted-consent.ts";
+import { resolveProjectTarget } from "../../../../command-internal/target/resolve-project-target.ts";
 import { LinkedProjectCache } from "../../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import {
@@ -216,12 +217,12 @@ function addYourCode(sourceDisplay: string): string {
   return `Add your compute's code to ${sourceDisplay}, then run this command again.`;
 }
 
-const deployOneCompute = Effect.fnUntraced(function* (input: {
+const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
   readonly project: ComputeProject;
   readonly name: string;
   readonly projectRef: string;
   /**
-   * ` --project-ref <ref>` when the flag supplied the ref, `""` when the link
+   * ` --remote=<ref>` when a flag selected the project, `""` when the link
    * did — the follow-up hint below is copy-pasted verbatim, so it has to carry
    * whatever the user typed to reach this project.
    */
@@ -262,13 +263,7 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
     // reason (permission, I/O) propagates as itself rather than misdiagnosing it.
     const info = yield* fs
       .stat(compute.sourceDir)
-      .pipe(
-        Effect.catchTag("PlatformError", (error) =>
-          Predicate.isTagged(error.reason, "NotFound")
-            ? Effect.fail<ComputeSourceMissingError | PlatformError>(sourceMissing)
-            : Effect.fail(error),
-        ),
-      );
+      .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.fail(sourceMissing)));
     // Something is there, it's just not a directory — reporting "no compute
     // source" would be false, and the path is occupied besides.
     if (info.type !== "Directory") {
@@ -319,26 +314,56 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
     override: input.exposure,
   });
 
+  // Same reason, and the same place: a pattern the CLI cannot read is a config mistake, and
+  // finding it out mid-walk would mean reporting it after the packaging step announced itself.
+  const exclude = yield* compileComputeExclude({ name, patterns: compute.entry?.exclude });
+
+  yield* Effect.annotateCurrentSpan({
+    "compute.runtime": runtime,
+    "compute.size": size,
+    "compute.exposure": exposure,
+    "compute.instances": instances,
+  });
+
   let contextUploadId: string;
   {
     const packaging = yield* output.task("Packaging compute...");
-    const packaged = yield* packageComputeDirectory(compute.sourceDir).pipe(
+    const packaged = yield* packageComputeDirectory(compute.sourceDir, exclude).pipe(
       Effect.tapError(() => packaging.fail()),
     );
-    yield* packaging.clear();
+    yield* packaging.clear;
+    yield* Effect.annotateCurrentSpan({
+      "compute.file_count": packaged.fileCount,
+      "compute.excluded_count": packaged.excludedCount,
+      "compute.bundle_bytes": packaged.archive.length,
+    });
+    // The excluded count rides along on the same line, and only when patterns are configured:
+    // an over-broad pattern is otherwise visible only as a file count nobody had a number to
+    // compare against, and by then the archive is already uploaded.
+    const excludedNote = exclude.active
+      ? `, excluded ${packaged.excludedCount} ${packaged.excludedCount === 1 ? "path" : "paths"}`
+      : "";
     yield* output.raw(
       `Packaged ${sourceDisplay} (${packaged.fileCount} files, ${formatBytes(
         packaged.archive.length,
-      )}).\n`,
+      )}${excludedNote}).\n`,
       "stderr",
     );
 
     // The guard above only counts directory entries, so a tree of nothing but
-    // empty subdirectories still reaches here and packages to zero files.
+    // empty subdirectories still reaches here and packages to zero files — as
+    // does a directory whose every file the exclude patterns matched, which is
+    // the same outcome for a different reason and needs its own recovery.
     if (packaged.fileCount === 0) {
+      // Keyed on what the patterns removed, not on whether any are configured.
+      const excludedSomething = packaged.excludedCount > 0;
       return yield* new ComputeSourceMissingError({
-        detail: `${sourceDisplay} holds no files to deploy, only empty directories.`,
-        suggestion: addYourCode(sourceDisplay),
+        detail: excludedSomething
+          ? `Every file in ${sourceDisplay} is matched by [compute.${name}] exclude, so there is nothing to deploy.`
+          : `${sourceDisplay} holds no files to deploy, only empty directories.`,
+        suggestion: excludedSomething
+          ? `Narrow [compute.${name}] exclude in supabase/config.toml so the files the build needs are packaged.`
+          : addYourCode(sourceDisplay),
       });
     }
 
@@ -347,7 +372,7 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
       Effect.tapError(() => uploading.fail()),
     );
     yield* uploadBuildContext(slot, packaged.archive).pipe(Effect.tapError(() => uploading.fail()));
-    yield* uploading.clear();
+    yield* uploading.clear;
     yield* output.raw("Uploaded build context.\n", "stderr");
     contextUploadId = slot.uploadId;
   }
@@ -390,10 +415,15 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
               : Effect.void,
         }).pipe(Effect.tapError(() => deploying.fail()));
 
+  yield* Effect.annotateCurrentSpan({
+    "compute.waited": !input.noWait && accepted.buildState === "building",
+    "compute.build_state": settled.buildState,
+  });
+
   // Checked regardless of whether the build was waited on: the verdict can
   // arrive on the deploy response as readily as on a poll.
   if (settled.buildState === "failed") {
-    yield* deploying.clear();
+    yield* deploying.clear;
     return yield* new ComputeBuildFailedError({
       detail: `The build for "${name}" failed${
         settled.stateReason === undefined ? "" : `: ${settled.stateReason}`
@@ -402,7 +432,7 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
     });
   }
 
-  yield* deploying.clear();
+  yield* deploying.clear;
 
   const url =
     settled.spec.exposure === "public"
@@ -515,14 +545,13 @@ export const computePush = Effect.fn("compute.push")(function* (
 ) {
   const output = yield* Output;
   const path = yield* Path.Path;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
   // Resolved here, outside the block below, since caching it is one of that
   // block's own finalizers — everything else that can fail belongs inside so
   // those failures still flush telemetry.
-  const projectRef = yield* resolver.resolve(flags.projectRef);
+  const projectRef = yield* resolveProjectTarget(flags);
 
   yield* Effect.gen(function* () {
     const project = yield* loadComputeProject;
@@ -544,7 +573,7 @@ export const computePush = Effect.fn("compute.push")(function* (
     }
 
     const names = [...new Set(requested)];
-    const refSuffix = computeProjectRefSuffix(flags.projectRef);
+    const refSuffix = computeRemoteSuffix(flags, projectRef);
 
     if (Option.isNone(flags.exposure)) {
       for (const name of names) {
@@ -563,6 +592,10 @@ export const computePush = Effect.fn("compute.push")(function* (
     // carries a `compute` array, so `-o env` can never encode it, and finding
     // that out at the end means failing with the remote project already changed.
     yield* rejectComputeEnvOutput();
+
+    yield* requireHostedMutationConsent({
+      action: `Deploy compute ${names.join(", ")}`,
+    });
 
     const machineOutput = yield* computeMachineOutputRequested();
     const deployed: Array<Record<string, unknown>> = [];

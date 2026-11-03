@@ -5,7 +5,12 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../telemetry/error-actionability.ts";
-import { appendTomlSection, isRenderableTomlNumber, tomlKey } from "./toml-section.ts";
+import {
+  appendTomlSection,
+  isRenderableTomlNumber,
+  tomlKey,
+  type TomlSectionValue,
+} from "./toml-section.ts";
 
 /**
  * The `[compute]` section of `supabase/config.toml`, read through the decoded
@@ -23,6 +28,7 @@ export interface ComputeEntry {
   readonly exposure?: string;
   readonly instances?: number;
   readonly source?: string;
+  readonly exclude?: ReadonlyArray<string>;
 }
 
 export interface ComputeSection {
@@ -91,6 +97,20 @@ const instanceCountOrUndefined = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
 
 /**
+ * The recorded exclude patterns, or `undefined` when the key is absent or holds something
+ * other than a list. Entries are left exactly as written, blanks included: `push` compiles
+ * them and names the one it cannot read, and a pattern dropped here would upload the file it
+ * was written to withhold.
+ */
+const patternsOrUndefined = (value: unknown): ReadonlyArray<string> | undefined => {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const patterns = value.filter((entry): entry is string => typeof entry === "string");
+  return patterns.length === value.length ? patterns : undefined;
+};
+
+/**
  * The decoded `[compute]` section as per-compute tables. Anything that is not an
  * object is dropped rather than read as a compute named after it.
  */
@@ -118,6 +138,7 @@ export function readComputeSection(compute: unknown): ComputeSection {
       exposure: recordedStringOrUndefined(value["exposure"]),
       instances: instanceCountOrUndefined(value["instances"]),
       source: stringOrUndefined(value["source"]),
+      exclude: patternsOrUndefined(value["exclude"]),
     };
   }
 
@@ -136,11 +157,11 @@ export interface ComputeEntryWrite {
  * writes the starter files first, and a failure after that would leave a directory nothing
  * records.
  */
-export const planComputeEntry = Effect.fnUntraced(function* (options: {
+export const planComputeEntry = Effect.fn("Compute.planConfigEntry")(function* (options: {
   readonly configPath: string;
   readonly name: string;
-  /** Rendered as written: strings are quoted, numbers are not. */
-  readonly patch: Readonly<Record<string, string | number>>;
+  /** Rendered as written: strings are quoted, numbers are not, lists become TOML arrays. */
+  readonly patch: Readonly<Record<string, TomlSectionValue>>;
   /** The already-parsed config — the authority on whether an entry exists. */
   readonly existingCompute: Readonly<Record<string, ComputeEntry>>;
 }) {
@@ -210,7 +231,9 @@ export const planComputeEntry = Effect.fnUntraced(function* (options: {
  * exist yet, so `new` works in a directory that has never been `supabase
  * init`-ed.
  */
-export const commitComputeEntry = Effect.fnUntraced(function* (write: ComputeEntryWrite) {
+export const commitComputeEntry = Effect.fn("Compute.commitConfigEntry")(function* (
+  write: ComputeEntryWrite,
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   yield* fs.makeDirectory(path.dirname(write.configPath), { recursive: true });

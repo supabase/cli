@@ -38,11 +38,12 @@ export class MissingComputeNameError extends Data.TaggedError("MissingComputeNam
 /**
  * A symlink in the compute source points outside the build context.
  *
- * The archive is everything the server gets, with no install step and no view of the surrounding
- * repository, so a link whose target isn't also packaged arrives dangling — the catalog runtimes
- * boot without the dependency, or a Dockerfile build fails on `COPY`, both minutes later with
+ * The archive is everything the server gets, with no view of the surrounding repository, so a
+ * link whose target isn't also packaged arrives dangling — the catalog runtimes boot without
+ * whatever it pointed at, or a Dockerfile build fails on `COPY`, both minutes later with
  * nothing naming the cause. Refused here instead. The common source is a package manager that
- * hoists dependencies to the repository root, outside the compute's own `node_modules`.
+ * hoists dependencies to the repository root, outside the compute's own `node_modules`; adding
+ * the link to `[compute.<name>] exclude` is the other way out.
  */
 export class ComputeSourceEscapingLinkError extends Data.TaggedError(
   "ComputeSourceEscapingLinkError",
@@ -52,6 +53,22 @@ export class ComputeSourceEscapingLinkError extends Data.TaggedError(
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidInput;
+  }
+}
+
+/**
+ * `[compute.<name>] exclude` records a pattern the CLI cannot act on.
+ *
+ * Refused rather than skipped, because the setting exists to keep a specific file out of an
+ * archive that is uploaded and built: a pattern read as something other than what it says, or
+ * dropped, ships the secret or the stale dependency tree it was written to withhold.
+ */
+export class InvalidComputeExcludeError extends Data.TaggedError("InvalidComputeExcludeError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
   }
 }
 
@@ -204,9 +221,9 @@ export class ComputeNotDeployedError extends Data.TaggedError("ComputeNotDeploye
 }
 
 /**
- * Compute are in private alpha: an unenrolled project's routes answer 404, indistinguishable at
- * the transport level from an unknown compute — so this is only raised on collection endpoints,
- * where there's no compute name that could have been wrong.
+ * Compute are in private alpha, and an unenrolled project's routes answer 404 with their own
+ * `not_found.compute.not_enabled`. Raised on every compute route, named ones included, plus as
+ * the fallback for a 404 body this CLI cannot classify.
  */
 export class ComputeUnavailableError extends Data.TaggedError("ComputeUnavailableError")<{
   readonly detail: string;
@@ -232,6 +249,20 @@ export class ComputeProjectNotFoundError extends Data.TaggedError("ComputeProjec
 }
 
 /**
+ * The Management API serves no such route. Separated from {@link ComputeProjectNotFoundError}
+ * because the router answers an unrouted path under the same `not_found` code a missing project
+ * does, and blaming the project ref sends someone whose project is fine nowhere useful.
+ */
+export class ComputeRouteNotFoundError extends Data.TaggedError("ComputeRouteNotFoundError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return { ...actionability.apiStatus, fingerprint_suffix: "not_found" };
+  }
+}
+
+/**
  * Any other status the Compute routes answered with. Classified from the status it carries rather
  * than bucketed as a generic service failure — a 401 is the user's to fix by logging in, a 403 by
  * getting access, and reporting either as `api_status` would blur the actionability signal.
@@ -245,37 +276,6 @@ export class ComputeApiUnexpectedStatusError extends Data.TaggedError(
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status);
-  }
-}
-
-/** The user answered the `delete` confirmation with something other than the name. */
-export class ComputeDeleteNotConfirmedError extends Data.TaggedError(
-  "ComputeDeleteNotConfirmedError",
-)<{
-  readonly detail: string;
-  readonly suggestion: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.cancelled;
-  }
-}
-
-/**
- * `delete` could not ask for confirmation and was not told to skip it.
- *
- * There is nowhere to read a typed answer from without an interactive terminal,
- * and the alternative to refusing is deleting on the strength of the command
- * line alone — so a redirected stdout or a CI runner has to pass `--yes`
- * (or `SUPABASE_YES`) to say that out loud.
- */
-export class ComputeDeleteConfirmationRequiredError extends Data.TaggedError(
-  "ComputeDeleteConfirmationRequiredError",
-)<{
-  readonly detail: string;
-  readonly suggestion: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
   }
 }
 

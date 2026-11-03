@@ -1,4 +1,5 @@
 import { styleText } from "node:util";
+import { ambientEnvironment } from "../shared/config/cli-config-provider.layer.ts";
 
 /**
  * Structural subset of a write stream that the colour gate inspects. Both
@@ -24,7 +25,7 @@ export interface ColorStream {
  * Node's `FORCE_COLOR` is not honored — only the `CLICOLOR*` pair.
  */
 function supportsColor(stream: ColorStream): boolean {
-  const env = process.env;
+  const env = ambientEnvironment();
   if ((env["NO_COLOR"] ?? "") !== "") return false;
   const clicolorForce = env["CLICOLOR_FORCE"] ?? "";
   const forced = clicolorForce !== "" && clicolorForce !== "0";
@@ -71,4 +72,24 @@ export function red(text: string, stream: ColorStream = process.stderr): string 
 /** Renders in bright green. */
 export function green(text: string, stream: ColorStream = process.stderr): string {
   return supportsColor(stream) ? styleText("green", text, { validateStream: false }) : text;
+}
+
+/** Renders in gray for secondary text. */
+export function gray(text: string, stream: ColorStream = process.stderr): string {
+  return supportsColor(stream) ? styleText("gray", text, { validateStream: false }) : text;
+}
+
+/** Renders in magenta. */
+export function magenta(text: string, stream: ColorStream = process.stderr): string {
+  return supportsColor(stream) ? styleText("magenta", text, { validateStream: false }) : text;
+}
+
+/** Renders in blue. */
+export function blue(text: string, stream: ColorStream = process.stderr): string {
+  return supportsColor(stream) ? styleText("blue", text, { validateStream: false }) : text;
+}
+
+/** Renders dimmed. */
+export function dim(text: string, stream: ColorStream = process.stderr): string {
+  return supportsColor(stream) ? styleText("dim", text, { validateStream: false }) : text;
 }

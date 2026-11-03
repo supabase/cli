@@ -93,19 +93,10 @@ Earlier revisions carried an experimental `next/` (v3) shell and a `legacy/` wra
 both are gone and `apps/cli/src/` is the single CLI tree. Never mention `next/`, v3, or a "legacy
 shell" in release notes — describe every change as a change to the CLI.
 
-### Go → TypeScript port
-
-Ongoing port: `apps/cli-go/` → `apps/cli/src/`. Parity PRs are **not** features/fixes.
-
-- If leaf commands were ported: **one line** under **TypeScript port progress** — list leaf commands only (`db diff`, not `db`); behavior matches Go CLI; cite PRs. Omit section if none.
-- Port infra (services, tests, parity scripts) → tail count only.
-- Port PR that **also** fixes a real bug or adds a non-Go flag → promote that part to Bug fixes / New features; still list the command under port progress.
-
 ### Where user-visible changes usually live
 
-- `apps/cli/src/commands/**` — behavior, output, flags, errors (beyond pure porting)
+- `apps/cli/src/commands/**` — behavior, output, flags, errors
 - `apps/cli/src/shared/**` — telemetry, global flags, output inherited by every command
-- `apps/cli-go/**` — while still the production binary
 - `packages/cli-*`, `apps/cli/scripts/` — install/packaging (homebrew, scoop, build)
 
 Everything else is usually internal.
@@ -180,11 +171,6 @@ From the header line extract `VERSION`, `COMPARE_URL`, `DATE`.
 ### Bug fixes
 
 - <symptom resolved>. (#1234)
-
-### TypeScript port progress
-
-<omit if none>
-- **Now served by the TypeScript shell:** `<cmd a>`, `<cmd b>`. Behavior matches the Go CLI. (#1234)
 
 ---
 

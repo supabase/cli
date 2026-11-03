@@ -11,7 +11,7 @@ import type { CliConfig } from "@supabase/config";
 
 import { localDbContainerId } from "../docker-ids.ts";
 import { toDockerMountPath } from "../docker-path.ts";
-import { encodeToml } from "../go-output.encoders.ts";
+import { encodeToml } from "../output.encoders.ts";
 import { POSTGRES_DEFAULT_ROOT_KEY } from "../local-config-values.ts";
 import type { StartContainerSpec } from "./docker-create-args.ts";
 import { START_DB_RESTORE_SH } from "./templates/db-restore.sh.ts";
@@ -24,6 +24,9 @@ import { START_DB_WEBHOOK_SQL } from "./templates/db-webhook.sql.ts";
  * `buildShadowPostgresContainerSpec`'s `password` field below.
  */
 const POSTGRES_PASSWORD = "postgres";
+
+/** `PGDATA` in every `supabase/postgres` image; the pgdata snapshot tar layout depends on it. */
+export const POSTGRES_DATA_DIR = "/var/lib/postgresql/data";
 
 /**
  * In-container path for the pgsodium root key, delivered via
@@ -64,9 +67,9 @@ const POSTGRES_INITDB_VERSION_THRESHOLD = "15.8.1.005";
 const POSTGRES_CONFIG_HEADER = "\n# supabase [db.settings] configuration\n";
 
 export interface PostgresStartServiceInput {
-  /** Decoded `[db]` section: `port`, `major_version`, and `settings`. */
+  /** Decoded `[db]` section: `port`, `major_version`, `orioledb_version`, and `settings`. */
   readonly db: CliConfig["db"];
-  /** Decoded `[experimental]` section — only the OrioleDB/S3 fields are read. */
+  /** Decoded `[experimental]` section — only the S3 fields are read. */
   readonly experimental: CliConfig["experimental"];
   /** Resolved `auth.jwt_secret`, as produced by `resolveLocalConfigValues`. */
   readonly jwtSecret: string;
@@ -170,10 +173,11 @@ export function postgresImageVersionTag(image: string): string {
  * for images older than {@link POSTGRES_INITDB_VERSION_THRESHOLD}. At most one branch fires.
  */
 function postgresExtraEnv(
+  orioledbVersion: string | undefined,
   experimental: CliConfig["experimental"],
   image: string,
 ): Readonly<Record<string, string>> {
-  if (experimental.orioledb_version !== undefined && experimental.orioledb_version.length > 0) {
+  if (orioledbVersion !== undefined && orioledbVersion.length > 0) {
     return {
       POSTGRES_INITDB_ARGS: "--lc-collate=C --lc-ctype=C",
       S3_ENABLED: "true",
@@ -285,7 +289,7 @@ export function buildPostgresStartContainerSpec(
     POSTGRES_HOST: "/var/run/postgresql",
     JWT_SECRET: input.jwtSecret,
     JWT_EXP: String(input.jwtExpiry),
-    ...postgresExtraEnv(input.experimental, input.configImage),
+    ...postgresExtraEnv(input.db.orioledb_version, input.experimental, input.configImage),
   };
 
   const script = isRestore
@@ -308,7 +312,7 @@ export function buildPostgresStartContainerSpec(
           secretFiles: [{ containerPath: POSTGRES_PGSODIUM_ROOT_KEY_PATH, content: rootKeyValue }],
         }),
     binds: [
-      `${containerName}:/var/lib/postgresql/data`,
+      `${containerName}:${POSTGRES_DATA_DIR}`,
       // The backup file bind is appended only on the `fromBackup` branch.
       ...(input.fromBackup === undefined
         ? []
@@ -339,7 +343,7 @@ export const SHADOW_ENTRYPOINT_ARGS = "-c max_worker_processes=0";
  * since the shadow container has no name and never restores from a backup) plus its own host port.
  */
 export interface ShadowPostgresContainerSpecInput {
-  readonly db: Pick<CliConfig["db"], "major_version" | "settings">;
+  readonly db: Pick<CliConfig["db"], "major_version" | "orioledb_version" | "settings">;
   readonly experimental: CliConfig["experimental"];
   readonly jwtSecret: string;
   readonly jwtExpiry: number;
@@ -377,7 +381,7 @@ export function buildShadowPostgresContainerSpec(
     POSTGRES_HOST: "/var/run/postgresql",
     JWT_SECRET: input.jwtSecret,
     JWT_EXP: String(input.jwtExpiry),
-    ...postgresExtraEnv(input.experimental, input.configImage),
+    ...postgresExtraEnv(input.db.orioledb_version, input.experimental, input.configImage),
   };
 
   const script = isPg14OrEarlier

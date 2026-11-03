@@ -23,8 +23,8 @@ test("lists a secret created on the remote project", ({ cliEffect, project }) =>
           "secrets",
           "set",
           `${name}=live-value`,
-          "--project-ref",
-          project.ref,
+          "--yes",
+          `--remote=${project.ref}`,
         ]);
         yield* requireSuccess(created, "secrets set setup");
 
@@ -33,8 +33,7 @@ test("lists a secret created on the remote project", ({ cliEffect, project }) =>
           "list",
           "--output",
           "json",
-          "--project-ref",
-          project.ref,
+          `--remote=${project.ref}`,
         ]);
         expect(result.exitCode, result.stderr).toBe(0);
         const secrets = yield* secretsPayload(result.stdout);

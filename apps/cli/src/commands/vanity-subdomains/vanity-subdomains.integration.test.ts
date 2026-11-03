@@ -4,9 +4,9 @@ import type {
   V1GetVanitySubdomainConfigOutput,
 } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Schema } from "effect";
 
-import { mockAnalytics, mockOutput } from "../../../tests/helpers/mocks.ts";
+import { mockAnalytics, mockOutput, mockTty } from "../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
   buildTestRuntime,
@@ -16,17 +16,43 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../tests/helpers/command-mocks.ts";
+import { describeHostedConsent } from "../../../tests/helpers/hosted-consent.ts";
+import { describeHostedTargetSelection } from "../../../tests/helpers/hosted-target-selection.ts";
+import { assertPermissionDrift } from "../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../tests/helpers/permission-real-layers.ts";
 import { vanitySubdomainsActivate } from "./activate/activate.handler.ts";
 import { vanitySubdomainsCheckAvailability } from "./check-availability/check-availability.handler.ts";
 import { vanitySubdomainsDelete } from "./delete/delete.handler.ts";
 import { vanitySubdomainsGet } from "./get/get.handler.ts";
+import { classifyCliCauseActionability } from "../../shared/telemetry/error-actionability.ts";
+import { YesFlag } from "../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../command-internal/target/target-policy.ts";
 
 type VanityConfig = typeof V1GetVanitySubdomainConfigOutput.Type;
 type AvailabilityResponse = typeof V1CheckVanitySubdomainAvailabilityOutput.Type;
 type ActivateResponse = typeof V1ActivateVanitySubdomainConfigOutput.Type;
 
 const tempRoot = useTempWorkdir("supabase-vanity-int-");
+
+const buildRuntime = (opts: Parameters<typeof buildTestRuntime>[0]) =>
+  Layer.mergeAll(
+    buildTestRuntime(opts),
+    Layer.succeed(YesFlag, true),
+    Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+  );
+
+const confirmedDelete = `Confirmed by --yes: Delete the vanity subdomain on project ${VALID_REF}\n`;
+const API_URL = "https://api.supabase.com";
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+const requestLines = (api: ReturnType<typeof mockCommandPlatformApi>) =>
+  api.requests.map(({ method, url }) => `${method} ${url}`);
 
 const SAMPLE_GET: VanityConfig = {
   status: "custom-domain-used",
@@ -46,7 +72,16 @@ const SAMPLE_ACTIVATE: ActivateResponse = {
   custom_domain: "example.com",
 };
 
-type GoOutput = "env" | "pretty" | "json" | "toml" | "yaml";
+const VANITY_GATE_ENVELOPE = {
+  message: "This feature requires the Pro, Team, or Enterprise organization plan.",
+  error: {
+    code: "entitlement_required",
+    feature: "vanity_subdomain",
+    upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
+  },
+};
+
+type OutputFlagValue = "env" | "pretty" | "json" | "toml" | "yaml";
 
 function runtimeWith(opts: {
   readonly out: ReturnType<typeof mockOutput>;
@@ -54,63 +89,91 @@ function runtimeWith(opts: {
   readonly analytics?: ReturnType<typeof mockAnalytics>;
   readonly telemetry?: ReturnType<typeof mockTelemetryStateTracked>["layer"];
   readonly linkedProjectCache?: ReturnType<typeof mockLinkedProjectCacheTracked>["layer"];
-  readonly goOutput?: GoOutput;
+  readonly outputFlag?: OutputFlagValue;
 }) {
-  return buildTestRuntime({
+  return buildRuntime({
     out: opts.out,
     api: opts.api,
     analytics: opts.analytics,
     cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
     telemetry: opts.telemetry,
     linkedProjectCache: opts.linkedProjectCache,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
 }
 
-// Mocks a billing-gated (402) write endpoint with entitlements reporting no access to
-// `vanity_subdomain`, for the upgrade-suggestion branch tests.
-function gatedApi(matchWrite: (url: string) => boolean) {
-  return mockCommandPlatformApi({
-    handler: (request) =>
-      Effect.sync(() => {
-        if (request.method === "POST" && matchWrite(request.url)) {
-          return jsonResponse(request, 402, {});
-        }
-        if (request.method === "GET" && request.url.endsWith(`/v1/projects/${VALID_REF}`)) {
-          return jsonResponse(request, 200, { organization_slug: "supabase" });
-        }
-        if (request.method === "GET" && request.url.includes("/entitlements")) {
-          return jsonResponse(request, 200, {
-            entitlements: [
-              {
-                feature: { key: "vanity_subdomain", type: "boolean" },
-                hasAccess: false,
-                type: "boolean",
-                config: { enabled: true },
-              },
-            ],
-          });
-        }
-        return jsonResponse(request, 200, null);
-      }),
+// No project is configured: the picker lists projects, the command makes its own call, and the
+// real linked-project cache then looks the project up.
+function pickerComposition(own: { readonly status: number; readonly body: unknown }) {
+  const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+  const api = mockCommandPlatformApi({
+    handler: (request) => {
+      if (request.method === "GET" && request.url === `${API_URL}/v1/projects`) {
+        return Effect.succeed(jsonResponse(request, 200, [projectResponse(VALID_REF)]));
+      }
+      if (request.method === "GET" && request.url === `${API_URL}/v1/projects/${VALID_REF}`) {
+        return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
+      }
+      return Effect.succeed(jsonResponse(request, own.status, own.body));
+    },
   });
+  const cliSettings = mockCommandSettings({ workdir: tempRoot.current, projectId: Option.none() });
+  const layer = buildRuntime({
+    out,
+    api,
+    cliSettings,
+    tty: mockTty({ stdinIsTty: true }),
+    linkedProjectCache: realLinkedProjectCache({ httpClient: api.httpClientLayer, cliSettings }),
+  });
+  return { out, api, layer };
 }
+
+const linkedProjectCachePath = () => `${tempRoot.current}/supabase/.temp/linked-project.json`;
 
 describe("vanity-subdomains get", () => {
-  it.live("prints status and subdomain in text mode", () => {
+  it.effect("prints status and subdomain in text mode", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: SAMPLE_GET } });
     const layer = runtimeWith({ out, api });
 
     return Effect.gen(function* () {
-      yield* vanitySubdomainsGet({ projectRef: Option.none() });
+      yield* vanitySubdomainsGet({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toBe("Status: custom-domain-used\nVanity subdomain: example.com\n");
       expect(api.requests[0]?.method).toBe("GET");
       expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/vanity-subdomain`);
+      assertPermissionDrift({
+        command: "vanity-subdomains get",
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("suggests upgrade from entitlement_required envelope on 400", () => {
+  it.effect("lists the picker's projects, reads the config and fills the real cache", () => {
+    const { out, api, layer } = pickerComposition({ status: 200, body: SAMPLE_GET });
+
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      expect(yield* fs.exists(linkedProjectCachePath())).toBe(false);
+      yield* vanitySubdomainsGet({ remote: Option.none(), projectRef: Option.none() });
+      expect(requestLines(api)).toEqual([
+        `GET ${API_URL}/v1/projects`,
+        `GET ${API_URL}/v1/projects/${VALID_REF}/vanity-subdomain`,
+        `GET ${API_URL}/v1/projects/${VALID_REF}`,
+      ]);
+      expect(out.stdoutText).toBe("Status: custom-domain-used\nVanity subdomain: example.com\n");
+      expect(yield* decodeJson(yield* fs.readFileString(linkedProjectCachePath()))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({
+        command: "vanity-subdomains get",
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("suggests upgrade from entitlement_required envelope on 400", () => {
     const out = mockOutput({ format: "text" });
     const analytics = mockAnalytics();
     const api = mockCommandPlatformApi({
@@ -129,9 +192,12 @@ describe("vanity-subdomains get", () => {
     const layer = runtimeWith({ out, api, analytics });
 
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(vanitySubdomainsGet({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        vanitySubdomainsGet({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(api.requests).toHaveLength(1);
+      assertPermissionDrift({ command: "vanity-subdomains get", requests: api.requests });
       expect(out.stderrText).toContain("Upgrade your plan:");
       expect(out.stderrText).toContain("/org/env-org/billing");
       expect(analytics.captured).toEqual([
@@ -143,7 +209,7 @@ describe("vanity-subdomains get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("plain 404 without envelope produces no upgrade hint", () => {
+  it.effect("plain 404 without envelope produces no upgrade hint", () => {
     const out = mockOutput({ format: "text" });
     const analytics = mockAnalytics();
     const api = mockCommandPlatformApi({
@@ -152,7 +218,9 @@ describe("vanity-subdomains get", () => {
     const layer = runtimeWith({ out, api, analytics });
 
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(vanitySubdomainsGet({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        vanitySubdomainsGet({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(api.requests).toHaveLength(1);
       expect(analytics.captured).toHaveLength(0);
@@ -160,108 +228,110 @@ describe("vanity-subdomains get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("omits the subdomain line in text mode when none is configured", () => {
+  it.effect("omits the subdomain line in text mode when none is configured", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: SAMPLE_GET_NO_DOMAIN } });
     const layer = runtimeWith({ out, api });
 
     return Effect.gen(function* () {
-      yield* vanitySubdomainsGet({ projectRef: Option.none() });
+      yield* vanitySubdomainsGet({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toBe("Status: not-used\n");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits JSON bytes for --output json", () => {
+  it.effect("emits JSON bytes for --output json", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: SAMPLE_GET } });
-    const layer = runtimeWith({ out, api, goOutput: "json" });
+    const layer = runtimeWith({ out, api, outputFlag: "json" });
 
     return Effect.gen(function* () {
-      yield* vanitySubdomainsGet({ projectRef: Option.none() });
+      yield* vanitySubdomainsGet({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain('"status": "custom-domain-used"');
       expect(out.stdoutText).toContain('"custom_domain": "example.com"');
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits YAML for --output yaml", () => {
+  it.effect("emits YAML for --output yaml", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: SAMPLE_GET } });
-    const layer = runtimeWith({ out, api, goOutput: "yaml" });
+    const layer = runtimeWith({ out, api, outputFlag: "yaml" });
 
     return Effect.gen(function* () {
-      yield* vanitySubdomainsGet({ projectRef: Option.none() });
+      yield* vanitySubdomainsGet({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("status: custom-domain-used");
-      // yaml.v3 lowercases the whole field name.
+      // YAML output lowercases the whole field name.
       expect(out.stdoutText).toContain("customdomain: example.com");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits TOML bytes for --output toml", () => {
+  it.effect("emits TOML bytes for --output toml", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: SAMPLE_GET } });
-    const layer = runtimeWith({ out, api, goOutput: "toml" });
+    const layer = runtimeWith({ out, api, outputFlag: "toml" });
 
     return Effect.gen(function* () {
-      yield* vanitySubdomainsGet({ projectRef: Option.none() });
+      yield* vanitySubdomainsGet({ remote: Option.none(), projectRef: Option.none() });
       // CustomDomain precedes Status, with a single trailing newline.
       expect(out.stdoutText).toBe('CustomDomain = "example.com"\nStatus = "custom-domain-used"\n');
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("omits CustomDomain in TOML when none is configured", () => {
+  it.effect("omits CustomDomain in TOML when none is configured", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: SAMPLE_GET_NO_DOMAIN } });
-    const layer = runtimeWith({ out, api, goOutput: "toml" });
+    const layer = runtimeWith({ out, api, outputFlag: "toml" });
 
     return Effect.gen(function* () {
-      yield* vanitySubdomainsGet({ projectRef: Option.none() });
+      yield* vanitySubdomainsGet({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toBe('Status = "not-used"\n');
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits env for --output env", () => {
+  it.effect("emits env for --output env", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: SAMPLE_GET } });
-    const layer = runtimeWith({ out, api, goOutput: "env" });
+    const layer = runtimeWith({ out, api, outputFlag: "env" });
 
     return Effect.gen(function* () {
-      yield* vanitySubdomainsGet({ projectRef: Option.none() });
+      yield* vanitySubdomainsGet({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain('STATUS="custom-domain-used"');
       expect(out.stdoutText).toContain('CUSTOM_DOMAIN="example.com"');
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a JSON success event for --output-format json", () => {
+  it.effect("emits a JSON success event for --output-format json", () => {
     const out = mockOutput({ format: "json" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: SAMPLE_GET } });
     const layer = runtimeWith({ out, api });
 
     return Effect.gen(function* () {
-      yield* vanitySubdomainsGet({ projectRef: Option.none() });
+      yield* vanitySubdomainsGet({ remote: Option.none(), projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({ status: "custom-domain-used" });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a result event for --output-format stream-json", () => {
+  it.effect("emits a result event for --output-format stream-json", () => {
     const out = mockOutput({ format: "stream-json" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: SAMPLE_GET } });
     const layer = runtimeWith({ out, api });
 
     return Effect.gen(function* () {
-      yield* vanitySubdomainsGet({ projectRef: Option.none() });
+      yield* vanitySubdomainsGet({ remote: Option.none(), projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({ status: "custom-domain-used" });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with an unexpected-status error on HTTP 503", () => {
+  it.effect("fails with an unexpected-status error on HTTP 503", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 503, body: {} } });
     const layer = runtimeWith({ out, api });
 
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(vanitySubdomainsGet({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        vanitySubdomainsGet({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
@@ -272,13 +342,15 @@ describe("vanity-subdomains get", () => {
   });
 
   // json mode so the spinner is suppressed — exercises the no-task error path.
-  it.live("fails with a network error on transport failure", () => {
+  it.effect("fails with a network error on transport failure", () => {
     const out = mockOutput({ format: "json" });
     const api = mockCommandPlatformApi({ network: "fail" });
     const layer = runtimeWith({ out, api });
 
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(vanitySubdomainsGet({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        vanitySubdomainsGet({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
@@ -290,13 +362,14 @@ describe("vanity-subdomains get", () => {
 });
 
 describe("vanity-subdomains check-availability", () => {
-  it.live("prints availability in text mode", () => {
+  it.effect("prints availability in text mode", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_CHECK } });
     const layer = runtimeWith({ out, api });
 
     return Effect.gen(function* () {
       yield* vanitySubdomainsCheckAvailability({
+        remote: Option.none(),
         projectRef: Option.none(),
         desiredSubdomain: Option.some("example.com"),
       });
@@ -306,16 +379,52 @@ describe("vanity-subdomains check-availability", () => {
         `/v1/projects/${VALID_REF}/vanity-subdomain/check-availability`,
       );
       expect(api.requests[0]?.body).toEqual({ vanity_subdomain: "example.com" });
+      assertPermissionDrift({
+        command: "vanity-subdomains check-availability",
+        activeFlags: { "desired-subdomain": "example.com" },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits JSON bytes for --output json", () => {
+  it.effect("lists the picker's projects, checks availability and fills the real cache", () => {
+    const { out, api, layer } = pickerComposition({ status: 201, body: SAMPLE_CHECK });
+
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      expect(yield* fs.exists(linkedProjectCachePath())).toBe(false);
+      yield* vanitySubdomainsCheckAvailability({
+        remote: Option.none(),
+        projectRef: Option.none(),
+        desiredSubdomain: Option.some("example.com"),
+      });
+      expect(requestLines(api)).toEqual([
+        `GET ${API_URL}/v1/projects`,
+        `POST ${API_URL}/v1/projects/${VALID_REF}/vanity-subdomain/check-availability`,
+        `GET ${API_URL}/v1/projects/${VALID_REF}`,
+      ]);
+      expect(out.stdoutText).toBe("Subdomain example.com available: true\n");
+      expect(yield* decodeJson(yield* fs.readFileString(linkedProjectCachePath()))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({
+        command: "vanity-subdomains check-availability",
+        activeFlags: { "desired-subdomain": "example.com" },
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("emits JSON bytes for --output json", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_CHECK } });
-    const layer = runtimeWith({ out, api, goOutput: "json" });
+    const layer = runtimeWith({ out, api, outputFlag: "json" });
 
     return Effect.gen(function* () {
       yield* vanitySubdomainsCheckAvailability({
+        remote: Option.none(),
         projectRef: Option.none(),
         desiredSubdomain: Option.some("example.com"),
       });
@@ -323,13 +432,14 @@ describe("vanity-subdomains check-availability", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits YAML for --output yaml", () => {
+  it.effect("emits YAML for --output yaml", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_CHECK } });
-    const layer = runtimeWith({ out, api, goOutput: "yaml" });
+    const layer = runtimeWith({ out, api, outputFlag: "yaml" });
 
     return Effect.gen(function* () {
       yield* vanitySubdomainsCheckAvailability({
+        remote: Option.none(),
         projectRef: Option.none(),
         desiredSubdomain: Option.some("example.com"),
       });
@@ -337,13 +447,14 @@ describe("vanity-subdomains check-availability", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits TOML bytes for --output toml", () => {
+  it.effect("emits TOML bytes for --output toml", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_CHECK } });
-    const layer = runtimeWith({ out, api, goOutput: "toml" });
+    const layer = runtimeWith({ out, api, outputFlag: "toml" });
 
     return Effect.gen(function* () {
       yield* vanitySubdomainsCheckAvailability({
+        remote: Option.none(),
         projectRef: Option.none(),
         desiredSubdomain: Option.some("example.com"),
       });
@@ -351,13 +462,14 @@ describe("vanity-subdomains check-availability", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits env for --output env", () => {
+  it.effect("emits env for --output env", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_CHECK } });
-    const layer = runtimeWith({ out, api, goOutput: "env" });
+    const layer = runtimeWith({ out, api, outputFlag: "env" });
 
     return Effect.gen(function* () {
       yield* vanitySubdomainsCheckAvailability({
+        remote: Option.none(),
         projectRef: Option.none(),
         desiredSubdomain: Option.some("example.com"),
       });
@@ -365,13 +477,14 @@ describe("vanity-subdomains check-availability", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a JSON success event for --output-format json", () => {
+  it.effect("emits a JSON success event for --output-format json", () => {
     const out = mockOutput({ format: "json" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_CHECK } });
     const layer = runtimeWith({ out, api });
 
     return Effect.gen(function* () {
       yield* vanitySubdomainsCheckAvailability({
+        remote: Option.none(),
         projectRef: Option.none(),
         desiredSubdomain: Option.some("example.com"),
       });
@@ -380,27 +493,65 @@ describe("vanity-subdomains check-availability", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("suggests upgrade for gated checks without firing analytics", () => {
+  it.effect("suggests upgrade for gated checks without firing analytics", () => {
     const out = mockOutput({ format: "text" });
-    const api = gatedApi((url) => url.includes("/check-availability"));
+    const api = mockCommandPlatformApi({ response: { status: 400, body: VANITY_GATE_ENVELOPE } });
     const analytics = mockAnalytics();
     const layer = runtimeWith({ out, api, analytics });
 
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         vanitySubdomainsCheckAvailability({
+          remote: Option.none(),
           projectRef: Option.none(),
           desiredSubdomain: Option.some("example.com"),
         }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(out.stderrText).toContain("Upgrade your plan:");
+      expect(out.stderrText).toContain("/org/env-org/billing");
+      expect(analytics.captured).toHaveLength(0);
+      expect(requestLines(api)).toEqual([
+        `POST ${API_URL}/v1/projects/${VALID_REF}/vanity-subdomain/check-availability`,
+      ]);
+      assertPermissionDrift({
+        command: "vanity-subdomains check-availability",
+        activeFlags: { "desired-subdomain": "example.com" },
+        requests: api.requests,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("makes one request and suggests no upgrade on a check 4xx without the envelope", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi({
+      response: { status: 400, body: { message: "Invalid subdomain" } },
+    });
+    const analytics = mockAnalytics();
+    const layer = runtimeWith({ out, api, analytics });
+
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        vanitySubdomainsCheckAvailability({
+          remote: Option.none(),
+          projectRef: Option.none(),
+          desiredSubdomain: Option.some("example.com"),
+        }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(classifyCliCauseActionability(exit.cause).error_category).not.toBe("plan_limit");
+      }
+      expect(requestLines(api)).toEqual([
+        `POST ${API_URL}/v1/projects/${VALID_REF}/vanity-subdomain/check-availability`,
+      ]);
+      expect(out.stderrText).not.toContain("Upgrade your plan:");
       expect(analytics.captured).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 
   // json mode so the spinner is suppressed — exercises the no-task error path.
-  it.live("fails with a network error on transport failure", () => {
+  it.effect("fails with a network error on transport failure", () => {
     const out = mockOutput({ format: "json" });
     const api = mockCommandPlatformApi({ network: "fail" });
     const layer = runtimeWith({ out, api });
@@ -408,6 +559,7 @@ describe("vanity-subdomains check-availability", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         vanitySubdomainsCheckAvailability({
+          remote: Option.none(),
           projectRef: Option.none(),
           desiredSubdomain: Option.some("example.com"),
         }),
@@ -421,7 +573,7 @@ describe("vanity-subdomains check-availability", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with cobra's required-flag error when --desired-subdomain is omitted", () => {
+  it.effect("fails with the required-flag error when --desired-subdomain is omitted", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_CHECK } });
     const layer = runtimeWith({ out, api });
@@ -429,6 +581,7 @@ describe("vanity-subdomains check-availability", () => {
     return Effect.gen(function* () {
       const error = yield* Effect.flip(
         vanitySubdomainsCheckAvailability({
+          remote: Option.none(),
           projectRef: Option.none(),
           desiredSubdomain: Option.none(),
         }),
@@ -436,33 +589,53 @@ describe("vanity-subdomains check-availability", () => {
       expect(error._tag).toBe("DesiredSubdomainRequiredError");
       expect(error.message).toBe('required flag(s) "desired-subdomain" not set');
       expect(api.requests).toHaveLength(0);
+      expect(() =>
+        assertPermissionDrift({
+          command: "vanity-subdomains check-availability",
+          activeFlags: {},
+          requests: [
+            {
+              method: "POST",
+              url: `${API_URL}/v1/projects/${VALID_REF}/vanity-subdomain/check-availability`,
+            },
+          ],
+        }),
+      ).toThrow(/condition doesn't hold/);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("passes an explicit empty --desired-subdomain through to the API", () => {
+  it.effect("passes an explicit empty --desired-subdomain through to the API", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_CHECK } });
     const layer = runtimeWith({ out, api });
 
     return Effect.gen(function* () {
       yield* vanitySubdomainsCheckAvailability({
+        remote: Option.none(),
         projectRef: Option.none(),
         desiredSubdomain: Option.some(""),
       });
       expect(api.requests[0]?.body).toEqual({ vanity_subdomain: "" });
       expect(out.stdoutText).toBe("Subdomain  available: true\n");
+      assertPermissionDrift({
+        command: "vanity-subdomains check-availability",
+        activeFlags: { "desired-subdomain": "" },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 });
 
 describe("vanity-subdomains activate", () => {
-  it.live("activates the vanity subdomain in text mode", () => {
+  it.effect("activates the vanity subdomain in text mode", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_ACTIVATE } });
     const layer = runtimeWith({ out, api });
 
     return Effect.gen(function* () {
       yield* vanitySubdomainsActivate({
+        remote: Option.none(),
         projectRef: Option.none(),
         desiredSubdomain: Option.some("example.com"),
       });
@@ -470,16 +643,52 @@ describe("vanity-subdomains activate", () => {
       expect(api.requests[0]?.method).toBe("POST");
       expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/vanity-subdomain/activate`);
       expect(api.requests[0]?.body).toEqual({ vanity_subdomain: "example.com" });
+      assertPermissionDrift({
+        command: "vanity-subdomains activate",
+        activeFlags: { "desired-subdomain": "example.com" },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits JSON bytes for --output json", () => {
+  it.effect("lists the picker's projects, activates the subdomain and fills the real cache", () => {
+    const { out, api, layer } = pickerComposition({ status: 201, body: SAMPLE_ACTIVATE });
+
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      expect(yield* fs.exists(linkedProjectCachePath())).toBe(false);
+      yield* vanitySubdomainsActivate({
+        remote: Option.none(),
+        projectRef: Option.none(),
+        desiredSubdomain: Option.some("example.com"),
+      });
+      expect(requestLines(api)).toEqual([
+        `GET ${API_URL}/v1/projects`,
+        `POST ${API_URL}/v1/projects/${VALID_REF}/vanity-subdomain/activate`,
+        `GET ${API_URL}/v1/projects/${VALID_REF}`,
+      ]);
+      expect(out.stdoutText).toBe("Activated vanity subdomain at example.com\n");
+      expect(yield* decodeJson(yield* fs.readFileString(linkedProjectCachePath()))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({
+        command: "vanity-subdomains activate",
+        activeFlags: { "desired-subdomain": "example.com" },
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("emits JSON bytes for --output json", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_ACTIVATE } });
-    const layer = runtimeWith({ out, api, goOutput: "json" });
+    const layer = runtimeWith({ out, api, outputFlag: "json" });
 
     return Effect.gen(function* () {
       yield* vanitySubdomainsActivate({
+        remote: Option.none(),
         projectRef: Option.none(),
         desiredSubdomain: Option.some("example.com"),
       });
@@ -487,28 +696,30 @@ describe("vanity-subdomains activate", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits YAML for --output yaml", () => {
+  it.effect("emits YAML for --output yaml", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_ACTIVATE } });
-    const layer = runtimeWith({ out, api, goOutput: "yaml" });
+    const layer = runtimeWith({ out, api, outputFlag: "yaml" });
 
     return Effect.gen(function* () {
       yield* vanitySubdomainsActivate({
+        remote: Option.none(),
         projectRef: Option.none(),
         desiredSubdomain: Option.some("example.com"),
       });
-      // yaml.v3 lowercases the whole field name.
+      // YAML output lowercases the whole field name.
       expect(out.stdoutText).toContain("customdomain: example.com");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits TOML bytes for --output toml", () => {
+  it.effect("emits TOML bytes for --output toml", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_ACTIVATE } });
-    const layer = runtimeWith({ out, api, goOutput: "toml" });
+    const layer = runtimeWith({ out, api, outputFlag: "toml" });
 
     return Effect.gen(function* () {
       yield* vanitySubdomainsActivate({
+        remote: Option.none(),
         projectRef: Option.none(),
         desiredSubdomain: Option.some("example.com"),
       });
@@ -516,13 +727,14 @@ describe("vanity-subdomains activate", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits env for --output env", () => {
+  it.effect("emits env for --output env", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_ACTIVATE } });
-    const layer = runtimeWith({ out, api, goOutput: "env" });
+    const layer = runtimeWith({ out, api, outputFlag: "env" });
 
     return Effect.gen(function* () {
       yield* vanitySubdomainsActivate({
+        remote: Option.none(),
         projectRef: Option.none(),
         desiredSubdomain: Option.some("example.com"),
       });
@@ -530,13 +742,14 @@ describe("vanity-subdomains activate", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a JSON success event for --output-format json", () => {
+  it.effect("emits a JSON success event for --output-format json", () => {
     const out = mockOutput({ format: "json" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_ACTIVATE } });
     const layer = runtimeWith({ out, api });
 
     return Effect.gen(function* () {
       yield* vanitySubdomainsActivate({
+        remote: Option.none(),
         projectRef: Option.none(),
         desiredSubdomain: Option.some("example.com"),
       });
@@ -545,32 +758,73 @@ describe("vanity-subdomains activate", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("suggests upgrade and fires analytics for gated activation", () => {
+  it.effect("suggests upgrade and fires analytics for gated activation", () => {
     const out = mockOutput({ format: "text" });
-    const api = gatedApi((url) => url.endsWith("/vanity-subdomain/activate"));
+    const api = mockCommandPlatformApi({ response: { status: 400, body: VANITY_GATE_ENVELOPE } });
     const analytics = mockAnalytics();
     const layer = runtimeWith({ out, api, analytics });
 
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         vanitySubdomainsActivate({
+          remote: Option.none(),
           projectRef: Option.none(),
           desiredSubdomain: Option.some("example.com"),
         }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(out.stderrText).toContain("Upgrade your plan:");
+      expect(out.stderrText).toContain("/org/env-org/billing");
       expect(analytics.captured).toEqual([
         {
           event: "cli_upgrade_suggested",
-          properties: { feature_key: "vanity_subdomain", org_slug: "supabase" },
+          properties: { feature_key: "vanity_subdomain", org_slug: "env-org" },
         },
       ]);
+      expect(requestLines(api)).toEqual([
+        `POST ${API_URL}/v1/projects/${VALID_REF}/vanity-subdomain/activate`,
+      ]);
+      assertPermissionDrift({
+        command: "vanity-subdomains activate",
+        activeFlags: { "desired-subdomain": "example.com" },
+        requests: api.requests,
+      });
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect(
+    "makes one request and suggests no upgrade on an activate 4xx without the envelope",
+    () => {
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi({
+        response: { status: 400, body: { message: "Invalid subdomain" } },
+      });
+      const analytics = mockAnalytics();
+      const layer = runtimeWith({ out, api, analytics });
+
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          vanitySubdomainsActivate({
+            remote: Option.none(),
+            projectRef: Option.none(),
+            desiredSubdomain: Option.some("example.com"),
+          }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(classifyCliCauseActionability(exit.cause).error_category).not.toBe("plan_limit");
+        }
+        expect(requestLines(api)).toEqual([
+          `POST ${API_URL}/v1/projects/${VALID_REF}/vanity-subdomain/activate`,
+        ]);
+        expect(out.stderrText).not.toContain("Upgrade your plan:");
+        expect(analytics.captured).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   // json mode so the spinner is suppressed — exercises the no-task error path.
-  it.live("fails with a network error on transport failure", () => {
+  it.effect("fails with a network error on transport failure", () => {
     const out = mockOutput({ format: "json" });
     const api = mockCommandPlatformApi({ network: "fail" });
     const analytics = mockAnalytics();
@@ -579,6 +833,7 @@ describe("vanity-subdomains activate", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         vanitySubdomainsActivate({
+          remote: Option.none(),
           projectRef: Option.none(),
           desiredSubdomain: Option.some("example.com"),
         }),
@@ -593,7 +848,7 @@ describe("vanity-subdomains activate", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with cobra's required-flag error when --desired-subdomain is omitted", () => {
+  it.effect("fails with the required-flag error when --desired-subdomain is omitted", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_ACTIVATE } });
     const layer = runtimeWith({ out, api });
@@ -601,6 +856,7 @@ describe("vanity-subdomains activate", () => {
     return Effect.gen(function* () {
       const error = yield* Effect.flip(
         vanitySubdomainsActivate({
+          remote: Option.none(),
           projectRef: Option.none(),
           desiredSubdomain: Option.none(),
         }),
@@ -608,69 +864,123 @@ describe("vanity-subdomains activate", () => {
       expect(error._tag).toBe("DesiredSubdomainRequiredError");
       expect(error.message).toBe('required flag(s) "desired-subdomain" not set');
       expect(api.requests).toHaveLength(0);
+      expect(() =>
+        assertPermissionDrift({
+          command: "vanity-subdomains activate",
+          activeFlags: {},
+          requests: [
+            {
+              method: "POST",
+              url: `${API_URL}/v1/projects/${VALID_REF}/vanity-subdomain/activate`,
+            },
+          ],
+        }),
+      ).toThrow(/condition doesn't hold/);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("passes an explicit empty --desired-subdomain through to the API", () => {
+  it.effect("passes an explicit empty --desired-subdomain through to the API", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_ACTIVATE } });
     const layer = runtimeWith({ out, api });
 
     return Effect.gen(function* () {
       yield* vanitySubdomainsActivate({
+        remote: Option.none(),
         projectRef: Option.none(),
         desiredSubdomain: Option.some(""),
       });
       expect(api.requests[0]?.body).toEqual({ vanity_subdomain: "" });
+      assertPermissionDrift({
+        command: "vanity-subdomains activate",
+        activeFlags: { "desired-subdomain": "" },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 });
 
 describe("vanity-subdomains delete", () => {
-  it.live("deletes the vanity subdomain in text mode", () => {
+  it.effect("deletes the vanity subdomain in text mode", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: null } });
     const layer = runtimeWith({ out, api });
 
     return Effect.gen(function* () {
-      yield* vanitySubdomainsDelete({ projectRef: Option.none() });
-      expect(out.stderrText).toBe("Deleted vanity subdomain successfully.\n");
+      yield* vanitySubdomainsDelete({ remote: Option.none(), projectRef: Option.none() });
+      expect(out.stderrText).toBe(
+        unverifiedTargetBanner() + confirmedDelete + "Deleted vanity subdomain successfully.\n",
+      );
       expect(api.requests[0]?.method).toBe("DELETE");
       expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/vanity-subdomain`);
+      assertPermissionDrift({
+        command: "vanity-subdomains delete",
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a JSON success event for --output-format json", () => {
+  it.effect("lists the picker's projects, deletes the subdomain and fills the real cache", () => {
+    const { out, api, layer } = pickerComposition({ status: 200, body: null });
+
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      expect(yield* fs.exists(linkedProjectCachePath())).toBe(false);
+      yield* vanitySubdomainsDelete({ remote: Option.none(), projectRef: Option.none() });
+      expect(requestLines(api)).toEqual([
+        `GET ${API_URL}/v1/projects`,
+        `DELETE ${API_URL}/v1/projects/${VALID_REF}/vanity-subdomain`,
+        `GET ${API_URL}/v1/projects/${VALID_REF}`,
+      ]);
+      expect(out.stderrText).toContain("Deleted vanity subdomain successfully.\n");
+      expect(yield* decodeJson(yield* fs.readFileString(linkedProjectCachePath()))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({
+        command: "vanity-subdomains delete",
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("emits a JSON success event for --output-format json", () => {
     const out = mockOutput({ format: "json" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: null } });
     const layer = runtimeWith({ out, api });
 
     return Effect.gen(function* () {
-      yield* vanitySubdomainsDelete({ projectRef: Option.none() });
+      yield* vanitySubdomainsDelete({ remote: Option.none(), projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.message).toBe("Deleted vanity subdomain successfully.");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("ignores --output values and prints to stderr", () => {
+  it.effect("ignores --output values and prints to stderr", () => {
     const out = mockOutput({ format: "json" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: null } });
-    const layer = runtimeWith({ out, api, goOutput: "json" });
+    const layer = runtimeWith({ out, api, outputFlag: "json" });
 
     return Effect.gen(function* () {
-      yield* vanitySubdomainsDelete({ projectRef: Option.none() });
-      expect(out.stderrText).toBe("Deleted vanity subdomain successfully.\n");
+      yield* vanitySubdomainsDelete({ remote: Option.none(), projectRef: Option.none() });
+      expect(out.stderrText).toBe(
+        unverifiedTargetBanner() + confirmedDelete + "Deleted vanity subdomain successfully.\n",
+      );
       expect(out.messages.find((m) => m.type === "success")).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with an unexpected-status error on HTTP 503", () => {
+  it.effect("fails with an unexpected-status error on HTTP 503", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 503, body: {} } });
     const layer = runtimeWith({ out, api });
 
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(vanitySubdomainsDelete({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        vanitySubdomainsDelete({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
@@ -681,13 +991,15 @@ describe("vanity-subdomains delete", () => {
   });
 
   // json mode so the spinner is suppressed — exercises the no-task error path.
-  it.live("fails with a network error on transport failure", () => {
+  it.effect("fails with a network error on transport failure", () => {
     const out = mockOutput({ format: "json" });
     const api = mockCommandPlatformApi({ network: "fail" });
     const layer = runtimeWith({ out, api });
 
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(vanitySubdomainsDelete({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        vanitySubdomainsDelete({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
@@ -699,7 +1011,7 @@ describe("vanity-subdomains delete", () => {
 });
 
 describe("vanity-subdomains PersistentPostRun parity", () => {
-  it.live("flushes telemetry and writes linked-project cache on success", () => {
+  it.effect("flushes telemetry and writes linked-project cache on success", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: SAMPLE_GET } });
     const telemetry = mockTelemetryStateTracked();
@@ -712,13 +1024,13 @@ describe("vanity-subdomains PersistentPostRun parity", () => {
     });
 
     return Effect.gen(function* () {
-      yield* vanitySubdomainsGet({ projectRef: Option.none() });
+      yield* vanitySubdomainsGet({ remote: Option.none(), projectRef: Option.none() });
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry and writes linked-project cache on failure", () => {
+  it.effect("flushes telemetry and writes linked-project cache on failure", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 503, body: {} } });
     const telemetry = mockTelemetryStateTracked();
@@ -731,7 +1043,9 @@ describe("vanity-subdomains PersistentPostRun parity", () => {
     });
 
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(vanitySubdomainsGet({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        vanitySubdomainsGet({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
@@ -740,7 +1054,7 @@ describe("vanity-subdomains PersistentPostRun parity", () => {
 
   // The desired-subdomain check runs inside both `Effect.ensuring` wrappers, so telemetry
   // still flushes and the cache still writes even though it fails before any API call.
-  it.live(
+  it.effect(
     "flushes telemetry and writes linked-project cache on a missing --desired-subdomain",
     () => {
       const out = mockOutput({ format: "text" });
@@ -757,6 +1071,7 @@ describe("vanity-subdomains PersistentPostRun parity", () => {
       return Effect.gen(function* () {
         const error = yield* Effect.flip(
           vanitySubdomainsActivate({
+            remote: Option.none(),
             projectRef: Option.none(),
             desiredSubdomain: Option.none(),
           }),
@@ -767,4 +1082,54 @@ describe("vanity-subdomains PersistentPostRun parity", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+});
+
+describeHostedConsent("vanity-subdomains activate", {
+  api: { response: { status: 201, body: SAMPLE_ACTIVATE } },
+  invoke: () => ({
+    run: vanitySubdomainsActivate({
+      remote: Option.none(),
+      projectRef: Option.none(),
+      desiredSubdomain: Option.some("example"),
+    }),
+  }),
+});
+
+describeHostedConsent("vanity-subdomains delete", {
+  api: { response: { status: 200, body: null } },
+  invoke: () => ({
+    run: vanitySubdomainsDelete({ remote: Option.none(), projectRef: Option.none() }),
+  }),
+});
+
+describeHostedTargetSelection("vanity-subdomains get", {
+  respond: (request) => Effect.succeed(jsonResponse(request, 200, SAMPLE_GET)),
+  run: (flags) => vanitySubdomainsGet(flags),
+});
+
+describeHostedTargetSelection("vanity-subdomains check-availability", {
+  operands: ["--desired-subdomain", "example.com"],
+  activeFlags: { "desired-subdomain": "example.com" },
+  respond: (request) => Effect.succeed(jsonResponse(request, 201, SAMPLE_CHECK)),
+  run: (flags) =>
+    vanitySubdomainsCheckAvailability({
+      ...flags,
+      desiredSubdomain: Option.some("example.com"),
+    }),
+});
+
+describeHostedTargetSelection("vanity-subdomains activate", {
+  operands: ["--desired-subdomain", "example.com"],
+  activeFlags: { "desired-subdomain": "example.com" },
+  respond: (request) => Effect.succeed(jsonResponse(request, 201, SAMPLE_ACTIVATE)),
+  run: (flags) =>
+    vanitySubdomainsActivate({
+      ...flags,
+      desiredSubdomain: Option.some("example.com"),
+    }),
+});
+
+describeHostedTargetSelection("vanity-subdomains delete", {
+  respond: (request) => Effect.succeed(jsonResponse(request, 200, null)),
+  run: (flags) => vanitySubdomainsDelete(flags),
 });

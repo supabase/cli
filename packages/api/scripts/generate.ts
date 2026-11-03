@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { NodeServices } from "@effect/platform-node";
+import { Console, Effect, FileSystem, Path, Schema } from "effect";
 import * as Arr from "effect/Array";
 import * as JsonSchema from "effect/JsonSchema";
 import * as SchemaRepresentation from "effect/SchemaRepresentation";
@@ -29,6 +29,8 @@ export type OpenApiOperation = {
   readonly parameters?: ReadonlyArray<OpenApiParameter>;
   readonly requestBody?: OpenApiRequestBody;
   readonly responses?: Record<string, OpenApiResponse>;
+  readonly "x-fga-permissions"?: ReadonlyArray<ReadonlyArray<string>>;
+  readonly "x-oauth-scope"?: string;
 };
 
 type OpenApiRequestBody = {
@@ -135,17 +137,35 @@ const httpMethods: Record<OpenApiHttpMethod, HttpMethod> = {
   head: "HEAD",
 };
 
-const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(scriptDir, "../../..");
-const sourceSpecPath = path.join(repoRoot, "packages/api/src/generated/openapi.json");
-const generatedDir = path.join(repoRoot, "packages/api/src/generated");
+const sourceSpecPath = fileURLToPath(new URL("../src/generated/openapi.json", import.meta.url));
+const generatedDir = fileURLToPath(new URL("../src/generated", import.meta.url));
+
+class GenerateError extends Schema.TaggedError<GenerateError>()("GenerateError", {
+  message: Schema.String,
+  cause: Schema.Defect(),
+}) {}
+
+const generationStep = <A>(step: () => A) =>
+  Effect.try({
+    try: step,
+    catch: (cause) =>
+      new GenerateError({ message: cause instanceof Error ? cause.message : String(cause), cause }),
+  });
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-export function loadSpec(): OpenApiDocument {
-  const parsed = JSON.parse(readFileSync(sourceSpecPath, "utf8"));
+export const loadSpec = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const source = new TextDecoder("utf-8", { ignoreBOM: true }).decode(
+    yield* fs.readFile(sourceSpecPath),
+  );
+  return yield* generationStep(() => parseSpec(source));
+});
+
+function parseSpec(source: string): OpenApiDocument {
+  const parsed = JSON.parse(source);
   if (!isRecord(parsed) || !isRecord(parsed.paths)) {
     throw new Error(`Invalid OpenAPI document at ${sourceSpecPath}`);
   }
@@ -215,6 +235,7 @@ const UUID_PATTERN =
 // Keys stripped from a schema node because they describe documentation/example
 // values, not the value's shape.
 const SCHEMA_METADATA_KEYS = new Set(["default", "example", "examples"]);
+const CONTENT_ANNOTATION_KEYS = new Set(["contentEncoding", "contentMediaType"]);
 
 // `inPropertiesMap` tracks whether the current object is the value of a
 // `properties: {...}` map; there, keys are user-defined property names (which may
@@ -246,13 +267,20 @@ export function sanitizeOpenApiSchema(
       continue;
     }
 
-    if (
-      !inPropertiesMap &&
-      key === "propertyNames" &&
-      isRecord(rawValue) &&
-      Object.keys(rawValue).length === 1 &&
-      rawValue.type === "string"
-    ) {
+    // The OpenAPI 3.0 converter rejects `propertyNames`; key constraints are left to the server.
+    if (!inPropertiesMap && key === "propertyNames" && isRecord(rawValue)) {
+      continue;
+    }
+
+    // The OpenAPI 3.0 converter rejects the annotation-only content keywords; `format` still
+    // carries the encoding.
+    if (!inPropertiesMap && CONTENT_ANNOTATION_KEYS.has(key)) {
+      continue;
+    }
+
+    // The OpenAPI 3.0 converter rejects `const`; a one-value `enum` is equivalent.
+    if (!inPropertiesMap && key === "const") {
+      Object.assign(sanitized, { enum: [rawValue] });
       continue;
     }
 
@@ -277,6 +305,16 @@ export function sanitizeOpenApiSchema(
     }
 
     sanitized[key] = rawValue;
+  }
+
+  // Binary bodies are rewritten to `BinaryInput` by matching the bare format annotation, so
+  // extra annotations such as `description` would leave them typed as plain strings.
+  if (sanitized.type === "string" && sanitized.format === "binary") {
+    return {
+      type: "string",
+      format: "binary",
+      ...(sanitized.nullable === true ? { nullable: true } : {}),
+    };
   }
 
   if (
@@ -310,13 +348,133 @@ export function sanitizeOpenApiSchema(
   return sanitized;
 }
 
-function convertSchemaToDraft2020(schema: OpenApiSchema) {
+function convertSchemaToDraft2020(
+  schema: OpenApiSchema,
+  options?: { readonly openEnums: boolean },
+) {
   const sanitized = sanitizeOpenApiSchema(schema);
+  const prepared = options?.openEnums === true ? openStringEnums(sanitized) : sanitized;
   return (
-    sanitized.$schema === JsonSchema.META_SCHEMA_URI_DRAFT_2020_12
-      ? JsonSchema.fromSchemaDraft2020_12(sanitized)
-      : JsonSchema.fromSchemaOpenApi3_0(sanitized)
+    prepared.$schema === JsonSchema.META_SCHEMA_URI_DRAFT_2020_12
+      ? JsonSchema.fromSchemaDraft2020_12(prepared)
+      : JsonSchema.fromSchemaOpenApi3_0(prepared)
   ).schema;
+}
+
+const OPEN_STRING_FORMAT = "x-open-string";
+const COMPONENT_REF_PREFIX = "#/components/schemas/";
+
+function isOpenableStringEnum(schema: OpenApiSchema): boolean {
+  if (!Array.isArray(schema.enum) || (schema.type !== undefined && schema.type !== "string")) {
+    return false;
+  }
+  const values = schema.enum.filter((value) => value !== null);
+  return values.length > 1 && values.every((value) => typeof value === "string");
+}
+
+/**
+ * Widens every multi-value string enum to `enum | any string`. Single-value enums stay closed
+ * because they tag union variants, and widening them would make variant matching ambiguous.
+ */
+export function openStringEnums(schema: OpenApiSchema): OpenApiSchema {
+  const visitSchema = (value: OpenApiSchema): OpenApiSchema => {
+    const visited: OpenApiSchema = {};
+    for (const [key, entry] of Object.entries(value)) {
+      visited[key] = visit(entry);
+    }
+    return isOpenableStringEnum(visited)
+      ? { anyOf: [visited, { type: "string", format: OPEN_STRING_FORMAT }] }
+      : visited;
+  };
+  const visit = (value: unknown): unknown => {
+    if (Array.isArray(value)) {
+      return value.map(visit);
+    }
+    if (!isRecord(value)) {
+      return value;
+    }
+    return visitSchema(value);
+  };
+  return visitSchema(schema);
+}
+
+function collectComponentRefs(value: unknown, into: Set<string>): void {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      collectComponentRefs(entry, into);
+    }
+  } else if (isRecord(value)) {
+    for (const [key, entry] of Object.entries(value)) {
+      if (key === "$ref" && typeof entry === "string" && entry.startsWith(COMPONENT_REF_PREFIX)) {
+        into.add(entry.slice(COMPONENT_REF_PREFIX.length));
+      } else {
+        collectComponentRefs(entry, into);
+      }
+    }
+  }
+}
+
+function componentRefClosure(
+  components: Record<string, OpenApiSchema>,
+  roots: ReadonlyArray<OpenApiSchema>,
+): ReadonlySet<string> {
+  const pending = new Set<string>();
+  for (const root of roots) {
+    collectComponentRefs(root, pending);
+  }
+  const reachable = new Set<string>();
+  for (const name of pending) {
+    if (reachable.has(name)) {
+      continue;
+    }
+    reachable.add(name);
+    const component = components[name];
+    if (component !== undefined) {
+      collectComponentRefs(component, pending);
+    }
+  }
+  return reachable;
+}
+
+function containsOpenableStringEnum(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some(containsOpenableStringEnum);
+  }
+  return (
+    isRecord(value) &&
+    (isOpenableStringEnum(value) || Object.values(value).some(containsOpenableStringEnum))
+  );
+}
+
+/**
+ * Components reachable from response schemas whose string enums are widened. A component that
+ * both requests and responses reach would need two variants, which the generator does not model.
+ */
+function outputEnumComponents(
+  components: Record<string, OpenApiSchema>,
+  operations: ReadonlyArray<OperationDefinition>,
+): ReadonlySet<string> {
+  const outputRoots = operations.flatMap((operation) =>
+    operation.response.kind !== "void" && operation.outputSchema ? [operation.outputSchema] : [],
+  );
+  const outputReachable = componentRefClosure(components, outputRoots);
+  const inputReachable = componentRefClosure(
+    components,
+    operations.map((operation) => operation.inputSchema),
+  );
+  for (const name of outputReachable) {
+    const component = components[name];
+    if (
+      inputReachable.has(name) &&
+      component !== undefined &&
+      containsOpenableStringEnum(sanitizeOpenApiSchema(component))
+    ) {
+      throw new Error(
+        `Schema "${name}" has string enums and is reachable from both request and response schemas; response enums are widened, so it cannot be shared.`,
+      );
+    }
+  }
+  return outputReachable;
 }
 
 function containsBinarySchema(schema: OpenApiSchema): boolean {
@@ -349,6 +507,16 @@ function containsBinarySchema(schema: OpenApiSchema): boolean {
 
 function replaceBinarySchemaCode(code: string): string {
   return code.replace(/Schema\.String\.annotate\(\{\s*"format":\s*"binary"\s*\}\)/g, "BinaryInput");
+}
+
+function replaceOpenStringCode(code: string): string {
+  return code.replace(
+    new RegExp(
+      `Schema\\.String\\.annotate\\(\\{\\s*"format":\\s*"${OPEN_STRING_FORMAT}"\\s*\\}\\)`,
+      "g",
+    ),
+    "OpenString",
+  );
 }
 
 function normalizeJsonSchemaValue(value: unknown): unknown {
@@ -755,10 +923,15 @@ function renderSchemaSource(
   operations: ReadonlyArray<OperationDefinition>,
 ): string {
   const schemaEntries = operations.flatMap((operation) => {
-    const entries: Array<{ readonly name: string; readonly schema: OpenApiSchema }> = [
+    const entries: Array<{
+      readonly name: string;
+      readonly schema: OpenApiSchema;
+      readonly isOutput: boolean;
+    }> = [
       {
         name: operation.inputSchemaName,
         schema: operation.inputSchema,
+        isOutput: false,
       },
     ];
 
@@ -766,22 +939,29 @@ function renderSchemaSource(
       entries.push({
         name: operation.outputSchemaName,
         schema: operation.outputSchema,
+        isOutput: true,
       });
     }
 
     return entries;
   });
 
+  const components = document.components?.schemas ?? {};
+  const openEnumComponents = outputEnumComponents(components, operations);
   const definitions = Object.fromEntries(
-    Object.entries(document.components?.schemas ?? {}).map(([name, schema]) => [
+    Object.entries(components).map(([name, schema]) => [
       name,
-      normalizeNullableJsonSchema(convertSchemaToDraft2020(schema)),
+      normalizeNullableJsonSchema(
+        convertSchemaToDraft2020(schema, { openEnums: openEnumComponents.has(name) }),
+      ),
     ]),
   );
 
   const nameMap = schemaEntries.map((entry) => entry.name);
   const schemas = schemaEntries.map((entry) =>
-    normalizeNullableJsonSchema(convertSchemaToDraft2020(entry.schema)),
+    normalizeNullableJsonSchema(
+      convertSchemaToDraft2020(entry.schema, { openEnums: entry.isOutput }),
+    ),
   );
 
   if (!Arr.isArrayNonEmpty(schemas)) {
@@ -818,15 +998,16 @@ function renderSchemaSource(
     containsBinarySchema(operation.inputSchema),
   );
 
+  const finalizeCode = (code: string): string => {
+    const withOpenStrings = replaceOpenStringCode(code);
+    return hasBinaryInputs ? replaceBinarySchemaCode(withOpenStrings) : withOpenStrings;
+  };
+
   const parts: Array<string> = [];
   if (codeDocument.references.nonRecursives.length > 0) {
     parts.push("// non-recursive definitions");
     for (const reference of codeDocument.references.nonRecursives) {
-      parts.push(
-        `export const ${reference.$ref} = ${
-          hasBinaryInputs ? replaceBinarySchemaCode(reference.code.runtime) : reference.code.runtime
-        }`,
-      );
+      parts.push(`export const ${reference.$ref} = ${finalizeCode(reference.code.runtime)}`);
     }
   }
 
@@ -835,7 +1016,7 @@ function renderSchemaSource(
     parts.push("// recursive definitions");
     for (const [name, code] of recursiveEntries) {
       parts.push(
-        `export type ${name} = ${code.Type}\nexport const ${name} = ${hasBinaryInputs ? replaceBinarySchemaCode(code.runtime) : code.runtime}`,
+        `export type ${name} = ${code.Type}\nexport const ${name} = ${finalizeCode(code.runtime)}`,
       );
     }
   }
@@ -851,9 +1032,7 @@ function renderSchemaSource(
     parts.push("// operation schemas");
     for (const [index, code] of codeDocument.codes.entries()) {
       const name = nameMap[index]!;
-      parts.push(
-        `export const ${name} = ${hasBinaryInputs ? replaceBinarySchemaCode(code.runtime) : code.runtime}`,
-      );
+      parts.push(`export const ${name} = ${finalizeCode(code.runtime)}`);
     }
   }
 
@@ -861,6 +1040,14 @@ function renderSchemaSource(
     if (operation.response.kind === "void") {
       parts.push(`export const ${operation.outputSchemaName} = Schema.Void`);
     }
+  }
+
+  // `string & {}` keeps the literal members of a widened enum visible to autocomplete.
+  if (parts.some((part) => /\bOpenString\b/u.test(part))) {
+    parts.unshift(
+      "// open string helper",
+      'export const OpenString = Schema.declare((value: unknown): value is string & {} => typeof value === "string")',
+    );
   }
 
   return parts.join("\n") + "\n";
@@ -960,19 +1147,21 @@ export function renderEffectClient(operations: ReadonlyArray<OperationDefinition
           const isEmptyInput =
             operation.inputSchema.type === "object" &&
             Object.keys(operation.inputSchema.properties ?? {}).length === 0;
-          const signature = isEmptyInput
-            ? ""
+          const inputParameter = isEmptyInput
+            ? "_input: Record<string, never> = {}"
             : `input: typeof operationDefinitions.${operation.operationName}.inputSchema.Type`;
           const inputExpression = isEmptyInput ? "{}" : "input";
 
           return `    ${methodName}: (
-      ${signature}
+      ${inputParameter},
+      options?: SupabaseApiRequestOptions,
     ): Effect.Effect<typeof operationDefinitions.${operation.operationName}.outputSchema.Type, SupabaseApiError, SupabaseApiClient> =>
       Effect.gen(function* () {
         const client = yield* SupabaseApiClient;
         return yield* client.execute<${JSON.stringify(operation.operationName)}>(
           operationDefinitions.${operation.operationName},
           ${inputExpression},
+          options,
         );
       }),`;
         })
@@ -984,29 +1173,9 @@ ${methods}
     })
     .join("\n");
 
-  const executorCases = operations
-    .map((operation) => {
-      const { version, methodName } = operation;
-      const isEmptyInput =
-        operation.inputSchema.type === "object" &&
-        Object.keys(operation.inputSchema.properties ?? {}).length === 0;
-      const decodedExpression = `Schema.decodeUnknownEffect(operationDefinitions.${operation.operationName}.inputSchema)(input)`;
-      const decodedParam = isEmptyInput ? "_decoded" : "decoded";
-      const callExpression = isEmptyInput
-        ? `api.${version}.${methodName}()`
-        : `api.${version}.${methodName}(decoded)`;
+  return `import { Effect } from "effect";
 
-      return `    case ${JSON.stringify(operation.operationName)}:
-      return ${decodedExpression}.pipe(
-        Effect.flatMap((${decodedParam}) => ${callExpression}),
-      );`;
-    })
-    .join("\n");
-
-  return `import { Effect, Schema } from "effect";
-
-import type { EffectClient } from "../internal/effect-client.ts";
-import type { SupabaseApiError } from "../internal/client.ts";
+import type { SupabaseApiError, SupabaseApiRequestOptions } from "../internal/client.ts";
 import { SupabaseApiClient } from "../internal/client.ts";
 import { operationDefinitions } from "./contracts.ts";
 
@@ -1015,34 +1184,82 @@ ${versionedOperationsSource}
 } as const;
 
 export type GeneratedEffectOperations = typeof versionedEffectOperations;
-type GeneratedApiClient = EffectClient<GeneratedEffectOperations>;
-
-export function executeApiClientOperation(
-  operationId: keyof typeof operationDefinitions,
-  api: GeneratedApiClient,
-  input: unknown,
-) {
-  switch (operationId) {
-${executorCases}
-  }
-}
 `;
 }
 
-function main() {
-  const document = loadSpec();
-  const operations = extractOperations(document);
-
-  rmSync(generatedDir, { recursive: true, force: true });
-  mkdirSync(generatedDir, { recursive: true });
-
-  writeFileSync(path.join(generatedDir, "contracts.ts"), renderContracts(document, operations));
-  writeFileSync(path.join(generatedDir, "effect-client.ts"), renderEffectClient(operations));
-  writeFileSync(path.join(generatedDir, "openapi.json"), `${JSON.stringify(document, null, 2)}\n`);
-
-  console.log(`Generated ${operations.length} API operations in ${generatedDir}`);
+export function renderPermissions(document: OpenApiDocument): string {
+  const rows: Array<string> = [];
+  for (const pathItem of Object.values(document.paths)) {
+    for (const method of httpMethodOrder) {
+      const operation = pathItem[method];
+      if (!operation?.operationId) continue;
+      const fga = operation["x-fga-permissions"] ?? [];
+      const oauthScope = operation["x-oauth-scope"];
+      rows.push(
+        `  ${JSON.stringify(operation.operationId)}: { fga: ${JSON.stringify(fga)}${
+          oauthScope === undefined ? "" : `, oauthScope: ${JSON.stringify(oauthScope)}`
+        } },`,
+      );
+    }
+  }
+  return `/** Token permissions an operation declares in the API spec. */
+export interface OperationPermissions {
+  /** Alternative permission sets: a token needs every permission in at least one set. */
+  readonly fga: ReadonlyArray<ReadonlyArray<string>>;
+  /** OAuth scope for the operation; absent when OAuth tokens cannot call it yet. */
+  readonly oauthScope?: string;
 }
 
+/** Permissions keyed by OpenAPI operation id. */
+export const operationPermissions: Readonly<Record<string, OperationPermissions>> = {
+${rows.join("\n")}
+};
+`;
+}
+
+const encodePrettyJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }));
+
+export const renderOpenApiJson = (document: OpenApiDocument) =>
+  Effect.map(encodePrettyJson(document), (json) => `${json}\n`);
+
+const main = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const document = yield* loadSpec;
+  const operations = yield* generationStep(() => extractOperations(document));
+
+  yield* fs.remove(generatedDir, { recursive: true, force: true });
+  yield* fs.makeDirectory(generatedDir, { recursive: true });
+
+  yield* fs.writeFileString(
+    path.join(generatedDir, "contracts.ts"),
+    yield* generationStep(() => renderContracts(document, operations)),
+  );
+  yield* fs.writeFileString(
+    path.join(generatedDir, "effect-client.ts"),
+    yield* generationStep(() => renderEffectClient(operations)),
+  );
+  yield* fs.writeFileString(
+    path.join(generatedDir, "permissions.ts"),
+    yield* generationStep(() => renderPermissions(document)),
+  );
+  yield* fs.writeFileString(
+    path.join(generatedDir, "openapi.json"),
+    yield* renderOpenApiJson(document),
+  );
+
+  yield* Console.log(`Generated ${operations.length} API operations in ${generatedDir}`);
+});
+
 if (import.meta.main) {
-  main();
+  await Effect.runPromise(
+    main.pipe(
+      /* Crash with the step's original error so the uncaught report names it, not the wrapper. */
+      Effect.catchTags({
+        GenerateError: (error) => Effect.die(error.cause),
+        PlatformError: (error) => Effect.die(error.cause ?? error),
+      }),
+      Effect.provide(NodeServices.layer),
+    ),
+  );
 }

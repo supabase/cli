@@ -1,7 +1,8 @@
-import { CliError, Command } from "effect/unstable/cli";
+import { CliError, Command } from "effect/cli";
 import { describe, expect, it } from "vitest";
 import { branchesCommand } from "../../commands/branches/branches.command.ts";
 import { networkRestrictionsCommand } from "../../commands/network-restrictions/network-restrictions.command.ts";
+import { rootCommandForFeatures } from "../../cli/root.ts";
 import { formatCliErrorsForDisplay } from "./subcommand-flag-suggestions.ts";
 
 const testRoot = Command.make("supabase").pipe(
@@ -98,6 +99,54 @@ describe("subcommand flag placement suggestions", () => {
     expect(errors.errors[0]?.message).not.toContain("branches disable");
   });
 
+  it("shows --remote as taking its value only through =", () => {
+    const errors = formatCliErrorsForDisplay(
+      [
+        new CliError.UnrecognizedOption({
+          option: "--remote",
+          command: ["supabase", "network-restrictions"],
+          suggestions: [],
+        }),
+      ],
+      {
+        rootCommand: testRoot,
+        args: ["network-restrictions", "--remote", "get"],
+      },
+    );
+
+    expect(errors.changed).toBe(true);
+    expect(errors.errors[0]?.message).toContain(
+      "Hint: --remote is available on `supabase network-restrictions get` and `supabase network-restrictions update`.",
+    );
+    expect(errors.errors[0]?.message).toContain(
+      "supabase network-restrictions get --remote[=<value>]",
+    );
+  });
+
+  it("keeps the subcommand after a misplaced --remote instead of reading it as the flag's value", () => {
+    const errors = formatCliErrorsForDisplay(
+      [
+        new CliError.UnrecognizedOption({
+          option: "--remote",
+          command: ["supabase", "network-restrictions"],
+          suggestions: [],
+        }),
+        new CliError.UnknownSubcommand({
+          subcommand: "get",
+          parent: ["supabase", "network-restrictions"],
+          suggestions: [],
+        }),
+      ],
+      {
+        rootCommand: testRoot,
+        args: ["network-restrictions", "--remote", "get"],
+      },
+    );
+
+    expect(errors.errors).toHaveLength(2);
+    expect(errors.errors[1]?.message).toContain("Unknown subcommand");
+  });
+
   it("normalizes assigned flags in placement examples", () => {
     const errors = formatCliErrorsForDisplay(
       [
@@ -159,7 +208,7 @@ describe("subcommand flag placement suggestions", () => {
   });
 
   it("also collapses the doubled prefix for a non-choice primitive whose failure text starts with 'Expected' (e.g. an invalid integer flag value)", () => {
-    // Real failure text from effect's schema-backed `Primitive.integer` (also affects `float`,
+    // Real failure text from effect's schema-backed `Primitive.Int` (also affects `float`,
     // `boolean`, and `date`).
     const errors = formatCliErrorsForDisplay([
       new CliError.InvalidValue({
@@ -178,7 +227,7 @@ describe("subcommand flag placement suggestions", () => {
   });
 
   it("leaves invalid-value errors whose expected text does not start with 'Expected' unchanged", () => {
-    // Real failure text from effect's `Primitive.keyValuePair`, which never starts with
+    // Real failure text from effect's `Primitive.KeyValuePair`, which never starts with
     // "Expected", so it needs no rewriting.
     const errors = formatCliErrorsForDisplay([
       new CliError.InvalidValue({
@@ -196,20 +245,20 @@ describe("subcommand flag placement suggestions", () => {
     );
   });
 
-  it("passes a complete pflag-format diagnostic through verbatim (Go stderr parity, CLI-1983)", () => {
-    const pflagMessage =
+  it("passes a complete `invalid argument` diagnostic through verbatim", () => {
+    const invalidValueMessage =
       'invalid argument "\\"1.2.3.4" for "--db-unban-ip" flag: parse error on line 1, column 9: extraneous or missing " in quoted-field';
     const errors = formatCliErrorsForDisplay([
       new CliError.InvalidValue({
         option: "db-unban-ip",
         value: '"1.2.3.4',
-        expected: pflagMessage,
+        expected: invalidValueMessage,
         kind: "flag",
       }),
     ]);
 
     expect(errors.changed).toBe(true);
-    expect(errors.errors[0]?.message).toBe(pflagMessage);
+    expect(errors.errors[0]?.message).toBe(invalidValueMessage);
   });
 
   it("does not corrupt a value that itself contains the literal 'Expected: Expected' text", () => {
@@ -225,6 +274,51 @@ describe("subcommand flag placement suggestions", () => {
     expect(errors.changed).toBe(true);
     expect(errors.errors[0]?.message).toBe(
       'Invalid value for flag --env: "Expected: Expected nano". Expected "dev" | "staging" | "prod", got "Expected: Expected nano"',
+    );
+  });
+});
+
+describe("--remote where it does not apply", () => {
+  const root = rootCommandForFeatures();
+  const messageFor = (path: ReadonlyArray<string>, option = "--remote") =>
+    formatCliErrorsForDisplay(
+      [
+        new CliError.UnrecognizedOption({
+          option,
+          command: ["supabase", ...path],
+          suggestions: [],
+        }),
+      ],
+      { rootCommand: root, args: [...path, option] },
+    ).errors[0]?.message;
+
+  it("points link at its ref-or-branch argument", () => {
+    expect(messageFor(["link"])).toBe(
+      "supabase link takes the project ref or branch as its argument: supabase link <ref-or-branch>",
+    );
+  });
+
+  it.each([["start"], ["stop"], ["db", "start"], ["init"]])("says %s is local only", (...path) => {
+    expect(messageFor(path)).toBe(
+      `supabase ${path.join(" ")} is local only; --remote doesn't apply.`,
+    );
+  });
+
+  it("rewrites --remote=<value> the same way", () => {
+    expect(messageFor(["start"], "--remote=staging")).toBe(
+      "supabase start is local only; --remote doesn't apply.",
+    );
+  });
+
+  it("leaves --remote on an account command with the library's message", () => {
+    expect(messageFor(["projects", "list"])).toBe(
+      "Unrecognized flag: --remote in command supabase projects list",
+    );
+  });
+
+  it("leaves other unrecognized flags on link and local-only commands unchanged", () => {
+    expect(messageFor(["start"], "--bogus")).toBe(
+      "Unrecognized flag: --bogus in command supabase start",
     );
   });
 });

@@ -4,7 +4,7 @@ import { processEnvLayer } from "../../../tests/helpers/mocks.ts";
 import { resolvePosthogConfig } from "./posthog-config.ts";
 
 describe("resolvePosthogConfig", () => {
-  it.live("uses no key when nothing is injected or overridden", () =>
+  it.effect("uses no key when nothing is injected or overridden", () =>
     Effect.gen(function* () {
       const config = yield* resolvePosthogConfig(
         ConfigProvider.fromEnvRecord({}, { preserveEmptyStrings: true }),
@@ -15,7 +15,7 @@ describe("resolvePosthogConfig", () => {
     }).pipe(Effect.provide(processEnvLayer())),
   );
 
-  it.live("uses the build-injected key and host by default", () =>
+  it.effect("uses the build-injected key and host by default", () =>
     Effect.gen(function* () {
       const config = yield* resolvePosthogConfig(
         ConfigProvider.fromEnvRecord({}, { preserveEmptyStrings: true }),
@@ -33,7 +33,7 @@ describe("resolvePosthogConfig", () => {
     ),
   );
 
-  it.live("prefers runtime overrides over build-injected values", () =>
+  it.effect("prefers runtime overrides over build-injected values", () =>
     Effect.gen(function* () {
       const config = yield* resolvePosthogConfig(
         ConfigProvider.fromEnvRecord(

@@ -19,7 +19,7 @@ const formerDeclarativeDefaultWarning = (formerDirRel: string, defaultDirRel: st
 /**
  * Warns when a project still has a declarative tree at the former default `supabase/database`
  * while relying on the implicit default, which now resolves to `supabase/schemas` — otherwise an
- * upgraded project silently stops reading its existing tree. See docs/go-cli-divergences.md.
+ * upgraded project silently stops reading its existing tree.
  *
  * Fires only when `declarative_schema_path` is unset, the new default directory has no entries,
  * and the former default contains `.sql` files or an export manifest; probe failures read as
@@ -35,13 +35,13 @@ export const warnFormerDeclarativeDefault = Effect.fnUntraced(function* (
   const defaultDirRel = resolveDeclarativeDir(path, pgDelta);
   const defaultEntries = yield* fs
     .readDirectory(path.resolve(workdir, defaultDirRel))
-    .pipe(Effect.orElseSucceed(() => [] as string[]));
+    .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
   if (defaultEntries.length > 0) return;
 
   const formerDirRel = path.join(...FORMER_DEFAULT_SEGMENTS);
   const formerDir = path.resolve(workdir, formerDirRel);
   const formerSqlFiles = yield* walkSqlFiles(fs, formerDir, "").pipe(
-    Effect.orElseSucceed(() => [] as string[]),
+    Effect.orElseSucceed((): ReadonlyArray<string> => []),
   );
   const formerHasManifest = yield* fs
     .exists(path.join(formerDir, ".pgdelta-export.json"))

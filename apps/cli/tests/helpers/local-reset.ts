@@ -1,7 +1,7 @@
 import { Effect, Layer, PlatformError, Sink, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { ChildProcessSpawner } from "effect/process";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 /**
  * A minimal `docker`/`podman` CLI spawner mock + default happy-path route for
@@ -32,14 +32,12 @@ export function mockContainerCliSpawner(route: (args: ReadonlyArray<string>) => 
         spawned.push({ args });
 
         if (command._tag !== "StandardCommand") {
-          return yield* Effect.fail(
-            PlatformError.systemError({
-              _tag: "NotFound",
-              module: "ChildProcess",
-              method: "spawn",
-              description: "spawn failed",
-            }),
-          );
+          return yield* PlatformError.systemError({
+            _tag: "NotFound",
+            module: "ChildProcess",
+            method: "spawn",
+            description: "spawn failed",
+          });
         }
 
         const result = route(args);

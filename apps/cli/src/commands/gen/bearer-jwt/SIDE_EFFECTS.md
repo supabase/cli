@@ -33,7 +33,7 @@
 | ---- | -------------------------------------------------------------------------------------------- |
 | `0`  | success — the signed JWT is printed to stdout                                                |
 | `1`  | missing required `--role` flag (`required flag(s) "role" not set`, no usage block)           |
-| `1`  | malformed `--exp` (not valid RFC3339) or `--valid-for` (not a valid Go duration)             |
+| `1`  | malformed `--exp` (not valid RFC3339) or `--valid-for` (not a valid duration)                |
 | `1`  | malformed `--payload` (`failed to parse payload: ...`)                                       |
 | `1`  | `supabase/config.toml` itself is malformed                                                   |
 | `1`  | `[auth].signing_keys_path` is configured but the file is missing/unreadable                  |
@@ -74,7 +74,7 @@ Same as `text` above.
 - `--exp` (RFC3339, e.g. `2030-01-01T00:00:00Z`) sets an explicit expiry; `iat` is then
   computed as `exp - --valid-for`. Without `--exp`, `iat` is "now" and `exp` is `iat +
 --valid-for`.
-- `--valid-for` (Go duration syntax, e.g. `30m`, `1h`) defaults to 30 minutes.
+- `--valid-for` (duration syntax, e.g. `30m`, `1h`, `1h30m`) defaults to 30 minutes.
 - `--payload` (default `"{}"`) is arbitrary JSON merged ON TOP of the computed claims —
   any key it sets (including `role`, `exp`, `iat`) overrides the computed value.
 - The final claims object's JSON keys are serialized in **alphabetical order**, not
@@ -93,9 +93,8 @@ kid of your signing key (or leave blank to use the first one): ` on stderr, echo
 <kid>`.
   - `[auth].signing_keys_path` **configured**, **real TTY**: presents an interactive
     picker (`Select a signing key:`) built from each key's `kid`/`alg`/`key_ops`, then
-    prints `Selected key ID: <kid>` to stderr. Does not byte-match the old interactive
-    picker UI (an accepted divergence — see `project-ref.layer.ts` for the
-    established precedent of only matching the observable "Selected ..." line).
+    prints `Selected key ID: <kid>` to stderr. Only the observable "Selected ..." line is stable
+    (see `project-ref.layer.ts` for the precedent).
   - **`[auth].enabled = false` quirk:** the `signing_keys_path` file is only read
     when `auth.enabled` is `true` — but which prompt is shown depends purely on
     whether the path STRING is configured, independent of `auth.enabled`. So with

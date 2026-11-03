@@ -25,7 +25,7 @@ User-authored configuration and migrations live in the repository:
     functions/
 ```
 
-The CLI discovers the active project from the nearest ancestor containing `supabase/config.toml`
+The CLI discovers the active project from the nearest ancestor containing `supabase/config.toml` or `supabase/config.json`
 (or the legacy config filename where supported), then passes that canonical project root to the
 managed stack identity. A stack ID is derived from the canonical project root, the current Git
 branch context (or `ordinary-workspace` outside Git), and the stack name. This identity is local
@@ -45,37 +45,36 @@ Gitignored checkout metadata lives beside the project:
 checkout-local service-version overrides. Neither file records whether a local stack is running.
 Stack identity does not write repository or Git markers.
 
-### Global managed runtime
+### Global local stack runtime
 
 Managed stack documents and runtime artifacts are shared through the global CLI home:
 
 ```text
 <SUPABASE_HOME>/
   access-token
+  cli-latest
   telemetry.json
-  traces/
   bin/
-  managed/
-    stacks/
-      <stack-id>/
-        state.json
-        data/
-        logs/
-        runtime/
-        control.json
+  stacks/
+    <stack-id>/
+      state.json
+      data/
+        <instance-id>/
+      uploads/
+  tmp/
+  artifacts/
 ```
 
-`state.json` is the single durable managed record. It contains the canonical project root, branch
+`state.json` is the single durable stack record. It contains the canonical project root, branch
 context, and stack name that make up stack identity, together with sticky port intents and
-assignments, the desired lifecycle, the runtime selection, and the materialized stack definition
-(enabled capabilities with their pinned versions, listeners, and security settings). Runtime-only
-service ports are allocated for the
-supervisor run and are not persisted as sticky intents. `control.json` contains runtime owner
-metadata for the deterministic loopback control endpoint; the ownership protocol is the liveness
-authority, and a stale document is reclaimed by a subsequent managed lifecycle operation.
+assignments, the runtime selection, the service definitions, and the composition needed to resume
+the stack. Runtime-only observations and active owner state are kept in memory. Service data lives
+under the stack's `data/<instance-id>/` directories, while downloaded native artifacts are shared
+under `artifacts/`. Storage objects live in the stack's `uploads/` directory, which `stack destroy` removes, and scratch output of
+database and Functions commands (pgdelta debug bundles, Functions bundling) lives in `tmp/`.
+Stack mode reads and writes nothing under `supabase/.temp`.
 
-There is no project-local `stacks/<name>` directory, `state.json`, daemon socket file, or second
-StateManager metadata format.
+There is no project-local `stacks/<name>` directory or second state format.
 
 ## Service-version inputs
 
@@ -94,9 +93,16 @@ no separate command that rewrites it, and no second project-level pinned-version
 
 Raw `supabase/config.toml` values and their origins are loaded before defaults are applied. Explicit
 sticky values are persisted as `exact` intents in each managed document. Omitted values remain
-`automatic`; sibling worktrees have independent stack identities and allocations, while live exact
-port conflicts are rejected by the manager. Runtime-only service ports are selected by the managed
-supervisor and are not written to the document.
+`automatic`; sibling worktrees and branches have independent stack identities and allocations.
+Automatic allocation avoids ports saved by any stack, so stopped stacks keep their URLs. A port
+intent is stable: it does not migrate on its own, but starting a stopped stack whose configuration
+moved an endpoint to a different exact port, or to and from automatic, re-plans that endpoint and
+claims the new one instead of failing; a line in the command's output names the endpoint and its
+old and new port. A taken exact port fails that start with the usual conflict and the saved intent
+stays as configured. An exact
+port is rejected only when a listener already answers on it or the port cannot be bound; another
+stack's saved claim alone never blocks it, and a conflict names the stack that saved the port. Runtime-only service ports are
+selected by the managed supervisor and are not written to the document.
 
 ## Command behavior
 
@@ -118,6 +124,21 @@ supervisor and are not written to the document.
 Auth, telemetry, traces, and downloaded binaries remain machine-global under `SUPABASE_HOME`.
 Legacy installer artifacts may coexist under that root, but they are not part of managed stack
 coordination.
+
+In stack mode the post-run linked-project fill writes `<SUPABASE_HOME>/project-cache/<ref>.json`
+atomically after the first successful `GET /v1/projects/{ref}`. It is only a marker that the
+project's analytics groups were identified once per ref on this machine; nothing else reads it.
+Legacy mode keeps `supabase/.temp/linked-project.json`, which `RemoteTarget.parent` also reads.
+
+## Release check cache
+
+After a successful command, the upgrade notice compares the running version with the latest
+GitHub release. The release tag is cached for ten hours in `supabase/.temp/cli-latest` when the
+project directory has a real `supabase/` directory and uses legacy project state, and in
+`<SUPABASE_HOME>/cli-latest` otherwise, including every stack-mode project. `--version` and `--help` check only the current directory, so from a project
+subdirectory they use `<SUPABASE_HOME>/cli-latest`. A failed fetch writes an empty file, which
+suppresses the notice and further fetches until it expires. The cache is skipped when the file,
+`supabase/.temp`, or `SUPABASE_HOME` is a symlink. `SUPABASE_NO_UPDATE_NOTIFIER=1` disables the check.
 
 ## Related docs
 

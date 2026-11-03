@@ -1,8 +1,7 @@
-import { Option } from "effect";
+import { Data, Option } from "effect";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
-  ErrorActionabilityFingerprintId,
   ErrorActionabilityId,
 } from "../../../shared/telemetry/error-actionability.ts";
 
@@ -18,10 +17,9 @@ import {
  * Thrown for grammar or evaluation outside the supported csvq subset; the rule evaluator
  * surfaces it as the rule's STATUS cell instead of failing the command.
  */
-export class InspectCsvqError extends Error {
-  static readonly [ErrorActionabilityFingerprintId] = "InspectCsvqError";
-  override readonly name = "InspectCsvqError";
-
+export class InspectCsvqError extends Data.TaggedError("InspectCsvqError")<{
+  readonly message: string;
+}> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.impossibleState;
   }
@@ -53,7 +51,7 @@ function parseCsvRecords(text: string): Array<Array<string>> {
     started = false;
   };
   for (let i = 0; i < text.length; i++) {
-    const ch = text[i]!;
+    const ch = text[i] ?? "";
     if (inQuotes) {
       started = true;
       if (ch === '"') {
@@ -96,10 +94,10 @@ function parseCsvRecords(text: string): Array<Array<string>> {
 export function parseReportCsv(input: Uint8Array | string): CsvTable {
   const text = typeof input === "string" ? input : new TextDecoder().decode(input);
   const records = parseCsvRecords(text);
-  if (records.length === 0) {
+  const header = records[0];
+  if (header === undefined) {
     return { columns: new Map(), rows: [] };
   }
-  const header = records[0]!;
   const columns = new Map<string, number>();
   header.forEach((name, index) => {
     columns.set(name.toLowerCase(), index);
@@ -123,7 +121,7 @@ function tokenize(sql: string): Array<Token> {
   const tokens: Array<Token> = [];
   let i = 0;
   while (i < sql.length) {
-    const ch = sql[i]!;
+    const ch = sql[i] ?? "";
     if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r") {
       i++;
       continue;
@@ -161,20 +159,21 @@ function tokenize(sql: string): Array<Token> {
     }
     if (/[0-9]/.test(ch) || (ch === "." && /[0-9]/.test(sql[i + 1] ?? ""))) {
       let raw = "";
-      while (i < sql.length && /[0-9.eE+-]/.test(sql[i]!)) {
+      while (i < sql.length && /[0-9.eE+-]/.test(sql[i] ?? "")) {
         // Stop a sign that is not part of an exponent (e.g. `1-2`).
         if ((sql[i] === "+" || sql[i] === "-") && !/[eE]/.test(sql[i - 1] ?? "")) break;
         raw += sql[i];
         i++;
       }
       const n = Number(raw);
-      if (!Number.isFinite(n)) throw new InspectCsvqError(`invalid number literal: ${raw}`);
+      if (!Number.isFinite(n))
+        throw new InspectCsvqError({ message: `invalid number literal: ${raw}` });
       tokens.push({ t: "num", v: n });
       continue;
     }
     if (IDENT_START.test(ch)) {
       let value = "";
-      while (i < sql.length && IDENT_PART.test(sql[i]!)) {
+      while (i < sql.length && IDENT_PART.test(sql[i] ?? "")) {
         value += sql[i];
         i++;
       }
@@ -211,7 +210,7 @@ function tokenize(sql: string): Array<Token> {
       i++;
       continue;
     }
-    throw new InspectCsvqError(`unexpected character: ${ch}`);
+    throw new InspectCsvqError({ message: `unexpected character: ${ch}` });
   }
   tokens.push({ t: "eof" });
   return tokens;
@@ -237,31 +236,54 @@ type CondNode =
   | { readonly k: "cmp"; readonly op: string; readonly l: ValNode; readonly r: ValNode }
   | { readonly k: "isnull"; readonly e: ValNode; readonly negated: boolean };
 
-interface AggNode {
-  readonly fn: "LISTAGG" | "COUNT" | "SUM" | "MIN" | "MAX" | "AVG";
-  readonly col?: string; // undefined for COUNT(*)
-  readonly star?: boolean;
-  readonly sep?: string; // LISTAGG separator
-}
+type AggFn = "LISTAGG" | "COUNT" | "SUM" | "MIN" | "MAX" | "AVG";
 
-interface SelectStmt {
-  readonly agg?: AggNode;
-  readonly expr?: ValNode; // plain (non-aggregate) scalar expression
+type AggNode =
+  | { readonly fn: "COUNT"; readonly star: true }
+  | {
+      readonly fn: AggFn;
+      readonly star?: undefined;
+      readonly col: string;
+      readonly sep?: string; // LISTAGG separator
+    };
+
+type SelectExpr =
+  | { readonly agg: AggNode; readonly expr?: undefined }
+  | { readonly agg?: undefined; readonly expr: ValNode }; // plain (non-aggregate) scalar expression
+
+type SelectStmt = SelectExpr & {
   readonly table: string;
   readonly where?: CondNode;
-}
+};
 
-const AGG_FNS = new Set(["LISTAGG", "COUNT", "SUM", "MIN", "MAX", "AVG"]);
+const EOF_TOKEN: Token = { t: "eof" };
+
+const AGG_FNS: ReadonlySet<string> = new Set<AggFn>([
+  "LISTAGG",
+  "COUNT",
+  "SUM",
+  "MIN",
+  "MAX",
+  "AVG",
+]);
+
+function isAggFn(name: string): name is AggFn {
+  return AGG_FNS.has(name);
+}
 
 class Parser {
   private pos = 0;
   constructor(private readonly tokens: ReadonlyArray<Token>) {}
 
   private peek(): Token {
-    return this.tokens[this.pos]!;
+    return this.tokens[this.pos] ?? EOF_TOKEN;
   }
   private next(): Token {
-    return this.tokens[this.pos++]!;
+    return this.tokens[this.pos++] ?? EOF_TOKEN;
+  }
+  private peekOp(a: string, b?: string): string | undefined {
+    const tok = this.peek();
+    return tok.t === "op" && (tok.v === a || tok.v === b) ? tok.v : undefined;
   }
   private isKeyword(word: string): boolean {
     const tok = this.peek();
@@ -276,13 +298,13 @@ class Parser {
   }
   private expectKeyword(word: string): void {
     if (!this.eatKeyword(word)) {
-      throw new InspectCsvqError(`expected ${word}`);
+      throw new InspectCsvqError({ message: `expected ${word}` });
     }
   }
   private expectPunct(sym: string): void {
     const tok = this.next();
     if (tok.t !== "punct" || tok.v !== sym) {
-      throw new InspectCsvqError(`expected '${sym}'`);
+      throw new InspectCsvqError({ message: `expected '${sym}'` });
     }
   }
   private isPunct(sym: string): boolean {
@@ -292,15 +314,15 @@ class Parser {
 
   parse(): SelectStmt {
     this.expectKeyword("SELECT");
-    const { agg, expr } = this.parseSelectExpr();
+    const select = this.parseSelectExpr();
     if (this.eatKeyword("AS")) {
       const tok = this.next();
-      if (tok.t !== "ident") throw new InspectCsvqError("expected alias after AS");
+      if (tok.t !== "ident") throw new InspectCsvqError({ message: "expected alias after AS" });
     }
     this.expectKeyword("FROM");
     const tableTok = this.next();
     if (tableTok.t !== "btick") {
-      throw new InspectCsvqError("expected a backtick-quoted CSV table name");
+      throw new InspectCsvqError({ message: "expected a backtick-quoted CSV table name" });
     }
     // A bare ident here is a table alias unless it's the WHERE keyword.
     if (this.peek().t === "ident" && !this.isKeyword("WHERE")) {
@@ -312,29 +334,27 @@ class Parser {
     }
     if (this.isPunct(";")) this.pos++;
     if (this.peek().t !== "eof") {
-      throw new InspectCsvqError("unexpected trailing tokens");
+      throw new InspectCsvqError({ message: "unexpected trailing tokens" });
     }
-    return { agg, expr, table: tableTok.v, where };
+    return { ...select, table: tableTok.v, where };
   }
 
-  private parseSelectExpr(): { agg?: AggNode; expr?: ValNode } {
+  private parseSelectExpr(): SelectExpr {
     const tok = this.peek();
-    if (
-      tok.t === "ident" &&
-      AGG_FNS.has(tok.v.toUpperCase()) &&
-      this.tokens[this.pos + 1]?.t === "punct" &&
-      (this.tokens[this.pos + 1] as { v: string }).v === "("
-    ) {
-      return { agg: this.parseAgg() };
+    const after = this.tokens[this.pos + 1];
+    if (tok.t === "ident" && after?.t === "punct" && after.v === "(") {
+      const fn = tok.v.toUpperCase();
+      if (isAggFn(fn)) {
+        return { agg: this.parseAgg(fn) };
+      }
     }
     return { expr: this.parseValueExpr() };
   }
 
-  private parseAgg(): AggNode {
-    const fnTok = this.next();
-    const fn = (fnTok as { v: string }).v.toUpperCase() as AggNode["fn"];
+  private parseAgg(fn: AggFn): AggNode {
+    this.pos++;
     this.expectPunct("(");
-    if (fn === "COUNT" && this.peek().t === "op" && (this.peek() as { v: string }).v === "*") {
+    if (fn === "COUNT" && this.peekOp("*") !== undefined) {
       this.pos++;
       this.expectPunct(")");
       return { fn, star: true };
@@ -343,7 +363,8 @@ class Parser {
     if (fn === "LISTAGG") {
       this.expectPunct(",");
       const sepTok = this.next();
-      if (sepTok.t !== "str") throw new InspectCsvqError("LISTAGG separator must be a string");
+      if (sepTok.t !== "str")
+        throw new InspectCsvqError({ message: "LISTAGG separator must be a string" });
       this.expectPunct(")");
       return { fn, col, sep: sepTok.v };
     }
@@ -353,11 +374,11 @@ class Parser {
 
   private parseColRef(): string {
     const tok = this.next();
-    if (tok.t !== "ident") throw new InspectCsvqError("expected a column reference");
+    if (tok.t !== "ident") throw new InspectCsvqError({ message: "expected a column reference" });
     if (this.isPunct(".")) {
       this.pos++;
       const col = this.next();
-      if (col.t !== "ident") throw new InspectCsvqError("expected column after '.'");
+      if (col.t !== "ident") throw new InspectCsvqError({ message: "expected column after '.'" });
       return col.v; // alias prefix ignored (single table)
     }
     return tok.v;
@@ -405,7 +426,7 @@ class Parser {
       const right = this.parseValueExpr();
       return { k: "cmp", op: opTok.v, l: left, r: right };
     }
-    throw new InspectCsvqError("expected a comparison operator");
+    throw new InspectCsvqError({ message: "expected a comparison operator" });
   }
 
   private parseValueExpr(): ValNode {
@@ -413,30 +434,24 @@ class Parser {
   }
   private parseConcat(): ValNode {
     let left = this.parseArith();
-    while (this.peek().t === "op" && (this.peek() as { v: string }).v === "||") {
-      const op = (this.next() as { v: string }).v;
+    for (let op = this.peekOp("||"); op !== undefined; op = this.peekOp("||")) {
+      this.pos++;
       left = { k: "binop", op, l: left, r: this.parseArith() };
     }
     return left;
   }
   private parseArith(): ValNode {
     let left = this.parseTerm();
-    while (
-      this.peek().t === "op" &&
-      ((this.peek() as { v: string }).v === "+" || (this.peek() as { v: string }).v === "-")
-    ) {
-      const op = (this.next() as { v: string }).v;
+    for (let op = this.peekOp("+", "-"); op !== undefined; op = this.peekOp("+", "-")) {
+      this.pos++;
       left = { k: "binop", op, l: left, r: this.parseTerm() };
     }
     return left;
   }
   private parseTerm(): ValNode {
     let left = this.parseFactor();
-    while (
-      this.peek().t === "op" &&
-      ((this.peek() as { v: string }).v === "*" || (this.peek() as { v: string }).v === "/")
-    ) {
-      const op = (this.next() as { v: string }).v;
+    for (let op = this.peekOp("*", "/"); op !== undefined; op = this.peekOp("*", "/")) {
+      this.pos++;
       left = { k: "binop", op, l: left, r: this.parseFactor() };
     }
     return left;
@@ -472,11 +487,12 @@ class Parser {
           const e = this.parseValueExpr();
           this.expectPunct(",");
           const search = this.next();
-          if (search.t !== "str") throw new InspectCsvqError("REPLACE search must be a string");
+          if (search.t !== "str")
+            throw new InspectCsvqError({ message: "REPLACE search must be a string" });
           this.expectPunct(",");
           const replacement = this.next();
           if (replacement.t !== "str") {
-            throw new InspectCsvqError("REPLACE replacement must be a string");
+            throw new InspectCsvqError({ message: "REPLACE replacement must be a string" });
           }
           this.expectPunct(")");
           return { k: "replace", e, search: search.v, replacement: replacement.v };
@@ -484,7 +500,7 @@ class Parser {
       }
       return { k: "col", name: this.parseColRef() };
     }
-    throw new InspectCsvqError("expected a value");
+    throw new InspectCsvqError({ message: "expected a value" });
   }
 }
 
@@ -521,7 +537,7 @@ function evalVal(node: ValNode, table: CsvTable, row: ReadonlyArray<string>): Ev
     case "col": {
       const index = table.columns.get(node.name.toLowerCase());
       if (index === undefined) {
-        throw new InspectCsvqError(`unknown column: ${node.name}`);
+        throw new InspectCsvqError({ message: `unknown column: ${node.name}` });
       }
       return { kind: "str", s: row[index] ?? "" };
     }
@@ -546,7 +562,7 @@ function evalVal(node: ValNode, table: CsvTable, row: ReadonlyArray<string>): Ev
         case "/":
           return r === 0 ? NULL_VALUE : { kind: "num", n: l / r };
         default:
-          throw new InspectCsvqError(`unsupported operator: ${node.op}`);
+          throw new InspectCsvqError({ message: `unsupported operator: ${node.op}` });
       }
     }
     case "float": {
@@ -589,7 +605,7 @@ function compareValues(op: string, left: EvalValue, right: EvalValue): Tri {
     case ">=":
       return cmp >= 0;
     default:
-      throw new InspectCsvqError(`unsupported comparison: ${op}`);
+      throw new InspectCsvqError({ message: `unsupported comparison: ${op}` });
   }
 }
 
@@ -633,7 +649,7 @@ function matchedRows(stmt: SelectStmt, table: CsvTable): Array<ReadonlyArray<str
 
 function columnIndex(table: CsvTable, name: string): number {
   const index = table.columns.get(name.toLowerCase());
-  if (index === undefined) throw new InspectCsvqError(`unknown column: ${name}`);
+  if (index === undefined) throw new InspectCsvqError({ message: `unknown column: ${name}` });
   return index;
 }
 
@@ -642,12 +658,12 @@ function evalAggregate(
   table: CsvTable,
   rows: Array<ReadonlyArray<string>>,
 ): Option.Option<string> {
-  if (agg.fn === "COUNT" && agg.star === true) {
+  if (agg.star === true) {
     return Option.some(String(rows.length));
   }
   // Resolves the column before checking any rows, so an unknown column always errors —
   // matching csvq's schema validation, even when the matched set would otherwise be empty.
-  const index = columnIndex(table, agg.col!);
+  const index = columnIndex(table, agg.col);
   if (agg.fn === "COUNT") {
     // CSV cells are never NULL, so COUNT(col) == COUNT(*) == the matched-row count.
     return Option.some(String(rows.length));
@@ -697,7 +713,7 @@ export function evalCsvqScalar(query: string, provider: CsvTableProvider): Optio
   const stmt = new Parser(tokenize(query)).parse();
   const table = provider(stmt.table);
   if (table === undefined) {
-    throw new InspectCsvqError(`table not found: ${stmt.table}`);
+    throw new InspectCsvqError({ message: `table not found: ${stmt.table}` });
   }
   const rows = matchedRows(stmt, table);
   if (stmt.agg !== undefined) {
@@ -707,7 +723,7 @@ export function evalCsvqScalar(query: string, provider: CsvTableProvider): Optio
   const first = rows[0];
   return first === undefined
     ? Option.none()
-    : Option.some(toStringValue(evalVal(stmt.expr!, table, first)));
+    : Option.some(toStringValue(evalVal(stmt.expr, table, first)));
 }
 
 const DUPLICATE_INDEXES_QUERY =
@@ -720,7 +736,7 @@ function evalDuplicateIndexesQuery(
   if (query.trim().replace(/;$/, "") !== DUPLICATE_INDEXES_QUERY) return undefined;
   const table = provider("index_stats.csv");
   if (table === undefined) {
-    throw new InspectCsvqError("table not found: index_stats.csv");
+    throw new InspectCsvqError({ message: "table not found: index_stats.csv" });
   }
   const nameIndex = columnIndex(table, "name");
   const tableIndex = columnIndex(table, "table");

@@ -1,4 +1,4 @@
-import { Effect, type FileSystem, type Path } from "effect";
+import { Effect, type FileSystem, type Path, Schema } from "effect";
 import { classifySqlFiles } from "@supabase/pg-delta/frontends";
 
 import { Output } from "../../../shared/output/output.service.ts";
@@ -12,6 +12,8 @@ import type {
 } from "./pgdelta-engine.service.ts";
 
 const EXPORT_MANIFEST_FILE = ".pgdelta-export.json";
+
+const PrettyJsonString = Schema.fromJsonString(Schema.Unknown, { space: 2 });
 
 function declarativeWriteError(message: string): DeclarativeWriteError {
   return new DeclarativeWriteError({ message });
@@ -30,12 +32,14 @@ export interface DeclarativeWriteResult {
   readonly preservedUnmanagedFiles: ReadonlyArray<string>;
 }
 
-function safeDeclarativeExportName(path: Path.Path, name: string): string {
+function safeDeclarativeExportName(
+  path: Path.Path,
+  name: string,
+): Effect.Effect<string, DeclarativeWriteError> {
   const rel = path.normalize(name.split("\\").join("/"));
-  if (rel.startsWith("..") || path.isAbsolute(rel)) {
-    throw declarativeWriteError(`unsafe declarative export path: ${name}`);
-  }
-  return rel.split("\\").join("/");
+  return rel.startsWith("..") || path.isAbsolute(rel)
+    ? Effect.fail(declarativeWriteError(`unsafe declarative export path: ${name}`))
+    : Effect.succeed(rel.split("\\").join("/"));
 }
 
 function isCustomDeclarativePath(name: string): boolean {
@@ -80,26 +84,24 @@ const readManagedDeclarativeSqlFiles = Effect.fnUntraced(function* (
  * files were preserved (see {@link warnPreservedUnmanagedDeclarativeFiles}). Never touches
  * `[db.migrations] schema_paths`; `db pull --declarative` handles that separately.
  */
-export const writeDeclarativeSchemas = Effect.fnUntraced(function* (
+export const writeDeclarativeSchemas = Effect.fn("PgDelta.writeDeclarativeSchemas")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   declarativeDir: string,
   output: PgDeltaDeclarativeExportResult,
 ) {
   const proposed = yield* Effect.forEach(output.files, (file) =>
-    Effect.try({
-      try: () => {
-        const name = safeDeclarativeExportName(path, file.name);
-        if (isCustomDeclarativePath(name)) {
-          throw declarativeWriteError(
-            `refusing to write into reserved declarative schema path: ${file.name}`,
-          );
-        }
-        return { name, sql: file.sql };
-      },
-      catch: (error) =>
-        error instanceof DeclarativeWriteError ? error : declarativeWriteError(String(error)),
-    }),
+    safeDeclarativeExportName(path, file.name).pipe(
+      Effect.flatMap((name) =>
+        isCustomDeclarativePath(name)
+          ? Effect.fail(
+              declarativeWriteError(
+                `refusing to write into reserved declarative schema path: ${file.name}`,
+              ),
+            )
+          : Effect.succeed({ name, sql: file.sql }),
+      ),
+    ),
   );
 
   const exists = yield* fs
@@ -145,6 +147,11 @@ export const writeDeclarativeSchemas = Effect.fnUntraced(function* (
 
   yield* fs.makeDirectory(declarativeDir, { recursive: true });
   const changed = new Set([...classification.created, ...classification.updated]);
+  yield* Effect.annotateCurrentSpan({
+    "file.count": proposed.length,
+    "file.changed_count": changed.size,
+    "file.removed_count": classification.removed.length,
+  });
   for (const file of proposed) {
     if (!changed.has(file.name)) continue;
     const targetPath = path.join(declarativeDir, file.name);
@@ -170,7 +177,12 @@ export const writeDeclarativeSchemas = Effect.fnUntraced(function* (
     ...output.manifest,
     files: proposed.map((file) => file.name).sort(),
   };
-  const serialized = `${JSON.stringify(manifest, null, 2)}\n`;
+  const manifestJson = yield* Schema.encodeEffect(PrettyJsonString)(manifest).pipe(
+    Effect.mapError((error) =>
+      declarativeWriteError(`failed to serialize export manifest: ${error.message}`),
+    ),
+  );
+  const serialized = `${manifestJson}\n`;
   const manifestPath = path.join(declarativeDir, EXPORT_MANIFEST_FILE);
   const manifestExists = yield* fs
     .exists(manifestPath)
@@ -246,7 +258,9 @@ const SCHEMA_PATHS_PATTERN = /\nschema_paths = \[[\s\S]*?\]\n/g;
  * literal byte-edit, not a TOML re-serialize, so the rest of the file's comments and
  * formatting are preserved exactly.
  */
-export const updateDeclarativeSchemaPathsConfig = Effect.fnUntraced(function* (
+export const updateDeclarativeSchemaPathsConfig = Effect.fn(
+  "PgDelta.updateDeclarativeSchemaPathsConfig",
+)(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
@@ -259,15 +273,17 @@ export const updateDeclarativeSchemaPathsConfig = Effect.fnUntraced(function* (
   const block = `\nschema_paths = [\n  "${relative}",\n]\n`;
   const configPath = path.join(workdir, "supabase", "config.toml");
   const existing = yield* fs.readFileString(configPath).pipe(
-    Effect.catchTag("PlatformError", (error) =>
-      // A missing config file is tolerated; other read errors abort.
-      error.reason._tag === "NotFound"
-        ? Effect.succeed("")
-        : Effect.fail(
-            new DeclarativeWriteError({
-              message: `failed to read config: ${error.message}`,
-            }),
-          ),
+    // A missing config file is tolerated; other read errors abort.
+    Effect.catchReason(
+      "PlatformError",
+      "NotFound",
+      () => Effect.succeed(""),
+      (_, error) =>
+        Effect.fail(
+          new DeclarativeWriteError({
+            message: `failed to read config: ${error.message}`,
+          }),
+        ),
     ),
   );
   // A replacer function, not a string, so a literal "$" in the path/value can't be

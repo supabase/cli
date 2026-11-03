@@ -25,7 +25,7 @@ export const studio = Schema.Struct({
     tags,
     links: [links.studio],
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEnabled))),
-  port: Schema.Number.annotate({
+  port: Schema.Finite.annotate({
     default: defaultPort,
     description: "Port to use for Supabase Studio.",
     tags,

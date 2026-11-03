@@ -1,21 +1,36 @@
-import type { EffectStackCredentials, StackStatus } from "@supabase/stack/effect";
-import { Effect, Redacted } from "effect";
+import { Effect } from "effect";
+import type { StackCredentials } from "@supabase/stack/effect";
+import { connectionEnv, type StackConnections } from "../stack-summary.ts";
 import { StackCommandStatusError } from "./status.errors.ts";
 
 const variableNames = [
   "API_URL",
+  "REST_URL",
+  "FUNCTIONS_URL",
   "DB_URL",
-  "ANON_KEY",
-  "SERVICE_ROLE_KEY",
+  "STUDIO_URL",
+  "MCP_URL",
+  "MAILPIT_URL",
   "PUBLISHABLE_KEY",
   "SECRET_KEY",
-  "STUDIO_URL",
-  "INBUCKET_URL",
+  "ANON_KEY",
+  "SERVICE_ROLE_KEY",
+  "STORAGE_S3_URL",
   "S3_PROTOCOL_ACCESS_KEY_ID",
   "S3_PROTOCOL_ACCESS_KEY_SECRET",
   "S3_PROTOCOL_REGION",
-  "S3_PROTOCOL_URL",
 ] as const;
+
+/** Names the stack backend used to export, since removed, mapped to their replacement if any. */
+const removedVariableNames = new Map<string, string | undefined>([
+  ["S3_PROTOCOL_URL", undefined],
+  ["INBUCKET_URL", "MAILPIT_URL"],
+]);
+
+const removedReplacement = (name: string) => {
+  const replacement = removedVariableNames.get(name);
+  return replacement === undefined ? "" : `; use ${replacement} instead`;
+};
 
 export const stackEnvOverrides = (entries: ReadonlyArray<string>) =>
   Effect.gen(function* () {
@@ -25,15 +40,20 @@ export const stackEnvOverrides = (entries: ReadonlyArray<string>) =>
       const [source, target, extra] = entry.split("=");
       if (
         source === undefined ||
-        !names.has(source) ||
         target === undefined ||
         extra !== undefined ||
         !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(target)
       )
         return yield* new StackCommandStatusError({
           reason: "flags",
-          message:
-            "--override-name must be EXPORTED_VARIABLE=VALID_ENV_NAME; for example API_URL=NEXT_PUBLIC_SUPABASE_URL.",
+          message: `--override-name entry "${entry}" must be EXPORTED_VARIABLE=VALID_ENV_NAME; for example API_URL=NEXT_PUBLIC_SUPABASE_URL.`,
+        });
+      if (!names.has(source))
+        return yield* new StackCommandStatusError({
+          reason: "flags",
+          message: removedVariableNames.has(source)
+            ? `--override-name entry "${entry}" refers to ${source}, which is not exported by the stack backend${removedReplacement(source)}.`
+            : `--override-name entry "${entry}" refers to ${source}, which is not an exported variable; valid variables are ${variableNames.join(", ")}.`,
         });
       if (sources.has(source))
         return yield* new StackCommandStatusError({
@@ -51,37 +71,20 @@ export const stackEnvOverrides = (entries: ReadonlyArray<string>) =>
     return names;
   });
 
+/** The `status --env` variable map, with `--override-name` remapping applied. */
 export const stackEnvValues = (
-  status: StackStatus,
-  credentials: EffectStackCredentials,
+  connections: StackConnections,
+  credentials:
+    | Pick<StackCredentials, "publishableKey" | "secretKey" | "anonKey" | "serviceRoleKey">
+    | undefined,
   names: ReadonlyMap<string, string>,
-): Readonly<Record<string, string>> => {
-  const values: Record<string, string> = {
-    DB_URL: Redacted.value(credentials.database.url),
-    ...(credentials.api === undefined
-      ? {}
-      : {
-          ANON_KEY: credentials.api.anonJwt,
-          SERVICE_ROLE_KEY: Redacted.value(credentials.api.serviceRoleJwt),
-          PUBLISHABLE_KEY: credentials.api.publishableKey,
-          SECRET_KEY: Redacted.value(credentials.api.secretKey),
-        }),
-    ...(status.endpoints.api === undefined ? {} : { API_URL: status.endpoints.api.url }),
-    ...(status.endpoints.studio === undefined ? {} : { STUDIO_URL: status.endpoints.studio.url }),
-    ...(status.endpoints.mailUi === undefined ? {} : { INBUCKET_URL: status.endpoints.mailUi.url }),
-    ...(credentials.storage === undefined
-      ? {}
-      : {
-          S3_PROTOCOL_ACCESS_KEY_ID: credentials.storage.accessKeyId,
-          S3_PROTOCOL_ACCESS_KEY_SECRET: Redacted.value(credentials.storage.secretAccessKey),
-          S3_PROTOCOL_REGION: credentials.storage.region,
-          S3_PROTOCOL_URL: credentials.storage.endpoint,
-        }),
-  };
-  return Object.fromEntries(
-    Object.entries(values).map(([key, value]) => [names.get(key) ?? key, value]),
+): Readonly<Record<string, string>> =>
+  Object.fromEntries(
+    Object.entries(connectionEnv(connections, credentials)).map(([key, value]) => [
+      names.get(key) ?? key,
+      value,
+    ]),
   );
-};
 
 const dotenvQuote = (value: string): string | undefined => {
   if (!value.includes("'")) return "'";

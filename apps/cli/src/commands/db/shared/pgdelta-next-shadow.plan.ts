@@ -4,7 +4,7 @@
  * ({@link runPlanShadowProvisions}), and output buffering ({@link bufferedShadowOutput}).
  */
 
-import { Deferred, Effect } from "effect";
+import { Chunk, Deferred, Effect, Ref } from "effect";
 
 import { Output } from "../../../shared/output/output.service.ts";
 import type { ShadowBaselinePeek } from "../../../command-internal/db-bootstrap/shadow-cache.ts";
@@ -86,7 +86,9 @@ export interface BufferedShadowOutput {
  * only holds anomaly-path output (cache warnings, cold-fallback baseline prints); it does not
  * cover writes that bypass `Output`, such as `SUPABASE_SHADOW_DEBUG` timing lines.
  */
-export function bufferedShadowOutput(real: typeof Output.Service): BufferedShadowOutput {
+export const bufferedShadowOutput = Effect.fnUntraced(function* (
+  real: typeof Output.Service,
+): Effect.fn.Return<BufferedShadowOutput> {
   type BufferedWrite =
     | { readonly kind: "raw"; readonly text: string; readonly stream: "stdout" | "stderr" }
     | {
@@ -94,34 +96,27 @@ export function bufferedShadowOutput(real: typeof Output.Service): BufferedShado
         readonly bytes: Uint8Array;
         readonly stream: "stdout" | "stderr";
       };
-  const buffer: Array<BufferedWrite> = [];
-  let flushed = false;
+  const state = yield* Ref.make<{
+    readonly flushed: boolean;
+    readonly buffer: Chunk.Chunk<BufferedWrite>;
+  }>({ flushed: false, buffer: Chunk.empty() });
+  const write = (pending: BufferedWrite) =>
+    pending.kind === "raw"
+      ? real.raw(pending.text, pending.stream)
+      : real.rawBytes(pending.bytes, pending.stream);
+  const bufferOrWrite = (pending: BufferedWrite) =>
+    Ref.modify(state, (current) =>
+      current.flushed
+        ? [true, current]
+        : [false, { flushed: false, buffer: Chunk.append(current.buffer, pending) }],
+    ).pipe(Effect.flatMap((live) => (live ? write(pending) : Effect.void)));
   const output = Output.of({
     ...real,
-    raw: (text, stream = "stdout") =>
-      Effect.suspend(() => {
-        if (flushed) return real.raw(text, stream);
-        buffer.push({ kind: "raw", text, stream });
-        return Effect.void;
-      }),
-    rawBytes: (bytes, stream = "stdout") =>
-      Effect.suspend(() => {
-        if (flushed) return real.rawBytes(bytes, stream);
-        buffer.push({ kind: "rawBytes", bytes, stream });
-        return Effect.void;
-      }),
+    raw: (text, stream = "stdout") => bufferOrWrite({ kind: "raw", text, stream }),
+    rawBytes: (bytes, stream = "stdout") => bufferOrWrite({ kind: "rawBytes", bytes, stream }),
   });
-  const flush = Effect.suspend(() => {
-    flushed = true;
-    const pending = buffer.splice(0);
-    return Effect.forEach(
-      pending,
-      (write) =>
-        write.kind === "raw"
-          ? real.raw(write.text, write.stream)
-          : real.rawBytes(write.bytes, write.stream),
-      { discard: true },
-    );
-  });
+  const flush = Ref.getAndSet(state, { flushed: true, buffer: Chunk.empty() }).pipe(
+    Effect.flatMap(({ buffer }) => Effect.forEach(buffer, write, { discard: true })),
+  );
   return { output, flush };
-}
+});

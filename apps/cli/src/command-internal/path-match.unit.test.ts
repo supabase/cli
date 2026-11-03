@@ -18,7 +18,7 @@ describe("pathMatch", () => {
     });
   });
 
-  describe("`*` and `?` never cross `/` (Go's non-`/` rule)", () => {
+  describe("`*` and `?` never cross `/`", () => {
     it.each([
       ["*.sql", "sub/seed.sql", false],
       ["seed?.sql", "seed/.sql", false],
@@ -40,14 +40,14 @@ describe("pathMatch", () => {
       expect(pathMatch(pattern, name).matched).toBe(expected);
     });
 
-    it("treats a leading `!` as a literal class member, NOT negation (Go parity)", () => {
+    it("treats a leading `!` as a literal class member, NOT negation", () => {
       expect(pathMatch("[!a].sql", "!.sql").matched).toBe(true);
       expect(pathMatch("[!a].sql", "a.sql").matched).toBe(true);
       expect(pathMatch("[!a].sql", "b.sql").matched).toBe(false);
     });
   });
 
-  describe("byte-offset `*` retry against multibyte characters (Go path.Match parity)", () => {
+  describe("byte-offset `*` retry against multibyte characters", () => {
     it.each([
       // U+FF01 (fullwidth `！`) is 3 UTF-8 bytes; U+1F600 (😀) is 4 UTF-8 bytes.
       ["*??.sql", "！.sql", true],
@@ -70,7 +70,7 @@ describe("pathMatch", () => {
     });
   });
 
-  describe("malformed patterns report badPattern (Go's path.ErrBadPattern)", () => {
+  describe("malformed patterns report badPattern", () => {
     it.each([
       "[", // unterminated class
       "[a", // unterminated class with member

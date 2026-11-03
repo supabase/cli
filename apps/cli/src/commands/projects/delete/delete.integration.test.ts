@@ -1,24 +1,33 @@
 import type { V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
+import { holdLock } from "@supabase/stack/effect";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
+import { TestClock } from "effect/testing";
 
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   type ApiResponse,
   type HttpMethod,
   VALID_REF,
   buildTestRuntime,
+  jsonResponse,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
-  withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
 import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { writeProjectLink } from "../../../shared/config/project-link.ts";
+import { projectStateModeLayer } from "../../../shared/config/project-state-mode.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { projectsDelete } from "./delete.handler.ts";
 
 const OTHER_REF = "qrstuvwxyzabcdefghij";
+const API = "https://api.supabase.com";
 
 const DELETED = { id: 1, ref: VALID_REF, name: "alpha" };
 
@@ -45,12 +54,11 @@ interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
   readonly stdinIsTty?: boolean;
   readonly yes?: boolean;
-  /** Piped stdin lines consumed by the non-TTY confirm read. */
-  readonly stdinInput?: string;
   readonly byMethod?: Partial<Record<HttpMethod, ApiResponse>>;
   readonly network?: "fail";
   readonly promptConfirmResponses?: ReadonlyArray<boolean>;
   readonly promptSelectResponses?: ReadonlyArray<string>;
+  readonly stack?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -79,11 +87,13 @@ function setup(opts: SetupOpts = {}) {
       api,
       cliSettings,
       tty,
-      stdin: mockStdin(opts.stdinIsTty ?? false, opts.stdinInput),
+      stdin: mockStdin(opts.stdinIsTty ?? false),
       telemetry: telemetry.layer,
       linkedProjectCache: cache.layer,
     }),
     Layer.succeed(YesFlag, opts.yes ?? false),
+    ...(opts.stack === true ? [projectStateModeLayer("stack")] : []),
+    Layer.succeed(TargetPolicy, { group: "account", consent: "no" }),
   );
   return { layer, out, api, telemetry, cache };
 }
@@ -104,7 +114,7 @@ function hasMethod(
 }
 
 describe("projects delete integration", () => {
-  it.live("deletes a project by positional ref after confirmation", () => {
+  it.effect("deletes a project by positional ref after confirmation", () => {
     const { layer, out, api } = setup({ stdinIsTty: true, promptConfirmResponses: [true] });
     return Effect.gen(function* () {
       yield* projectsDelete({ ref: Option.some(VALID_REF) });
@@ -113,28 +123,16 @@ describe("projects delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("respects --yes and skips the confirmation prompt", () => {
+  it.effect("respects --yes and skips the confirmation prompt", () => {
     const { layer, out, api } = setup({ yes: true });
     return Effect.gen(function* () {
       yield* projectsDelete({ ref: Option.some(VALID_REF) });
-      expect(out.stderrText).toContain("[y/N] y");
+      expect(out.stderrText).toContain(`Confirmed by --yes: Delete project ${VALID_REF}`);
       expect(hasMethod(api, "DELETE")).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("cancels without deleting when the user declines confirmation", () => {
-    const { layer, api } = setup({ stdinIsTty: true, promptConfirmResponses: [false] });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("ProjectsDeleteCancelledError");
-      }
-      expect(hasMethod(api, "DELETE")).toBe(false);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("prompts to select a project when no ref is given on a TTY", () => {
+  it.effect("prompts to select a project when no ref is given on a TTY", () => {
     const { layer, api } = setup({
       stdinIsTty: true,
       promptSelectResponses: [VALID_REF],
@@ -151,8 +149,66 @@ describe("projects delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails when no ref is given on a non-TTY", () => {
-    const { layer, cache } = setup({ stdinIsTty: false });
+  it.effect("deletes the project chosen in the picker, then looks it up for the real cache", () => {
+    const out = mockOutput({
+      format: "text",
+      promptSelectResponses: [VALID_REF],
+      promptConfirmResponses: [true],
+    });
+    const api = mockCommandPlatformApi({
+      handler: (request) =>
+        Effect.sync(() => {
+          if (request.method === "GET" && request.url === `${API}/v1/projects`) {
+            return jsonResponse(request, 200, [SAMPLE_PROJECT]);
+          }
+          if (request.method === "GET" && request.url === `${API}/v1/projects/${VALID_REF}`) {
+            return jsonResponse(request, 404, { message: "not found" });
+          }
+          if (request.method === "DELETE" && request.url === `${API}/v1/projects/${VALID_REF}`) {
+            return jsonResponse(request, 200, DELETED);
+          }
+          return jsonResponse(request, 404, { message: "unexpected request" });
+        }),
+    });
+    const cliSettings = mockCommandSettings({
+      workdir: tempRoot.current,
+      projectId: Option.none(),
+    });
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true }),
+        stdin: mockStdin(true),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      }),
+      Layer.succeed(YesFlag, false),
+      Layer.succeed(TargetPolicy, { group: "account", consent: "no" }),
+    );
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      expect(yield* fs.exists(cachePath)).toBe(false);
+
+      yield* projectsDelete({ ref: Option.none() });
+
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET ${API}/v1/projects`,
+        `DELETE ${API}/v1/projects/${VALID_REF}`,
+        `GET ${API}/v1/projects/${VALID_REF}`,
+      ]);
+      expect(out.stdoutText).toContain("Deleted project: alpha");
+      expect(yield* fs.exists(cachePath)).toBe(false);
+      assertPermissionDrift({ command: "projects delete", requests: api.requests, exact: true });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fails when no ref is given on a non-TTY", () => {
+    const { layer, cache, api } = setup({ stdinIsTty: false });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(projectsDelete({ ref: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
@@ -160,57 +216,11 @@ describe("projects delete integration", () => {
         expect(Cause.pretty(exit.cause)).toContain("ProjectsDeleteRefRequiredError");
       }
       expect(cache.cached).toBe(false);
+      expect(api.requests).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("cancels on a non-TTY when a ref is provided but --yes is unset", () => {
-    const { layer, out, api } = setup({ stdinIsTty: false, yes: false });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("ProjectsDeleteCancelledError");
-      }
-      expect(out.stderrText).toContain("Do you want to delete project ");
-      expect(out.stderrText).toContain("? This action is irreversible. [y/N] \n");
-      expect(hasMethod(api, "DELETE")).toBe(false);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("SUPABASE_YES=1 in the environment auto-confirms with the [y/N] y echo", () => {
-    const { layer, out, api } = setup({ yes: false });
-    return withEnvVar(
-      "SUPABASE_YES",
-      "1",
-      Effect.gen(function* () {
-        yield* projectsDelete({ ref: Option.some(VALID_REF) });
-        expect(out.stderrText).toContain("Do you want to delete project ");
-        expect(out.stderrText).toContain("? This action is irreversible. [y/N] y\n");
-        expect(hasMethod(api, "DELETE")).toBe(true);
-      }).pipe(Effect.provide(layer)),
-    );
-  });
-
-  it.live("non-TTY with piped `y` confirms like Go", () => {
-    const { layer, out, api } = setup({ stdinIsTty: false, stdinInput: "y\n" });
-    return Effect.gen(function* () {
-      yield* projectsDelete({ ref: Option.some(VALID_REF) });
-      expect(out.stderrText).toContain("[y/N] y\n");
-      expect(hasMethod(api, "DELETE")).toBe(true);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("non-TTY with piped `n` declines like Go", () => {
-    const { layer, out, api } = setup({ stdinIsTty: false, stdinInput: "n\n" });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(out.stderrText).toContain("[y/N] n\n");
-      expect(hasMethod(api, "DELETE")).toBe(false);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("emits a result for --output-format stream-json", () => {
+  it.effect("emits a result for --output-format stream-json", () => {
     const { layer, out } = setup({ format: "stream-json", yes: true });
     return Effect.gen(function* () {
       yield* projectsDelete({ ref: Option.some(VALID_REF) });
@@ -219,7 +229,7 @@ describe("projects delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails on an invalid project-ref format", () => {
+  it.effect("fails on an invalid project-ref format", () => {
     const { layer } = setup({ yes: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(projectsDelete({ ref: Option.some("BADREF") }));
@@ -230,7 +240,7 @@ describe("projects delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("removes the linked supabase/.temp dir when the deleted ref matches", () => {
+  it.effect("removes the linked supabase/.temp dir when the deleted ref matches", () => {
     const { layer } = setup({ yes: true });
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -242,7 +252,7 @@ describe("projects delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("leaves the linked dir intact when the deleted ref differs", () => {
+  it.effect("leaves the linked dir intact when the deleted ref differs", () => {
     const { layer } = setup({ yes: true });
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -256,7 +266,84 @@ describe("projects delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("maps HTTP 404 to project-does-not-exist", () => {
+  describe("in stack mode", () => {
+    const writeLinkDocument = (projectRef: string, activeRef = "branchprojectrefabcd") =>
+      writeProjectLink(tempRoot.current, {
+        project: { ref: projectRef },
+        active_branch: { ref: activeRef },
+        fetchedAt: "2026-01-01T00:00:00.000Z",
+      });
+
+    const linkDocumentExists = Effect.fnUntraced(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      return yield* fs.exists(path.join(tempRoot.current, "supabase", ".link.json"));
+    });
+
+    it.effect("removes the link document when the deleted ref is the linked project", () => {
+      const { layer } = setup({ yes: true, stack: true });
+      return Effect.gen(function* () {
+        yield* writeLinkDocument(VALID_REF);
+        yield* projectsDelete({ ref: Option.some(VALID_REF) });
+        expect(yield* linkDocumentExists()).toBe(false);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("removes the link document when the deleted ref is the linked branch", () => {
+      const { layer } = setup({ yes: true, stack: true });
+      return Effect.gen(function* () {
+        yield* writeLinkDocument(OTHER_REF, VALID_REF);
+        yield* projectsDelete({ ref: Option.some(VALID_REF) });
+        expect(yield* linkDocumentExists()).toBe(false);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("fails on a busy project lease and keeps the link document", () => {
+      const { layer } = setup({ yes: true, stack: true });
+      return Effect.gen(function* () {
+        yield* writeLinkDocument(VALID_REF);
+        yield* holdLock(
+          `${tempRoot.current}/supabase/.supabase.lock.lease`,
+          "1 hour",
+          "supabase.lock",
+        );
+        // The lease wait runs on the test clock; the lock stays held, so the outcome is fixed.
+        yield* TestClock.adjust("1 second").pipe(
+          Effect.andThen(Effect.yieldNow),
+          Effect.forever,
+          Effect.forkScoped,
+        );
+
+        const error = yield* projectsDelete({ ref: Option.some(VALID_REF) }).pipe(Effect.flip);
+
+        expect(error).toMatchObject({ _tag: "LockResolutionError", reason: "lease-busy" });
+        expect(yield* linkDocumentExists()).toBe(true);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("deletes the project without creating supabase/ when the project has none", () => {
+      const { layer } = setup({ yes: true, stack: true });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+
+        yield* projectsDelete({ ref: Option.some(VALID_REF) });
+
+        expect(yield* fs.exists(path.join(tempRoot.current, "supabase"))).toBe(false);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("keeps the link document when another project is deleted", () => {
+      const { layer } = setup({ yes: true, stack: true });
+      return Effect.gen(function* () {
+        yield* writeLinkDocument(OTHER_REF);
+        yield* projectsDelete({ ref: Option.some(VALID_REF) });
+        expect(yield* linkDocumentExists()).toBe(true);
+      }).pipe(Effect.provide(layer));
+    });
+  });
+
+  it.effect("maps HTTP 404 to project-does-not-exist", () => {
     const { layer } = setup({ yes: true, byMethod: { DELETE: { status: 404, body: {} } } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
@@ -269,7 +356,7 @@ describe("projects delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("maps HTTP 503 to delete-failed", () => {
+  it.effect("maps HTTP 503 to delete-failed", () => {
     const { layer } = setup({ yes: true, byMethod: { DELETE: { status: 503, body: {} } } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
@@ -282,7 +369,7 @@ describe("projects delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with ProjectsDeleteNetworkError on transport failure", () => {
+  it.effect("fails with ProjectsDeleteNetworkError on transport failure", () => {
     const { layer } = setup({ yes: true, network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
@@ -295,7 +382,7 @@ describe("projects delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a success event for --output-format json", () => {
+  it.effect("emits a success event for --output-format json", () => {
     const { layer, out } = setup({ format: "json", yes: true });
     return Effect.gen(function* () {
       yield* projectsDelete({ ref: Option.some(VALID_REF) });
@@ -305,7 +392,7 @@ describe("projects delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes linked-project cache + telemetry state on success", () => {
+  it.effect("writes linked-project cache + telemetry state on success", () => {
     const { layer, telemetry, cache } = setup({ yes: true });
     return Effect.gen(function* () {
       yield* projectsDelete({ ref: Option.some(VALID_REF) });
@@ -314,11 +401,16 @@ describe("projects delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry even when the delete fails", () => {
+  it.effect("flushes telemetry even when the delete fails", () => {
     const { layer, telemetry } = setup({ yes: true, network: "fail" });
     return Effect.gen(function* () {
       yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedConsent("projects delete", {
+  api: { byMethod: { DELETE: { status: 200, body: DELETED } } },
+  invoke: () => ({ run: projectsDelete({ ref: Option.some(VALID_REF) }) }),
 });

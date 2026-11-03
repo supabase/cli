@@ -1,6 +1,6 @@
 import { Context, Effect, FileSystem, Layer, Option, Path, Redacted, Schema } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { Output } from "../../shared/output/output.service.ts";
@@ -47,9 +47,7 @@ interface GithubContentEntry {
 
 function isStarterTemplate(value: unknown): value is StarterTemplate {
   return (
-    typeof value === "object" &&
-    value !== null &&
-    typeof (value as StarterTemplate).name === "string"
+    typeof value === "object" && value !== null && "name" in value && typeof value.name === "string"
   );
 }
 
@@ -57,13 +55,11 @@ const jsonValue = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 // Preserve an explicit non-200 / parse failure (already a tagged error); wrap any
 // transport / filesystem cause in the same tagged error so the channel stays narrow.
-const mapDownloadError = (cause: unknown): Effect.Effect<never, BootstrapTemplateDownloadError> =>
+const wrapDownloadCause = (cause: unknown) =>
   Effect.fail(
-    cause instanceof BootstrapTemplateDownloadError
-      ? cause
-      : new BootstrapTemplateDownloadError({
-          message: `failed to download template: ${cause}`,
-        }),
+    new BootstrapTemplateDownloadError({
+      message: `failed to download template: ${cause}`,
+    }),
   );
 
 export const templateServiceLayer = Layer.effect(
@@ -97,10 +93,7 @@ export const templateServiceLayer = Layer.effect(
       return request;
     };
 
-    const listSamples: Effect.Effect<
-      ReadonlyArray<StarterTemplate>,
-      BootstrapTemplateListError
-    > = Effect.gen(function* () {
+    const listSamples = Effect.gen(function* () {
       const response = yield* httpClient
         .execute(contentsRequest(SAMPLES_OWNER, SAMPLES_REPO, "samples.json", "main"))
         .pipe(
@@ -131,16 +124,18 @@ export const templateServiceLayer = Layer.effect(
         Effect.mapError(
           (cause) =>
             new BootstrapTemplateListError({
-              message: `failed to unmarshal samples: ${cause.message}`,
+              message: `failed to parse samples: ${cause.message}`,
             }),
         ),
       );
       const samples = (parsed as { samples?: ReadonlyArray<unknown> }).samples ?? [];
-      return samples.filter(isStarterTemplate);
-    });
+      const templates = samples.filter(isStarterTemplate);
+      yield* Effect.annotateCurrentSpan("template.count", templates.length);
+      return templates;
+    }).pipe(Effect.withSpan("TemplateService.listSamples"));
 
-    const downloadFile = (localPath: string, remoteUrl: string) =>
-      Effect.gen(function* () {
+    const downloadFile = Effect.fnUntraced(
+      function* (localPath: string, remoteUrl: string) {
         const response = yield* httpClient.execute(HttpClientRequest.get(remoteUrl));
         if (response.status !== 200) {
           return yield* new BootstrapTemplateDownloadError({
@@ -150,10 +145,12 @@ export const templateServiceLayer = Layer.effect(
         const bytes = new Uint8Array(yield* response.arrayBuffer);
         yield* fs.makeDirectory(path.dirname(localPath), { recursive: true });
         yield* fs.writeFile(localPath, bytes);
-      }).pipe(Effect.catch(mapDownloadError));
+      },
+      Effect.catchTags({ HttpClientError: wrapDownloadCause, PlatformError: wrapDownloadCause }),
+    );
 
-    const download = (templateUrl: string, targetDir: string) =>
-      Effect.gen(function* () {
+    const download = Effect.fn("TemplateService.download")(
+      function* (templateUrl: string, targetDir: string) {
         // e.g. https://github.com/supabase/supabase/tree/master/examples/user-management
         const parsed = new URL(templateUrl);
         const parts = parsed.pathname.split("/");
@@ -227,11 +224,14 @@ export const templateServiceLayer = Layer.effect(
           }
         }
 
+        yield* Effect.annotateCurrentSpan("file.count", downloads.length);
         yield* Effect.forEach(downloads, (job) => downloadFile(job.localPath, job.remoteUrl), {
           concurrency: DOWNLOAD_CONCURRENCY,
         });
-      }).pipe(Effect.catch(mapDownloadError));
+      },
+      Effect.catchTag("HttpClientError", wrapDownloadCause),
+    );
 
-    return { listSamples, download };
+    return TemplateService.of({ listSamples, download });
   }),
 );

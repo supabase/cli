@@ -20,10 +20,10 @@ import {
 } from "../../tests/helpers/mocks.ts";
 import {
   isolatedHomeLayer,
-  mockCommandSettings,
   mockTelemetryStateLayer,
   useTempWorkdir,
 } from "../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
 
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import {
@@ -39,6 +39,7 @@ import { DbConnection } from "./db-connection.service.ts";
 import { IdentityStitch } from "./identity-stitch.ts";
 
 import { testDbRuntimeLayer } from "./test-db.layers.ts";
+import { commandTargetLayer } from "../shared/output/command-target.layer.ts";
 
 const tempRoot = useTempWorkdir("supabase-test-db-layers-");
 
@@ -68,7 +69,7 @@ function ambientStubs() {
       connect: () => Effect.die("db-connection not needed for layer-exposure test"),
     }),
     Layer.succeed(DbConfigResolver, {
-      resolve: () => Effect.die("db-config-resolver not needed for layer-exposure test"),
+      resolveConnection: () => Effect.die("resolveConnection is not used by this test"),
       resolvePoolerFallback: () =>
         Effect.die("db-config-resolver not needed for layer-exposure test"),
     }),
@@ -76,17 +77,16 @@ function ambientStubs() {
 
   return Layer.mergeAll(
     BunServices.layer,
-    // The runtime layer under test builds the real commandSettingsLayer against
-    // the real filesystem — see isolatedHomeLayer's docs.
     isolatedHomeLayer(tempRoot.current),
     mockTty(),
     mockProcessControl().layer,
     analytics.layer,
     mockTelemetryRuntime(),
     out.layer,
+    commandTargetLayer.pipe(Layer.provide(out.layer)),
     flagLayers,
-    mockCommandSettings({ workdir: "/tmp/test-db-layers-test" }),
     mockTelemetryStateLayer,
+    cliConfigValuesTestLayer,
     heavyServiceStubs,
   );
 }
@@ -98,7 +98,9 @@ describe("testDbRuntimeLayer — IdentityStitch exposure", () => {
       return Effect.gen(function* () {
         const stitch = yield* Effect.serviceOption(IdentityStitch);
         expect(Option.isSome(stitch)).toBe(true);
-      }).pipe(Effect.provide(testDbRuntimeLayer(["test", "db"])), Effect.provide(ambientStubs()));
+      }).pipe(
+        Effect.provide(testDbRuntimeLayer(["test", "db"]).pipe(Layer.provideMerge(ambientStubs()))),
+      );
     },
   );
 });

@@ -26,6 +26,7 @@ export const migrationNew = Effect.fn("migration.new")(function* (flags: Migrati
   const path = yield* Path.Path;
 
   yield* Effect.gen(function* () {
+    yield* Effect.annotateCurrentSpan({ "migration.stdin_piped": !stdin.isTTY });
     const timestamp = formatMigrationTimestamp(yield* Clock.currentTimeMillis);
     const migrationPath = getMigrationPath(
       path,
@@ -39,11 +40,9 @@ export const migrationNew = Effect.fn("migration.new")(function* (flags: Migrati
     // simple identifiers.
     const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
     if (!migrationPath.startsWith(migrationsDir + path.sep)) {
-      return yield* Effect.fail(
-        new MigrationNewWriteError({
-          message: `invalid migration name: "${flags.migrationName}" must not escape the ${path.join("supabase", "migrations")} directory`,
-        }),
-      );
+      return yield* new MigrationNewWriteError({
+        message: `invalid migration name: "${flags.migrationName}" must not escape the ${path.join("supabase", "migrations")} directory`,
+      });
     }
 
     yield* fs

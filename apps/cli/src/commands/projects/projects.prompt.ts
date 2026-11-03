@@ -10,7 +10,7 @@ import {
   ProjectsOrgsListNetworkError,
   ProjectsOrgsListUnexpectedStatusError,
 } from "./projects.errors.ts";
-import { formatRegion } from "./projects.format.ts";
+import { formatRegion } from "../../command-internal/region.format.ts";
 
 const mapOrgsListError = mapHttpError({
   networkError: ProjectsOrgsListNetworkError,

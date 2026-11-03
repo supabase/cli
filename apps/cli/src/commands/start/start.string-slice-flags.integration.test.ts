@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer } from "effect";
-import { CliOutput, Command } from "effect/unstable/cli";
+import { CliOutput, Command } from "effect/cli";
 
 import { normalizeCause } from "../../shared/output/normalize-error.ts";
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
@@ -14,10 +14,11 @@ import {
   mockCommandPlatformApi,
   useTempWorkdir,
 } from "../../../tests/helpers/command-mocks.ts";
+import { unusedStackServices } from "../../../tests/helpers/unused-stack.ts";
 import { startCommand } from "./start.command.ts";
 
-// Malformed CSV aborts flag parsing before the handler runs, with pflag's exact
-// `invalid argument %q for %q flag: %v` line on stderr — a shorthand flag frames both spellings
+// Malformed CSV aborts flag parsing before the handler runs, with the exact
+// `invalid argument "<value>" for "<flag>" flag: <reason>` line on stderr — a shorthand flag frames both spellings
 // (`-x, --exclude`). These run the whole command tree (`Command.runWith`), not just the flag parser.
 
 const tempRoot = useTempWorkdir("supabase-start-string-slice-int-");
@@ -41,6 +42,7 @@ function setup() {
     runtimeInfo: mockRuntimeInfo({ homeDir: tempRoot.current }),
   });
   const layer = Layer.mergeAll(
+    unusedStackServices,
     runtime,
     CliOutput.layer(textCliOutputFormatter()),
     processEnvLayer({ SUPABASE_NO_KEYRING: "1" }),
@@ -48,9 +50,7 @@ function setup() {
       TelemetryRuntime,
       TelemetryRuntime.of({
         configDir: `${tempRoot.current}/.supabase`,
-        tracesDir: `${tempRoot.current}/.supabase/traces`,
         consent: "granted",
-        showDebug: false,
         deviceId: "test-device-id",
         sessionId: "test-session-id",
         identity: makeTelemetryIdentity(undefined),
@@ -66,17 +66,17 @@ function setup() {
   return { layer };
 }
 
-describe("start --exclude flag (pflag CSV parity)", () => {
-  // Both spellings render the identical diagnostic line: pflag always frames a shorthand
-  // flag as `-x, --exclude`.
+describe("start --exclude flag", () => {
+  // Both spellings render the identical diagnostic line: a shorthand
+  // flag is always framed as `-x, --exclude`.
   const spellings: ReadonlyArray<{ readonly name: string; readonly flag: string }> = [
     { name: "--exclude", flag: "--exclude" },
     { name: "-x", flag: "-x" },
   ];
 
   for (const { name, flag } of spellings) {
-    it.live(
-      `${name}: malformed CSV fails at parse time with pflag's shorthand-framed diagnostic`,
+    it.effect(
+      `${name}: malformed CSV fails at parse time with the shorthand-framed diagnostic`,
       () => {
         const { layer } = setup();
         return Effect.gen(function* () {

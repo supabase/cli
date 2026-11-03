@@ -1,5 +1,6 @@
 import { Data, Effect, type FileSystem, type Path } from "effect";
 
+import { envValue } from "../shared/config/env-option.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { bold } from "./colors.ts";
 import { DbConnectError, DbExecError } from "./db-connection.errors.ts";
@@ -18,7 +19,7 @@ import {
 } from "./migration-history.ts";
 import { parseMigrationContent } from "./migration-file.ts";
 import { sqlFilesGlob } from "./sql-files-glob.ts";
-import { splitSqlTokens } from "./sql-split.ts";
+import { splitSqlTokens, trimLeadingSqlComments } from "./sql-split.ts";
 
 /**
  * A migration file failed to apply. Used by `migration up`/`down`'s migrate-and-seed step; the
@@ -39,9 +40,6 @@ export class MigrationApplyError extends Data.TaggedError("MigrationApplyError")
   }
 }
 
-// Byte order mark (U+FEFF), stripped from the head of a statement.
-const BOM_CODE_POINT = 0xfeff;
-
 // Statements that PostgreSQL refuses to run inside a transaction block / extended-query
 // pipeline (SQLSTATE 25001). Matched against the upper-cased, comment-stripped statement.
 //
@@ -56,31 +54,6 @@ const ALTER_SYSTEM_PATTERN = /^ALTER\s+SYSTEM(?:\s|$)/u;
 const CLUSTER_PATTERN = /^CLUSTER(?:\s|$)/u;
 const TRANSACTION_CONTROL_PATTERN =
   /^(?:BEGIN|START\s+TRANSACTION|COMMIT|END|ABORT|PREPARE\s+TRANSACTION)(?:\s|$)/u;
-
-/**
- * Strips a leading BOM, whitespace, and SQL line (`--`) and block comments from the
- * front of a statement so the keyword check below sees the real first token.
- */
-const trimLeadingSqlComments = (sql: string): string => {
-  // Stripped via code point comparison so it isn't relied on to match a whitespace regex class.
-  let trimmed = sql.replace(/^[ \t\n\r]+/u, "");
-  while (trimmed.charCodeAt(0) === BOM_CODE_POINT) {
-    trimmed = trimmed.slice(1).replace(/^[ \t\n\r]+/u, "");
-  }
-  for (;;) {
-    if (trimmed.startsWith("--")) {
-      const idx = trimmed.indexOf("\n");
-      if (idx < 0) return "";
-      trimmed = trimmed.slice(idx + 1).replace(/^[ \t\n\r]+/u, "");
-    } else if (trimmed.startsWith("/*")) {
-      const idx = trimmed.indexOf("*/");
-      if (idx < 0) return trimmed;
-      trimmed = trimmed.slice(idx + 2).replace(/^[ \t\n\r]+/u, "");
-    } else {
-      return trimmed.trim();
-    }
-  }
-};
 
 /**
  * Whether a migration statement cannot run inside a transaction block — `CREATE [UNIQUE] INDEX
@@ -143,14 +116,14 @@ const utf8ByteLength = (value: string): number => new TextEncoder().encode(value
 // The scanner buffer starts at this size before applying the configured/default max, so a
 // statement must reach at least this many bytes before an oversized-token error can fire,
 // regardless of how small an override is set.
-const GO_SCANNER_START_BUF_SIZE = 4096;
+const SCANNER_START_BUF_SIZE = 4096;
 
 // Fallback cap when `SUPABASE_SCANNER_BUFFER_SIZE` is set but parses to a non-positive size,
 // including a value that can't be parsed at all (e.g. a bare "5M" with no trailing "B").
-const GO_DEFAULT_MAX_SCANNER_CAPACITY = 256 * 1024;
+const DEFAULT_MAX_SCANNER_CAPACITY = 256 * 1024;
 
-const GO_MAX_INT64 = 9223372036854775807n;
-const GO_MIN_INT64 = -9223372036854775808n;
+const INT64_MAX = 9223372036854775807n;
+const INT64_MIN = -9223372036854775808n;
 
 /**
  * Parses a base-0 integer literal: decimal, or `0x`/`0o`/`0b`-prefixed hex/octal/binary, or a
@@ -158,7 +131,7 @@ const GO_MIN_INT64 = -9223372036854775808n;
  * the same base (never leading, trailing, or doubled). Returns `undefined` for anything invalid
  * or outside the 64-bit signed integer range.
  */
-const parseGoBaseZeroInt = (value: string): number | undefined => {
+const parseBaseZeroInt = (value: string): number | undefined => {
   const negative = value.startsWith("-");
   const unsigned = negative || value.startsWith("+") ? value.slice(1) : value;
   if (unsigned.length === 0) return undefined;
@@ -198,7 +171,7 @@ const parseGoBaseZeroInt = (value: string): number | undefined => {
   const bigPrefix = base === 16 ? "0x" : base === 8 ? "0o" : base === 2 ? "0b" : "";
   const magnitude = BigInt(`${bigPrefix}${cleanDigits}`);
   const signedMagnitude = negative ? -magnitude : magnitude;
-  if (signedMagnitude > GO_MAX_INT64 || signedMagnitude < GO_MIN_INT64) return undefined;
+  if (signedMagnitude > INT64_MAX || signedMagnitude < INT64_MIN) return undefined;
 
   const n = Number.parseInt(cleanDigits, base);
   return negative ? -n : n;
@@ -206,8 +179,8 @@ const parseGoBaseZeroInt = (value: string): number | undefined => {
 
 // Drops a decimal literal's fractional part rather than rounding (`"5.5"` → `"5"`); a
 // `0x`/`0o`/`0b` literal (which contains letters) never matches and passes through unchanged for
-// {@link parseGoBaseZeroInt} to accept or reject.
-const trimGoDecimal = (value: string): string => {
+// {@link parseBaseZeroInt} to accept or reject.
+const trimDecimalFraction = (value: string): string => {
   if (!value.includes(".")) return value;
   const match = /^([+-]?\d*)(?:\.\d*)?$/.exec(value);
   if (!match) return value;
@@ -220,7 +193,7 @@ const trimGoDecimal = (value: string): string => {
  * `SUPABASE_SCANNER_BUFFER_SIZE` accepts an integer byte count, optionally suffixed
  * `k`/`m`/`g` (× 1024/1024²/1024³) immediately followed by a trailing `b`/`B` (e.g. `"5MB"`). A
  * bare `"5M"` (no trailing `B`) is NOT 5 MiB — it fails to parse as an integer and is treated as
- * unset (`0`), same as any other unparseable or non-positive value. See {@link parseGoBaseZeroInt}
+ * unset (`0`), same as any other unparseable or non-positive value. See {@link parseBaseZeroInt}
  * for the accepted integer-literal grammar (hex/octal/binary prefixes, `_` separators).
  */
 const parseScannerBufferSize = (raw: string): number => {
@@ -246,7 +219,7 @@ const parseScannerBufferSize = (raw: string): number => {
         break;
     }
   }
-  const size = parseGoBaseZeroInt(trimGoDecimal(value));
+  const size = parseBaseZeroInt(trimDecimalFraction(value));
   return size !== undefined && Number.isFinite(size) && size > 0 ? size * multiplier : 0;
 };
 
@@ -263,62 +236,62 @@ export const checkScannerBufferSize = <E>(
   content: string,
   mapError: (message: string, phase: "read" | "exec") => E,
   projectEnv: Readonly<Record<string, string>> = {},
-): Effect.Effect<void, E> => {
-  const raw =
-    process.env["SUPABASE_SCANNER_BUFFER_SIZE"] ?? projectEnv["SUPABASE_SCANNER_BUFFER_SIZE"];
-  if (raw === undefined) return Effect.void;
-  const configuredLimit = parseScannerBufferSize(raw);
-  // Covers both an explicit non-positive size and an unparseable value (see
-  // `GO_DEFAULT_MAX_SCANNER_CAPACITY` above) — both fall back to the hardcoded default cap, not
-  // to "no limit".
-  const limit =
-    configuredLimit > 0
-      ? Math.max(configuredLimit, GO_SCANNER_START_BUF_SIZE)
-      : GO_DEFAULT_MAX_SCANNER_CAPACITY;
-  // The reported limit is the raw configured value, even below the `GO_SCANNER_START_BUF_SIZE`
-  // floor (which only affects when the too-long error can fire, not the number reported), or the
-  // hardcoded default once that's been fallen back to.
-  const reportedLimit = configuredLimit > 0 ? configuredLimit : GO_DEFAULT_MAX_SCANNER_CAPACITY;
-  let emitted = 0;
-  let lastRaw = "";
-  for (const token of splitSqlTokens(content)) {
-    // A terminated token exactly at `limit` still succeeds (only strictly-over fails, `>`); an
-    // unterminated trailing token at `limit` already fails (`>=`), since there's no delimiter left
-    // to find once the buffer fills without one.
-    const tooLong = token.terminated
-      ? utf8ByteLength(token.raw) > limit
-      : utf8ByteLength(token.raw) >= limit;
-    if (tooLong) {
-      const suggestion = `Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is ${Math.floor(reportedLimit / 1024)}KB)`;
-      return Effect.fail(
-        mapError(
-          `bufio.Scanner: token too long\nAfter statement ${emitted}: ${lastRaw}\n${suggestion}`,
-          "read",
-        ),
-      );
+): Effect.Effect<void, E> =>
+  Effect.gen(function* () {
+    const shell = yield* envValue("SUPABASE_SCANNER_BUFFER_SIZE");
+    const raw = shell ?? projectEnv["SUPABASE_SCANNER_BUFFER_SIZE"];
+    if (raw === undefined) return;
+    const configuredLimit = parseScannerBufferSize(raw);
+    // Covers both an explicit non-positive size and an unparseable value (see
+    // `DEFAULT_MAX_SCANNER_CAPACITY` above) — both fall back to the hardcoded default cap, not
+    // to "no limit".
+    const limit =
+      configuredLimit > 0
+        ? Math.max(configuredLimit, SCANNER_START_BUF_SIZE)
+        : DEFAULT_MAX_SCANNER_CAPACITY;
+    // The reported limit is the raw configured value, even below the `SCANNER_START_BUF_SIZE`
+    // floor (which only affects when the too-long error can fire, not the number reported), or the
+    // hardcoded default once that's been fallen back to.
+    const reportedLimit = configuredLimit > 0 ? configuredLimit : DEFAULT_MAX_SCANNER_CAPACITY;
+    let emitted = 0;
+    let lastRaw = "";
+    for (const token of splitSqlTokens(content)) {
+      // A terminated token exactly at `limit` still succeeds (only strictly-over fails, `>`); an
+      // unterminated trailing token at `limit` already fails (`>=`), since there's no delimiter left
+      // to find once the buffer fills without one.
+      const tooLong = token.terminated
+        ? utf8ByteLength(token.raw) > limit
+        : utf8ByteLength(token.raw) >= limit;
+      if (tooLong) {
+        const suggestion = `Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is ${Math.floor(reportedLimit / 1024)}KB)`;
+        return yield* Effect.fail(
+          mapError(
+            `scanner: token too long\nAfter statement ${emitted}: ${lastRaw}\n${suggestion}`,
+            "read",
+          ),
+        );
+      }
+      // `lastRaw` updates on every scanned token, even ones that trim to empty and don't advance
+      // `emitted` — so a lone `;` right before an oversized statement reports it accurately instead
+      // of a blank token.
+      lastRaw = token.raw;
+      if (token.trimmed.length > 0) {
+        emitted += 1;
+      }
     }
-    // `lastRaw` updates on every scanned token, even ones that trim to empty and don't advance
-    // `emitted` — so a lone `;` right before an oversized statement reports it accurately instead
-    // of a blank token.
-    lastRaw = token.raw;
-    if (token.trimmed.length > 0) {
-      emitted += 1;
-    }
-  }
-  return Effect.void;
-};
+  });
 
 /**
  * Renders a `^` caret line under the error position of a failing statement. `pos` is the
- * server's 1-based error cursor, measured in UTF-8 bytes, so multibyte statements shift the caret
- * correctly. The caret line replaces every line after the error line. Position 0 (absent), a
+ * server's 1-based error cursor, measured in characters (code points), not UTF-8 bytes or UTF-16
+ * units. The caret line replaces every line after the error line. Position 0 (absent), a
  * position past the end of the statement, or one landing exactly on a line break leave the
  * statement untouched.
  */
 export const markError = (stat: string, pos: number): string => {
   const lines = stat.split("\n");
   for (const [j, line] of lines.entries()) {
-    const c = utf8ByteLength(line);
+    const c = [...line].length;
     if (pos > c) {
       pos -= c + 1;
       continue;
@@ -441,6 +414,11 @@ const execMigrationBatch = <E>(
       const matches = MIGRATE_FILE_PATTERN.exec(filename);
       const version = forceNoVersion ? "" : (matches?.[1] ?? "");
       const name = matches?.[2] ?? "";
+      yield* Effect.annotateCurrentSpan({
+        "statement.count": statements.length,
+        "migration.transaction_mode": transactionMode,
+        ...(version !== "" ? { "migration.version": version } : {}),
+      });
 
       const restoreRole = session.restoreRoleSql;
 
@@ -592,7 +570,7 @@ const execMigrationBatch = <E>(
           : mapError(errorMessage(error), "exec", formattedExecBatchDbError(error)),
       ),
     );
-  });
+  }).pipe(Effect.withSpan("MigrationApply.file"));
 
 /**
  * Clears any connection settings a prior statement on the same session may have changed (e.g.
@@ -660,7 +638,9 @@ export const applyMigrations = <E>(
       yield* resetConnectionState(session, mapError);
       yield* execMigrationBatch(session, fs, path, migrationPath, mapError, false);
     }
-  });
+  }).pipe(
+    Effect.withSpan("MigrationApply.run", { attributes: { "migration.count": pending.length } }),
+  );
 
 /**
  * Applies custom-role/globals files: for each file, emits `Seeding globals from <name>...` to
@@ -680,7 +660,9 @@ export const seedGlobals = <E>(
       yield* output.raw(`Seeding globals from ${path.basename(globalPath)}...\n`, "stderr");
       yield* execMigrationBatch(session, fs, path, globalPath, mapError, true);
     }
-  });
+  }).pipe(
+    Effect.withSpan("MigrationApply.seedGlobals", { attributes: { "file.count": globals.length } }),
+  );
 
 /**
  * Runs one SQL file's statements transactionally, without `seedGlobals`'s per-file stderr
@@ -734,6 +716,7 @@ export const applySchemaFiles = <E>(
 ): Effect.Effect<void, E | DbConnectError> =>
   Effect.gen(function* () {
     const { files, warnings } = yield* sqlFilesGlob(fs, path, schemaPaths, workdir);
+    yield* Effect.annotateCurrentSpan("file.count", files.length);
     if (files.length === 0) {
       // Succeeds when there were no patterns to glob at all; fails with the joined per-pattern
       // warnings otherwise.
@@ -760,4 +743,4 @@ export const applySchemaFiles = <E>(
         projectEnv,
       );
     }
-  });
+  }).pipe(Effect.withSpan("MigrationApply.schemaFiles"));

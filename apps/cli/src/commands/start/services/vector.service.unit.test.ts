@@ -1,7 +1,6 @@
 import { describe, expect, it, test } from "@effect/vitest";
-import { afterEach, vi } from "vitest";
-import { Deferred, Effect, Sink, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { Effect, Sink, Stream } from "effect";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
   buildVectorContainerSpec,
@@ -15,10 +14,6 @@ import {
   type VectorDockerSocketPlan,
 } from "./vector.service.ts";
 
-afterEach(() => {
-  vi.unstubAllEnvs();
-});
-
 /** Matches the standing `mockSpawner` shape in `image-prepull.unit.test.ts`. */
 function mockSpawner(
   handler: (args: ReadonlyArray<string>) => { exitCode: number; stdout?: string; stderr?: string },
@@ -27,13 +22,10 @@ function mockSpawner(
   const spawned: Array<ReadonlyArray<string>> = [];
 
   const spawner = ChildProcessSpawner.make((command) =>
-    Effect.gen(function* () {
-      const args = command._tag === "StandardCommand" ? command.args : [];
+    Effect.sync(() => {
+      const args = ChildProcess.isStandardCommand(command) ? command.args : [];
       spawned.push(args);
       const result = handler(args);
-
-      const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
-      yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(result.exitCode));
 
       return ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(1),
@@ -44,7 +36,7 @@ function mockSpawner(
           result.stderr !== undefined ? [encoder.encode(result.stderr)] : [],
         ),
         all: Stream.empty,
-        exitCode: Deferred.await(exitDeferred),
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(result.exitCode)),
         isRunning: Effect.succeed(false),
         stdin: Sink.drain,
         kill: () => Effect.void,
@@ -85,7 +77,7 @@ describe("parseDockerHostUrl", () => {
     });
   });
 
-  test("strips a trailing path from a tcp host, matching Go's url.Parse round-trip", () => {
+  test("strips a trailing path from a tcp host", () => {
     expect(parseDockerHostUrl("tcp://127.0.0.1:2375/some/path")).toEqual({
       scheme: "tcp",
       host: "127.0.0.1:2375",
@@ -146,7 +138,7 @@ describe("shouldMountRootDockerSocket", () => {
 });
 
 describe("resolveVectorDockerSocketPlan", () => {
-  test("tcp: proxies through host.docker.internal on the daemon's own port, no binds/securityOpt (start.go:422-426)", () => {
+  test("tcp: proxies through host.docker.internal on the daemon's own port, no binds/securityOpt", () => {
     const plan = resolveVectorDockerSocketPlan("tcp://127.0.0.1:2376");
     expect(plan).toEqual<VectorDockerSocketPlan>({
       env: { DOCKER_HOST: "http://host.docker.internal:2376" },
@@ -161,7 +153,7 @@ describe("resolveVectorDockerSocketPlan", () => {
     expect(plan.env).toEqual({ DOCKER_HOST: "http://host.docker.internal:2375" });
   });
 
-  test("npipe: proxies through host.docker.internal:2375 and flags isNpipe (start.go:427-430,481)", () => {
+  test("npipe: proxies through host.docker.internal:2375 and flags isNpipe", () => {
     const plan = resolveVectorDockerSocketPlan("npipe:////./pipe/docker_engine");
     expect(plan).toEqual<VectorDockerSocketPlan>({
       env: { DOCKER_HOST: "http://host.docker.internal:2375" },
@@ -171,7 +163,7 @@ describe("resolveVectorDockerSocketPlan", () => {
     });
   });
 
-  test("unix + known rootful socket (Docker Desktop): binds the STANDARD socket path to itself, no env/securityOpt (start.go:431-437)", () => {
+  test("unix + known rootful socket (Docker Desktop): binds the STANDARD socket path to itself, no env/securityOpt", () => {
     const plan = resolveVectorDockerSocketPlan(
       "unix:///Users/me/.docker/run/docker.sock",
       "darwin",
@@ -193,7 +185,7 @@ describe("resolveVectorDockerSocketPlan", () => {
     expect(plan.securityOpt).toEqual([]);
   });
 
-  test("unix + rootless socket (Podman/OrbStack): binds the ACTUAL detected path onto the standard path, plus label:disable (start.go:438-442)", () => {
+  test("unix + rootless socket (Podman/OrbStack): binds the ACTUAL detected path onto the standard path, plus label:disable", () => {
     const plan = resolveVectorDockerSocketPlan("unix:///run/user/1000/podman/podman.sock", "linux");
     expect(plan).toEqual<VectorDockerSocketPlan>({
       env: {},
@@ -211,9 +203,9 @@ describe("resolveVectorDockerSocketPlan", () => {
 });
 
 describe("buildVectorEntrypointScript", () => {
-  test("writes vector.yaml then waits on Logflare's health endpoint before exec'ing vector (start.go:449-454)", () => {
+  test("writes vector.yaml then waits on Logflare's health endpoint before exec'ing vector", () => {
     expect(buildVectorEntrypointScript("VECTOR_YAML", "supabase_analytics_proj")).toBe(
-      "cat <<'EOF' > /etc/vector/vector.yaml\n" +
+      "mkdir -p /etc/vector\ncat <<'EOF' > /etc/vector/vector.yaml\n" +
         "VECTOR_YAML" +
         "\nEOF\ntrap 'exit 143' TERM\nuntil wget --no-verbose --tries=1 -T 2 --spider http://" +
         "supabase_analytics_proj" +
@@ -223,6 +215,7 @@ describe("buildVectorEntrypointScript", () => {
 });
 
 const base: VectorContainerSpecInput = {
+  slim: false,
   image: "supabase/vector:0.28.1",
   containerName: "supabase_vector_proj",
   networkId: "supabase_network_proj",
@@ -239,7 +232,7 @@ const base: VectorContainerSpecInput = {
 };
 
 describe("buildVectorContainerSpec", () => {
-  test("builds identity, entrypoint, healthcheck, restart policy, network aliases (start.go:444-477)", () => {
+  test("builds identity, entrypoint, healthcheck, restart policy, network aliases", () => {
     const spec = buildVectorContainerSpec(base);
     expect(spec.image).toBe("supabase/vector:0.28.1");
     expect(spec.containerName).toBe("supabase_vector_proj");
@@ -287,9 +280,9 @@ describe("buildVectorContainerSpec", () => {
   });
 
   test("slim image waits on Logflare with BusyBox wget flags", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
     const spec = buildVectorContainerSpec({
       ...base,
+      slim: true,
       image: "ghcr.io/supabase/cli/vector:0.53.0",
     });
     expect(spec.entrypoint).toBe("sh");
@@ -308,7 +301,7 @@ describe("buildVectorContainerSpec", () => {
 });
 
 describe("resolveDockerDaemonHost", () => {
-  it.live("prefers an explicit DOCKER_HOST env var over any context inspection", () => {
+  it.effect("prefers an explicit DOCKER_HOST env var over any context inspection", () => {
     const mock = mockSpawner(() => ({ exitCode: 1 }));
     return resolveDockerDaemonHost(
       mock.spawner,
@@ -322,7 +315,7 @@ describe("resolveDockerDaemonHost", () => {
     );
   });
 
-  it.live("falls back to the current docker context's endpoint when DOCKER_HOST is unset", () => {
+  it.effect("falls back to the current docker context's endpoint when DOCKER_HOST is unset", () => {
     const mock = mockSpawner((args) => {
       if (args[0] === "context" && args[1] === "inspect") {
         return { exitCode: 0, stdout: "unix:///Users/me/.colima/default/docker.sock\n" };
@@ -336,7 +329,7 @@ describe("resolveDockerDaemonHost", () => {
     );
   });
 
-  it.live("falls back to the platform default when docker context inspect fails", () => {
+  it.effect("falls back to the platform default when docker context inspect fails", () => {
     const mock = mockSpawner(() => ({ exitCode: 1 }));
     return resolveDockerDaemonHost(mock.spawner, {}, "darwin").pipe(
       Effect.map((host) => {
@@ -345,7 +338,7 @@ describe("resolveDockerDaemonHost", () => {
     );
   });
 
-  it.live(
+  it.effect(
     "falls back to the platform default when docker context inspect returns an empty host",
     () => {
       const mock = mockSpawner(() => ({ exitCode: 0, stdout: "\n" }));
@@ -357,7 +350,7 @@ describe("resolveDockerDaemonHost", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "treats an empty DOCKER_HOST value as unset, falling through to context inspection",
     () => {
       const mock = mockSpawner((args) => {

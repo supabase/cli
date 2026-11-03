@@ -1,6 +1,6 @@
 import { Layer } from "effect";
-import type * as HttpClient from "effect/unstable/http/HttpClient";
-import { FetchHttpClient } from "effect/unstable/http";
+import type * as HttpClient from "effect/http/HttpClient";
+import { FetchHttpClient } from "effect/http";
 
 import { CommandCredentials } from "../auth/command-credentials.service.ts";
 import { commandCredentialsLayer } from "../auth/command-credentials.layer.ts";
@@ -15,7 +15,7 @@ import { CommandSettings } from "../config/command-settings.service.ts";
 import { commandSettingsLayer } from "../config/command-settings.layer.ts";
 import { ProjectRefResolver } from "../config/project-ref.service.ts";
 import { projectRefLayer } from "../config/project-ref.layer.ts";
-import { DebugLogger } from "./debug-logger.service.ts";
+import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 import { debugLoggerLayer } from "./debug-logger.layer.ts";
 import { dohFetchLayer } from "./http-dns.ts";
 import { IdentityStitch, identityStitchLayer } from "./identity-stitch.ts";
@@ -54,7 +54,7 @@ export function managementApiRuntimeLayer(subcommand: ReadonlyArray<string>) {
   const platformApiStack = commandPlatformApiLayer.pipe(
     Layer.provide(credentials),
     Layer.provide(cliSettings),
-    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(Layer.fresh(FetchHttpClient.layer)),
     Layer.provide(dohFetchLayer),
     Layer.provide(debugLoggerLayer),
     Layer.provide(identityStitchLayer),
@@ -87,9 +87,13 @@ export function managementApiRuntimeLayer(subcommand: ReadonlyArray<string>) {
 
   // Compile-time guarantee that the merged layer exposes every service a Management-API handler
   // may yield from its top-level `Effect.fn` body — a service missing from `ManagementApiServices`
-  // below becomes a type error here instead of a `Service not found` runtime panic. `unknown` for
-  // E and R keeps this check scoped to exposed services only.
-  const _serviceCoverageCheck: Layer.Layer<ManagementApiServices, unknown, unknown> = built;
+  // below becomes a type error here instead of a `Service not found` runtime panic. Reusing
+  // `built`'s own E and R keeps this check scoped to exposed services only.
+  const _serviceCoverageCheck: Layer.Layer<
+    ManagementApiServices,
+    Layer.Error<typeof built>,
+    Layer.Services<typeof built>
+  > = built;
   void _serviceCoverageCheck;
 
   return built;

@@ -3,9 +3,8 @@ import { Effect, FileSystem, Option, Path } from "effect";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { PROJECT_REF_PATTERN } from "../config/project-ref.service.ts";
 import { findBranchName } from "./branch-target.ts";
-import { type CachedLinkedProject, parseCachedLinkedProject } from "./parent-project-ref.ts";
 import { formatNamedRef, sanitizeInlineName } from "./http-errors.ts";
-import { readProjectRefFile, tempPaths } from "./temp-paths.ts";
+import { type LinkSnapshot, readLinkSnapshotSoft } from "../shared/config/link-snapshot.ts";
 
 /**
  * Discriminated linked-state result.
@@ -32,33 +31,23 @@ export type LinkedState =
     };
 
 /**
- * Soft lookup of the currently linked ref: env `SUPABASE_PROJECT_ID`, else the
- * `<workdir>/supabase/.temp/project-ref` file. Never prompts or fails, and does not depend on
- * `ProjectRefResolver`, so runtimes like `status` can use it without wiring that resolver up.
+ * Soft lookup of the currently linked ref: env `SUPABASE_PROJECT_ID`, else the checkout's link.
+ * Never prompts or fails, and does not depend on `ProjectRefResolver`, so runtimes like `status` can
+ * use it without wiring that resolver up.
  *
  * Candidates must match `PROJECT_REF_PATTERN`: the value is echoed verbatim by `status -o json`
  * and the file read follows symlinks, so an unvalidated value could leak a secret file's contents.
  * Reports which source won, since the env override and the cache file carry different trust.
  */
-const resolveSoftLinkedRef = Effect.fnUntraced(function* () {
-  const cliSettings = yield* CommandSettings;
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-
-  if (
-    Option.isSome(cliSettings.projectId) &&
-    PROJECT_REF_PATTERN.test(cliSettings.projectId.value)
-  ) {
-    return { ref: cliSettings.projectId, source: "env" as const };
+function resolveSoftLinkedRef(projectId: Option.Option<string>, snapshot: LinkSnapshot) {
+  if (Option.isSome(projectId) && PROJECT_REF_PATTERN.test(projectId.value)) {
+    return { ref: projectId, source: "env" as const };
   }
-  const fileRef = yield* readProjectRefFile(fs, path, cliSettings.workdir).pipe(
-    Effect.orElseSucceed(() => Option.none<string>()),
-  );
   return {
-    ref: Option.filter(fileRef, (ref) => PROJECT_REF_PATTERN.test(ref)),
+    ref: Option.filter(snapshot.ref, (ref) => PROJECT_REF_PATTERN.test(ref)),
     source: "file" as const,
   };
-});
+}
 
 /**
  * Resolves the linked-state display (project or branch) for `status` without requiring a link.
@@ -71,22 +60,25 @@ const resolveSoftLinkedRef = Effect.fnUntraced(function* () {
  *   from `SUPABASE_PROJECT_ID` the cache may not describe it, so the branch claim needs the
  *   lookup to confirm it and otherwise degrades to the plain shape.
  */
-export const resolveLinkedState = Effect.fnUntraced(function* () {
+export const resolveLinkedState = Effect.fn("LinkedState.resolve")(function* () {
   const cliSettings = yield* CommandSettings;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  const soft = yield* resolveSoftLinkedRef();
+  const snapshot = yield* readLinkSnapshotSoft(fs, path, cliSettings.workdir);
+  const soft = resolveSoftLinkedRef(cliSettings.projectId, snapshot);
   const linkedRef = soft.ref;
   if (Option.isNone(linkedRef)) {
+    yield* Effect.annotateCurrentSpan("linked_state.kind", "unlinked");
     return { linked: false } as const;
   }
+  yield* Effect.annotateCurrentSpan({
+    "linked_state.kind": "project",
+    "linked_state.ref_source": soft.source,
+    "project.ref": linkedRef.value,
+  });
 
-  const paths = tempPaths(path, cliSettings.workdir);
-  const cached = yield* fs.readFileString(paths.linkedProjectCache).pipe(
-    Effect.map(parseCachedLinkedProject),
-    Effect.orElseSucceed(() => Option.none<CachedLinkedProject>()),
-  );
+  const cached = snapshot.parent;
 
   if (Option.isSome(cached)) {
     const cacheFields = {
@@ -114,6 +106,7 @@ export const resolveLinkedState = Effect.fnUntraced(function* () {
     }
     // File-sourced, or env-sourced with a confirmed lookup: always render
     // the branch-linked shape, degrading only the `branch` name.
+    yield* Effect.annotateCurrentSpan("linked_state.kind", "branch");
     return {
       linked: true,
       projectRef: linkedRef.value,
@@ -124,7 +117,7 @@ export const resolveLinkedState = Effect.fnUntraced(function* () {
   }
 
   // No cache at all: render the plain shape with zero API calls. Querying
-  // `resolveLinkedParentRef` here would only match the ref's own default
+  // the linked parent here would only match the ref's own default
   // branch (misrendering it as "a branch of itself") or 403 when it
   // genuinely is a branch — there's no positive-confirmation case to attempt.
   return { linked: true, projectRef: linkedRef.value } as const;
@@ -195,7 +188,7 @@ export function formatLinkedStateBlock(state: LinkedState): string {
  * what signals "not linked" for these formats. A degraded branch-linked
  * state still emits every field it knows; only `linked_branch` is absent.
  */
-export function linkedStateGoFields(state: LinkedState): Readonly<Record<string, string>> {
+export function linkedStateFields(state: LinkedState): Readonly<Record<string, string>> {
   if (!state.linked) return {};
   return {
     linked_project_ref: state.projectRef,
@@ -209,7 +202,7 @@ export function linkedStateGoFields(state: LinkedState): Readonly<Record<string,
 
 /**
  * The `linked_project` shape merged into a `--output-format json`/
- * `stream-json` structured success payload. See {@link linkedStateGoFields}
+ * `stream-json` structured success payload. See {@link linkedStateFields}
  * for the `-o` machine-format counterpart.
  */
 export interface LinkedStateJsonField {

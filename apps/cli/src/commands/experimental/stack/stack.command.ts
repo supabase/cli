@@ -1,10 +1,10 @@
-import { Layer } from "effect";
-import { Command } from "effect/unstable/cli";
+import { Effect, Layer } from "effect";
+import { Command } from "effect/cli";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { commandSettingsLayer } from "../../../config/command-settings.layer.ts";
 import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
-import { dbConnectionLayer } from "../../../command-internal/db-connection.layer.ts";
+import { dbConnectionLayer } from "../../../command-internal/db-connection.sql-pg.layer.ts";
 import { stackCatalogSetupLayer } from "../../../command-internal/stack-catalog-setup.ts";
 import { httpClientLayer } from "../../../auth/http-debug.layer.ts";
 import { commandCredentialsLayer } from "../../../auth/command-credentials.layer.ts";
@@ -17,15 +17,26 @@ import { stackDestroyCommand as stackDestroyCommandBase } from "./destroy/destro
 import { stackLogsCommand as stackLogsCommandBase } from "./logs/logs.command.ts";
 import { stackListCommand as stackListCommandBase } from "./list/list.command.ts";
 import { stackRestartCommand as stackRestartCommandBase } from "./restart/restart.command.ts";
-import { stackPrepareCommand as stackPrepareCommandBase } from "./prepare/prepare.command.ts";
+import { stackInstallCommand as stackInstallCommandBase } from "./install/install.command.ts";
+import { stackOutdatedCommand as stackOutdatedCommandBase } from "./outdated/outdated.command.ts";
+import { stackUpdateCommand as stackUpdateCommandBase } from "./update/update.command.ts";
 import { stackApiLayer, stackTargetResolverLayer } from "./stack.shared.ts";
+import { configureLoopbackProxyBypass } from "../../../command-internal/hostname.ts";
+
+const stackCommandSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
+const stackTarget = stackTargetResolverLayer.pipe(
+  Layer.provideMerge(stackApiLayer),
+  Layer.provideMerge(stackCommandSettings),
+);
+const stackLoopbackProxyLayer = Layer.effectDiscard(
+  Effect.sync(() => configureLoopbackProxyBypass()),
+);
 
 export const stackRuntimeLayer = Layer.mergeAll(
-  stackTargetResolverLayer,
-  stackApiLayer,
+  stackLoopbackProxyLayer,
+  stackTarget,
   dbConnectionLayer,
   stackCatalogSetupLayer,
-  commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer)),
   telemetryStateLayer,
 );
 
@@ -72,8 +83,15 @@ const stackListCommand = stackListCommandBase.pipe(
 const stackRestartCommand = stackRestartCommandBase.pipe(
   Command.provide(commandRuntimeLayer(["stack", "restart"])),
 );
-const stackPrepareCommand = stackPrepareCommandBase.pipe(
-  Command.provide(commandRuntimeLayer(["stack", "prepare"])),
+const stackInstallCommand = stackInstallCommandBase.pipe(
+  Command.provide(commandRuntimeLayer(["stack", "install"])),
+);
+const stackOutdatedCommand = stackOutdatedCommandBase.pipe(
+  Command.provide(commandRuntimeLayer(["stack", "outdated"])),
+);
+const stackUpdateCommand = stackUpdateCommandBase.pipe(
+  Command.provide(commandRuntimeLayer(["stack", "update"])),
+  Command.provide(stackStartRuntimeLayer),
 );
 
 export const stackCommand = Command.make("stack").pipe(
@@ -83,13 +101,15 @@ export const stackCommand = Command.make("stack").pipe(
   Command.withShortDescription("Manage experimental local stacks"),
   Command.withSubcommands([
     stackDestroyCommand,
+    stackInstallCommand,
     stackListCommand,
     stackLogsCommand,
-    stackPrepareCommand,
+    stackOutdatedCommand,
     stackRestartCommand,
     stackStartCommand,
     stackStatusCommand,
     stackStopCommand,
+    stackUpdateCommand,
   ]),
   Command.provide(stackRuntimeLayer),
 );

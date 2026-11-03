@@ -331,7 +331,7 @@ span.end(); // records duration
 
 **Telemetry consent**:
 
-Local diagnostics (traces written to `~/.supabase/traces/`, `--debug` output) are always available — they stay on the user's machine and require no consent.
+Local diagnostics (a trace file via `SUPABASE_TRACE_FILE`, a user-run OTLP collector via `SUPABASE_OTLP_ENDPOINT`, and `--debug` output) are opt-in per run and require no consent; [ADR 0027](0027-cli-tracing-conventions.md) defines the export and instrumentation conventions.
 
 Remote telemetry is **opt-in by default** — it is never sent unless the user explicitly consents. See [ADR 0002](0002-cli-product-metrics.md) for consent implementation details.
 

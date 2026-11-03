@@ -5,6 +5,7 @@ import {
   ErrorActionabilityId,
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
+import type { PlanGateEntitlement } from "../../shared/output/normalize-error.ts";
 
 /**
  * Raised by the `activate` and `check-availability` handlers when
@@ -69,6 +70,7 @@ export class VanitySubdomainsCheckUnexpectedStatusError extends Data.TaggedError
   readonly body: string;
   readonly message: string;
   readonly upgradeSuggested?: boolean;
+  readonly entitlement?: PlanGateEntitlement;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, {
@@ -98,6 +100,7 @@ export class VanitySubdomainsActivateUnexpectedStatusError extends Data.TaggedEr
   readonly body: string;
   readonly message: string;
   readonly upgradeSuggested?: boolean;
+  readonly entitlement?: PlanGateEntitlement;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, {

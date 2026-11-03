@@ -1,11 +1,26 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, FileSystem, Path, Schema } from "effect";
 
-import { runSupabase } from "../../../../tests/helpers/cli.ts";
+import { runSupabaseEffect } from "../../../../tests/helpers/cli.ts";
 
 const E2E_TIMEOUT_MS = 30_000;
+
+const storedSigningKeysJson = Schema.fromJsonString(Schema.Unknown);
+
+const makeProject = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const projectDir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-gen-signing-key-e2e-" });
+  yield* fs.makeDirectory(path.join(projectDir, "supabase"), { recursive: true });
+  yield* fs.writeFileString(
+    path.join(projectDir, "supabase", "config.toml"),
+    '[auth]\nsigning_keys_path = "./signing_keys.json"\n',
+  );
+  const keysPath = path.join(projectDir, "supabase", "signing_keys.json");
+  yield* fs.writeFileString(keysPath, "[]\n");
+  return { projectDir, keysPath };
+});
 
 /**
  * Golden-path e2e exercising the real compiled-binary boundary: the actual production runtime
@@ -13,47 +28,41 @@ const E2E_TIMEOUT_MS = 30_000;
  * coverage lives in the integration suite.
  */
 describe("supabase gen signing-key", () => {
-  let projectDir: string;
-
-  beforeEach(() => {
-    projectDir = mkdtempSync(join(tmpdir(), "supabase-gen-signing-key-e2e-"));
-    mkdirSync(join(projectDir, "supabase"), { recursive: true });
-    writeFileSync(
-      join(projectDir, "supabase", "config.toml"),
-      '[auth]\nsigning_keys_path = "./signing_keys.json"\n',
-    );
-    writeFileSync(join(projectDir, "supabase", "signing_keys.json"), "[]\n");
-  });
-
-  afterEach(() => {
-    rmSync(projectDir, { recursive: true, force: true });
-  });
-
-  test(
+  it.live(
     "declines the overwrite on a piped 'n' without crashing or writing the file",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { projectDir, keysPath } = yield* makeProject;
+        const { exitCode, stderr } = yield* runSupabaseEffect(["gen", "signing-key"], {
+          cwd: projectDir,
+          stdin: "n\n",
+        });
+        expect(exitCode).toBe(1);
+        expect(stderr).toContain("context canceled");
+        expect(stderr).not.toContain("Try rerunning the command with --debug");
+        expect(stderr).not.toContain("Service not found");
+        const saved = yield* fs.readFileString(keysPath);
+        expect(yield* Schema.decodeEffect(storedSigningKeysJson)(saved)).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     { timeout: E2E_TIMEOUT_MS },
-    async () => {
-      const { exitCode, stderr } = await runSupabase(["gen", "signing-key"], {
-        cwd: projectDir,
-        stdin: "n\n",
-      });
-      expect(exitCode).toBe(1);
-      expect(stderr).toContain("context canceled");
-      expect(stderr).not.toContain("Try rerunning the command with --debug");
-      expect(stderr).not.toContain("Service not found");
-      const saved = readFileSync(join(projectDir, "supabase", "signing_keys.json"), "utf8");
-      expect(JSON.parse(saved)).toEqual([]);
-    },
   );
 
-  test("overwrites on a piped 'y'", { timeout: E2E_TIMEOUT_MS }, async () => {
-    const { exitCode, stderr } = await runSupabase(["gen", "signing-key"], {
-      cwd: projectDir,
-      stdin: "y\n",
-    });
-    expect(exitCode).toBe(0);
-    expect(stderr).toContain("JWT signing key appended to:");
-    const saved = readFileSync(join(projectDir, "supabase", "signing_keys.json"), "utf8");
-    expect(JSON.parse(saved)).toHaveLength(1);
-  });
+  it.live(
+    "overwrites on a piped 'y'",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { projectDir, keysPath } = yield* makeProject;
+        const { exitCode, stderr } = yield* runSupabaseEffect(["gen", "signing-key"], {
+          cwd: projectDir,
+          stdin: "y\n",
+        });
+        expect(exitCode).toBe(0);
+        expect(stderr).toContain("JWT signing key appended to:");
+        const saved = yield* fs.readFileString(keysPath);
+        expect(yield* Schema.decodeEffect(storedSigningKeysJson)(saved)).toHaveLength(1);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    { timeout: E2E_TIMEOUT_MS },
+  );
 });

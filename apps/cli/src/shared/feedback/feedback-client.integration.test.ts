@@ -1,8 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Fiber } from "effect";
+import { Deferred, Effect, Exit, Fiber, Schema } from "effect";
 import { feedbackClientLayer } from "./feedback-client.layer.ts";
 import type { FeedbackSubmission } from "./feedback-client.service.ts";
-import { FeedbackClient } from "./feedback-client.service.ts";
+import { FeedbackBackendError, FeedbackClient } from "./feedback-client.service.ts";
 import { actionability, ErrorActionabilityId } from "../telemetry/error-actionability.ts";
 
 // The layer only needs a url/key shape — no request leaves the test, so the
@@ -39,11 +39,16 @@ function recordingFetch(
 ) {
   const requests: Array<{ request: Request; bodyText: string }> = [];
   const fetch: typeof globalThis.fetch = Object.assign(
-    async (input: string | URL | Request, init?: RequestInit) => {
+    (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
       const request =
         input instanceof Request ? new Request(input, init) : new Request(String(input), init);
-      requests.push({ request, bodyText: await request.clone().text() });
-      return respond(request);
+      return request
+        .clone()
+        .text()
+        .then((bodyText) => {
+          requests.push({ request, bodyText });
+          return respond(request);
+        });
     },
     { preconnect: () => Promise.resolve() },
   );
@@ -57,13 +62,17 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
+const decodeJsonBody = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
+
 function layerWith(transport: ReturnType<typeof recordingFetch>) {
   return feedbackClientLayer({ environment: TEST_ENV, fetch: transport.fetch });
 }
 
 describe("feedbackClientLayer", () => {
   describe("submit", () => {
-    it.live("submits through the RPC and returns the server-issued delete token", () => {
+    it.effect("submits through the RPC and returns the server-issued delete token", () => {
       const transport = recordingFetch(() => jsonResponse(TOKEN));
       return Effect.gen(function* () {
         const client = yield* FeedbackClient;
@@ -75,7 +84,7 @@ describe("feedbackClientLayer", () => {
         expect(request.method).toBe("POST");
         expect(request.url).toBe(`${TEST_ENV.url}/rest/v1/rpc/submit_interfaces_feedback`);
         expect(request.headers.get("apikey")).toBe(TEST_ENV.key);
-        expect(JSON.parse(bodyText)).toEqual({
+        expect(yield* decodeJsonBody(bodyText)).toEqual({
           feedback: "port conflicts when running two stacks",
           user_agent: "SupabaseCLI/9.9.9",
           project_ref: PROJECT_REF,
@@ -92,7 +101,7 @@ describe("feedbackClientLayer", () => {
       }).pipe(Effect.provide(layerWith(transport)));
     });
 
-    it.live("omits project_ref and agent_name for an unlinked non-agent run", () => {
+    it.effect("omits project_ref and agent_name for an unlinked non-agent run", () => {
       const transport = recordingFetch(() => jsonResponse(TOKEN));
       return Effect.gen(function* () {
         const client = yield* FeedbackClient;
@@ -107,12 +116,12 @@ describe("feedbackClientLayer", () => {
           },
         });
 
-        const body = JSON.parse(transport.requests[0]!.bodyText);
+        const body = yield* decodeJsonBody(transport.requests[0]!.bodyText);
         // The RPC's `project_ref` parameter defaults to null server-side; the
         // CLI simply leaves it (and `user_id`) out of the call.
         expect(body).not.toHaveProperty("project_ref");
         expect(body).not.toHaveProperty("user_id");
-        expect(body.metadata).toEqual({
+        expect(body["metadata"]).toEqual({
           cli_version: "9.9.9",
           source: "cli",
           os: "linux",
@@ -122,7 +131,7 @@ describe("feedbackClientLayer", () => {
       }).pipe(Effect.provide(layerWith(transport)));
     });
 
-    it.live("maps a PostgREST error response to FeedbackBackendError", () => {
+    it.effect("maps a PostgREST error response to FeedbackBackendError", () => {
       // Shape PostgREST returns when execute is denied on the RPC.
       const transport = recordingFetch(() =>
         jsonResponse(
@@ -139,7 +148,7 @@ describe("feedbackClientLayer", () => {
         const client = yield* FeedbackClient;
         const error = yield* client.submit(SUBMISSION).pipe(Effect.flip);
 
-        expect(error._tag).toBe("FeedbackBackendError");
+        expect(error).toBeInstanceOf(FeedbackBackendError);
         expect(error.operation).toBe("submit");
         expect(error.message).toContain("permission denied");
         // The backend answered: an API-status failure, not a network outage.
@@ -151,7 +160,7 @@ describe("feedbackClientLayer", () => {
       }).pipe(Effect.provide(layerWith(transport)));
     });
 
-    it.live("maps a network failure to FeedbackBackendError", () => {
+    it.effect("maps a network failure to FeedbackBackendError", () => {
       const transport = recordingFetch(() => {
         throw new Error("network down");
       });
@@ -159,7 +168,7 @@ describe("feedbackClientLayer", () => {
         const client = yield* FeedbackClient;
         const error = yield* client.submit(SUBMISSION).pipe(Effect.flip);
 
-        expect(error._tag).toBe("FeedbackBackendError");
+        expect(error).toBeInstanceOf(FeedbackBackendError);
         expect(error.operation).toBe("submit");
         // The fetch threw: a transport failure, classified as network.
         expect(error.reason).toBe("transport");
@@ -167,45 +176,43 @@ describe("feedbackClientLayer", () => {
       }).pipe(Effect.provide(layerWith(transport)));
     });
 
-    it.live("aborts the in-flight request when the fiber is interrupted", () => {
+    it.effect("aborts the in-flight request when the fiber is interrupted", () => {
       // Ctrl-C during submission must abort the HTTP request, not let the
       // insert commit after the command was cancelled. The fake fetch behaves
       // like a real one: it settles only when its abort signal fires.
       let capturedSignal: AbortSignal | undefined;
-      const inFlight = Promise.withResolvers<void>();
+      const inFlight = Deferred.makeUnsafe<void>();
       const transport = recordingFetch((request) => {
         capturedSignal = request.signal;
-        inFlight.resolve();
-        return new Promise<Response>((_, reject) => {
-          request.signal.addEventListener("abort", () => reject(request.signal.reason));
-        });
+        Deferred.doneUnsafe(inFlight, Exit.void);
+        return Effect.runPromise(Effect.never, { signal: request.signal });
       });
       return Effect.gen(function* () {
         const client = yield* FeedbackClient;
         const fiber = yield* client
           .submit(SUBMISSION)
           .pipe(Effect.forkChild({ startImmediately: true }));
-        yield* Effect.promise(() => inFlight.promise);
+        yield* Deferred.await(inFlight);
         yield* Fiber.interrupt(fiber);
 
         expect(capturedSignal?.aborted).toBe(true);
       }).pipe(Effect.provide(layerWith(transport)));
     });
 
-    it.live("fails when the backend returns no delete token", () => {
+    it.effect("fails when the backend returns no delete token", () => {
       const transport = recordingFetch(() => jsonResponse(null));
       return Effect.gen(function* () {
         const client = yield* FeedbackClient;
         const error = yield* client.submit(SUBMISSION).pipe(Effect.flip);
 
-        expect(error._tag).toBe("FeedbackBackendError");
+        expect(error).toBeInstanceOf(FeedbackBackendError);
         expect(error.message).toContain("no delete token");
       }).pipe(Effect.provide(layerWith(transport)));
     });
   });
 
   describe("delete", () => {
-    it.live("deletes with the token filter, capability headers, and an exact count", () => {
+    it.effect("deletes with the token filter, capability headers, and an exact count", () => {
       const transport = recordingFetch(
         () => new Response(null, { status: 204, headers: { "content-range": "*/1" } }),
       );
@@ -226,7 +233,7 @@ describe("feedbackClientLayer", () => {
       }).pipe(Effect.provide(layerWith(transport)));
     });
 
-    it.live("reports deleted: false when the delete matched zero rows", () => {
+    it.effect("reports deleted: false when the delete matched zero rows", () => {
       // Wrong/stale token or a project-ref/user-id context mismatch: RLS
       // matches nothing and PostgREST reports an empty range.
       const transport = recordingFetch(
@@ -242,7 +249,7 @@ describe("feedbackClientLayer", () => {
       }).pipe(Effect.provide(layerWith(transport)));
     });
 
-    it.live("maps a network failure to FeedbackBackendError", () => {
+    it.effect("maps a network failure to FeedbackBackendError", () => {
       const transport = recordingFetch(() => {
         throw new Error("network down");
       });
@@ -250,7 +257,7 @@ describe("feedbackClientLayer", () => {
         const client = yield* FeedbackClient;
         const error = yield* client.delete(TOKEN).pipe(Effect.flip);
 
-        expect(error._tag).toBe("FeedbackBackendError");
+        expect(error).toBeInstanceOf(FeedbackBackendError);
         expect(error.operation).toBe("delete");
       }).pipe(Effect.provide(layerWith(transport)));
     });

@@ -16,7 +16,7 @@ function value(archive: Uint8Array, block: number, offset: number, length: numbe
 }
 
 describe("createTar", () => {
-  it.live("writes a readable ustar header for a file", () =>
+  it.effect("writes a readable ustar header for a file", () =>
     Effect.gen(function* () {
       const archive = yield* createTar([
         { path: "index.js", contents: encoder.encode("hello"), mode: 0o644, mtime: 1_700_000_000 },
@@ -31,7 +31,7 @@ describe("createTar", () => {
     }),
   );
 
-  it.live("computes a checksum the standard algorithm reproduces", () =>
+  it.effect("computes a checksum the standard algorithm reproduces", () =>
     Effect.gen(function* () {
       const archive = yield* createTar([{ path: "a.txt", contents: encoder.encode("a") }]);
       const header = archive.subarray(0, 512);
@@ -46,7 +46,7 @@ describe("createTar", () => {
     }),
   );
 
-  it.live("pads content to a 512-byte boundary and ends with two zero blocks", () =>
+  it.effect("pads content to a 512-byte boundary and ends with two zero blocks", () =>
     Effect.gen(function* () {
       const archive = yield* createTar([{ path: "a.txt", contents: encoder.encode("hello") }]);
 
@@ -56,7 +56,7 @@ describe("createTar", () => {
     }),
   );
 
-  it.live("emits directory entries with no content and the directory typeflag", () =>
+  it.effect("emits directory entries with no content and the directory typeflag", () =>
     Effect.gen(function* () {
       const archive = yield* createTar([
         { path: "nested/", contents: new Uint8Array(0), mode: 0o755 },
@@ -69,7 +69,7 @@ describe("createTar", () => {
     }),
   );
 
-  it.live("stores a symlink as a link entry with no content blocks", () =>
+  it.effect("stores a symlink as a link entry with no content blocks", () =>
     Effect.gen(function* () {
       const archive = yield* createTar([
         { path: "link.txt", contents: new Uint8Array(0), linkTarget: "target.txt", mode: 0o777 },
@@ -82,7 +82,7 @@ describe("createTar", () => {
     }),
   );
 
-  it.live("a symlink entry wins over the trailing-slash directory rule", () =>
+  it.effect("a symlink entry wins over the trailing-slash directory rule", () =>
     Effect.gen(function* () {
       const archive = yield* createTar([
         { path: "dir", contents: new Uint8Array(0), linkTarget: ".." },
@@ -91,7 +91,7 @@ describe("createTar", () => {
     }),
   );
 
-  it.live("refuses a link target too long for the header field", () =>
+  it.effect("refuses a link target too long for the header field", () =>
     Effect.gen(function* () {
       const error = yield* Effect.flip(
         createTar([
@@ -102,7 +102,7 @@ describe("createTar", () => {
     }),
   );
 
-  it.live("splits a long path across the prefix and name fields", () =>
+  it.effect("splits a long path across the prefix and name fields", () =>
     Effect.gen(function* () {
       const deep = `${"d".repeat(120)}/${"f".repeat(60)}.txt`;
       const archive = yield* createTar([{ path: deep, contents: new Uint8Array(0) }]);
@@ -112,7 +112,7 @@ describe("createTar", () => {
     }),
   );
 
-  it.live("refuses a value too large for an octal header field rather than truncating it", () =>
+  it.effect("refuses a value too large for an octal header field rather than truncating it", () =>
     Effect.gen(function* () {
       const error = yield* Effect.flip(
         createTar([{ path: "a.txt", contents: new Uint8Array(1), mtime: 8 ** 11 }]),
@@ -123,7 +123,7 @@ describe("createTar", () => {
     }),
   );
 
-  it.live("can evaluate one archive Effect more than once", () =>
+  it.effect("can evaluate one archive Effect more than once", () =>
     Effect.gen(function* () {
       const archive = createTar([{ path: "a.txt", contents: encoder.encode("a") }]);
       const first = yield* archive;
@@ -134,7 +134,7 @@ describe("createTar", () => {
     }),
   );
 
-  it.live.each([
+  it.effect.each([
     { label: "a pre-epoch mtime", mtime: -1 },
     { label: "an mtime from an invalid date", mtime: Number.NaN },
     { label: "an infinite mtime", mtime: Number.POSITIVE_INFINITY },
@@ -147,7 +147,7 @@ describe("createTar", () => {
     }),
   );
 
-  it.live("refuses a negative mode rather than writing a field no tar can parse", () =>
+  it.effect("refuses a negative mode rather than writing a field no tar can parse", () =>
     Effect.gen(function* () {
       const error = yield* Effect.flip(
         createTar([{ path: "a.txt", contents: new Uint8Array(1), mode: -1 }]),
@@ -156,7 +156,7 @@ describe("createTar", () => {
     }),
   );
 
-  it.live("refuses a path component too long to represent", () =>
+  it.effect("refuses a path component too long to represent", () =>
     Effect.gen(function* () {
       const error = yield* Effect.flip(
         createTar([{ path: `${"f".repeat(120)}.txt`, contents: new Uint8Array(0) }]),

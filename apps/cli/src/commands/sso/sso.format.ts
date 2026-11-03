@@ -1,15 +1,15 @@
-import { Result } from "effect";
+import { Predicate, Result, Schema } from "effect";
 
 import { renderGlamourTable } from "../../output/glamour-table.ts";
 import { SsoInvalidUuidError } from "./sso.errors.ts";
 
+export const quoteSsoString = Schema.encodeSync(Schema.fromJsonString(Schema.String));
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * Permissive shape that covers both the typed-client output
- * (`V1GetASsoProviderOutput` / list items) and arbitrary JSON returned by the
- * raw POST/PUT path. `attribute_mapping` is left as `unknown` so we can render
- * provider responses that carry user-defined keys.
+ * Provider shape rendered by list/show/add/update/remove, structurally
+ * compatible with the typed-client provider outputs.
  */
 export interface SsoProviderView {
   readonly id: string;
@@ -30,57 +30,8 @@ export interface SsoProviderView {
 }
 
 /**
- * Defensive extraction for the raw-HTTP add/update path. The response is
- * untyped (we bypass the generated schema to preserve `attribute_mapping.keys.<x>.default`),
- * so the formatter coerces an arbitrary object into the provider view shape
- * without throwing on missing fields.
- */
-export function toSsoProviderView(value: unknown): SsoProviderView {
-  if (typeof value !== "object" || value === null) {
-    return { id: "" };
-  }
-  const root = value as Record<string, unknown>;
-  const samlRaw = root["saml"];
-  const saml =
-    samlRaw !== undefined && typeof samlRaw === "object" && samlRaw !== null
-      ? (samlRaw as Record<string, unknown>)
-      : undefined;
-
-  const domainsRaw = root["domains"];
-  const domains = Array.isArray(domainsRaw)
-    ? domainsRaw
-        .filter((d): d is Record<string, unknown> => typeof d === "object" && d !== null)
-        .map((d) => ({
-          domain: typeof d["domain"] === "string" ? d["domain"] : undefined,
-          created_at: typeof d["created_at"] === "string" ? d["created_at"] : undefined,
-          updated_at: typeof d["updated_at"] === "string" ? d["updated_at"] : undefined,
-        }))
-    : undefined;
-
-  return {
-    id: typeof root["id"] === "string" ? root["id"] : "",
-    saml:
-      saml === undefined
-        ? undefined
-        : {
-            entity_id: typeof saml["entity_id"] === "string" ? saml["entity_id"] : undefined,
-            metadata_url:
-              typeof saml["metadata_url"] === "string" ? saml["metadata_url"] : undefined,
-            metadata_xml:
-              typeof saml["metadata_xml"] === "string" ? saml["metadata_xml"] : undefined,
-            name_id_format:
-              typeof saml["name_id_format"] === "string" ? saml["name_id_format"] : undefined,
-            attribute_mapping: saml["attribute_mapping"],
-          },
-    domains,
-    created_at: typeof root["created_at"] === "string" ? root["created_at"] : undefined,
-    updated_at: typeof root["updated_at"] === "string" ? root["updated_at"] : undefined,
-  };
-}
-
-/**
  * Validates a positional provider-id argument as a canonical UUID.
- * Failure message uses `%q`-style quoting (JSON.stringify wraps the raw input).
+ * Failure message double-quotes the raw input via JSON.stringify.
  */
 export function validateUuid(input: string): Result.Result<string, SsoInvalidUuidError> {
   if (UUID_PATTERN.test(input)) {
@@ -95,14 +46,16 @@ export function validateUuid(input: string): Result.Result<string, SsoInvalidUui
 }
 
 const pad2 = (n: number): string => String(n).padStart(2, "0");
+const decodeTimestamp = Schema.decodeUnknownResult(Schema.DateFromString);
 
 /**
  * RFC3339 → `YYYY-MM-DD HH:MM:SS` (UTC, no timezone label).
  */
 export function formatSsoTimestamp(input?: string): string {
   if (input === undefined || input === null) return "";
-  const date = new Date(input);
-  if (Number.isNaN(date.getTime())) return input;
+  const decoded = decodeTimestamp(input);
+  if (Result.isFailure(decoded)) return input;
+  const date = decoded.success;
   return (
     `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())} ` +
     `${pad2(date.getUTCHours())}:${pad2(date.getUTCMinutes())}:${pad2(date.getUTCSeconds())}`
@@ -145,7 +98,7 @@ const XMLFMT_INTERTAG_SPACES_RE = />\s+</g;
 
 /**
  * Pretty-prints an XML document by inserting newlines and indentation between
- * tags, matching `go-xmlfmt/xmlfmt@v1.1.3`'s output byte-for-byte (excluding
+ * tags, matching `xmlfmt@v1.1.3`'s output byte-for-byte (excluding
  * its unused nested-tags-in-comments branch). Text between adjacent
  * open/close tags (e.g. `<b>text</b>`) stays inline; other tags start a new,
  * indented line.
@@ -265,8 +218,8 @@ export function renderSingleProvider(provider: SsoProviderView): string {
 }
 
 function hasAtLeastOneKey(value: unknown): boolean {
-  if (typeof value !== "object" || value === null) return false;
-  const keys = (value as { keys?: unknown }).keys;
+  if (!Predicate.hasProperty(value, "keys")) return false;
+  const keys = value.keys;
   if (typeof keys !== "object" || keys === null) return false;
   return Object.keys(keys).length > 0;
 }

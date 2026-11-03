@@ -1,21 +1,45 @@
 import { Data } from "effect";
 import {
   actionability,
+  causeDeclaration,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
+  unclassifiedStackFailureActionability,
 } from "../../../../shared/telemetry/error-actionability.ts";
+import { type StackTargetIssue, stackTargetInvalidConfigActionability } from "../stack.shared.ts";
+
+/** The start check that rejected the project or saved stack configuration. */
+type StartConfigIssue =
+  | "project-config"
+  | "service-config"
+  | "functions-env"
+  | "saved-stack-changes"
+  | "credentials-conflict"
+  | "missing-database"
+  | "missing-credentials";
+
+const configIssueSuffix = {
+  "project-config": "project_config",
+  "service-config": "service_config",
+  "functions-env": "functions_env",
+  "saved-stack-changes": "saved_stack_changes",
+  "credentials-conflict": "credentials_conflict",
+  "missing-database": "missing_database",
+  "missing-credentials": "missing_credentials",
+} as const;
 
 export class StackCommandStartError extends Data.TaggedError("ExperimentalStackStartError")<{
   readonly reason:
     | "invalid-config"
+    | "filesystem"
+    | "lock"
     | "flags"
     | "runtime"
-    | "registry"
-    | "port"
-    | "artifact"
     | "lifecycle"
     | "seed"
-    | "unknown";
+    | "stack";
+  readonly targetIssue?: StackTargetIssue;
+  readonly configIssue?: StartConfigIssue;
   readonly message: string;
   readonly detail?: string;
   readonly suggestion?: string;
@@ -24,22 +48,35 @@ export class StackCommandStartError extends Data.TaggedError("ExperimentalStackS
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     switch (this.reason) {
       case "invalid-config":
-        return actionability.invalidConfig;
+        return this.configIssue === undefined
+          ? stackTargetInvalidConfigActionability(this.targetIssue)
+          : {
+              ...actionability.invalidConfig,
+              fingerprint_suffix: configIssueSuffix[this.configIssue],
+            };
+      case "filesystem": {
+        const declared = causeDeclaration(this.cause);
+        return declared?.error_kind === "user_actionable"
+          ? declared
+          : { ...actionability.runtimeCrash, fingerprint_suffix: "filesystem_io" };
+      }
+      case "lock":
+        return (
+          causeDeclaration(this.cause) ?? {
+            ...actionability.invalidConfig,
+            fingerprint_suffix: "invalid_config",
+          }
+        );
       case "flags":
-        return actionability.provideFlags;
+        return { ...actionability.provideFlags, fingerprint_suffix: "flags" };
       case "runtime":
-        return actionability.dockerNotRunning;
-      case "registry":
-      case "artifact":
-        return actionability.externalNetwork;
-      case "port":
-        return actionability.invalidConfig;
+        return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
       case "lifecycle":
-        return actionability.invalidConfig;
+        return { ...actionability.invalidConfig, fingerprint_suffix: "lifecycle" };
       case "seed":
-        return actionability.seedBuckets;
-      case "unknown":
-        return actionability.unknown;
+        return { ...actionability.seedBuckets, fingerprint_suffix: "seed_buckets" };
+      case "stack":
+        return causeDeclaration(this.cause) ?? unclassifiedStackFailureActionability(this.cause);
     }
   }
 }

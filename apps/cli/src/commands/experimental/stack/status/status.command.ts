@@ -1,17 +1,21 @@
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { stringSliceFlag } from "../../../../command-internal/string-slice-flag.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { stackStatus } from "./status.handler.ts";
+import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
+import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 
 const config = {
-  stack: Flag.string("stack").pipe(Flag.withDescription("Inspect a named stack."), Flag.optional),
-  stackId: Flag.string("stack-id").pipe(
-    Flag.withDescription("Inspect an existing stack by id."),
+  stack: Flag.String("stack").pipe(Flag.withDescription("Inspect a named stack."), Flag.optional),
+  stackId: Flag.String("stack-id").pipe(
+    Flag.withDescription("Inspect an existing stack by id or unique id prefix."),
     Flag.optional,
   ),
-  env: Flag.boolean("env").pipe(
+  env: Flag.Boolean("env").pipe(
     Flag.withDescription("Export connection URLs and credentials as environment variables."),
     Flag.withDefault(false),
   ),
@@ -40,7 +44,14 @@ export const stackStatusCommand = Command.make("status", config).pipe(
       description: "Export connection variables as dotenv",
     },
   ]),
+  withPermissions({
+    operations: [],
+    noApiEffectFlags: ["stack", "stack-id", "env", "override-name"],
+  }),
   Command.withHandler((flags) =>
     stackStatus(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

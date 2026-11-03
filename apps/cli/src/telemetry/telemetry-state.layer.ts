@@ -1,10 +1,10 @@
-import { Effect, FileSystem, Layer, Path } from "effect";
+import { Crypto, DateTime, Effect, FileSystem, Layer, Path } from "effect";
 import { homedir } from "node:os";
 
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../shared/telemetry/runtime.service.ts";
 import { isEphemeralIdentityRuntime } from "../shared/telemetry/identity.ts";
-import { supabaseHome } from "../config/profile-file.ts";
+import { readSupabaseHome } from "../shared/config/supabase-home.ts";
 import { TelemetryState } from "./telemetry-state.service.ts";
 
 interface State {
@@ -25,9 +25,9 @@ interface State {
 const SCHEMA_VERSION = 1;
 const SESSION_ROTATION_MS = 30 * 60 * 1000;
 
-function telemetryPath(env: Record<string, string | undefined>, pathSvc: Path.Path): string {
-  return pathSvc.join(supabaseHome(homedir(), env), "telemetry.json");
-}
+const telemetryPath = Effect.fnUntraced(function* (pathSvc: Path.Path) {
+  return pathSvc.join(yield* readSupabaseHome(pathSvc, homedir()), "telemetry.json");
+});
 
 /**
  * Serializes the state, splicing a carried exact `schema_version` token back in verbatim via
@@ -80,7 +80,7 @@ function daysInMonth(year: number, month: number): number {
  * pass, since a valid form JS can't parse would NaN there and wrongly count as session-expired
  * (see the rotation check in `loadOrCreateTelemetryState`).
  */
-function parseGoRfc3339Ms(text: string): number | undefined {
+function parseRfc3339Ms(text: string): number | undefined {
   const match = RFC3339_RE.exec(text);
   if (match === null) return undefined;
   const year = Number(match[1]);
@@ -93,11 +93,9 @@ function parseGoRfc3339Ms(text: string): number | undefined {
   if (day < 1 || day > daysInMonth(year, month)) return undefined;
   if (hour > 23 || minute > 59 || second > 59) return undefined;
   if (match[9] !== undefined && (Number(match[9]) > 24 || Number(match[10]) > 60)) return undefined;
-  // `setUTCFullYear` (not `Date.UTC`) so years 0000-0099 aren't remapped to
-  // 1900-1999; components are already range-checked, so no rollover occurs.
-  const date = new Date(0);
-  date.setUTCFullYear(year, month - 1, day);
-  date.setUTCHours(hour, minute, second, 0);
+  /* `DateTime.makeUnsafe` parts (not `Date.UTC`) so years 0000-0099 aren't remapped to
+     1900-1999; components are already range-checked, so no rollover occurs. */
+  const date = DateTime.makeUnsafe({ year, month, day, hour, minute, second, millisecond: 0 });
   // At most 9 fractional digits (nanoseconds) are read; ms precision is exact for the 30-minute
   // comparison this feeds.
   const fractionMs = match[7] !== undefined ? Number(`0.${match[7].slice(0, 9)}`) * 1000 : 0;
@@ -105,15 +103,15 @@ function parseGoRfc3339Ms(text: string): number | undefined {
     match[8] !== undefined
       ? (match[8] === "-" ? -1 : 1) * (Number(match[9]) * 3600 + Number(match[10]) * 60) * 1000
       : 0;
-  return date.getTime() + fractionMs - offsetMs;
+  return DateTime.toEpochMillis(date) + fractionMs - offsetMs;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-const GO_INT64_MIN = -(2n ** 63n);
-const GO_INT64_MAX = 2n ** 63n - 1n;
+const INT64_MIN = -(2n ** 63n);
+const INT64_MAX = 2n ** 63n - 1n;
 const INT64_TOKEN_RE = /^-?\d+$/;
 
 /**
@@ -126,9 +124,7 @@ const INT64_TOKEN_RE = /^-?\d+$/;
  * int64-max+1 are indistinguishable; the tokens are not).
  */
 function isInt64Token(token: string): boolean {
-  return (
-    INT64_TOKEN_RE.test(token) && BigInt(token) >= GO_INT64_MIN && BigInt(token) <= GO_INT64_MAX
-  );
+  return INT64_TOKEN_RE.test(token) && BigInt(token) >= INT64_MIN && BigInt(token) <= INT64_MAX;
 }
 
 const JSON_WS = new Set([" ", "\t", "\n", "\r"]);
@@ -221,7 +217,7 @@ function scanRootJsonEntries(
  * canonical lowercase keys, so a case-variant key (`"Enabled": …`) requires a hand-edited file and
  * is treated as unknown here rather than folded to `enabled`.
  */
-function hasGoDecodableFieldTokens(
+function hasDecodableFieldTokens(
   entries: ReadonlyArray<readonly [key: string, token: string]>,
 ): boolean {
   for (const [key, token] of entries) {
@@ -235,7 +231,7 @@ function hasGoDecodableFieldTokens(
       case "distinct_id": // string
         if (!token.startsWith('"') && token !== "null") return false;
         break;
-      case "schema_version": // int — Go parses the raw token as base-10 int64
+      case "schema_version": // int — the raw token is parsed as base-10 int64
         if (token !== "null" && !isInt64Token(token)) return false;
         break;
       default:
@@ -279,7 +275,7 @@ function lastNonNullString(
 ): string | undefined {
   const token = lastNonNullToken(entries, key);
   if (token === undefined) return undefined;
-  // The token was validated as a JSON string by `hasGoDecodableFieldTokens`;
+  // The token was validated as a JSON string by `hasDecodableFieldTokens`;
   // the typeof narrow keeps the typing honest without a cast.
   const value: unknown = JSON.parse(token);
   return typeof value === "string" ? value : undefined;
@@ -294,7 +290,7 @@ function lastNonNullString(
  * does not stay disabled.
  *
  * Strictness is reproduced at the token level, over every occurrence of every root field
- * ({@link scanRootJsonEntries} + {@link hasGoDecodableFieldTokens}): `JSON.parse` collapses
+ * ({@link scanRootJsonEntries} + {@link hasDecodableFieldTokens}): `JSON.parse` collapses
  * `2.0` → `2`, `1e3` → `1000`, and duplicated keys down to their final occurrence, so parsed
  * values alone would preserve files this format rejects as wholly malformed — non-integer number
  * tokens, magnitudes outside the int64 range, and wrong-typed non-final duplicates
@@ -311,7 +307,7 @@ export function readExistingState(text: string): PriorState | undefined {
     // Per-occurrence typing first: fails on any wrong-typed occurrence, including one shadowed
     // by a later valid duplicate that `JSON.parse` would surface.
     const entries = scanRootJsonEntries(text);
-    if (entries === undefined || !hasGoDecodableFieldTokens(entries)) return undefined;
+    if (entries === undefined || !hasDecodableFieldTokens(entries)) return undefined;
 
     // A non-null `consent` must be `granted`/`denied` (and unlocks the unix-millis timestamp
     // form); otherwise a bool `enabled` is required. Field typing was already validated above.
@@ -340,7 +336,7 @@ export function readExistingState(text: string): PriorState | undefined {
     const rawLastActive = record.session_last_active;
     let sessionLastActiveMs: number;
     if (typeof rawLastActive === "string") {
-      const parsedMs = parseGoRfc3339Ms(rawLastActive);
+      const parsedMs = parseRfc3339Ms(rawLastActive);
       if (parsedMs === undefined) {
         return undefined;
       }
@@ -390,30 +386,32 @@ export function readExistingState(text: string): PriorState | undefined {
 }
 
 export const loadOrCreateTelemetryState = Effect.fn("telemetry.loadOrCreateState")(function* (
-  opts: { readonly now?: Date } = {},
+  opts: { readonly now?: DateTime.Utc } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
   const pathSvc = yield* Path.Path;
-  const filePath = telemetryPath(process.env, pathSvc);
+  const crypto = yield* Crypto.Crypto;
+  const filePath = yield* telemetryPath(pathSvc);
   const exists = yield* fs.exists(filePath);
   const existing = exists ? yield* fs.readFileString(filePath) : undefined;
   const prior = existing !== undefined ? readExistingState(existing) : undefined;
-  const now = opts.now ?? new Date();
-  const nowIso = now.toISOString();
+  const now = opts.now ?? (yield* DateTime.now);
+  const nowIso = DateTime.formatIso(now);
 
-  // The expiry comparison uses the epoch computed by `parseGoRfc3339Ms` during decode, not a
+  // The expiry comparison uses the epoch computed by `parseRfc3339Ms` during decode, not a
   // `new Date(string)` re-parse — a valid form JS can't parse (comma fraction `…00,5Z`, offsets
   // `+24:00`/`+05:60`) would NaN there and wrongly read as expired, rotating `session_id` even
   // though the instant decoded fine and is still inside the 30-minute window.
   const priorActiveMs = prior?.sessionLastActiveMs;
   const expired =
-    priorActiveMs === undefined || now.getTime() - priorActiveMs > SESSION_ROTATION_MS;
+    priorActiveMs === undefined ||
+    DateTime.toEpochMillis(now) - priorActiveMs > SESSION_ROTATION_MS;
 
   const state: State = {
     enabled: prior?.enabled ?? true,
-    device_id: prior?.device_id ?? crypto.randomUUID(),
+    device_id: prior?.device_id ?? (yield* crypto.randomUUIDv4),
     session_id:
-      !expired && prior?.session_id !== undefined ? prior.session_id : crypto.randomUUID(),
+      !expired && prior?.session_id !== undefined ? prior.session_id : yield* crypto.randomUUIDv4,
     session_last_active: nowIso,
     ...(prior?.distinct_id !== undefined ? { distinct_id: prior.distinct_id } : {}),
     // A decoded file's non-zero schema_version is kept. The numeric field is for in-memory
@@ -432,7 +430,7 @@ export const loadOrCreateTelemetryState = Effect.fn("telemetry.loadOrCreateState
 
 export const setTelemetryEnabled = Effect.fn("telemetry.setEnabled")(function* (
   enabled: boolean,
-  opts: { readonly now?: Date } = {},
+  opts: { readonly now?: DateTime.Utc } = {},
 ) {
   const state = yield* loadOrCreateTelemetryState(opts);
   if (state.enabled === enabled) return state;
@@ -440,7 +438,7 @@ export const setTelemetryEnabled = Effect.fn("telemetry.setEnabled")(function* (
   const fs = yield* FileSystem.FileSystem;
   const pathSvc = yield* Path.Path;
   const nextState: State = { ...state, enabled };
-  const filePath = telemetryPath(process.env, pathSvc);
+  const filePath = yield* telemetryPath(pathSvc);
   yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });
   yield* fs.writeFileString(filePath, serializeTelemetryState(nextState));
   return nextState;
@@ -460,7 +458,7 @@ const persistDistinctId = Effect.fn("telemetry.persistDistinctId")(function* (
   const { distinct_id: _drop, ...rest } = base;
   const nextState: State =
     distinctId !== undefined && distinctId.length > 0 ? { ...rest, distinct_id: distinctId } : rest;
-  const filePath = telemetryPath(process.env, pathSvc);
+  const filePath = yield* telemetryPath(pathSvc);
   yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });
   yield* fs.writeFileString(filePath, serializeTelemetryState(nextState));
 });
@@ -469,9 +467,10 @@ const persistIdentityReset = Effect.fn("telemetry.persistIdentityReset")(functio
   const base = yield* loadOrCreateTelemetryState();
   const fs = yield* FileSystem.FileSystem;
   const pathSvc = yield* Path.Path;
+  const crypto = yield* Crypto.Crypto;
   const { distinct_id: _drop, ...rest } = base;
-  const nextState: State = { ...rest, device_id: crypto.randomUUID() };
-  const filePath = telemetryPath(process.env, pathSvc);
+  const nextState: State = { ...rest, device_id: yield* crypto.randomUUIDv4 };
+  const filePath = yield* telemetryPath(pathSvc);
   yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });
   yield* fs.writeFileString(filePath, serializeTelemetryState(nextState));
 });
@@ -494,13 +493,17 @@ export const telemetryStateLayer = Layer.effect(
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const pathSvc = yield* Path.Path;
+    const crypto = yield* Crypto.Crypto;
     const analytics = yield* Analytics;
     const runtime = yield* TelemetryRuntime;
 
-    const provide = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>) =>
+    const provide = <A, E>(
+      effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Crypto.Crypto>,
+    ) =>
       effect.pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, pathSvc),
+        Effect.provideService(Crypto.Crypto, crypto),
       );
 
     return TelemetryState.of({

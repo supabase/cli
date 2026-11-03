@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { CliOutput, Command } from "effect/unstable/cli";
+import { CliOutput, Command } from "effect/cli";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import {
   mockContextualAnalytics,
@@ -62,7 +62,6 @@ const setup = () =>
         mockRuntimeInfo({ cwd: root, homeDir: root }),
         mockTelemetryRuntime({
           configDir: path.join(root, ".supabase"),
-          tracesDir: path.join(root, ".supabase", "traces"),
         }),
         processEnvLayer({ SUPABASE_HOME: path.join(root, ".supabase") }),
       ),
@@ -70,7 +69,7 @@ const setup = () =>
   });
 
 describe("stack command telemetry", () => {
-  it.live("records the canonical list command identity", () => {
+  it.effect("records the canonical list command identity", () => {
     return setup().pipe(
       Effect.flatMap((fixture) => {
         const command = stackCommand.pipe(Command.provide(fixture.layer));
@@ -92,7 +91,7 @@ describe("stack command telemetry", () => {
     );
   });
 
-  it.live("records canonical and top-level stop paths with distinct run ids", () => {
+  it.effect("records canonical and top-level stop paths with distinct run ids", () => {
     return setup().pipe(
       Effect.flatMap((fixture) => {
         const canonical = stackCommand.pipe(Command.provide(fixture.layer));
@@ -121,7 +120,7 @@ describe("stack command telemetry", () => {
     );
   });
 
-  it.live("records the destroy command identity on invalid target input", () => {
+  it.effect("records the destroy command identity on invalid target input", () => {
     return setup().pipe(
       Effect.flatMap((fixture) => {
         const command = stackCommand.pipe(Command.provide(fixture.layer));
@@ -141,48 +140,23 @@ describe("stack command telemetry", () => {
     );
   });
 
-  it.live("records the prepare command identity on invalid target input", () => {
+  it.effect("records the logs command identity when no stack exists", () => {
     return setup().pipe(
       Effect.flatMap((fixture) => {
         const command = stackCommand.pipe(Command.provide(fixture.layer));
         return Effect.gen(function* () {
-          yield* Command.runWith(command, { version: "0.0.0-test" })([
-            "prepare",
-            "--stack-id",
-            "invalid",
-          ]).pipe(Effect.flip);
-          const event = fixture.analytics.captured.find(
-            (candidate) => candidate.event === EventCommandExecuted,
-          );
-          expect(event?.properties[PropCommand]).toBe("stack prepare");
-        }).pipe(Effect.provide(fixture.layer));
-      }),
-      Effect.provide(BunServices.layer),
-    );
-  });
-
-  it.live("records the logs command identity when no stack exists", () => {
-    return setup().pipe(
-      Effect.flatMap((fixture) => {
-        const command = stackCommand.pipe(Command.provide(fixture.layer));
-        return Effect.gen(function* () {
-          yield* Command.runWith(command, { version: "0.0.0-test" })(["logs"]);
+          yield* Command.runWith(command, { version: "0.0.0-test" })(["logs"]).pipe(Effect.flip);
           const event = fixture.analytics.captured.find(
             (candidate) => candidate.event === EventCommandExecuted,
           );
           expect(event?.properties[PropCommand]).toBe("stack logs");
-          expect(fixture.output.messages).toEqual(
-            expect.arrayContaining([
-              expect.objectContaining({ type: "success", data: { found: false, entries: [] } }),
-            ]),
-          );
         }).pipe(Effect.provide(fixture.layer));
       }),
       Effect.provide(BunServices.layer),
     );
   });
 
-  it.live("records the restart command identity on invalid target input", () => {
+  it.effect("records the restart command identity on invalid target input", () => {
     return setup().pipe(
       Effect.flatMap((fixture) => {
         const command = stackCommand.pipe(Command.provide(fixture.layer));

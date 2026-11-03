@@ -1,7 +1,6 @@
-import { Effect, FileSystem, Path } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
 
-import { promptYesNo } from "./prompt-yes-no.ts";
-import { CONTEXT_CANCELED_MESSAGE } from "../shared/output/errors.ts";
+import type { DbSeedPlan } from "./seed-remote-consent.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { listLocalMigrations } from "./migration-list.ts";
 import {
@@ -14,7 +13,6 @@ import {
 import { type SeedFile, getPendingSeeds, seedData } from "./seed-ops.ts";
 import {
   DbPushApplyError,
-  DbPushCancelledError,
   DbPushMissingLocalError,
   DbPushMissingRemoteError,
   DbPushRolesError,
@@ -24,6 +22,8 @@ import type { DbTomlValues } from "./db-config.toml-read.ts";
 import { DbConnection, type PgConnInput } from "./db-connection.service.ts";
 import { applyMigrations, seedGlobals } from "./migration-apply.ts";
 import { listRemoteMigrations, suggestRevertHistory } from "./migration-history.ts";
+import { requireTargetMutationConsent } from "./hosted-consent/hosted-consent.ts";
+import type { HostedMutationConsent } from "./hosted-consent/hosted-consent.token.ts";
 import { upsertVaultSecrets } from "./vault.ts";
 
 const CUSTOM_ROLES_PATH = "supabase/roles.sql";
@@ -38,6 +38,13 @@ const confirmSeedAll = (seeds: ReadonlyArray<SeedFile>): string =>
     .map((seed) => ` • ${bold(seed.dirty ? `${seed.path} (hash update)` : seed.path)}\n`)
     .join("");
 
+const plural = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? "" : "s"}`;
+
+const joinParts = (parts: ReadonlyArray<string>): string =>
+  parts.length <= 1 ? (parts[0] ?? "") : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
+
+const capitalize = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
+
 const applyError = (message: string) => new DbPushApplyError({ message });
 
 /**
@@ -51,18 +58,12 @@ const applyError = (message: string) => new DbPushApplyError({ message });
 export interface DbPushCoreInput {
   /** Absolute project directory (never read from `CommandSettings.workdir`). */
   readonly workdir: string;
-  /** Resolved project ref, or `""` for `--local` / `--db-url`. */
+  /** Resolved project ref, or `""` for a local or database URL target. */
   readonly projectRef: string;
   readonly conn: PgConnInput;
   readonly isLocal: boolean;
-  /**
-   * Whether `--local` (not `--db-url`/`--linked`) was the explicit target selector, distinct
-   * from `isLocal` (whether the resolved connection happens to point at a local address, e.g. a
-   * `--db-url` pointing at `127.0.0.1`). Only feeds the "missing local migrations" repair
-   * suggestion's `--local` flag; `bootstrap` never selects `--local`, so it is always `false`
-   * there.
-   */
-  readonly repairSuggestsLocalFlag: boolean;
+  /** Flags that point the "missing local migrations" repair suggestion at the pushed target. */
+  readonly repairTargetFlags: string;
   /**
    * Gates the "DRY RUN: …" heads-up line, the "Would push/seed/create …" plan, and the JSON
    * `dryRun` field.
@@ -71,12 +72,13 @@ export interface DbPushCoreInput {
   readonly includeAll: boolean;
   readonly includeRoles: boolean;
   readonly includeSeed: boolean;
+  readonly seed: DbSeedPlan;
   readonly includeVault: boolean;
   readonly dnsResolver: "native" | "https";
   /** Already loaded + validated `config.toml`, e.g. via `checkDbToml`. */
   readonly toml: DbTomlValues;
-  /** Already resolved confirm-prompt default, e.g. via `resolveYesWithProjectEnv`. */
-  readonly yes: boolean;
+  /** Consent the caller already obtained; `None` asks once after the plan (never for local). */
+  readonly preapproved: Option.Option<HostedMutationConsent>;
   /**
    * Standalone `db push` emits a `--output-format` json/stream-json success result for its own
    * invocation; `bootstrap` suppresses it since it emits its own top-level result instead.
@@ -84,7 +86,7 @@ export interface DbPushCoreInput {
   readonly emitStructuredResult: boolean;
 }
 
-export const dbPushCore = Effect.fnUntraced(function* (input: DbPushCoreInput) {
+export const dbPushCore = Effect.fn("DbPush.run")(function* (input: DbPushCoreInput) {
   const output = yield* Output;
   const dbConn = yield* DbConnection;
   const fs = yield* FileSystem.FileSystem;
@@ -95,7 +97,7 @@ export const dbPushCore = Effect.fnUntraced(function* (input: DbPushCoreInput) {
     projectRef,
     conn,
     isLocal,
-    repairSuggestsLocalFlag,
+    repairTargetFlags,
     dryRun,
     includeAll,
     includeRoles,
@@ -103,8 +105,9 @@ export const dbPushCore = Effect.fnUntraced(function* (input: DbPushCoreInput) {
     includeVault,
     dnsResolver,
     toml,
-    yes,
+    preapproved,
     emitStructuredResult,
+    seed,
   } = input;
 
   const vaultSecrets = toml.vault;
@@ -115,12 +118,10 @@ export const dbPushCore = Effect.fnUntraced(function* (input: DbPushCoreInput) {
     yield* output.raw("DRY RUN: migrations will *not* be pushed to the database.\n", "stderr");
   }
 
-  const databaseName = isLocal ? "local database" : "remote database";
   const statusTarget = isLocal ? "Local database" : "Remote database";
 
   yield* Effect.scoped(
     Effect.gen(function* () {
-      yield* output.raw(`Connecting to ${isLocal ? "local" : "remote"} database...\n`, "stderr");
       const session = yield* dbConn.connect(conn, { isLocal, dnsResolver });
 
       let pending: ReadonlyArray<string> = [];
@@ -135,23 +136,19 @@ export const dbPushCore = Effect.fnUntraced(function* (input: DbPushCoreInput) {
         const local = yield* listLocalMigrations(fs, path, migrationsDir);
         const result = findPendingMigrations(local, remote);
         if (result.kind === "missing-local") {
-          return yield* Effect.fail(
-            new DbPushMissingLocalError({
-              message: ERR_MISSING_LOCAL,
-              suggestion: suggestRevertHistory(result.versions, repairSuggestsLocalFlag),
-            }),
-          );
+          return yield* new DbPushMissingLocalError({
+            message: ERR_MISSING_LOCAL,
+            suggestion: suggestRevertHistory(result.versions, repairTargetFlags),
+          });
         }
         if (result.kind === "missing-remote") {
           if (!includeAll) {
             // Workdir-relative paths for `suggestIgnoreFlag`.
             const relPaths = result.paths.map((p) => toSlash(path.relative(workdir, p)));
-            return yield* Effect.fail(
-              new DbPushMissingRemoteError({
-                message: ERR_MISSING_REMOTE,
-                suggestion: suggestIgnoreFlag(relPaths),
-              }),
-            );
+            return yield* new DbPushMissingRemoteError({
+              message: ERR_MISSING_REMOTE,
+              suggestion: suggestIgnoreFlag(relPaths),
+            });
           }
           pending = includeAllPending(local, remote.length, result.paths);
         } else {
@@ -161,13 +158,13 @@ export const dbPushCore = Effect.fnUntraced(function* (input: DbPushCoreInput) {
 
       let seeds: ReadonlyArray<SeedFile> = [];
       if (includeSeed) {
-        if (!toml.seed.enabled) {
+        if (!seed.input.enabled) {
           yield* output.raw(
             `Skipping seed because it is disabled in config.toml for project: ${projectRef}\n`,
             "stderr",
           );
         } else {
-          seeds = yield* getPendingSeeds(session, fs, path, toml.seed.sqlPaths, workdir);
+          seeds = yield* getPendingSeeds(session, fs, path, seed.input.sqlPaths, workdir);
         }
       }
 
@@ -183,6 +180,14 @@ export const dbPushCore = Effect.fnUntraced(function* (input: DbPushCoreInput) {
         );
         if (exists) globals.push(CUSTOM_ROLES_PATH);
       }
+
+      yield* Effect.annotateCurrentSpan({
+        "db.is_local": isLocal,
+        "db.push.dry_run": dryRun,
+        "migration.count": pending.length,
+        "seed.count": seeds.length,
+        "role_file.count": globals.length,
+      });
 
       if (pending.length === 0 && seeds.length === 0 && globals.length === 0) {
         if (output.format === "text") {
@@ -212,18 +217,39 @@ export const dbPushCore = Effect.fnUntraced(function* (input: DbPushCoreInput) {
           yield* output.raw(confirmSeedAll(seeds), "stderr");
         }
       } else {
-        if (globals.length > 0) {
-          const ok = yield* promptYesNo(
-            output,
-            yes,
-            "Do you want to create custom roles in the database cluster?",
-            true,
+        if (Option.isNone(preapproved)) {
+          const parts = [
+            ...(globals.length > 0 ? ["create custom roles"] : []),
+            ...(pending.length > 0 ? [`apply ${plural(pending.length, "migration")}`] : []),
+            ...(seeds.length > 0 ? [`seed ${plural(seeds.length, "file")}`] : []),
+          ];
+          const seedDetail = seed.detail(seeds.map((s) => s.path));
+          yield* requireTargetMutationConsent(
+            { conn, isLocal },
+            {
+              action: capitalize(joinParts(parts)),
+              details: [
+                ...(globals.length > 0 ? [`Create custom roles from ${bold(globals[0]!)}`] : []),
+                ...(pending.length > 0
+                  ? [
+                      `Apply these migrations:\n${confirmPushAll(pending.map((p) => path.basename(p))).trimEnd()}`,
+                      ...(includeVault && vaultSecrets.some((secret) => secret.resolved)
+                        ? ["Update vault secrets from config.toml"]
+                        : []),
+                    ]
+                  : []),
+                ...(seeds.length > 0
+                  ? [
+                      `Seed these files:\n${confirmSeedAll(seeds).trimEnd()}`,
+                      ...(seedDetail === undefined ? [] : [capitalize(seedDetail)]),
+                    ]
+                  : []),
+              ],
+            },
           );
-          if (!ok) {
-            return yield* Effect.fail(
-              new DbPushCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
-            );
-          }
+        }
+
+        if (globals.length > 0) {
           yield* seedGlobals(
             session,
             fs,
@@ -234,17 +260,6 @@ export const dbPushCore = Effect.fnUntraced(function* (input: DbPushCoreInput) {
         }
 
         if (pending.length > 0) {
-          const ok = yield* promptYesNo(
-            output,
-            yes,
-            `Do you want to push these migrations to the ${databaseName}?\n${confirmPushAll(pending.map((p) => path.basename(p)))}`,
-            true,
-          );
-          if (!ok) {
-            return yield* Effect.fail(
-              new DbPushCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
-            );
-          }
           if (includeVault) {
             yield* upsertVaultSecrets(session, vaultSecrets);
           }
@@ -254,17 +269,6 @@ export const dbPushCore = Effect.fnUntraced(function* (input: DbPushCoreInput) {
         }
 
         if (seeds.length > 0) {
-          const ok = yield* promptYesNo(
-            output,
-            yes,
-            `Do you want to seed the ${databaseName} with these files?\n${confirmSeedAll(seeds)}`,
-            true,
-          );
-          if (!ok) {
-            return yield* Effect.fail(
-              new DbPushCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
-            );
-          }
           yield* seedData(session, fs, workdir, path, seeds, applyError);
         } else if (includeSeed) {
           yield* output.raw("Seed files are up to date.\n", "stderr");

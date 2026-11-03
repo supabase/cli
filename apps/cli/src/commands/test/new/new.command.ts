@@ -1,7 +1,8 @@
 import { Layer } from "effect";
-import { Argument, Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Argument, Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { commandSettingsLayer } from "../../../config/command-settings.layer.ts";
 import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
@@ -9,12 +10,13 @@ import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.lay
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { testNew } from "./new.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const TEMPLATE_VALUES = ["pgtap"] as const;
 
 const config = {
-  name: Argument.string("name").pipe(Argument.withDescription("Name of the test file to create.")),
-  template: Flag.choice("template", TEMPLATE_VALUES).pipe(
+  name: Argument.String("name").pipe(Argument.withDescription("Name of the test file to create.")),
+  template: Flag.Literals("template", TEMPLATE_VALUES).pipe(
     Flag.withAlias("t"),
     Flag.withDescription("Template framework to generate."),
     Flag.optional,
@@ -37,6 +39,7 @@ const testNewRuntimeLayer = Layer.mergeAll(
 export const testNewCommand = Command.make("new", config).pipe(
   Command.withDescription("Create a new test file."),
   Command.withShortDescription("Create a new test file"),
+  withPermissions({ operations: [], noApiEffectFlags: ["template"] }),
   Command.withHandler((flags) =>
     testNew(flags).pipe(
       withCommandTelemetry({
@@ -50,4 +53,5 @@ export const testNewCommand = Command.make("new", config).pipe(
     ),
   ),
   Command.provide(testNewRuntimeLayer),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

@@ -1,5 +1,10 @@
-import { Argument, Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Argument, Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose, withContext } from "../../../../command-internal/command-permissions/model.ts";
+import { projectRefPicker } from "../../../../config/project-ref.layer.ts";
+import { linkedProjectCache } from "../../../../telemetry/linked-project-cache.layer.ts";
+import { computeRead } from "../../../../shared/compute/compute-api.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../../../command-internal/management-api-runtime.layer.ts";
 import {
@@ -8,6 +13,9 @@ import {
 } from "../../../../shared/compute/compute-logs.sql.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { computeLogs } from "./logs.handler.ts";
+import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
+import { branchResolution } from "../../../../command-internal/target/branch-resolution.ts";
+import { projectTargetFlags } from "../../../../command-internal/target/target-flags.ts";
 
 /**
  * The endpoint's own ceiling is the SQL `LIMIT`, so this bound is the CLI's
@@ -20,29 +28,26 @@ import { computeLogs } from "./logs.handler.ts";
 const MAX_TAIL = 1000;
 
 const config = {
-  name: Argument.string("name").pipe(Argument.withDescription("Compute to read logs for.")),
-  projectRef: Flag.string("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
-  kind: Flag.choice("kind", COMPUTE_LOG_KINDS).pipe(
+  name: Argument.String("name").pipe(Argument.withDescription("Compute to read logs for.")),
+  ...projectTargetFlags(),
+  kind: Flag.Literals("kind", COMPUTE_LOG_KINDS).pipe(
     Flag.withDescription(
       "Limit to one log stream: app (the compute's own output), requests (HTTP access), " +
         "builds (deploy lifecycle). Defaults to all three.",
     ),
     Flag.optional,
   ),
-  follow: Flag.boolean("follow").pipe(
+  follow: Flag.Boolean("follow").pipe(
     Flag.withAlias("f"),
     Flag.withDescription(
       `Keep printing new lines until interrupted, polling every ${COMPUTE_LOG_POLL_SECONDS} seconds.`,
     ),
-    // Required: `Flag.boolean` alone builds a *required* param, which breaks
+    // Required: `Flag.Boolean` alone builds a *required* param, which breaks
     // invocations that omit the flag. `boolean-flag-defaults.unit.test.ts`
     // walks the command tree and fails any bare boolean.
     Flag.withDefault(false),
   ),
-  tail: Flag.integer("tail").pipe(
+  tail: Flag.Int("tail").pipe(
     Flag.filter(
       (tail) => tail >= 0 && tail <= MAX_TAIL,
       (tail) => `Expected --tail between 0 and ${MAX_TAIL}, got ${tail}`,
@@ -85,6 +90,29 @@ export const computeLogsCommand = Command.make("logs", config).pipe(
       description: "Skip the backlog and print only lines that arrive from now on",
     },
   ]),
+  withPermissions(
+    compose(
+      {
+        operations: [
+          {
+            operationId: "v1-get-project-logs",
+            kind: "required",
+            context: "--tail isn't 0",
+          },
+          {
+            operationId: "v1-get-project-logs",
+            kind: "required",
+            when: [{ flag: "follow", is: true }],
+          },
+        ],
+        noApiEffectFlags: ["kind", "tail"],
+      },
+      withContext(computeRead, "the log query returned no rows, or --tail 0 with --follow"),
+      projectRefPicker,
+      linkedProjectCache,
+      branchResolution,
+    ),
+  ),
   Command.withHandler((flags) =>
     computeLogs(flags).pipe(
       // `config` as well as `flags`: `--kind` is a choice flag, and the wrapper
@@ -94,4 +122,5 @@ export const computeLogsCommand = Command.make("logs", config).pipe(
     ),
   ),
   Command.provide(managementApiRuntimeLayer(["compute", "logs"])),
+  withTargetPolicy({ group: "hosted", consent: "none" }),
 );

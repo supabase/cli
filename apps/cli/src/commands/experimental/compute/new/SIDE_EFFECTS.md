@@ -4,7 +4,7 @@
 
 This command is registered only when `experimental.compute` is enabled. Set
 `SUPABASE_EXPERIMENTAL_COMPUTE=1` to enable it, or `0` to disable it; an unset
-or empty variable uses the project configuration. Any other non-empty value
+or empty variable uses the project configuration. Any non-boolean value
 reports an invalid feature-flag value before command parsing. When disabled, it is absent from
 help and completion; direct invocation follows the normal unknown-command path
 and the command handler does not run. See the [Compute command guide](../../../../../docs/compute-commands.md).
@@ -24,12 +24,29 @@ and the command handler does not run. See the [Compute command guide](../../../.
 
 ## Files Written
 
-| Path                                            | Format | When                                                                                                                                                                                                                          |
-| ----------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`                | TOML   | on success — appends `[compute.<name>]` with `runtime`, `size` and `exposure` always, `instances` only when it differs from the default of 1, and `source` only when `--source` was passed, preserving surrounding formatting |
-| `<workdir>/supabase/compute/<name>/*`           | varies | on success, unless `--source` names another directory                                                                                                                                                                         |
-| `<workdir>/<source>/*`                          | varies | on success, when `--source` is given                                                                                                                                                                                          |
-| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | whenever the handler runs — flushed on success and on failure                                                                                                                                                                 |
+| Path                                            | Format | When                                                                                                                                                                                                                                                                                           |
+| ----------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`                | TOML   | on success — appends `[compute.<name>]` with `runtime`, `size` and `exposure` always, `exclude` whenever the chosen runtime declares default patterns, `instances` only when it differs from the default of 1, and `source` only when `--source` was passed, preserving surrounding formatting |
+| `<workdir>/supabase/compute/<name>/*`           | varies | on success, unless `--source` names another directory                                                                                                                                                                                                                                          |
+| `<workdir>/<source>/*`                          | varies | on success, when `--source` is given                                                                                                                                                                                                                                                           |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | whenever the handler runs — flushed on success and on failure                                                                                                                                                                                                                                  |
+
+## Default `exclude` patterns
+
+Each runtime declares the `[compute.<name>] exclude` patterns a scaffold starts with, and they
+are written into `config.toml` as a single-line TOML array rather than applied silently at push
+time — the list is the runtime's opinion about its own build, and a file the user can read and
+edit is the only place that opinion can be argued with. `push` has no built-in defaults of its
+own, so editing or deleting the line is all it takes to change what ships.
+
+Every runtime excludes environment files and version-control metadata (`.env`, `.env.*`,
+`.git`). Beyond that the two catalog runtimes carry more than `dockerfile` does, because the
+CLI knows what tooling writes into their directories: `node` also drops `node_modules` and
+`*.log`, `deno` drops `*.log`, and a `dockerfile` context is left alone because the user's own
+`Dockerfile` already decides what it copies. The key is
+omitted entirely for a runtime that declares no patterns. The chosen list is reported as the
+`Excluded` row beside the compute's other dials, and carried on the machine-output payload as
+`exclude`.
 
 Compute resources are recorded in `config.toml` only. The project config loader prefers
 `supabase/config.json` when one exists, but the entry writer is a TOML text
@@ -70,8 +87,12 @@ Writes to `config.toml` are append-only. A compute already recorded under
 and before anything reaches disk — because editing an entry the user owns is
 not this command's job.
 
-Nothing at the destination is ever removed or overwritten: a destination that
-exists and is not empty is refused, and clearing it is left to the user.
+Nothing that was already at the destination is ever removed or overwritten: a
+destination that exists and is not empty is refused, and clearing it is left to
+the user. A write that fails partway, including the final `config.toml` append,
+takes back only what this run wrote — the starter files, then the destination
+itself when this run created it and it is empty again — so a retry finds it
+free. Parent directories created along the way are left in place.
 `--source` is refused when it resolves to the project root, `supabase/`,
 `supabase/functions/`, `supabase/migrations/`, or outside the project. Symlinks
 are resolved first, so a path inside the project that points outside it is
@@ -101,12 +122,12 @@ root.
 
 ## Environment Variables
 
-| Variable                        | Purpose                                                                                                                    | Required?                                              |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| `SUPABASE_EXPERIMENTAL_COMPUTE` | command registration (`1` enable, `0` disable; unset/empty uses `experimental.compute`; other non-empty values are errors) | no                                                     |
-| `SUPABASE_PROFILE`              | built-in profile name or YAML file path                                                                                    | no (falls back to `~/.supabase/profile` -> `supabase`) |
-| `SUPABASE_WORKDIR`              | project directory the command acts on                                                                                      | no (falls back to `--workdir`, then the ancestor walk) |
-| `SUPABASE_HOME`                 | directory holding `telemetry.json`                                                                                         | no (falls back to `~/.supabase`)                       |
+| Variable                        | Purpose                                                                                                                                         | Required?                                              |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `SUPABASE_EXPERIMENTAL_COMPUTE` | command registration (boolean `1`/`true` enables, `0`/`false` disables; unset/empty uses `experimental.compute`; non-boolean values are errors) | no                                                     |
+| `SUPABASE_PROFILE`              | built-in profile name or YAML file path                                                                                                         | no (falls back to `~/.supabase/profile` -> `supabase`) |
+| `SUPABASE_WORKDIR`              | project directory the command acts on                                                                                                           | no (falls back to `--workdir`, then the ancestor walk) |
+| `SUPABASE_HOME`                 | directory holding `telemetry.json`                                                                                                              | no (falls back to `~/.supabase`)                       |
 
 ## Telemetry Events Fired
 

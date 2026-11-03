@@ -1,10 +1,8 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { Effect, Exit, Layer, Option, Sink, Stream } from "effect";
-import { CliOutput, Command } from "effect/unstable/cli";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Schema, Sink, Stream } from "effect";
+import { CliOutput, Command } from "effect/cli";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   mockAnalytics,
@@ -14,25 +12,35 @@ import {
   mockTty,
   processEnvLayer,
 } from "../../../../tests/helpers/mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import {
   buildTestRuntime,
   mockCommandSettings,
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  withConfigEnv,
+  withEmptyConfigEnv,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
+import { DebugLogger } from "../../../shared/output/debug-logger.service.ts";
 import { GLOBAL_FLAGS, YesFlag } from "../../../command-internal/global-flags.ts";
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
 import { processControlLayer } from "../../../shared/runtime/process-control.layer.ts";
 import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../../../shared/telemetry/identity.ts";
-import { genCommand } from "../gen.command.ts";
+import { genSigningKeyCommand } from "./signing-key.command.ts";
 import { genSigningKey } from "./signing-key.handler.ts";
-import { DEFAULT_SIGNING_KEY } from "../../../command-internal/go-jwt.ts";
+import { DEFAULT_SIGNING_KEY } from "../../../command-internal/local-jwt.ts";
+import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
 
 const tempRoot = useTempWorkdir("supabase-gen-signing-key-int-");
+
+const storedSigningKeyJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
+const storedSigningKeysJson = Schema.fromJsonString(
+  Schema.Array(Schema.Record(Schema.String, Schema.Unknown)),
+);
 
 interface SetupOptions {
   readonly format?: "text" | "json" | "stream-json";
@@ -88,6 +96,7 @@ function setup(options: SetupOptions = {}) {
   });
   const telemetry = options.trackTelemetry ? mockTelemetryStateTracked() : undefined;
   const layer = Layer.mergeAll(
+    cliConfigValuesTestLayer,
     buildTestRuntime({ out, api, cliSettings, tty, telemetry: telemetry?.layer }),
     Layer.succeed(YesFlag, options.yes ?? false),
     Layer.succeed(CliArgs, { args: options.cliArgs ?? [] }),
@@ -99,51 +108,133 @@ function setup(options: SetupOptions = {}) {
     // Listed after buildTestRuntime so it overrides the real spawner from BunServices.
     mockGitCheckIgnore(options.gitCheckIgnoreExitCode ?? 1),
   );
-  return { layer, out, telemetry };
+  return { layer, out, telemetry, api };
 }
 
-async function writeConfig(contents: string) {
-  await mkdir(join(tempRoot.current, "supabase"), { recursive: true });
-  await writeFile(join(tempRoot.current, "supabase", "config.toml"), contents);
-}
+const writeConfig = Effect.fnUntraced(function* (contents: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* fs.makeDirectory(path.join(tempRoot.current, "supabase"), { recursive: true });
+  yield* fs.writeFileString(path.join(tempRoot.current, "supabase", "config.toml"), contents);
+});
 
-async function writeJsonConfig(contents: string) {
-  await mkdir(join(tempRoot.current, "supabase"), { recursive: true });
-  await writeFile(join(tempRoot.current, "supabase", "config.json"), contents);
-}
+const writeJsonConfig = Effect.fnUntraced(function* (contents: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* fs.makeDirectory(path.join(tempRoot.current, "supabase"), { recursive: true });
+  yield* fs.writeFileString(path.join(tempRoot.current, "supabase", "config.json"), contents);
+});
 
 // `findGitRoot` needs a real `.git` entry; `git check-ignore` itself is mocked separately.
-async function initGitDir() {
-  await mkdir(join(tempRoot.current, ".git"), { recursive: true });
+const initGitDir = Effect.fnUntraced(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* fs.makeDirectory(path.join(tempRoot.current, ".git"), { recursive: true });
+});
+
+const writeSigningKeys = Effect.fnUntraced(function* (contents: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* fs.writeFileString(path.join(tempRoot.current, "supabase", "signing_keys.json"), contents);
+});
+
+const readSigningKeysFile = Effect.fnUntraced(function* (filePath: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const saved = yield* fs.readFileString(filePath);
+  return yield* Schema.decodeEffect(storedSigningKeysJson)(saved);
+});
+
+const readSigningKeys = Effect.fnUntraced(function* () {
+  const path = yield* Path.Path;
+  return yield* readSigningKeysFile(path.join(tempRoot.current, "supabase", "signing_keys.json"));
+});
+
+const readSigningKeysText = Effect.fnUntraced(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  return yield* fs.readFileString(path.join(tempRoot.current, "supabase", "signing_keys.json"));
+});
+
+function expectedEs256FileEntry(key: Readonly<Record<string, unknown>> | undefined): string {
+  return [
+    "  {",
+    '    "kty": "EC",',
+    `    "kid": "${String(key?.["kid"])}",`,
+    '    "use": "sig",',
+    '    "key_ops": [',
+    '      "sign",',
+    '      "verify"',
+    "    ],",
+    '    "alg": "ES256",',
+    '    "ext": true,',
+    `    "d": "${String(key?.["d"])}",`,
+    '    "crv": "P-256",',
+    `    "x": "${String(key?.["x"])}",`,
+    `    "y": "${String(key?.["y"])}"`,
+    "  }",
+  ].join("\n");
+}
+
+function expectedRs256FileEntry(key: Readonly<Record<string, unknown>> | undefined): string {
+  return [
+    "  {",
+    '    "kty": "RSA",',
+    `    "kid": "${String(key?.["kid"])}",`,
+    '    "use": "sig",',
+    '    "key_ops": [',
+    '      "sign",',
+    '      "verify"',
+    "    ],",
+    '    "alg": "RS256",',
+    '    "ext": true,',
+    `    "n": "${String(key?.["n"])}",`,
+    `    "e": "${String(key?.["e"])}",`,
+    `    "d": "${String(key?.["d"])}",`,
+    `    "p": "${String(key?.["p"])}",`,
+    `    "q": "${String(key?.["q"])}",`,
+    `    "dp": "${String(key?.["dp"])}",`,
+    `    "dq": "${String(key?.["dq"])}",`,
+    `    "qi": "${String(key?.["qi"])}"`,
+    "  }",
+  ].join("\n");
 }
 
 const testRoot = Command.make("supabase").pipe(
-  Command.withSubcommands([genCommand]),
+  Command.withSubcommands([
+    Command.make("gen").pipe(Command.withSubcommands([genSigningKeyCommand])),
+  ]),
   Command.withGlobalFlags(GLOBAL_FLAGS),
 );
 
 describe("gen signing-key integration", () => {
-  it.live("prints a generated key to stdout when no signing_keys_path is configured", () => {
-    const { layer, out } = setup();
+  it.effect("prints a generated key to stdout when no signing_keys_path is configured", () => {
+    const { layer, out, api } = setup();
     return Effect.gen(function* () {
+      const path = yield* Path.Path;
       yield* genSigningKey({ algorithm: "ES256", append: false });
+      assertPermissionDrift({
+        command: "gen signing-key",
+        activeFlags: { algorithm: true },
+        requests: api.requests,
+        exact: true,
+      });
 
-      const parsed = JSON.parse(out.stdoutText) as Record<string, unknown>;
+      const parsed = yield* Schema.decodeEffect(storedSigningKeyJson)(out.stdoutText);
       expect(parsed.alg).toBe("ES256");
       expect(parsed.kty).toBe("EC");
       expect(typeof parsed.kid).toBe("string");
       expect(out.stderrText).toContain("To enable JWT signing keys in your local project:");
-      expect(out.stderrText).toContain(join("supabase", "signing_keys.json"));
+      expect(out.stderrText).toContain(path.join("supabase", "signing_keys.json"));
       expect(out.stderrText.endsWith("\n\n")).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prints a complete RS256 JWK to stdout when no signing_keys_path is configured", () => {
+  it.effect("prints a complete RS256 JWK to stdout when no signing_keys_path is configured", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* genSigningKey({ algorithm: "RS256", append: false });
 
-      const parsed = JSON.parse(out.stdoutText) as Record<string, unknown>;
+      const parsed = yield* Schema.decodeEffect(storedSigningKeyJson)(out.stdoutText);
       expect(parsed.kty).toBe("RSA");
       expect(parsed.alg).toBe("RS256");
       expect(parsed.use).toBe("sig");
@@ -153,152 +244,180 @@ describe("gen signing-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("runs through the command wiring without missing runtime services", () => {
-    const out = mockOutput({ format: "text", interactive: false });
-    const analytics = mockAnalytics();
-    const layer = Layer.mergeAll(
-      BunServices.layer,
-      processControlLayer,
-      CliOutput.layer(textCliOutputFormatter()),
-      out.layer,
-      analytics.layer,
-      processEnvLayer({ SUPABASE_HOME: tempRoot.current }),
-      mockRuntimeInfo({ cwd: tempRoot.current, homeDir: tempRoot.current }),
-      mockTty({ stdinIsTty: false, stdoutIsTty: false }),
-      Layer.succeed(CliArgs, { args: [] }),
-      mockStdin(false),
-      Layer.succeed(
-        TelemetryRuntime,
-        TelemetryRuntime.of({
-          configDir: join(tempRoot.current, ".supabase"),
-          tracesDir: join(tempRoot.current, ".supabase", "traces"),
-          consent: "granted",
-          showDebug: false,
-          deviceId: "test-device-id",
-          sessionId: "test-session-id",
-          identity: makeTelemetryIdentity(undefined),
-          isFirstRun: false,
-          isTty: false,
-          isCi: false,
-          os: "linux",
-          arch: "x64",
-          cliVersion: "0.1.0",
-        }),
-      ),
-    );
-
+  it.effect("prints the generated key to stdout as compact JSON in a fixed field order", () => {
+    const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* Command.runWith(testRoot, { version: "0.0.0-test" })([
-        "gen",
-        "signing-key",
-        "--workdir",
-        tempRoot.current,
-      ]);
+      yield* genSigningKey({ algorithm: "ES256", append: false });
 
-      const parsed = JSON.parse(out.stdoutText) as Record<string, unknown>;
-      expect(parsed.alg).toBe("ES256");
-      expect(out.stderrText).toContain("To enable JWT signing keys in your local project:");
-    }).pipe(Effect.provide(layer)) as Effect.Effect<void>;
+      const parsed = yield* Schema.decodeEffect(storedSigningKeyJson)(out.stdoutText);
+      expect(out.stdoutText).toBe(
+        `{"kty":"EC","kid":"${String(parsed["kid"])}","use":"sig","key_ops":["sign","verify"],"alg":"ES256","ext":true,"d":"${String(parsed["d"])}","crv":"P-256","x":"${String(parsed["x"])}","y":"${String(parsed["y"])}"}\n`,
+      );
+    }).pipe(Effect.provide(layer));
   });
 
-  it.live(
-    "ignores a stray config.json and uses the default config.toml path in the local setup hint (CLI-1961)",
+  it.effect("runs through the command wiring without missing runtime services", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const out = mockOutput({ format: "text", interactive: false });
+      const analytics = mockAnalytics();
+      const layer = Layer.mergeAll(
+        BunServices.layer,
+        processControlLayer,
+        CliOutput.layer(textCliOutputFormatter()),
+        out.layer,
+        analytics.layer,
+        processEnvLayer({ SUPABASE_HOME: tempRoot.current }),
+        mockRuntimeInfo({ cwd: tempRoot.current, homeDir: tempRoot.current }),
+        mockTty({ stdinIsTty: false, stdoutIsTty: false }),
+        Layer.succeed(CliArgs, { args: [] }),
+        mockStdin(false),
+        Layer.succeed(
+          TelemetryRuntime,
+          TelemetryRuntime.of({
+            configDir: path.join(tempRoot.current, ".supabase"),
+            consent: "granted",
+            deviceId: "test-device-id",
+            sessionId: "test-session-id",
+            identity: makeTelemetryIdentity(undefined),
+            isFirstRun: false,
+            isTty: false,
+            isCi: false,
+            os: "linux",
+            arch: "x64",
+            cliVersion: "0.1.0",
+          }),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        yield* Command.runWith(testRoot, { version: "0.0.0-test" })([
+          "gen",
+          "signing-key",
+          "--workdir",
+          tempRoot.current,
+        ]);
+
+        const parsed = yield* Schema.decodeEffect(storedSigningKeyJson)(out.stdoutText);
+        expect(parsed.alg).toBe("ES256");
+        expect(out.stderrText).toContain("To enable JWT signing keys in your local project:");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect(
+    "names config.json and shows a JSON snippet in the local setup hint when it is the config file",
     () => {
       const { layer, out } = setup();
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeJsonConfig("{}\n"));
+        const path = yield* Path.Path;
+        yield* writeJsonConfig("{}\n");
         yield* genSigningKey({ algorithm: "ES256", append: false });
 
-        expect(out.stderrText).toContain(join("supabase", "config.toml"));
-        expect(out.stderrText).not.toContain("config.json");
+        expect(out.stderrText).toContain(path.join("supabase", "config.json"));
+        expect(out.stderrText).toContain(
+          '{ "auth": { "signing_keys_path": "./signing_keys.json" } }',
+        );
+        expect(out.stderrText).not.toContain("config.toml");
+        expect(out.stderrText).not.toContain("[auth]");
         expect(out.stderrText).not.toContain(tempRoot.current);
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live(
-    "overwrites the configured signing keys file and defaults to yes on non-tty when stdin has no piped answer",
+  it.effect(
+    "names config.toml and shows a TOML snippet in the local setup hint without a config file",
     () => {
-      const { layer, out } = setup({ stdinIsTty: false });
+      const { layer, out } = setup();
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-        );
-        yield* Effect.tryPromise(() =>
-          writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
-        );
+        const path = yield* Path.Path;
+        yield* genSigningKey({ algorithm: "ES256", append: false });
 
-        yield* genSigningKey({ algorithm: "RS256", append: false });
-
-        const saved = yield* Effect.tryPromise(() =>
-          readFile(join(tempRoot.current, "supabase", "signing_keys.json"), "utf8"),
-        );
-        const parsed = JSON.parse(saved) as ReadonlyArray<Record<string, unknown>>;
-        expect(parsed).toHaveLength(1);
-        expect(parsed[0]?.alg).toBe("RS256");
-        expect(out.stderrText).toContain("Do you want to overwrite the existing");
-        expect(out.stderrText).toContain("JWT signing key appended to: ");
-        expect(out.stderrText).toContain(join("supabase", "signing_keys.json"));
+        expect(out.stderrText).toContain(path.join("supabase", "config.toml"));
+        expect(out.stderrText).toContain('[auth]\nsigning_keys_path = "./signing_keys.json"');
+        expect(out.stderrText).not.toContain("config.json");
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live("cancels the overwrite when a piped non-tty answer of 'n' is read", () => {
+  it.effect(
+    "overwrites the configured signing keys file and defaults to yes on non-tty when stdin has no piped answer",
+    () => {
+      const { layer, out } = setup({ stdinIsTty: false });
+      return Effect.gen(function* () {
+        const path = yield* Path.Path;
+        yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+        yield* writeSigningKeys("[]\n");
+
+        yield* genSigningKey({ algorithm: "RS256", append: false });
+
+        const parsed = yield* readSigningKeys();
+        expect(parsed).toHaveLength(1);
+        expect(parsed[0]?.alg).toBe("RS256");
+        expect(out.stderrText).toContain("Do you want to overwrite the existing");
+        expect(out.stderrText).toContain("JWT signing key appended to: ");
+        expect(out.stderrText).toContain(path.join("supabase", "signing_keys.json"));
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    "reads signing_keys_path from SUPABASE_AUTH_SIGNING_KEYS_PATH over the config file",
+    () => {
+      const { layer, out } = setup({ stdinIsTty: false });
+      return withConfigEnv(
+        { SUPABASE_AUTH_SIGNING_KEYS_PATH: "./signing_keys.json" },
+        Effect.gen(function* () {
+          yield* writeConfig('[auth]\nsigning_keys_path = "./unused.json"\n');
+          yield* writeSigningKeys("[]\n");
+
+          yield* genSigningKey({ algorithm: "ES256", append: false });
+
+          expect(yield* readSigningKeys()).toHaveLength(1);
+          expect(out.stderrText).toContain("JWT signing key appended to: ");
+        }),
+      ).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("cancels the overwrite when a piped non-tty answer of 'n' is read", () => {
     const { layer, out } = setup({ stdinIsTty: false, pipedAnswer: "n" });
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
-      );
+      yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+      yield* writeSigningKeys("[]\n");
 
       const exit = yield* Effect.exit(genSigningKey({ algorithm: "ES256", append: false }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("GenSigningKeyCancelledError");
-        expect(json).toContain("context canceled");
+        const dump = Cause.pretty(exit.cause);
+        expect(dump).toContain("GenSigningKeyCancelledError");
+        expect(dump).toContain("context canceled");
       }
 
-      const saved = yield* Effect.tryPromise(() =>
-        readFile(join(tempRoot.current, "supabase", "signing_keys.json"), "utf8"),
-      );
-      expect(JSON.parse(saved)).toEqual([]);
+      expect(yield* readSigningKeys()).toEqual([]);
       expect(out.stderrText).toContain("[Y/n] n\n");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("overwrites when a piped non-tty answer of 'y' is read", () => {
+  it.effect("overwrites when a piped non-tty answer of 'y' is read", () => {
     const { layer, out } = setup({ stdinIsTty: false, pipedAnswer: "y" });
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
-      );
+      yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+      yield* writeSigningKeys("[]\n");
 
       yield* genSigningKey({ algorithm: "ES256", append: false });
 
-      const saved = yield* Effect.tryPromise(() =>
-        readFile(join(tempRoot.current, "supabase", "signing_keys.json"), "utf8"),
-      );
-      const parsed = JSON.parse(saved) as ReadonlyArray<Record<string, unknown>>;
+      const parsed = yield* readSigningKeys();
       expect(parsed).toHaveLength(1);
       expect(out.stderrText).toContain("Do you want to overwrite the existing");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("passes an explicit default-yes prompt for interactive overwrite", () => {
+  it.effect("passes an explicit default-yes prompt for interactive overwrite", () => {
     const { layer, out } = setup({ stdinIsTty: true });
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
-      );
+      yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+      yield* writeSigningKeys("[]\n");
 
       yield* genSigningKey({ algorithm: "ES256", append: false });
 
@@ -307,72 +426,92 @@ describe("gen signing-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("appends a new key when --append is set", () => {
+  it.effect("appends a new key when --append is set", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(
-          join(tempRoot.current, "supabase", "signing_keys.json"),
-          `${JSON.stringify([
-            {
-              kty: "EC",
-              x: "existing-x",
-            },
-          ])}\n`,
-        ),
-      );
+      yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+      yield* writeSigningKeys('[{"kty":"EC","x":"existing-x"}]\n');
 
       yield* genSigningKey({ algorithm: "ES256", append: true });
 
-      const saved = yield* Effect.tryPromise(() =>
-        readFile(join(tempRoot.current, "supabase", "signing_keys.json"), "utf8"),
-      );
-      const parsed = JSON.parse(saved) as ReadonlyArray<Record<string, unknown>>;
+      const parsed = yield* readSigningKeys();
       expect(parsed).toHaveLength(2);
       expect(parsed[0]?.x).toBe("existing-x");
       expect(parsed[1]?.alg).toBe("ES256");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("does not fail on a malformed signing keys file when [auth] enabled is false", () => {
+  it.effect("writes the overwritten signing keys file as two-space indented JSON", () => {
+    const { layer, out } = setup({ yes: true });
+    return Effect.gen(function* () {
+      yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+      yield* writeSigningKeys("[]\n");
+
+      yield* genSigningKey({ algorithm: "RS256", append: false });
+
+      const parsed = yield* readSigningKeys();
+      expect(yield* readSigningKeysText()).toBe(
+        `${["[", expectedRs256FileEntry(parsed[0]), "]"].join("\n")}\n`,
+      );
+      expect(out.stdoutText).toBe("");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("keeps non-standard fields of existing keys when appending", () => {
+    const { layer, out } = setup();
+    return Effect.gen(function* () {
+      yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+      yield* writeSigningKeys(
+        '[{"kty":"EC","kid":"existing-key","x":"existing-x","x_custom":{"nested":[1,"two",null,true]}}]\n',
+      );
+
+      yield* genSigningKey({ algorithm: "ES256", append: true });
+
+      const parsed = yield* readSigningKeys();
+      const seededEntry = [
+        "  {",
+        '    "kty": "EC",',
+        '    "kid": "existing-key",',
+        '    "x": "existing-x",',
+        '    "x_custom": {',
+        '      "nested": [',
+        "        1,",
+        '        "two",',
+        "        null,",
+        "        true",
+        "      ]",
+        "    }",
+        "  },",
+      ].join("\n");
+      expect(yield* readSigningKeysText()).toBe(
+        `${["[", seededEntry, expectedEs256FileEntry(parsed[1]), "]"].join("\n")}\n`,
+      );
+      expect(out.stdoutText).toBe("");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("does not fail on a malformed signing keys file when [auth] enabled is false", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nenabled = false\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "not valid json {\n"),
-      );
+      yield* writeConfig('[auth]\nenabled = false\nsigning_keys_path = "./signing_keys.json"\n');
+      yield* writeSigningKeys("not valid json {\n");
 
       const exit = yield* Effect.exit(genSigningKey({ algorithm: "ES256", append: true }));
       expect(Exit.isFailure(exit)).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "appends to (and overwrites with) the built-in default key, ignoring the real file content, when [auth] enabled is false",
     () => {
       const { layer } = setup();
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          writeConfig('[auth]\nenabled = false\nsigning_keys_path = "./signing_keys.json"\n'),
-        );
-        yield* Effect.tryPromise(() =>
-          writeFile(
-            join(tempRoot.current, "supabase", "signing_keys.json"),
-            `${JSON.stringify([{ kty: "EC", kid: "existing-key", x: "existing-x" }])}\n`,
-          ),
-        );
+        yield* writeConfig('[auth]\nenabled = false\nsigning_keys_path = "./signing_keys.json"\n');
+        yield* writeSigningKeys('[{"kty":"EC","kid":"existing-key","x":"existing-x"}]\n');
 
         yield* genSigningKey({ algorithm: "ES256", append: true });
 
-        const saved = yield* Effect.tryPromise(() =>
-          readFile(join(tempRoot.current, "supabase", "signing_keys.json"), "utf8"),
-        );
-        const parsed = JSON.parse(saved) as ReadonlyArray<Record<string, unknown>>;
+        const parsed = yield* readSigningKeys();
         expect(parsed).toHaveLength(2);
         expect(parsed[0]?.kid).toBe(DEFAULT_SIGNING_KEY.kid);
         expect(parsed.some((key) => key["kid"] === "existing-key")).toBe(false);
@@ -380,125 +519,161 @@ describe("gen signing-key integration", () => {
     },
   );
 
-  it.live("fails when the configured signing keys file is not a JSON array of objects", () => {
+  it.effect("fails when the configured signing keys file is not a JSON array of objects", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[1]\n"),
-      );
+      yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+      yield* writeSigningKeys("[1]\n");
 
       const exit = yield* Effect.exit(genSigningKey({ algorithm: "ES256", append: false }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("GenSigningKeyDecodeError");
-        expect(json).toContain("failed to decode signing keys");
+        const dump = Cause.pretty(exit.cause);
+        expect(dump).toContain("GenSigningKeyDecodeError");
+        expect(dump).toContain("failed to decode signing keys");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with a config parse error when config.toml is malformed", () => {
+  it.effect("fails with a config parse error when config.toml is malformed", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeConfig("not valid toml ]["));
+      yield* writeConfig("not valid toml ][");
 
       const exit = yield* Effect.exit(genSigningKey({ algorithm: "ES256", append: false }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("GenSigningKeyConfigParseError");
+        expect(Cause.pretty(exit.cause)).toContain("GenSigningKeyConfigParseError");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails when the configured signing keys file is not a JSON array at all", () => {
+  it.effect("fails when the configured signing keys file is not a JSON array at all", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "{}\n"),
-      );
+      yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+      yield* writeSigningKeys("{}\n");
 
       const exit = yield* Effect.exit(genSigningKey({ algorithm: "ES256", append: false }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("GenSigningKeyDecodeError");
-        expect(json).toContain("expected a JSON array");
+        const dump = Cause.pretty(exit.cause);
+        expect(dump).toContain("GenSigningKeyDecodeError");
+        expect(dump).toContain("expected a JSON array");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("resolves and displays an absolute signing_keys_path as configured", () => {
+  it.effect("resolves and displays an absolute signing_keys_path as configured", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      const absoluteKeysPath = join(tempRoot.current, "supabase", "absolute_keys.json");
-      yield* Effect.tryPromise(() =>
-        writeConfig(`[auth]\nsigning_keys_path = ${JSON.stringify(absoluteKeysPath)}\n`),
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const absoluteKeysPath = path.join(tempRoot.current, "supabase", "absolute_keys.json");
+      const quotedKeysPath = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(
+        absoluteKeysPath,
       );
-      yield* Effect.tryPromise(() => writeFile(absoluteKeysPath, "[]\n"));
+      yield* writeConfig(`[auth]\nsigning_keys_path = ${quotedKeysPath}\n`);
+      yield* fs.writeFileString(absoluteKeysPath, "[]\n");
 
       yield* genSigningKey({ algorithm: "ES256", append: false });
 
-      const saved = yield* Effect.tryPromise(() => readFile(absoluteKeysPath, "utf8"));
-      const parsed = JSON.parse(saved) as ReadonlyArray<Record<string, unknown>>;
+      const parsed = yield* readSigningKeysFile(absoluteKeysPath);
       expect(parsed).toHaveLength(1);
       expect(out.stderrText).toContain(absoluteKeysPath);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails when signing_keys_path is configured but the file is missing", () => {
+  it.effect("resolves env() config references from the injected SUPABASE_ENV's dotenv set", () => {
+    const { layer, out } = setup();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const supabaseDir = path.join(tempRoot.current, "supabase");
+      yield* writeConfig('[auth]\nsigning_keys_path = "env(KEYS_PATH)"\n');
+      yield* fs.writeFileString(
+        path.join(supabaseDir, ".env.local"),
+        "KEYS_PATH=./from-env-local.json\n",
+      );
+      yield* fs.writeFileString(path.join(supabaseDir, ".env"), "KEYS_PATH=./from-env.json\n");
+      yield* fs.writeFileString(path.join(supabaseDir, "from-env-local.json"), "[]\n");
+      yield* fs.writeFileString(path.join(supabaseDir, "from-env.json"), "[]\n");
+
+      yield* withConfigEnv(
+        { SUPABASE_ENV: "test" },
+        genSigningKey({ algorithm: "ES256", append: false }),
+      );
+
+      expect(out.stderrText).toContain(path.join("supabase", "from-env.json"));
+      expect(yield* readSigningKeysFile(path.join(supabaseDir, "from-env.json"))).toHaveLength(1);
+      expect(
+        yield* readSigningKeysFile(path.join(supabaseDir, "from-env-local.json")),
+      ).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "ignores an unparseable supabase/.env.local when the injected SUPABASE_ENV is test",
+    () => {
+      const { layer } = setup();
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+        yield* writeSigningKeys("[]\n");
+        yield* fs.writeFileString(
+          path.join(tempRoot.current, "supabase", ".env.local"),
+          "!=broken\n",
+        );
+
+        yield* withConfigEnv(
+          { SUPABASE_ENV: "test" },
+          genSigningKey({ algorithm: "ES256", append: false }),
+        );
+
+        expect(yield* readSigningKeys()).toHaveLength(1);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("fails when signing_keys_path is configured but the file is missing", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
+      yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
 
       const exit = yield* Effect.exit(genSigningKey({ algorithm: "ES256", append: false }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("GenSigningKeyReadError");
-        expect(json).toContain("failed to read signing keys");
+        const dump = Cause.pretty(exit.cause);
+        expect(dump).toContain("GenSigningKeyReadError");
+        expect(dump).toContain("failed to read signing keys");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("returns context canceled when a TTY user declines overwrite", () => {
+  it.effect("returns context canceled when a TTY user declines overwrite", () => {
     const { layer } = setup({ stdinIsTty: true, promptConfirmResponses: [false] });
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
-      );
+      yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+      yield* writeSigningKeys("[]\n");
 
       const exit = yield* Effect.exit(genSigningKey({ algorithm: "ES256", append: false }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("GenSigningKeyCancelledError");
-        expect(json).toContain("context canceled");
+        const dump = Cause.pretty(exit.cause);
+        expect(dump).toContain("GenSigningKeyCancelledError");
+        expect(dump).toContain("context canceled");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("warns when the configured signing key path is not gitignored", () => {
+  it.effect("warns when the configured signing key path is not gitignored", () => {
     // git check-ignore exits non-zero when the path is NOT ignored.
     const { layer, out } = setup({ gitCheckIgnoreExitCode: 1 });
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
-      yield* Effect.tryPromise(() => initGitDir());
-      yield* Effect.tryPromise(() =>
-        writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
-      );
+      yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+      yield* initGitDir();
+      yield* writeSigningKeys("[]\n");
 
       yield* genSigningKey({ algorithm: "ES256", append: false });
 
@@ -508,19 +683,15 @@ describe("gen signing-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "does not warn when gitignore rules already ignore the configured signing key path",
     () => {
       // git check-ignore exits zero when the path IS ignored.
       const { layer, out } = setup({ gitCheckIgnoreExitCode: 0 });
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-        );
-        yield* Effect.tryPromise(() => initGitDir());
-        yield* Effect.tryPromise(() =>
-          writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
-        );
+        yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+        yield* initGitDir();
+        yield* writeSigningKeys("[]\n");
 
         yield* genSigningKey({ algorithm: "ES256", append: false });
 
@@ -529,15 +700,11 @@ describe("gen signing-key integration", () => {
     },
   );
 
-  it.live("echoes [Y/n] y to stderr when --yes bypasses overwrite confirmation", () => {
+  it.effect("echoes [Y/n] y to stderr when --yes bypasses overwrite confirmation", () => {
     const { layer, out } = setup({ yes: true, stdinIsTty: true });
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
-      );
+      yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+      yield* writeSigningKeys("[]\n");
 
       yield* genSigningKey({ algorithm: "ES256", append: false });
 
@@ -545,181 +712,120 @@ describe("gen signing-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "declines the overwrite without prompting on a tty when --output-format is not text",
     () => {
       const { layer, out } = setup({ format: "json", stdinIsTty: true });
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-        );
-        yield* Effect.tryPromise(() =>
-          writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
-        );
+        yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+        yield* writeSigningKeys("[]\n");
 
         const exit = yield* Effect.exit(genSigningKey({ algorithm: "ES256", append: false }));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
-          expect(json).toContain("GenSigningKeyCancelledError");
+          expect(Cause.pretty(exit.cause)).toContain("GenSigningKeyCancelledError");
         }
 
-        const saved = yield* Effect.tryPromise(() =>
-          readFile(join(tempRoot.current, "supabase", "signing_keys.json"), "utf8"),
-        );
-        expect(JSON.parse(saved)).toEqual([]);
+        expect(yield* readSigningKeys()).toEqual([]);
         expect(out.promptConfirmCalls).toHaveLength(0);
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live("honors a piped non-tty 'n' even when --output-format is json", () => {
+  it.effect("honors a piped non-tty 'n' even when --output-format is json", () => {
     const { layer, out } = setup({ format: "json", stdinIsTty: false, pipedAnswer: "n" });
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
-      );
+      yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+      yield* writeSigningKeys("[]\n");
 
       const exit = yield* Effect.exit(genSigningKey({ algorithm: "ES256", append: false }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("GenSigningKeyCancelledError");
+        expect(Cause.pretty(exit.cause)).toContain("GenSigningKeyCancelledError");
       }
 
-      const saved = yield* Effect.tryPromise(() =>
-        readFile(join(tempRoot.current, "supabase", "signing_keys.json"), "utf8"),
-      );
-      expect(JSON.parse(saved)).toEqual([]);
+      expect(yield* readSigningKeys()).toEqual([]);
       expect(out.promptConfirmCalls).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("honors a piped non-tty 'y' when --output-format is stream-json", () => {
+  it.effect("honors a piped non-tty 'y' when --output-format is stream-json", () => {
     const { layer } = setup({ format: "stream-json", stdinIsTty: false, pipedAnswer: "y" });
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
-      );
+      yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+      yield* writeSigningKeys("[]\n");
 
       yield* genSigningKey({ algorithm: "ES256", append: false });
 
-      const saved = yield* Effect.tryPromise(() =>
-        readFile(join(tempRoot.current, "supabase", "signing_keys.json"), "utf8"),
-      );
-      expect(JSON.parse(saved) as ReadonlyArray<unknown>).toHaveLength(1);
+      expect(yield* readSigningKeys()).toHaveLength(1);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("honors SUPABASE_YES and overwrites even when a piped 'n' is present", () => {
-    const prev = process.env["SUPABASE_YES"];
-    process.env["SUPABASE_YES"] = "1";
+  it.effect("honors SUPABASE_YES and overwrites even when a piped 'n' is present", () => {
     const { layer } = setup({ stdinIsTty: false, pipedAnswer: "n" });
-    return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
-      );
-
-      yield* genSigningKey({ algorithm: "ES256", append: false });
-
-      const saved = yield* Effect.tryPromise(() =>
-        readFile(join(tempRoot.current, "supabase", "signing_keys.json"), "utf8"),
-      );
-      const parsed = JSON.parse(saved) as ReadonlyArray<Record<string, unknown>>;
-      expect(parsed).toHaveLength(1);
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_YES"];
-          else process.env["SUPABASE_YES"] = prev;
-        }),
-      ),
-      Effect.provide(layer),
-    );
-  });
-
-  it.live(
-    "auto-confirms from SUPABASE_YES in the project .env, even with a piped 'n' (CLI-1878)",
-    () => {
-      // Clears any shell SUPABASE_YES so this proves the project-.env source specifically.
-      const prev = process.env["SUPABASE_YES"];
-      delete process.env["SUPABASE_YES"];
-      const { layer } = setup({ stdinIsTty: false, pipedAnswer: "n" });
-      return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-        );
-        yield* Effect.tryPromise(() =>
-          writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
-        );
-        yield* Effect.tryPromise(() =>
-          writeFile(join(tempRoot.current, "supabase", ".env"), "SUPABASE_YES=true\n"),
-        );
+    return withConfigEnv(
+      { SUPABASE_YES: "1" },
+      Effect.gen(function* () {
+        yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+        yield* writeSigningKeys("[]\n");
 
         yield* genSigningKey({ algorithm: "ES256", append: false });
 
-        const saved = yield* Effect.tryPromise(() =>
-          readFile(join(tempRoot.current, "supabase", "signing_keys.json"), "utf8"),
-        );
-        const parsed = JSON.parse(saved) as ReadonlyArray<Record<string, unknown>>;
+        const parsed = yield* readSigningKeys();
         expect(parsed).toHaveLength(1);
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (prev !== undefined) process.env["SUPABASE_YES"] = prev;
-          }),
-        ),
-        Effect.provide(layer),
+      }).pipe(Effect.provide(layer)),
+    );
+  });
+
+  it.effect(
+    "auto-confirms from SUPABASE_YES in the project .env, even with a piped 'n' (CLI-1878)",
+    () => {
+      const { layer } = setup({ stdinIsTty: false, pipedAnswer: "n" });
+      // Clears any shell SUPABASE_YES so this proves the project-.env source specifically.
+      return withEmptyConfigEnv(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+          yield* writeSigningKeys("[]\n");
+          yield* fs.writeFileString(
+            path.join(tempRoot.current, "supabase", ".env"),
+            "SUPABASE_YES=true\n",
+          );
+
+          yield* genSigningKey({ algorithm: "ES256", append: false });
+
+          const parsed = yield* readSigningKeys();
+          expect(parsed).toHaveLength(1);
+        }).pipe(Effect.provide(layer)),
       );
     },
   );
 
-  it.live("an explicit --yes=false overrides SUPABASE_YES and honors a piped 'n'", () => {
-    const prev = process.env["SUPABASE_YES"];
-    process.env["SUPABASE_YES"] = "1";
+  it.effect("an explicit --yes=false overrides SUPABASE_YES and honors a piped 'n'", () => {
     const { layer } = setup({
       stdinIsTty: false,
       pipedAnswer: "n",
       cliArgs: ["gen", "signing-key", "--yes=false"],
     });
-    return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
-      );
+    return withConfigEnv(
+      { SUPABASE_YES: "1" },
+      Effect.gen(function* () {
+        yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+        yield* writeSigningKeys("[]\n");
 
-      const exit = yield* Effect.exit(genSigningKey({ algorithm: "ES256", append: false }));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("GenSigningKeyCancelledError");
-      }
+        const exit = yield* Effect.exit(genSigningKey({ algorithm: "ES256", append: false }));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("GenSigningKeyCancelledError");
+        }
 
-      const saved = yield* Effect.tryPromise(() =>
-        readFile(join(tempRoot.current, "supabase", "signing_keys.json"), "utf8"),
-      );
-      expect(JSON.parse(saved)).toEqual([]);
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_YES"];
-          else process.env["SUPABASE_YES"] = prev;
-        }),
-      ),
-      Effect.provide(layer),
+        expect(yield* readSigningKeys()).toEqual([]);
+      }).pipe(Effect.provide(layer)),
     );
   });
 
-  it.live("flushes telemetry state after the command finishes", () => {
+  it.effect("flushes telemetry state after the command finishes", () => {
     const { layer, telemetry } = setup({ trackTelemetry: true });
     return Effect.gen(function* () {
       yield* genSigningKey({ algorithm: "ES256", append: false });
@@ -727,22 +833,21 @@ describe("gen signing-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry state even when the project .env is malformed (Codex review)", () => {
-    const { layer, telemetry } = setup({ trackTelemetry: true });
-    return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(join(tempRoot.current, "supabase", ".env"), "!=broken\n"),
-      );
+  it.effect(
+    "flushes telemetry state even when the project .env is malformed (Codex review)",
+    () => {
+      const { layer, telemetry } = setup({ trackTelemetry: true });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(path.join(tempRoot.current, "supabase"), { recursive: true });
+        yield* fs.writeFileString(path.join(tempRoot.current, "supabase", ".env"), "!=broken\n");
 
-      const exit = yield* Effect.exit(genSigningKey({ algorithm: "ES256", append: false }));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("DbConfigLoadError");
-      }
-      expect(telemetry?.flushed).toBe(true);
-    }).pipe(Effect.provide(layer));
-  });
+        const error = yield* genSigningKey({ algorithm: "ES256", append: false }).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(DbConfigLoadError);
+        expect(error.message).toBe("failed to parse environment file: supabase/.env");
+        expect(telemetry?.flushed).toBe(true);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });

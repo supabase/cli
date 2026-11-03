@@ -1,0 +1,313 @@
+import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { describe, expect, it } from "@effect/vitest";
+import { Context, Effect, FileSystem, Layer, Path, Redacted, Ref } from "effect";
+import { PgClient } from "@effect/sql-pg";
+import { HttpClient, HttpClientRequest } from "effect/http";
+import { SignJWT } from "jose";
+import * as Network from "../Network.ts";
+import * as StackNamespace from "../StackNamespace.ts";
+import { makeStandaloneService } from "../../tests/standalone-service.ts";
+import { ProxyError } from "../Proxy.ts";
+import { makeServiceRecipe } from "./Catalog.ts";
+import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
+import { engineTarget, testEngine } from "../../tests/engine-target.ts";
+import { httpHost } from "../../tests/helpers/endpoint.ts";
+import { testArtifactCacheRoot } from "../../tests/artifact-cache.ts";
+import { selection } from "../../tests/pins.ts";
+
+const makeTestState = (root: string) =>
+  Layer.build(StackNamespace.layer({ root })).pipe(
+    Effect.map((context) => Context.get(context, StackNamespace.Service)),
+  );
+
+const makeTestNetwork = (options: {
+  readonly stackId: string;
+  readonly runtime: Network.NetworkRuntime;
+  readonly state: StackNamespace.Interface;
+}) =>
+  Layer.build(
+    Network.layer({ stackId: options.stackId, runtime: options.runtime }).pipe(
+      Layer.provide(Layer.succeed(StackNamespace.Service, options.state)),
+    ),
+  ).pipe(Effect.map((context) => Context.get(context, Network.Service)));
+
+const options = (root: string) => ({
+  stackId: "catalog-rest",
+  instanceId: "instance",
+  root,
+  cacheRoot: `${root}/cache`,
+  runtime: "native" as const,
+  claimNativePort: () => Effect.succeed(true),
+});
+
+const dockerOptions = (root: string) => ({
+  ...options(root),
+  runtime: testEngine,
+  engineTarget,
+});
+
+describe("service catalog", () => {
+  it.live(
+    "routes PostgREST through an owned database public endpoint",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const client = yield* HttpClient.HttpClient;
+          const root = yield* makeDockerDatabaseRoot("catalog-rest-");
+          const stackId = "catalog-network";
+          const state = yield* makeTestState(path.dirname(path.dirname(path.dirname(root))));
+          yield* state.save({
+            id: stackId,
+            identity: { projectRoot: root, branchContext: "test", stackName: "catalog" },
+            runtime: testEngine,
+            instances: [],
+            lifetime: "detached",
+            composition: { members: [], dependencies: [] },
+          });
+          const network = yield* makeTestNetwork({ stackId, runtime: testEngine, state });
+          const secret = "catalog-rest-secret-with-at-least-32-chars";
+          const databaseRecipe = yield* makeServiceRecipe(
+            {
+              service: "database",
+              pin: selection.database,
+              config: {
+                databasePassword: Redacted.make("postgres"),
+                jwtSecret: Redacted.make(secret),
+                jwtExpiry: 3600,
+              },
+            },
+            dockerOptions(root),
+          );
+          const database = yield* makeStandaloneService(databaseRecipe.definition, {
+            id: "database",
+            config: databaseRecipe.creation,
+          });
+          const databaseActive = yield* Ref.make(true);
+          const databaseNamespace = yield* network.register({
+            id: "database",
+            endpoints: {
+              sql: {
+                protocol: "tcp",
+                port: "auto",
+                enabled: Ref.get(databaseActive),
+                backend: databaseRecipe.endpoint("sql").pipe(
+                  Effect.flatMap((endpoint) =>
+                    endpoint.kind === "tcp" && endpoint.host !== undefined
+                      ? Effect.succeed({ host: endpoint.host, port: endpoint.port })
+                      : Effect.fail(new ProxyError({ message: "Database endpoint is not TCP" })),
+                  ),
+                  Effect.mapError((cause) =>
+                    cause instanceof ProxyError
+                      ? cause
+                      : new ProxyError({ message: cause.message, cause }),
+                  ),
+                ),
+              },
+            },
+          });
+          yield* databaseNamespace.bind;
+          const databaseRuntimeAddress = yield* databaseNamespace.address("sql", "runtime");
+          const databaseHostAddress = yield* databaseNamespace.address("sql", "host");
+          yield* database.start;
+          yield* database.ready;
+          const databaseLayer = yield* Layer.build(
+            PgClient.layer({
+              host: databaseHostAddress.host,
+              port: databaseHostAddress.port,
+              database: "postgres",
+              username: "supabase_admin",
+              password: Redacted.make("postgres"),
+            }),
+          );
+          const sql = Context.get(databaseLayer, PgClient.PgClient);
+          yield* sql.unsafe(
+            "CREATE TABLE IF NOT EXISTS public.catalog_probe (id integer PRIMARY KEY, value text NOT NULL);",
+          );
+          yield* sql.unsafe("GRANT SELECT ON public.catalog_probe TO anon;");
+          yield* sql.unsafe("TRUNCATE public.catalog_probe;");
+          yield* sql.unsafe("INSERT INTO public.catalog_probe (id, value) VALUES (1, 'catalog');");
+
+          const restRecipe = yield* makeServiceRecipe(
+            {
+              service: "rest",
+              pin: selection.rest,
+              config: {
+                databaseUrl:
+                  "postgresql://supabase_admin:postgres@" +
+                  databaseRuntimeAddress.host +
+                  ":" +
+                  databaseRuntimeAddress.port +
+                  "/postgres",
+                jwtSecret: secret,
+                anonRole: "anon",
+              },
+            },
+            dockerOptions(root),
+          );
+          const rest = yield* makeStandaloneService(restRecipe.definition, {
+            id: "rest",
+            config: restRecipe.creation,
+          });
+          const restActive = yield* Ref.make(true);
+          const restNamespace = yield* network.register({
+            id: "rest",
+            endpoints: {
+              http: {
+                protocol: "http",
+                port: "auto",
+                enabled: Ref.get(restActive),
+                backend: restRecipe.endpoint("http").pipe(
+                  Effect.flatMap((endpoint) =>
+                    endpoint.kind !== "tcp" || endpoint.host === undefined
+                      ? Effect.fail(new ProxyError({ message: "REST endpoint has no host" }))
+                      : Effect.succeed({ host: endpoint.host, port: endpoint.port }),
+                  ),
+                  Effect.mapError((cause) => new ProxyError({ message: cause.message, cause })),
+                ),
+              },
+            },
+          });
+          yield* restNamespace.bind;
+          const publicAddress = yield* restNamespace.address("http", "host");
+          yield* rest.start;
+          yield* rest.ready;
+          const token = yield* Effect.tryPromise(() =>
+            new SignJWT({ role: "anon" })
+              .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+              .setIssuedAt()
+              .setExpirationTime("1h")
+              .sign(new TextEncoder().encode(secret)),
+          );
+          const response = yield* client.execute(
+            HttpClientRequest.get(
+              "http://" + publicAddress.host + ":" + publicAddress.port + "/catalog_probe",
+            ).pipe(HttpClientRequest.setHeader("Authorization", "Bearer " + token)),
+          );
+          const responseBody = yield* response.text;
+          expect(response.status).toBe(200);
+          expect(responseBody).toContain("catalog");
+
+          yield* rest.stop;
+          yield* Ref.set(restActive, false);
+          yield* restNamespace.close;
+          yield* restNamespace.release;
+          yield* database.stop;
+          yield* Ref.set(databaseActive, false);
+          yield* databaseNamespace.close;
+          yield* databaseNamespace.release;
+          yield* network.releaseStack;
+        }),
+      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    { timeout: 120_000 },
+  );
+
+  it.live("routes native PostgREST to the owned database Unix socket", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const client = yield* HttpClient.HttpClient;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-rest-native-" });
+        const stackId = "catalog-native";
+        const secret = "catalog-native-secret-with-at-least-32-chars";
+        const databaseRecipe = yield* makeServiceRecipe(
+          {
+            service: "database",
+            pin: selection.database,
+            config: {
+              databasePassword: Redacted.make("postgres"),
+              jwtSecret: Redacted.make(secret),
+              jwtExpiry: 3600,
+            },
+          },
+          { ...options(root), stackId, cacheRoot: testArtifactCacheRoot },
+        );
+        const database = yield* makeStandaloneService(databaseRecipe.definition, {
+          id: "database",
+          config: databaseRecipe.creation,
+        });
+        yield* database.start;
+        yield* database.ready;
+        const databaseEndpoint = yield* databaseRecipe.endpoint("sql");
+        if (databaseEndpoint.kind !== "unix")
+          return yield* new ProxyError({ message: "Native database did not expose a Unix socket" });
+        // node-postgres appends the `.s.PGSQL.<port>` suffix itself, so it must receive the
+        // socket directory rather than the endpoint's full socket filename.
+        const databaseSocketDir = path.dirname(databaseEndpoint.path);
+        const databaseLayer = yield* Layer.build(
+          PgClient.layer({
+            host: databaseSocketDir,
+            port: databaseEndpoint.port,
+            database: "postgres",
+            username: "supabase_admin",
+            password: Redacted.make("postgres"),
+          }),
+        );
+        const sql = Context.get(databaseLayer, PgClient.PgClient);
+        yield* sql.unsafe(
+          "CREATE TABLE IF NOT EXISTS public.catalog_native_probe (id integer PRIMARY KEY, value text NOT NULL);",
+        );
+        yield* sql.unsafe("GRANT SELECT ON public.catalog_native_probe TO anon;");
+        yield* sql.unsafe("TRUNCATE public.catalog_native_probe;");
+        yield* sql.unsafe(
+          "INSERT INTO public.catalog_native_probe (id, value) VALUES (1, 'catalog-native');",
+        );
+        yield* sql.unsafe(`CREATE OR REPLACE FUNCTION public.catalog_native_hook() RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF current_setting('request.headers', true)::json->>'x-app-secret' IS DISTINCT FROM 'expected' THEN
+    RAISE SQLSTATE 'PGRST' USING MESSAGE = '{"code":"APP_403","message":"Unauthorized."}',
+      DETAIL = '{"status":403,"headers":{}}';
+  END IF;
+END $$;`);
+        yield* sql.unsafe("GRANT EXECUTE ON FUNCTION public.catalog_native_hook() TO anon;");
+        yield* sql.unsafe(
+          "ALTER ROLE supabase_admin SET pgrst.db_pre_request = 'public.catalog_native_hook';",
+        );
+        const restRecipe = yield* makeServiceRecipe(
+          {
+            service: "rest",
+            pin: selection.rest,
+            config: {
+              databaseUrl:
+                "postgresql://supabase_admin:postgres@127.0.0.1/postgres?host=" +
+                encodeURIComponent(databaseSocketDir),
+              jwtSecret: secret,
+              anonRole: "anon",
+            },
+          },
+          { ...options(root), stackId, cacheRoot: testArtifactCacheRoot },
+        );
+        const rest = yield* makeStandaloneService(restRecipe.definition, {
+          id: "rest",
+          config: restRecipe.creation,
+        });
+        yield* rest.start;
+        yield* rest.ready;
+        const endpoint = yield* restRecipe.endpoint("http");
+        const base = "http://" + httpHost(endpoint) + ":" + endpoint.port;
+        const rejected = yield* client.execute(HttpClientRequest.get(base + "/"));
+        expect(rejected.status).toBe(403);
+        const token = yield* Effect.tryPromise(() =>
+          new SignJWT({ role: "anon" })
+            .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+            .setIssuedAt()
+            .setExpirationTime("1h")
+            .sign(new TextEncoder().encode(secret)),
+        );
+        const response = yield* client.execute(
+          HttpClientRequest.get(base + "/catalog_native_probe").pipe(
+            HttpClientRequest.setHeader("Authorization", "Bearer " + token),
+            HttpClientRequest.setHeader("x-app-secret", "expected"),
+          ),
+        );
+        const responseBody = yield* response.text;
+        expect(response.status).toBe(200);
+        expect(responseBody).toContain("catalog-native");
+        yield* rest.stop;
+        yield* database.stop;
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  );
+});

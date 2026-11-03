@@ -20,6 +20,7 @@ describe("readComputeSection", () => {
           exposure: "private",
           instances: 4,
           source: "packages/api",
+          exclude: ["node_modules", ".env"],
         },
         box: { runtime: "sandbox" },
       }),
@@ -31,6 +32,7 @@ describe("readComputeSection", () => {
           exposure: "private",
           instances: 4,
           source: "packages/api",
+          exclude: ["node_modules", ".env"],
         },
         box: {
           runtime: "sandbox",
@@ -38,9 +40,25 @@ describe("readComputeSection", () => {
           exposure: undefined,
           instances: undefined,
           source: undefined,
+          exclude: undefined,
         },
       },
     });
+  });
+
+  // Blanks survive so `push` can refuse the pattern by name; dropping one here would upload
+  // the file it was written to withhold.
+  test("keeps every recorded exclude pattern, blanks included", () => {
+    expect(readComputeSection({ api: { exclude: ["", "dist/"] } }).compute["api"]?.exclude).toEqual(
+      ["", "dist/"],
+    );
+  });
+
+  test.each([
+    ["a bare string", "node_modules"],
+    ["a list holding a non-string", ["dist/", 7]],
+  ])("reads %s as no exclude list at all", (_label, exclude) => {
+    expect(readComputeSection({ api: { exclude } }).compute["api"]?.exclude).toBeUndefined();
   });
 
   test("drops non-object values so a stray scalar is not read as a compute", () => {
@@ -108,7 +126,7 @@ describe("planComputeEntry + commitComputeEntry", () => {
   // The re-parse below is a syntax check, not a schema one: `instances = 1.5`
   // is perfectly valid TOML that the compute schema rejects, so it would reach
   // the user's config and only fail later, when the loader refuses the file.
-  it.live.each([
+  it.effect.each([
     { label: "a fraction", instances: 1.5 },
     { label: "a negative count", instances: -1 },
     { label: "a value past the safe integer range", instances: 1e21 },
@@ -132,7 +150,7 @@ describe("planComputeEntry + commitComputeEntry", () => {
     ),
   );
 
-  it.live("writes a whole, non-negative count unquoted", () =>
+  it.effect("writes a whole, non-negative count unquoted", () =>
     withConfig((configPath, fs) =>
       Effect.gen(function* () {
         yield* writeComputeEntry({
@@ -147,7 +165,7 @@ describe("planComputeEntry + commitComputeEntry", () => {
     ),
   );
 
-  it.live("creates the file when there is none yet", () =>
+  it.effect("creates the file when there is none yet", () =>
     withConfig((configPath, fs) =>
       Effect.gen(function* () {
         yield* writeComputeEntry({
@@ -162,7 +180,7 @@ describe("planComputeEntry + commitComputeEntry", () => {
     ),
   );
 
-  it.live("appends to an existing file without touching the rest of it", () =>
+  it.effect("appends to an existing file without touching the rest of it", () =>
     withConfig((configPath, fs) =>
       Effect.gen(function* () {
         yield* fs.writeFileString(configPath, '# keep me\nproject_id = "demo"\n');
@@ -183,7 +201,7 @@ describe("planComputeEntry + commitComputeEntry", () => {
 
   // `new` creates a compute; changing one that exists is a `config.toml` edit and
   // the file is the user's. Refusing is also what keeps writes append-only.
-  it.live("refuses a compute that is already configured, leaving the file alone", () =>
+  it.effect("refuses a compute that is already configured, leaving the file alone", () =>
     withConfig((configPath, fs) =>
       Effect.gen(function* () {
         const before = '# hand-written\n[compute.api]\nruntime = "node" # mine\n';
@@ -208,7 +226,7 @@ describe("planComputeEntry + commitComputeEntry", () => {
   // decoded config says it exists, which is the whole question, and answering it
   // from the parser rather than the file text is what removed the need to know
   // any TOML beyond how to render a value.
-  it.live.each([
+  it.effect.each([
     { label: "dotted keys", before: 'compute.api.runtime = "node"\n' },
     { label: "an inline table", before: 'compute = { api = { runtime = "node" } }\n' },
     { label: "a value spanning lines", before: '[compute.api]\nruntime = [\n  "node",\n]\n' },
@@ -240,7 +258,7 @@ describe("planComputeEntry + commitComputeEntry", () => {
   // `[compute.api]` renders a file nothing can parse. The name is absent from
   // the decoded section, so the already-configured check cannot catch this —
   // reading the rendered plan back is what does.
-  it.live.each([
+  it.effect.each([
     { label: "an empty inline compute table", before: "compute = {}\n" },
     {
       label: "an inline compute table holding another compute",
@@ -270,7 +288,7 @@ describe("planComputeEntry + commitComputeEntry", () => {
   // parse to begin with cannot be appended to safely either, and finding that
   // out after the scaffold is written is exactly what the plan/commit split
   // exists to avoid.
-  it.live("refuses a config.toml that does not parse, leaving the file alone", () =>
+  it.effect("refuses a config.toml that does not parse, leaving the file alone", () =>
     withConfig((configPath, fs) =>
       Effect.gen(function* () {
         const before = "this is not = = toml\n";
@@ -294,7 +312,7 @@ describe("planComputeEntry + commitComputeEntry", () => {
   // Why rendering is separate from writing: `new` writes the starter files before
   // it records anything, so a failure that could only surface at the write would
   // leave a scaffold on disk that nothing records.
-  it.live("renders without writing, and only writes when committed", () =>
+  it.effect("renders without writing, and only writes when committed", () =>
     withConfig((configPath, fs) =>
       Effect.gen(function* () {
         yield* fs.writeFileString(configPath, 'project_id = "demo"\n');

@@ -17,6 +17,7 @@ import {
   mockTelemetryStateLayer,
   useTempWorkdir,
 } from "../../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-values-layer.ts";
 
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import {
@@ -32,6 +33,7 @@ import { DbConnection } from "../../command-internal/db-connection.service.ts";
 import { IdentityStitch } from "../../command-internal/identity-stitch.ts";
 
 import { inspectBaseLayer } from "./inspect.layers.ts";
+import { commandTargetLayer } from "../../shared/output/command-target.layer.ts";
 
 const tempRoot = useTempWorkdir("supabase-inspect-layers-");
 
@@ -54,7 +56,7 @@ function ambientStubs() {
       connect: () => Effect.die("db-connection not needed for layer-exposure test"),
     }),
     Layer.succeed(DbConfigResolver, {
-      resolve: () => Effect.die("db-config-resolver not needed for layer-exposure test"),
+      resolveConnection: () => Effect.die("resolveConnection is not used by this test"),
       resolvePoolerFallback: () =>
         Effect.die("db-config-resolver not needed for layer-exposure test"),
     }),
@@ -69,23 +71,25 @@ function ambientStubs() {
     analytics.layer,
     mockTelemetryRuntime(),
     out.layer,
+    commandTargetLayer.pipe(Layer.provide(out.layer)),
     flagLayers,
     mockCommandSettings({ workdir: "/tmp/inspect-layers-test" }),
     mockCommandCredentialsLayer,
     mockLinkedProjectCacheLayer,
     mockTelemetryStateLayer,
+    cliConfigValuesTestLayer,
     heavyServiceStubs,
   );
 }
 
 describe("inspectBaseLayer — IdentityStitch exposure", () => {
-  it.live(
+  it.effect(
     "exposes IdentityStitch at top level so withCommandTelemetry can read stitchedDistinctId()",
     () => {
       return Effect.gen(function* () {
         const stitch = yield* Effect.serviceOption(IdentityStitch);
         expect(Option.isSome(stitch)).toBe(true);
-      }).pipe(Effect.provide(inspectBaseLayer), Effect.provide(ambientStubs()));
+      }).pipe(Effect.provide(Layer.provide(inspectBaseLayer, ambientStubs())));
     },
   );
 });

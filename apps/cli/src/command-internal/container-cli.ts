@@ -1,7 +1,12 @@
 import { Data, Effect, Stream } from "effect";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/process/ChildProcess";
+import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
+import {
+  withChildTraceEnv,
+  withProcessSpan,
+  withProcessSpanScoped,
+} from "../shared/telemetry/spans.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -15,6 +20,10 @@ import {
  */
 
 type Spawner = ChildProcessSpawner["Service"];
+
+/* Max container CLI calls a fan-out keeps in flight: each Podman-machine call opens its own ssh
+   connection, and the VM's sshd starts dropping them past ten mid-handshake; 8 leaves headroom. */
+export const CONTAINER_CLI_CONCURRENCY = 8;
 
 /**
  * Raised when neither `docker` nor `podman` can be spawned at all, as opposed to a spawned
@@ -54,17 +63,13 @@ export const spawnContainerCliWithRuntime = (
   args: ReadonlyArray<string>,
   options?: ChildProcess.CommandOptions,
 ) =>
-  spawner.spawn(ChildProcess.make("docker", args, options)).pipe(
+  spawnRuntime(spawner, dockerRuntime, args, options).pipe(
     Effect.map((handle) => ({ handle, runtime: dockerRuntime })),
     Effect.catch(() =>
-      spawner.spawn(ChildProcess.make("podman", args, options)).pipe(
+      spawnRuntime(spawner, podmanRuntime, args, options).pipe(
         Effect.map((handle) => ({ handle, runtime: podmanRuntime })),
-        Effect.catch(() =>
-          Effect.fail(
-            new ContainerRuntimeNotFoundError({
-              message: containerRuntimeNotFoundMessage,
-            }),
-          ),
+        Effect.mapError(
+          () => new ContainerRuntimeNotFoundError({ message: containerRuntimeNotFoundMessage }),
         ),
       ),
     ),
@@ -72,6 +77,78 @@ export const spawnContainerCliWithRuntime = (
 
 const dockerRuntime: ContainerRuntime = "docker";
 const podmanRuntime: ContainerRuntime = "podman";
+
+const MANAGEMENT_COMMANDS: ReadonlySet<string> = new Set([
+  "container",
+  "context",
+  "image",
+  "network",
+  "system",
+  "volume",
+]);
+const COMMANDS: ReadonlySet<string> = new Set([
+  "build",
+  "cp",
+  "create",
+  "exec",
+  "images",
+  "info",
+  "inspect",
+  "kill",
+  "load",
+  "logs",
+  "ls",
+  "ps",
+  "prune",
+  "pull",
+  "restart",
+  "rm",
+  "run",
+  "save",
+  "start",
+  "stop",
+  "tag",
+  "version",
+  "wait",
+]);
+
+function containerSubcommand(args: ReadonlyArray<string>): string {
+  const [first, second] = args;
+  if (first === undefined) return "none";
+  if (MANAGEMENT_COMMANDS.has(first)) {
+    return second !== undefined && COMMANDS.has(second) ? `${first} ${second}` : first;
+  }
+  return COMMANDS.has(first) ? first : "other";
+}
+
+const processTarget = (runtime: ContainerRuntime, args: ReadonlyArray<string>) => ({
+  executable: runtime,
+  argCount: args.length,
+  subcommand: containerSubcommand(args),
+  hasFallback: runtime === dockerRuntime,
+});
+
+function spawnRuntime(
+  spawner: Spawner,
+  runtime: ContainerRuntime,
+  args: ReadonlyArray<string>,
+  options?: ChildProcess.CommandOptions,
+) {
+  return withProcessSpanScoped("ContainerCli.spawn", processTarget(runtime, args), (traceEnv) =>
+    spawner.spawn(ChildProcess.make(runtime, args, withChildTraceEnv(options, traceEnv))),
+  );
+}
+
+function runtimeExitCode(
+  spawner: Spawner,
+  runtime: ContainerRuntime,
+  args: ReadonlyArray<string>,
+  options?: ChildProcess.CommandOptions,
+) {
+  return withProcessSpan("ContainerCli.run", processTarget(runtime, args), (traceEnv) =>
+    spawner.exitCode(ChildProcess.make(runtime, args, withChildTraceEnv(options, traceEnv))),
+  );
+}
 
 /**
  * Spawn a container-CLI command and return the process handle. Use when the
@@ -95,15 +172,11 @@ export const containerCliExitCode = (
   options?: ChildProcess.CommandOptions,
   podmanArgs?: ReadonlyArray<string>,
 ) =>
-  spawner.exitCode(ChildProcess.make("docker", args, options)).pipe(
+  runtimeExitCode(spawner, dockerRuntime, args, options).pipe(
     Effect.catch(() =>
-      spawner.exitCode(ChildProcess.make("podman", podmanArgs ?? args, options)).pipe(
-        Effect.catch(() =>
-          Effect.fail(
-            new ContainerRuntimeNotFoundError({
-              message: containerRuntimeNotFoundMessage,
-            }),
-          ),
+      runtimeExitCode(spawner, podmanRuntime, podmanArgs ?? args, options).pipe(
+        Effect.mapError(
+          () => new ContainerRuntimeNotFoundError({ message: containerRuntimeNotFoundMessage }),
         ),
       ),
     ),
@@ -172,11 +245,11 @@ export function runContainerCliExpectSuccess<E>(
 }
 
 /**
- * Like {@link containerCliExitCode}, but also returns the child's stdout — reading it instead of
- * ignoring it avoids the process hanging on an unread pipe. `podmanArgs` behaves the same as on
+ * Like {@link containerCliExitCode}, but also returns the child's stdout and stderr — reading them
+ * instead of ignoring them avoids the process hanging on an unread pipe. `podmanArgs` behaves the same as on
  * {@link containerCliExitCode}.
  */
-export const containerCliExitCodeAndStdout = (
+export const containerCliOutput = (
   spawner: Spawner,
   args: ReadonlyArray<string>,
   podmanArgs?: ReadonlyArray<string>,
@@ -186,28 +259,28 @@ export const containerCliExitCodeAndStdout = (
       const options = {
         stdin: "ignore",
         stdout: "pipe",
-        stderr: "ignore",
+        stderr: "pipe",
       } satisfies ChildProcess.CommandOptions;
-      const handle = yield* spawner.spawn(ChildProcess.make("docker", args, options)).pipe(
+      const handle = yield* spawnRuntime(spawner, dockerRuntime, args, options).pipe(
         Effect.catch(() =>
-          spawner.spawn(ChildProcess.make("podman", podmanArgs ?? args, options)).pipe(
-            Effect.catch(() =>
-              Effect.fail(
-                new ContainerRuntimeNotFoundError({
-                  message: containerRuntimeNotFoundMessage,
-                }),
-              ),
+          spawnRuntime(spawner, podmanRuntime, podmanArgs ?? args, options).pipe(
+            Effect.mapError(
+              () => new ContainerRuntimeNotFoundError({ message: containerRuntimeNotFoundMessage }),
             ),
           ),
         ),
       );
       // Read stdout concurrently with the exit code: Node's "exit" event can fire before a fast
       // process's stdio finishes draining, so awaiting the exit code first would race the stream.
-      const [exitCode, stdout] = yield* Effect.all(
-        [handle.exitCode.pipe(Effect.map(Number)), collectText(handle.stdout)],
+      const [exitCode, stdout, stderr] = yield* Effect.all(
+        [
+          handle.exitCode.pipe(Effect.map(Number)),
+          collectText(handle.stdout),
+          collectText(handle.stderr),
+        ],
         { concurrency: "unbounded" },
       );
-      return { exitCode, stdout };
+      return { exitCode, stdout, stderr };
     }),
   );
 
@@ -227,29 +300,49 @@ function isDockerApiVersionAtLeast(version: string, minVersion: string): boolean
 }
 
 /**
- * Checks whether the daemon's negotiated API version supports `docker volume prune --all`
- * (added in 1.42). Older daemons reject the flag outright instead of ignoring it, so this must be
- * checked via `docker version` before use; there's no persistent Engine API client to ask
- * directly. Does not fall back to Podman, whose `volume prune` has no `--all` flag to gate.
- * Resolves to `false` on any failure to spawn `docker` or read its version — the same effect as
- * omitting `--all` on a pre-1.42 daemon, which already prunes every unused volume without it.
+ * Checks whether both the Docker client and daemon API versions are >= 1.42, the minimum for
+ * `docker volume prune --all`. The flag is client-side and validated against the negotiated
+ * version, so an old client against a new daemon still rejects it. Resolves to `false` on any
+ * failure to spawn `docker` or read its versions; omitting `--all` is the safe fallback. Does not
+ * fall back to Podman, whose `volume prune` has no `--all` flag to gate.
  */
 export const dockerSupportsVolumePruneAllFlag = (spawner: Spawner) =>
+  dockerApiVersionsSatisfy(spawner, (version) => isDockerApiVersionAtLeast(version, "1.42"));
+
+/**
+ * `docker create --health-start-interval` needs API >= 1.44 on both ends and is a hard failure
+ * below that. The Podman CLI rejects the flag, and a `docker` shim for it fails this format or
+ * prints Podman's own `6.x`, so a major other than 1 is not Docker's API. The real `docker` client
+ * on a Podman socket reporting 1.44 passes: Podman keeps the start period and drops the start
+ * interval.
+ */
+export const dockerSupportsHealthStartInterval = (spawner: Spawner) =>
+  dockerApiVersionsSatisfy(
+    spawner,
+    (version) => version.startsWith("1.") && isDockerApiVersionAtLeast(version, "1.44"),
+  );
+
+/* Reads the client's own and effective API versions and the daemon's, `false` on any failure.
+   `DOCKER_API_VERSION` can lift the effective one past what the client binary supports. */
+const dockerApiVersionsSatisfy = (spawner: Spawner, supported: (version: string) => boolean) =>
   Effect.scoped(
     Effect.gen(function* () {
-      const child = yield* spawner.spawn(
-        ChildProcess.make("docker", ["version", "--format", "{{.Server.APIVersion}}"], {
-          stdin: "ignore",
-          stdout: "pipe",
-          stderr: "ignore",
-        }),
+      const child = yield* spawnRuntime(
+        spawner,
+        "docker",
+        [
+          "version",
+          "--format",
+          "{{.Client.DefaultAPIVersion}} {{.Client.APIVersion}} {{.Server.APIVersion}}",
+        ],
+        { stdin: "ignore", stdout: "pipe", stderr: "ignore" },
       );
       const [exitCode, stdout] = yield* Effect.all(
         [child.exitCode.pipe(Effect.map(Number)), collectText(child.stdout)],
         { concurrency: "unbounded" },
       );
       if (exitCode !== 0) return false;
-      const version = stdout.trim();
-      return version.length > 0 && isDockerApiVersionAtLeast(version, "1.42");
+      const versions = stdout.trim().split(/\s+/);
+      return versions.length === 3 && versions.every(supported);
     }),
   ).pipe(Effect.orElseSucceed(() => false));

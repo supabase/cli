@@ -10,6 +10,10 @@
  * path, never the secret content.
  */
 
+import {
+  DEFAULT_LOCAL_SERVICE_SECRET_KEY_BASE,
+  DEFAULT_POOLER_VAULT_ENCRYPTION_KEY,
+} from "@supabase/stack/defaults";
 import { serviceContainerName } from "../../../command-internal/docker-ids.ts";
 import type { StartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
 import { slimWgetHealthcheck } from "../../../command-internal/db-bootstrap/slim-runtime.ts";
@@ -22,10 +26,9 @@ const SUPAVISOR_CONTAINER_SUFFIX = "pooler";
 /** The Supavisor tenant id default — never configurable, so hardcoded here. */
 const SUPAVISOR_TENANT_ID = "pooler-dev";
 /** The Supavisor encryption key default — never configurable. */
-const SUPAVISOR_ENCRYPTION_KEY = "12345678901234567890123456789032";
+const SUPAVISOR_ENCRYPTION_KEY = DEFAULT_POOLER_VAULT_ENCRYPTION_KEY;
 /** The Supavisor secret key base default — never configurable. */
-const SUPAVISOR_SECRET_KEY_BASE =
-  "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG";
+const SUPAVISOR_SECRET_KEY_BASE = DEFAULT_LOCAL_SERVICE_SECRET_KEY_BASE;
 
 /** The Supavisor session-mode port. */
 const SUPAVISOR_SESSION_PORT = "5432";
@@ -53,6 +56,8 @@ export function buildSupavisorStartCmd(): ReadonlyArray<string> {
 }
 
 export interface SupavisorContainerSpecInput {
+  /** The resolved `SUPABASE_USE_SLIM_IMAGES` flag. */
+  readonly slim: boolean;
   /** The already-resolved `config.db.pooler.image`; resolution is the caller's responsibility. */
   readonly image: string;
   /** The project id, used to derive this container's own name via {@link serviceContainerName}. */
@@ -127,7 +132,7 @@ export function buildSupavisorContainerSpec(
     ],
     ports: [{ hostPort: String(input.port), containerPort: dockerPort }],
     // Slim pooler ships wget, not curl.
-    healthcheck: usesSlimImageRuntime(input.image)
+    healthcheck: usesSlimImageRuntime(input.image, input.slim)
       ? slimWgetHealthcheck("http://127.0.0.1:4000/api/health")
       : {
           test: [

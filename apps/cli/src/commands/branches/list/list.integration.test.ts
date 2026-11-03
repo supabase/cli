@@ -1,20 +1,42 @@
-import type { V1ListAllBranchesOutput } from "@supabase/api/effect";
+import type { V1ListAllBranchesOutput, V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Path, Schema } from "effect";
 
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
   buildTestRuntime,
+  jsonResponse,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
 import { branchesList } from "./list.handler.ts";
 
 type Branches = typeof V1ListAllBranchesOutput.Type;
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+const PROJECT: (typeof V1ListAllProjectsOutput.Type)[number] = {
+  id: VALID_REF,
+  ref: VALID_REF,
+  organization_id: "org-123",
+  organization_slug: "acme",
+  name: "alpha",
+  region: "us-east-1",
+  created_at: "2026-05-27T01:02:03Z",
+  status: "ACTIVE_HEALTHY",
+  database: {
+    host: "db.alpha.supabase.co",
+    version: "15.1",
+    postgres_engine: "15",
+    release_channel: "ga",
+  },
+};
 
 const SAMPLE_BRANCH: Branches[number] = {
   id: "11111111-2222-4333-8444-555555555555",
@@ -45,6 +67,8 @@ const EXPLICIT_REF = "explicitprojectrefzz";
 const ENV_REF = "envprojectrefaaaaaaa";
 const CACHE_REF = "cacheprojectrefbbbbb";
 const FILE_ONLY_REF = "fileonlyprojectrefcc";
+// A cached parent stands only while its branch list contains the linked branch.
+const LINKED_BRANCH: Branches[number] = { ...SAMPLE_BRANCH, project_ref: BRANCH_OWN_REF };
 
 function writeTempContent(workdir: string, name: string, content: string) {
   return Effect.gen(function* () {
@@ -73,7 +97,7 @@ function writeLinkedProjectCacheFile(workdir: string, ref: string) {
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  readonly outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   readonly response?: Branches;
   readonly status?: number;
   readonly network?: "fail";
@@ -94,7 +118,7 @@ function setup(opts: SetupOpts = {}) {
     out,
     api,
     cliSettings,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api, workdir: tempRoot.current };
 }
@@ -119,10 +143,10 @@ function setupTracked(opts: SetupOpts = {}) {
 }
 
 describe("branches list integration", () => {
-  it.live("renders a Glamour table with all 8 columns in text mode", () => {
+  it.effect("renders a Glamour table with all 8 columns in text mode", () => {
     const { layer, out } = setup({ response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {
-      yield* branchesList({ projectRef: Option.none() });
+      yield* branchesList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("ID");
       expect(out.stdoutText).toContain("NAME");
       expect(out.stdoutText).toContain("DEFAULT");
@@ -136,53 +160,53 @@ describe("branches list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders literal `|` characters in branch fields (Go parity)", () => {
+  it.effect("renders literal `|` characters in branch fields", () => {
     const { layer, out } = setup({ response: [SAMPLE_BRANCH_PIPE] });
     return Effect.gen(function* () {
-      yield* branchesList({ projectRef: Option.none() });
+      yield* branchesList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("with|pipe");
       expect(out.stdoutText).toContain("g|pipe");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders an empty table when API returns []", () => {
+  it.effect("renders an empty table when API returns []", () => {
     const { layer, out } = setup({ response: [] });
     return Effect.gen(function* () {
-      yield* branchesList({ projectRef: Option.none() });
+      yield* branchesList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("STATUS");
       expect(out.stdoutText).not.toContain("feat-1");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a success event with { branches } for --output-format=json", () => {
+  it.effect("emits a success event with { branches } for --output-format=json", () => {
     const { layer, out } = setup({ format: "json", response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {
-      yield* branchesList({ projectRef: Option.none() });
+      yield* branchesList({ remote: Option.none(), projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       expect(success?.data).toMatchObject({ branches: [SAMPLE_BRANCH] });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a success event for --output-format=stream-json", () => {
+  it.effect("emits a success event for --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json", response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {
-      yield* branchesList({ projectRef: Option.none() });
+      yield* branchesList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.messages.find((m) => m.type === "success")).toBeDefined();
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-byte-exact indented JSON for --output json", () => {
-    const { layer, out } = setup({ goOutput: "json", response: [SAMPLE_BRANCH] });
+  it.effect("emits byte-exact indented JSON for --output json", () => {
+    const { layer, out } = setup({ outputFlag: "json", response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {
-      yield* branchesList({ projectRef: Option.none() });
+      yield* branchesList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText.startsWith("[\n  {\n")).toBe(true);
       expect(out.stdoutText.endsWith("]\n")).toBe(true);
       expect(out.stdoutText).toContain('"created_at": "2026-05-27T01:02:03Z"');
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-byte-exact YAML for --output yaml", () => {
+  it.effect("emits byte-exact YAML for --output yaml", () => {
     // Omits every optional field to assert how absent values render.
     const zeroBranch: Branches[number] = {
       id: "00000000-0000-0000-0000-000000000000",
@@ -196,9 +220,9 @@ describe("branches list integration", () => {
       updated_at: "0001-01-01T00:00:00Z",
       with_data: false,
     };
-    const { layer, out } = setup({ goOutput: "yaml", response: [SAMPLE_BRANCH, zeroBranch] });
+    const { layer, out } = setup({ outputFlag: "yaml", response: [SAMPLE_BRANCH, zeroBranch] });
     return Effect.gen(function* () {
-      yield* branchesList({ projectRef: Option.none() });
+      yield* branchesList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toBe(`- createdat: 2026-05-27T01:02:03Z
   deletionscheduledat: null
   gitbranch: feat-1
@@ -237,18 +261,18 @@ describe("branches list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits nothing for --output toml when the branch list is empty (Go nil slice)", () => {
-    const { layer, out } = setup({ goOutput: "toml", response: [] });
+  it.effect("emits nothing for --output toml when the branch list is empty", () => {
+    const { layer, out } = setup({ outputFlag: "toml", response: [] });
     return Effect.gen(function* () {
-      yield* branchesList({ projectRef: Option.none() });
+      yield* branchesList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("wraps result as { branches = [...] } for --output toml", () => {
-    const { layer, out } = setup({ goOutput: "toml", response: [SAMPLE_BRANCH] });
+  it.effect("wraps result as { branches = [...] } for --output toml", () => {
+    const { layer, out } = setup({ outputFlag: "toml", response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {
-      yield* branchesList({ projectRef: Option.none() });
+      yield* branchesList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toBe(`[[branches]]
   CreatedAt = 2026-05-27T01:02:03Z
   GitBranch = "feat-1"
@@ -265,10 +289,12 @@ describe("branches list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with BranchesEnvNotSupportedError for --output env", () => {
-    const { layer } = setup({ goOutput: "env", response: [SAMPLE_BRANCH] });
+  it.effect("fails with BranchesEnvNotSupportedError for --output env", () => {
+    const { layer } = setup({ outputFlag: "env", response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(branchesList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        branchesList({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
@@ -278,57 +304,124 @@ describe("branches list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("treats --output pretty as identical to text mode (table render)", () => {
-    const { layer, out } = setup({ goOutput: "pretty", response: [SAMPLE_BRANCH] });
+  it.effect("treats --output pretty as identical to text mode (table render)", () => {
+    const { layer, out } = setup({ outputFlag: "pretty", response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {
-      yield* branchesList({ projectRef: Option.none() });
+      yield* branchesList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("STATUS");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output flag wins over --output-format", () => {
+  it.effect("--output flag wins over --output-format", () => {
     const { layer, out } = setup({
       format: "json",
-      goOutput: "yaml",
+      outputFlag: "yaml",
       response: [SAMPLE_BRANCH],
     });
     return Effect.gen(function* () {
-      yield* branchesList({ projectRef: Option.none() });
+      yield* branchesList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("name: feat-1");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("passes the resolved project ref to listAllBranches", () => {
+  it.effect("passes the resolved project ref to listAllBranches", () => {
     const { layer, api } = setup({ response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {
-      yield* branchesList({ projectRef: Option.none() });
+      yield* branchesList({ remote: Option.none(), projectRef: Option.none() });
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/branches`);
+      assertPermissionDrift({ command: "branches list", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect(
+    "lists projects for the picker, then the branches, then fills the linked-project cache",
+    () => {
+      const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+      const api = mockCommandPlatformApi({
+        handler: (request) => {
+          if (request.url === "https://api.supabase.com/v1/projects") {
+            return Effect.succeed(jsonResponse(request, 200, [PROJECT]));
+          }
+          if (request.url === `https://api.supabase.com/v1/projects/${VALID_REF}`) {
+            return Effect.succeed(jsonResponse(request, 200, PROJECT));
+          }
+          return Effect.succeed(jsonResponse(request, 200, [SAMPLE_BRANCH]));
+        },
+      });
+      const cliSettings = mockCommandSettings({
+        workdir: tempRoot.current,
+        projectId: Option.none(),
+      });
+      const layer = buildTestRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true }),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+        expect(yield* fs.exists(cachePath)).toBe(false);
+        yield* branchesList({ remote: Option.none(), projectRef: Option.none() });
+        expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          "GET https://api.supabase.com/v1/projects",
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}/branches`,
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+        ]);
+        expect(out.stdoutText).toContain("feat-1");
+        expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+          ref: VALID_REF,
+        });
+        assertPermissionDrift({ command: "branches list", requests: api.requests, exact: true });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   describe("parent-scoped resolution after linking a branch (CLI-2167 follow-up)", () => {
-    it.live(
+    it.effect(
       "resolves the linked PARENT (not the branch's own ref) when linked to a branch, and renders the table",
       () => {
         const { layer, out, api, workdir } = setup({
           projectId: Option.none(),
-          response: [SAMPLE_BRANCH],
+          response: [LINKED_BRANCH],
         });
         return Effect.gen(function* () {
           yield* writeProjectRefFile(workdir, BRANCH_OWN_REF);
           yield* writeLinkedProjectCacheFile(workdir, PARENT_REF);
-          yield* branchesList({ projectRef: Option.none() });
-          expect(api.requests).toHaveLength(1);
-          expect(api.requests[0]?.url).toContain(`/v1/projects/${PARENT_REF}/branches`);
+          yield* branchesList({ remote: Option.none(), projectRef: Option.none() });
+          expect(api.requests.map(({ url }) => url)).toEqual([
+            `https://api.supabase.com/v1/projects/${PARENT_REF}/branches`,
+            `https://api.supabase.com/v1/projects/${PARENT_REF}/branches`,
+          ]);
           expect(out.stdoutText).toContain("STATUS");
           expect(out.stdoutText).toContain("feat-1");
+          assertPermissionDrift({ command: "branches list", requests: api.requests, exact: true });
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.live(
-      "an explicit --project-ref still wins over both the cache and the project-ref file",
+    it.effect("announces the cached parent project as the production target", () => {
+      const { layer, out, workdir } = setup({
+        projectId: Option.none(),
+        response: [LINKED_BRANCH],
+      });
+      return Effect.gen(function* () {
+        yield* writeProjectRefFile(workdir, BRANCH_OWN_REF);
+        yield* writeLinkedProjectCacheFile(workdir, PARENT_REF);
+        yield* branchesList({ remote: Option.none(), projectRef: Option.none() });
+        expect(out.stderrText).toBe(
+          `Target: project Parent Project (${PARENT_REF}) · production\n`,
+        );
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect(
+      "an explicit --remote=<ref> still wins over both the cache and the project-ref file",
       () => {
         const { layer, api, workdir } = setup({
           projectId: Option.none(),
@@ -337,42 +430,87 @@ describe("branches list integration", () => {
         return Effect.gen(function* () {
           yield* writeProjectRefFile(workdir, BRANCH_OWN_REF);
           yield* writeLinkedProjectCacheFile(workdir, PARENT_REF);
-          yield* branchesList({ projectRef: Option.some(EXPLICIT_REF) });
+          yield* branchesList({
+            remote: Option.some({ _tag: "Ref", ref: EXPLICIT_REF }),
+            projectRef: Option.none(),
+          });
           expect(api.requests[0]?.url).toContain(`/v1/projects/${EXPLICIT_REF}/branches`);
+          assertPermissionDrift({
+            command: "branches list",
+            activeFlags: { remote: EXPLICIT_REF },
+            requests: api.requests,
+            exact: true,
+          });
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.live("a valid SUPABASE_PROJECT_ID wins over both the cache and the project-ref file", () => {
-      const { layer, api, workdir } = setup({
-        projectId: Option.some(ENV_REF),
-        response: [SAMPLE_BRANCH],
-      });
-      return Effect.gen(function* () {
-        yield* writeProjectRefFile(workdir, BRANCH_OWN_REF);
-        yield* writeLinkedProjectCacheFile(workdir, CACHE_REF);
-        yield* branchesList({ projectRef: Option.none() });
-        expect(api.requests[0]?.url).toContain(`/v1/projects/${ENV_REF}/branches`);
-      }).pipe(Effect.provide(layer));
-    });
+    it.effect(
+      "a bare --remote resolves the linked parent from the project-ref file without the picker",
+      () => {
+        const api = mockCommandPlatformApi({
+          response: { status: 200, body: [SAMPLE_BRANCH] },
+        });
+        const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+        const layer = buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current, projectId: Option.none() }),
+          tty: mockTty({ stdinIsTty: true }),
+        });
+        return Effect.gen(function* () {
+          yield* writeProjectRefFile(tempRoot.current, FILE_ONLY_REF);
+          yield* branchesList({
+            remote: Option.some({ _tag: "Linked" }),
+            projectRef: Option.none(),
+          });
+          expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+            `GET https://api.supabase.com/v1/projects/${FILE_ONLY_REF}/branches`,
+          ]);
+          expect(out.promptSelectCalls).toHaveLength(0);
+          assertPermissionDrift({
+            command: "branches list",
+            activeFlags: { remote: true },
+            requests: api.requests,
+            exact: true,
+          });
+        }).pipe(Effect.provide(layer));
+      },
+    );
 
-    it.live(
-      "SUPABASE_PROJECT_ID merely restating the linked branch ref is deduped; the cached parent wins (PR #6168 review)",
+    it.effect(
+      "a valid SUPABASE_PROJECT_ID wins over both the cache and the project-ref file",
       () => {
         const { layer, api, workdir } = setup({
-          projectId: Option.some(BRANCH_OWN_REF),
+          projectId: Option.some(ENV_REF),
           response: [SAMPLE_BRANCH],
         });
         return Effect.gen(function* () {
           yield* writeProjectRefFile(workdir, BRANCH_OWN_REF);
-          yield* writeLinkedProjectCacheFile(workdir, PARENT_REF);
-          yield* branchesList({ projectRef: Option.none() });
-          expect(api.requests[0]?.url).toContain(`/v1/projects/${PARENT_REF}/branches`);
+          yield* writeLinkedProjectCacheFile(workdir, CACHE_REF);
+          yield* branchesList({ remote: Option.none(), projectRef: Option.none() });
+          expect(api.requests[0]?.url).toContain(`/v1/projects/${ENV_REF}/branches`);
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.live(
+    it.effect(
+      "SUPABASE_PROJECT_ID merely restating the linked branch ref is deduped; the cached parent wins (PR #6168 review)",
+      () => {
+        const { layer, api, workdir } = setup({
+          projectId: Option.some(BRANCH_OWN_REF),
+          response: [LINKED_BRANCH],
+        });
+        return Effect.gen(function* () {
+          yield* writeProjectRefFile(workdir, BRANCH_OWN_REF);
+          yield* writeLinkedProjectCacheFile(workdir, PARENT_REF);
+          yield* branchesList({ remote: Option.none(), projectRef: Option.none() });
+          expect(api.requests.at(-1)?.url).toContain(`/v1/projects/${PARENT_REF}/branches`);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.effect(
       "a garbage SUPABASE_PROJECT_ID hard-fails with InvalidProjectRefError even when a valid cache/file exists (PR #6168 review)",
       () => {
         const { layer, api, workdir } = setup({
@@ -382,7 +520,9 @@ describe("branches list integration", () => {
         return Effect.gen(function* () {
           yield* writeProjectRefFile(workdir, FILE_ONLY_REF);
           yield* writeLinkedProjectCacheFile(workdir, CACHE_REF);
-          const exit = yield* Effect.exit(branchesList({ projectRef: Option.none() }));
+          const exit = yield* Effect.exit(
+            branchesList({ remote: Option.none(), projectRef: Option.none() }),
+          );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             expect(Cause.pretty(exit.cause)).toContain("InvalidProjectRefError");
@@ -392,12 +532,14 @@ describe("branches list integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "a garbage SUPABASE_PROJECT_ID with no cache and no file falls back to the unchanged InvalidProjectRefError",
       () => {
         const { layer, api } = setup({ projectId: Option.some("not-a-valid-ref") });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(branchesList({ projectRef: Option.none() }));
+          const exit = yield* Effect.exit(
+            branchesList({ remote: Option.none(), projectRef: Option.none() }),
+          );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             expect(Cause.pretty(exit.cause)).toContain("InvalidProjectRefError");
@@ -407,10 +549,12 @@ describe("branches list integration", () => {
       },
     );
 
-    it.live("nothing linked anywhere, non-TTY, fails with the unchanged not-linked error", () => {
+    it.effect("nothing linked anywhere, non-TTY, fails with the unchanged not-linked error", () => {
       const { layer, api } = setup({ projectId: Option.none() });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(branchesList({ projectRef: Option.none() }));
+        const exit = yield* Effect.exit(
+          branchesList({ remote: Option.none(), projectRef: Option.none() }),
+        );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           expect(Cause.pretty(exit.cause)).toContain("ProjectRefNotLinkedError");
@@ -419,7 +563,7 @@ describe("branches list integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live(
+    it.effect(
       "the cache alone is never proof of a link: no project-ref file/env means ProjectRefNotLinkedError, no API call (PR #6168 review)",
       () => {
         const { layer, api, workdir } = setup({
@@ -428,7 +572,9 @@ describe("branches list integration", () => {
         });
         return Effect.gen(function* () {
           yield* writeLinkedProjectCacheFile(workdir, PARENT_REF);
-          const exit = yield* Effect.exit(branchesList({ projectRef: Option.none() }));
+          const exit = yield* Effect.exit(
+            branchesList({ remote: Option.none(), projectRef: Option.none() }),
+          );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             expect(Cause.pretty(exit.cause)).toContain("ProjectRefNotLinkedError");
@@ -438,7 +584,7 @@ describe("branches list integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "a normal (non-branch) linked state via the project-ref file alone is unaffected",
       () => {
         const { layer, api, workdir } = setup({
@@ -447,7 +593,7 @@ describe("branches list integration", () => {
         });
         return Effect.gen(function* () {
           yield* writeProjectRefFile(workdir, FILE_ONLY_REF);
-          yield* branchesList({ projectRef: Option.none() });
+          yield* branchesList({ remote: Option.none(), projectRef: Option.none() });
           expect(api.requests[0]?.url).toContain(`/v1/projects/${FILE_ONLY_REF}/branches`);
         }).pipe(Effect.provide(layer));
       },
@@ -462,36 +608,36 @@ describe("branches list integration", () => {
       project_ref: "zzzzzzzzzzzzzzzzzzzz",
     };
 
-    it.live("marks the linked branch's NAME cell with (active) and no other row", () => {
+    it.effect("marks the linked branch's NAME cell with (active) and no other row", () => {
       const { layer, out, workdir } = setup({
         projectId: Option.none(),
         response: [SAMPLE_BRANCH, OTHER_BRANCH],
       });
       return Effect.gen(function* () {
         yield* writeProjectRefFile(workdir, SAMPLE_BRANCH.project_ref);
-        yield* branchesList({ projectRef: Option.none() });
+        yield* branchesList({ remote: Option.none(), projectRef: Option.none() });
         expect(out.stdoutText).toContain("feat-1 (active)");
         expect(out.stdoutText).not.toContain("other (active)");
       }).pipe(Effect.provide(layer));
     });
 
-    it.live(
-      "omits the marker entirely for --output json (Go machine format, byte-identical to before)",
+    it.effect(
+      "omits the marker entirely for --output json (machine format, byte-identical to before)",
       () => {
         const { layer, out, workdir } = setup({
-          goOutput: "json",
+          outputFlag: "json",
           projectId: Option.none(),
           response: [SAMPLE_BRANCH],
         });
         return Effect.gen(function* () {
           yield* writeProjectRefFile(workdir, SAMPLE_BRANCH.project_ref);
-          yield* branchesList({ projectRef: Option.none() });
+          yield* branchesList({ remote: Option.none(), projectRef: Option.none() });
           expect(out.stdoutText).not.toContain("active");
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.live(
+    it.effect(
       "omits the marker/field entirely for --output-format json (structured payload untouched)",
       () => {
         const { layer, out, workdir } = setup({
@@ -501,29 +647,31 @@ describe("branches list integration", () => {
         });
         return Effect.gen(function* () {
           yield* writeProjectRefFile(workdir, SAMPLE_BRANCH.project_ref);
-          yield* branchesList({ projectRef: Option.none() });
+          yield* branchesList({ remote: Option.none(), projectRef: Option.none() });
           const success = out.messages.find((m) => m.type === "success");
           expect(success?.data).toEqual({ branches: [SAMPLE_BRANCH] });
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.live("renders no marker when the linked ref matches no listed branch", () => {
+    it.effect("renders no marker when the linked ref matches no listed branch", () => {
       const { layer, out } = setup({
         projectId: Option.some(EXPLICIT_REF),
         response: [SAMPLE_BRANCH],
       });
       return Effect.gen(function* () {
-        yield* branchesList({ projectRef: Option.none() });
+        yield* branchesList({ remote: Option.none(), projectRef: Option.none() });
         expect(out.stdoutText).not.toContain("(active)");
       }).pipe(Effect.provide(layer));
     });
   });
 
-  it.live("fails with BranchesListUnexpectedStatusError on HTTP 503", () => {
+  it.effect("fails with BranchesListUnexpectedStatusError on HTTP 503", () => {
     const { layer } = setup({ status: 503, response: [] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(branchesList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        branchesList({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
@@ -533,10 +681,12 @@ describe("branches list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with BranchesListNetworkError on transport failure", () => {
+  it.effect("fails with BranchesListNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(branchesList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        branchesList({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
@@ -546,19 +696,19 @@ describe("branches list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes linked-project cache + telemetry state on success", () => {
+  it.effect("writes linked-project cache + telemetry state on success", () => {
     const { layer, telemetry, cache } = setupTracked();
     return Effect.gen(function* () {
-      yield* branchesList({ projectRef: Option.none() });
+      yield* branchesList({ remote: Option.none(), projectRef: Option.none() });
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes linked-project cache + telemetry state on failure", () => {
+  it.effect("writes linked-project cache + telemetry state on failure", () => {
     const { layer, telemetry, cache } = setupTracked({ status: 503 });
     return Effect.gen(function* () {
-      yield* Effect.exit(branchesList({ projectRef: Option.none() }));
+      yield* Effect.exit(branchesList({ remote: Option.none(), projectRef: Option.none() }));
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));

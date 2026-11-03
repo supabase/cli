@@ -1,38 +1,40 @@
-import { Effect, Option, Redacted, Result, Stdio } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import { operationDefinitions, type SupabaseApiError } from "@supabase/api/effect";
+import { Effect, Option, Predicate, type Redacted, Schema, Stdio, type Types } from "effect";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import {
-  cobraMutuallyExclusiveErrorMessage,
+  mutuallyExclusiveFlagsMessage,
   PERSISTENT_VALUE_FLAG_NAMES,
   PERSISTENT_VALUE_FLAG_SHORTHANDS,
-  pflagArgvScan,
-} from "../../../shared/cli/cobra-flag-groups.ts";
+  scanArgvFlags,
+} from "../../../shared/cli/flag-groups.ts";
 import { Output } from "../../../shared/output/output.service.ts";
+import { encodeSortedJson } from "../../../command-internal/output.encoders.ts";
 import {
-  encodeGoJson,
-  encodeGoStructJsonBody,
-} from "../../../command-internal/go-output.encoders.ts";
-import { encodeGoToml, encodeGoYaml } from "../../../command-internal/go-struct-output.encoders.ts";
-import { GO_SSO_PROVIDER_RESPONSE } from "../sso.go-payload.ts";
-import { sanitizeErrorBody } from "../../../command-internal/http-errors.ts";
-import { resolveAccessToken } from "../../../command-internal/resolve-token.ts";
+  encodeStructToml,
+  encodeStructYaml,
+} from "../../../command-internal/struct-output.encoders.ts";
+import { SSO_PROVIDER_RESPONSE_SHAPE } from "../sso.response-shape.ts";
+import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import { accessTokenForProfile } from "../../../auth/command-credentials.layer.ts";
 import { missingAccessTokenMessage } from "../../../auth/access-token.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
-import { suggestUpgrade } from "../../../command-internal/upgrade-suggest.ts";
+import { gateResponse, suggestUpgrade } from "../../../command-internal/upgrade-suggest.ts";
 import {
-  pflagBoolValue,
-  pflagEnumValue,
-  pflagSliceValue,
-  pflagStringValue,
-  resolvePflagProfile,
-  validatePflagWorkdir,
-} from "../../../command-internal/pflag-reconcile.ts";
+  argvBoolValue,
+  argvEnumValue,
+  argvRemoteValue,
+  argvSliceValue,
+  argvStringValue,
+  resolveArgvProfile,
+  validateArgvWorkdir,
+} from "../../../command-internal/argv-flag-reconcile.ts";
 import {
   SsoAddAttributeMappingFileError,
   SsoAddMetadataFileError,
@@ -46,13 +48,33 @@ import {
   SsoAccessTokenError,
   SsoTomlEncodeError,
 } from "../sso.errors.ts";
-import { renderSingleProvider, toSsoProviderView } from "../sso.format.ts";
+import { renderSingleProvider } from "../sso.format.ts";
 import { validateMetadataUrl } from "../sso.metadata-url.ts";
-import { SSO_NAME_ID_FORMATS, readAttributeMappingFile, readMetadataFile } from "../sso.saml.ts";
+import {
+  SSO_NAME_ID_FORMATS,
+  readAttributeMappingFile,
+  readMetadataFile,
+  toNameIdFormat,
+} from "../sso.saml.ts";
 import type { SsoAddFlags } from "./add.command.ts";
 
 const SAML_DISABLED_MESSAGE =
   "SAML 2.0 support is not enabled for this project. Please enable it through the dashboard";
+
+type SsoAddBody = Types.Mutable<
+  Omit<Schema.Schema.Type<typeof operationDefinitions.v1CreateASsoProvider.inputSchema>, "ref">
+>;
+
+const decodeProvider = Schema.decodeUnknownEffect(
+  operationDefinitions.v1CreateASsoProvider.outputSchema,
+);
+
+const mapStatusOrNetwork = mapHttpError({
+  networkError: SsoAddNetworkError,
+  statusError: SsoAddUnexpectedStatusError,
+  networkMessage: (cause) => `failed to create sso provider: ${cause}`,
+  statusMessage: (_status, body) => `Unexpected error adding identity provider: ${body}`,
+});
 
 const readMetadata = readMetadataFile({
   openError: (args) => new SsoAddMetadataFileError(args),
@@ -64,12 +86,50 @@ const readAttributeMapping = readAttributeMappingFile({
   openError: (args) => new SsoAddAttributeMappingFileError(args),
 });
 
+type TokenForAux<R> = Effect.Effect<Option.Option<Redacted.Redacted<string>> | undefined, never, R>;
+
+const handleAddError = <R>(
+  ref: string,
+  apiUrl: string,
+  tokenForAux: TokenForAux<R>,
+  cause: SupabaseApiError,
+) =>
+  mapStatusOrNetwork(cause).pipe(
+    Effect.catchTag("SsoAddUnexpectedStatusError", (mapped) =>
+      Effect.gen(function* () {
+        const upgradeSuggested = yield* suggestUpgrade({
+          projectRef: ref,
+          featureKey: "auth.saml_2",
+          statusCode: mapped.status,
+          response: gateResponse(cause),
+          apiUrl,
+          ...(yield* Effect.map(tokenForAux, (token) =>
+            token !== undefined ? { accessToken: token } : {},
+          )),
+        });
+        if (mapped.status === 404) {
+          return yield* new SsoAddSamlDisabledError({
+            message: SAML_DISABLED_MESSAGE,
+            upgradeSuggested,
+          });
+        }
+        return yield* new SsoAddUnexpectedStatusError({
+          status: mapped.status,
+          body: mapped.body,
+          message: mapped.message,
+          upgradeSuggested,
+          entitlement: mapped.entitlement,
+        });
+      }),
+    ),
+  );
+
 const SSO_ADD_COMMAND_PATH = ["sso", "add"] as const;
 
 // Declaration order sets the mutex error message's bracket order.
 const SSO_ADD_MUTEX_GROUP = ["metadata-file", "metadata-url"] as const;
 
-// Value-taking flags for `pflagArgvScan`: each consumes the next argv token
+// Value-taking flags for `scanArgvFlags`: each consumes the next argv token
 // as its value. `--skip-url-validation` is this command's only boolean flag,
 // so it's excluded.
 const SSO_ADD_SCAN_SPEC = {
@@ -88,10 +148,9 @@ const SSO_ADD_SCAN_SPEC = {
 
 export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
-  const httpClient = yield* HttpClient.HttpClient;
+  const outputFlag = yield* OutputFlag;
+  const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const stdio = yield* Stdio.Stdio;
@@ -99,40 +158,31 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
 
   yield* Effect.gen(function* () {
     // Required-flag and mutex validation run first, against raw argv rather
-    // than the parsed flags: pflag treats a flag as "set" once passed
-    // regardless of value, and consumes tokens differently than the TS
+    // than the parsed flags: a flag counts as "set" once passed
+    // regardless of value, and tokens are consumed differently than the TS
     // parser does.
-    const scan = pflagArgvScan(rawArgs, SSO_ADD_COMMAND_PATH, SSO_ADD_SCAN_SPEC);
+    const scan = scanArgvFlags(rawArgs, SSO_ADD_COMMAND_PATH, SSO_ADD_SCAN_SPEC);
     const occurrences = scan.occurrences;
 
-    // Validate against pflag's accepted values before the missing-value,
-    // required-flag, and mutex checks — pflag fails on the first invalid
-    // occurrence even if a later one overrides it, and its bool parsing
+    // Validate against the accepted values before the missing-value,
+    // required-flag, and mutex checks — the first invalid
+    // occurrence fails even if a later one overrides it, and bool parsing
     // excludes `yes`/`no`.
-    yield* Result.match(pflagEnumValue(occurrences, "type", ["saml"], "-t, --type"), {
-      onFailure: (message: string) => Effect.fail(new SsoInvalidFlagValueError({ message })),
-      onSuccess: Effect.succeed,
-    });
-    const skipUrlValidation = yield* Result.match(
-      pflagBoolValue(occurrences, "skip-url-validation"),
-      {
-        onFailure: (message: string) => Effect.fail(new SsoInvalidFlagValueError({ message })),
-        onSuccess: Effect.succeed,
-      },
+    yield* Effect.fromResult(argvEnumValue(occurrences, "type", ["saml"], "-t, --type")).pipe(
+      Effect.mapError((message) => new SsoInvalidFlagValueError({ message })),
     );
-    const nameIdFormat = yield* Result.match(
-      pflagEnumValue(occurrences, "name-id-format", SSO_NAME_ID_FORMATS),
-      {
-        onFailure: (message: string) => Effect.fail(new SsoInvalidFlagValueError({ message })),
-        onSuccess: Effect.succeed,
-      },
-    );
+    const skipUrlValidation = yield* Effect.fromResult(
+      argvBoolValue(occurrences, "skip-url-validation"),
+    ).pipe(Effect.mapError((message) => new SsoInvalidFlagValueError({ message })));
+    const nameIdFormat = yield* Effect.fromResult(
+      argvEnumValue(occurrences, "name-id-format", SSO_NAME_ID_FORMATS),
+    ).pipe(Effect.mapError((message) => new SsoInvalidFlagValueError({ message })));
 
     // A bare value-taking flag as the final token (e.g. `--domains` with
-    // nothing after) is a pflag parse error; the TS parser accepts it as
+    // nothing after) is a parse error; the TS parser accepts it as
     // unset, so this must run before every other validation.
     if (scan.missingValueError !== undefined) {
-      return yield* Effect.fail(new SsoFlagNeedsArgumentError({ message: scan.missingValueError }));
+      return yield* new SsoFlagNeedsArgumentError({ message: scan.missingValueError });
     }
 
     // Reconcile the effective `--profile` before the workdir check: when the
@@ -140,7 +190,7 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
     // the reconciled profile decides the API host, not the parser's. Where
     // they agree this resolves to `none` and the config layer's apiUrl is
     // already correct.
-    const reconciledProfile = yield* resolvePflagProfile(scan);
+    const reconciledProfile = yield* resolveArgvProfile(scan);
     const profileApiUrl = Option.map(reconciledProfile, (profile) => profile.apiUrl);
     // Resolved once (memoized) so the token read happens after
     // required/mutex/workdir validation — a missing or invalid reconciled
@@ -151,62 +201,66 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
       : undefined;
     const reconciledTokenForAux =
       reconciledTokenCached === undefined
-        ? Effect.succeed<Option.Option<Redacted.Redacted<string>> | undefined>(undefined)
-        : Effect.catch(reconciledTokenCached, () =>
-            Effect.succeed(Option.none<Redacted.Redacted<string>>()),
+        ? Effect.as(Effect.void, undefined)
+        : Effect.orElseSucceed(reconciledTokenCached, () =>
+            Option.none<Redacted.Redacted<string>>(),
           );
 
     // Validate the effective `--workdir` before the required-type and mutex
     // checks: when the scan and the parser disagree on what `--workdir`
     // consumed, this stops a POST that would otherwise fire against the
     // wrong metadata source.
-    yield* validatePflagWorkdir(scan);
+    yield* validateArgvWorkdir(scan);
 
-    // `--type` is required. If pflag would have consumed the `--type`/`-t`
-    // token as another flag's value rather than registering it, the
+    // `--type` is required. If the `--type`/`-t`
+    // token was consumed as another flag's value rather than registered, the
     // required-flag check must still fail — the TS parser can't see that
     // (it refuses flag-shaped values), so this reproduces it from the scan.
     if (!occurrences.has("type") && scan.consumedFlagNames.has("type")) {
-      return yield* Effect.fail(
-        new SsoAddRequiredFlagError({ message: `required flag(s) "type" not set` }),
-      );
+      return yield* new SsoAddRequiredFlagError({ message: `required flag(s) "type" not set` });
     }
 
     const changed = SSO_ADD_MUTEX_GROUP.filter((flagName) => occurrences.has(flagName));
     if (changed.length > 1) {
-      return yield* Effect.fail(
-        new SsoMutexFlagError({
-          message: cobraMutuallyExclusiveErrorMessage(SSO_ADD_MUTEX_GROUP, changed),
-        }),
-      );
+      return yield* new SsoMutexFlagError({
+        message: mutuallyExclusiveFlagsMessage(SSO_ADD_MUTEX_GROUP, changed),
+      });
     }
 
-    // Everything below reads pflag-effective values from the scan rather
-    // than the TS-parsed flags, since pflag consumes flag-shaped tokens as
+    // Everything below reads values from the scan rather
+    // than the TS-parsed flags, since the scan consumes flag-shaped tokens as
     // values where the parser doesn't.
-    const projectRef = pflagStringValue(occurrences, "project-ref");
-    const metadataFile = pflagStringValue(occurrences, "metadata-file");
-    const metadataUrl = pflagStringValue(occurrences, "metadata-url");
-    const attributeMappingFile = pflagStringValue(occurrences, "attribute-mapping-file");
-    const domains = pflagSliceValue(occurrences, "domains", flags.domains);
+    const projectRef = argvStringValue(occurrences, "project-ref");
+    const remote = argvRemoteValue(occurrences);
+    const metadataFile = argvStringValue(occurrences, "metadata-file");
+    const metadataUrl = argvStringValue(occurrences, "metadata-url");
+    const attributeMappingFile = argvStringValue(occurrences, "attribute-mapping-file");
+    const domains = argvSliceValue(occurrences, "domains", flags.domains);
 
-    const ref = yield* resolver.resolve(projectRef);
+    const ref = yield* resolveProjectTarget({ remote, projectRef });
 
-    // Use the pflag-reconciled profile's host when it disagreed with
+    // Use the argv-reconciled profile's host when it disagreed with
     // `--profile`, otherwise the config layer's — applies to the POST and
     // every auxiliary call alike.
     const apiUrl = Option.getOrElse(profileApiUrl, () => cliSettings.apiUrl);
 
+    yield* Effect.annotateCurrentSpan({
+      "sso.metadata_source": Option.isSome(metadataFile)
+        ? "file"
+        : Option.isSome(metadataUrl)
+          ? "url"
+          : "none",
+      "sso.domain_count": domains.length,
+    });
+
     yield* Effect.gen(function* () {
-      // Posted as raw JSON, not the generated schema, so unlisted
-      // `attribute_mapping.keys.<x>` fields (e.g. `default`) survive.
-      const body: Record<string, unknown> = {
-        type: flags.type,
+      const body: SsoAddBody = {
+        type: "saml",
       };
 
       if (Option.isSome(metadataFile)) {
         const xml = yield* readMetadata(metadataFile.value);
-        body["metadata_xml"] = xml;
+        body.metadata_xml = xml;
       } else if (Option.isSome(metadataUrl)) {
         if (!skipUrlValidation) {
           yield* validateMetadataUrl(metadataUrl.value).pipe(
@@ -220,105 +274,82 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
             ),
           );
         }
-        body["metadata_url"] = metadataUrl.value;
+        body.metadata_url = metadataUrl.value;
       }
 
       if (Option.isSome(attributeMappingFile)) {
         const mapping = yield* readAttributeMapping(attributeMappingFile.value);
-        body["attribute_mapping"] = mapping;
+        body.attribute_mapping = mapping;
       }
 
       if (domains.length > 0) {
-        body["domains"] = [...domains];
+        body.domains = [...domains];
       }
 
       if (Option.isSome(nameIdFormat)) {
-        body["name_id_format"] = nameIdFormat.value;
+        const format = toNameIdFormat(nameIdFormat.value);
+        if (format !== undefined) body.name_id_format = format;
       }
+
+      yield* requireHostedMutationConsent({
+        action: "Add an SSO provider",
+        details: [
+          `Type: ${flags.type}`,
+          ...(domains.length > 0 ? [`Domains: ${domains.join(", ")}`] : []),
+          ...(Option.isSome(metadataFile) ? ["Metadata: from a file"] : []),
+          ...(Option.isSome(metadataUrl) ? ["Metadata: from a URL"] : []),
+        ],
+      });
+
+      const reconciledToken =
+        reconciledTokenCached === undefined
+          ? undefined
+          : (yield* Effect.filterOrFail(
+              reconciledTokenCached,
+              Option.isSome,
+              () => new SsoAccessTokenError({ message: missingAccessTokenMessage() }),
+            )).value;
 
       const creating =
         output.format === "text" ? yield* output.task("Adding SSO provider...") : undefined;
 
-      const tokenOpt =
-        reconciledTokenCached !== undefined
-          ? yield* Effect.flatMap(reconciledTokenCached, (resolved) =>
-              Option.isSome(resolved)
-                ? Effect.succeed(resolved)
-                : Effect.fail(new SsoAccessTokenError({ message: missingAccessTokenMessage() })),
-            )
-          : yield* resolveAccessToken;
-
-      // `bearerToken(Redacted)` keeps the Authorization header's redaction
-      // marker, so any future debug serialization of the request stays
-      // opaque about the token.
-      const request = HttpClientRequest.post(
-        `${apiUrl}/v1/projects/${ref}/config/auth/sso/providers`,
-      ).pipe(
-        Option.isSome(tokenOpt) ? HttpClientRequest.bearerToken(tokenOpt.value) : (req) => req,
-        HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
-        // Alphabetical key order so the cli-e2e replay server's
-        // string-compare body match succeeds.
-        HttpClientRequest.bodyText(encodeGoStructJsonBody(body), "application/json"),
-      );
-
-      const response = yield* httpClient.execute(request).pipe(
+      // `executeRaw` keeps the response body intact so structured output emits it as the API
+      // returned it; the typed schema decodes a copy for the table view.
+      const { rawBody, provider } = yield* Effect.gen(function* () {
+        const response = yield* api
+          .executeRaw(
+            operationDefinitions.v1CreateASsoProvider,
+            { ref, ...body },
+            {
+              retry: { requestTimeoutMs: Number.POSITIVE_INFINITY },
+              ...(reconciledToken === undefined
+                ? {}
+                : { baseUrl: apiUrl, accessToken: reconciledToken }),
+            },
+          )
+          .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
+        const rawBody: unknown = yield* response.json;
+        return { rawBody, provider: yield* decodeProvider(rawBody) };
+      }).pipe(
+        Effect.catch((cause) => handleAddError(ref, apiUrl, reconciledTokenForAux, cause)),
         Effect.tapError(() => creating?.fail() ?? Effect.void),
-        Effect.mapError(
-          (cause) =>
-            new SsoAddNetworkError({
-              message: `failed to create sso provider: ${String(cause)}`,
-            }),
-        ),
       );
+      yield* creating?.clear ?? Effect.void;
 
-      if (response.status !== 201) {
-        const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-        // Same cap + control-character sanitization as the typed-client
-        // error mapper (`mapHttpError`), so this raw-HTTP path doesn't skip it.
-        const bodyText = sanitizeErrorBody(rawBody);
-        const upgradeSuggested = yield* suggestUpgrade({
-          projectRef: ref,
-          featureKey: "auth.saml_2",
-          statusCode: response.status,
-          response,
-          apiUrl,
-          ...(yield* Effect.map(reconciledTokenForAux, (token) =>
-            token !== undefined ? { accessToken: token } : {},
-          )),
-        });
-        yield* creating?.fail() ?? Effect.void;
-        if (response.status === 404) {
-          return yield* Effect.fail(
-            new SsoAddSamlDisabledError({ message: SAML_DISABLED_MESSAGE, upgradeSuggested }),
-          );
-        }
-        return yield* Effect.fail(
-          new SsoAddUnexpectedStatusError({
-            status: response.status,
-            body: bodyText,
-            message: `Unexpected error adding identity provider: ${bodyText}`,
-            upgradeSuggested,
-          }),
-        );
-      }
+      const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
-      const parsedJson = yield* response.json.pipe(Effect.orElseSucceed((): unknown => ({})));
-      yield* creating?.clear() ?? Effect.void;
-
-      const goFmt = Option.getOrUndefined(goOutputFlag);
-
-      if (goFmt === "json") {
-        yield* output.raw(encodeGoJson(parsedJson));
+      if (outputFlagFormat === "json") {
+        yield* output.raw(encodeSortedJson(rawBody));
         return;
       }
-      if (goFmt === "yaml") {
-        yield* output.raw(encodeGoYaml(parsedJson, GO_SSO_PROVIDER_RESPONSE));
+      if (outputFlagFormat === "yaml") {
+        yield* output.raw(encodeStructYaml(rawBody, SSO_PROVIDER_RESPONSE_SHAPE));
         return;
       }
-      if (goFmt === "toml") {
+      if (outputFlagFormat === "toml") {
         // Same TOML-encode-failure pattern as list/show.
         const toml = yield* Effect.try({
-          try: () => encodeGoToml(parsedJson, GO_SSO_PROVIDER_RESPONSE),
+          try: () => encodeStructToml(rawBody, SSO_PROVIDER_RESPONSE_SHAPE),
           catch: (cause) =>
             new SsoTomlEncodeError({
               message: `failed to output toml: ${cause instanceof Error ? cause.message : String(cause)}`,
@@ -327,7 +358,7 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
         yield* output.raw(toml);
         return;
       }
-      if (goFmt === "env") {
+      if (outputFlagFormat === "env") {
         // `-o env` emits nothing for `sso add`.
         return;
       }
@@ -335,14 +366,12 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
       if (output.format === "json" || output.format === "stream-json") {
         yield* output.success(
           "",
-          parsedJson !== null && typeof parsedJson === "object"
-            ? (parsedJson as Record<string, unknown>)
-            : { value: parsedJson },
+          Predicate.isObjectOrArray(rawBody) ? { ...rawBody } : { value: rawBody },
         );
         return;
       }
 
-      yield* output.raw(renderSingleProvider(toSsoProviderView(parsedJson)));
+      yield* output.raw(renderSingleProvider(provider));
     }).pipe(
       // Linked-project cache fill GETs `/v1/projects/{ref}` through the
       // reconciled host, never the config layer's.

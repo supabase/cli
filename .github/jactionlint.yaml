@@ -1,0 +1,18 @@
+rules:
+  missing-timeout: off
+  concurrency-limits: off
+  unpinned-uses: error # actions, reusable workflows and docker:// must be pinned to a full SHA / @sha256 digest
+self-hosted-runner:
+  labels:
+    - arm-runner
+    - blacksmith-2vcpu-ubuntu-2404
+    - blacksmith-4vcpu-ubuntu-2404
+    - blacksmith-6vcpu-macos-latest
+    - blacksmith-8vcpu-ubuntu-2404
+    - blacksmith-8vcpu-windows-2025
+    - blacksmith-32vcpu-ubuntu-2404
+paths:
+  # Other projects' repositories, pulled in as git submodules. CI never checks them out.
+  ".repos/**":
+    ignore:
+      - ".*"

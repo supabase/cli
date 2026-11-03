@@ -4,9 +4,7 @@ import type { ConsentState } from "./types.ts";
 
 interface TelemetryRuntimeShape {
   readonly configDir: string;
-  readonly tracesDir: string;
   readonly consent: ConsentState;
-  readonly showDebug: boolean;
   readonly deviceId: string;
   readonly sessionId: string;
   readonly identity: TelemetryIdentity;

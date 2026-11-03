@@ -2,7 +2,7 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/__PROJECT_REF__/billing/addons",
+      "path": "/v1/projects/replayfixtureprojref/billing/addons",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
@@ -745,7 +745,7 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v2/projects/__PROJECT_REF__/config",
+      "path": "/v2/projects/replayfixtureprojref/config",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
@@ -767,7 +767,7 @@
       "body": {
         "data": {
           "type": "project_config",
-          "id": "__PROJECT_REF__",
+          "id": "replayfixtureprojref",
           "attributes": {
             "database": {
               "major_version": 15,

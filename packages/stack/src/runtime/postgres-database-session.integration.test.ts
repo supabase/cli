@@ -1,18 +1,13 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Redacted, Ref } from "effect";
-import {
-  AuthenticationError,
-  ConnectionError,
-  SqlError,
-  UnknownError,
-} from "effect/unstable/sql/SqlError";
+import { AuthenticationError, ConnectionError, SqlError, UnknownError } from "effect/sql/SqlError";
 import {
   ensureInternalDatabase,
   makeDatabaseSessionFromAcquisition,
   makeDatabaseSessionFromSqlClient,
   type DatabaseSqlClient,
 } from "./PostgresDatabaseSession.ts";
-import { DatabaseBootstrapError } from "../model/DatabaseBootstrap.ts";
+import { DatabaseBootstrapError } from "./DatabaseBootstrap.ts";
 
 describe("Postgres database session", () => {
   it.live("classifies SQL connection failures without retaining raw causes", () =>
@@ -147,6 +142,72 @@ describe("Postgres database session", () => {
     }),
   );
 
+  it.live("accepts an internal database that a concurrent creator publishes first", () =>
+    Effect.gen(function* () {
+      const calls: Array<string> = [];
+      let published = false;
+      const postgres = makeDatabaseSessionFromSqlClient({
+        unsafe: (sql) =>
+          Effect.suspend(() => {
+            calls.push(sql);
+            if (sql.startsWith("CREATE DATABASE")) {
+              published = true;
+              return Effect.fail(
+                new SqlError({
+                  reason: new UnknownError({
+                    message: 'database "_supabase" already exists',
+                    cause: new Error("duplicate database"),
+                  }),
+                }),
+              );
+            }
+            return Effect.succeed(
+              sql.startsWith("SELECT 1 FROM pg_database") && published ? [{ exists: true }] : [],
+            );
+          }),
+        withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
+      });
+      const internal = makeDatabaseSessionFromSqlClient({
+        unsafe: (sql) =>
+          Effect.sync(() => {
+            calls.push(sql);
+            return [];
+          }),
+        withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
+      });
+
+      yield* Effect.scoped(ensureInternalDatabase(postgres, Effect.succeed(internal)));
+
+      expect(calls).toContain("CREATE DATABASE _supabase WITH OWNER postgres");
+      expect(calls).toContain("CREATE SCHEMA IF NOT EXISTS _supavisor AUTHORIZATION postgres");
+    }),
+  );
+
+  it.live("fails when the internal database is still missing after a failed create", () =>
+    Effect.gen(function* () {
+      const postgres = makeDatabaseSessionFromSqlClient({
+        unsafe: (sql) =>
+          sql.startsWith("CREATE DATABASE")
+            ? Effect.fail(
+                new SqlError({
+                  reason: new UnknownError({
+                    message: "permission denied",
+                    cause: new Error("permission denied"),
+                  }),
+                }),
+              )
+            : Effect.succeed([]),
+        withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
+      });
+
+      const error = yield* Effect.scoped(
+        ensureInternalDatabase(postgres, Effect.die("internal database must not open")),
+      ).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(DatabaseBootstrapError);
+    }),
+  );
+
   it.live("reuses an existing internal database without recreating it", () =>
     Effect.gen(function* () {
       const calls: Array<string> = [];
@@ -182,12 +243,15 @@ describe("Postgres database session", () => {
         unsafe: (sql, params = []) =>
           Effect.sync(() => {
             calls.push({ sql, params });
-            if (sql.startsWith("SELECT string_agg"))
+            if (sql.startsWith("SELECT array_agg"))
               return [
                 {
-                  statement: sql.includes("ALTER ROLE")
-                    ? "ALTER ROLE postgres PASSWORD 'database-secret'"
-                    : "ALTER DATABASE postgres SET app.settings.jwt_secret TO 'jwt-secret'; ALTER DATABASE postgres SET app.settings.jwt_exp TO '3600'",
+                  statements: sql.includes("ALTER ROLE")
+                    ? ["ALTER ROLE postgres PASSWORD 'database-secret'"]
+                    : [
+                        "ALTER DATABASE postgres SET app.settings.jwt_secret TO 'jwt-secret'",
+                        "ALTER DATABASE postgres SET app.settings.jwt_exp TO '3600'",
+                      ],
                 },
               ];
             return [];
@@ -205,15 +269,16 @@ describe("Postgres database session", () => {
         }),
       );
       expect(calls[0]).toEqual({
-        sql: "SELECT string_agg(format('ALTER ROLE %I PASSWORD %L', role, $1::text), E';\\n') AS statement FROM unnest(ARRAY[$2::text]::text[]) AS role",
+        sql: "SELECT array_agg(format('ALTER ROLE %I PASSWORD %L', role, $1::text)) AS statements FROM unnest(ARRAY[$2::text]::text[]) AS role",
         params: ["database-secret", "postgres"],
       });
       expect(calls[1]?.sql).toContain("ALTER ROLE postgres PASSWORD");
       expect(calls[2]).toEqual({
-        sql: "SELECT string_agg(format('ALTER DATABASE postgres SET %I TO %L', name, value), E';\\n') AS statement FROM (VALUES ($1::text, $2::text), ($3::text, $4::text)) AS settings(name, value)",
+        sql: "SELECT array_agg(format('ALTER DATABASE postgres SET %I TO %L', name, value)) AS statements FROM (VALUES ($1::text, $2::text), ($3::text, $4::text)) AS settings(name, value)",
         params: ["app.settings.jwt_secret", "jwt-secret", "app.settings.jwt_exp", 3600],
       });
       expect(calls[3]?.sql).toContain("ALTER DATABASE postgres SET app.settings.jwt_secret");
+      expect(calls[4]?.sql).toContain("ALTER DATABASE postgres SET app.settings.jwt_exp");
     }),
   );
 
@@ -221,8 +286,8 @@ describe("Postgres database session", () => {
     Effect.gen(function* () {
       const client: DatabaseSqlClient = {
         unsafe: (sql) =>
-          sql.startsWith("SELECT string_agg")
-            ? Effect.succeed([{ statement: "ALTER ROLE postgres PASSWORD 'database-secret'" }])
+          sql.startsWith("SELECT array_agg")
+            ? Effect.succeed([{ statements: ["ALTER ROLE postgres PASSWORD 'database-secret'"] }])
             : Effect.fail(
                 new SqlError({
                   reason: new UnknownError({

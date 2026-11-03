@@ -1,30 +1,59 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { ConfigProvider, Effect, Exit, Layer, Option, Stream } from "effect";
-
-import { mockOutput } from "../../tests/helpers/mocks.ts";
 import {
+  Cause,
+  ConfigProvider,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Schema,
+} from "effect";
+import { vi } from "vitest";
+
+vi.mock("node:net", (importOriginal) =>
+  Promise.all([
+    import("../../tests/helpers/refuse-invalid-db-hosts.ts"),
+    importOriginal<typeof import("node:net")>(),
+  ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net)),
+);
+
+import { mockOutput, mockTty } from "../../tests/helpers/mocks.ts";
+import {
+  VALID_REF,
+  VALID_TOKEN,
   mockCommandSettings,
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../tests/helpers/command-mocks.ts";
+import { branchListApi } from "../../tests/helpers/remote-selection.ts";
+import { assertPermissionDrift } from "../../tests/helpers/permission-drift.ts";
+import {
+  asRecordedRequests,
+  provideEnv,
+  realDbConfigResolver,
+  serveLinkedDatabase,
+  stubManagementApi,
+  type StubbedRequest,
+} from "../../tests/helpers/permission-real-layers.ts";
+import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
+import { describeDbTargetSelection } from "../../tests/helpers/db-target-selection.ts";
+import { describeHostedConsent } from "../../tests/helpers/hosted-consent.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
-import { DebugFlag, DnsResolverFlag, NetworkIdFlag } from "./global-flags.ts";
+import { DebugFlag, DnsResolverFlag, NetworkIdFlag, OutputFlag, YesFlag } from "./global-flags.ts";
+import { ProjectRefResolver } from "../config/project-ref.service.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
+import type { DbConnectionInput, ResolvedDbConnection } from "./db-config.types.ts";
+import { HostedMutationDeclinedError } from "./hosted-consent/hosted-consent.errors.ts";
+import { TargetPolicy } from "./target/target-policy.ts";
 import { DbConnectError, DbExecError } from "./db-connection.errors.ts";
 import { DbConnection, type DbSession, type PgConnInput } from "./db-connection.service.ts";
 import { DockerRunError } from "./docker-run.errors.ts";
 import { DockerRun, type DockerRunOpts } from "./docker-run.service.ts";
-import { BundledPostgresClient } from "./bundled-postgres-client.ts";
-import {
-  ContainerEngineResolver,
-  StackIdSchema,
-  type EffectStack,
-  type RunPostgresClientOptions,
-} from "@supabase/stack/effect";
+import { BundledPostgresClient, type RunPostgresClientOptions } from "./bundled-postgres-client.ts";
 import { testDb } from "./test-db.handler.ts";
 import { stackBackendLayer } from "./stack-backend.ts";
 import { StackApi } from "./stack-api.ts";
@@ -44,28 +73,48 @@ const REMOTE_CONN: PgConnInput = {
   database: "postgres",
 };
 
+const stackApiStub = Layer.succeed(StackApi, {
+  create: () => Effect.die("stack API unused"),
+  open: () => Effect.die("stack API unused"),
+  discover: () => Effect.die("stack API unused"),
+  find: () => Effect.die("stack API unused"),
+  findDeleted: () => Effect.die("stack API unused"),
+});
+
 function mockResolver(opts: { conn?: PgConnInput; isLocal?: boolean } = {}) {
-  const calls: Array<{
-    readonly connType: string;
-    readonly linkedProjectRef: Option.Option<string>;
-  }> = [];
+  const inputs: Array<DbConnectionInput> = [];
   const layer = Layer.succeed(DbConfigResolver, {
-    resolve: (flags) => {
-      calls.push({
-        connType: flags.connType ?? "",
-        linkedProjectRef: flags.linkedProjectRef ?? Option.none(),
-      });
-      return Effect.succeed({ conn: opts.conn ?? LOCAL_CONN, isLocal: opts.isLocal ?? true });
+    resolveConnection: (input: DbConnectionInput) => {
+      inputs.push(input);
+      return Effect.succeed({
+        conn: opts.conn ?? LOCAL_CONN,
+        isLocal: opts.isLocal ?? input.target.kind === "local",
+        ref: input.target.kind === "linked" ? Option.some(input.target.ref) : Option.none(),
+        target: input.target,
+      } satisfies ResolvedDbConnection);
     },
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
   return {
     layer,
-    get calls() {
-      return calls;
+    get inputs() {
+      return inputs;
     },
   };
 }
+
+const projectRefLayer = Layer.succeed(ProjectRefResolver, {
+  resolve: () => Effect.die("resolve is not used by this test"),
+  resolveForLink: () => Effect.succeed(VALID_REF),
+  resolveRef: (flagValue: Option.Option<string>) =>
+    Effect.succeed(
+      Option.isSome(flagValue) && flagValue.value.length > 0
+        ? { ref: flagValue.value, source: "flag" as const, matchesLinkedRef: false }
+        : { ref: VALID_REF, source: "file" as const, matchesLinkedRef: true },
+    ),
+  resolveOptional: () => Effect.succeed(Option.some(VALID_REF)),
+  promptProjectRef: () => Effect.succeed(VALID_REF),
+});
 
 function mockDbConnection(opts: {
   existed?: boolean;
@@ -79,10 +128,10 @@ function mockDbConnection(opts: {
       Effect.gen(function* () {
         execCalls.push(sql);
         if (opts.enableFails === true && sql.includes("create extension")) {
-          return yield* Effect.fail(new DbExecError({ message: "permission denied" }));
+          return yield* new DbExecError({ message: "permission denied" });
         }
         if (opts.dropFails === true && sql.includes("drop extension")) {
-          return yield* Effect.fail(new DbExecError({ message: "cannot drop" }));
+          return yield* new DbExecError({ message: "cannot drop" });
         }
       }),
     // `test db` never runs a migration batch; keep the seam explicit rather than silent.
@@ -193,13 +242,11 @@ function mockBundledPostgresClient(opts: {
       Effect.gen(function* () {
         allOpts.push(runOpts);
         if (opts.runFails === true) {
-          return yield* Effect.fail(
-            new DockerRunError({
-              message: "failed to run docker: not found",
-              reason: "spawn",
-              daemonDown: false,
-            }),
-          );
+          return yield* new DockerRunError({
+            message: "failed to run docker: not found",
+            reason: "spawn",
+            daemonDown: false,
+          });
         }
         const encoder = new TextEncoder();
         for (const chunk of opts.stdout ?? []) {
@@ -215,12 +262,6 @@ function mockBundledPostgresClient(opts: {
     },
   };
 }
-
-const containerEngineResolver = (installed: boolean) =>
-  Layer.succeed(ContainerEngineResolver, {
-    isInstalled: () => Effect.succeed(installed),
-    resolve: () => Effect.die("unused"),
-  });
 
 const runtimeInfoLayer = (platform: NodeJS.Platform, arch?: NodeJS.Architecture) =>
   Layer.succeed(RuntimeInfo, {
@@ -250,24 +291,39 @@ interface SetupOpts {
   workdir?: string;
   dnsResolver?: "native" | "https";
   dockerInstalled?: boolean;
-  /** Raw CLI args for `CliArgs` — drives DB target selection (Changed-based). */
-  args?: ReadonlyArray<string>;
+  /** Runs the real `DbConfigResolver` against `workdir`. */
+  realLayers?: boolean;
+  /** `--yes`; on by default so hosted runs reach pg_prove. */
+  yes?: boolean;
+  interactive?: boolean;
+  confirm?: ReadonlyArray<boolean>;
 }
 
 function setup(opts: SetupOpts = {}) {
-  const out = mockOutput({ format: opts.format ?? "text" });
+  const out = mockOutput({
+    format: opts.format ?? "text",
+    interactive: opts.interactive,
+    promptConfirmResponses: opts.confirm,
+  });
   const telemetry = mockTelemetryStateTracked();
   const resolver = mockResolver({ conn: opts.conn, isLocal: opts.isLocal });
   const connection = mockDbConnection(opts);
   const docker = mockDockerRun(opts);
   const bundled = mockBundledPostgresClient(opts);
   const layer = Layer.mergeAll(
+    cliConfigValuesTestLayer,
     out.layer,
-    resolver.layer,
+    opts.realLayers === true
+      ? realDbConfigResolver({
+          workdir: opts.workdir ?? "/work/project",
+          dbConnection: connection.layer,
+          env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+        })
+      : resolver.layer,
     connection.layer,
     docker.layer,
     bundled.layer,
-    containerEngineResolver(opts.dockerInstalled ?? true),
+    stackApiStub,
     mockCommandSettings({ workdir: opts.workdir ?? "/work/project", projectId: Option.none() }),
     telemetry.layer,
     runtimeInfoLayer(opts.platform ?? "linux", opts.arch),
@@ -277,19 +333,29 @@ function setup(opts: SetupOpts = {}) {
       opts.networkId === undefined ? Option.none() : Option.some(opts.networkId),
     ),
     Layer.succeed(DnsResolverFlag, opts.dnsResolver ?? "native"),
-    Layer.succeed(CliArgs, { args: opts.args ?? [] }),
+    Layer.succeed(CliArgs, { args: [] }),
+    projectRefLayer,
+    Layer.succeed(TargetPolicy, { group: "selectable", consent: "no" }),
+    Layer.succeed(YesFlag, opts.yes ?? true),
+    Layer.succeed(OutputFlag, Option.none()),
+    mockTty({ stdinIsTty: opts.interactive ?? false }),
     BunServices.layer,
   );
   return { layer, out, telemetry, connection, docker, bundled, resolver };
 }
 
+const REMOTE_LINKED = Option.some({ _tag: "Linked" } as const);
+
 const flags = (over: Partial<Parameters<typeof testDb>[0]> = {}) => ({
   paths: over.paths ?? [],
+  remote: over.remote ?? Option.none(),
   dbUrl: over.dbUrl ?? Option.none<string>(),
   linked: over.linked ?? false,
-  local: over.local ?? true,
+  local: over.local ?? false,
   projectRef: over.projectRef ?? Option.none<string>(),
 });
+
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 describe("test db integration", () => {
   it.live("runs pgTAP on the local db: enables then drops pgtap, exits 0", () => {
@@ -393,10 +459,11 @@ describe("test db integration", () => {
     const { layer, docker, connection } = setup({
       conn: REMOTE_CONN,
       isLocal: false,
-      args: ["--db-url=postgres://x"],
     });
     return Effect.gen(function* () {
-      yield* testDb(flags({ dbUrl: Option.some("postgres://x") }));
+      yield* testDb(
+        flags({ remote: Option.some({ _tag: "DbUrl", url: "postgres://x" } as const) }),
+      );
       const run = docker.lastOpts;
       expect(run?.network).toEqual({ _tag: "host" });
       expect(run?.env["PGHOST"]).toBe(REMOTE_CONN.host);
@@ -410,17 +477,18 @@ describe("test db integration", () => {
     const { layer, docker, bundled } = setup({
       conn: LOCAL_CONN,
       isLocal: true,
-      args: ["--db-url=postgresql://postgres:postgres@127.0.0.1:54322/postgres"],
     });
     return Effect.gen(function* () {
       yield* testDb(
         flags({
-          local: false,
-          dbUrl: Option.some("postgresql://postgres:postgres@127.0.0.1:54322/postgres"),
+          remote: Option.some({
+            _tag: "DbUrl",
+            url: "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+          }),
         }),
       );
       expect(docker.lastOpts).toBeUndefined();
-      expect(bundled.lastOpts?.runtime).toEqual({ kind: "container", engine: "docker" });
+      expect(bundled.lastOpts?.runtime).toEqual({ kind: "native" });
       expect(bundled.lastOpts?.network).toBe("host");
       expect(bundled.lastOpts?.env?.["PGHOST"]).toBe("127.0.0.1");
       expect(bundled.lastOpts?.env?.["PGPORT"]).toBe("54322");
@@ -428,139 +496,19 @@ describe("test db integration", () => {
     }).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
   });
 
-  const PROVE_STACK_ID = StackIdSchema.make("e".repeat(64));
-  const unusedProve = () => Effect.die("unused");
-  const proveStackApi = (
-    runtime: { kind: "native" } | { kind: "container"; engine: "docker" },
-    databaseVersion = "17.6.1.168",
-  ) => {
-    const stack: EffectStack = {
-      id: PROVE_STACK_ID,
-      status: Effect.succeed({
-        id: PROVE_STACK_ID,
-        lifecycle: "running",
-        desiredLifecycle: "running",
-        runtime,
-        endpoints: {},
-        versions: { database: databaseVersion },
-        capabilities: [],
-        artifacts: [],
-      }),
-      credentials: Effect.die("unused"),
-      prepare: unusedProve,
-      start: unusedProve,
-      stop: Effect.die("unused"),
-      destroy: Effect.die("unused"),
-      resetDatabase: Effect.die("unused"),
-      logs: unusedProve,
-      followLogs: () => Stream.empty,
-    };
-    return Layer.succeed(StackApi, {
-      createStack: unusedProve,
-      findStack: () =>
-        Effect.succeed(
-          Option.some({
-            id: PROVE_STACK_ID,
-            projectRoot: "/work/project",
-            name: "default",
-            branchContext: "main",
-            runtime,
-            desiredLifecycle: "running",
-          }),
-        ),
-      discoverStacks: unusedProve,
-      openStack: () => Effect.succeed(stack),
-      inspectStack: unusedProve,
-    });
-  };
-
-  it.live("stack --local native uses bundled pg_prove, not supabase/pg_prove", () => {
-    const { layer, docker, bundled } = setup({ isLocal: true });
-    return Effect.gen(function* () {
-      yield* testDb(flags({ local: true }));
-      expect(docker.lastOpts).toBeUndefined();
-      expect(bundled.lastOpts?.runtime).toEqual({ kind: "native" });
-      expect(bundled.lastOpts?.argv.slice(0, 5)).toEqual([
-        "pg_prove",
-        "--ext",
-        ".pg",
-        "--ext",
-        ".sql",
-      ]);
-      expect(bundled.lastOpts?.env?.["PGHOST"]).toBe("127.0.0.1");
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(layer, stackBackendLayer("stack"), proveStackApi({ kind: "native" })),
-      ),
-    );
-  });
-
-  it.live("stack --local docker uses catalog pg_prove, not supabase/pg_prove", () => {
-    const { layer, docker, bundled } = setup({ isLocal: true });
-    return Effect.gen(function* () {
-      yield* testDb(flags({ local: true }));
-      expect(docker.lastOpts).toBeUndefined();
-      expect(bundled.lastOpts?.runtime).toEqual({ kind: "container", engine: "docker" });
-      expect(bundled.lastOpts?.argv.slice(0, 5)).toEqual([
-        "pg_prove",
-        "--ext",
-        ".pg",
-        "--ext",
-        ".sql",
-      ]);
-      expect(bundled.lastOpts?.env?.["PGHOST"]).toBe("127.0.0.1");
-      expect(bundled.lastOpts?.mounts).toEqual([
-        {
-          source: "/work/project/supabase/tests",
-          target: "/work/project/supabase/tests",
-          readOnly: true,
-        },
-      ]);
-      expect(bundled.lastOpts?.cwd).toBe("/work/project/supabase/tests");
-      expect(bundled.lastOpts?.extraHosts).toEqual(["host.docker.internal:host-gateway"]);
-      expect(bundled.lastOpts?.securityOpt).toEqual(["label:disable"]);
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          layer,
-          stackBackendLayer("stack"),
-          proveStackApi({ kind: "container", engine: "docker" }),
-        ),
-      ),
-    );
-  });
-
-  it.live(
-    "stack --local on Windows uses catalog container pg_prove against host.docker.internal",
-    () => {
-      const { layer, docker, bundled } = setup({ isLocal: true, platform: "win32" });
-      return Effect.gen(function* () {
-        yield* testDb(flags({ local: true }));
-        expect(docker.lastOpts).toBeUndefined();
-        expect(bundled.lastOpts?.runtime).toEqual({ kind: "container", engine: "docker" });
-        expect(bundled.lastOpts?.env?.["PGHOST"]).toBe("host.docker.internal");
-        expect(bundled.lastOpts?.network).toBe("host");
-        expect(bundled.lastOpts?.extraHosts).toEqual([]);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(layer, stackBackendLayer("stack"), proveStackApi({ kind: "native" })),
-        ),
-      );
-    },
-  );
-
-  it.live("stack --db-url native keeps PGHOST when isLocal is true", () => {
+  it.live("stack --remote=<db-url> native keeps PGHOST when isLocal is true", () => {
     const { layer, docker, bundled } = setup({
       conn: { ...LOCAL_CONN, host: "db.internal" },
       isLocal: true,
       dockerInstalled: false,
-      args: ["--db-url=postgresql://postgres:postgres@db.internal:54322/postgres"],
     });
     return Effect.gen(function* () {
       yield* testDb(
         flags({
-          dbUrl: Option.some("postgresql://postgres:postgres@db.internal:54322/postgres"),
-          local: false,
+          remote: Option.some({
+            _tag: "DbUrl",
+            url: "postgresql://postgres:postgres@db.internal:54322/postgres",
+          }),
         }),
       );
       expect(docker.lastOpts).toBeUndefined();
@@ -569,15 +517,14 @@ describe("test db integration", () => {
     }).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
   });
 
-  it.live("stack --linked native keeps the remote PGHOST", () => {
+  it.live("stack --remote native keeps the remote PGHOST", () => {
     const { layer, docker, bundled } = setup({
       conn: REMOTE_CONN,
       isLocal: false,
       dockerInstalled: false,
-      args: ["--linked"],
     });
     return Effect.gen(function* () {
-      yield* testDb(flags({ local: false, linked: true }));
+      yield* testDb(flags({ remote: REMOTE_LINKED }));
       expect(docker.lastOpts).toBeUndefined();
       expect(bundled.lastOpts?.runtime).toEqual({ kind: "native" });
       expect(bundled.lastOpts?.env?.["PGHOST"]).toBe(REMOTE_CONN.host);
@@ -589,10 +536,11 @@ describe("test db integration", () => {
       conn: REMOTE_CONN,
       isLocal: false,
       dnsResolver: "https",
-      args: ["--db-url=postgres://x"],
     });
     return Effect.gen(function* () {
-      yield* testDb(flags({ dbUrl: Option.some("postgres://x") }));
+      yield* testDb(
+        flags({ remote: Option.some({ _tag: "DbUrl", url: "postgres://x" } as const) }),
+      );
       expect(connection.connectCalls[0]?.dnsResolver).toBe("https");
     }).pipe(Effect.provide(layer));
   });
@@ -603,7 +551,7 @@ describe("test db integration", () => {
       const exit = yield* Effect.exit(testDb(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to enable pgTAP: permission denied");
+        expect(encodeJson(exit.cause)).toContain("failed to enable pgTAP: permission denied");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -614,7 +562,7 @@ describe("test db integration", () => {
       const exit = yield* Effect.exit(testDb(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to connect to postgres");
+        expect(encodeJson(exit.cause)).toContain("failed to connect to postgres");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -625,7 +573,7 @@ describe("test db integration", () => {
       const exit = yield* Effect.exit(testDb(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("error running container: exit 3");
+        expect(encodeJson(exit.cause)).toContain("error running container: exit 3");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -639,9 +587,7 @@ describe("test db integration", () => {
       const exit = yield* Effect.exit(testDb(flags({ paths: ["tests/db"] })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
-          "no pgTAP tests found in /work/project/tests/db",
-        );
+        expect(encodeJson(exit.cause)).toContain("no pgTAP tests found in /work/project/tests/db");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -744,12 +690,12 @@ describe("test db integration", () => {
       const exit = yield* Effect.exit(testDb(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to run docker");
+        expect(encodeJson(exit.cause)).toContain("failed to run docker");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("json mode: streams TAP only — emits no result envelope (Go parity)", () => {
+  it.live("json mode: streams TAP only — emits no result envelope", () => {
     const { layer, out } = setup({ format: "json", exitCode: 0 });
     return Effect.gen(function* () {
       yield* testDb(flags());
@@ -757,76 +703,11 @@ describe("test db integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("stream-json mode: emits no result envelope (Go parity)", () => {
+  it.live("stream-json mode: emits no result envelope", () => {
     const { layer, out } = setup({ format: "stream-json", exitCode: 0 });
     return Effect.gen(function* () {
       yield* testDb(flags());
       expect(out.messages.find((m) => m.type === "success")).toBeUndefined();
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("rejects mutually exclusive connection flags (--linked + --local via args)", () => {
-    const { layer } = setup({ args: ["--linked", "--local"] });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(testDb(flags()));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
-          "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
-        );
-      }
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("--local=false --linked fails with mutual-exclusion (sorted set [linked local])", () => {
-    const { layer } = setup({ args: ["--local=false", "--linked"] });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(testDb(flags()));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
-          "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
-        );
-      }
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("--linked=false routes to the linked branch (Changed, not value)", () => {
-    const { layer } = setup({ args: ["--linked=false"] });
-    return Effect.gen(function* () {
-      // No explicit assertion: success means routing reached resolver.resolve
-      // with connType "linked" instead of failing on mutual exclusion or the
-      // local-target guard.
-      yield* testDb(flags());
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("tests the project given via --project-ref --linked", () => {
-    // Only reaches the resolver as `linkedProjectRef` when --linked is set.
-    const FLAG_REF = "flagflagflagflagflag";
-    const { layer, resolver } = setup({ conn: REMOTE_CONN, isLocal: false, args: ["--linked"] });
-    return Effect.gen(function* () {
-      yield* testDb(flags({ linked: true, local: false, projectRef: Option.some(FLAG_REF) }));
-      expect(resolver.calls[0]?.connType).toBe("linked");
-      expect(resolver.calls[0]?.linkedProjectRef).toEqual(Option.some(FLAG_REF));
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("rejects --project-ref on the default local target", () => {
-    // No explicit --local/--db-url flag; the guard must fire from the default alone.
-    const FLAG_REF = "flagflagflagflagflag";
-    const { layer, connection, docker, resolver } = setup();
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(testDb(flags({ projectRef: Option.some(FLAG_REF) })));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-        );
-      }
-      expect(resolver.calls).toEqual([]);
-      expect(connection.execCalls).toEqual([]);
-      expect(docker.lastOpts).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
 
@@ -846,40 +727,178 @@ describe("test db integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes the connection diagnostic to stderr, keeping stdout for TAP (Go parity)", () => {
+  it.live("keeps stdout for the TAP stream only", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* testDb(flags());
-      expect(out.stderrText).toContain("Connecting to local database...");
       expect(out.stdoutText).toBe("");
       expect(out.messages).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("labels the connection diagnostic 'remote' for non-local connections", () => {
-    const { layer, out } = setup({
+  it.live("asks before enabling pgTAP on a hosted target and stops when declined", () => {
+    const { layer, out, connection, docker } = setup({
       conn: REMOTE_CONN,
       isLocal: false,
-      args: ["--db-url=postgres://x"],
+      yes: false,
+      interactive: true,
+      confirm: [false],
     });
     return Effect.gen(function* () {
-      yield* testDb(flags({ dbUrl: Option.some("postgres://x") }));
-      expect(out.stderrText).toContain("Connecting to remote database...");
+      const exit = yield* Effect.exit(
+        testDb(
+          flags({
+            remote: Option.some({ _tag: "DbUrl", url: "postgres://x" } as const),
+            paths: ["/abs/a_test.sql"],
+          }),
+        ),
+      );
+      expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBeInstanceOf(
+        HostedMutationDeclinedError,
+      );
+      expect(out.stderrText).toContain("enable the pgtap extension");
+      expect(out.stderrText).toContain("run pg_prove against /abs/a_test.sql");
+      expect(connection.connectCalls).toEqual([]);
+      expect(docker.lastOpts).toBeUndefined();
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("runs against a local target without asking for consent", () => {
+    const { layer, out } = setup({ yes: false });
+    return Effect.gen(function* () {
+      yield* testDb(flags());
+      expect(out.promptConfirmCalls).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 
   const tempWorkdir = useTempWorkdir();
-  it.live("sanitizes a configured project_id when naming the local network (Go parity)", () => {
+  it.live("sanitizes a configured project_id when naming the local network", () => {
     const workdir = tempWorkdir.current;
-    mkdirSync(join(workdir, "supabase"), { recursive: true });
-    writeFileSync(join(workdir, "supabase", "config.toml"), 'project_id = "My Project"\n');
-    const { layer, docker } = setup({ workdir });
     return Effect.gen(function* () {
-      yield* testDb(flags());
-      expect(docker.lastOpts?.network).toEqual({
-        _tag: "named",
-        name: "supabase_network_My_Project",
-      });
-    }).pipe(Effect.provide(layer));
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(workdir, "supabase", "config.toml"),
+        'project_id = "My Project"\n',
+      );
+      const { layer, docker } = setup({ workdir });
+      yield* Effect.gen(function* () {
+        yield* testDb(flags());
+        expect(docker.lastOpts?.network).toEqual({
+          _tag: "named",
+          name: "supabase_network_My_Project",
+        });
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(BunServices.layer));
   });
+
+  it.effect("mints a login role through the real resolver for --remote=<ref>", () => {
+    const { layer, connection } = setup({
+      realLayers: true,
+      workdir: tempWorkdir.current,
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* testDb(flags({ remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const) }));
+      expect(connection.connectCalls[0]?.isLocal).toBe(false);
+      expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
+        `GET /v1/projects/${VALID_REF}/config/database/pooler`,
+        `POST /v1/projects/${VALID_REF}/cli/login-role`,
+      ]);
+      assertPermissionDrift({
+        command: "test db",
+        activeFlags: { remote: VALID_REF },
+        requests: asRecordedRequests(requests),
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("makes no Management API request for the default local target", () => {
+    const { layer } = setup({
+      realLayers: true,
+      workdir: tempWorkdir.current,
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, () => undefined);
+      yield* testDb(flags());
+      expect(requests).toEqual([]);
+      assertPermissionDrift({
+        command: "test db",
+        requests: asRecordedRequests(requests),
+        exact: true,
+      });
+      expect(() =>
+        assertPermissionDrift({
+          command: "test db",
+          requests: [
+            {
+              method: "POST",
+              url: `https://api.supabase.com/v1/projects/${VALID_REF}/cli/login-role`,
+            },
+          ],
+        }),
+      ).toThrow(/condition doesn't hold/);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  describeDbTargetSelection("test db", {
+    dbUrl: true,
+    workdir: () => tempWorkdir.current,
+    attempt: ({ workdir, target }) => {
+      const ctx = setup({ conn: REMOTE_CONN, workdir });
+      const branchApi = branchListApi();
+      return {
+        layer: Layer.merge(ctx.layer, branchApi.layer),
+        out: ctx.out,
+        run: testDb(flags(target)),
+        target: () => ctx.resolver.inputs[0]?.target,
+        branchLookups: () => branchApi.requests,
+        apiRequests: () => branchApi.requests,
+      };
+    },
+  });
+});
+
+describeHostedConsent("test db", {
+  invoke: () => {
+    const connection = mockDbConnection({});
+    return {
+      run: testDb(
+        flags({
+          remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
+          paths: ["supabase/tests"],
+        }),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            mockResolver({ conn: REMOTE_CONN, isLocal: false }).layer,
+            connection.layer,
+            mockDockerRun({}).layer,
+            mockBundledPostgresClient({}).layer,
+            stackApiStub,
+            cliConfigValuesTestLayer,
+            mockTelemetryStateTracked().layer,
+            runtimeInfoLayer("linux"),
+            Layer.succeed(DebugFlag, false),
+            Layer.succeed(NetworkIdFlag, Option.none()),
+            Layer.succeed(DnsResolverFlag, "native"),
+          ),
+        ),
+        Effect.scoped,
+      ),
+      mutations: () => connection.execCalls.length,
+    };
+  },
 });

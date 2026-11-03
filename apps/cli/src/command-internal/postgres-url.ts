@@ -13,7 +13,7 @@ function isIPv6Host(host: string): boolean {
  * and turns space into `+` (`application/x-www-form-urlencoded` query-escaping, not
  * `encodeURIComponent`, which differs on space and `!*'()`).
  */
-function goQueryEscape(value: string): string {
+function queryEscape(value: string): string {
   let out = "";
   for (const ch of value) {
     if (/[A-Za-z0-9\-_.~]/.test(ch)) {
@@ -46,6 +46,21 @@ export interface PostgresUrlInput {
   readonly runtimeParams?: Readonly<Record<string, string>>;
 }
 
+export interface UserFacingDatabaseUrlInput {
+  readonly host: string;
+  readonly port: number;
+  readonly password: string;
+}
+
+/**
+ * Builds the `postgres`-role connection string shown to users (stack summary, `db url`
+ * commands), without the tool-only query parameters {@link toPostgresURL} adds.
+ */
+export function toUserFacingDatabaseUrl(conn: UserFacingDatabaseUrlInput): string {
+  const host = isIPv6Host(conn.host) ? `[${conn.host}]` : conn.host;
+  return `postgresql://postgres:${encodeURIComponent(conn.password)}@${host}:${conn.port}/postgres`;
+}
+
 export function toPostgresURL(conn: PostgresUrlInput): string {
   const timeout =
     conn.connectTimeoutSeconds !== undefined && conn.connectTimeoutSeconds > 0
@@ -59,7 +74,7 @@ export function toPostgresURL(conn: PostgresUrlInput): string {
   // tenant on pooler fallback.
   const optionsParam =
     conn.options !== undefined && conn.options.length > 0
-      ? `&options=${goQueryEscape(conn.options)}`
+      ? `&options=${queryEscape(conn.options)}`
       : "";
   // Every other runtime param (search_path, statement_timeout, …), sorted for stable
   // serialization.
@@ -68,7 +83,7 @@ export function toPostgresURL(conn: PostgresUrlInput): string {
       ? ""
       : Object.keys(conn.runtimeParams)
           .sort()
-          .map((key) => `&${goQueryEscape(key)}=${goQueryEscape(conn.runtimeParams![key]!)}`)
+          .map((key) => `&${queryEscape(key)}=${queryEscape(conn.runtimeParams![key]!)}`)
           .join("");
   return `postgresql://${userinfo}@${host}:${conn.port}/${encodeURIComponent(
     conn.database,

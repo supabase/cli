@@ -1,4 +1,4 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { configDiffCommand } from "./diff/diff.command.ts";
 import { configPullCommand } from "./pull/pull.command.ts";
 import { configPushCommand } from "./push/push.command.ts";

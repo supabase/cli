@@ -1,18 +1,16 @@
-import { Clock, Effect, FileSystem, Option, Path } from "effect";
+import { Clock, DateTime, Effect, FileSystem, Option, Path } from "effect";
 
-import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { bold } from "../../../output/bold.ts";
 import { renderGlamourTable } from "../../../output/glamour-table.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
-import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
+import { hostedMutationPreapproval } from "../../../command-internal/hosted-consent/hosted-consent.ts";
+import { resolveTarget } from "../../../command-internal/target/resolve-target.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
-import { InspectMutuallyExclusiveFlagsError } from "../db/inspect-query.ts";
 import type { InspectReportFlags } from "./report.command.ts";
 import { type CsvTable, type CsvTableProvider, parseReportCsv } from "./report.csvq.ts";
 import { readInspectRules } from "./report.config.ts";
@@ -26,11 +24,15 @@ import {
 
 /** Local-time `YYYY-MM-DD`, the report's dated output folder format. */
 function reportDateFolder(epochMillis: number): string {
-  const date = new Date(epochMillis);
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return DateTime.make(epochMillis).pipe(
+    Option.map((dateTime) => {
+      const local = DateTime.toParts(DateTime.setZone(dateTime, DateTime.zoneMakeLocal()));
+      const month = String(local.month).padStart(2, "0");
+      const day = String(local.day).padStart(2, "0");
+      return `${local.year}-${month}-${day}`;
+    }),
+    Option.getOrElse(() => "NaN-NaN-NaN"),
+  );
 }
 
 /**
@@ -60,41 +62,18 @@ const runInspectReport = Effect.fnUntraced(function* (
   const tty = yield* Tty;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const cliArgs = yield* CliArgs;
   const isText = output.format === "text";
-
-  // Mutual exclusivity is keyed off raw argv, not the parsed boolean value: `--local=false`
-  // was explicitly passed, so value-based detection would miss it and default to linked.
-  const target = resolveDbTargetFlags(cliArgs.args);
-  if (target.setFlags.length > 1) {
-    return yield* Effect.fail(
-      new InspectMutuallyExclusiveFlagsError({
-        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
-      }),
-    );
-  }
 
   // Validated before any DB work so a malformed config aborts before connecting or writing
   // CSVs; applied later in the summary rendering below.
-  const configRules = yield* readInspectRules(fs, path, cliSettings.workdir);
+  const configRules = yield* readInspectRules(cliSettings.workdir);
 
-  // `--linked` is the default, so absence of the others resolves to linked.
-  const connType = target.connType ?? "linked";
-
-  if (Option.isSome(flags.projectRef) && connType !== "linked") {
-    return yield* Effect.fail(
-      new InspectMutuallyExclusiveFlagsError({
-        message:
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      }),
-    );
-  }
-
-  const cfg = yield* resolver.resolve({
-    dbUrl: flags.dbUrl,
-    connType,
+  const target = yield* resolveTarget(flags);
+  const cfg = yield* resolver.resolveConnection({
+    target,
     dnsResolver,
-    linkedProjectRef: flags.projectRef,
+    password: Option.none(),
+    networkBanRemoval: yield* hostedMutationPreapproval,
   });
 
   // Resolved against the process CWD when relative, not `--workdir`.
@@ -111,10 +90,6 @@ const runInspectReport = Effect.fnUntraced(function* (
       ),
     );
 
-  if (isText) {
-    yield* output.raw(`Connecting to ${cfg.isLocal ? "local" : "remote"} database...\n`, "stderr");
-  }
-
   const ignoreSchemas = reportIgnoreSchemas();
   const dbLiteral = `'${cfg.conn.database}'`;
   const csvByFile = new Map<string, Uint8Array>();
@@ -125,24 +100,33 @@ const runInspectReport = Effect.fnUntraced(function* (
       const session = yield* dbConn.connect(cfg.conn, { isLocal: cfg.isLocal, dnsResolver });
       if (isText) yield* output.raw("Running queries...\n", "stderr");
       for (const { fileName, sql } of REPORT_QUERIES) {
-        const bytes = yield* session.copyToCsv(wrapReportQuery(sql, ignoreSchemas, dbLiteral));
-        const filePath = path.join(outDir, `${fileName}.csv`);
-        yield* fs.writeFile(filePath, bytes, { mode: 0o644 }).pipe(
-          Effect.mapError(
-            (error) =>
-              new InspectReportWriteError({
-                message: `failed to create output file: ${error}`,
-              }),
-          ),
+        yield* Effect.gen(function* () {
+          const bytes = yield* session.copyToCsv(wrapReportQuery(sql, ignoreSchemas, dbLiteral));
+          yield* Effect.annotateCurrentSpan({ "csv.bytes": bytes.length });
+          const filePath = path.join(outDir, `${fileName}.csv`);
+          yield* fs.writeFile(filePath, bytes, { mode: 0o644 }).pipe(
+            Effect.mapError(
+              (error) =>
+                new InspectReportWriteError({
+                  message: `failed to create output file: ${error}`,
+                }),
+            ),
+          );
+          csvByFile.set(`${fileName}.csv`, bytes);
+          files.push({ name: fileName, path: filePath });
+        }).pipe(
+          Effect.withSpan("inspect.report.runQuery", {
+            attributes: { "inspect.query.name": fileName },
+          }),
         );
-        csvByFile.set(`${fileName}.csv`, bytes);
-        files.push({ name: fileName, path: filePath });
       }
     }),
   );
 
   if (isText) {
-    yield* output.raw(`Reports saved to ${bold(outDir, tty.stdoutIsTty)}\n`, "stderr");
+    // Bolding is keyed off stdout's TTY state even though this line goes to stderr.
+    const savedTo = tty.stdoutIsTty ? `\x1b[1m${outDir}\x1b[0m` : outDir;
+    yield* output.raw(`Reports saved to ${savedTo}\n`, "stderr");
   }
 
   // Custom rules (validated above) replace the defaults when present.

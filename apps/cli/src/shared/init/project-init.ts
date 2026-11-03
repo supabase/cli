@@ -1,5 +1,6 @@
 import { Effect, FileSystem, Path, Schema } from "effect";
 import { promptYesNo } from "../../command-internal/prompt-yes-no.ts";
+import { sanitizeProjectId } from "../config/project-id.ts";
 import { Output } from "../output/output.service.ts";
 import { Tty } from "../runtime/tty.service.ts";
 import {
@@ -10,18 +11,6 @@ import {
   renderCliConfigTemplate,
 } from "./project-init.templates.ts";
 import { InitParseSettingsError } from "./project-init.errors.ts";
-
-const invalidProjectId = /[^a-zA-Z0-9_.-]+/g;
-const maxProjectIdLength = 40;
-
-function truncateText(text: string, maxLength: number): string {
-  return text.length > maxLength ? text.slice(0, maxLength) : text;
-}
-
-function sanitizeProjectId(src: string): string {
-  const sanitized = src.replaceAll(invalidProjectId, "_").replace(/^[_.-]+/, "");
-  return truncateText(sanitized, maxProjectIdLength);
-}
 
 // Strips line and block comments and trailing commas while preserving
 // string contents, so an existing JSONC settings file parses correctly.
@@ -106,6 +95,8 @@ const decodeJsonObject = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
 
+const encodePrettyJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }));
+
 // Parses a settings file through a Schema boundary so malformed JSON surfaces
 // as a typed `InitParseSettingsError` (never a fiber defect) and a
 // non-object document is rejected.
@@ -135,6 +126,8 @@ export interface ProjectInitOptions {
   readonly yes: boolean;
   readonly withVscodeSettings: boolean;
   readonly withIntellijSettings: boolean;
+  /** Persist `experimental.stack` and omit default stack listener ports. */
+  readonly experimentalStack?: boolean;
 }
 
 // Files/directories are pinned to 0644/0755 explicitly rather than relying
@@ -145,9 +138,9 @@ const INIT_DIR_MODE = 0o755;
 function writeJsonFile(pathname: string, contents: Record<string, unknown>) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    yield* fs.writeFileString(pathname, `${JSON.stringify(contents, null, 2)}\n`, {
-      mode: INIT_FILE_MODE,
-    });
+    // `contents` was just decoded from JSON, so encoding it back cannot fail.
+    const json = yield* encodePrettyJson(contents).pipe(Effect.orDie);
+    yield* fs.writeFileString(pathname, `${json}\n`, { mode: INIT_FILE_MODE });
   });
 }
 
@@ -302,7 +295,7 @@ export const initProject = Effect.fnUntraced(function* (options: ProjectInitOpti
   yield* fs.makeDirectory(supabaseDir, { recursive: true, mode: INIT_DIR_MODE });
   yield* fs.writeFileString(
     configTomlPath,
-    renderCliConfigTemplate(projectId, options.useOrioledb),
+    renderCliConfigTemplate(projectId, options.useOrioledb, options.experimentalStack === true),
     { mode: INIT_FILE_MODE },
   );
   yield* ensureSupabaseGitignore(options.cwd);

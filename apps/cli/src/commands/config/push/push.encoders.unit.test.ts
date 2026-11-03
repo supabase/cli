@@ -1,6 +1,7 @@
 import type { CliConfig, ConfigChange, ProjectConfig } from "@supabase/config";
 import { comparableProjectConfigPaths, getDefaultCliConfig } from "@supabase/config";
 import { AUTH_HOOK_NAMES, projectConfigMappingRows } from "@supabase/config/internal";
+import { DateTime } from "effect";
 import { describe, expect, it } from "vitest";
 
 import type { AuthEmailContent } from "./push.auth-email-content.ts";
@@ -59,7 +60,8 @@ function authInput(overrides: Partial<AuthEncoderInput> = {}): AuthEncoderInput 
     secrets: [],
     emailContent: EMPTY_EMAIL_CONTENT,
     remoteAuthAttributes: {},
-    now: new Date("2030-01-01T00:00:00.000Z"),
+    config: getDefaultCliConfig(),
+    now: DateTime.makeUnsafe("2030-01-01T00:00:00.000Z"),
     ...overrides,
   };
 }
@@ -503,6 +505,13 @@ describe("encodeAuthBody", () => {
     expect(result.body).toEqual({ mailer_autoconfirm: false });
   });
 
+  it("inverts sms.enable_confirmations into sms_autoconfirm", () => {
+    const result = encodeAuthBody(
+      authInput({ changes: [change(["auth", "sms", "enable_confirmations"], true)] }),
+    );
+    expect(result.body).toEqual({ sms_autoconfirm: false });
+  });
+
   it("maps password_requirements through the character-class table", () => {
     const result = encodeAuthBody(
       authInput({ changes: [change(["auth", "password_requirements"], "letters_digits")] }),
@@ -938,6 +947,45 @@ describe("encodeAuthBody", () => {
     });
   });
 
+  describe("oauth server enabled + authorization path pair", () => {
+    it("a path-only change against a project that doesn't report enabled sends the local flag and discloses it", () => {
+      const result = encodeAuthBody(
+        authInput({
+          changes: [change(["auth", "oauth_server", "authorization_url_path"], "/new/consent")],
+          remote: { auth: { oauth_server: { authorization_url_path: "/oauth/consent" } } },
+          local: {
+            auth: { oauth_server: { enabled: true, authorization_url_path: "/new/consent" } },
+          },
+        }),
+      );
+      expect(result.body).toEqual({
+        oauth_server_enabled: true,
+        oauth_server_authorization_path: "/new/consent",
+      });
+      expect(result.forced).toEqual([{ path: ["auth", "oauth_server", "enabled"], value: true }]);
+    });
+
+    it("a disable on a project with no stored path sends the config's path and discloses it", () => {
+      const result = encodeAuthBody(
+        authInput({
+          changes: [change(["auth", "oauth_server", "enabled"], false, true)],
+          remote: { auth: { oauth_server: { enabled: true } } },
+          remoteAuthAttributes: {
+            oauth_server_enabled: true,
+            oauth_server_authorization_path: null,
+          },
+        }),
+      );
+      expect(result.body).toEqual({
+        oauth_server_enabled: false,
+        oauth_server_authorization_path: "/oauth/consent",
+      });
+      expect(result.forced).toEqual([
+        { path: ["auth", "oauth_server", "authorization_url_path"], value: "/oauth/consent" },
+      ]);
+    });
+  });
+
   describe("external provider containers", () => {
     it("disabled → only external_<id>_enabled: false", () => {
       const result = encodeAuthBody(
@@ -1188,12 +1236,26 @@ describe("encodeAuthBody", () => {
         authInput({
           changes: [change(["auth", "sms", "test_otp", "15555550100"], "123456")],
           local,
-          now: new Date("2030-06-15T12:00:00.000Z"),
+          now: DateTime.makeUnsafe("2030-06-15T12:00:00.000Z"),
         }),
       );
       expect(result.body).toEqual({
         sms_test_otp: "15555550100=123456,15555550101=654321",
         sms_test_otp_valid_until: "2040-06-15T12:00:00.000Z",
+      });
+    });
+
+    it("rolls a leap-day clock over to March 1st ten years later", () => {
+      const result = encodeAuthBody(
+        authInput({
+          changes: [change(["auth", "sms", "test_otp", "15555550100"], "123456")],
+          local: { auth: { sms: { test_otp: { "15555550100": "123456" } } } },
+          now: DateTime.makeUnsafe("2028-02-29T12:00:00.000Z"),
+        }),
+      );
+      expect(result.body).toEqual({
+        sms_test_otp: "15555550100=123456",
+        sms_test_otp_valid_until: "2038-03-01T12:00:00.000Z",
       });
     });
   });

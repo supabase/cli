@@ -1,11 +1,11 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { FileSystem, Path } from "effect";
 
-import { describe, expect, it } from "@effect/vitest";
+import { expect, layer } from "@effect/vitest";
+import { BunServices } from "@effect/platform-bun";
 import { edgeRuntimeNofileUlimit } from "../../../shared/stack-constants.ts";
-import { ConfigProvider, Deferred, Effect, Exit, Sink, Stream } from "effect";
-import { type ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { afterEach, beforeEach, vi } from "vitest";
+import { ConfigProvider, Effect, Exit, Sink, Stream } from "effect";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { afterEach, assert, beforeEach, vi } from "vitest";
 
 import { useTempWorkdir } from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
@@ -32,23 +32,22 @@ function mockDockerSpawner(
   const encoder = new TextEncoder();
 
   const spawner = ChildProcessSpawner.make((command) =>
-    Effect.gen(function* () {
-      const args = command._tag === "StandardCommand" ? command.args : [];
+    Effect.sync(() => {
+      const standard = ChildProcess.isStandardCommand(command);
+      const args = standard ? command.args : [];
       calls.push({
         args,
-        stdin: command._tag === "StandardCommand" ? command.options.stdin : undefined,
+        stdin: standard ? command.options.stdin : undefined,
       });
       const result = handler?.(args) ?? { exitCode: 0 };
 
-      const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
-      yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(result.exitCode));
       return ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(1),
         stdout: Stream.empty,
         stderr:
           result.stderr === undefined ? Stream.empty : Stream.make(encoder.encode(result.stderr)),
         all: Stream.empty,
-        exitCode: Deferred.await(exitDeferred),
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(result.exitCode)),
         isRunning: Effect.succeed(false),
         stdin: Sink.drain,
         kill: () => Effect.void,
@@ -66,7 +65,9 @@ function mockDockerSpawner(
     },
     get runCall() {
       // Excludes `docker volume create`, whose first arg is "volume", not "create".
-      return calls.find((call) => call.args[0] === "create");
+      const runCall = calls.find((call) => call.args[0] === "create");
+      assert(runCall !== undefined, "docker create was never spawned");
+      return runCall;
     },
   };
 }
@@ -100,25 +101,32 @@ function baseInput(workdir: string): EdgeRuntimeBringUpInput {
   };
 }
 
-function envEntries(runCall: {
+const envEntries = Effect.fnUntraced(function* (runCall: {
   args: ReadonlyArray<string>;
   env?: Readonly<Record<string, string>>;
 }) {
+  const fs = yield* FileSystem.FileSystem;
   const envFileArgIndex = runCall.args.indexOf("--env-file");
   const envFilePath = runCall.args[envFileArgIndex + 1];
-  expect(envFilePath).toBeDefined();
-  return readFileSync(envFilePath!, "utf8")
-    .split("\n")
-    .filter((line) => line.length > 0);
-}
+  assert(envFilePath !== undefined, "docker create has no --env-file value");
+  return (yield* fs.readFileString(envFilePath)).split("\n").filter((line) => line.length > 0);
+});
 
-describe("startStackEdgeRuntimeContainer", () => {
+layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
   const tempWorkdir = useTempWorkdir("supabase-edge-runtime-service-int-");
 
   // Only needs to exist — every scenario here has zero declared functions,
   // so nothing under it is read.
   beforeEach(() => {
-    mkdirSync(join(tempWorkdir.current, "supabase", "functions"), { recursive: true });
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(path.join(tempWorkdir.current, "supabase", "functions"), {
+          recursive: true,
+        });
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
   });
 
   afterEach(() => {
@@ -138,8 +146,7 @@ describe("startStackEdgeRuntimeContainer", () => {
         Effect.provide(out.layer),
         Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnvRecord({})),
       );
-      expect(mock.runCall).toBeDefined();
-      expect(mock.runCall!.args.join(" ")).not.toContain(":/root/.cache/deno");
+      expect(mock.runCall.args.join(" ")).not.toContain(":/root/.cache/deno");
       expect(mock.calls.some((call) => call.args[0] === "volume")).toBe(false);
     }),
   );
@@ -156,7 +163,7 @@ describe("startStackEdgeRuntimeContainer", () => {
           Effect.provide(out.layer),
         );
 
-        const entries = envEntries(mock.runCall!);
+        const entries = yield* envEntries(mock.runCall);
         expect(entries).toContain(
           "SUPABASE_DB_URL=postgresql://postgres:postgres@supabase_db_proj:5432/postgres",
         );
@@ -173,7 +180,7 @@ describe("startStackEdgeRuntimeContainer", () => {
         Effect.provide(out.layer),
       );
 
-      const entries = envEntries(mock.runCall!);
+      const entries = yield* envEntries(mock.runCall);
       expect(entries).toContain("SUPABASE_ANON_KEY=anon.jwt.value");
       expect(entries).toContain("SUPABASE_SERVICE_ROLE_KEY=service-role.jwt.value");
       expect(entries).toContain(
@@ -198,14 +205,14 @@ describe("startStackEdgeRuntimeContainer", () => {
           Effect.provide(out.layer),
         );
 
-        const runCall = mock.runCall!;
+        const runCall = mock.runCall;
         expect(runCall.args).not.toContain("-p");
         expect(runCall.args.join(" ")).not.toContain("--inspect");
       }),
   );
 
   it.effect(
-    "sets --ulimit nofile, capped at Go's 65536 and clamped to the host hard limit (CLI-2220)",
+    "sets --ulimit nofile, capped at 65536 and clamped to the host hard limit (CLI-2220)",
     () =>
       Effect.gen(function* () {
         const mock = mockDockerSpawner();
@@ -216,7 +223,7 @@ describe("startStackEdgeRuntimeContainer", () => {
           Effect.provide(out.layer),
         );
 
-        const runCall = mock.runCall!;
+        const runCall = mock.runCall;
         const ulimitIndex = runCall.args.indexOf("--ulimit");
         expect(runCall.args[ulimitIndex + 1]).toBe(edgeRuntimeNofileUlimit("darwin").arg);
         expect(out.messages.filter((message) => message.type === "warn")).toEqual([]);
@@ -225,10 +232,14 @@ describe("startStackEdgeRuntimeContainer", () => {
 
   it.effect("sets --workdir once an enabled function mounts the project root (#6035)", () =>
     Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
       const slug = "hello";
-      const entrypoint = join(tempWorkdir.current, "supabase", "functions", slug, "index.ts");
-      mkdirSync(join(tempWorkdir.current, "supabase", "functions", slug), { recursive: true });
-      writeFileSync(entrypoint, "Deno.serve(() => new Response('ok'));");
+      const entrypoint = path.join(tempWorkdir.current, "supabase", "functions", slug, "index.ts");
+      yield* fs.makeDirectory(path.join(tempWorkdir.current, "supabase", "functions", slug), {
+        recursive: true,
+      });
+      yield* fs.writeFileString(entrypoint, "Deno.serve(() => new Response('ok'));");
 
       const fnConfig = {
         enabled: true,
@@ -252,7 +263,7 @@ describe("startStackEdgeRuntimeContainer", () => {
         Effect.provide(out.layer),
       );
 
-      const args = mock.runCall!.args;
+      const args = mock.runCall.args;
       expect(args[args.indexOf("--workdir") + 1]).toBe(tempWorkdir.current);
     }),
   );
@@ -267,7 +278,7 @@ describe("startStackEdgeRuntimeContainer", () => {
         Effect.provide(out.layer),
       );
 
-      expect(mock.runCall!.args).not.toContain("--workdir");
+      expect(mock.runCall.args).not.toContain("--workdir");
     }),
   );
 
@@ -283,7 +294,7 @@ describe("startStackEdgeRuntimeContainer", () => {
           Effect.provide(out.layer),
         );
 
-        const runCall = mock.runCall!;
+        const runCall = mock.runCall;
         expect(runCall.args).toContain(`com.supabase.cli.workdir=${tempWorkdir.current}`);
       }),
   );
@@ -305,7 +316,7 @@ describe("startStackEdgeRuntimeContainer", () => {
           Effect.provide(out.layer),
         );
 
-        const runCall = mock.runCall!;
+        const runCall = mock.runCall;
         const networkIndex = runCall.args.indexOf("--network");
         expect(runCall.args[networkIndex + 1]).toBe("custom_network_override");
         expect(runCall.args).toContain("registry.example.com/supabase/edge-runtime:v1.99.9");
@@ -329,7 +340,7 @@ describe("startStackEdgeRuntimeContainer", () => {
           .filter((step) => step === "create" || step === "cp" || step === "start");
         expect(containerSteps).toEqual(["create", "cp", "start"]);
 
-        const createArgs = mock.runCall!.args;
+        const createArgs = mock.runCall.args;
         const bindValues = createArgs.flatMap((arg, index) =>
           createArgs[index - 1] === "-v" ? [arg] : [],
         );
@@ -375,7 +386,7 @@ describe("startStackEdgeRuntimeContainer", () => {
           Effect.provide(out.layer),
         );
 
-        const createArgs = mock.runCall!.args;
+        const createArgs = mock.runCall.args;
         expect(createArgs).toContain("--entrypoint");
         expect(createArgs).toContain("sh");
         const script = createArgs.at(-1);
@@ -477,9 +488,11 @@ describe("startStackEdgeRuntimeContainer", () => {
     "cleans up a stale staging directory from a previous invocation even when this invocation fails before ever reaching docker create",
     () =>
       Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
         const mock = mockDockerSpawner();
         const out = mockOutput();
-        const stagingDir = join(
+        const stagingDir = path.join(
           tempWorkdir.current,
           "supabase",
           ".temp",
@@ -488,8 +501,8 @@ describe("startStackEdgeRuntimeContainer", () => {
         );
         // Simulates a stale leftover from an earlier invocation; `writeDockerEnvFile` reuses
         // this path deterministically rather than a fresh mkdtemp each call.
-        mkdirSync(join(stagingDir, "env"), { recursive: true });
-        writeFileSync(join(stagingDir, "env", "docker.env"), "STALE=1");
+        yield* fs.makeDirectory(path.join(stagingDir, "env"), { recursive: true });
+        yield* fs.writeFileString(path.join(stagingDir, "env", "docker.env"), "STALE=1");
 
         const input = {
           ...baseInput(tempWorkdir.current),
@@ -507,12 +520,12 @@ describe("startStackEdgeRuntimeContainer", () => {
         );
 
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(existsSync(stagingDir)).toBe(false);
+        expect(yield* fs.exists(stagingDir)).toBe(false);
       }),
   );
 
   it.effect(
-    "never reloads Kong — Go's `start` bring-up (`ServeFunctions`) never does, unlike `functions serve`'s own restart wrapper",
+    "never reloads Kong — the `start` bring-up never does, unlike `functions serve`'s own restart wrapper",
     () =>
       Effect.gen(function* () {
         const mock = mockDockerSpawner();
@@ -530,7 +543,7 @@ describe("startStackEdgeRuntimeContainer", () => {
   );
 
   it.effect(
-    "never prints functions serve's own setup banner — Go's start bring-up (ServeFunctions) never does, unlike restartEdgeRuntime",
+    "never prints functions serve's own setup banner — the start bring-up never does, unlike restartEdgeRuntime",
     () =>
       Effect.gen(function* () {
         const mock = mockDockerSpawner();

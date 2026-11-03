@@ -1,8 +1,8 @@
-import { parseGoDuration } from "../../../command-internal/go-duration.ts";
+import { DateTime } from "effect";
+import { parseDuration } from "../../../command-internal/duration.ts";
 import { bearerJwtErrorMessage } from "./bearer-jwt.errors.ts";
 
-// The fractional-seconds separator accepts either `.` or `,`, matching
-// `time.Parse`'s RFC3339 handling for any layout element.
+// The fractional-seconds separator accepts either `.` or `,`.
 const RFC3339_PATTERN =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:[.,](\d+))?(?:(Z)|([+-])(\d{2}):(\d{2}))$/;
 
@@ -53,7 +53,7 @@ function isLeapYear(year: number): boolean {
 }
 
 function daysInMonth(year: number, month: number): number {
-  return month === 2 && isLeapYear(year) ? 29 : DAYS_IN_MONTH[month - 1]!;
+  return month === 2 && isLeapYear(year) ? 29 : (DAYS_IN_MONTH[month - 1] ?? 0);
 }
 
 /**
@@ -144,16 +144,17 @@ export function parseBearerJwtExp(value: string): BearerJwtInstant {
   // any two-digit year in `[0, 99]` (e.g. year 1 becomes 1901), but a valid
   // RFC3339 year in that range must be accepted literally. `setUTCFullYear`
   // has no such remapping, so building the instant this way avoids it.
-  const parsedDate = new Date(0);
-  parsedDate.setUTCFullYear(Number(year), Number(month) - 1, Number(day));
-  parsedDate.setUTCHours(Number(hour), Number(minute), Number(second), 0);
-  const wholeSeconds = parsedDate.getTime() / 1000 - offsetSeconds;
+  const parsedDate = DateTime.mutateUtc(DateTime.makeUnsafe(0), (date) => {
+    date.setUTCFullYear(Number(year), Number(month) - 1, Number(day));
+    date.setUTCHours(Number(hour), Number(minute), Number(second), 0);
+  });
+  const wholeSeconds = DateTime.toEpochMillis(parsedDate) / 1000 - offsetSeconds;
   const nanos = fraction === undefined ? 0 : Number(fraction.slice(0, 9).padEnd(9, "0"));
   return { wholeSeconds, nanos };
 }
 
 /**
- * `--valid-for`, parsed via {@link parseGoDuration} (Go duration syntax);
+ * `--valid-for`, parsed via {@link parseDuration} (duration syntax);
  * unlike `--exp`, this input is not trimmed.
  *
  * Returns seconds unfloored: `buildBearerJwtClaims` floors only the final
@@ -162,7 +163,7 @@ export function parseBearerJwtExp(value: string): BearerJwtInstant {
  */
 export function parseBearerJwtValidFor(value: string): number {
   try {
-    return parseGoDuration(value) / 1_000_000_000;
+    return parseDuration(value) / 1_000_000_000;
   } catch (cause) {
     throw new Error(
       `invalid argument "${value}" for "--valid-for" flag: ${bearerJwtErrorMessage(cause)}`,

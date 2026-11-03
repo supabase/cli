@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer } from "effect";
-import { CliOutput, Command } from "effect/unstable/cli";
+import { CliOutput, Command } from "effect/cli";
 
 import { normalizeCause } from "../../shared/output/normalize-error.ts";
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
@@ -55,9 +55,7 @@ function setup() {
       TelemetryRuntime,
       TelemetryRuntime.of({
         configDir: `${tempRoot.current}/.supabase`,
-        tracesDir: `${tempRoot.current}/.supabase/traces`,
         consent: "granted",
-        showDebug: false,
         deviceId: "test-device-id",
         sessionId: "test-session-id",
         identity: makeTelemetryIdentity(undefined),
@@ -81,14 +79,14 @@ function expectGateDidNotFire(cause: Cause.Cause<unknown>): void {
   expect(failures.some((error) => error instanceof ExperimentalRequiredError)).toBe(false);
 }
 
-describe("network-restrictions experimental gate (Go PersistentPreRunE parity)", () => {
+describe("network-restrictions experimental gate ", () => {
   const leaves: ReadonlyArray<{ readonly name: string; readonly args: ReadonlyArray<string> }> = [
     { name: "get", args: ["network-restrictions", "get"] },
     { name: "update", args: ["network-restrictions", "update"] },
   ];
 
   for (const { name, args } of leaves) {
-    it.live(`${name} fails with ExperimentalRequiredError when --experimental is unset`, () => {
+    it.effect(`${name} fails with ExperimentalRequiredError when --experimental is unset`, () => {
       const { layer, api } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(Command.runWith(testRoot, { version: "0.0.0-test" })(args));
@@ -100,7 +98,7 @@ describe("network-restrictions experimental gate (Go PersistentPreRunE parity)",
       }).pipe(Effect.provide(layer));
     });
 
-    it.live(`${name} does not fail with the gate error once --experimental is set`, () => {
+    it.effect(`${name} does not fail with the gate error once --experimental is set`, () => {
       const { layer, api } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
@@ -116,10 +114,10 @@ describe("network-restrictions experimental gate (Go PersistentPreRunE parity)",
     });
   }
 
-  it.live(
-    "update: malformed --db-allow-cidr CSV fails at parse time with pflag's exact diagnostic, before the gate",
+  it.effect(
+    "update: malformed --db-allow-cidr CSV fails at parse time with the exact diagnostic, before the gate",
     () => {
-      // `"1.2.3.0/24` is 11 bytes, so pflag's CSV reader hits EOF at column 12.
+      // `"1.2.3.0/24` is 11 bytes, so the CSV reader hits EOF at column 12.
       const { layer, api } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer } from "effect";
-import { CliOutput, Command } from "effect/unstable/cli";
+import { CliOutput, Command } from "effect/cli";
 
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
 import { ExperimentalRequiredError } from "../../command-internal/experimental-gate.ts";
@@ -48,7 +48,6 @@ function setup() {
     CliOutput.layer(textCliOutputFormatter()),
     mockTelemetryRuntime({
       configDir: `${tempRoot.current}/.supabase`,
-      tracesDir: `${tempRoot.current}/.supabase/traces`,
     }),
   );
   return { layer, api };
@@ -62,14 +61,14 @@ function expectGateDidNotFire(cause: Cause.Cause<unknown>): void {
   expect(failures.some((error) => error instanceof ExperimentalRequiredError)).toBe(false);
 }
 
-describe("ssl-enforcement experimental gate (Go PersistentPreRunE parity)", () => {
+describe("ssl-enforcement experimental gate", () => {
   const leaves: ReadonlyArray<{ readonly name: string; readonly args: ReadonlyArray<string> }> = [
     { name: "get", args: ["ssl-enforcement", "get"] },
     { name: "update", args: ["ssl-enforcement", "update", "--enable-db-ssl-enforcement"] },
   ];
 
   for (const { name, args } of leaves) {
-    it.live(`${name} fails with ExperimentalRequiredError when --experimental is unset`, () => {
+    it.effect(`${name} fails with ExperimentalRequiredError when --experimental is unset`, () => {
       const { layer, api } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(Command.runWith(testRoot, { version: "0.0.0-test" })(args));
@@ -81,7 +80,7 @@ describe("ssl-enforcement experimental gate (Go PersistentPreRunE parity)", () =
       }).pipe(Effect.provide(layer));
     });
 
-    it.live(`${name} does not fail with the gate error once --experimental is set`, () => {
+    it.effect(`${name} does not fail with the gate error once --experimental is set`, () => {
       const { layer, api } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { Effect, FileSystem, Layer, Path, Schema } from "effect";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
+import { FetchHttpClient } from "effect/http";
 
 import {
   mockAnalytics,
@@ -74,12 +75,14 @@ function setupWithRealAnalytics(dir: string) {
     Layer.provide(runtimeInfoLayer),
     Layer.provide(cliProjectContextLayer),
     Layer.provide(envLayer),
+    Layer.provide(BunServices.layer),
   );
   const analytics = analyticsLayer.pipe(
     Layer.provide(configLayer),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(ttyLayer),
     Layer.provide(BunServices.layer),
+    Layer.provide(FetchHttpClient.layer),
     Layer.provide(envLayer),
   );
   const layer = Layer.mergeAll(
@@ -101,7 +104,7 @@ function runTelemetry(args: Array<string>) {
 }
 
 describe("telemetry integration", () => {
-  it.live("status creates legacy telemetry.json and prints Go-style enabled output", () => {
+  it.live("status creates legacy telemetry.json and prints the enabled output", () => {
     const dir = tempRoot.current;
     const { out, layer } = setup(dir);
 
@@ -115,7 +118,7 @@ describe("telemetry integration", () => {
     });
   });
 
-  it.live("enable preserves prior identity fields and prints Go-style enabled output", () => {
+  it.live("enable preserves prior identity fields and prints the enabled output", () => {
     const dir = tempRoot.current;
     const { out, layer } = setup(dir);
     const seed = JSON.stringify({
@@ -139,7 +142,7 @@ describe("telemetry integration", () => {
     });
   });
 
-  it.live("disable preserves prior identity fields and prints Go-style disabled output", () => {
+  it.live("disable preserves prior identity fields and prints the disabled output", () => {
     const dir = tempRoot.current;
     const { out, layer } = setup(dir);
     const seed = JSON.stringify({

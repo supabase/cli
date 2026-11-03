@@ -1,9 +1,11 @@
-import { loadCliProjectEnvironment } from "@supabase/config/effect";
-import { loadCliConfig } from "@supabase/config/internal";
-import { Effect, FileSystem, Option, Path } from "effect";
-import { assertDecodableJwkAlgorithm } from "../../command-internal/go-jwt.ts";
-import { goJsonKindName } from "../../command-internal/go-json.ts";
-import { resolveProjectEnvironmentValues } from "../../command-internal/project-environment.ts";
+import { Effect, FileSystem, Option, Path, Predicate } from "effect";
+import type { CliConfigKey } from "../../config/cli-config-key.ts";
+import { CliConfigKeys } from "../../config/cli-config-keys.ts";
+import { CliConfigValues } from "../../config/cli-config-values.service.ts";
+import { describeConfigLoadFailure } from "../../command-internal/resolved-config-context.ts";
+import { describeConfigParseError } from "../../command-internal/workdir-project.ts";
+import { assertDecodableJwkAlgorithm } from "../../command-internal/local-jwt.ts";
+import { jsonKindName } from "../../command-internal/html-safe-json.ts";
 
 /**
  * Shared `[auth].signing_keys_path` config-loading logic for `gen signing-key` and `gen
@@ -14,8 +16,9 @@ import { resolveProjectEnvironmentValues } from "../../command-internal/project-
 export type StoredSigningKeyJwk = Readonly<Record<string, unknown>>;
 
 interface GenSigningKeysConfigPaths {
-  /** CWD-relative `supabase/config.toml` (or the resolved config file's own display path). */
+  /** Workdir-relative path of the loaded config file, or `supabase/config.toml` when none exists. */
   readonly configDisplayPath: string;
+  readonly configFormat: "toml" | "json";
   /**
    * `[auth].enabled` from the resolved config (default `true`). The `signing_keys_path` file is
    * only read when this is `true` — see {@link resolveBearerJwtSigningKey} and {@link genSigningKey}.
@@ -28,34 +31,26 @@ interface GenSigningKeysConfigPaths {
   }>;
 }
 
-/**
- * Excludes arrays: `typeof value === "object"` is also `true` for `[]`, but an array-shaped
- * `signing_keys_path` entry must be rejected, not accepted as a JWK-shaped record.
- */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** Extends `goJsonKindName` to also name a bare object, needed when a JWK field holds `{}`. */
+/** Extends `jsonKindName` to also name a bare object, needed when a JWK field holds `{}`. */
 function jwkFieldKindName(value: unknown): string {
-  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+  if (Predicate.isObject(value)) {
     return "object";
   }
-  return goJsonKindName(value);
+  return jsonKindName(value);
 }
 
-/** Reproduces `encoding/json`'s struct-field type-mismatch text: `"json: cannot unmarshal <kind> into Go struct field JWK.<field> of type <goType>"`. */
-function jwkStructFieldTypeMismatch(field: string, value: unknown, goType: string): string {
-  return `json: cannot unmarshal ${jwkFieldKindName(value)} into Go struct field JWK.${field} of type ${goType}`;
+/** Builds the field type-mismatch text: `invalid JWK field <field>: expected <typeName>, got <kind>`. */
+function jwkStructFieldTypeMismatch(field: string, value: unknown, typeName: string): string {
+  return `invalid JWK field ${field}: expected ${typeName}, got ${jwkFieldKindName(value)}`;
 }
 
-/** `null` is treated as absent, not a type mismatch, matching `encoding/json`'s zero-value semantics for a null field. */
+/** `null` is treated as absent, not a type mismatch. */
 function isAbsentJwkField(value: unknown): boolean {
   return value === undefined || value === null;
 }
 
 /**
- * Looks up a JWK field case-insensitively, matching `encoding/json`'s struct-field matching.
+ * Looks up a JWK field case-insensitively.
  * When multiple case-variant keys are present, the last one in source order wins.
  */
 export function resolveJwkFieldValue(record: Record<string, unknown>, field: string): unknown {
@@ -83,7 +78,7 @@ export function readOptionalString(
     return undefined;
   }
   if (typeof value !== "string") {
-    throw new Error(jwkStructFieldTypeMismatch(field, value, "string"));
+    throw new Error(jwkStructFieldTypeMismatch(field, value, "a string"));
   }
   return value;
 }
@@ -91,7 +86,7 @@ export function readOptionalString(
 /**
  * Reads the optional `key_ops` field, throwing {@link jwkStructFieldTypeMismatch} when present
  * but not an array or containing a non-string, non-null element. A `null` element decodes to
- * `""` (its zero value) instead, matching `encoding/json`'s slice-element decoding.
+ * `""` (its zero value) instead.
  */
 export function readOptionalStringArray(
   record: Record<string, unknown>,
@@ -102,14 +97,14 @@ export function readOptionalStringArray(
     return undefined;
   }
   if (!Array.isArray(value)) {
-    throw new Error(jwkStructFieldTypeMismatch(field, value, "[]string"));
+    throw new Error(jwkStructFieldTypeMismatch(field, value, "an array of strings"));
   }
   return value.map((entry) => {
     if (entry === null) {
       return "";
     }
     if (typeof entry !== "string") {
-      throw new Error(jwkStructFieldTypeMismatch(field, entry, "string"));
+      throw new Error(jwkStructFieldTypeMismatch(field, entry, "a string"));
     }
     return entry;
   });
@@ -125,7 +120,7 @@ export function readOptionalBoolean(
     return undefined;
   }
   if (typeof value !== "boolean") {
-    throw new Error(jwkStructFieldTypeMismatch(field, value, "bool"));
+    throw new Error(jwkStructFieldTypeMismatch(field, value, "a boolean"));
   }
   return value;
 }
@@ -195,6 +190,16 @@ function skipJsonValue(text: string, start: number): number {
 }
 
 /**
+ * Parses only the first JSON value's span and ignores trailing content, since plain
+ * `JSON.parse` would otherwise error on trailing bytes that a single-value decode
+ * should silently ignore. Native parser errors are CLI output; schema decoding discards
+ * their messages.
+ */
+function parseLeadingJsonValue(text: string): unknown {
+  return JSON.parse(text.slice(0, skipJsonValue(text, 0)));
+}
+
+/**
  * Splits a JSON array literal into each top-level element's exact source substring, without
  * re-serializing through `JSON.stringify` (which would erase a duplicate key) — used by
  * {@link readSigningKeysFile} for {@link assertNoMalformedDuplicateJwkField}.
@@ -241,7 +246,7 @@ function findTopLevelObjectFieldOccurrences(
     while (i < objectText.length && /\s/.test(objectText[i] ?? "")) i++;
     const keyStart = i;
     i = skipJsonValue(objectText, i);
-    const key = (JSON.parse(objectText.slice(keyStart, i)) as string).toLowerCase();
+    const key = String(JSON.parse(objectText.slice(keyStart, i))).toLowerCase();
     while (i < objectText.length && /\s/.test(objectText[i] ?? "")) i++;
     if (objectText[i] === ":") i++;
     while (i < objectText.length && /\s/.test(objectText[i] ?? "")) i++;
@@ -263,8 +268,7 @@ function findTopLevelObjectFieldOccurrences(
 
 /**
  * Rejects an earlier malformed duplicate JWK field even though `JSON.parse` keeps only
- * the last occurrence, matching `encoding/json`'s first-mismatch-wins duplicate-key
- * handling; `alg` also fails on an earlier disallowed value even if a later one is valid.
+ * the last occurrence (first mismatch wins); `alg` also fails on an earlier disallowed value even if a later one is valid.
  */
 export function assertNoMalformedDuplicateJwkField(objectText: string): void {
   const occurrences = findTopLevelObjectFieldOccurrences(objectText);
@@ -301,7 +305,7 @@ export function assertNoMalformedDuplicateJwkField(objectText: string): void {
 }
 
 /**
- * Resolves `supabase/config.toml`'s display path and `[auth].signing_keys_path`'s
+ * Resolves the config file's display path and `[auth].signing_keys_path`'s
  * actual/display path — no file I/O on the keys path itself (see
  * {@link readSigningKeysFile} for that).
  */
@@ -310,64 +314,52 @@ export const resolveSigningKeysConfigPaths = Effect.fnUntraced(function* <E>(
   onConfigParseError: (message: string) => E,
 ) {
   const path = yield* Path.Path;
-  // Loads the dotenv cascade explicitly before `loadCliConfig` decodes `env(...)` TOML
-  // references — `loadCliConfig`'s own internal env resolution covers only
-  // `supabase/.env[.local]`, not `.env.<SUPABASE_ENV>[.local]` or `<workdir>/.env`.
-  const projectEnv = yield* loadCliProjectEnvironment({
-    cwd,
-    baseEnv: process.env,
-    search: false,
-    skipEnvLocal: (process.env["SUPABASE_ENV"] || "development") === "test",
-  }).pipe(
-    Effect.mapError((cause) => onConfigParseError(`failed to read config: ${String(cause)}`)),
-  );
-  const projectEnvValues = yield* Effect.try({
-    try: () => resolveProjectEnvironmentValues(projectEnv, cwd),
-    catch: (cause) => onConfigParseError(`failed to read config: ${String(cause)}`),
-  });
-  const loaded = yield* loadCliConfig(cwd, {
-    cliProjectEnv: projectEnv !== null ? { ...projectEnv, values: projectEnvValues } : undefined,
-    goViperCompat: true,
-    // `cwd` is already resolved (`CommandSettings.workdir`); `search: false` avoids climbing
-    // again, which would otherwise find an ancestor project's config when `--workdir` points
-    // below another project's root. `tomlOnly: true` because there is no JSON config format.
-    search: false,
-    tomlOnly: true,
-  }).pipe(
-    Effect.catchTag("CliConfigParseError", (cause) =>
-      Effect.fail(onConfigParseError(`failed to parse ${cause.path}: ${String(cause.cause)}`)),
-    ),
-  );
-  if (loaded === null) {
-    return {
-      configDisplayPath: path.join("supabase", "config.toml"),
-      authEnabled: true,
-      signingKeysPath: Option.none(),
-    } satisfies GenSigningKeysConfigPaths;
-  }
+  const values = yield* CliConfigValues;
+  // `cwd` is already resolved (`CommandSettings.workdir`); the resolved config never climbs to an
+  // ancestor project when `--workdir` points below another project's root.
+  const resolvedConfig = yield* values
+    .load({ workdir: cwd, projectRef: Option.none() })
+    .pipe(
+      Effect.mapError((cause) =>
+        onConfigParseError(
+          cause._tag === "CliConfigParseError"
+            ? describeConfigParseError(cwd, cause)
+            : describeConfigLoadFailure(cause),
+        ),
+      ),
+    );
+  const read = <A, X>(key: CliConfigKey<A, X>) =>
+    resolvedConfig.get(key).pipe(
+      Effect.map((resolved) => resolved.value),
+      Effect.mapError((cause) => onConfigParseError(describeConfigLoadFailure(cause))),
+    );
+  const authEnabled = yield* read(CliConfigKeys.auth.enabled);
+  const configuredPath = yield* read(CliConfigKeys.auth.signingKeysPath);
 
-  // Display the config path relative to the project root; `loaded.path` is always absolute.
-  const projectRoot = path.dirname(path.dirname(loaded.path));
-  const configDisplayPath = path.relative(projectRoot, loaded.path);
-  const authEnabled = loaded.config.auth.enabled;
+  const configDisplayPath = resolvedConfig.hasConfigFile
+    ? path.relative(cwd, resolvedConfig.loaded.path)
+    : path.join("supabase", "config.toml");
+  const configFormat = resolvedConfig.hasConfigFile ? resolvedConfig.loaded.format : "toml";
 
-  const configuredPath = loaded.config.auth.signing_keys_path;
-  if (configuredPath === undefined || configuredPath.length === 0) {
+  if (Option.isNone(configuredPath) || configuredPath.value.length === 0) {
     return {
       configDisplayPath,
+      configFormat,
       authEnabled,
       signingKeysPath: Option.none(),
     } satisfies GenSigningKeysConfigPaths;
   }
 
-  const resolvedPath = path.isAbsolute(configuredPath)
-    ? configuredPath
-    : path.join(path.dirname(loaded.path), configuredPath);
-  const displayPath = path.isAbsolute(configuredPath)
-    ? configuredPath
-    : path.relative(projectRoot, resolvedPath);
+  const signingKeysPath = configuredPath.value;
+  const resolvedPath = path.isAbsolute(signingKeysPath)
+    ? signingKeysPath
+    : path.join(cwd, "supabase", signingKeysPath);
+  const displayPath = path.isAbsolute(signingKeysPath)
+    ? signingKeysPath
+    : path.relative(cwd, resolvedPath);
   return {
     configDisplayPath,
+    configFormat,
     authEnabled,
     signingKeysPath: Option.some({ actualPath: resolvedPath, displayPath }),
   } satisfies GenSigningKeysConfigPaths;
@@ -388,10 +380,7 @@ export const readSigningKeysFile = Effect.fnUntraced(function* <E1, E2>(
     .readFileString(actualPath)
     .pipe(Effect.mapError((cause) => onReadError(`failed to read signing keys: ${String(cause)}`)));
   const decoded = yield* Effect.try({
-    // Parses only the first JSON value's span and ignores trailing content, since plain
-    // `JSON.parse` would otherwise error on trailing bytes that a single-value decode
-    // should silently ignore.
-    try: () => JSON.parse(raw.slice(0, skipJsonValue(raw, 0))),
+    try: () => parseLeadingJsonValue(raw),
     catch: (cause) => onDecodeError(`failed to decode signing keys: ${String(cause)}`),
   });
   if (!Array.isArray(decoded)) {
@@ -400,37 +389,37 @@ export const readSigningKeysFile = Effect.fnUntraced(function* <E1, E2>(
     );
   }
   // A `null` array element normalizes to `{}` (every field absent) rather than being
-  // rejected here, matching `encoding/json`'s zero-value decoding of a `null` struct element.
+  // rejected here.
   // Downstream signing may still fail on an all-absent key; this step never rejects it.
+  const records: Array<StoredSigningKeyJwk> = [];
   for (const item of decoded) {
-    if (item !== null && !isRecord(item)) {
+    if (item === null) {
+      records.push({});
+    } else if (Predicate.isObject(item)) {
+      records.push(item);
+    } else {
       return yield* Effect.fail(
         onDecodeError("failed to decode signing keys: expected a JSON array of objects"),
       );
     }
   }
   const elementTexts = splitJsonArrayElementTexts(raw);
-  const normalized: Array<Record<string, unknown>> = [];
-  for (const [index, item] of (
-    decoded as ReadonlyArray<Record<string, unknown> | null>
-  ).entries()) {
-    const record = item === null ? {} : item;
+  for (const [index, record] of records.entries()) {
     const elementText = elementTexts[index];
-    try {
-      // The `alg` allowlist check runs case-insensitively, matching decode-time validation.
-      const alg = resolveJwkFieldValue(record, "alg");
-      assertDecodableJwkAlgorithm(typeof alg === "string" ? alg : undefined);
-      if (elementText !== undefined) {
-        assertNoMalformedDuplicateJwkField(elementText);
-      }
-    } catch (cause) {
-      return yield* Effect.fail(
+    yield* Effect.try({
+      try: () => {
+        // The `alg` allowlist check runs case-insensitively, matching decode-time validation.
+        const alg = resolveJwkFieldValue(record, "alg");
+        assertDecodableJwkAlgorithm(typeof alg === "string" ? alg : undefined);
+        if (elementText !== undefined) {
+          assertNoMalformedDuplicateJwkField(elementText);
+        }
+      },
+      catch: (cause) =>
         onDecodeError(
           `failed to decode signing keys: failed to parse response body: ${cause instanceof Error ? cause.message : String(cause)}`,
         ),
-      );
-    }
-    normalized.push(record);
+    });
   }
-  return normalized as ReadonlyArray<StoredSigningKeyJwk>;
+  return records;
 });

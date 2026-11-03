@@ -10,6 +10,7 @@ import { createHash, scryptSync } from "node:crypto";
 import type { CliConfig } from "@supabase/config";
 import {
   Clock,
+  DateTime,
   Effect,
   Match,
   Option,
@@ -18,9 +19,9 @@ import {
   Semaphore,
   type FileSystem,
 } from "effect";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
-import { viperEnvBoolWithProjectFallback } from "../viper-env.ts";
+import { supabaseEnvBoolWithProjectFallback } from "../supabase-env.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { containerCliExitCode, describeContainerCliFailure } from "../container-cli.ts";
 import { DbConnection } from "../db-connection.service.ts";
@@ -39,7 +40,7 @@ import { START_DB_SCHEMA_SQL } from "./templates/db-schema.sql.ts";
 import { START_DB_SUPABASE_SQL } from "./templates/db-supabase.sql.ts";
 import { START_DB_WEBHOOK_SQL } from "./templates/db-webhook.sql.ts";
 import { CREATE_VAULT_KV, READ_VAULT_KV, UPDATE_VAULT_KV, type VaultSecret } from "../vault.ts";
-import { waitForShadowReady } from "./health-check.ts";
+import { waitForPostgresReady } from "./health-check.ts";
 import {
   exportPgDataTar,
   pgDataRestoreArchive,
@@ -48,6 +49,7 @@ import {
 } from "./pgdata-snapshot.ts";
 import type { PgDataArchiveProblem, PgDataSnapshotUnavailable } from "./pgdata-snapshot.ts";
 import { resolvePinnedImage } from "./pinned-image.ts";
+import { slimImagesEnabled } from "../../shared/services/slim-images.ts";
 import {
   createShadowDatabase,
   removeShadowDatabase,
@@ -59,7 +61,7 @@ import {
 
 type Spawner = ChildProcessSpawner["Service"];
 
-/** `SUPABASE_SHADOW_CACHE` — opt-out gate (viper bool when set; unset is ON). */
+/** `SUPABASE_SHADOW_CACHE` — opt-out gate (parsed as a boolean when set; unset is ON). */
 export const SHADOW_CACHE_ENV = "SUPABASE_SHADOW_CACHE";
 
 /**
@@ -148,7 +150,7 @@ export interface ShadowCacheKeyInputs {
  * PG<=14 setup SQL is excluded because that major is cache-ineligible.
  */
 let shadowBaselineEmbeddedDigestMemo: string | undefined;
-export const shadowBaselineEmbeddedDigest = (): string =>
+const shadowBaselineEmbeddedDigest = (): string =>
   (shadowBaselineEmbeddedDigestMemo ??= createHash("sha256")
     .update(
       [
@@ -171,7 +173,7 @@ export const shadowBaselineEmbeddedDigest = (): string =>
     .digest("hex"));
 
 /** JSON with recursively key-sorted objects, so `db.settings`' own property order cannot change the key. */
-export function canonicalJson(value: unknown): string {
+function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   const entries = Object.entries(value)
@@ -257,7 +259,7 @@ const resolveShadowCacheKeyInputs = <E>(
 ): Effect.Effect<Option.Option<ShadowCacheKeyInputs>, E> =>
   Effect.gen(function* () {
     // OrioleDB keeps cluster state in S3, so a PGDATA tar is not a coherent snapshot.
-    const orioledbVersion = input.experimental.orioledb_version;
+    const orioledbVersion = input.db.orioledb_version;
     if (orioledbVersion !== undefined && orioledbVersion.length > 0) return Option.none();
 
     // PG<=14 applies `ALTER ROLE … SET` on the setup session; a snapshot reconnect would
@@ -269,9 +271,7 @@ const resolveShadowCacheKeyInputs = <E>(
       .readFileString(rolesPath)
       .pipe(
         Effect.catchTag("PlatformError", (error) =>
-          Predicate.isTagged(error.reason, "NotFound")
-            ? Effect.succeed("")
-            : Effect.succeed(undefined),
+          Predicate.isTagged(error.reason, "NotFound") ? Effect.succeed("") : Effect.undefined,
         ),
       );
     if (rolesSql === undefined) return Option.none();
@@ -290,13 +290,14 @@ const resolveShadowCacheKeyInputs = <E>(
     const realtimeConsumesJwks =
       input.setup.majorVersion >= 15 && input.setup.config.realtime.enabled;
     const jwks = realtimeConsumesJwks ? yield* input.setup.jwks : "";
+    const slim = yield* slimImagesEnabled;
     const realtimeImage = yield* resolveJobImage(
-      resolvePinnedImage("realtime", "realtime", overrides),
+      resolvePinnedImage("realtime", "realtime", overrides, slim),
     );
     const storageImage = yield* resolveJobImage(
-      resolvePinnedImage("storage", "storage", overrides),
+      resolvePinnedImage("storage", "storage", overrides, slim),
     );
-    const authImage = yield* resolveJobImage(resolvePinnedImage("gotrue", "auth", overrides));
+    const authImage = yield* resolveJobImage(resolvePinnedImage("gotrue", "auth", overrides, slim));
     if (Option.isNone(realtimeImage) || Option.isNone(storageImage) || Option.isNone(authImage)) {
       return Option.none();
     }
@@ -332,7 +333,7 @@ const resolveShadowCacheKeyInputs = <E>(
         },
       },
     } satisfies ShadowCacheKeyInputs);
-  });
+  }).pipe(Effect.withSpan("ShadowCache.resolveKeyInputs"));
 
 /** Filename prefix shared by every key's snapshot — the handle the retention sweep enumerates by. */
 const SHADOW_BASELINE_TAR_PREFIX = "shadow-baseline-";
@@ -433,7 +434,7 @@ const SHADOW_PARTIAL_ABANDON_MS = 5 * 60 * 1000;
  */
 const sweepAbandonedShadowBaselinePartials = <E>(input: ShadowSetupInput<E>): Effect.Effect<void> =>
   Effect.gen(function* () {
-    const cacheDir = shadowBaselineCacheDir(input.path);
+    const cacheDir = yield* shadowBaselineCacheDir(input.path);
     const entries = yield* input.fs
       .readDirectory(cacheDir)
       .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
@@ -463,7 +464,7 @@ const sweepShadowBaselineRetention = <E>(
   retainFileName?: string,
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
-    const cacheDir = shadowBaselineCacheDir(input.path);
+    const cacheDir = yield* shadowBaselineCacheDir(input.path);
     const names = yield* input.fs
       .readDirectory(cacheDir)
       .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
@@ -479,20 +480,22 @@ const sweepShadowBaselineRetention = <E>(
       if (mtime === undefined) continue;
       entries.push({ fileName, mtimeMs: mtime.getTime() });
     }
+    const evicted = shadowBaselineTarsToEvict(entries, now, { retainFileName });
+    yield* Effect.annotateCurrentSpan({
+      "cache.entry_count": entries.length,
+      "cache.evicted_count": evicted.length,
+    });
     yield* Effect.forEach(
-      shadowBaselineTarsToEvict(entries, now, { retainFileName }),
+      evicted,
       (fileName) => forgetShadowBaselineTar(input.fs, input.path.join(cacheDir, fileName)),
       { discard: true },
     );
-  });
+  }).pipe(Effect.withSpan("ShadowCache.sweepRetention"));
 
 /** Refresh mtime on a warm hit so frequently used keys survive LRU/TTL. Best-effort. */
-export const touchShadowBaselineTar = (
-  fs: FileSystem.FileSystem,
-  tarPath: string,
-): Effect.Effect<void> =>
+const touchShadowBaselineTar = (fs: FileSystem.FileSystem, tarPath: string): Effect.Effect<void> =>
   Effect.gen(function* () {
-    const now = new Date(yield* Clock.currentTimeMillis);
+    const now = yield* DateTime.nowAsDate;
     yield* fs.utimes(tarPath, now, now);
   }).pipe(Effect.orElseSucceed(() => undefined));
 
@@ -529,7 +532,7 @@ const awaitShadowReady = <E>(
   containerId: string,
   what: string,
 ): Effect.Effect<void, ShadowCacheUnavailable, DbConnection> =>
-  waitForShadowReady(spawner, containerId, shadowConnConfig(input), {
+  waitForPostgresReady(spawner, containerId, shadowConnConfig(input), {
     timeoutSeconds: input.healthTimeoutSeconds,
     image: input.image,
   }).pipe(
@@ -566,7 +569,7 @@ const writeShadowBaselineTar = <E>(
         const published = yield* input.fs.exists(tarPath).pipe(Effect.orElseSucceed(() => false));
         if (published) return;
       }
-      const cacheDir = shadowBaselineCacheDir(input.path);
+      const cacheDir = yield* shadowBaselineCacheDir(input.path);
       yield* input.fs
         .makeDirectory(cacheDir, { recursive: true, mode: 0o700 })
         .pipe(
@@ -606,9 +609,7 @@ const exportShadowBaseline = <E>(
           .readFileString(input.path.join(input.workdir, "supabase", "roles.sql"))
           .pipe(
             Effect.catchTag("PlatformError", (error) =>
-              Predicate.isTagged(error.reason, "NotFound")
-                ? Effect.succeed("")
-                : Effect.succeed(undefined),
+              Predicate.isTagged(error.reason, "NotFound") ? Effect.succeed("") : Effect.undefined,
             ),
           );
         if (rolesSqlNow !== keyedRolesSql) {
@@ -638,6 +639,7 @@ const exportShadowBaseline = <E>(
           }),
       ),
     );
+    yield* Effect.annotateCurrentSpan("cache.published", Result.isSuccess(exported));
     if (Result.isFailure(exported)) {
       const output = yield* Output;
       yield* output.raw(
@@ -645,7 +647,7 @@ const exportShadowBaseline = <E>(
         "stderr",
       );
     }
-  });
+  }).pipe(Effect.withSpan("ShadowCache.export"));
 
 export interface ShadowCacheOpts {
   /** `sync --no-cache`: neither restore nor publish, regardless of the env gate. */
@@ -683,7 +685,10 @@ export const peekShadowBaseline = <E>(
   Effect.gen(function* () {
     if (
       opts.bypassCache === true ||
-      !viperEnvBoolWithProjectFallback(SHADOW_CACHE_ENV, input.setup.projectEnvValues ?? {})
+      !(yield* supabaseEnvBoolWithProjectFallback(
+        SHADOW_CACHE_ENV,
+        input.setup.projectEnvValues ?? {},
+      ))
     ) {
       return { state: "uncachable" } as const;
     }
@@ -691,16 +696,17 @@ export const peekShadowBaseline = <E>(
     if (Option.isNone(keyInputs)) return { state: "uncachable" } as const;
     const key = shadowCacheKey(keyInputs.value);
     const tarPath = input.path.join(
-      shadowBaselineCacheDir(input.path),
+      yield* shadowBaselineCacheDir(input.path),
       shadowBaselineTarFileName(key),
     );
     const cached = yield* input.fs.exists(tarPath).pipe(Effect.orElseSucceed(() => false));
+    yield* Effect.annotateCurrentSpan("cache.hit", cached);
     return {
       state: cached ? ("warm" as const) : ("cold" as const),
       key,
       keyInputs: keyInputs.value,
     };
-  });
+  }).pipe(Effect.withSpan("ShadowCache.peek"));
 
 /**
  * What `acquireUseRelease`'s `acquire` hands the `use` phase: the container, whether its cluster
@@ -841,7 +847,10 @@ const warmShadow = <E>(
       snapshotRequired: false,
       snapshotBaseline: Effect.void,
     } satisfies ShadowAcquiredHandle;
-  });
+  }).pipe(Effect.withSpan("ShadowCache.restore"));
+
+const annotateCacheState = (state: "disabled" | "ineligible" | "unwritable" | "cold" | "warm") =>
+  Effect.annotateCurrentSpan("cache.state", state);
 
 /**
  * `Effect.acquireUseRelease`'s `acquire` for every shadow that runs the platform baseline (`db
@@ -859,10 +868,15 @@ export const acquireShadowDatabase = <E>(
   Effect.gen(function* () {
     if (
       opts.bypassCache === true ||
-      !viperEnvBoolWithProjectFallback(SHADOW_CACHE_ENV, input.setup.projectEnvValues ?? {}, {
-        whenUnset: true,
-      })
+      !(yield* supabaseEnvBoolWithProjectFallback(
+        SHADOW_CACHE_ENV,
+        input.setup.projectEnvValues ?? {},
+        {
+          whenUnset: true,
+        },
+      ))
     ) {
+      yield* annotateCacheState("disabled");
       return yield* uncachedShadow(spawner, input);
     }
 
@@ -872,14 +886,17 @@ export const acquireShadowDatabase = <E>(
         ? Effect.succeed(Option.some(opts.precomputedKeyInputs))
         : resolveShadowCacheKeyInputs(input, opts),
     );
-    if (Option.isNone(keyInputs)) return yield* uncachedShadow(spawner, input);
+    if (Option.isNone(keyInputs)) {
+      yield* annotateCacheState("ineligible");
+      return yield* uncachedShadow(spawner, input);
+    }
 
     // The cache root must be usable before committing to the cached lifecycle: the cold path
     // drops `--rm` and pays a stop/export/restart cycle that's already doomed if this directory
     // can't be written. The mkdir alone isn't a sufficient probe — it succeeds on an
     // already-existing directory regardless of permission — so `access(W_OK)` catches a
     // pre-existing read-only root (EACCES, EROFS, a root-squashing NFS server).
-    const cacheDir = shadowBaselineCacheDir(input.path);
+    const cacheDir = yield* shadowBaselineCacheDir(input.path);
     const cacheRoot = yield* Effect.result(
       input.fs
         .makeDirectory(cacheDir, { recursive: true, mode: 0o700 })
@@ -891,6 +908,7 @@ export const acquireShadowDatabase = <E>(
         `Warning: shadow baseline cache unavailable (cannot write ${cacheDir}: ${cacheRoot.failure.message}); continuing uncached.\n`,
         "stderr",
       );
+      yield* annotateCacheState("unwritable");
       return yield* uncachedShadow(spawner, input);
     }
 
@@ -898,8 +916,11 @@ export const acquireShadowDatabase = <E>(
     const tarPath = input.path.join(cacheDir, shadowBaselineTarFileName(key));
 
     const cached = yield* input.fs.exists(tarPath).pipe(Effect.orElseSucceed(() => false));
-    if (!cached)
+    if (!cached) {
+      yield* annotateCacheState("cold");
       return yield* coldCachedShadow(spawner, input, key, tarPath, keyInputs.value.rolesSql, true);
+    }
+    yield* annotateCacheState("warm");
 
     // Warm hits refresh mtime and sweep leftovers the cold path would otherwise never see again.
     yield* touchShadowBaselineTar(input.fs, tarPath);
@@ -917,6 +938,10 @@ export const acquireShadowDatabase = <E>(
           // Delete only when the failure implicates the tar's contents — see
           // {@link ShadowCacheUnavailable.tarSuspect}; an infra failure leaves it in place, since
           // the cold fallback's own export republishes over a genuinely bad tar anyway.
+          yield* Effect.annotateCurrentSpan({
+            "cache.state": "warm_fallback",
+            "cache.tar_suspect": cause.tarSuspect === true,
+          });
           if (cause.tarSuspect === true) {
             yield* forgetShadowBaselineTar(input.fs, tarPath);
           }
@@ -931,7 +956,7 @@ export const acquireShadowDatabase = <E>(
         }),
       ),
     );
-  });
+  }).pipe(Effect.withSpan("ShadowCache.acquire"));
 
 /**
  * Acquire/use/release for a platform-baseline shadow. `acquireUseRelease` registers removal in

@@ -1,15 +1,16 @@
 import { Effect } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { verifyCname } from "../domains.cname.ts";
 import { emitHostnameResult } from "../domains.emit.ts";
 import { mapDomainsHttpError } from "../domains.errors.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { gateMapError } from "../../../command-internal/upgrade-suggest.ts";
 import type { DomainsCreateFlags } from "./create.command.ts";
 
@@ -20,11 +21,10 @@ export const domainsCreate = Effect.fn("domains.create")(function* (flags: Domai
   const httpClient = yield* HttpClient.HttpClient;
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
-  const ref = yield* resolver.resolve(flags.projectRef);
+  const ref = yield* resolveProjectTarget(flags);
 
   // Write the linked-project cache and persist the telemetry state file on
   // success and failure.
@@ -37,6 +37,10 @@ export const domainsCreate = Effect.fn("domains.create")(function* (flags: Domai
       customHostname: flags.customHostname,
     });
 
+    yield* requireHostedMutationConsent({
+      action: `Create custom hostname ${flags.customHostname}`,
+    });
+
     // 2. Initialize the custom hostname.
     const creating =
       output.format === "text" ? yield* output.task("Creating custom hostname...") : undefined;
@@ -46,8 +50,8 @@ export const domainsCreate = Effect.fn("domains.create")(function* (flags: Domai
         Effect.tapError(() => creating?.fail() ?? Effect.void),
         Effect.catch(gateMapError({ projectRef: ref }, mapCreateError)),
       );
-    yield* creating?.clear() ?? Effect.void;
+    yield* creating?.clear ?? Effect.void;
 
-    yield* emitHostnameResult(response, flags.includeRawOutput);
+    yield* emitHostnameResult(response);
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });

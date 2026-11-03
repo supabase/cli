@@ -1,4 +1,4 @@
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Predicate } from "effect";
 import type { Pool } from "pg";
 import {
   serializeSnapshot,
@@ -35,6 +35,7 @@ import {
   type PgDeltaNextHazardReport,
   type PgDeltaNextRenderedFile,
   type PgDeltaNextSnapshotCaptureInput,
+  type PgDeltaNextSnapshotCaptureResult,
   type PgDeltaNextSqlFile,
   type PgDeltaNextOperation,
 } from "./pgdelta-next-adapter.service.ts";
@@ -210,18 +211,27 @@ function pgDeltaNextErrorDiagnostics(
   }));
 }
 
+function pgDeltaNextError(operation: PgDeltaNextOperation, cause: unknown): PgDeltaNextError {
+  const diagnostics = pgDeltaNextErrorDiagnostics(cause);
+  return new PgDeltaNextError({
+    operation,
+    message: pgDeltaNextMessage(operation, cause),
+    cause,
+    ...(diagnostics !== undefined ? { diagnostics } : {}),
+  });
+}
+
 function tryPgDeltaNext<Success>(operation: PgDeltaNextOperation, run: () => Promise<Success>) {
   return Effect.tryPromise({
     try: run,
-    catch: (cause) => {
-      const diagnostics = pgDeltaNextErrorDiagnostics(cause);
-      return new PgDeltaNextError({
-        operation,
-        message: pgDeltaNextMessage(operation, cause),
-        cause,
-        ...(diagnostics !== undefined ? { diagnostics } : {}),
-      });
-    },
+    catch: (cause) => pgDeltaNextError(operation, cause),
+  });
+}
+
+function attemptPgDeltaNext<Success>(operation: PgDeltaNextOperation, run: () => Success) {
+  return Effect.try({
+    try: run,
+    catch: (cause) => pgDeltaNextError(operation, cause),
   });
 }
 
@@ -337,19 +347,18 @@ function pgDeltaNextFormatOptions(raw: string | undefined): SqlFormatOptions | u
   if (raw === undefined || raw.trim().length === 0) return pgDeltaNextDefaultFormatOptions;
   const parsed: unknown = JSON.parse(raw);
   if (parsed === null) return undefined;
-  if (typeof parsed !== "object" || Array.isArray(parsed)) {
+  if (!Predicate.isObject(parsed)) {
     return pgDeltaNextDefaultFormatOptions;
   }
-  const value = (key: string): unknown => Reflect.get(parsed, key);
-  const keywordCase = value("keywordCase");
-  const commaStyle = value("commaStyle");
-  const indent = value("indent");
-  const maxWidth = value("maxWidth");
-  const alignColumns = value("alignColumns");
-  const alignKeyValues = value("alignKeyValues");
-  const preserveRoutineBodies = value("preserveRoutineBodies");
-  const preserveViewBodies = value("preserveViewBodies");
-  const preserveRuleBodies = value("preserveRuleBodies");
+  const keywordCase = parsed["keywordCase"];
+  const commaStyle = parsed["commaStyle"];
+  const indent = parsed["indent"];
+  const maxWidth = parsed["maxWidth"];
+  const alignColumns = parsed["alignColumns"];
+  const alignKeyValues = parsed["alignKeyValues"];
+  const preserveRoutineBodies = parsed["preserveRoutineBodies"];
+  const preserveViewBodies = parsed["preserveViewBodies"];
+  const preserveRuleBodies = parsed["preserveRuleBodies"];
   return {
     ...pgDeltaNextDefaultFormatOptions,
     ...(keywordCase === "upper" || keywordCase === "lower" || keywordCase === "preserve"
@@ -424,18 +433,20 @@ function makePgDeltaNextAdapter<FactBase, PlanOptions extends object, Plan, Subj
   libraries: PgDeltaNextLibraries<FactBase, PlanOptions, Plan, Subject>,
 ): PgDeltaNextAdapterShape {
   return {
-    diff: (input: PgDeltaNextDiffInput) =>
-      tryPgDeltaNext("diff", async () => {
-        const format = pgDeltaNextFormatOptions(input.formatOptions);
-        const profile = await libraries.resolveProfile(
-          input.sourcePool,
-          { redactSecrets: true },
-          input.schema,
-        );
-        const [source, desired] = await Promise.all([
+    diff: Effect.fn("PgDeltaNextAdapter.diff")(function* (input: PgDeltaNextDiffInput) {
+      const format = yield* attemptPgDeltaNext("diff", () =>
+        pgDeltaNextFormatOptions(input.formatOptions),
+      );
+      const profile = yield* tryPgDeltaNext("diff", () =>
+        libraries.resolveProfile(input.sourcePool, { redactSecrets: true }, input.schema),
+      );
+      const [source, desired] = yield* tryPgDeltaNext("diff", () =>
+        Promise.all([
           profile.extract(input.sourcePool, { redactSecrets: true }),
           profile.extract(input.desiredPool, { redactSecrets: true }),
-        ]);
+        ]),
+      );
+      return yield* attemptPgDeltaNext("diff", () => {
         const generatedPlan = libraries.plan(source.factBase, desired.factBase, {
           ...profile.planOptions,
           redactSecrets: true,
@@ -482,35 +493,42 @@ function makePgDeltaNextAdapter<FactBase, PlanOptions extends object, Plan, Subj
               }
             : {}),
         };
-      }),
-    exportDeclarativeSchema: (input: PgDeltaNextDeclarativeExportInput) =>
-      tryPgDeltaNext("declarativeExport", async () => {
-        const result = await libraries.buildSchemaExport(
-          input.pool,
-          pgDeltaNextExportOptions(input),
-        );
-        return {
-          files: result.files.map((file) => ({ name: file.name, sql: file.sql })),
-          manifest: {
-            ...result.manifest,
-            files: result.files.map((file) => file.name).sort(),
-          },
-          diagnostics: normalizePgDeltaNextDiagnostics(
-            result.diagnostics,
-            "export",
-            libraries.encodeSubject,
-          ),
-        };
-      }),
-    planDeclarativeSchema: (input: PgDeltaNextDeclarativePlanInput) =>
-      tryPgDeltaNext("declarativePlan", async () => {
-        const format = pgDeltaNextFormatOptions(input.formatOptions);
-        const result = await libraries.planSchemaFiles(
+      });
+    }),
+    exportDeclarativeSchema: Effect.fn("PgDeltaNextAdapter.exportDeclarativeSchema")(function* (
+      input: PgDeltaNextDeclarativeExportInput,
+    ) {
+      const result = yield* tryPgDeltaNext("declarativeExport", () =>
+        libraries.buildSchemaExport(input.pool, pgDeltaNextExportOptions(input)),
+      );
+      return yield* attemptPgDeltaNext("declarativeExport", () => ({
+        files: result.files.map((file) => ({ name: file.name, sql: file.sql })),
+        manifest: {
+          ...result.manifest,
+          files: result.files.map((file) => file.name).sort(),
+        },
+        diagnostics: normalizePgDeltaNextDiagnostics(
+          result.diagnostics,
+          "export",
+          libraries.encodeSubject,
+        ),
+      }));
+    }),
+    planDeclarativeSchema: Effect.fn("PgDeltaNextAdapter.planDeclarativeSchema")(function* (
+      input: PgDeltaNextDeclarativePlanInput,
+    ) {
+      const format = yield* attemptPgDeltaNext("declarativePlan", () =>
+        pgDeltaNextFormatOptions(input.formatOptions),
+      );
+      const result = yield* tryPgDeltaNext("declarativePlan", () =>
+        libraries.planSchemaFiles(
           input.targetPool,
           input.shadowPool,
           input.files,
           pgDeltaNextPlanOptions(input),
-        );
+        ),
+      );
+      return yield* attemptPgDeltaNext("declarativePlan", () => {
         const rendered = libraries.renderPlanFiles(result.plan, {
           allowDrops: input.allowDrops,
         });
@@ -553,29 +571,35 @@ function makePgDeltaNextAdapter<FactBase, PlanOptions extends object, Plan, Subj
           removals: libraries.summarizeRemovals(result.plan),
           ...(input.debug ? { debug: { plan: libraries.serializePlan(result.plan) } } : {}),
         };
-      }),
-    captureSnapshot: (input: PgDeltaNextSnapshotCaptureInput) =>
-      tryPgDeltaNext("snapshotCapture", async () => {
-        const profile = await libraries.resolveProfile(input.pool, {
+      });
+    }),
+    captureSnapshot: Effect.fn("PgDeltaNextAdapter.captureSnapshot")(function* (
+      input: PgDeltaNextSnapshotCaptureInput,
+    ) {
+      const profile = yield* tryPgDeltaNext("snapshotCapture", () =>
+        libraries.resolveProfile(input.pool, {
           redactSecrets: true,
           skipBaseline: true,
-        });
-        const result = await profile.extract(input.pool, { redactSecrets: true });
-        return {
-          generation: "v2",
-          snapshot: libraries.serializeSnapshot(result.factBase, {
-            pgVersion: result.pgVersion,
-            redactSecrets: true,
-            profile: profile.id,
-          }),
+        }),
+      );
+      const result = yield* tryPgDeltaNext("snapshotCapture", () =>
+        profile.extract(input.pool, { redactSecrets: true }),
+      );
+      return yield* attemptPgDeltaNext<PgDeltaNextSnapshotCaptureResult>("snapshotCapture", () => ({
+        generation: "v2",
+        snapshot: libraries.serializeSnapshot(result.factBase, {
           pgVersion: result.pgVersion,
-          diagnostics: normalizePgDeltaNextDiagnostics(
-            result.diagnostics,
-            "snapshot",
-            libraries.encodeSubject,
-          ),
-        };
-      }),
+          redactSecrets: true,
+          profile: profile.id,
+        }),
+        pgVersion: result.pgVersion,
+        diagnostics: normalizePgDeltaNextDiagnostics(
+          result.diagnostics,
+          "snapshot",
+          libraries.encodeSubject,
+        ),
+      }));
+    }),
   };
 }
 

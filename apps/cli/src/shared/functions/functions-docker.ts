@@ -2,30 +2,29 @@
 // `serve.ts` (the `functions` family), plus
 // `command-internal/db-bootstrap/container-lifecycle.ts` (a different
 // family, using the generic `isUserDefinedDockerNetwork` predicate).
-import { resolve } from "node:path";
-import { Effect, Option, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import type { PlatformError } from "effect/PlatformError";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+  unwrapNativeFailure,
+} from "../telemetry/error-actionability.ts";
+
+import type { Path } from "effect";
+import { Data, Effect, Option, Predicate, Runtime, Stream } from "effect";
+import { ChildProcessSpawner } from "effect/process";
 import { spawnContainerCli } from "../../command-internal/container-cli.ts";
 import { makeDockerImageResolver } from "../../command-internal/docker-image-resolve.ts";
 import { DENO1_EDGE_RUNTIME_VERSION } from "./functions.shared.ts";
 import { bitbucketCloneDir } from "../../command-internal/bitbucket-pipeline.ts";
-
-const INVALID_PROJECT_ID = /[^a-zA-Z0-9_.-]+/g;
-const MAX_PROJECT_ID_LENGTH = 40;
+import { sanitizeProjectId } from "../config/project-id.ts";
 
 export function toSlash(pathname: string) {
   return pathname.replaceAll("\\", "/");
 }
 
-export function normalizeProjectId(source: string) {
-  const sanitized = source.replaceAll(INVALID_PROJECT_ID, "_").replace(/^[_.-]+/, "");
-  return sanitized.length > MAX_PROJECT_ID_LENGTH
-    ? sanitized.slice(0, MAX_PROJECT_ID_LENGTH)
-    : sanitized;
-}
-
 export function localDockerId(name: string, projectId: string) {
-  return `supabase_${name}_${normalizeProjectId(projectId)}`;
+  return `supabase_${name}_${sanitizeProjectId(projectId)}`;
 }
 
 /**
@@ -45,21 +44,21 @@ export function edgeRuntimeCacheVolume(projectId: string) {
 
 /**
  * Resolves the Docker network mode. `explicit` is tri-state: `undefined`
- * (never set) falls through to `envOverride`; `""` (explicitly cleared) and
- * any non-empty value both skip `envOverride` and resolve immediately.
+ * (never set) falls through to `envNetworkId`; `""` (explicitly cleared) and
+ * any non-empty value both skip `envNetworkId` and resolve immediately.
  * Callers must pass a flag reader that preserves this distinction — see
- * `lastExplicitLongFlagValue` (`shared/cli/cobra-flag-groups.ts`).
+ * `lastExplicitLongFlagValue` (`shared/cli/flag-groups.ts`).
  */
 export function resolveDockerNetworkMode(input: {
   readonly explicit: string | undefined;
-  readonly envOverride: string | undefined;
+  readonly envNetworkId: string | undefined;
   readonly projectId: string;
 }): string {
   if (input.explicit !== undefined) {
     return input.explicit.length > 0 ? input.explicit : localDockerId("network", input.projectId);
   }
-  if (input.envOverride !== undefined && input.envOverride.length > 0) {
-    return input.envOverride;
+  if (input.envNetworkId !== undefined && input.envNetworkId.length > 0) {
+    return input.envNetworkId;
   }
   return localDockerId("network", input.projectId);
 }
@@ -74,8 +73,8 @@ export function dockerProjectLabels(projectId: string) {
   };
 }
 
-export function toDockerPath(hostPath: string) {
-  const normalized = toSlash(resolve(hostPath));
+export function toDockerPath(hostPath: string, path: Pick<Path.Path, "resolve">) {
+  const normalized = toSlash(path.resolve(hostPath));
   return normalized.replace(/^[A-Za-z]:/, "");
 }
 
@@ -149,10 +148,10 @@ export function buildFunctionsDockerRunArgs(spec: FunctionsDockerRunSpec): Array
 // Decodes a byte stream to text, accumulating the full text (returned, for
 // callers that post-process it, e.g. scanning stderr for "invalid eszip
 // v2") while also tee-ing each decoded chunk to `onChunk` as it arrives.
-function collectByteStream(
-  stream: Stream.Stream<Uint8Array, unknown>,
+function collectByteStream<E>(
+  stream: Stream.Stream<Uint8Array, E>,
   onChunk?: (chunk: string) => Effect.Effect<void>,
-): Effect.Effect<string, unknown> {
+): Effect.Effect<string, E> {
   return Effect.suspend(() => {
     const decoder = new TextDecoder();
     let text = "";
@@ -242,7 +241,7 @@ export function isUserDefinedDockerNetwork(networkMode: string) {
   );
 }
 
-export const ensureDockerNetwork = Effect.fnUntraced(function* (
+export const ensureDockerNetwork = Effect.fn("FunctionsDocker.ensureNetwork")(function* (
   networkMode: string,
   projectId: string,
 ) {
@@ -253,7 +252,8 @@ export const ensureDockerNetwork = Effect.fnUntraced(function* (
   const inspect = yield* runChildProcess("docker", ["network", "inspect", networkMode], {
     stdout: "ignore",
     stderr: "ignore",
-  }).pipe(Effect.catch(() => Effect.succeed({ exitCode: 1, stdout: "", stderr: "" })));
+  }).pipe(Effect.orElseSucceed(() => ({ exitCode: 1, stdout: "", stderr: "" })));
+  yield* Effect.annotateCurrentSpan({ "docker.network.exists": inspect.exitCode === 0 });
   if (inspect.exitCode === 0) {
     return;
   }
@@ -276,11 +276,11 @@ export const ensureDockerNetwork = Effect.fnUntraced(function* (
     },
   );
   if (create.exitCode !== 0 && !create.stderr.includes("already exists")) {
-    return yield* Effect.fail(new Error(`failed to create docker network: ${networkMode}`));
+    return yield* nativeFailure(new Error(`failed to create docker network: ${networkMode}`));
   }
 });
 
-export const ensureDockerNamedVolume = Effect.fnUntraced(function* (
+export const ensureDockerNamedVolume = Effect.fn("FunctionsDocker.ensureVolume")(function* (
   volumeName: string,
   projectId: string,
   projectEnvValues?: Readonly<Record<string, string>>,
@@ -307,16 +307,18 @@ export const ensureDockerNamedVolume = Effect.fnUntraced(function* (
     },
   );
   if (create.exitCode !== 0 && !create.stderr.includes("already exists")) {
-    return yield* Effect.fail(new Error(`failed to create docker volume: ${volumeName}`));
+    return yield* nativeFailure(new Error(`failed to create docker volume: ${volumeName}`));
   }
 });
 
-export const isDockerRunning = Effect.fnUntraced(function* () {
+export const isDockerRunning = Effect.fn("FunctionsDocker.isRunning")(function* () {
   const result = yield* runChildProcess("docker", ["info"], {
     stdout: "ignore",
     stderr: "ignore",
-  }).pipe(Effect.catch(() => Effect.succeed({ exitCode: 1, stdout: "", stderr: "" })));
-  return result.exitCode === 0;
+  }).pipe(Effect.orElseSucceed(() => ({ exitCode: 1, stdout: "", stderr: "" })));
+  const running = result.exitCode === 0;
+  yield* Effect.annotateCurrentSpan({ "docker.running": running });
+  return running;
 });
 
 /**
@@ -328,7 +330,7 @@ export const isDockerRunning = Effect.fnUntraced(function* () {
 export function resolveEdgeRuntimeVersion(
   denoVersion: number | undefined,
   defaultVersion: string,
-): Effect.Effect<string, Error> {
+): Effect.Effect<string, NativeFailure> {
   if (denoVersion === undefined || denoVersion === 2) {
     return Effect.succeed(defaultVersion);
   }
@@ -336,7 +338,9 @@ export function resolveEdgeRuntimeVersion(
     return Effect.succeed(DENO1_EDGE_RUNTIME_VERSION);
   }
   return Effect.fail(
-    new Error(`Failed reading config: Invalid edge_runtime.deno_version: ${denoVersion}.`),
+    nativeFailure(
+      new Error(`Failed reading config: Invalid edge_runtime.deno_version: ${denoVersion}.`),
+    ),
   );
 }
 
@@ -347,10 +351,53 @@ export function resolveEdgeRuntimeVersion(
  * answered. Shared by every `functions` Docker path (`deploy`, `download`,
  * `serve`).
  */
-export const resolveFunctionsDockerImage = Effect.fnUntraced(function* (
+export const resolveFunctionsDockerImage = Effect.fn("FunctionsDocker.resolveImage")(function* (
   image: string,
   projectEnvValues?: Readonly<Record<string, string>>,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  return yield* makeDockerImageResolver(spawner, projectEnvValues)(image);
+  const resolved = yield* makeDockerImageResolver(spawner, projectEnvValues)(image);
+  yield* Effect.annotateCurrentSpan({ "docker.image.resolved": resolved });
+  return resolved;
 });
+
+/** Retains native failure diagnostics while exposing a typed Effect failure. */
+export class NativeFailure extends Data.TaggedError("NativeFailure")<{
+  readonly cause: Error;
+}> {
+  override get message() {
+    const cause = unwrapNativeFailure(this);
+    return cause instanceof Error ? cause.message : "";
+  }
+
+  override get [Runtime.errorExitCode]() {
+    return Runtime.getErrorExitCode(unwrapNativeFailure(this));
+  }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.unknown;
+  }
+}
+
+export function nativeFailure(cause: unknown): NativeFailure {
+  return cause instanceof NativeFailure
+    ? cause
+    : new NativeFailure({ cause: cause instanceof Error ? cause : new Error(String(cause)) });
+}
+
+/** Preserves the host error carried by an injected platform operation. */
+export function nativePlatformFailure(error: PlatformError, pathname?: string): NativeFailure {
+  const reason = error.reason;
+  if (reason.cause !== undefined && reason.cause !== null) return nativeFailure(reason.cause);
+  // The native adapter drops synchronous argument causes; NUL input identifies the host error.
+  if (
+    Predicate.isTagged(reason, "BadArgument") &&
+    reason.module === "FileSystem" &&
+    pathname?.includes("\0")
+  ) {
+    return nativeFailure(
+      Object.assign(new TypeError(reason.description), { code: "ERR_INVALID_ARG_VALUE" }),
+    );
+  }
+  return nativeFailure(reason);
+}

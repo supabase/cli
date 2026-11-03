@@ -1,15 +1,21 @@
-import { BunServices } from "@effect/platform-bun";
-import { Cause, Effect, Layer, Option } from "effect";
-import { GlobalFlag } from "effect/unstable/cli";
-import type { Command, Param, Primitive } from "effect/unstable/cli";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { Cause, Clock, Crypto, DateTime, Effect, Layer, Option } from "effect";
+import { FetchHttpClient } from "effect/http";
+import { GlobalFlag } from "effect/cli";
+import type { Command, Param, Primitive } from "effect/cli";
+import type { PlatformError } from "effect/PlatformError";
 import process from "node:process";
 import {
   QUERY_OUTPUT_FORMATS,
   RESOURCE_OUTPUT_FORMATS,
-} from "../command-internal/go-output-flag.ts";
+} from "../command-internal/output-formats.ts";
 import { unwrapParam } from "../command-internal/param-introspection.ts";
-import { isValidBase0Int64, parseUintBase0 } from "../command-internal/parse-uint.ts";
+import { REMOTE_FLAG_NAME } from "../command-internal/target/remote-vocabulary.ts";
+import { isValidBase0Int64, parseUintBase0 } from "../shared/config/parse-uint.ts";
+import type { ProjectStateMode } from "../shared/config/project-state-mode.ts";
 import { parseStringSliceFlag } from "../command-internal/string-slice-flag.ts";
+import { joinRemoteOperands, type RemoteArgvLeaf } from "../shared/cli/remote-argv.ts";
+import { remoteArgvLeafFor } from "../shared/cli/run.ts";
 import { withAnalyticsContext } from "../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
 import {
@@ -18,13 +24,17 @@ import {
   PropExitCode,
   PropOutputFormat,
 } from "../shared/telemetry/event-catalog.ts";
-import { standaloneAnalyticsConfigLayer } from "../shared/telemetry/standalone-analytics-config.layer.ts";
+import { cliProjectContextLayer } from "../shared/config/cli-project-context.layer.ts";
+import { cliSettingsLayer } from "../shared/config/cli-settings.layer.ts";
+import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
+import { ttyLayer } from "../shared/runtime/tty.layer.ts";
 import { cliConfigProviderLayer } from "../shared/config/cli-config-provider.layer.ts";
-import { analyticsLayer } from "../telemetry/analytics.layer.ts";
+import { analyticsLayerFor } from "../telemetry/analytics.layer.ts";
 import { formatCliError, normalizeCliError } from "../shared/output/normalize-error.ts";
+import { ambientEnvironment } from "../shared/config/cli-config-provider.layer.ts";
 
 /**
- * Implements the shell completion protocol that cobra-generated scripts (`supabase
+ * Implements the shell completion protocol that the generated scripts (`supabase
  * completion {bash,zsh,fish,powershell}`) call into via `supabase __complete`/
  * `__completeNoDesc` on every tab press. Completion argv can contain partial or malformed
  * flag tokens (e.g. `--de` mid-word), so this bypasses the structured CLI parser and
@@ -44,6 +54,7 @@ export interface CompletionResult {
 /** Bit flags for the shell completion protocol's directive value. */
 export const CompletionDirective = {
   Default: 0,
+  NoSpace: 2,
   NoFileComp: 4,
   FilterFileExt: 8,
 } as const;
@@ -55,7 +66,7 @@ export interface FlagDescriptor {
   readonly description: string | undefined;
   readonly isVariadic: boolean;
   readonly isBoolean: boolean;
-  /** `Param.Single`'s underlying `Primitive<A>._tag` (`"Boolean"`, `"Choice"`, `"Integer"`, ...). */
+  /** `Param.Single`'s underlying `Primitive<A>._tag` (`"Boolean"`, `"Choice"`, `"Int"`, ...). */
   readonly primitiveTag: string;
   /** The valid value set for a `primitiveTag === "Choice"` flag; `undefined` for every other tag. */
   readonly choiceKeys: ReadonlyArray<string> | undefined;
@@ -74,6 +85,7 @@ export interface ClassifyCompletionInput {
   readonly trimmedArgs: ReadonlyArray<string>;
   readonly toComplete: string;
   readonly inScopeFlags: ReadonlyArray<FlagDescriptor>;
+  readonly remoteLeaf?: RemoteArgvLeaf | undefined;
 }
 
 export interface CompleteDeps {
@@ -86,7 +98,7 @@ export interface CompleteDeps {
   readonly stderrWrite: (message: string) => void;
   readonly exit: (code: number) => void;
   /** Fires the `cli_command_executed` telemetry capture for this request. */
-  readonly captureTelemetry: (exitCode: number, durationMs: number) => Promise<void>;
+  readonly captureTelemetry: (exitCode: number, durationMs: number) => Effect.Effect<void>;
 }
 
 /**
@@ -122,10 +134,8 @@ function flattenSubcommands(command: Command.Command.Any): ReadonlyArray<Command
 }
 
 /**
- * `choiceKeys` (a `Choice` primitive's valid value set) is attached via
- * `Object.assign` at runtime and isn't part of the public `Primitive<A>`
- * type, so this narrows through the same runtime-guard idiom as
- * `CommandInternal`.
+ * `choiceKeys` (a `Choice` primitive's valid values) is attached via `Object.assign`, so it is
+ * absent from the public `Primitive<A>` type and narrows via the same guard as `CommandInternal`.
  */
 interface ChoicePrimitive {
   readonly choiceKeys: ReadonlyArray<string>;
@@ -342,12 +352,20 @@ const COMPLETION_NO_FILE_COMP_PATHS: ReadonlySet<string> = new Set([
   "completion powershell",
 ]);
 
+const REMOTE_FLAG_CANDIDATE = `--${REMOTE_FLAG_NAME}=`;
+
+function flagNameDirective(candidates: ReadonlyArray<CompletionCandidate>): number {
+  return candidates.length > 0 && candidates.every((candidate) => candidate.name.endsWith("="))
+    ? CompletionDirective.NoFileComp | CompletionDirective.NoSpace
+    : CompletionDirective.NoFileComp;
+}
+
 function flagNameCandidates(
   flag: FlagDescriptor,
   toComplete: string,
 ): ReadonlyArray<CompletionCandidate> {
   const candidates: Array<CompletionCandidate> = [];
-  const long = `--${flag.name}`;
+  const long = flag.name === REMOTE_FLAG_NAME ? REMOTE_FLAG_CANDIDATE : `--${flag.name}`;
   if (long.startsWith(toComplete)) candidates.push({ name: long, description: flag.description });
   for (const alias of flag.aliases) {
     if (alias.length !== 1) continue;
@@ -457,8 +475,8 @@ function hasUnconsumedFlagTerminator(
 
 /**
  * Flags whose real validation rejects a leading `-`/`+`, unlike this tree's plain signed
- * `Flag.integer`/`Flag.string` declarations — checked before `primitiveTag` dispatch since
- * `storage cp --jobs` is declared as `Flag.string`. Key = `<matched command path>:<flag name>`.
+ * `Flag.Int`/`Flag.String` declarations — checked before `primitiveTag` dispatch since
+ * `storage cp --jobs` is declared as `Flag.String`. Key = `<matched command path>:<flag name>`.
  */
 const COMPLETION_UINT_FLAGS: ReadonlySet<string> = new Set([
   "functions deploy:jobs",
@@ -468,8 +486,8 @@ const COMPLETION_UINT_FLAGS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Flags validated against Go duration syntax (see `isValidGoDuration`) rather than this
- * tree's plain `Flag.string` declarations.
+ * Flags validated against duration syntax (see `isValidDuration`) rather than this
+ * tree's plain `Flag.String` declarations.
  */
 const COMPLETION_DURATION_FLAGS: ReadonlySet<string> = new Set([
   "gen types:query-timeout",
@@ -479,8 +497,8 @@ const COMPLETION_DURATION_FLAGS: ReadonlySet<string> = new Set([
 /** `--exp` (`gen bearer-jwt`) is validated as an RFC 3339 timestamp, not a plain string. */
 const COMPLETION_RFC3339_FLAGS: ReadonlySet<string> = new Set(["gen bearer-jwt:exp"]);
 
-/** Nanosecond scale for each unit the Go duration grammar accepts. */
-const GO_DURATION_UNIT_NANOS: ReadonlyMap<string, bigint> = new Map([
+/** Nanosecond scale for each unit the duration grammar accepts. */
+const DURATION_UNIT_NANOS: ReadonlyMap<string, bigint> = new Map([
   ["ns", 1n],
   ["us", 1_000n],
   ["µs", 1_000n], // U+00B5 micro sign
@@ -491,23 +509,23 @@ const GO_DURATION_UNIT_NANOS: ReadonlyMap<string, bigint> = new Map([
   ["h", 3_600_000_000_000n],
 ]);
 
-// Go's duration grammar accumulates into a `uint64` (range-checked against `1<<63`
+// The duration grammar accumulates into a `uint64` (range-checked against `1<<63`
 // mid-parse) and narrows to the `int64` max in the final non-negative check below.
-const GO_DURATION_UINT64_OVERFLOW_BOUND = 1n << 63n;
-const GO_DURATION_MAX_INT64 = (1n << 63n) - 1n;
+const DURATION_UINT64_OVERFLOW_BOUND = 1n << 63n;
+const DURATION_MAX_INT64 = (1n << 63n) - 1n;
 
 function isAsciiDigit(char: string | undefined): boolean {
   return char !== undefined && char >= "0" && char <= "9";
 }
 
 /**
- * Validates the Go duration syntax (`1h30m`, `1.5h`, `.5s`) these flags accept, returning a
+ * Validates the duration syntax (`1h30m`, `1.5h`, `.5s`) these flags accept, returning a
  * boolean verdict rather than a parsed value. Uses `BigInt` for the integer/fraction
- * accumulators to match Go's `uint64` overflow semantics exactly, and a plain `Number` for
- * the one step Go performs in `float64` — a JS `number` is itself an IEEE-754 double, so
+ * accumulators to get `uint64` overflow semantics, and a plain `Number` for
+ * the one step performed in `float64` — a JS `number` is itself an IEEE-754 double, so
  * this round-trips bit-for-bit rather than merely approximating it.
  */
-function isValidGoDuration(value: string): boolean {
+function isValidDuration(value: string): boolean {
   let rest = value;
   let negative = false;
   if (rest.length > 0 && (rest[0] === "-" || rest[0] === "+")) {
@@ -525,9 +543,9 @@ function isValidGoDuration(value: string): boolean {
     let i = 0;
     let intPart = 0n;
     while (isAsciiDigit(rest[i])) {
-      if (intPart > GO_DURATION_UINT64_OVERFLOW_BOUND / 10n) return false;
+      if (intPart > DURATION_UINT64_OVERFLOW_BOUND / 10n) return false;
       intPart = intPart * 10n + BigInt(rest[i] as string);
-      if (intPart > GO_DURATION_UINT64_OVERFLOW_BOUND) return false;
+      if (intPart > DURATION_UINT64_OVERFLOW_BOUND) return false;
       i++;
     }
     const hasIntDigits = i > 0;
@@ -543,11 +561,11 @@ function isValidGoDuration(value: string): boolean {
       let fracOverflowed = false;
       while (isAsciiDigit(rest[j])) {
         if (!fracOverflowed) {
-          if (fracPart > GO_DURATION_MAX_INT64 / 10n) {
+          if (fracPart > DURATION_MAX_INT64 / 10n) {
             fracOverflowed = true;
           } else {
             const next = fracPart * 10n + BigInt(rest[j] as string);
-            if (next > GO_DURATION_UINT64_OVERFLOW_BOUND) {
+            if (next > DURATION_UINT64_OVERFLOW_BOUND) {
               fracOverflowed = true;
             } else {
               fracPart = next;
@@ -566,38 +584,38 @@ function isValidGoDuration(value: string): boolean {
     let k = 0;
     while (k < rest.length && !(rest[k] === "." || isAsciiDigit(rest[k]))) k++;
     if (k === 0) return false; // missing unit
-    const unitNanos = GO_DURATION_UNIT_NANOS.get(rest.slice(0, k));
+    const unitNanos = DURATION_UNIT_NANOS.get(rest.slice(0, k));
     rest = rest.slice(k);
     if (unitNanos === undefined) return false; // unknown unit
 
-    if (intPart > GO_DURATION_UINT64_OVERFLOW_BOUND / unitNanos) return false;
+    if (intPart > DURATION_UINT64_OVERFLOW_BOUND / unitNanos) return false;
     let termNanos = intPart * unitNanos;
     if (fracPart > 0n) {
       const fractional = Number(fracPart) * (Number(unitNanos) / Number(scale));
       termNanos += BigInt(Math.trunc(fractional));
-      if (termNanos > GO_DURATION_UINT64_OVERFLOW_BOUND) return false;
+      if (termNanos > DURATION_UINT64_OVERFLOW_BOUND) return false;
     }
     total += termNanos;
-    if (total > GO_DURATION_UINT64_OVERFLOW_BOUND) return false;
+    if (total > DURATION_UINT64_OVERFLOW_BOUND) return false;
   }
 
   // The negative side already got the larger `1<<63` bound above (int64's two's-complement
   // asymmetry); only the non-negative case needs this final check.
-  return negative || total <= GO_DURATION_MAX_INT64;
+  return negative || total <= DURATION_MAX_INT64;
 }
 
 /**
  * Matches RFC 3339 (`2006-01-02T15:04:05Z07:00`): fractional seconds may use either `.` or
  * `,`, and the offset's own hour/minute are independently capped at 24/60 (not the 0-23/0-59
  * bounds used for the time fields themselves). Calendar validity is checked by round-tripping
- * through `Date#setUTCFullYear`, which — unlike the `Date` constructor — doesn't special-case
+ * through `DateTime.makeUnsafe`, which — unlike the `Date` constructor — doesn't special-case
  * a 0-99 year into 1900+year.
  */
-const GO_RFC3339_PATTERN =
+const RFC3339_PATTERN =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:[.,]\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/;
 
-function isValidGoRfc3339(value: string): boolean {
-  const match = GO_RFC3339_PATTERN.exec(value);
+function isValidRfc3339(value: string): boolean {
+  const match = RFC3339_PATTERN.exec(value);
   if (match === null) return false;
   const [, year, month, day, hour, minute, second, offsetHour, offsetMinute] = match;
   const y = Number(year);
@@ -607,13 +625,8 @@ function isValidGoRfc3339(value: string): boolean {
   if (offsetHour !== undefined && (Number(offsetHour) > 24 || Number(offsetMinute) > 60))
     return false;
 
-  const roundTrip = new Date(0);
-  roundTrip.setUTCFullYear(y, mo - 1, d);
-  return (
-    roundTrip.getUTCFullYear() === y &&
-    roundTrip.getUTCMonth() === mo - 1 &&
-    roundTrip.getUTCDate() === d
-  );
+  const roundTrip = DateTime.toPartsUtc(DateTime.makeUnsafe({ year: y, month: mo, day: d }));
+  return roundTrip.year === y && roundTrip.month === mo && roundTrip.day === d;
 }
 
 /**
@@ -649,6 +662,18 @@ function outputFlagChoiceKeys(matchedPath: ReadonlyArray<string>): ReadonlyArray
     : RESOURCE_OUTPUT_FORMATS;
 }
 
+function remoteTakesWord(
+  remoteLeaf: RemoteArgvLeaf | undefined,
+  trimmedArgs: ReadonlyArray<string>,
+  toComplete: string,
+): boolean {
+  if (remoteLeaf === undefined) return false;
+  // An empty word has no shape yet, so it is read as the branch name it may become.
+  const word = toComplete === "" ? "branch" : toComplete;
+  const joined = joinRemoteOperands([...trimmedArgs, word], remoteLeaf);
+  return joined[joined.length - 1] === `--${REMOTE_FLAG_NAME}=${word}`;
+}
+
 /**
  * Validates a flag's value; an invalid value returns zero candidates with the Default
  * directive, exactly like an unresolved flag name. The command-dependent overrides
@@ -661,15 +686,16 @@ function isValidFlagValue(
   flag: FlagDescriptor,
   value: string,
 ): boolean {
+  if (flag.name === REMOTE_FLAG_NAME) return true;
   const key = `${matchedPath.join(" ")}:${flag.name}`;
   if (COMPLETION_UINT_FLAGS.has(key)) {
     return "value" in parseUintBase0(value);
   }
   if (COMPLETION_DURATION_FLAGS.has(key)) {
-    return isValidGoDuration(value);
+    return isValidDuration(value);
   }
   if (COMPLETION_RFC3339_FLAGS.has(key)) {
-    return isValidGoRfc3339(value);
+    return isValidRfc3339(value);
   }
   if (
     flag.isVariadic &&
@@ -680,15 +706,15 @@ function isValidFlagValue(
   }
   switch (flag.primitiveTag) {
     case "Boolean":
-      return parseGoBool(value) !== undefined;
+      return parseBoolLiteral(value) !== undefined;
     case "Choice":
       if (flag.name === "output") {
         return outputFlagChoiceKeys(matchedPath).includes(value);
       }
       return flag.choiceKeys !== undefined && flag.choiceKeys.includes(value);
-    case "Integer":
+    case "Int":
       return isValidBase0Int64(value);
-    case "Float":
+    case "Finite":
       return value.trim().length > 0 && !Number.isNaN(Number(value));
     default:
       return true;
@@ -796,6 +822,9 @@ function flagValueCompletion(
   matchedPath: ReadonlyArray<string>,
   flagName: string | undefined,
 ): CompletionResult {
+  if (flagName === REMOTE_FLAG_NAME) {
+    return { candidates: [], directive: CompletionDirective.NoFileComp };
+  }
   const key = flagName === undefined ? undefined : `${matchedPath.join(" ")}:${flagName}`;
   const extensions = key === undefined ? undefined : COMPLETION_FLAG_FILE_EXTENSIONS.get(key);
   if (extensions !== undefined) {
@@ -850,6 +879,7 @@ function helpArgumentCandidates(
  */
 export function classifyCompletion(input: ClassifyCompletionInput): CompletionResult {
   const { finalCommand, matchedPath, leftoverArgs, trimmedArgs, toComplete, inScopeFlags } = input;
+  const { remoteLeaf } = input;
   const isAtRoot = matchedPath.length === 0;
 
   if (findUnresolvedFlagToken(trimmedArgs, toComplete, inScopeFlags, matchedPath) !== undefined) {
@@ -892,12 +922,12 @@ export function classifyCompletion(input: ClassifyCompletionInput): CompletionRe
     );
     // If any required flag is still unset, only required flags are offered.
     if (requiredCandidates.length > 0) {
-      return { candidates: requiredCandidates, directive: CompletionDirective.NoFileComp };
+      return { candidates: requiredCandidates, directive: flagNameDirective(requiredCandidates) };
     }
     const candidates = inScopeFlags
       .filter((flag) => !flag.hidden && (!changedFlagNames.has(flag.name) || flag.isVariadic))
       .flatMap((flag) => flagNameCandidates(flag, toComplete));
-    return { candidates, directive: CompletionDirective.NoFileComp };
+    return { candidates, directive: flagNameDirective(candidates) };
   }
 
   // Case 2: flag-VALUE completion.
@@ -926,6 +956,12 @@ export function classifyCompletion(input: ClassifyCompletionInput): CompletionRe
         return { candidates: [], directive: CompletionDirective.Default };
       }
       if (!resolved.isBoolean) {
+        return flagValueCompletion(matchedPath, resolved.name);
+      }
+      if (
+        resolved.name === REMOTE_FLAG_NAME &&
+        remoteTakesWord(remoteLeaf, trimmedArgs, toComplete)
+      ) {
         return flagValueCompletion(matchedPath, resolved.name);
       }
       // A resolved boolean precedingToken falls through to Case 3, since it never
@@ -1012,18 +1048,12 @@ export function respondToComplete(
     trimmedArgs,
     toComplete,
     inScopeFlags,
+    remoteLeaf: remoteArgvLeafFor(root, [...trimmedArgs, toComplete]),
   });
 }
 
-const GO_TRUE_BOOL_SPELLINGS: ReadonlySet<string> = new Set([
-  "1",
-  "t",
-  "T",
-  "TRUE",
-  "true",
-  "True",
-]);
-const GO_FALSE_BOOL_SPELLINGS: ReadonlySet<string> = new Set([
+const TRUE_BOOL_SPELLINGS: ReadonlySet<string> = new Set(["1", "t", "T", "TRUE", "true", "True"]);
+const FALSE_BOOL_SPELLINGS: ReadonlySet<string> = new Set([
   "0",
   "f",
   "F",
@@ -1032,16 +1062,15 @@ const GO_FALSE_BOOL_SPELLINGS: ReadonlySet<string> = new Set([
   "False",
 ]);
 
-function parseGoBool(value: string): boolean | undefined {
-  if (GO_TRUE_BOOL_SPELLINGS.has(value)) return true;
-  if (GO_FALSE_BOOL_SPELLINGS.has(value)) return false;
+function parseBoolLiteral(value: string): boolean | undefined {
+  if (TRUE_BOOL_SPELLINGS.has(value)) return true;
+  if (FALSE_BOOL_SPELLINGS.has(value)) return false;
   return undefined;
 }
 
 /**
  * `argv[0] === "__completeNoDesc"` always wins; otherwise `SUPABASE_COMPLETION_DESCRIPTIONS`
- * is checked first, falling back to `COBRA_COMPLETION_DESCRIPTIONS` when unset or empty. An
- * unparseable value is ignored, leaving the `argv[0]`-derived default in place.
+ * is consulted. An unparseable value is ignored, leaving the `argv[0]`-derived default in place.
  */
 export function resolveIncludeDescriptions(
   argv0: string | undefined,
@@ -1049,8 +1078,8 @@ export function resolveIncludeDescriptions(
 ): boolean {
   let includeDescriptions = argv0 !== "__completeNoDesc";
   if (includeDescriptions) {
-    const raw = env.SUPABASE_COMPLETION_DESCRIPTIONS || env.COBRA_COMPLETION_DESCRIPTIONS || "";
-    const parsed = parseGoBool(raw);
+    const raw = env.SUPABASE_COMPLETION_DESCRIPTIONS ?? "";
+    const parsed = parseBoolLiteral(raw);
     if (parsed !== undefined) includeDescriptions = parsed;
   }
   return includeDescriptions;
@@ -1093,60 +1122,77 @@ export function formatCompletionResponse(
 export function captureCompleteTelemetryEffect(
   exitCode: number,
   durationMs: number,
-): Effect.Effect<void, never, Analytics> {
+): Effect.Effect<void, PlatformError, Analytics | Crypto.Crypto> {
   return Effect.gen(function* () {
+    const crypto = yield* Crypto.Crypto;
+    const commandRunId = yield* crypto.randomUUIDv4;
     const analytics = yield* Analytics;
-    yield* analytics.capture(EventCommandExecuted, {
-      [PropExitCode]: exitCode,
-      [PropDurationMs]: durationMs,
-      [PropOutputFormat]: "text",
-    });
-  }).pipe(
-    withAnalyticsContext({
-      command_run_id: crypto.randomUUID(),
-      command: "__complete",
-      flags: undefined,
-    }),
-  );
+    yield* analytics
+      .capture(EventCommandExecuted, {
+        [PropExitCode]: exitCode,
+        [PropDurationMs]: durationMs,
+        [PropOutputFormat]: "text",
+      })
+      .pipe(
+        withAnalyticsContext({
+          command_run_id: commandRunId,
+          command: "__complete",
+          flags: undefined,
+        }),
+      );
+  });
 }
 
 const COMPLETE_TELEMETRY_TIMEOUT = "2 seconds";
 
-// `analyticsLayer` needs `CliSettings`/`RuntimeInfo`/`Tty` plus a platform layer;
-// `standaloneAnalyticsConfigLayer` packages that small set for a caller outside the full
-// CLI runtime tree.
-const completeAnalyticsLayer = analyticsLayer.pipe(
-  Layer.provide(standaloneAnalyticsConfigLayer),
-  Layer.provide(cliConfigProviderLayer),
-  Layer.provide(BunServices.layer),
-);
+// Completion telemetry fires before `runCli` builds its layer tree, so the
+// `CliSettings`/`RuntimeInfo`/`Tty` set that `analyticsLayer` needs is resolved here.
+const completeAnalyticsLayer = (mode: ProjectStateMode) =>
+  analyticsLayerFor(mode).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        cliSettingsLayer.pipe(
+          Layer.provide(cliProjectContextLayer),
+          Layer.provide(runtimeInfoLayer),
+        ),
+        runtimeInfoLayer,
+        ttyLayer,
+      ),
+    ),
+    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(cliConfigProviderLayer),
+    Layer.provide(BunServices.layer),
+    Layer.merge(BunCrypto.layer),
+  );
 
 /**
  * Production default for `CompleteDeps.captureTelemetry`. Best-effort and bounded: a missing
  * consent, network hiccup, or DNS failure must never hang or fail a user's tab press. Callers
- * must `await` this before exiting, since `process.exit` kills the process without waiting
- * for pending async work.
+ * must run this to completion before exiting, since `process.exit` kills the process without
+ * waiting for pending async work.
  */
-function captureCompleteTelemetry(exitCode: number, durationMs: number): Promise<void> {
-  return Effect.runPromise(
-    captureCompleteTelemetryEffect(exitCode, durationMs).pipe(
-      Effect.provide(completeAnalyticsLayer),
-      Effect.timeout(COMPLETE_TELEMETRY_TIMEOUT),
-      Effect.ignore,
-    ),
+function captureCompleteTelemetry(
+  mode: ProjectStateMode,
+  exitCode: number,
+  durationMs: number,
+): Effect.Effect<void> {
+  return captureCompleteTelemetryEffect(exitCode, durationMs).pipe(
+    Effect.provide(completeAnalyticsLayer(mode)),
+    Effect.timeout(COMPLETE_TELEMETRY_TIMEOUT),
+    Effect.ignore,
   );
 }
 
 /**
  * Runs before Effect's CLI argv parser, returning `false` immediately when `deps.argv[0]`
- * isn't a completion request, otherwise fully handling it and returning `true`. Async only
- * because it awaits `deps.captureTelemetry` before `deps.exit(...)`, so the capture actually
+ * isn't a completion request, otherwise fully handling it and returning `true`. Runs
+ * `deps.captureTelemetry` to completion before `deps.exit(...)`, so the capture actually
  * reaches PostHog before the process exits.
  */
-export async function tryComplete(deps: CompleteDeps): Promise<boolean> {
+export const tryComplete = Effect.fn("cli.complete")(function* (deps: CompleteDeps) {
   if (deps.argv[0] !== "__complete" && deps.argv[0] !== "__completeNoDesc") return false;
 
-  const startedAt = Date.now();
+  const startedAt = yield* Clock.currentTimeMillis;
   const response = respondToComplete(deps.root, deps.argv);
   if (response === undefined) {
     if (deps.routingFailure !== undefined) {
@@ -1156,27 +1202,28 @@ export async function tryComplete(deps: CompleteDeps): Promise<boolean> {
         : Cause.pretty(deps.routingFailure);
       deps.stderrWrite(`${message}\n`);
     }
-    await deps.captureTelemetry(1, Date.now() - startedAt);
+    yield* deps.captureTelemetry(1, (yield* Clock.currentTimeMillis) - startedAt);
     deps.exit(1);
     return true;
   }
 
   const includeDescriptions = resolveIncludeDescriptions(deps.argv[0], deps.env);
   deps.stdoutWrite(formatCompletionResponse(response, includeDescriptions));
-  await deps.captureTelemetry(0, Date.now() - startedAt);
+  yield* deps.captureTelemetry(0, (yield* Clock.currentTimeMillis) - startedAt);
   deps.exit(0);
   return true;
-}
+});
 
 export function defaultCompleteDeps(
   root?: Command.Command.Any,
   routingFailure?: Cause.Cause<unknown>,
+  projectState: ProjectStateMode = "legacy",
 ): CompleteDeps {
   return {
     root,
     routingFailure,
     argv: process.argv.slice(2),
-    env: process.env,
+    env: ambientEnvironment(),
     stdoutWrite: (message) => {
       process.stdout.write(message);
     },
@@ -1186,6 +1233,7 @@ export function defaultCompleteDeps(
     exit: (code) => {
       process.exit(code);
     },
-    captureTelemetry: captureCompleteTelemetry,
+    captureTelemetry: (exitCode, durationMs) =>
+      captureCompleteTelemetry(projectState, exitCode, durationMs),
   };
 }

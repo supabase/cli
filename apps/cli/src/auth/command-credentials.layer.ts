@@ -14,7 +14,7 @@ import type { PlatformError } from "effect/PlatformError";
 
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { normalizeKeyringToken } from "../shared/auth/keyring-token.ts";
-import { DebugLogger, type DebugLoggerShape } from "../command-internal/debug-logger.service.ts";
+import { DebugLogger, type DebugLoggerShape } from "../shared/output/debug-logger.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { ACCESS_TOKEN_PATTERN, validateAccessToken } from "./access-token.ts";
 import { CommandCredentials } from "./command-credentials.service.ts";
@@ -52,9 +52,9 @@ const tryKeyringRead = (
       if (value && value.length > 0) return Option.some(normalizeKeyringToken(value));
 
       if (platform === "win32") {
-        const goWindowsValue = readGoWindowsTarget(module, account);
-        if (goWindowsValue && goWindowsValue.length > 0) {
-          return Option.some(normalizeKeyringToken(goWindowsValue));
+        const windowsValue = readWindowsTarget(module, account);
+        if (windowsValue && windowsValue.length > 0) {
+          return Option.some(normalizeKeyringToken(windowsValue));
         }
       }
 
@@ -72,7 +72,7 @@ const tryKeyringWrite = (
   Effect.try({
     try: () => {
       if (platform === "win32") {
-        return writeGoWindowsTarget(module, account, token);
+        return writeWindowsTarget(module, account, token);
       }
 
       const entry = new module.Entry(KEYRING_SERVICE, account);
@@ -99,7 +99,7 @@ const tryKeyringDelete = (
       }
 
       if (platform === "win32" && probeWindowsTarget(module, account) !== "absent") {
-        deleted = deleteGoWindowsTarget(module, account) || deleted;
+        deleted = deleteWindowsTarget(module, account) || deleted;
       }
 
       return deleted;
@@ -115,15 +115,15 @@ function readEntryPassword(entry: KeyringEntry): string | null {
   }
 }
 
-function goWindowsCredentialTarget(account: string): string {
+function windowsCredentialTarget(account: string): string {
   return `${KEYRING_SERVICE}:${account}`;
 }
 
-function readGoWindowsTarget(module: KeyringModule, account: string): string | null {
+function readWindowsTarget(module: KeyringModule, account: string): string | null {
   try {
-    const credentials = module.findCredentials(KEYRING_SERVICE, goWindowsCredentialTarget(account));
+    const credentials = module.findCredentials(KEYRING_SERVICE, windowsCredentialTarget(account));
     const credential = credentials.find((item) => item.account === account);
-    return credential ? normalizeGoWindowsPassword(credential.password) : null;
+    return credential ? normalizeWindowsPassword(credential.password) : null;
   } catch {
     return null;
   }
@@ -135,7 +135,7 @@ type WindowsTargetProbe = "present" | "absent" | "unknown";
 
 function probeWindowsTarget(module: KeyringModule, account: string): WindowsTargetProbe {
   try {
-    const credentials = module.findCredentials(KEYRING_SERVICE, goWindowsCredentialTarget(account));
+    const credentials = module.findCredentials(KEYRING_SERVICE, windowsCredentialTarget(account));
     // An empty password is an orphaned placeholder, not a real credential.
     const credential = credentials.find(
       (item) => item.account === account && item.password.length > 0,
@@ -157,7 +157,7 @@ const deleteProbedWindowsTarget = <E>(
   Effect.gen(function* () {
     const result = yield* Effect.try(() =>
       module.Entry.withTarget(
-        goWindowsCredentialTarget(account),
+        windowsCredentialTarget(account),
         KEYRING_SERVICE,
         account,
       ).deleteCredential(),
@@ -167,11 +167,11 @@ const deleteProbedWindowsTarget = <E>(
     return yield* Effect.fail(onFailure(cause));
   });
 
-function normalizeGoWindowsPassword(value: string): string {
+function normalizeWindowsPassword(value: string): string {
   const direct = normalizeKeyringToken(value);
   if (ACCESS_TOKEN_PATTERN.test(direct)) return direct;
 
-  // Go writes Windows CredentialBlob values as raw UTF-8 bytes, which the keyring search API
+  // Legacy Windows CredentialBlob values are raw UTF-8 bytes, which the keyring search API
   // can surface packed into UTF-16 code units; unpack each back into the original byte sequence.
   const bytes: number[] = [];
   for (let index = 0; index < value.length; index += 1) {
@@ -183,10 +183,10 @@ function normalizeGoWindowsPassword(value: string): string {
   return Buffer.from(bytes).toString("utf8");
 }
 
-function writeGoWindowsTarget(module: KeyringModule, account: string, token: string): boolean {
+function writeWindowsTarget(module: KeyringModule, account: string, token: string): boolean {
   try {
     const entry = module.Entry.withTarget(
-      goWindowsCredentialTarget(account),
+      windowsCredentialTarget(account),
       KEYRING_SERVICE,
       account,
     );
@@ -197,10 +197,10 @@ function writeGoWindowsTarget(module: KeyringModule, account: string, token: str
   }
 }
 
-function deleteGoWindowsTarget(module: KeyringModule, account: string): boolean {
+function deleteWindowsTarget(module: KeyringModule, account: string): boolean {
   try {
     const entry = module.Entry.withTarget(
-      goWindowsCredentialTarget(account),
+      windowsCredentialTarget(account),
       KEYRING_SERVICE,
       account,
     );
@@ -298,12 +298,9 @@ const deleteAllKeyringEntries = (
   Effect.sync(() => {
     if (platform === "win32") {
       try {
-        const entries = module.findCredentials(
-          KEYRING_SERVICE,
-          `${goWindowsCredentialTarget("")}*`,
-        );
+        const entries = module.findCredentials(KEYRING_SERVICE, `${windowsCredentialTarget("")}*`);
         for (const { account } of entries) {
-          deleteGoWindowsTarget(module, account);
+          deleteWindowsTarget(module, account);
         }
       } catch {
         // best-effort
@@ -379,53 +376,55 @@ const readFallbackFile = (
 /**
  * Resolves an access token for an explicit profile account: env token → keyring (profile
  * account, then legacy account) → fallback file. Used by commands that reconcile a
- * pflag-effective profile after `CommandCredentials` already captured a different one at
+ * profile resolved from raw argv after `CommandCredentials` already captured a different one at
  * construction. Fails with the same validation error as `resolveAccessToken` and propagates
  * credential storage failures.
  */
-export const accessTokenForProfile = Effect.fnUntraced(function* (profileAccount: string) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const runtimeInfo = yield* RuntimeInfo;
-  const cliSettings = yield* CommandSettings;
-  const configProvider = yield* ConfigProvider.ConfigProvider;
-  // Keeps the logger optional — a no-op outside the real CLI tree.
-  const debugLogger: DebugLoggerShape = Option.getOrElse(
-    yield* Effect.serviceOption(DebugLogger),
-    () => ({ debug: () => Effect.void, http: () => Effect.void }),
-  );
+export const accessTokenForProfile = Effect.fn("CommandCredentials.accessTokenForProfile")(
+  function* (profileAccount: string) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const runtimeInfo = yield* RuntimeInfo;
+    const cliSettings = yield* CommandSettings;
+    const configProvider = yield* ConfigProvider.ConfigProvider;
+    // Keeps the logger optional — a no-op outside the real CLI tree.
+    const debugLogger: DebugLoggerShape = Option.getOrElse(
+      yield* Effect.serviceOption(DebugLogger),
+      () => ({ debug: () => Effect.void, http: () => Effect.void }),
+    );
 
-  if (Option.isSome(cliSettings.accessToken)) {
-    yield* debugLogger.debug("Using access token from env var...");
-    yield* validateAccessToken(Redacted.value(cliSettings.accessToken.value));
-    return Option.some(cliSettings.accessToken.value);
-  }
+    if (Option.isSome(cliSettings.accessToken)) {
+      yield* debugLogger.debug("Using access token from env var...");
+      yield* validateAccessToken(Redacted.value(cliSettings.accessToken.value));
+      return Option.some(cliSettings.accessToken.value);
+    }
 
-  const noKeyring = yield* Config.option(Config.string("SUPABASE_NO_KEYRING")).parse(
-    configProvider,
-  );
-  const keyringModule = yield* loadKeyringModule(fs, noKeyring);
-  const keyringValue = yield* readKeyringForAccount(
-    keyringModule,
-    profileAccount,
-    runtimeInfo.platform,
-    debugLogger,
-  );
-  if (Option.isSome(keyringValue)) {
-    yield* validateAccessToken(keyringValue.value);
-    return Option.some(Redacted.make(keyringValue.value));
-  }
+    const noKeyring = yield* Config.option(Config.String("SUPABASE_NO_KEYRING")).parse(
+      configProvider,
+    );
+    const keyringModule = yield* loadKeyringModule(fs, noKeyring);
+    const keyringValue = yield* readKeyringForAccount(
+      keyringModule,
+      profileAccount,
+      runtimeInfo.platform,
+      debugLogger,
+    );
+    if (Option.isSome(keyringValue)) {
+      yield* validateAccessToken(keyringValue.value);
+      return Option.some(Redacted.make(keyringValue.value));
+    }
 
-  const fallbackPath = path.join(cliSettings.supabaseHome, "access-token");
-  const fileValue = yield* readFallbackFile(fs, fallbackPath);
-  if (Option.isSome(fileValue)) {
-    yield* debugLogger.debug(`Using access token from file: ${fallbackPath}`);
-    yield* validateAccessToken(fileValue.value);
-    return Option.some(Redacted.make(fileValue.value));
-  }
+    const fallbackPath = path.join(cliSettings.supabaseHome, "access-token");
+    const fileValue = yield* readFallbackFile(fs, fallbackPath);
+    if (Option.isSome(fileValue)) {
+      yield* debugLogger.debug(`Using access token from file: ${fallbackPath}`);
+      yield* validateAccessToken(fileValue.value);
+      return Option.some(Redacted.make(fileValue.value));
+    }
 
-  return Option.none<Redacted.Redacted<string>>();
-});
+    return Option.none<Redacted.Redacted<string>>();
+  },
+);
 
 const makeCommandCredentials = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -433,7 +432,7 @@ const makeCommandCredentials = Effect.gen(function* () {
   const runtimeInfo = yield* RuntimeInfo;
   const cliSettings = yield* CommandSettings;
   const configProvider = yield* ConfigProvider.ConfigProvider;
-  const noKeyring = yield* Config.option(Config.string("SUPABASE_NO_KEYRING")).parse(
+  const noKeyring = yield* Config.option(Config.String("SUPABASE_NO_KEYRING")).parse(
     configProvider,
   );
   const debugLogger = yield* DebugLogger;
@@ -444,6 +443,7 @@ const makeCommandCredentials = Effect.gen(function* () {
   const fallbackPath = path.join(fallbackDir, "access-token");
 
   const keyringModule = yield* loadKeyringModule(fs, noKeyring);
+  yield* Effect.annotateCurrentSpan({ "keyring.enabled": Option.isSome(keyringModule) });
 
   const readKeyring = readKeyringForAccount(
     keyringModule,
@@ -459,6 +459,7 @@ const makeCommandCredentials = Effect.gen(function* () {
       if (Option.isSome(cliSettings.accessToken)) {
         yield* debugLogger.debug("Using access token from env var...");
         yield* validateAccessToken(Redacted.value(cliSettings.accessToken.value), "env");
+        yield* Effect.annotateCurrentSpan({ "credential.source": "env" });
         return Option.some(cliSettings.accessToken.value);
       }
 
@@ -466,6 +467,7 @@ const makeCommandCredentials = Effect.gen(function* () {
       const keyringValue = yield* readKeyring;
       if (Option.isSome(keyringValue)) {
         yield* validateAccessToken(keyringValue.value, "stored");
+        yield* Effect.annotateCurrentSpan({ "credential.source": "keyring" });
         return Option.some(Redacted.make(keyringValue.value));
       }
 
@@ -473,29 +475,34 @@ const makeCommandCredentials = Effect.gen(function* () {
       if (Option.isSome(fileValue)) {
         yield* debugLogger.debug(`Using access token from file: ${fallbackPath}`);
         yield* validateAccessToken(fileValue.value, "stored");
+        yield* Effect.annotateCurrentSpan({ "credential.source": "file" });
         return Option.some(Redacted.make(fileValue.value));
       }
 
+      yield* Effect.annotateCurrentSpan({ "credential.source": "none" });
       return Option.none();
-    }),
+    }).pipe(Effect.withSpan("CommandCredentials.getAccessToken")),
 
-    saveAccessToken: (token: string) =>
-      Effect.gen(function* () {
-        yield* validateAccessToken(token);
-        if (Option.isSome(keyringModule)) {
-          const ok = yield* tryKeyringWrite(
-            keyringModule.value,
-            profileAccount,
-            token,
-            runtimeInfo.platform,
-          );
-          if (ok) return;
+    saveAccessToken: Effect.fn("CommandCredentials.saveAccessToken")(function* (token: string) {
+      yield* validateAccessToken(token);
+      if (Option.isSome(keyringModule)) {
+        const ok = yield* tryKeyringWrite(
+          keyringModule.value,
+          profileAccount,
+          token,
+          runtimeInfo.platform,
+        );
+        if (ok) {
+          yield* Effect.annotateCurrentSpan({ "credential.destination": "keyring" });
+          return;
         }
-        // The containing directory is world-readable (0755); only the token file itself must
-        // be private (0600).
-        yield* fs.makeDirectory(fallbackDir, { recursive: true, mode: 0o755 });
-        yield* fs.writeFileString(fallbackPath, token, { mode: 0o600 });
-      }),
+      }
+      // The containing directory is world-readable (0755); only the token file itself must
+      // be private (0600).
+      yield* fs.makeDirectory(fallbackDir, { recursive: true, mode: 0o755 });
+      yield* fs.writeFileString(fallbackPath, token, { mode: 0o600 });
+      yield* Effect.annotateCurrentSpan({ "credential.destination": "file" });
+    }),
 
     deleteAccessToken: Effect.gen(function* () {
       // Removes the fallback token file first; a missing file is ignored, but any other
@@ -531,24 +538,21 @@ const makeCommandCredentials = Effect.gen(function* () {
       if (outcome === "notFound") {
         return yield* new NotLoggedInError({ message: NOT_LOGGED_IN_MESSAGE });
       }
-    }),
+    }).pipe(Effect.withSpan("CommandCredentials.deleteAccessToken")),
 
     deleteAllProjectCredentials: Effect.gen(function* () {
       if (Option.isNone(keyringModule)) return;
       yield* deleteAllKeyringEntries(keyringModule.value, runtimeInfo.platform);
-    }),
+    }).pipe(Effect.withSpan("CommandCredentials.deleteAllProjectCredentials")),
 
-    deleteProjectCredential: (projectRef: string) =>
-      Effect.gen(function* () {
-        // WSL or no keyring module: no-op success, nothing to delete.
-        if (Option.isNone(keyringModule)) return false;
-        return yield* deleteKeyringEntryStrict(
-          keyringModule.value,
-          projectRef,
-          runtimeInfo.platform,
-        );
-      }),
+    deleteProjectCredential: Effect.fn("CommandCredentials.deleteProjectCredential")(function* (
+      projectRef: string,
+    ) {
+      // WSL or no keyring module: no-op success, nothing to delete.
+      if (Option.isNone(keyringModule)) return false;
+      return yield* deleteKeyringEntryStrict(keyringModule.value, projectRef, runtimeInfo.platform);
+    }),
   });
-});
+}).pipe(Effect.withSpan("CommandCredentials.load"));
 
 export const commandCredentialsLayer = Layer.effect(CommandCredentials, makeCommandCredentials);

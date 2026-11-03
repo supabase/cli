@@ -1,5 +1,5 @@
 import { Effect, FileSystem, Option } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import { emitSuccessTrailer } from "../../shared/cli/success-trailer.ts";
 import { Output } from "../../shared/output/output.service.ts";
@@ -13,9 +13,15 @@ import {
   type ContainerIdName,
 } from "../../command-internal/docker-lifecycle.ts";
 import { dockerRemoveAll } from "../../command-internal/docker-remove-all.ts";
+import { holdProjectLifecycleLock } from "../../command-internal/project-lifecycle-lock.ts";
 import { cleanupStartSecrets } from "../../command-internal/start-secrets-cleanup.ts";
+import { CliConfigValueError } from "../../config/cli-config.errors.ts";
+import { loadResolvedConfigSurfacingValueErrors } from "../../command-internal/config-value-passthrough.ts";
 import { resolveLocalConfigValues } from "../../command-internal/local-config-values.ts";
-import { loadLocalProjectContext } from "../../command-internal/local-project-context.ts";
+import {
+  loadLocalProjectContext,
+  recordLocalProjectOrioleDbTelemetry,
+} from "../../command-internal/local-project-context.ts";
 import { validateWorkdirIsDirectory } from "../../command-internal/workdir-validation.ts";
 import type { StopFlags } from "./stop.command.ts";
 import {
@@ -33,7 +39,7 @@ import {
  * Resolves the Docker label filter `stop` searches on: `--all` bypasses config with an empty
  * filter; a non-empty `--project-id` (an empty string falls through like an absent flag)
  * overrides the resolved id directly, unsanitized; otherwise it resolves via config (env → toml
- * → workdir basename, see `resolveProjectEnvironmentValues`), sanitized with `sanitizeProjectId`
+ * → workdir basename, see `loadCliProjectEnvFiles`), sanitized with `sanitizeProjectId`
  * to match the string the Docker label `start` writes.
  */
 const resolveSearchProjectIdFilter = Effect.fn("stop.resolveSearchProjectIdFilter")(function* (
@@ -47,31 +53,34 @@ const resolveSearchProjectIdFilter = Effect.fn("stop.resolveSearchProjectIdFilte
     return flags.projectId.value;
   }
 
+  yield* loadResolvedConfigSurfacingValueErrors(
+    cliSettings.workdir,
+    (message) => new StopConfigLoadError({ message }),
+  );
   // `loadLocalProjectContext` covers the config-load/env/project-id resolution sequence; see its
   // own doc comment (workdir validation is handled separately, by `stop`'s own call above).
   const context = yield* loadLocalProjectContext(
     cliSettings.workdir,
     (message) => new StopConfigLoadError({ message }),
   );
+  yield* recordLocalProjectOrioleDbTelemetry(context);
 
   // Runs full config validation before touching Docker, unlike the `--all`/`--project-id`
   // branches above which bypass config loading. `resolveLocalConfigValues` is reused purely for
-  // its throwing side effects — its resolved URLs/keys are discarded — giving `stop` the same
+  // its validation failures — its resolved URLs/keys are discarded — giving `stop` the same
   // config-validation coverage `status` already has.
-  yield* Effect.try({
-    try: () =>
-      resolveLocalConfigValues(
-        context.config,
-        context.hostname,
-        cliSettings.workdir,
-        context.projectEnvValues,
-        context.loaded?.document,
-      ),
-    catch: (cause) =>
-      new StopConfigLoadError({
-        message: cause instanceof Error ? cause.message : String(cause),
-      }),
-  });
+  yield* resolveLocalConfigValues(
+    context.config,
+    context.hostname,
+    cliSettings.workdir,
+    context.resolvedConfig.loaded.document,
+  ).pipe(
+    Effect.mapError((cause) =>
+      cause instanceof CliConfigValueError
+        ? cause
+        : new StopConfigLoadError({ message: cause.message }),
+    ),
+  );
 
   return context.projectId;
 });
@@ -109,6 +118,9 @@ export const stop = Effect.fn("stop")(function* (flags: StopFlags) {
     // `--backup=false` alone is a no-op.
     const deleteVolumes = flags.noBackup;
     const filterValue = cliProjectFilterValue(searchProjectIdFilter);
+
+    // Held through the prune and its secret cleanup; `--all` excludes every other lifecycle command.
+    yield* holdProjectLifecycleLock(searchProjectIdFilter);
 
     // Printed directly (not via `output.task`'s debounced spinner) so it always appears — the
     // spinner's delay drops the message when Docker calls resolve faster than the threshold, as
@@ -149,6 +161,15 @@ export const stop = Effect.fn("stop")(function* (flags: StopFlags) {
       Effect.ensuring(
         Effect.suspend(() => cleanupStartSecrets(removedContainers, cliSettings.workdir)),
       ),
+      Effect.tap(() =>
+        Effect.annotateCurrentSpan({ "container.removed_count": removedContainers.length }),
+      ),
+      Effect.withSpan("stop.removeContainers", {
+        attributes: {
+          "stop.all_projects": searchProjectIdFilter.length === 0,
+          "stop.delete_volumes": deleteVolumes,
+        },
+      }),
     );
 
     if (output.format === "text") {
@@ -166,6 +187,8 @@ export const stop = Effect.fn("stop")(function* (flags: StopFlags) {
     if (output.format === "text") {
       const remainingVolumes = yield* listVolumesByLabel(spawner, filterValue).pipe(
         Effect.orElseSucceed(() => []),
+        Effect.tap((volumes) => Effect.annotateCurrentSpan({ "volume.count": volumes.length })),
+        Effect.withSpan("stop.listRemainingVolumes"),
       );
       if (remainingVolumes.length > 0) {
         const listVolumeCommand =
@@ -177,5 +200,5 @@ export const stop = Effect.fn("stop")(function* (flags: StopFlags) {
         );
       }
     }
-  }).pipe(Effect.ensuring(telemetryState.flush));
+  }).pipe(Effect.scoped, Effect.ensuring(telemetryState.flush));
 });

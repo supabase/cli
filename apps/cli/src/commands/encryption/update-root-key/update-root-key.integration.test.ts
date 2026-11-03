@@ -1,19 +1,33 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Schema } from "effect";
 
-import { mockOutput, mockStdin } from "../../../../tests/helpers/mocks.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   buildTestRuntime,
+  jsonResponse,
   VALID_REF,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { encryptionUpdateRootKey } from "./update-root-key.handler.ts";
 
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
 const ROOT_KEY_RESPONSE = { root_key: "new-key" };
+const ACTION = "Replace the project's root encryption key";
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
@@ -51,14 +65,16 @@ function setup(opts: SetupOpts = {}) {
       linkedProjectCache: linkedProjectCache.layer,
     }),
     mockStdin(opts.stdinIsTty ?? false, opts.pipedInput),
+    Layer.succeed(YesFlag, true),
+    Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
   );
   return { layer, out, api, telemetry, linkedProjectCache };
 }
 
-const baseFlags = { projectRef: Option.none<string>() };
+const baseFlags = { remote: Option.none(), projectRef: Option.none<string>() };
 
 describe("encryption update-root-key integration", () => {
-  it.live("reads a piped root key and PUTs it, printing the finished message to stderr", () => {
+  it.effect("reads a piped root key and PUTs it, printing the finished message to stderr", () => {
     const { layer, out, api } = setup({ pipedInput: "new-key" });
     return Effect.gen(function* () {
       yield* encryptionUpdateRootKey(baseFlags);
@@ -71,10 +87,73 @@ describe("encryption update-root-key integration", () => {
       expect(out.stderrText).toContain("Finished ");
       expect(out.stderrText).toContain("supabase root-key update");
       expect(out.stdoutText).toBe("\n");
+      assertPermissionDrift({
+        command: "encryption update-root-key",
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prompts for a masked root key when stdin is a TTY", () => {
+  it.effect("lists projects for the picker and fills the real linked-project cache", () => {
+    const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+    const api = mockCommandPlatformApi({
+      handler: (request) => {
+        const path = new URL(request.url).pathname;
+        if (path === "/v1/projects") {
+          return Effect.succeed(jsonResponse(request, 200, [projectResponse(VALID_REF)]));
+        }
+        if (path === `/v1/projects/${VALID_REF}`) {
+          return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
+        }
+        if (path === `/v1/projects/${VALID_REF}/pgsodium`) {
+          return Effect.succeed(jsonResponse(request, 200, ROOT_KEY_RESPONSE));
+        }
+        return Effect.succeed(jsonResponse(request, 404, { message: "unexpected request" }));
+      },
+    });
+    const cliSettings = mockCommandSettings({
+      workdir: tempRoot.current,
+      projectId: Option.none(),
+    });
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true }),
+        stdin: mockStdin(false, "new-key"),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      }),
+      Layer.succeed(YesFlag, true),
+      Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+    );
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* encryptionUpdateRootKey(baseFlags);
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        "GET https://api.supabase.com/v1/projects",
+        `PUT https://api.supabase.com/v1/projects/${VALID_REF}/pgsodium`,
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+      ]);
+      expect(api.requests[1]?.body).toEqual({ root_key: "new-key" });
+      expect(out.stderrText).toContain("Finished ");
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({
+        command: "encryption update-root-key",
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("prompts for a masked root key when stdin is a TTY", () => {
     const { layer, api } = setup({
       stdinIsTty: true,
       promptPasswordResponses: ["tty-key"],
@@ -86,7 +165,7 @@ describe("encryption update-root-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("sends an empty root key when piped stdin is empty", () => {
+  it.effect("sends an empty root key when piped stdin is empty", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* encryptionUpdateRootKey(baseFlags);
@@ -95,7 +174,7 @@ describe("encryption update-root-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits the updated config as a structured result in json mode", () => {
+  it.effect("emits the updated config as a structured result in json mode", () => {
     const { layer, out } = setup({ format: "json", pipedInput: "new-key" });
     return Effect.gen(function* () {
       yield* encryptionUpdateRootKey(baseFlags);
@@ -103,11 +182,13 @@ describe("encryption update-root-key integration", () => {
       expect(success?.message).toBe("");
       expect(success?.data).toEqual({ root_key: "new-key" });
       expect(out.stdoutText).toBe("");
-      expect(out.stderrText).toBe("");
+      expect(out.stderrText).toBe(
+        unverifiedTargetBanner() + `Confirmed by --yes: ${ACTION} on project ${VALID_REF}\n`,
+      );
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a result event in stream-json mode", () => {
+  it.effect("emits a result event in stream-json mode", () => {
     const { layer, out } = setup({ format: "stream-json", pipedInput: "new-key" });
     return Effect.gen(function* () {
       yield* encryptionUpdateRootKey(baseFlags);
@@ -116,7 +197,7 @@ describe("encryption update-root-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with a transport error when the network is down", () => {
+  it.effect("fails with a transport error when the network is down", () => {
     const { layer } = setup({ network: "fail", pipedInput: "new-key" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(encryptionUpdateRootKey(baseFlags));
@@ -129,7 +210,7 @@ describe("encryption update-root-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with an unexpected-status error on a 503", () => {
+  it.effect("fails with an unexpected-status error on a 503", () => {
     const { layer } = setup({ status: 503, pipedInput: "new-key" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(encryptionUpdateRootKey(baseFlags));
@@ -142,7 +223,7 @@ describe("encryption update-root-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("does not start a spinner in json mode on failure", () => {
+  it.effect("does not start a spinner in json mode on failure", () => {
     const { layer, out } = setup({ format: "json", status: 503, pipedInput: "new-key" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(encryptionUpdateRootKey(baseFlags));
@@ -151,7 +232,7 @@ describe("encryption update-root-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails when no project ref can be resolved", () => {
+  it.effect("fails when no project ref can be resolved", () => {
     const { layer } = setup({ projectId: Option.none(), pipedInput: "new-key" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(encryptionUpdateRootKey(baseFlags));
@@ -162,7 +243,7 @@ describe("encryption update-root-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes the linked-project cache and flushes telemetry on success", () => {
+  it.effect("writes the linked-project cache and flushes telemetry on success", () => {
     const { layer, telemetry, linkedProjectCache } = setup({ pipedInput: "new-key" });
     return Effect.gen(function* () {
       yield* encryptionUpdateRootKey(baseFlags);
@@ -171,7 +252,7 @@ describe("encryption update-root-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes the linked-project cache and flushes telemetry on failure", () => {
+  it.effect("writes the linked-project cache and flushes telemetry on failure", () => {
     const { layer, telemetry, linkedProjectCache } = setup({
       status: 503,
       pipedInput: "new-key",
@@ -183,4 +264,19 @@ describe("encryption update-root-key integration", () => {
       expect(linkedProjectCache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedConsent("encryption update-root-key", {
+  api: { response: { status: 200, body: ROOT_KEY_RESPONSE } },
+  invoke: () => ({
+    run: encryptionUpdateRootKey({
+      remote: Option.some({ _tag: "Ref", ref: VALID_REF }),
+      projectRef: Option.none(),
+    }).pipe(Effect.provide(mockStdin(false, "new-key"))),
+  }),
+});
+
+describeHostedTargetSelection("encryption update-root-key", {
+  respond: (request) => Effect.succeed(jsonResponse(request, 200, ROOT_KEY_RESPONSE)),
+  run: (flags) => encryptionUpdateRootKey(flags).pipe(Effect.provide(mockStdin(false, "new-key"))),
 });

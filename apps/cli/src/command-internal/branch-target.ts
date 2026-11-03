@@ -1,6 +1,6 @@
 import type { ApiClient, V1ListAllBranchesOutput } from "@supabase/api/effect";
 import { Duration, Effect, Option } from "effect";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import * as HttpClientError from "effect/http/HttpClientError";
 
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
 import { CommandPlatformApi } from "../auth/command-platform-api.service.ts";
@@ -10,6 +10,12 @@ import {
   type NetworkErrorFactory,
   type StatusErrorFactory,
 } from "./http-errors.ts";
+import { block } from "./command-permissions/model.ts";
+
+/** `findBranchName`'s branch listing. */
+export const branchTarget = block("branch-target", [
+  { operationId: "v1-list-all-branches", kind: "best-effort" },
+]);
 
 type BranchLookupBranches = typeof V1ListAllBranchesOutput.Type;
 
@@ -85,10 +91,7 @@ const acquireBranchLookupApi = Effect.fnUntraced(function* () {
   const factoryOption = yield* Effect.serviceOption(CommandPlatformApiFactory);
   if (Option.isNone(factoryOption)) return Option.none<ApiClient>();
 
-  return yield* factoryOption.value.make.pipe(
-    Effect.map(Option.some),
-    Effect.catch(() => Effect.succeed(Option.none<ApiClient>())),
-  );
+  return yield* factoryOption.value.make.pipe(Effect.option);
 });
 
 /**
@@ -109,7 +112,7 @@ export const BRANCH_LOOKUP_TIMEOUT = Duration.seconds(5);
  * timeout degrades like any other failure. Spinner cleanup runs via `Effect.ensuring` so it
  * still fires when the timeout interrupts the in-flight listing call.
  */
-export const findBranchName = Effect.fnUntraced(function* (
+export const findBranchName = Effect.fn("BranchTarget.findName")(function* (
   parentRef: string,
   linkedRef: string,
   options: { readonly spinnerLabel?: string } = {},
@@ -127,15 +130,20 @@ export const findBranchName = Effect.fnUntraced(function* (
         : undefined;
     return yield* api.v1
       .listAllBranches({ ref: parentRef })
-      .pipe(Effect.map(Option.some), Effect.ensuring(task?.clear() ?? Effect.void));
+      .pipe(Effect.map(Option.some), Effect.ensuring(task?.clear ?? Effect.void));
   }).pipe(
     Effect.timeout(BRANCH_LOOKUP_TIMEOUT),
     // Any failure or the timeout above degrades to `None`; this helper never fails on a
     // flaky or slow lookup.
-    Effect.catch(() => Effect.succeed(Option.none<BranchLookupBranches>())),
+    Effect.orElseSucceed(() => Option.none<BranchLookupBranches>()),
   );
 
-  return Option.isSome(branchesOption)
+  const name = Option.isSome(branchesOption)
     ? branchesOption.value.find((branch) => branch.project_ref === linkedRef)?.name
     : undefined;
+  yield* Effect.annotateCurrentSpan(
+    "branch_lookup.outcome",
+    Option.isNone(branchesOption) ? "unavailable" : name === undefined ? "not_found" : "found",
+  );
+  return name;
 });

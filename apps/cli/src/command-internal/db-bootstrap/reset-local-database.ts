@@ -1,8 +1,9 @@
 /**
  * Resets the local database in-process — shared by `db reset`'s handler and the `db schema
  * declarative`/`sync` local-reset paths, so neither needs to shell out to a separate process.
- * `db reset`'s own handler is the only caller that ever passes a non-empty
- * `version`/`seedFlags` override; the declarative callers always want the plain full reset.
+ * `db reset`'s own handler is the only caller that ever passes a non-empty `version`; the
+ * declarative callers always want the plain full reset. Seeding follows the resolved config:
+ * `--no-seed`, `--sql-paths` and `SUPABASE_DB_SEED_ENABLED` all arrive through it.
  *
  * Always prints its own two stderr lines via `output.raw`, regardless of `output.format`, but
  * never the JSON `output.success(...)` envelope — that belongs to a top-level `db reset`
@@ -10,9 +11,9 @@
  */
 
 import { Data, Effect, FileSystem, Option, Path } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
-import { detectGitBranch } from "../../shared/git/git-branch.ts";
+import { branchClause, detectGitBranch } from "../../shared/git/git-branch.ts";
 import {
   DebugFlag,
   NetworkIdFlag,
@@ -23,27 +24,21 @@ import { Output } from "../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import {
   actionability,
+  causeDeclaration,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
 import { aqua, yellow } from "../colors.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
-import { checkDbToml, loadProjectEnv, readDbToml } from "../db-config.toml-read.ts";
-import { DbConnection } from "../db-connection.service.ts";
+import { checkDbToml, loadProjectEnvValues, readDbToml } from "../db-config.toml-read.ts";
 import { loadLocalProjectContext } from "../local-project-context.ts";
-import { migrateAndSeed } from "../migrate-and-seed.ts";
 import { hasConfiguredBuckets, seedBucketsRun } from "../seed-buckets.ts";
 import { awaitStorageReady } from "./await-storage-ready.ts";
-import { resolveResetSeedConfig } from "./db-setup.ts";
 import { buildLocalDbContainerInputs } from "./local-container-inputs.ts";
 import { isLocalDbRunning } from "./local-db-running.ts";
 import { recreateLocalDatabase } from "./recreate-local-database.ts";
 import { currentStackBackend } from "../stack-backend.ts";
-import {
-  optionalCatalogConfigFromStatus,
-  stackLocalDatabaseConn,
-  stackOpenReadyProject,
-} from "../stack-local-database.ts";
+import { stackOpenReadyProject } from "../stack-local-database.ts";
 import {
   classifyStorageCapability,
   describeStorageCapability,
@@ -52,7 +47,13 @@ import {
   stackStorageEndpointFor,
 } from "../stack-storage.ts";
 import { loadStackConfig } from "../stack-config.ts";
-import { StackCatalogSetup } from "../stack-catalog-setup.ts";
+import { readSelectionOrBundled } from "../stack-lock.ts";
+import { catalogDatabaseServices, StackCatalogSetup } from "../stack-catalog-setup.ts";
+import {
+  initializeStackDatabase,
+  projectCatalogOverlay,
+  StackBootstrapError,
+} from "../stack-bootstrap.ts";
 
 /** The local database container is not running. */
 class ResetLocalDbNotRunningError extends Data.TaggedError("ResetLocalDbNotRunningError")<{
@@ -66,9 +67,10 @@ class ResetLocalDbNotRunningError extends Data.TaggedError("ResetLocalDbNotRunni
 class ResetLocalDbFailedError extends Data.TaggedError("ResetLocalDbFailedError")<{
   readonly message: string;
   readonly suggestion?: string;
+  readonly cause?: unknown;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.dbConnection;
+    return causeDeclaration(this.cause) ?? actionability.dbConnection;
   }
 }
 
@@ -79,21 +81,17 @@ const toLogMessage = (version: string): string =>
 export interface ResetLocalDatabaseInput {
   /** The resolved reset migration version (`""` for every pending migration, `db reset`'s default). */
   readonly version: string;
-  /** `db reset`'s `--no-seed`/`--sql-paths` — see `resolveResetSeedConfig`. */
-  readonly seedFlags: { readonly noSeed: boolean; readonly sqlPaths: ReadonlyArray<string> };
 }
 
-const PLAIN_FULL_RESET: ResetLocalDatabaseInput = {
-  version: "",
-  seedFlags: { noSeed: false, sqlPaths: [] },
-};
+const PLAIN_FULL_RESET: ResetLocalDatabaseInput = { version: "" };
 
 const notRunning = () =>
   new ResetLocalDbNotRunningError({
     message: `${aqua("supabase start")} is not running.`,
   });
 
-const resetFailed = (message: string) => new ResetLocalDbFailedError({ message });
+const resetFailed = (message: string, cause?: unknown) =>
+  new ResetLocalDbFailedError({ message, ...(cause === undefined ? {} : { cause }) });
 
 const suggestionOf = (error: unknown): string | undefined =>
   error instanceof StackStorageUnavailableError || error instanceof StackStorageCapabilityError
@@ -101,7 +99,7 @@ const suggestionOf = (error: unknown): string | undefined =>
     : undefined;
 
 /** Resets the local database in-process. See this module's own header for the full design rationale. */
-export const resetLocalDatabase = Effect.fnUntraced(function* (
+export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(function* (
   input: ResetLocalDatabaseInput = PLAIN_FULL_RESET,
 ) {
   const backend = yield* currentStackBackend;
@@ -113,82 +111,111 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
   const workdir = cliSettings.workdir;
   // Load the project env first so a `SUPABASE_EXPERIMENTAL` set only in `supabase/.env` is
   // honored by the experimental gate below.
-  const projectEnv = yield* loadProjectEnv(fs, path, workdir);
+  const projectEnv = yield* loadProjectEnvValues(fs, path, workdir);
   const yes = yield* resolveYesWithProjectEnv(projectEnv);
   const experimental = yield* resolveExperimentalWithProjectEnv(projectEnv);
 
   // Abort on a bad config before wiping the local database.
   yield* checkDbToml(fs, path, workdir);
+  yield* Effect.annotateCurrentSpan("stack.backend", backend.kind);
 
   if (backend.kind === "stack") {
     const opened = yield* stackOpenReadyProject;
     if (Option.isNone(opened))
-      return yield* Effect.fail(
-        new ResetLocalDbNotRunningError({ message: "The local stack is not running." }),
-      );
+      return yield* new ResetLocalDbNotRunningError({ message: "The local stack is not running." });
     const catalog = yield* Effect.serviceOption(StackCatalogSetup);
     if (Option.isNone(catalog)) return yield* resetFailed("stack catalog setup is unavailable");
-    const stackConfig = yield* loadStackConfig(workdir).pipe(
-      Effect.mapError((cause) => resetFailed(cause.message)),
+    const config = yield* loadStackConfig(workdir, { selection: readSelectionOrBundled }).pipe(
+      Effect.mapError((cause) => resetFailed(cause.message, cause)),
     );
     const toml = yield* readDbToml(fs, path, workdir);
-    const runningStatus = yield* opened.value.stack.status.pipe(
+    const databaseStatus = yield* opened.value.database.status.pipe(
       Effect.mapError((cause) => resetFailed(`failed to inspect stack: ${cause.message}`)),
     );
-    const optionalConfig = optionalCatalogConfigFromStatus(stackConfig, runningStatus);
-    yield* output.raw(`Resetting local database${toLogMessage(input.version)}\n`, "stderr");
-    yield* opened.value.stack.resetDatabase.pipe(
-      Effect.catchTag("StackNotRunningError", () =>
-        Effect.fail(
-          new ResetLocalDbNotRunningError({ message: "The local stack is not running." }),
+    if (databaseStatus.config.service !== "database")
+      return yield* resetFailed("the local stack primary service is not a database");
+    const composition = yield* opened.value.stack.composition.describe.pipe(
+      Effect.mapError((cause) =>
+        resetFailed(`failed to inspect stack composition: ${cause.message}`),
+      ),
+    );
+    const members = yield* Effect.forEach(composition.members, ({ id }) =>
+      opened.value.stack.services
+        .get(id)
+        .pipe(
+          Effect.mapError((cause) =>
+            resetFailed(`failed to inspect stack service: ${cause.message}`),
+          ),
+        ),
+    );
+    // A database-only composition is the `db start` overlay, which provisions schemas from config;
+    // a full stack keeps its saved members so `stack start --exclude` choices hold.
+    const databaseServices = members.every((member) => member.service === "database")
+      ? (["auth", "realtime", "storage"] as const).filter(
+          (service) => config.source[service].enabled,
+        )
+      : catalogDatabaseServices(members);
+    // The one-shots run the artifacts the saved services were created with.
+    const savedPins = yield* Effect.forEach(members, (member) =>
+      member.status.pipe(
+        Effect.map(({ config: saved }) => [saved.service, saved.pin] as const),
+        Effect.mapError((cause) =>
+          resetFailed(`failed to inspect stack service: ${cause.message}`),
         ),
       ),
-      Effect.mapError((cause) => resetFailed(`failed to reset local database: ${cause.message}`)),
     );
-    yield* catalog.value
-      .apply({
-        target: {
-          kind: "live",
-          stack: opened.value.stack,
-          projectRoot: workdir,
-          config: stackConfig,
-        },
-        optionalConfig,
-        overlay: {
-          webhooks: "config",
-          webhooksEnabled: toml.webhooksEnabled,
-          apiAutoExposeNewTables: toml.baseline.apiAutoExposeNewTables,
-          vault: toml.vault,
-          workdir,
-        },
-      })
-      .pipe(Effect.mapError((cause) => resetFailed(cause.message)));
-    const dbConn = yield* DbConnection;
-    const conn = yield* stackLocalDatabaseConn.pipe(
-      Effect.mapError((cause) => new ResetLocalDbNotRunningError({ message: cause.message })),
-    );
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        const session = yield* dbConn
-          .connect(conn, { isLocal: true, dnsResolver: "native" })
-          .pipe(
-            Effect.mapError((cause) =>
-              resetFailed(`failed to connect after reset: ${cause.message}`),
-            ),
-          );
-        yield* migrateAndSeed(session, fs, path, workdir, input.version, {
-          migrationsEnabled: toml.migrationsEnabled,
-          seed: resolveResetSeedConfig(toml.seed, input.seedFlags, path),
-          experimental,
-          pgDeltaEnabled: toml.pgDelta.enabled,
-          schemaPaths: toml.schemaPaths,
-          localDatabaseWebhooksEnabled: toml.webhooksEnabled,
-        }).pipe(Effect.mapError((cause) => resetFailed(cause.message)));
-      }),
-    );
-    const status = yield* opened.value.stack.status.pipe(
+    yield* output.raw(`Resetting local database${toLogMessage(input.version)}\n`, "stderr");
+    yield* Effect.gen(function* () {
+      yield* opened.value.stack.composition.stop.pipe(
+        Effect.mapError((cause) =>
+          resetFailed(`failed to stop local stack: ${cause.message}`, cause),
+        ),
+      );
+      yield* opened.value.database.resetData.pipe(
+        Effect.mapError((cause) =>
+          resetFailed(`failed to reset local database: ${cause.message}`, cause),
+        ),
+      );
+      yield* opened.value.database.start.pipe(
+        Effect.mapError((cause) =>
+          resetFailed(`failed to start local database: ${cause.message}`, cause),
+        ),
+      );
+      yield* opened.value.database.ready.pipe(
+        Effect.mapError((cause) =>
+          resetFailed(`failed to ready local database: ${cause.message}`, cause),
+        ),
+      );
+    }).pipe(Effect.withSpan("DbBootstrap.resetStackDatabase"));
+    yield* initializeStackDatabase({
+      target: {
+        stack: opened.value.stack,
+        database: opened.value.database,
+        databaseServices,
+        selection: { ...config.selection, ...Object.fromEntries(savedPins) },
+      },
+      overlay: projectCatalogOverlay(toml, workdir),
+      migrations: {
+        workdir,
+        toml,
+        experimental,
+        version: input.version,
+      },
+    }).pipe(
+      Effect.provideService(StackCatalogSetup, catalog.value),
       Effect.mapError((cause) =>
-        resetFailed(`failed to inspect stack after reset: ${cause.message}`),
+        !(cause instanceof StackBootstrapError)
+          ? resetFailed(cause.message)
+          : cause.reason === "unavailable"
+            ? new ResetLocalDbNotRunningError({ message: cause.message })
+            : cause.reason === "connect"
+              ? resetFailed(`failed to connect after reset: ${cause.message}`)
+              : resetFailed(cause.message),
+      ),
+    );
+    yield* opened.value.stack.composition.start.pipe(
+      Effect.mapError((cause) =>
+        resetFailed(`failed to start local stack services: ${cause.message}`),
       ),
     );
     // Bucket creation and object seeding are owned by the CLI, not the stack runtime; the
@@ -196,43 +223,50 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
     // waits for `ready`. See docs/stack-commands.md#storage-and-bucket-seeding.
     const skipSeeding = (
       reason: string,
-      nextStep = "Run supabase seed buckets --local once Storage is available.",
+      nextStep = "Run supabase seed buckets once Storage is available.",
     ) =>
       output.raw(
         `${yellow("WARNING:")} skipped seeding storage buckets: ${reason} ${nextStep}\n`,
         "stderr",
       );
-    const capability = status.capabilities.find((entry) => entry.name === "storage");
+    const storage = members.find((member) => member.service === "storage");
     // The database is already rebuilt, so any typed seeding failure only warns; defects and
     // interruption still propagate.
     yield* Effect.gen(function* () {
       const context = yield* loadLocalProjectContext(workdir, (message) => resetFailed(message));
       if (!hasConfiguredBuckets(context.config)) return;
+      const capability = storage === undefined ? undefined : yield* storage.status;
       const decision = classifyStorageCapability(capability);
       if (decision !== "proceed") {
         yield* skipSeeding(
           describeStorageCapability(capability),
           decision === "disabled"
-            ? "Set [storage] enabled = true in supabase/config.toml, run supabase stack stop followed by supabase stack start without -x storage, then supabase seed buckets --local."
+            ? "Set [storage] enabled = true in supabase/config.toml, run supabase stack stop followed by supabase stack start without -x storage, then supabase seed buckets."
             : undefined,
         );
         return;
       }
-      const credentials = yield* stackStorageEndpointFor(opened.value.stack, status);
+      const credentials = yield* stackStorageEndpointFor(opened.value.stack);
       yield* seedBucketsRun({
         projectRef: "",
         emitSummary: false,
         interactive: false,
         yes,
         credentials,
-        resolvedConfig: { config: context.config, document: context.loaded?.document },
+        resolvedConfig: {
+          config: context.config,
+          document: context.resolvedConfig.loaded.document,
+        },
         projectEnvValues: projectEnv,
         workdir,
       });
-    }).pipe(Effect.catch((error) => skipSeeding(error.message, suggestionOf(error))));
-    const branch = Option.getOrElse(yield* detectGitBranch(workdir), () => "main");
+    }).pipe(
+      Effect.catch((error) => skipSeeding(error.message, suggestionOf(error))),
+      Effect.withSpan("DbBootstrap.seedStorageBuckets"),
+    );
+    const branch = yield* detectGitBranch(workdir);
     yield* output.raw(
-      `Finished ${aqua("supabase db reset")} on branch ${aqua(branch)}.\n`,
+      `Finished ${aqua("supabase db reset")}${branchClause(branch, aqua)}.\n`,
       "stderr",
     );
     return;
@@ -245,15 +279,9 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
   const debug = yield* DebugFlag;
 
   // Error if the local db container is down.
-  const running = yield* isLocalDbRunning(
-    spawner,
-    fs,
-    path,
-    workdir,
-    Option.getOrUndefined(cliSettings.projectId),
-  );
+  const running = yield* isLocalDbRunning(spawner, fs, path, workdir);
   if (!running) {
-    return yield* Effect.fail(notRunning());
+    return yield* notRunning();
   }
   // "Resetting local database…" then recreate + migrate + seed.
   yield* output.raw(`Resetting local database${toLogMessage(input.version)}\n`, "stderr");
@@ -268,7 +296,7 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
     debug,
   );
   const {
-    context: { projectId, hostname, config, loaded },
+    context: { projectId, hostname, config, resolvedConfig },
     values,
     bootstrapConfig,
     networkId,
@@ -295,7 +323,6 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
     resolvePostgresImage,
     dbHealthTimeoutSeconds: bootstrapConfig.dbHealthTimeoutSeconds,
     version: input.version,
-    seedFlags: input.seedFlags,
     // `db reset` resolves `--experimental` earlier than this prelude does, via the nested-env
     // walk above; override the prelude's own `setup.experimental` with that value so the two
     // stay consistent.
@@ -304,8 +331,10 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
 
   // Seed objects from supabase/buckets when storage is up; summary is suppressed since reset
   // emits its own result. See docs/stack-commands.md#storage-and-bucket-seeding.
-  const storageReady = yield* awaitStorageReady(spawner, projectId);
-  if (storageReady) {
+  yield* Effect.gen(function* () {
+    const storageReady = yield* awaitStorageReady(spawner, projectId);
+    yield* Effect.annotateCurrentSpan("storage.ready", storageReady);
+    if (!storageReady) return;
     // Non-interactive: overwrite/prune confirmations never open a TTY prompt. In text mode
     // each still prints its label and scans one stdin line (bounded) — a parsed y/n answer
     // wins, otherwise its default applies (overwrite → yes, prune → no); machine formats take
@@ -322,7 +351,7 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
       // `SUPABASE_YES` set in `supabase/.env` auto-confirms the bucket overwrite/prune
       // prompts.
       yes,
-      resolvedConfig: { config, document: loaded?.document },
+      resolvedConfig: { config, document: resolvedConfig.loaded.document },
       // The same nested-dotenv walk already resolved for `yes`/`experimental` above.
       projectEnvValues: projectEnv,
     }).pipe(
@@ -335,8 +364,11 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
         ),
       ),
     );
-  }
+  }).pipe(Effect.withSpan("DbBootstrap.seedStorageBuckets"));
 
-  const branch = Option.getOrElse(yield* detectGitBranch(workdir), () => "main");
-  yield* output.raw(`Finished ${aqua("supabase db reset")} on branch ${aqua(branch)}.\n`, "stderr");
+  const branch = yield* detectGitBranch(workdir);
+  yield* output.raw(
+    `Finished ${aqua("supabase db reset")}${branchClause(branch, aqua)}.\n`,
+    "stderr",
+  );
 });

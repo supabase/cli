@@ -1,5 +1,5 @@
-import { Argument, Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Argument, Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
@@ -9,15 +9,17 @@ import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts
 import { commandFeedbackClientLayer, feedbackCliConfigLayer } from "../feedback.layers.ts";
 import { FEEDBACK_OUTPUT_FORMATS } from "../feedback-output.ts";
 import { feedbackAdd } from "./add.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 
 const config = {
-  message: Argument.string("message").pipe(
+  message: Argument.String("message").pipe(
     Argument.withDescription(
       "Freeform feedback. Bare words are joined with spaces. 1000 character limit.",
     ),
     Argument.variadic(),
   ),
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription(
       "Project ref to attribute the feedback to (defaults to SUPABASE_PROJECT_ID, then the linked project).",
     ),
@@ -57,6 +59,7 @@ export const feedbackAddCommand = Command.make("add", config).pipe(
       description: "Attribute the feedback to a project from an unlinked directory",
     },
   ]),
+  withPermissions({ operations: [], noApiEffectFlags: ["project-ref"] }),
   Command.withHandler(feedbackAddHandler),
   Command.provide(commandRuntimeLayer(["feedback", "add"])),
   Command.provide(telemetryStateLayer),
@@ -66,4 +69,9 @@ export const feedbackAddCommand = Command.make("add", config).pipe(
   // client each get their own cli-config provision (CLI Agent Guide invariant 5).
   Command.provide(commandFeedbackClientLayer),
   Command.provide(feedbackCliConfigLayer),
+  withTargetPolicy({
+    group: "account",
+    consent: "none",
+    consentExemptReason: "sending the message is the command's whole purpose",
+  }),
 );

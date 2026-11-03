@@ -6,7 +6,7 @@ import {
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
 import { aqua } from "../../command-internal/colors.ts";
-import { goQuote } from "../../command-internal/go-quote.ts";
+import { quoteBytes } from "../../command-internal/byte-quote.ts";
 
 /**
  * Domain errors for `supabase storage ls/cp/mv/rm`. Each `message` is an
@@ -60,12 +60,13 @@ export class StorageUnsupportedOperationError extends Data.TaggedError(
 
 /**
  * Formats an invalid `-j, --jobs` value using the established
- * `invalid argument %q for %q flag: %v` message, with the raw (unnormalized) token
+ * `invalid argument "<value>" for "<flag>" flag: <reason>` message, with the raw (unnormalized) token
  * quoted and escaped so it never breaks onto a new line.
  */
 export function storageInvalidJobsMessage(token: string, cause: string): string {
-  const quoted = goQuote(new TextEncoder().encode(token));
-  return `invalid argument ${quoted} for "-j, --jobs" flag: strconv.ParseUint: parsing ${quoted}: ${cause}`;
+  const quoted = quoteBytes(new TextEncoder().encode(token));
+  const reason = cause === "invalid syntax" ? "expected an unsigned integer" : cause;
+  return `invalid argument ${quoted} for "-j, --jobs" flag: ${reason}`;
 }
 
 export class StorageCopyBetweenBucketsError extends Data.TaggedError(
@@ -130,6 +131,25 @@ export class StorageMissingFlagError extends Data.TaggedError("StorageMissingFla
   }
 }
 
+export class StorageRmConfirmationRequiredError extends Data.TaggedError(
+  "StorageRmConfirmationRequiredError",
+)<{
+  readonly message: string;
+  readonly suggestion: string;
+}> {
+  constructor() {
+    super({
+      message:
+        "Deleting objects needs confirmation, and a non-text output format has no prompt to ask on.",
+      suggestion: "Re-run with --yes (or set SUPABASE_YES=1) to confirm without a prompt.",
+    });
+  }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
 /** Raised by recursive `cp`/`mv`/`rm` when no objects match the given path. */
 export class StorageObjectNotFoundError extends Data.TaggedError("StorageObjectNotFoundError")<{
   readonly message: string;
@@ -149,17 +169,6 @@ export class StorageFileError extends Data.TaggedError("StorageFileError")<{
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.permission;
-  }
-}
-
-/** Conflicting target flags: `--linked` with `--local`, or `--project-ref` with `--local`. */
-export class StorageMutuallyExclusiveFlagsError extends Data.TaggedError(
-  "StorageMutuallyExclusiveFlagsError",
-)<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
   }
 }
 

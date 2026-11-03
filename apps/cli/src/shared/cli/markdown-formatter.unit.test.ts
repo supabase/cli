@@ -1,5 +1,5 @@
 import { Option, Context } from "effect";
-import type { HelpDoc } from "effect/unstable/cli";
+import type { HelpDoc } from "effect/cli";
 import { describe, expect, it } from "vitest";
 import { formatHelpDocAsMarkdown } from "./markdown-formatter.ts";
 

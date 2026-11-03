@@ -1,48 +1,55 @@
 # `supabase stack stop`
 
-The command is available only when the `experimental.stack` feature flag is enabled. The
-top-level `supabase stop` command uses this handler when the same flag is enabled.
+Stops the selected managed stack's entire namespace, including standalone
+services and attached jobs. Definitions, data, and assigned ports remain saved.
+The experimental top-level `supabase stop` alias delegates to this handler.
 
-This command stops the managed stack identified by the current project, an optional `--stack`
-name, or `--stack-id`. With `--all`, it discovers every readable managed stack and attempts each
-stop while preserving persistent state and data volumes. `--all` cannot be combined with a named
-stack or `--stack-id`; the command never destroys stacks.
+## Selection and output
 
-Durable stack state lives under `$SUPABASE_HOME/managed/stacks/<stackId>/`
-(`~/.supabase/managed/stacks/<stackId>/` by default). A stop that does not finish within 60s
-fails with still-running capabilities and reports that the owner stop continues in the background.
+Select the current project/branch/name, `--stack <name>`, or `--stack-id <id or unique prefix>`.
+`--stack` and `--stack-id` are mutually exclusive. `--all` cannot be combined
+with either selector. Explicit legacy `-o/--output` is rejected; use
+`--output-format` instead.
 
-## Files read and written
+Discovery probes saved owners before shutdown. If no owner is reachable, the
+command does not start one; it reclaims the stack's leftover workloads under the
+stack lease and reports `Stack <id> was not running; leftover resources were reclaimed.`
+It fails when another process holds the lease or the cleanup fails, so a stack
+whose owner exited after a failed stop can be stopped again. If an owner
+disappears after discovery, the shutdown error remains a failure.
 
-The stack package reads and updates its durable state under `<SUPABASE_HOME or ~/.supabase>`
-and the selected stack's lifecycle state. The CLI reads its normal workdir settings. Command
-routing may read `supabase/config.toml` or `supabase/config.json` to select the experimental
-backend; once the stack handler is selected, it does not load project configuration. Set
-`SUPABASE_EXPERIMENTAL_STACK=1` to stop a stack addressed with `--stack-id` when project
-configuration is missing or invalid. Implicit and named stacks still depend on workdir discovery, so removing an
-ancestor config can change which stack is selected; use an explicit `--workdir` when needed.
+Services stop in reverse dependency order with every stack listener still open,
+so a dependent's graceful stop can still reach its prerequisite; each listener
+closes once its own service has stopped. Traffic that would wake a stopped
+service during shutdown is refused. Shutdown is one-way: a failed stop leaves
+the stack registered and the owner exits, and the next stop retries.
 
-No project files, credentials, or runtime configuration files are written. The package owns
-the supervisor teardown and state transition; the CLI does not remove containers, volumes,
-or stack state itself. If persisted state says the stack is running but its owner is
-unreachable, the package may launch a short-lived Supervisor to arbitrate teardown before
-returning. That process is package-owned and is not managed directly by the CLI.
+Text confirms each successful shutdown and identifies each stack that had no owner.
+JSON and stream-json success data contain `stopped` and `not_running` ID arrays.
+A missing default selection reports `found: false`; an unknown explicit name or
+ID fails. A single selection reads only the selected stack's state document; an
+unreadable document fails the selection instead of being reported as missing.
+`--all` attempts every selected stack and reports failures with their
+IDs. It skips state entries that cannot be read or decoded with a warning on
+stderr identifying each stack; only a failure to read the stacks directory
+itself fails discovery.
 
-## Output and telemetry
+## Files and network
 
-Text mode reports the selected stack and stopped outcome. A successful single-stack JSON response is
-`{ "found": true, "id": "<stack-id>", "lifecycle": "stopped", "message": "" }`; when no current
-stack exists it is `{ "found": false, "message": "No managed stack found for this context." }`.
-A successful bulk JSON response is `{ "stopped": ["<stack-id>", ...], "message": "" }`.
-Stream-json wraps the same payload in its standard result event. Bulk mode attempts all readable
-stacks, warns for unreadable entries, and reports stopped, failed, and skipped counts with per-stack
-details. It exits nonzero when an entry is skipped or a stop fails.
-The `--all` flag is presence-sensitive for target validation, so `--all=false` still conflicts with
-`--stack` and `--stack-id`; `--all=false` alone uses single-stack mode.
-Registry-root enumeration failures remain fatal. Exit status is `0` for a successful stop or no
-current stack, `1` for a missing named stack or any typed stop failure, and `130` if the command is
-interrupted before the stop completes. Standard command instrumentation records command
-metadata; stack data and credentials are not emitted as telemetry properties.
+Reads saved state under `<SUPABASE_HOME or ~/.supabase>/stacks/<id>/` and the
+current project/Git identity when no explicit ID is supplied. Shared routing and
+settings may read project configuration and the selected profile. Communicates
+only with local owner endpoints; no hosted API requests. Shutdown updates owned
+runtime resources but preserves persistent instance definitions, data and automatic
+port reservations in the per-user registry at `<passwd home>/.supabase/ports.sqlite`
+(unaffected by `SUPABASE_HOME`); configured ports are released with their listeners.
+Killing the owner process preserves every reservation, but another stack may take over
+a configured port while no owner runs. No caller-owned upload files are removed.
 
-Telemetry state is flushed to `<SUPABASE_HOME or ~/.supabase>/telemetry.json`
-after both successful and failed command runs.
+## Exit codes and telemetry
+
+Exit 0 on successful shutdown or reclaim, or absent default selection;
+1 for invalid flags, selection/registry failure, or shutdown or reclaim failure; 130 on
+interruption. The command wrapper retains standard command telemetry, with no
+custom events. Telemetry flushes on success and failure to
+`<SUPABASE_HOME or ~/.supabase>/telemetry.json`.

@@ -76,7 +76,7 @@ function ambientStubs() {
 }
 
 describe("servicesRuntimeLayer — IdentityStitch exposure", () => {
-  it.live(
+  it.effect(
     "exposes IdentityStitch at top level so withCommandTelemetry can read stitchedDistinctId()",
     () => {
       return Effect.gen(function* () {

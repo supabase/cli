@@ -1,16 +1,21 @@
 import { Effect } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose } from "../../../../../command-internal/command-permissions/model.ts";
+import { withCliConfigFlags } from "../../../../../config/cli-config-flags.ts";
 import { withJsonErrorHandling } from "../../../../../shared/output/json-error-handling.ts";
 import { parseSchemaFlags } from "../../../../../command-internal/schema-flags.ts";
 import { withCommandTelemetry } from "../../../../../telemetry/command-telemetry.ts";
 import { dbSchemaDeclarativeSharedBase } from "../declarative.shared.ts";
 import { dbSchemaDeclarativeSync } from "./sync.handler.ts";
 import { dbSchemaDeclarativeSyncRuntimeLayer } from "./sync.layers.ts";
+import { cliConfigValuesLayer } from "../../../../../config/cli-config-values.layer.ts";
+import { withTargetPolicy } from "../../../../../command-internal/target/target-policy.ts";
 
 const config = {
-  schema: Flag.string("schema").pipe(
+  schema: Flag.String("schema").pipe(
     Flag.withAlias("s"),
     Flag.withDescription("Comma separated list of schema to include."),
     Flag.atLeast(0),
@@ -21,22 +26,22 @@ const config = {
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
-  file: Flag.string("file").pipe(
+  file: Flag.String("file").pipe(
     Flag.withAlias("f"),
     Flag.withDescription("Saves schema diff to a new migration file."),
     Flag.optional,
   ),
-  name: Flag.string("name").pipe(
+  name: Flag.String("name").pipe(
     Flag.withDescription("Name for the generated migration file."),
     Flag.optional,
   ),
   // Mutually exclusive with `--no-apply`, keyed off presence not value, so model with `Option`
   // so `--apply=false --no-apply` still trips the conflict.
-  apply: Flag.boolean("apply").pipe(
+  apply: Flag.Boolean("apply").pipe(
     Flag.withDescription("Apply the generated migration to the local database without prompting."),
     Flag.optional,
   ),
-  noApply: Flag.boolean("no-apply").pipe(
+  noApply: Flag.Boolean("no-apply").pipe(
     Flag.withDescription(
       "Generate the migration file without prompting or applying it to the local database.",
     ),
@@ -56,6 +61,20 @@ export const dbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
     "Compares the supabase/migrations baseline with the complete declarative schema tree and writes the difference as migration files. When a legacy export omits known implicit extensions, interactive sync can add declarations and re-plan before writing. Use --no-apply for non-interactive generation without changing the local database; --apply or global --yes applies locally and updates local migration history.",
   ),
   Command.withShortDescription("Generate a new migration from declarative schema"),
+  withPermissions(
+    compose({
+      operations: [],
+      noApiEffectFlags: [
+        "schema",
+        "file",
+        "name",
+        "apply",
+        "no-apply",
+        "no-cache",
+        "strict-coverage",
+      ],
+    }),
+  ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       // `--no-cache` is shared on the parent group; read the resolved value there.
@@ -85,4 +104,7 @@ export const dbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
     }),
   ),
   Command.provide(dbSchemaDeclarativeSyncRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

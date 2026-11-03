@@ -1,24 +1,22 @@
-import { readFileSync } from "node:fs";
 import * as net from "node:net";
 import type { ConnectionOptions } from "node:tls";
-import { PgClient } from "@effect/sql-pg";
-import { Cause, Duration, Effect, Exit, Layer, Scope } from "effect";
-import * as Reactivity from "effect/unstable/reactivity/Reactivity";
-import { ConnectionError, SqlError } from "effect/unstable/sql/SqlError";
-// `pg` is `@effect/sql-pg`'s transitive driver; used directly here for COPY and
-// extended-protocol batches, which `@effect/sql-pg` does not expose. Keep the direct `pg`
-// version in package.json aligned with the one `@effect/sql-pg` resolves.
+import { Cause, Duration, Effect, Exit, FileSystem, Layer, Scope } from "effect";
+import * as Reactivity from "effect/reactivity/Reactivity";
+import { ConnectionError, SqlError } from "effect/sql/SqlError";
+// `pg` drives the pool behind `makePoolSqlClient` and the raw COPY and extended-protocol batch
+// connections; `@effect/sql-pg` only supplies the statement compiler.
 import * as Pg from "pg";
 import { to as pgCopyTo } from "pg-copy-streams";
 import {
-  SUGGEST_LOCAL_STACK,
   connectFailureMessage,
   connectSuggestion,
   isDialFailure,
   isIPv6ConnectivityErrorCause,
   isSqlState,
+  localStackSuggestion,
 } from "./connect-errors.ts";
 import { DbConnectError, DbCopyError, DbExecError } from "./db-connection.errors.ts";
+import { makePoolSqlClient } from "./db-connection.pool-client.ts";
 import {
   type DbBatchStatement,
   type DbBatchValue,
@@ -201,13 +199,14 @@ export function batchFailureError(
   error: Error,
   batch: { readonly completed: number; readonly outcome: BatchOutcome } | undefined,
   isLocal: boolean,
+  linkedCheckout?: boolean,
 ): DbExecError | DbConnectError {
   if (batch === undefined || batch.outcome === "unsent") {
     return new DbConnectError({
       message: `${BATCH_CONNECTION_LOST}: ${error.message}`,
       // The checkout failure a tick earlier carries this same hint, so losing the
       // connection mid-batch must not silently drop it.
-      ...(isLocal ? { suggestion: SUGGEST_LOCAL_STACK } : {}),
+      ...(isLocal ? { suggestion: localStackSuggestion(linkedCheckout) } : {}),
     });
   }
   const mapped = toExecError(error);
@@ -397,13 +396,22 @@ export interface ClientCert {
 }
 
 /**
- * Whether the DSN itself asked for TLS behavior: `--db-url`'s `sslmode`/`sslrootcert` are honored
- * even against a target classified local (e.g. a TLS tunnel on the loopback stack), so `isLocal`
- * alone must not force plaintext when one of these is set.
+ * `sslmode` values that demand TLS. `prefer` and `allow` describe a fallback libpq would perform
+ * and {@link sslConfigsFor} does not, so neither counts as a demand; treating them as one would
+ * turn a plaintext-capable target into a handshake failure.
+ */
+const TLS_DEMANDING_SSLMODES = new Set(["require", "verify-ca", "verify-full"]);
+
+/**
+ * Whether the connection demands TLS, which keeps `--db-url`'s `sslmode`/`sslrootcert` honored
+ * against a target classified local (e.g. a TLS tunnel on the loopback stack) instead of being
+ * forced to plaintext by `isLocal` alone. An unset, `prefer`, `allow` or `disable` mode is not a
+ * demand: `sslmode` is also filled from `PGSSLMODE` and libpq service files, so a merely present
+ * value cannot be read as the DSN asking for TLS.
  */
 export function tlsExplicitlyRequested(cfg: PgConnInput): boolean {
   return (
-    cfg.sslmode !== undefined ||
+    (cfg.sslmode !== undefined && TLS_DEMANDING_SSLMODES.has(cfg.sslmode)) ||
     (cfg.sslrootcert?.length ?? 0) > 0 ||
     (cfg.sslrootcertInline?.length ?? 0) > 0
   );
@@ -458,7 +466,9 @@ export function sslOptionFor(
  * DoH-resolved IP was substituted; `caCert` promotes `require` to `verify-ca` when set.
  * `isLocal` is the caller's TLS-exemption decision, not the raw target classification: a local
  * target that explicitly set `sslmode`/`sslrootcert` (see {@link tlsExplicitlyRequested}) is not
- * exempt, so the caller passes `false` for it in that case.
+ * exempt, so the caller passes `false` for it in that case. `allow`'s fallback bypasses that
+ * exemption regardless: its first attempt is plaintext, identical to the exempt case, and the
+ * second only helps a local-classified target that actually requires TLS.
  */
 export function sslConfigsFor(
   sslmode: string | undefined,
@@ -468,14 +478,14 @@ export function sslConfigsFor(
   host?: string,
   clientCert?: ClientCert,
 ): Array<boolean | ConnectionOptions | undefined> {
-  if (isLocal) return [false];
   // A unix-socket host always connects in plaintext, regardless of `sslmode`; never send an SSL
   // negotiation over the socket. Independent of `isLocal`, since a socket path isn't the local
   // services hostname.
   if (host !== undefined && isUnixSocketHost(host)) return [false];
-  if (sslmode === "disable") return [false];
   if (sslmode === "allow")
     return [false, sslOptionFor("require", false, servername, caCert, clientCert)];
+  if (isLocal) return [false];
+  if (sslmode === "disable") return [false];
   // `require` plus a root cert behaves like `verify-ca`.
   const effectiveMode = sslmode === "require" && caCert !== undefined ? "verify-ca" : sslmode;
   if (
@@ -644,6 +654,9 @@ export const toConnectError = (
   });
 };
 
+const readFileUtf8 = (fs: FileSystem.FileSystem, path: string) =>
+  fs.readFile(path).pipe(Effect.map((bytes) => Buffer.from(bytes).toString("utf8")));
+
 /**
  * Acquires the winning raw pool through the full connection attempt chain (DNS resolution, TLS
  * negotiation, host fallback, role step-down). The pool finalizer is owned by the caller's
@@ -652,6 +665,7 @@ export const toConnectError = (
  */
 const acquirePgPoolConnection = (cfg: PgConnInput, { isLocal, dnsResolver }: DbConnectOptions) =>
   Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
     // A local target that explicitly set `sslmode`/`sslrootcert` (e.g. a TLS tunnel on the
     // loopback stack) is not exempt from TLS; only the default loopback case stays plaintext.
     const explicitTls = tlsExplicitlyRequested(cfg);
@@ -712,46 +726,52 @@ const acquirePgPoolConnection = (cfg: PgConnInput, { isLocal, dnsResolver }: DbC
     // ({@link sslConfigsFor} already plaintexts socket targets).
     const rootcertPath = cfg.sslrootcert;
     const anyTcpTarget = dialTargets.some(({ dialHost }) => !isUnixSocketHost(dialHost));
+    /* `sslmode=disable` never dials TLS, so leftover CA or client-cert paths cannot abort it. */
+    const plaintextOnly = cfg.sslmode === "disable";
     const caCert =
       cfg.sslrootcertInline !== undefined &&
       cfg.sslrootcertInline.length > 0 &&
       (!isLocal || explicitTls)
         ? cfg.sslrootcertInline
-        : rootcertPath !== undefined &&
+        : !plaintextOnly &&
+            rootcertPath !== undefined &&
             rootcertPath.length > 0 &&
             (!isLocal || explicitTls) &&
             anyTcpTarget
-          ? yield* Effect.try({
-              try: () => readFileSync(rootcertPath, "utf8"),
-              catch: (error) =>
-                new DbConnectError({
-                  message: `failed to read sslrootcert ${rootcertPath}: ${error}`,
-                }),
-            })
+          ? yield* readFileUtf8(fs, rootcertPath).pipe(
+              Effect.mapError(
+                (error) =>
+                  new DbConnectError({
+                    message: `failed to read sslrootcert ${rootcertPath}: ${error.reason.cause ?? error.message}`,
+                  }),
+              ),
+            )
           : undefined;
 
     // Loads the client `sslcert`/`sslkey` for cert auth, using the same non-local/TCP gate as
     // the CA bundle; `sslpassword` decrypts an encrypted key. Bound to locals so the narrowing
-    // holds in the `Effect.try` closures below.
+    // holds in the `mapError` closures below.
     const certPath = cfg.sslcert;
     const keyPath = cfg.sslkey;
     const clientCert =
-      certPath !== undefined && keyPath !== undefined && !isLocal && anyTcpTarget
+      !plaintextOnly && certPath !== undefined && keyPath !== undefined && !isLocal && anyTcpTarget
         ? {
-            cert: yield* Effect.try({
-              try: () => readFileSync(certPath, "utf8"),
-              catch: (error) =>
-                new DbConnectError({
-                  message: `failed to read sslcert ${certPath}: ${error}`,
-                }),
-            }),
-            key: yield* Effect.try({
-              try: () => readFileSync(keyPath, "utf8"),
-              catch: (error) =>
-                new DbConnectError({
-                  message: `failed to read sslkey ${keyPath}: ${error}`,
-                }),
-            }),
+            cert: yield* readFileUtf8(fs, certPath).pipe(
+              Effect.mapError(
+                (error) =>
+                  new DbConnectError({
+                    message: `failed to read sslcert ${certPath}: ${error.reason.cause ?? error.message}`,
+                  }),
+              ),
+            ),
+            key: yield* readFileUtf8(fs, keyPath).pipe(
+              Effect.mapError(
+                (error) =>
+                  new DbConnectError({
+                    message: `failed to read sslkey ${keyPath}: ${error.reason.cause ?? error.message}`,
+                  }),
+              ),
+            ),
             ...(cfg.sslpassword !== undefined ? { passphrase: cfg.sslpassword } : {}),
           }
         : undefined;
@@ -836,27 +856,24 @@ const acquirePgPoolConnection = (cfg: PgConnInput, { isLocal, dnsResolver }: DbC
 export const acquirePgPool = (
   cfg: PgConnInput,
   options: DbConnectOptions,
-): Effect.Effect<Pg.Pool, DbConnectError, Scope.Scope> =>
+): Effect.Effect<Pg.Pool, DbConnectError, FileSystem.FileSystem | Scope.Scope> =>
   acquirePgPoolConnection(cfg, options).pipe(Effect.map(({ pool }) => pool));
 
 /**
- * Default `DbConnection` layer, backed by `@effect/sql-pg` (pure-JS `pg` driver, no native
+ * Default `DbConnection` layer, backed by a node-postgres pool (pure-JS `pg` driver, no native
  * addon, so it bundles under `bun build --compile`). Each `connect` builds a scoped
  * single-client connection that closes on scope exit.
  */
 const connect = (
   cfg: PgConnInput,
   options: DbConnectOptions,
-): Effect.Effect<DbSession, DbConnectError, Scope.Scope> =>
+): Effect.Effect<DbSession, DbConnectError, FileSystem.FileSystem | Scope.Scope> =>
   Effect.gen(function* () {
     const { pool, winningRawConfig, stepDownRequired } = yield* acquirePgPoolConnection(
       cfg,
       options,
     );
-    const client = yield* PgClient.fromPool({ acquire: Effect.succeed(pool) }).pipe(
-      Effect.provide(Reactivity.layer),
-      Effect.mapError((error) => toConnectError(cfg, options.isLocal, error)),
-    );
+    const client = yield* makePoolSqlClient(pool).pipe(Effect.provide(Reactivity.layer));
 
     // `inspect report` runs ~14 `COPY (...) TO STDOUT` statements. node-postgres' COPY protocol
     // needs a raw client, which `@effect/sql-pg` does not surface, so the session opens one
@@ -947,7 +964,16 @@ const connect = (
                 resume(Effect.void);
                 return;
               }
-              resume(Effect.fail(batchFailureError(error, batchQuery, options.isLocal)));
+              resume(
+                Effect.fail(
+                  batchFailureError(
+                    error,
+                    batchQuery,
+                    options.isLocal,
+                    cfg.suggestionContext?.linkedCheckout,
+                  ),
+                ),
+              );
             };
             batchQuery = new PgBatchQuery(statements, finish);
             try {
@@ -1020,7 +1046,7 @@ const connect = (
           return {
             fields: result.fields.map((field) => field.name),
             // Surface the column type OIDs so the table/CSV formatter can render float4/float8
-            // with %g-style formatting while integer columns stay plain.
+            // in shortest round-trip form while integer columns stay plain.
             fieldTypeIds: result.fields.map((field) => field.dataTypeID),
             rows: result.rows,
             commandTag,
@@ -1043,4 +1069,14 @@ const connect = (
     return session;
   });
 
-export const dbConnectionSqlPgLayer = Layer.succeed(DbConnection, { connect });
+/** The active `DbConnection` layer, backed by node-postgres. */
+export const dbConnectionLayer = Layer.effect(
+  DbConnection,
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return DbConnection.of({
+      connect: (cfg, options) =>
+        connect(cfg, options).pipe(Effect.provideService(FileSystem.FileSystem, fs)),
+    });
+  }),
+);

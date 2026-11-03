@@ -9,17 +9,19 @@
  */
 
 import { Crypto, Effect, FileSystem, Option, Path } from "effect";
-import { HttpClient } from "effect/unstable/http";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
-import type { GlobalFlag } from "effect/unstable/cli";
+import { HttpClient } from "effect/http";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
+import type { GlobalFlag } from "effect/cli";
 
+import type { CliConfigValues } from "../../config/cli-config-values.service.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { resolveExperimentalWithProjectEnv } from "../global-flags.ts";
 import { DbConfigLoadError } from "../db-config.errors.ts";
+import { InvalidServiceVersionTagError } from "../service-version-overrides.ts";
 import { localDbContainerId } from "../docker-ids.ts";
 import { resolveDockerNetworkMode } from "../../shared/functions/functions-docker.ts";
-import { viperEnvStringWithProjectFallback } from "../viper-env.ts";
+import { supabaseEnvStringWithProjectFallback } from "../supabase-env.ts";
 import { isBitbucketPipeline } from "../bitbucket-pipeline.ts";
 import {
   resolveAuthExternalUrl,
@@ -80,19 +82,14 @@ export const buildLocalDbContainerInputs = (
   // so the shadow's container-spec fields reflect the matching `[remotes.<ref>]` override.
   // `db start`/`db reset` never pass this.
   projectRef?: string,
-  // Which keys the caller's own `readDbToml(..., ref)` read set from the matched remote block,
-  // so a remote-set field isn't overridden again by a conflicting `SUPABASE_*` env var.
-  // `db start`/`db reset` never pass a `projectRef`, so they never pass this either.
-  remoteOverrideKeys?: ReadonlySet<string>,
   // `db start`'s handler already loads a {@link LocalProjectContext} before calling this
   // function (to validate config ahead of its own "already running" short-circuit). When
-  // provided, this function skips its own reload — `@supabase/config`'s `loadCliConfig` prints
-  // deprecated-config WARN lines to stderr, so reloading would print each warning twice. Must
-  // correspond to the same `workdir`/`projectRef` this call would otherwise use.
+  // provided, this function skips its own load. Must correspond to the same `workdir`/`projectRef`
+  // this call would otherwise use.
   preloadedContext?: LocalProjectContext,
 ): Effect.Effect<
   LocalDbContainerInputs,
-  DbConfigLoadError,
+  DbConfigLoadError | InvalidServiceVersionTagError,
   | FileSystem.FileSystem
   | Path.Path
   | RuntimeInfo
@@ -100,6 +97,7 @@ export const buildLocalDbContainerInputs = (
   | GlobalFlag.Setting.Identifier<"experimental">
   | CliArgs
   | HttpClient.HttpClient
+  | CliConfigValues
 > =>
   Effect.gen(function* () {
     const httpClient = yield* HttpClient.HttpClient;
@@ -109,33 +107,28 @@ export const buildLocalDbContainerInputs = (
 
     const context =
       preloadedContext ?? (yield* loadLocalProjectContext(workdir, mapError, projectRef));
-    const { config, projectEnvValues, loaded, hostname, projectId } = context;
+    const { config, projectEnvValues, resolvedConfig, hostname, projectId } = context;
+    const document = resolvedConfig.loaded.document ?? {};
     const experimental = yield* resolveExperimentalWithProjectEnv(projectEnvValues);
 
-    const values = yield* Effect.try({
-      try: () =>
-        resolveLocalConfigValues(
-          config,
-          hostname,
-          workdir,
-          projectEnvValues,
-          loaded?.document,
-          remoteOverrideKeys,
-        ),
-      catch: (cause) => mapError(cause instanceof Error ? cause.message : String(cause)),
-    });
+    const values = yield* resolveLocalConfigValues(config, hostname, workdir, document).pipe(
+      Effect.mapError((cause) => mapError(cause.message)),
+    );
 
     const bootstrapConfig = yield* resolveDbBootstrapConfig(
       fs,
       path,
-      { config, projectEnvValues, workdir, remoteOverrideKeys },
+      { config, workdir },
       mapError,
     );
 
     // See {@link resolveDockerNetworkMode} for the full flag/env/fallback precedence.
     const networkId = resolveDockerNetworkMode({
       explicit: Option.getOrUndefined(networkIdFlag),
-      envOverride: viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
+      envNetworkId: yield* supabaseEnvStringWithProjectFallback(
+        "SUPABASE_NETWORK_ID",
+        projectEnvValues,
+      ),
       projectId,
     });
     // Only needed on Linux; Docker Desktop already resolves `host.docker.internal` elsewhere.
@@ -155,15 +148,11 @@ export const buildLocalDbContainerInputs = (
         ...config.db,
         port: values.dbPort,
         major_version: bootstrapConfig.majorVersion,
-        settings: resolveDbSettingsEnvOverrides(
-          config.db.settings,
-          projectEnvValues,
-          remoteOverrideKeys,
-        ),
+        orioledb_version: bootstrapConfig.orioledbVersion,
+        settings: resolveDbSettingsEnvOverrides(config.db.settings),
       },
       experimental: {
         ...config.experimental,
-        orioledb_version: bootstrapConfig.orioledbVersion,
         s3_host: bootstrapConfig.s3Host,
         s3_region: bootstrapConfig.s3Region,
         s3_access_key: bootstrapConfig.s3AccessKey,
@@ -211,22 +200,14 @@ export const buildLocalDbContainerInputs = (
       dbUrl: values.dbUrl,
       jwtSecret: values.jwtSecret,
       // Lazy: only evaluated when `runFreshDbSetup` reaches realtime setup and it's enabled.
-      jwks: resolveLocalJwks(
-        config,
-        workdir,
-        values.jwtSecret,
-        projectEnvValues,
-        remoteOverrideKeys,
-      ).pipe(
+      jwks: resolveLocalJwks(config, workdir, values.jwtSecret).pipe(
         Effect.provideService(HttpClient.HttpClient, httpClient),
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
         Effect.mapError((cause) => mapError(cause.message)),
       ),
       apiUrl: values.apiUrl,
-      authExternalUrl: resolveAuthExternalUrl(
-        loaded?.document,
-        projectEnvValues,
-        remoteOverrideKeys,
-      ),
+      authExternalUrl: resolveAuthExternalUrl(document),
       siteUrl: values.authSiteUrl,
       anonKey: values.anonKey,
       serviceRoleKey: values.serviceRoleKey,
@@ -252,4 +233,8 @@ export const buildLocalDbContainerInputs = (
       experimental,
       setup,
     };
-  });
+  }).pipe(
+    Effect.withSpan("DbBootstrap.buildLocalDbContainerInputs", {
+      attributes: { "config.preloaded": preloadedContext !== undefined },
+    }),
+  );
