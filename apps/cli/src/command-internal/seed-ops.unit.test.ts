@@ -44,22 +44,20 @@ const tempDir = (prefix: string) =>
 // (`../../../shared/path-match.ts`) end to end; pattern-matching semantics are covered by
 // `path-match.unit.test.ts`.
 layer(BunServices.layer)("getPendingSeeds (glob character classes)", (it) => {
-  it.effect(
-    "treats a leading `!` in a bracket class as literal, not negation (Go path.Match parity)",
-    () =>
-      Effect.gen(function* () {
-        const { fs, path, dir } = yield* tempDir("seed-glob-");
-        yield* fs.writeFileString(path.join(dir, "a.sql"), "select 1;");
-        yield* fs.writeFileString(path.join(dir, "b.sql"), "select 2;");
-        const { session } = fakeSeedSession();
-        // `[!a]` is a positive class of `!` and `a`; only a leading `^` negates.
-        const pending = yield* getPendingSeeds(session, fs, path, ["[!a].sql"], dir);
-        expect(pending.map((seed) => seed.path)).toEqual(["a.sql"]);
-      }).pipe(Effect.provide(mockOutput({ format: "text" }).layer)),
+  it.effect("treats a leading `!` in a bracket class as literal, not negation", () =>
+    Effect.gen(function* () {
+      const { fs, path, dir } = yield* tempDir("seed-glob-");
+      yield* fs.writeFileString(path.join(dir, "a.sql"), "select 1;");
+      yield* fs.writeFileString(path.join(dir, "b.sql"), "select 2;");
+      const { session } = fakeSeedSession();
+      // `[!a]` is a positive class of `!` and `a`; only a leading `^` negates.
+      const pending = yield* getPendingSeeds(session, fs, path, ["[!a].sql"], dir);
+      expect(pending.map((seed) => seed.path)).toEqual(["a.sql"]);
+    }).pipe(Effect.provide(mockOutput({ format: "text" }).layer)),
   );
 
   it.effect(
-    "warns Go's bad-pattern message for an unterminated bracket class, not a bogus no-match",
+    "warns the bad-pattern message for an unterminated bracket class, not a bogus no-match",
     () => {
       // An unclosed `[` is malformed, so `fs.Glob` reports a syntax error, not a bogus
       // "no files matched" for a well-formed-but-empty pattern.
@@ -109,7 +107,7 @@ layer(BunServices.layer)("seedData (dirty parse)", (it) => {
   );
 
   it.effect(
-    "rejects an oversized seed statement when SUPABASE_SCANNER_BUFFER_SIZE is configured (Go SeedFile.ExecBatchWithCache parity)",
+    "rejects an oversized seed statement when SUPABASE_SCANNER_BUFFER_SIZE is configured",
     () =>
       Effect.gen(function* () {
         const { fs, path, dir } = yield* tempDir("seed-scanner-");
@@ -121,7 +119,7 @@ layer(BunServices.layer)("seedData (dirty parse)", (it) => {
           { path: "big.sql", hash: "newhash", dirty: false },
         ]).pipe(Effect.flip);
         expect(error.message).toBe(
-          "bufio.Scanner: token too long\nAfter statement 0: \nTry setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is 0KB)",
+          "scanner: token too long\nAfter statement 0: \nTry setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is 0KB)",
         );
         expect(calls.some((c) => c.sql.includes("select"))).toBe(false);
       }).pipe((body) => withConfigEnv({ SUPABASE_SCANNER_BUFFER_SIZE: "100b" }, body)),

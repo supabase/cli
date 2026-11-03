@@ -75,7 +75,11 @@ describe("published JSON Schema artifacts", () => {
       throw new Error("expected properties.api.properties.max_rows to be an object");
     }
     const maxRows = apiProperties["max_rows"];
-    expect(maxRows["type"]).toBe("number");
+    const anyOf = maxRows["anyOf"];
+    if (!Array.isArray(anyOf) || !isRecord(anyOf[0])) {
+      throw new Error("expected max_rows to be an anyOf of the number and an env() string");
+    }
+    expect(anyOf[0]["type"]).toBe("number");
     expect(typeof maxRows["description"]).toBe("string");
     expect(maxRows["default"]).toBe(1000);
   });
@@ -89,7 +93,7 @@ describe("published JSON Schema artifacts", () => {
       "Supabase hosted project config (ProjectConfig)",
     ],
   ])("%s carries $schema, $id, and title", (_name, document, id, title) => {
-    expect(document["$schema"]).toBe("https://json-schema.org/draft/2020-12/schema");
+    expect(document["$schema"]).toBe("http://json-schema.org/draft-07/schema#");
     expect(document["$id"]).toBe(id);
     expect(document["title"]).toBe(title);
   });

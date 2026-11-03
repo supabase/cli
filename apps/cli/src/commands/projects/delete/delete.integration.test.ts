@@ -4,6 +4,7 @@ import { holdLock } from "@supabase/stack/effect";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import { TestClock } from "effect/testing";
 
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   type ApiResponse,
@@ -16,13 +17,13 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
-  withConfigEnv,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
 import { YesFlag } from "../../../command-internal/global-flags.ts";
-import { writeProjectLink } from "../../../command-internal/project-link.ts";
-import { projectStateModeLayer } from "../../../command-internal/project-state-mode.ts";
+import { writeProjectLink } from "../../../shared/config/project-link.ts";
+import { projectStateModeLayer } from "../../../shared/config/project-state-mode.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { projectsDelete } from "./delete.handler.ts";
 
 const OTHER_REF = "qrstuvwxyzabcdefghij";
@@ -53,8 +54,6 @@ interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
   readonly stdinIsTty?: boolean;
   readonly yes?: boolean;
-  /** Piped stdin lines consumed by the non-TTY confirm read. */
-  readonly stdinInput?: string;
   readonly byMethod?: Partial<Record<HttpMethod, ApiResponse>>;
   readonly network?: "fail";
   readonly promptConfirmResponses?: ReadonlyArray<boolean>;
@@ -88,12 +87,13 @@ function setup(opts: SetupOpts = {}) {
       api,
       cliSettings,
       tty,
-      stdin: mockStdin(opts.stdinIsTty ?? false, opts.stdinInput),
+      stdin: mockStdin(opts.stdinIsTty ?? false),
       telemetry: telemetry.layer,
       linkedProjectCache: cache.layer,
     }),
     Layer.succeed(YesFlag, opts.yes ?? false),
     ...(opts.stack === true ? [projectStateModeLayer("stack")] : []),
+    Layer.succeed(TargetPolicy, { group: "account", consent: "no" }),
   );
   return { layer, out, api, telemetry, cache };
 }
@@ -127,20 +127,8 @@ describe("projects delete integration", () => {
     const { layer, out, api } = setup({ yes: true });
     return Effect.gen(function* () {
       yield* projectsDelete({ ref: Option.some(VALID_REF) });
-      expect(out.stderrText).toContain("[y/N] y");
+      expect(out.stderrText).toContain(`Confirmed by --yes: Delete project ${VALID_REF}`);
       expect(hasMethod(api, "DELETE")).toBe(true);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("cancels without deleting when the user declines confirmation", () => {
-    const { layer, api } = setup({ stdinIsTty: true, promptConfirmResponses: [false] });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("ProjectsDeleteCancelledError");
-      }
-      expect(hasMethod(api, "DELETE")).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
@@ -199,6 +187,7 @@ describe("projects delete integration", () => {
         }),
       }),
       Layer.succeed(YesFlag, false),
+      Layer.succeed(TargetPolicy, { group: "account", consent: "no" }),
     );
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -228,65 +217,6 @@ describe("projects delete integration", () => {
       }
       expect(cache.cached).toBe(false);
       expect(api.requests).toEqual([]);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("cancels on a non-TTY when a ref is provided but --yes is unset", () => {
-    const { layer, out, api } = setup({ stdinIsTty: false, yes: false });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("ProjectsDeleteCancelledError");
-      }
-      expect(out.stderrText).toContain("Do you want to delete project ");
-      expect(out.stderrText).toContain("? This action is irreversible. [y/N] \n");
-      expect(hasMethod(api, "DELETE")).toBe(false);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("SUPABASE_YES=1 in the environment auto-confirms with the [y/N] y echo", () => {
-    const { layer, out, api } = setup({ yes: false });
-    return withConfigEnv(
-      { SUPABASE_YES: "1" },
-      Effect.gen(function* () {
-        yield* projectsDelete({ ref: Option.some(VALID_REF) });
-        expect(out.stderrText).toContain("Do you want to delete project ");
-        expect(out.stderrText).toContain("? This action is irreversible. [y/N] y\n");
-        expect(hasMethod(api, "DELETE")).toBe(true);
-        assertPermissionDrift({ command: "projects delete", requests: api.requests, exact: true });
-      }).pipe(Effect.provide(layer)),
-    );
-  });
-
-  it.effect("non-TTY with piped `y` confirms like Go", () => {
-    const { layer, out, api } = setup({ stdinIsTty: false, stdinInput: "y\n" });
-    return Effect.gen(function* () {
-      yield* projectsDelete({ ref: Option.some(VALID_REF) });
-      expect(out.stderrText).toContain("[y/N] y\n");
-      expect(hasMethod(api, "DELETE")).toBe(true);
-    }).pipe(Effect.provide(layer));
-  });
-
-  for (const format of ["json", "stream-json"] as const) {
-    it.effect(`${format} does not authorize deletion from piped y`, () => {
-      const { layer, out, api } = setup({ format, stdinIsTty: false, stdinInput: "y\n" });
-      return Effect.gen(function* () {
-        const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
-        expect(Exit.isFailure(exit)).toBe(true);
-        expect(hasMethod(api, "DELETE")).toBe(false);
-        expect(out.stderrText).not.toContain("[y/N]");
-      }).pipe(Effect.provide(layer));
-    });
-  }
-
-  it.effect("non-TTY with piped `n` declines like Go", () => {
-    const { layer, out, api } = setup({ stdinIsTty: false, stdinInput: "n\n" });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(out.stderrText).toContain("[y/N] n\n");
-      expect(hasMethod(api, "DELETE")).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
@@ -478,4 +408,9 @@ describe("projects delete integration", () => {
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedConsent("projects delete", {
+  api: { byMethod: { DELETE: { status: 200, body: DELETED } } },
+  invoke: () => ({ run: projectsDelete({ ref: Option.some(VALID_REF) }) }),
 });

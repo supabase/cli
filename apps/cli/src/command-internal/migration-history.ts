@@ -171,7 +171,7 @@ export type MigrationSync =
 export function reconcileMigrations(
   remote: ReadonlyArray<string>,
   local: ReadonlyArray<string>,
-  isLocal = false,
+  targetFlags: string,
 ): MigrationSync {
   // `MIGRATION_VERSION_MAX` pins the exhausted side of the walk; `parseMigrationVersion` is
   // shared with `migration list` so both surfaces skip the same edge-case versions.
@@ -216,7 +216,7 @@ export function reconcileMigrations(
   if (extraRemote.length + extraLocal.length > 0) {
     return {
       kind: "conflict",
-      suggestion: suggestMigrationRepair(extraRemote, extraLocal, isLocal),
+      suggestion: suggestMigrationRepair(extraRemote, extraLocal, targetFlags),
     };
   }
   if (local.length === 0) {
@@ -225,31 +225,32 @@ export function reconcileMigrations(
   return { kind: "in-sync" };
 }
 
+export const withTargetFlags = (command: string, targetFlags: string): string =>
+  targetFlags === "" ? command : `${command} ${targetFlags}`;
+
 export function suggestMigrationRepair(
   extraRemote: ReadonlyArray<string>,
   extraLocal: ReadonlyArray<string>,
-  isLocal = false,
+  targetFlags: string,
 ): string {
-  const localFlag = isLocal ? " --local" : "";
   let result =
     "\nMake sure your local git repo is up-to-date. If the error persists, try repairing the migration history table:\n";
   for (const version of extraRemote) {
-    result += `${bold(`supabase migration repair${localFlag} --status reverted ${version}`)}\n`;
+    result += `${bold(withTargetFlags(`supabase migration repair --status reverted ${version}`, targetFlags))}\n`;
   }
   for (const version of extraLocal) {
-    result += `${bold(`supabase migration repair${localFlag} --status applied ${version}`)}\n`;
+    result += `${bold(withTargetFlags(`supabase migration repair --status applied ${version}`, targetFlags))}\n`;
   }
   return result;
 }
 
 /** Each generated line ends with a trailing newline, including the last one. */
-export function suggestRevertHistory(versions: ReadonlyArray<string>, isLocal = false): string {
-  const localFlag = isLocal ? " --local" : "";
+export function suggestRevertHistory(versions: ReadonlyArray<string>, targetFlags: string): string {
   return (
     "\nMake sure your local git repo is up-to-date. If the error persists, try repairing the migration history table:\n" +
-    `${bold(`supabase migration repair${localFlag} --status reverted ${versions.join(" ")}`)}\n` +
+    `${bold(withTargetFlags(`supabase migration repair --status reverted ${versions.join(" ")}`, targetFlags))}\n` +
     "\nAnd update local migrations to match remote database:\n" +
-    `${bold(`supabase db pull${localFlag}`)}\n`
+    `${bold(withTargetFlags("supabase db pull", targetFlags))}\n`
   );
 }
 

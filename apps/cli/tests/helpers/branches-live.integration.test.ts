@@ -223,9 +223,7 @@ describe("live branch lifecycle helpers", () => {
       const exit = yield* Effect.exit(createLiveBranchEffect(cli, project, branch.name));
       if (!Exit.isFailure(exit)) throw new Error("expected create failure");
       expect(String(exit.cause)).toContain("branch quota exceeded");
-      expect(state.calls).toContain(
-        `branches delete ${branch.name} --project-ref ${project.ref} --yes`,
-      );
+      expect(state.calls).toContain(`branches delete ${branch.name} --remote=${project.ref} --yes`);
       expect(state.listed).toBe(false);
     }),
   );
@@ -268,13 +266,42 @@ describe("live branch lifecycle helpers", () => {
         expect(ref).toBe(branchRef);
         expect(creates).toBe(2);
         const deleteIndex = state.calls.indexOf(
-          `branches delete ${branch.name} --project-ref ${project.ref} --yes`,
+          `branches delete ${branch.name} --remote=${project.ref} --yes`,
         );
         expect(deleteIndex).toBeGreaterThan(-1);
         expect(
           state.calls.findLastIndex((call) => call.includes("branches create")),
         ).toBeGreaterThan(deleteIndex);
       }),
+  );
+
+  it.effect("re-issues create once after the platform drops TLS while setting the password", () =>
+    Effect.gen(function* () {
+      let creates = 0;
+      const cli: BranchCli = (args) =>
+        Effect.gen(function* () {
+          if (args[1] === "create") {
+            creates += 1;
+            return creates === 1
+              ? result(
+                  yield* json({
+                    _tag: "Error",
+                    error: {
+                      message:
+                        'unexpected create branch status 400: {"message":"Failed to update password: Client network socket disconnected before secure TLS connection was established"}',
+                    },
+                  }),
+                  "",
+                  1,
+                )
+              : result(yield* json(branch));
+          }
+          return result(yield* json([defaultBranch]));
+        });
+      const ref = yield* createLiveBranchEffect(cli, project, branch.name);
+      expect(ref).toBe(branchRef);
+      expect(creates).toBe(2);
+    }),
   );
 
   it.effect("fails a create rejected by a second platform database restart", () =>

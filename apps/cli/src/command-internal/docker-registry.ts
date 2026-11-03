@@ -3,9 +3,10 @@
  * overrides the default ECR mirror; `docker.io` returns the image unchanged, and any other value
  * rewrites it to `<registry>/supabase/<last-path-segment>`. Callers that can retry pulls should
  * use {@link getRegistryImageUrlCandidates} instead, which falls back through GHCR and the
- * source image. Slim images ({@link isSlimImageRef}) skip every rewrite — there's no mirror to
- * redirect them to.
+ * source image. Slim images ({@link isSlimImageRef}) skip these rewrites; their only fallback is
+ * the ECR Public mirror at the same tag and digest.
  */
+import { slimImageMirrors } from "@supabase/stack/internal/artifacts";
 import { Config, ConfigProvider, Effect, Option } from "effect";
 
 import { isSlimImageRef } from "../shared/services/slim-images.ts";
@@ -67,7 +68,7 @@ export function getRegistryImageUrlCandidates(
   projectEnvValues?: Readonly<Record<string, string>>,
 ): Effect.Effect<ReadonlyArray<string>, Config.ConfigError> {
   if (isSlimImageRef(imageName)) {
-    return Effect.succeed([imageName]);
+    return Effect.succeed([imageName, ...slimImageMirrors(imageName)]);
   }
 
   return registryOverride(projectEnvValues).pipe(

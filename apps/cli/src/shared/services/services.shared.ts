@@ -267,6 +267,7 @@ export interface ServiceFetchConfig {
   readonly headers?: Readonly<Record<string, string | undefined>>;
   readonly api?: ApiClient;
   readonly tenantBaseUrlOverride?: string;
+  readonly maxRetries?: number;
 }
 
 /** @public */
@@ -445,12 +446,15 @@ const makeConfiguredApiClient = Effect.fn("Services.buildApiClient")(function* (
 ) {
   return (
     input.api ??
-    (yield* makeApiClient({
-      baseUrl: input.apiUrl,
-      accessToken: input.accessToken,
-      userAgent: input.userAgent,
-      headers: input.headers,
-    }))
+    (yield* makeApiClient(
+      {
+        baseUrl: input.apiUrl,
+        accessToken: input.accessToken,
+        userAgent: input.userAgent,
+        headers: input.headers,
+      },
+      { retry: { maxRetries: input.maxRetries } },
+    ))
   );
 });
 

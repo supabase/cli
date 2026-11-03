@@ -3,7 +3,8 @@
  * `db reset` paths. Neither `db start` nor `supabase start` calls this: it exists purely to
  * bring the satellite containers (storage/auth/realtime/pooler) back in sync with a `db`
  * container that was just recreated or force-restarted out from under them, and to reload Kong's
- * nginx so its cached upstream addresses (which may have changed) stop 502ing.
+ * nginx so its cached upstream addresses (which may have changed) stop 502ing. PG15's path also
+ * stops those satellites before it removes the `db` container ({@link stopSatelliteServices}).
  */
 
 import { Data, Effect, Option, Result } from "effect";
@@ -54,18 +55,19 @@ export function restartContainer(
 }
 
 /**
- * One satellite service's restart, tolerant of "not found" — a service excluded from the stack
- * has no container to restart, and that's not an error. Never fails the surrounding `Effect.all`
+ * One satellite service's stop or restart, tolerant of "not found" — a service excluded from the
+ * stack has no container, and that's not an error. Never fails the surrounding `Effect.all`
  * itself: resolves `Option.some(message)` on a genuine failure so the caller can join every
  * service's outcome, and `Option.none()` on success or a tolerated not-found.
  */
-const restartSatelliteService = (
+const runSatelliteService = (
   spawner: Spawner,
+  verb: "stop" | "restart",
   containerId: string,
 ): Effect.Effect<Option.Option<string>> =>
   Effect.scoped(
     Effect.gen(function* () {
-      const child = yield* spawnContainerCli(spawner, ["restart", containerId], {
+      const child = yield* spawnContainerCli(spawner, [verb, containerId], {
         stdin: "ignore",
         stdout: "ignore",
         stderr: "pipe",
@@ -78,18 +80,18 @@ const restartSatelliteService = (
       const trimmed = stderr.trim();
       if (isContainerNotFoundMessage(trimmed)) return Option.none();
       return Option.some(
-        `failed to restart ${containerId}: ${trimmed.length > 0 ? trimmed : `exit ${exitCode}`}`,
+        `failed to ${verb} ${containerId}: ${trimmed.length > 0 ? trimmed : `exit ${exitCode}`}`,
       );
     }),
   ).pipe(
     Effect.catch((cause) =>
       Effect.succeed(
-        Option.some(`failed to restart ${containerId}: ${describeContainerCliFailure(cause)}`),
+        Option.some(`failed to ${verb} ${containerId}: ${describeContainerCliFailure(cause)}`),
       ),
     ),
   );
 
-/** One or more satellite-service restarts failed. Messages are newline-joined. */
+/** One or more satellite-service stops or restarts failed. Messages are newline-joined. */
 export class RestartServicesError extends Data.TaggedError("RestartServicesError")<{
   readonly message: string;
 }> {
@@ -99,13 +101,14 @@ export class RestartServicesError extends Data.TaggedError("RestartServicesError
 }
 
 /**
- * Restarts storage/auth/realtime/pooler concurrently — not PostgREST, which reconnects and
- * listens for schema changes on its own — without waiting for them to become healthy
- * afterward, since some may be excluded from the stack. Every per-service failure (excluding a
+ * Stops or restarts storage/auth/realtime/pooler concurrently — not PostgREST, which reconnects and
+ * listens for schema changes on its own — and never waits for them to become healthy, since
+ * some may be excluded from the stack. Every per-service failure (excluding a
  * tolerated not-found) is joined into one newline-separated message.
  */
-function restartSatelliteServices(
+function runSatelliteServices(
   spawner: Spawner,
+  verb: "stop" | "restart",
   projectId: string,
 ): Effect.Effect<void, RestartServicesError> {
   const containerIds = [
@@ -116,14 +119,25 @@ function restartSatelliteServices(
   ];
   return Effect.gen(function* () {
     const results = yield* Effect.all(
-      containerIds.map((containerId) => restartSatelliteService(spawner, containerId)),
+      containerIds.map((containerId) => runSatelliteService(spawner, verb, containerId)),
       { concurrency: "unbounded" },
     );
     const failures = results.filter(Option.isSome).map((result) => result.value);
     if (failures.length > 0) {
       return yield* new RestartServicesError({ message: failures.join("\n") });
     }
-  }).pipe(Effect.withSpan("RestartServices.restartSatellites"));
+  }).pipe(Effect.withSpan(`RestartServices.${verb}Satellites`));
+}
+
+/**
+ * Stops storage/auth/realtime/pooler before `db reset` removes the db container: left running,
+ * `unless-stopped` restarts them and their own migrations race the one-shot init jobs (#6915).
+ */
+export function stopSatelliteServices(
+  spawner: Spawner,
+  projectId: string,
+): Effect.Effect<void, RestartServicesError> {
+  return runSatelliteServices(spawner, "stop", projectId);
 }
 
 /** Gateway-recovery hint, rendered as a `Suggestion:` line by `Output.fail`. */
@@ -225,7 +239,7 @@ export function restartServicesAndReloadKong(
   projectId: string,
 ): Effect.Effect<void, RestartServicesError | KongReloadError> {
   return Effect.gen(function* () {
-    yield* restartSatelliteServices(spawner, projectId);
+    yield* runSatelliteServices(spawner, "restart", projectId);
     yield* reloadKong(spawner, projectId);
   }).pipe(Effect.withSpan("RestartServices.restartAndReloadKong"));
 }

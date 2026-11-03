@@ -16,6 +16,8 @@ import {
 } from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import {
   mockAnalytics,
   mockOutput,
@@ -37,7 +39,11 @@ import {
   projectResponse,
   realLinkedProjectCache,
 } from "../../../../tests/helpers/permission-real-layers.ts";
-import { ProfileFlag } from "../../../command-internal/global-flags.ts";
+import { rootCommandForFeatures } from "../../../cli/root.ts";
+import { ProfileFlag, YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { prepareCliArgs } from "../../../shared/cli/run.ts";
 import { EventUpgradeSuggested } from "../../../shared/telemetry/event-catalog.ts";
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
 import type { SsoUpdateFlags } from "./update.command.ts";
@@ -61,16 +67,23 @@ const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const tempRoot = useTempWorkdir("supabase-sso-update-int-");
 
+const OTHER_REF = "qrstuvwxyzabcdefghij";
+
+const providerRequestUrls = (requests: ReadonlyArray<{ readonly url: string }>) =>
+  requests
+    .map((request) => request.url)
+    .filter((url) => url.includes("/config/auth/sso/providers/"));
+
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   getStatus?: number;
   getBody?: unknown;
   putStatus?: number;
   putBody?: unknown;
   upgradeGate?: "gated" | "notGated";
   /**
-   * Raw argv the handler sees via `Stdio.Stdio`, driving the pflag-faithful
+   * Raw argv the handler sees via `Stdio.Stdio`, driving the raw-argv
    * scan behind the arity, mutex, and value-reconciliation checks. Keep in
    * sync with the flags passed to `ssoUpdate` (usually via `cliArgsFor`).
    */
@@ -175,12 +188,14 @@ function setup(opts: SetupOpts = {}) {
       telemetry: telemetry.layer,
       linkedProjectCache: cache.layer,
       analytics,
-      goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+      outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
       runtimeInfo: mockRuntimeInfo({ homeDir: tempRoot.current }),
     }),
     Stdio.layerTest({
       args: Effect.succeed(opts.cliArgs ?? ["sso", "update", VALID_PROVIDER_ID]),
     }),
+    Layer.succeed(YesFlag, true),
+    Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
     opts.profileFlag === undefined ? Layer.empty : Layer.succeed(ProfileFlag, opts.profileFlag),
     ConfigProvider.layer(
       ConfigProvider.fromEnvRecord({ SUPABASE_NO_KEYRING: "1" }, { preserveEmptyStrings: true }),
@@ -202,6 +217,7 @@ const decodePutDomains = Schema.decodeUnknownEffect(
 );
 
 const defaultFlags: SsoUpdateFlags = {
+  remote: Option.none(),
   projectRef: Option.none(),
   domains: [],
   addDomains: [],
@@ -305,6 +321,8 @@ describe("sso update integration", () => {
           cliSettings,
         }),
       }),
+      Layer.succeed(YesFlag, true),
+      Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
       Stdio.layerTest({ args: Effect.succeed(["sso", "update", VALID_PROVIDER_ID]) }),
     );
     return Effect.gen(function* () {
@@ -356,7 +374,7 @@ describe("sso update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("mutex check: --domains + --add-domains fails with cobra's exact error text", () => {
+  it.effect("mutex check: --domains + --add-domains fails with the exact error text", () => {
     const { layer } = setup({
       cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--domains", "a.com", "--add-domains", "b.com"],
     });
@@ -375,7 +393,7 @@ describe("sso update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("mutex check: --domains + --remove-domains fails with cobra's exact error text", () => {
+  it.effect("mutex check: --domains + --remove-domains fails with the exact error text", () => {
     const { layer } = setup({
       cliArgs: [
         "sso",
@@ -503,39 +521,36 @@ describe("sso update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect(
-    "mutex check: --metadata-file + --metadata-url fails with cobra's exact error text",
-    () => {
-      const { layer } = setup({
-        cliArgs: [
-          "sso",
-          "update",
-          VALID_PROVIDER_ID,
-          "--metadata-file",
-          "/tmp/x.xml",
-          "--metadata-url",
-          "https://idp.example.com/m",
-        ],
-      });
-      return Effect.gen(function* () {
-        const exit = yield* Effect.exit(
-          ssoUpdate({
-            ...defaultFlags,
-            metadataFile: Option.some("/tmp/x.xml"),
-            metadataUrl: Option.some("https://idp.example.com/m"),
-          }),
+  it.effect("mutex check: --metadata-file + --metadata-url fails with the exact error text", () => {
+    const { layer } = setup({
+      cliArgs: [
+        "sso",
+        "update",
+        VALID_PROVIDER_ID,
+        "--metadata-file",
+        "/tmp/x.xml",
+        "--metadata-url",
+        "https://idp.example.com/m",
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        ssoUpdate({
+          ...defaultFlags,
+          metadataFile: Option.some("/tmp/x.xml"),
+          metadataUrl: Option.some("https://idp.example.com/m"),
+        }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = Cause.pretty(exit.cause);
+        expect(dump).toContain("SsoMutexFlagError");
+        expect(dump).toContain(
+          "if any flags in the group [metadata-file metadata-url] are set none of the others can be; [metadata-file metadata-url] were all set",
         );
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const dump = Cause.pretty(exit.cause);
-          expect(dump).toContain("SsoMutexFlagError");
-          expect(dump).toContain(
-            "if any flags in the group [metadata-file metadata-url] are set none of the others can be; [metadata-file metadata-url] were all set",
-          );
-        }
-      }).pipe(Effect.provide(layer));
-    },
-  );
+      }
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect(
     "mutex check: a bare --metadata-file followed by --metadata-url is not a violation, and the consumed token is the file",
@@ -572,8 +587,59 @@ describe("sso update integration", () => {
     },
   );
 
+  it.effect("selects the project from a --remote the argv scan sees", () => {
+    const { layer, api } = setup({
+      cliArgs: ["sso", "update", VALID_PROVIDER_ID, `--remote=${OTHER_REF}`],
+    });
+    return Effect.gen(function* () {
+      yield* ssoUpdate(defaultFlags);
+      expect(providerRequestUrls(api.requests)).toEqual([
+        expect.stringContaining(`/v1/projects/${OTHER_REF}/`),
+        expect.stringContaining(`/v1/projects/${OTHER_REF}/`),
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fails before any API call when --remote is given twice with different values", () => {
+    const cliArgs = ["sso", "update", VALID_PROVIDER_ID, `--remote=${OTHER_REF}`, "--remote"];
+    const { layer, api } = setup({ cliArgs });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(ssoUpdate(defaultFlags));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.squash(exit.cause)).toMatchObject({
+          _tag: "TargetSelectorConflictError",
+          message: "--remote is given more than once with different values; pass it once.",
+        });
+      }
+      expect(api.requests).toEqual([]);
+    }).pipe(
+      Effect.provideService(CliArgs, prepareCliArgs(rootCommandForFeatures(), cliArgs)),
+      Effect.provide(layer),
+    );
+  });
+
   it.effect(
-    "arity emulation: project-ref consuming --metadata-file orphans x.xml — fails ExactArgs like Go, no API calls",
+    "ignores a --remote token a bare --domains consumed as its value, as it does for --project-ref",
+    () => {
+      const { layer, api } = setup({
+        cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--domains", `--remote=${OTHER_REF}`],
+      });
+      return Effect.gen(function* () {
+        yield* ssoUpdate({
+          ...defaultFlags,
+          remote: Option.some({ _tag: "Ref", ref: OTHER_REF }),
+        });
+        expect(providerRequestUrls(api.requests)).toEqual([
+          expect.stringContaining(`/v1/projects/${VALID_REF}/`),
+          expect.stringContaining(`/v1/projects/${VALID_REF}/`),
+        ]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    "arity emulation: project-ref consuming --metadata-file orphans x.xml — fails the arity check, no API calls",
     () => {
       const { layer, api } = setup({
         cliArgs: [
@@ -607,7 +673,7 @@ describe("sso update integration", () => {
   );
 
   it.effect(
-    "arity emulation: a bare --domains consuming --metadata-url orphans the URL — fails ExactArgs like Go, no GET/PUT",
+    "arity emulation: a bare --domains consuming --metadata-url orphans the URL — fails the arity check, no GET/PUT",
     () => {
       const { layer, api } = setup({
         cliArgs: [
@@ -715,7 +781,7 @@ describe("sso update integration", () => {
   });
 
   it.effect(
-    "workdir emulation: --workdir consuming a trailing --metadata-file fails at Go's chdir, no GET/PUT",
+    "workdir emulation: --workdir consuming a trailing --metadata-file fails at chdir, no GET/PUT",
     () => {
       const { layer, api } = setup({
         cliArgs: [
@@ -830,22 +896,19 @@ describe("sso update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect(
-    "arity emulation: a consumed boolean global keeps the count at 1 and PUTs, like Go",
-    () => {
-      const { layer, api } = setup({
-        cliArgs: ["sso", "update", "--domains", "--yes", VALID_PROVIDER_ID],
-      });
-      return Effect.gen(function* () {
-        yield* ssoUpdate(defaultFlags);
-        const putReq = api.requests.find((r) => r.method === "PUT");
-        expect(putReq?.body).toHaveProperty("domains", ["--yes"]);
-      }).pipe(Effect.provide(layer));
-    },
-  );
+  it.effect("arity emulation: a consumed boolean global keeps the count at 1 and PUTs", () => {
+    const { layer, api } = setup({
+      cliArgs: ["sso", "update", "--domains", "--yes", VALID_PROVIDER_ID],
+    });
+    return Effect.gen(function* () {
+      yield* ssoUpdate(defaultFlags);
+      const putReq = api.requests.find((r) => r.method === "PUT");
+      expect(putReq?.body).toHaveProperty("domains", ["--yes"]);
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect(
-    "missing-value emulation: a trailing bare --domains fails pflag parse, no GET/PUT",
+    "missing-value emulation: a trailing bare --domains fails flag parsing, no GET/PUT",
     () => {
       const { layer, api } = setup({
         cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--domains"],
@@ -863,7 +926,7 @@ describe("sso update integration", () => {
     },
   );
 
-  it.effect("missing-value emulation: the pflag parse error wins over an arity violation", () => {
+  it.effect("missing-value emulation: the parse error wins over an arity violation", () => {
     const { layer, api } = setup({
       cliArgs: [
         "sso",
@@ -897,38 +960,35 @@ describe("sso update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect(
-    "anchoring: a persistent flag between sso and update still enforces arity, like Go",
-    () => {
-      const { layer, api } = setup({
-        cliArgs: [
-          "sso",
-          "--profile",
-          "supabase",
-          "update",
-          "--domains",
-          "--metadata-url",
-          "https://idp.example.com/m",
-          VALID_PROVIDER_ID,
-        ],
-      });
-      return Effect.gen(function* () {
-        const exit = yield* Effect.exit(
-          ssoUpdate({
-            ...defaultFlags,
-            metadataUrl: Option.some("https://idp.example.com/m"),
-          }),
-        );
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const dump = Cause.pretty(exit.cause);
-          expect(dump).toContain("SsoUpdateArityError");
-          expect(dump).toContain("accepts 1 arg(s), received 2");
-        }
-        expect(api.requests.length).toBe(0);
-      }).pipe(Effect.provide(layer));
-    },
-  );
+  it.effect("anchoring: a persistent flag between sso and update still enforces arity", () => {
+    const { layer, api } = setup({
+      cliArgs: [
+        "sso",
+        "--profile",
+        "supabase",
+        "update",
+        "--domains",
+        "--metadata-url",
+        "https://idp.example.com/m",
+        VALID_PROVIDER_ID,
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        ssoUpdate({
+          ...defaultFlags,
+          metadataUrl: Option.some("https://idp.example.com/m"),
+        }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = Cause.pretty(exit.cause);
+        expect(dump).toContain("SsoUpdateArityError");
+        expect(dump).toContain("accepts 1 arg(s), received 2");
+      }
+      expect(api.requests.length).toBe(0);
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("anchoring: a persistent flag between sso and update sails through to the PUT", () => {
     const { layer, api } = setup({
@@ -941,7 +1001,7 @@ describe("sso update integration", () => {
   });
 
   it.effect(
-    "value reconciliation: repeated --skip-url-validation resolves last-wins like pflag (=false then bare ends true, skips validation, PUTs)",
+    "value reconciliation: repeated --skip-url-validation resolves last-wins (=false then bare ends true, skips validation, PUTs)",
     () => {
       const { layer, api } = setup({
         cliArgs: [
@@ -967,7 +1027,7 @@ describe("sso update integration", () => {
   );
 
   it.effect(
-    "value reconciliation: bare then =false ends false like pflag — URL validation runs and rejects, no PUT",
+    "value reconciliation: bare then =false ends false — URL validation runs and rejects, no PUT",
     () => {
       const { layer, api } = setup({
         cliArgs: [
@@ -1000,7 +1060,7 @@ describe("sso update integration", () => {
   );
 
   it.effect(
-    "value reconciliation: --domains consuming one --name-id-format leaves the other as pflag's effective value in the PUT",
+    "value reconciliation: --domains consuming one --name-id-format leaves the other as the effective value in the PUT",
     () => {
       const transient = "urn:oasis:names:tc:SAML:2.0:nameid-format:transient" as const;
       const persistent = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent";
@@ -1035,7 +1095,7 @@ describe("sso update integration", () => {
   );
 
   it.effect(
-    "invalid-value emulation: --skip-url-validation=yes fails with pflag's strconv.ParseBool error, no API calls",
+    "invalid-value emulation: --skip-url-validation=yes fails with the boolean parse error, no API calls",
     () => {
       const { layer, api } = setup({
         cliArgs: [
@@ -1060,7 +1120,7 @@ describe("sso update integration", () => {
           const dump = Cause.pretty(exit.cause);
           expect(dump).toContain("SsoInvalidFlagValueError");
           expect(dump).toContain(
-            'invalid argument "yes" for "--skip-url-validation" flag: strconv.ParseBool: parsing "yes": invalid syntax',
+            'invalid argument "yes" for "--skip-url-validation" flag: expected a boolean',
           );
         }
         expect(api.requests.length).toBe(0);
@@ -1069,7 +1129,7 @@ describe("sso update integration", () => {
   );
 
   it.effect(
-    "invalid-value emulation: a later inline-empty --skip-url-validation= fails like pflag, no API calls",
+    "invalid-value emulation: a later inline-empty --skip-url-validation= fails, no API calls",
     () => {
       const { layer, api } = setup({
         cliArgs: [
@@ -1095,7 +1155,7 @@ describe("sso update integration", () => {
           const dump = Cause.pretty(exit.cause);
           expect(dump).toContain("SsoInvalidFlagValueError");
           expect(dump).toContain(
-            'invalid argument "" for "--skip-url-validation" flag: strconv.ParseBool: parsing "": invalid syntax',
+            'invalid argument "" for "--skip-url-validation" flag: expected a boolean',
           );
         }
         expect(api.requests.length).toBe(0);
@@ -1104,7 +1164,7 @@ describe("sso update integration", () => {
   );
 
   it.effect(
-    "invalid-value emulation: a later invalid --name-id-format occurrence fails like pflag, no API calls",
+    "invalid-value emulation: a later invalid --name-id-format occurrence fails, no API calls",
     () => {
       const persistent = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent" as const;
       const { layer, api } = setup({
@@ -1137,28 +1197,25 @@ describe("sso update integration", () => {
     },
   );
 
-  it.effect(
-    "invalid-value emulation: an invalid occurrence beats a trailing missing value, matching pflag's sequential walk",
-    () => {
-      const { layer, api } = setup({
-        cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--skip-url-validation=yes", "--domains"],
-      });
-      return Effect.gen(function* () {
-        const exit = yield* Effect.exit(ssoUpdate({ ...defaultFlags, skipUrlValidation: true }));
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const dump = Cause.pretty(exit.cause);
-          expect(dump).toContain("SsoInvalidFlagValueError");
-          expect(
-            exit.cause.reasons
-              .filter(Cause.isFailReason)
-              .some((reason) => Predicate.isTagged(reason.error, "SsoFlagNeedsArgumentError")),
-          ).toBe(false);
-        }
-        expect(api.requests.length).toBe(0);
-      }).pipe(Effect.provide(layer));
-    },
-  );
+  it.effect("invalid-value emulation: an invalid occurrence beats a trailing missing value", () => {
+    const { layer, api } = setup({
+      cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--skip-url-validation=yes", "--domains"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(ssoUpdate({ ...defaultFlags, skipUrlValidation: true }));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = Cause.pretty(exit.cause);
+        expect(dump).toContain("SsoInvalidFlagValueError");
+        expect(
+          exit.cause.reasons
+            .filter(Cause.isFailReason)
+            .some((reason) => Predicate.isTagged(reason.error, "SsoFlagNeedsArgumentError")),
+        ).toBe(false);
+      }
+      expect(api.requests.length).toBe(0);
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("--domains replaces domains verbatim", () => {
     const flags = { ...defaultFlags, domains: ["new.com"] };
@@ -1344,16 +1401,16 @@ describe("sso update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("Go --output=env emits nothing", () => {
-    const { layer, out } = setup({ goOutput: "env" });
+  it.effect("--output=env emits nothing", () => {
+    const { layer, out } = setup({ outputFlag: "env" });
     return Effect.gen(function* () {
       yield* ssoUpdate(defaultFlags);
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("Go --output=json encodes response verbatim", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+  it.effect("--output=json encodes response verbatim", () => {
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* ssoUpdate(defaultFlags);
       expect(out.stdoutText).toContain(VALID_PROVIDER_ID);
@@ -1362,7 +1419,7 @@ describe("sso update integration", () => {
 
   it.effect("Go --output=json keeps response keys outside the OpenAPI schema", () => {
     const { layer, out } = setup({
-      goOutput: "json",
+      outputFlag: "json",
       putBody: { ...RESPONSE_PROVIDER, resource_id: "res-123" },
     });
     return Effect.gen(function* () {
@@ -1387,16 +1444,16 @@ describe("sso update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("Go --output=yaml encodes response verbatim", () => {
-    const { layer, out } = setup({ goOutput: "yaml" });
+  it.effect("--output=yaml encodes response verbatim", () => {
+    const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* ssoUpdate(defaultFlags);
       expect(out.stdoutText).toContain(VALID_PROVIDER_ID);
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("Go --output=toml encodes response verbatim", () => {
-    const { layer, out } = setup({ goOutput: "toml" });
+  it.effect("--output=toml encodes response verbatim", () => {
+    const { layer, out } = setup({ outputFlag: "toml" });
     return Effect.gen(function* () {
       yield* ssoUpdate(defaultFlags);
       expect(out.stdoutText).toContain(VALID_PROVIDER_ID);
@@ -1536,7 +1593,7 @@ describe("sso update integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("profile emulation: a reconciled profile with no resolvable token aborts like Go", () =>
+  it.effect("profile emulation: a reconciled profile with no resolvable token aborts", () =>
     Effect.gen(function* () {
       const first = yield* writeProfileYaml("first-notoken.yml", "http://first.example");
       const second = yield* writeProfileYaml("second-notoken.yml", "http://second.example");
@@ -1568,7 +1625,7 @@ describe("sso update integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("profile emulation: the missing-token gate fires AFTER the mutex check, like Go", () =>
+  it.effect("profile emulation: the missing-token gate fires AFTER the mutex check", () =>
     Effect.gen(function* () {
       const first = yield* writeProfileYaml("first-order.yml", "http://first.example");
       const second = yield* writeProfileYaml("second-order.yml", "http://second.example");
@@ -1616,7 +1673,7 @@ describe("sso update integration", () => {
         if (Exit.isFailure(exit)) {
           const dump = Cause.pretty(exit.cause);
           expect(dump).toContain("ProfileLoadError");
-          expect(dump).toContain(`failed to read profile: Unsupported Config Type ""`);
+          expect(dump).toContain(`failed to read profile: unsupported config file type ""`);
         }
         expect(api.requests.length).toBe(0);
       }).pipe(Effect.provide(layer));
@@ -1661,7 +1718,7 @@ describe("sso update integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("profile emulation: the LoadProfile failure loses to the arity check, like Go", () => {
+  it.effect("profile emulation: the LoadProfile failure loses to the arity check", () => {
     const { layer, api } = setup({
       cliArgs: ["sso", "update", "a", "b", "--profile", "--metadata-url", "u"],
     });
@@ -1680,4 +1737,34 @@ describe("sso update integration", () => {
       expect(api.requests.length).toBe(0);
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedConsent("sso update", {
+  api: {
+    byMethod: {
+      GET: { status: 200, body: EXISTING_PROVIDER },
+      PUT: { status: 200, body: RESPONSE_PROVIDER },
+    },
+  },
+  invoke: () => ({
+    run: ssoUpdate({
+      ...defaultFlags,
+      remote: Option.some({ _tag: "Ref", ref: VALID_REF }),
+    }).pipe(
+      Effect.provide(
+        Stdio.layerTest({
+          args: Effect.succeed(["sso", "update", VALID_PROVIDER_ID, `--remote=${VALID_REF}`]),
+        }),
+      ),
+    ),
+  }),
+});
+
+describeHostedTargetSelection("sso update", {
+  operands: [VALID_PROVIDER_ID],
+  respond: (request) =>
+    Effect.succeed(
+      jsonResponse(request, 200, request.method === "GET" ? EXISTING_PROVIDER : RESPONSE_PROVIDER),
+    ),
+  run: (flags) => ssoUpdate({ ...defaultFlags, ...flags }),
 });

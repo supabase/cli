@@ -7,34 +7,17 @@ import {
 } from "../../../../../command-internal/global-flags.ts";
 import { promptYesNo } from "../../../../../command-internal/prompt-yes-no.ts";
 import { Output } from "../../../../../shared/output/output.service.ts";
-import { Tty } from "../../../../../shared/runtime/tty.service.ts";
 import { CommandSettings } from "../../../../../config/command-settings.service.ts";
 import {
-  RemoteTarget,
-  type ResolvedRemoteTarget,
-} from "../../../../../config/remote-target.service.ts";
-import { bold } from "../../../../../command-internal/colors.ts";
-import {
-  loadProjectEnv,
+  loadProjectEnvValues,
   readDbToml,
   resolveDeclarativeDir,
-  warnDeprecatedOrioleDBVersionEnv,
 } from "../../../../../command-internal/db-config.toml-read.ts";
+import { resolveTarget } from "../../../../../command-internal/target/resolve-target.ts";
 import { LinkedProjectCache } from "../../../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../../../telemetry/telemetry-state.service.ts";
-import { listLocalMigrations } from "../../../../../command-internal/migration-list.ts";
-import { withSingleOrioleDBVersionEnvWarning } from "../../../../../command-internal/local-config-values.ts";
-import {
-  isPgDeltaDebugEnabled,
-  resolvePgDeltaProjectId,
-} from "../../../../../command-internal/pgdelta.ts";
-import type { PgDeltaDatabaseEndpoint } from "../../../shared/pgdelta-engine.service.ts";
+import { isPgDeltaDebugEnabled } from "../../../../../command-internal/pgdelta.ts";
 import { DeclarativeWriteError } from "../../../shared/pgdelta.errors.ts";
-import {
-  DeclarativeMutuallyExclusiveFlagsError,
-  DeclarativeNonInteractiveError,
-} from "../declarative.errors.ts";
-import { DeclarativeSeam } from "../../../shared/pgdelta.seam.service.ts";
 import { warnFormerDeclarativeDefault } from "../declarative.former-default.ts";
 import { requirePgDelta } from "../declarative.gate.ts";
 import {
@@ -47,41 +30,31 @@ import {
   writeDeclarativeSchemas,
 } from "../../../shared/pgdelta.write.ts";
 import type { DbSchemaDeclarativeGenerateFlags } from "./generate.command.ts";
-import {
-  type LocalConn,
-  resolveLocalTargetEndpoint,
-  resolveRemoteEndpoint,
-  resolveSmartTargetEndpoint,
-} from "../declarative.smart-target.ts";
+import { prepareLocalTargetEndpoint, resolveTargetEndpoint } from "../declarative.smart-target.ts";
 
 export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.generate")(function* (
   flags: DbSchemaDeclarativeGenerateFlags,
 ) {
   const output = yield* Output;
-  const tty = yield* Tty;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const cliSettings = yield* CommandSettings;
   const telemetryState = yield* TelemetryState;
   const linkedProjectCache = yield* LinkedProjectCache;
-  const remoteTarget = yield* RemoteTarget;
   const dnsResolver = yield* DnsResolverFlag;
   // The project env is loaded and resolved before the gate below, so a `SUPABASE_EXPERIMENTAL`
   // set only in `supabase/.env` opens the gate too.
-  const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
+  const projectEnv = yield* loadProjectEnvValues(fs, path, cliSettings.workdir);
   const experimental = yield* resolveExperimentalWithProjectEnv(projectEnv);
   // `--yes` or `SUPABASE_YES` (shell env or project `.env`) must auto-confirm the prompts below.
   const yes = yield* resolveYesWithProjectEnv(projectEnv);
 
-  // The resolved linked ref (explicit `--linked` only), hoisted so the post-run
-  // linked-project cache finalizer can read it after the body resolves it.
+  // Hoisted so the post-run linked-project cache finalizer can read the ref the body resolves.
   const linkedProjectRef = yield* Ref.make<string | undefined>(undefined);
 
   yield* Effect.gen(function* () {
     const baseToml = yield* readDbToml(fs, path, cliSettings.workdir);
-    yield* warnDeprecatedOrioleDBVersionEnv(baseToml.envLookup);
-    // Gate before the mutex check below (see `requirePgDelta`'s doc comment for why), and on the
-    // base config: a remote `experimental.pgdelta.enabled = true` must not enable a
+    // Gate on the base config: a remote `experimental.pgdelta.enabled = true` must not enable a
     // base-disabled command without `--experimental`.
     yield* requirePgDelta({
       experimental,
@@ -89,31 +62,14 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
       configPath: path.join("supabase", "config.toml"),
     });
 
-    // Mutually-exclusive db-url/linked/local group, checked after the gate above (see
-    // `requirePgDelta`'s doc comment for the ordering). "Set" means explicitly set: Option
-    // `Some`, or boolean `true`.
-    const exclusive: Array<string> = [];
-    if (Option.isSome(flags.dbUrl)) exclusive.push("db-url");
-    if (Option.isSome(flags.linked)) exclusive.push("linked");
-    if (Option.isSome(flags.local)) exclusive.push("local");
-    if (exclusive.length > 1) {
-      return yield* new DeclarativeMutuallyExclusiveFlagsError({
-        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${exclusive.join(" ")}] were all set`,
-      });
-    }
+    const target = yield* resolveTarget(flags);
 
-    // Explicit `--linked` re-loads config with the resolved ref, so a matching `[remotes.<ref>]`
-    // block overrides `experimental.pgdelta.*` downstream only, not the gate above. Smart-mode's
-    // "Linked project" choice does not re-load, so only `flags.linked` triggers this.
+    // A linked target re-loads config with its ref, so a matching `[remotes.<ref>]` block
+    // overrides `experimental.pgdelta.*` downstream only, not the gate above.
     let toml = baseToml;
-    let explicitLinkedTarget: ResolvedRemoteTarget | undefined;
-    // The resolved linked ref (explicit `--linked` only) is threaded into the raw-shadow export
-    // source, so its platform setup uses the remote-merged config, and into the post-run
-    // linked-project cache finalizer below.
-    if (Option.isSome(flags.linked)) {
-      explicitLinkedTarget = yield* remoteTarget.load(Option.none());
-      yield* Ref.set(linkedProjectRef, explicitLinkedTarget.ref);
-      toml = yield* readDbToml(fs, path, cliSettings.workdir, explicitLinkedTarget.ref);
+    if (target.kind === "linked") {
+      yield* Ref.set(linkedProjectRef, target.ref);
+      toml = yield* readDbToml(fs, path, cliSettings.workdir, target.ref);
     }
 
     // Preserve the selected value for user-facing output: invocation-local `--output` wins,
@@ -137,20 +93,11 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
       });
     }
     yield* warnFormerDeclarativeDefault(fs, path, cliSettings.workdir, toml.pgDelta);
-    const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
-    const local: LocalConn = { port: toml.port, password: toml.password };
-
-    const resolvedLinkedProjectRef = yield* Ref.get(linkedProjectRef);
     const run: DeclarativeRunContext = {
       pgDelta: {
-        // `resolvePgDeltaProjectId` resolves `SUPABASE_PROJECT_ID` env → config.toml's
-        // `project_id` → sanitized workdir basename — not `cliSettings.projectId` alone, which
-        // is env-only and would mount the wrong `supabase_edge_runtime_` Deno-cache volume for a
-        // project relying on config or the workdir-basename default.
-        projectId: resolvePgDeltaProjectId(path, cliSettings.projectId, toml, cliSettings.workdir),
+        projectId: toml.projectId,
         cwd: cliSettings.workdir,
-        // Merged config's deno_version (re-loaded with the linked ref above on
-        // `--linked`), so pg-delta runs under the remote-configured Deno image.
+        // The merged config's deno_version, so a linked run uses the remote-configured Deno image.
         denoVersion: toml.denoVersion,
         projectEnv: toml.projectEnv,
       },
@@ -162,86 +109,22 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
       debug: yield* isPgDeltaDebugEnabled,
       strictCoverage: flags.strictCoverage,
       dnsResolver,
-      ...(resolvedLinkedProjectRef !== undefined
-        ? { linkedProjectRef: resolvedLinkedProjectRef }
-        : {}),
+      ...(target.kind === "linked" ? { linkedProjectRef: target.ref } : {}),
     };
 
-    const hasExplicitTarget =
-      Option.isSome(flags.local) || Option.isSome(flags.linked) || Option.isSome(flags.dbUrl);
     yield* Effect.annotateCurrentSpan({
-      "declarative.target_mode": hasExplicitTarget ? "explicit" : "smart",
+      "declarative.target": target.kind,
       "schema.count": flags.schema.length,
     });
 
-    let target: PgDeltaDatabaseEndpoint;
-    let overwrite: boolean;
-    if (hasExplicitTarget) {
-      const seam = yield* DeclarativeSeam;
-      if (Option.isSome(flags.local)) {
-        // Target selection keys off flag presence, but auto-start gates on the boolean value, so
-        // `--local=false` selects the local target but must not start a stopped stack.
-        yield* seam.ensureLocalPostgresImageCurrent;
-        if (Option.getOrElse(flags.local, () => false)) {
-          yield* seam.ensureLocalDatabaseStarted;
-        }
-        target = yield* resolveLocalTargetEndpoint(local, dnsResolver);
-      } else {
-        target = yield* resolveRemoteEndpoint(flags, explicitLinkedTarget);
-      }
-      overwrite = flags.overwrite;
-    } else {
-      if (!tty.stdinIsTty && !yes) {
-        return yield* new DeclarativeNonInteractiveError({
-          message: "in non-interactive mode, specify a target: --local, --linked, or --db-url",
-        });
-      }
-      if ((yield* hasDeclarativeFiles(fs, declarativeDir)) && !flags.overwrite) {
-        // `--yes`/`SUPABASE_YES` auto-confirms, but still echoes the `<label> [y/N] y` stderr
-        // line via `promptYesNo` rather than skipping it.
-        const ok = yield* promptYesNo(
-          output,
-          yes,
-          `Declarative schema already exists at ${bold(
-            declarativeDirRel,
-          )}. Regenerate from database? This will overwrite existing files.`,
-          false,
-        );
-        if (!ok) {
-          yield* output.raw("Skipped generating declarative schema.\n", "stderr");
-          return;
-        }
-      }
-      const hasMigrations = yield* hasMigrationFiles(fs, path, migrationsDir);
-      // Only when migrations exist, resolve the target (env, then link) and record its ref for
-      // the post-run cache finalizer, so smart generate in a linked workdir caches the project
-      // regardless of which target the user picks.
-      let linkedTarget = Option.none<ResolvedRemoteTarget>();
-      if (hasMigrations) {
-        // Only decides whether to offer the linked choice, so a broken link omits the choice
-        // rather than aborting; the explicit `--linked` branch above still propagates a real
-        // failure.
-        linkedTarget = yield* remoteTarget.resolveOptional(Option.none());
-        if (Option.isSome(linkedTarget)) {
-          yield* Ref.set(linkedProjectRef, linkedTarget.value.ref);
-        }
-      }
-      target = yield* resolveSmartTargetEndpoint(
-        flags,
-        local,
-        hasMigrations,
-        fs,
-        path,
-        cliSettings.workdir,
-        linkedTarget,
-        (yield* DeclarativeSeam).ensureLocalPostgresImageCurrent,
-      );
-      overwrite = true;
-    }
+    const endpoint =
+      target.kind === "local"
+        ? yield* prepareLocalTargetEndpoint(Effect.succeed(flags.reset), flags.password)
+        : yield* resolveTargetEndpoint(target, flags.password, true);
 
-    const result = yield* generateDeclarativeOutput(run, target);
+    const result = yield* generateDeclarativeOutput(run, endpoint);
 
-    if (!overwrite && (yield* confirmOverwriteHasFiles(fs, declarativeDir))) {
+    if (!flags.overwrite && (yield* confirmOverwriteHasFiles(fs, declarativeDir))) {
       // `--yes`/`SUPABASE_YES` auto-confirms, but still echoes the `<label> [y/N] y` stderr line
       // via `promptYesNo` rather than skipping it.
       const ok = yield* promptYesNo(
@@ -257,18 +140,12 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
     }
 
     const written = yield* writeDeclarativeSchemas(fs, path, declarativeDir, result);
-    // The overwrite prompts above promise existing files may be deleted, but the
-    // next writer only prunes what an export manifest claimed — say so when a
-    // manifest-less directory kept files the export did not replace.
+    // The overwrite prompt promises existing files may be deleted, but the writer only prunes
+    // what an export manifest claimed, so say so when a manifest-less directory kept files.
     yield* warnPreservedUnmanagedDeclarativeFiles(declarativeDirRel, written);
     yield* output.raw(declarativeSchemaWrittenLine(declarativeDirRel), "stderr");
   }).pipe(
-    // Starting or resetting the local database loads the project context, which would print the
-    // OrioleDB env WARN again.
-    withSingleOrioleDBVersionEnvWarning,
-    // Writes the linked-project cache for any resolved ref, on success and failure. Only
-    // explicit `--linked` resolves a ref here; the cache layer no-ops when the file exists, the
-    // token is missing, or the GET is non-200.
+    // The cache layer no-ops when the file exists, the token is missing, or the GET is non-200.
     Effect.ensuring(
       Effect.flatMap(Ref.get(linkedProjectRef), (ref) =>
         ref !== undefined ? linkedProjectCache.cache(ref) : Effect.void,
@@ -278,19 +155,9 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
   );
 });
 
-const hasDeclarativeFiles = Effect.fnUntraced(function* (fs: FileSystem.FileSystem, dir: string) {
-  const exists = yield* fs.exists(dir).pipe(Effect.orElseSucceed(() => false));
-  if (!exists) return false;
-  const entries = yield* fs
-    .readDirectory(dir)
-    .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
-  return entries.length > 0;
-});
-
-// The overwrite-confirmation guard. Unlike the smart-mode `hasDeclarativeFiles` above (which
-// swallows read errors), an unreadable-but-existing declarative dir must abort here rather than
-// read as "empty" and get silently overwritten by `writeDeclarativeSchemas`; only a not-exist
-// directory means "no confirmation needed", so let any other `PlatformError` propagate unwrapped.
+// An unreadable-but-existing declarative dir must abort rather than read as "empty" and get
+// silently overwritten by `writeDeclarativeSchemas`; only a not-exist directory means "no
+// confirmation needed", so any other `PlatformError` propagates unwrapped.
 const confirmOverwriteHasFiles = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   dir: string,
@@ -303,18 +170,4 @@ const confirmOverwriteHasFiles = Effect.fnUntraced(function* (
       ),
     );
   return entries.length > 0;
-});
-
-const hasMigrationFiles = Effect.fnUntraced(function* (
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  migrationsDir: string,
-) {
-  // Smart-mode presence/prompt probe only: returns `false` on any error (unreadable dir,
-  // path-is-a-file, not-exist, …), so generate continues into the no-migrations local flow. The
-  // real diff path keeps `listLocalMigrations`'s hard error behavior instead.
-  const migrations = yield* listLocalMigrations(fs, path, migrationsDir).pipe(
-    Effect.orElseSucceed((): ReadonlyArray<string> => []),
-  );
-  return migrations.length > 0;
 });

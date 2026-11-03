@@ -57,11 +57,15 @@ export const sharesApiEndpoint = (creation: EndpointIntents): boolean =>
 
 type RouteKeys = NonNullable<NonNullable<NetworkEndpoint["shared"]>[number]["keyRewrite"]>["keys"];
 
-/** Routes a service's HTTP endpoint on the shared API listener, or `undefined` for a dedicated one. */
+/**
+ * Routes a service's HTTP endpoint on the shared API listener, or `undefined` for a dedicated one.
+ * `backend` reaches another of the service's endpoints, like PostgREST's admin port.
+ */
 export const sharedRoutes = (
-  creation: ServiceCreation,
+  creation: Pick<ServiceCreation, "service">,
   name: string,
   keys: RouteKeys,
+  backend: (endpoint: string) => NetworkEndpoint["backend"],
 ): NetworkEndpoint["shared"] => {
   const route = name === "http" ? apiRoute(creation.service) : undefined;
   if (route === undefined) return undefined;
@@ -72,6 +76,7 @@ export const sharedRoutes = (
           prefix: "/realtime/v1/api",
           upstreamPrefix: "/api",
           upstreamHost: "realtime-dev",
+          forwardedPrefix: "/realtime/v1/api",
           keyRewrite: { policy: "bearer", keys },
         },
         {
@@ -87,8 +92,32 @@ export const sharedRoutes = (
         { prefix: route, upstreamPrefix: "/", keyRewrite: { policy: "bearer", keys } },
       ];
     case "rest":
+      return [
+        { prefix: route, upstreamPrefix: "/", keyRewrite: { policy: "bearer", keys } },
+        {
+          prefix: "/graphql/v1",
+          upstreamPrefix: "/rpc/graphql",
+          forwardedPrefix: "/graphql/v1",
+          addHeaders: { "content-profile": "graphql_public" },
+          keyRewrite: { policy: "bearer", keys },
+        },
+        { prefix: "/rest-admin/v1", upstreamPrefix: "/", target: backend("admin") },
+      ];
     case "auth":
-      return [{ prefix: route, upstreamPrefix: "/", keyRewrite: { policy: "bearer", keys } }];
+      return [
+        /* Like legacy Kong, email links, OAuth redirects and discovery keep the client's headers. */
+        ...["verify", "callback", "authorize"].map((path) => ({
+          prefix: `${route}/${path}`,
+          upstreamPrefix: `/${path}`,
+          forwardedPrefix: `${route}/${path}`,
+        })),
+        {
+          prefix: "/.well-known/oauth-authorization-server",
+          upstreamPrefix: "/.well-known/oauth-authorization-server",
+          forwardedPrefix: "/.well-known/oauth-authorization-server",
+        },
+        { prefix: route, upstreamPrefix: "/", keyRewrite: { policy: "bearer", keys } },
+      ];
     case "functions":
       return [{ prefix: route, upstreamPrefix: "/", keyRewrite: { policy: "sb-api-key", keys } }];
     default:
@@ -96,11 +125,28 @@ export const sharedRoutes = (
   }
 };
 
-/** Shared-listener routes a dedicated HTTP endpoint also serves: Studio's MCP server at `/mcp`. */
-export const joinRoutes = (creation: ServiceCreation, name: string): NetworkEndpoint["join"] =>
-  creation.service === "studio" && name === "http"
-    ? [{ prefix: "/mcp", upstreamPrefix: "/api/mcp" }]
-    : undefined;
+/**
+ * Shared-listener routes a dedicated HTTP endpoint also serves while its service runs, like
+ * legacy Kong's: Studio's MCP server, postgres-meta, Logflare and Supavisor's API.
+ */
+export const joinRoutes = (
+  creation: Pick<ServiceCreation, "service">,
+  name: string,
+): NetworkEndpoint["join"] => {
+  if (name !== "http") return undefined;
+  switch (creation.service) {
+    case "studio":
+      return [{ prefix: "/mcp", upstreamPrefix: "/api/mcp", forwardedPrefix: "/mcp" }];
+    case "pgmeta":
+      return [{ prefix: "/pg", upstreamPrefix: "/" }];
+    case "analytics":
+      return [{ prefix: "/analytics/v1", upstreamPrefix: "/" }];
+    case "pooler":
+      return [{ prefix: "/pooler/v2", upstreamPrefix: "/v2" }];
+    default:
+      return undefined;
+  }
+};
 
 /**
  * Whether an endpoint's writes each take a fresh upstream connection instead of the pool: only

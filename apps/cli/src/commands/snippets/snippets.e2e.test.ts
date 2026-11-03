@@ -11,11 +11,11 @@ describe("supabase snippets", () => {
   // API-free code path in `snippets download` — the UUID pre-check surfacing
   // the `invalid snippet ID:` prefix to stdout/stderr with exit code 1.
   it.live(
-    "download with invalid UUID exits 1 with Go-format message",
+    "download with invalid UUID exits 1 with the formatted message",
     () =>
       Effect.gen(function* () {
         const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
-          ["snippets", "download", "not-a-uuid", "--project-ref", TEST_PROJECT_REF],
+          ["snippets", "download", "not-a-uuid", `--remote=${TEST_PROJECT_REF}`],
           { env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN } },
         );
         expect(exitCode).toBe(1);

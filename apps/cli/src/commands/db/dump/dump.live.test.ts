@@ -10,7 +10,7 @@ test("dumps the remote schema to a file", ({ cliEffect, project, workspace, sign
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const outFile = path.join(workspace.path, "schema.sql");
-      const result = yield* cliEffect(["db", "dump", "--db-url", project.dbUrl, "-f", outFile]);
+      const result = yield* cliEffect(["db", "dump", "-f", outFile, `--remote=${project.dbUrl}`]);
       expect(result.exitCode, result.stderr).toBe(0);
       const dump = new TextDecoder("utf-8", { ignoreBOM: true }).decode(
         yield* fs.readFile(outFile),

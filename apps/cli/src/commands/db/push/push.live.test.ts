@@ -2,7 +2,7 @@ import { BunServices } from "@effect/platform-bun";
 import { Cause, Clock, Effect, Exit, FileSystem, Path, Random } from "effect";
 import { expect } from "vitest";
 
-import { requireLiveSuccess, test, throwWithCleanup } from "../../../../tests/helpers/live.ts";
+import { resetLiveDatabase, test, throwWithCleanup } from "../../../../tests/helpers/live.ts";
 
 test("pushes a local migration to the remote database", ({
   cliEffect,
@@ -26,15 +26,12 @@ test("pushes a local migration to the remote database", ({
       );
 
       const target = Effect.gen(function* () {
-        const result = yield* cliEffect(["db", "push", "--db-url", project.dbUrl, "--yes"]);
+        const result = yield* cliEffect(["db", "push", "--yes", `--remote=${project.dbUrl}`]);
         expect(result.exitCode, result.stderr).toBe(0);
         expect(result.stdout).toContain("Finished supabase db push");
       });
 
-      const reset = Effect.gen(function* () {
-        const result = yield* cliEffect(["db", "reset", "--db-url", project.dbUrl, "--yes"]);
-        requireLiveSuccess(result, "db reset cleanup after db push");
-      });
+      const reset = resetLiveDatabase(cliEffect, project, "db reset cleanup after db push");
 
       return yield* Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {

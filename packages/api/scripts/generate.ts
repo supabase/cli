@@ -235,6 +235,7 @@ const UUID_PATTERN =
 // Keys stripped from a schema node because they describe documentation/example
 // values, not the value's shape.
 const SCHEMA_METADATA_KEYS = new Set(["default", "example", "examples"]);
+const CONTENT_ANNOTATION_KEYS = new Set(["contentEncoding", "contentMediaType"]);
 
 // `inPropertiesMap` tracks whether the current object is the value of a
 // `properties: {...}` map; there, keys are user-defined property names (which may
@@ -271,6 +272,12 @@ export function sanitizeOpenApiSchema(
       continue;
     }
 
+    // The OpenAPI 3.0 converter rejects the annotation-only content keywords; `format` still
+    // carries the encoding.
+    if (!inPropertiesMap && CONTENT_ANNOTATION_KEYS.has(key)) {
+      continue;
+    }
+
     // The OpenAPI 3.0 converter rejects `const`; a one-value `enum` is equivalent.
     if (!inPropertiesMap && key === "const") {
       Object.assign(sanitized, { enum: [rawValue] });
@@ -298,6 +305,16 @@ export function sanitizeOpenApiSchema(
     }
 
     sanitized[key] = rawValue;
+  }
+
+  // Binary bodies are rewritten to `BinaryInput` by matching the bare format annotation, so
+  // extra annotations such as `description` would leave them typed as plain strings.
+  if (sanitized.type === "string" && sanitized.format === "binary") {
+    return {
+      type: "string",
+      format: "binary",
+      ...(sanitized.nullable === true ? { nullable: true } : {}),
+    };
   }
 
   if (

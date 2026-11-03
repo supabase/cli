@@ -4,15 +4,15 @@ import { Effect, Option, Ref, Result } from "effect";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { RemoteTarget } from "../../../config/remote-target.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { mapHttpError, sanitizeErrorBody } from "../../../command-internal/http-errors.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import {
   decodeFunctionsResponse,
-  encodeFunctionsGoJson,
-  encodeFunctionsGoToml,
-  encodeFunctionsGoYaml,
+  encodeFunctionsListJson,
+  encodeFunctionsListToml,
+  encodeFunctionsListYaml,
   hasJsonContentType,
 } from "./list.encoders.ts";
 import {
@@ -32,16 +32,14 @@ const mapListError = mapHttpError({
 
 export const functionsList = Effect.fn("functions.list")(function* (flags: FunctionsListFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
-  const remoteTarget = yield* RemoteTarget;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const resolvedProjectRef = yield* Ref.make(Option.none<string>());
 
   yield* Effect.gen(function* () {
-    const ref = yield* remoteTarget.resolve(flags.projectRef).pipe(
-      Effect.map((target) => target.ref),
+    const ref = yield* resolveProjectTarget(flags).pipe(
       Effect.tap((projectRef) => Ref.set(resolvedProjectRef, Option.some(projectRef))),
     );
     yield* Effect.annotateCurrentSpan("project.ref", ref);
@@ -88,26 +86,26 @@ export const functionsList = Effect.fn("functions.list")(function* (flags: Funct
     const { functions, isNil } = decodedFunctions.success;
     yield* Effect.annotateCurrentSpan("function.count", functions.length);
 
-    const goFmt = Option.getOrUndefined(goOutputFlag);
+    const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
-    if (goFmt === "env") {
+    if (outputFlagFormat === "env") {
       return yield* new FunctionsEnvNotSupportedError({
         message: "--output env flag is not supported",
       });
     }
-    if (goFmt === "json") {
-      yield* output.raw(encodeFunctionsGoJson({ functions, isNil }));
+    if (outputFlagFormat === "json") {
+      yield* output.raw(encodeFunctionsListJson({ functions, isNil }));
       return;
     }
-    if (goFmt === "yaml") {
-      yield* output.raw(encodeFunctionsGoYaml(functions));
+    if (outputFlagFormat === "yaml") {
+      yield* output.raw(encodeFunctionsListYaml(functions));
       return;
     }
-    if (goFmt === "toml") {
-      yield* output.raw(encodeFunctionsGoToml({ functions, isNil }));
+    if (outputFlagFormat === "toml") {
+      yield* output.raw(encodeFunctionsListToml({ functions, isNil }));
       return;
     }
-    if (goFmt === "pretty") {
+    if (outputFlagFormat === "pretty") {
       yield* output.raw(renderFunctionsTable(functions));
       return;
     }

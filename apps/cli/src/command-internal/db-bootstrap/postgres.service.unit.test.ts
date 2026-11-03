@@ -114,7 +114,7 @@ describe("buildPostgresStartContainerSpec", () => {
     expect(spec.secretFiles).toBeUndefined();
   });
 
-  test("uses a rootKey override instead of the Go default when provided", () => {
+  test("uses a rootKey override instead of the default when provided", () => {
     const spec = buildPostgresStartContainerSpec(
       baseInput({ db: baseDb({ major_version: 17 }), rootKey: "custom-root-key" }),
     );
@@ -163,7 +163,7 @@ describe("buildPostgresStartContainerSpec", () => {
     });
   });
 
-  test("OrioleDB branch defaults unset S3 fields to empty strings, matching Go's zero-value string fields", () => {
+  test("OrioleDB branch defaults unset S3 fields to empty strings", () => {
     const spec = buildPostgresStartContainerSpec(
       baseInput({ db: baseDb({ orioledb_version: "17.4.1.030" }) }),
     );
@@ -223,7 +223,7 @@ describe("buildPostgresStartContainerSpec", () => {
     expect(spec.env.POSTGRES_INITDB_ARGS).toBeUndefined();
   });
 
-  test("healthcheck matches Go's pg_isready probe", () => {
+  test("healthcheck uses the pg_isready probe", () => {
     const spec = buildPostgresStartContainerSpec(baseInput());
     expect(spec.healthcheck).toEqual({
       test: ["CMD", "pg_isready", "-U", "postgres", "-h", "127.0.0.1", "-p", "5432"],
@@ -380,7 +380,7 @@ describe("postgresImageVersionTag", () => {
     expect(postgresImageVersionTag("supabase/postgres:17.4.1.030")).toBe("17.4.1.030");
   });
 
-  test("degrades to the whole string when there is no colon at all, matching Go's Image[i+1:] with i=-1", () => {
+  test("degrades to the whole string when there is no colon at all", () => {
     expect(postgresImageVersionTag("supabase/postgres")).toBe("supabase/postgres");
   });
 });
@@ -451,7 +451,7 @@ describe("buildShadowPostgresContainerSpec", () => {
     expect(spec.labels).toEqual({});
   });
 
-  test("initializes POSTGRES_PASSWORD from the resolved [db] password, not a hardcoded literal — the deliberate TS extension the input's own doc describes (Go rejects the toml key at config load and always uses 'postgres')", () => {
+  test("initializes POSTGRES_PASSWORD from the resolved [db] password, not a hardcoded literal", () => {
     const spec = buildShadowPostgresContainerSpec(baseShadowInput({ password: "hunter2" }));
     expect(spec.env?.["POSTGRES_PASSWORD"]).toBe("hunter2");
   });

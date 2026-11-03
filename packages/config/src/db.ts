@@ -1,4 +1,5 @@
 import { Effect, Schema } from "effect";
+import { MigrationChecks } from "./db-migration-checks.ts";
 import { secret } from "./lib/env.ts";
 import { stringEnum } from "./lib/schema.ts";
 
@@ -150,6 +151,7 @@ export const db = Schema.Struct({
         tags,
       })
       .pipe(Schema.withDecodingDefaultKey(Effect.succeed([...defaultSchemaPaths]))),
+    checks: Schema.optionalKey(MigrationChecks),
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultMigrations }))),
   seed: Schema.Struct({
     enabled: Schema.Boolean.annotate({

@@ -1,0 +1,43 @@
+import { Effect } from "effect";
+import type { FunctionsLocalConfigLoader } from "../shared/functions/functions-config.ts";
+import { loadLocalProjectContext } from "./local-project-context.ts";
+import { resolveLocalConfigValues } from "./local-config-values.ts";
+
+function toError(cause: unknown): Error {
+  return cause instanceof Error ? cause : new Error(String(cause));
+}
+
+/**
+ * Config resolution for the native `functions` Docker paths (`deploy`/`download`/`serve`),
+ * injected into `functions-config.ts`'s `loadFunctionsCliConfig` so `shared/functions/` never
+ * imports the command tree's validation directly.
+ *
+ * Delegates to the same `loadLocalProjectContext`/`resolveLocalConfigValues` pair
+ * `start`/`stop`/`status` already use, rather than re-implementing either. Their derived
+ * local-dev values (JWTs, URLs) are discarded here; only `projectId`/`edgeRuntimeDenoVersion` and
+ * the validation side effect (fails on the first error) matter to these three commands.
+ */
+export const functionsLocalConfigLoader: FunctionsLocalConfigLoader = {
+  load: ({ projectRoot, projectRef }) =>
+    Effect.gen(function* () {
+      const context = yield* loadLocalProjectContext(projectRoot, toError, projectRef);
+      const validated = yield* resolveLocalConfigValues(
+        context.config,
+        context.hostname,
+        projectRoot,
+        context.resolvedConfig.loaded.document,
+      ).pipe(Effect.mapError(toError));
+      return {
+        loaded: { config: context.config, document: context.resolvedConfig.loaded.document },
+        resolvedConfig: context.resolvedConfig,
+        configPath: context.resolvedConfig.hasConfigFile
+          ? context.resolvedConfig.loaded.path
+          : undefined,
+        projectEnvValues: context.projectEnvValues,
+        // `context.projectId` is the id built for Docker naming/labels; `validated.projectId`
+        // exists only to feed `validateResolvedConfig`'s emptiness check.
+        projectId: context.projectId,
+        denoVersion: validated.edgeRuntimeDenoVersion,
+      };
+    }),
+};

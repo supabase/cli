@@ -12,7 +12,7 @@ describe("parsePostgrestVersion", () => {
     expect(parsePostgrestVersion({ info: { version: "12.2.0" } })).toEqual(Option.some("v12.2.0"));
   });
 
-  it("uses only the first whitespace-delimited field (Go strings.Fields)", () => {
+  it("uses only the first whitespace-delimited field", () => {
     expect(parsePostgrestVersion({ info: { version: "12.2.0 (abc123)" } })).toEqual(
       Option.some("v12.2.0"),
     );

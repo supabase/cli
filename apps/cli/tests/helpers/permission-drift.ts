@@ -1,5 +1,6 @@
 import {
   DB_TARGET_FLAGS,
+  SELECTOR_FLAGS,
   applicableEntries,
   applicableOperations,
   declaredPermissions,
@@ -69,8 +70,9 @@ function knownFlagNames(
   for (const flag of permissions.noApiEffectFlags) names.add(flag);
   for (const entry of permissions.operations) {
     for (const cond of entry.when ?? []) {
-      if (cond.dbTarget === undefined) names.add(cond.flag);
-      else for (const flag of DB_TARGET_FLAGS) names.add(flag);
+      if (cond.dbTarget !== undefined) for (const flag of DB_TARGET_FLAGS) names.add(flag);
+      else if (cond.selector !== undefined) for (const flag of SELECTOR_FLAGS) names.add(flag);
+      else names.add(cond.flag);
     }
   }
   return names;

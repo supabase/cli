@@ -11,7 +11,7 @@ import type { CliConfig } from "@supabase/config";
 
 import { localDbContainerId } from "../docker-ids.ts";
 import { toDockerMountPath } from "../docker-path.ts";
-import { encodeToml } from "../go-output.encoders.ts";
+import { encodeToml } from "../output.encoders.ts";
 import { POSTGRES_DEFAULT_ROOT_KEY } from "../local-config-values.ts";
 import type { StartContainerSpec } from "./docker-create-args.ts";
 import { START_DB_RESTORE_SH } from "./templates/db-restore.sh.ts";
@@ -24,6 +24,9 @@ import { START_DB_WEBHOOK_SQL } from "./templates/db-webhook.sql.ts";
  * `buildShadowPostgresContainerSpec`'s `password` field below.
  */
 const POSTGRES_PASSWORD = "postgres";
+
+/** `PGDATA` in every `supabase/postgres` image; the pgdata snapshot tar layout depends on it. */
+export const POSTGRES_DATA_DIR = "/var/lib/postgresql/data";
 
 /**
  * In-container path for the pgsodium root key, delivered via
@@ -309,7 +312,7 @@ export function buildPostgresStartContainerSpec(
           secretFiles: [{ containerPath: POSTGRES_PGSODIUM_ROOT_KEY_PATH, content: rootKeyValue }],
         }),
     binds: [
-      `${containerName}:/var/lib/postgresql/data`,
+      `${containerName}:${POSTGRES_DATA_DIR}`,
       // The backup file bind is appended only on the `fromBackup` branch.
       ...(input.fromBackup === undefined
         ? []

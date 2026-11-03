@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { RemoteTarget } from "../../../config/remote-target.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -15,11 +15,10 @@ export const encryptionGetRootKey = Effect.fn("encryption.get-root-key")(functio
 ) {
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* RemoteTarget;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
-  const { ref } = yield* resolver.resolve(flags.projectRef);
+  const ref = yield* resolveProjectTarget(flags);
 
   // Write the linked-project cache and persist the telemetry state file on
   // success and failure.
@@ -38,7 +37,7 @@ export const encryptionGetRootKey = Effect.fn("encryption.get-root-key")(functio
       return;
     }
 
-    // text — Go prints the bare key + newline to stdout (`fmt.Println`).
+    // text — print the bare key + newline to stdout.
     yield* output.raw(root_key + "\n", "stdout");
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });

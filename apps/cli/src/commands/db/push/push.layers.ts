@@ -5,18 +5,17 @@ import { commandCredentialsLayer } from "../../../auth/command-credentials.layer
 import { httpClientLayer } from "../../../auth/http-debug.layer.ts";
 import { commandPlatformApiFactoryLayer } from "../../../auth/command-platform-api-factory.layer.ts";
 import { commandSettingsLayer } from "../../../config/command-settings.layer.ts";
-import { remoteTargetLayer } from "../../../config/remote-target.layer.ts";
+import { projectRefLayer } from "../../../config/project-ref.layer.ts";
 import { dbConfigLayer } from "../../../command-internal/db-config.layer.ts";
 import { dbConnectionLayer } from "../../../command-internal/db-connection.sql-pg.layer.ts";
 import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";
-import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { identityStitchLayer } from "../../../command-internal/identity-stitch.ts";
 import { linkedProjectCacheLayer } from "../../../telemetry/linked-project-cache.layer.ts";
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
 
 /**
- * Runtime layer for `supabase db push`. Same shape as `db lint`: it spans local
- * (`--local` / `--db-url`) and linked DB access, so it composes the Postgres
+ * Runtime layer for `supabase db push`. Same shape as `db lint`: it spans the local default
+ * and `--remote` DB access, so it composes the Postgres
  * connection, the db-config resolver, project-ref resolution, and the
  * linked-project cache.
  *
@@ -41,7 +40,7 @@ const platformApiFactory = commandPlatformApiFactoryLayer.pipe(
   Layer.provide(identityStitchLayer),
 );
 
-const projectRef = remoteTargetLayer.pipe(
+const projectRef = projectRefLayer.pipe(
   Layer.provide(platformApiFactory),
   Layer.provide(cliSettings),
 );
@@ -68,11 +67,8 @@ export const dbPushRuntimeLayer = Layer.mergeAll(
   credentials,
   projectRef,
   linkedProjectCache,
+  platformApiFactory,
   identityStitchLayer,
   telemetryStateLayer,
-  // `promptYesNo`'s non-TTY branch reads the piped answer via `Stdin`;
-  // without it a CI/piped `db push` that reaches a confirmation prompt fails
-  // with a missing-service defect instead of honoring `y`/`n` or the default.
-  stdinLayer,
   commandRuntimeLayer(["db", "push"]),
 );

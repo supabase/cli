@@ -177,31 +177,31 @@ describe("mergeBearerJwtPayload", () => {
     expect(mergeBearerJwtPayload(claims, "null")).toEqual({ role: "anon" });
   });
 
-  it("rejects an array payload with Go's unmarshal-type-mismatch message", () => {
+  it("rejects an array payload with an invalid-claims message", () => {
     expect(() => mergeBearerJwtPayload({ role: "anon" }, "[]")).toThrow(
-      "json: cannot unmarshal array into Go value of type jwt.MapClaims",
+      "invalid claims: expected a JSON object, got array",
     );
   });
 
-  it("rejects a scalar number payload with Go's unmarshal-type-mismatch message", () => {
+  it("rejects a scalar number payload with an invalid-claims message", () => {
     expect(() => mergeBearerJwtPayload({ role: "anon" }, "123")).toThrow(
-      "json: cannot unmarshal number into Go value of type jwt.MapClaims",
+      "invalid claims: expected a JSON object, got number",
     );
   });
 
-  it("rejects a scalar string payload with Go's unmarshal-type-mismatch message", () => {
+  it("rejects a scalar string payload with an invalid-claims message", () => {
     expect(() => mergeBearerJwtPayload({ role: "anon" }, '"str"')).toThrow(
-      "json: cannot unmarshal string into Go value of type jwt.MapClaims",
+      "invalid claims: expected a JSON object, got string",
     );
   });
 
-  it("rejects a scalar boolean payload with Go's unmarshal-type-mismatch message", () => {
+  it("rejects a scalar boolean payload with an invalid-claims message", () => {
     expect(() => mergeBearerJwtPayload({ role: "anon" }, "true")).toThrow(
-      "json: cannot unmarshal bool into Go value of type jwt.MapClaims",
+      "invalid claims: expected a JSON object, got boolean",
     );
   });
 
-  it("rejects an empty payload with Go's exact 'unexpected end of JSON input'", () => {
+  it("rejects an empty payload with the exact 'unexpected end of JSON input'", () => {
     expect(() => mergeBearerJwtPayload({ role: "anon" }, "")).toThrow(
       "unexpected end of JSON input",
     );
@@ -209,19 +209,19 @@ describe("mergeBearerJwtPayload", () => {
 
   it("rejects an overflowing number nested in an object payload instead of silently signing Infinity-as-null (CLI-1961 Codex review finding)", () => {
     expect(() => mergeBearerJwtPayload({ role: "anon" }, '{"extra":1e309}')).toThrow(
-      "json: cannot unmarshal number 1e309 into Go value of type float64",
+      "invalid claims: number 1e309 is out of range",
     );
   });
 
   it("rejects an overflowing number nested arbitrarily deep (inside an array, inside an object)", () => {
     expect(() => mergeBearerJwtPayload({ role: "anon" }, '{"a":{"b":[1,2,1e309]}}')).toThrow(
-      "json: cannot unmarshal number 1e309 into Go value of type float64",
+      "invalid claims: number 1e309 is out of range",
     );
   });
 
   it("reports the FIRST overflowing literal in document order when multiple numbers overflow", () => {
     expect(() => mergeBearerJwtPayload({ role: "anon" }, '{"a":1e400,"b":1e309}')).toThrow(
-      "json: cannot unmarshal number 1e400 into Go value of type float64",
+      "invalid claims: number 1e400 is out of range",
     );
   });
 
@@ -232,17 +232,17 @@ describe("mergeBearerJwtPayload", () => {
 
   it("prioritizes the top-level type-mismatch message over an overflowing scalar payload", () => {
     expect(() => mergeBearerJwtPayload({ role: "anon" }, "1e309")).toThrow(
-      "json: cannot unmarshal number into Go value of type jwt.MapClaims",
+      "invalid claims: expected a JSON object, got number",
     );
   });
 
   it("prioritizes the top-level array-mismatch message over an overflowing number nested inside the array", () => {
     expect(() => mergeBearerJwtPayload({ role: "anon" }, "[1e309]")).toThrow(
-      "json: cannot unmarshal array into Go value of type jwt.MapClaims",
+      "invalid claims: expected a JSON object, got array",
     );
   });
 
-  it("rejects trailing garbage after a valid value with Go's exact 'after top-level value' text", () => {
+  it("rejects trailing garbage after a valid value with the exact 'after top-level value' text", () => {
     expect(() => mergeBearerJwtPayload({ role: "anon" }, "{}{}")).toThrow(
       "invalid character '{' after top-level value",
     );
@@ -253,19 +253,19 @@ describe("mergeBearerJwtPayload", () => {
     expect(merged["sub"]).toBeNull();
   });
 
-  it("reports a partial keyword match against Go's exact 'in literal' wording", () => {
+  it("reports a partial keyword match against the exact 'in literal' wording", () => {
     expect(() => mergeBearerJwtPayload({ role: "anon" }, "not-json-at-all")).toThrow(
       "invalid character 'o' in literal null (expecting 'u')",
     );
   });
 
-  it("rejects a truncated object with Go's exact 'unexpected end of JSON input'", () => {
+  it("rejects a truncated object with the exact 'unexpected end of JSON input'", () => {
     expect(() => mergeBearerJwtPayload({ role: "anon" }, '{"a":1')).toThrow(
       "unexpected end of JSON input",
     );
   });
 
-  it("rejects a truncated array with Go's exact 'unexpected end of JSON input'", () => {
+  it("rejects a truncated array with the exact 'unexpected end of JSON input'", () => {
     expect(() => mergeBearerJwtPayload({ role: "anon" }, "[1,2")).toThrow(
       "unexpected end of JSON input",
     );
@@ -283,7 +283,7 @@ describe("mergeBearerJwtPayload", () => {
     );
   });
 
-  it("rejects an unterminated string with Go's exact 'unexpected end of JSON input'", () => {
+  it("rejects an unterminated string with the exact 'unexpected end of JSON input'", () => {
     expect(() => mergeBearerJwtPayload({ role: "anon" }, '"unterminated')).toThrow(
       "unexpected end of JSON input",
     );
@@ -314,7 +314,7 @@ describe("mergeBearerJwtPayload", () => {
     );
   });
 
-  it("rejects a lone digit-less minus sign with Go's exact 'unexpected end of JSON input'", () => {
+  it("rejects a lone digit-less minus sign with the exact 'unexpected end of JSON input'", () => {
     expect(() => mergeBearerJwtPayload({ role: "anon" }, "-")).toThrow(
       "unexpected end of JSON input",
     );
@@ -344,14 +344,14 @@ describe("mergeBearerJwtPayload", () => {
 });
 
 describe("encodeBearerJwtClaims", () => {
-  it("serializes claims with alphabetically sorted keys, matching Go's jwt.MapClaims", () => {
+  it("serializes claims with alphabetically sorted keys", () => {
     const claims = { role: "authenticated", is_anonymous: true, exp: 200, iat: 100 };
     expect(encodeBearerJwtClaims(claims)).toBe(
       '{"exp":200,"iat":100,"is_anonymous":true,"role":"authenticated"}',
     );
   });
 
-  it("HTML-escapes special characters like Go's default json.Marshal", () => {
+  it("HTML-escapes special characters", () => {
     const claims = { role: "a<b>&c" };
     expect(encodeBearerJwtClaims(claims)).toBe('{"role":"a\\u003cb\\u003e\\u0026c"}');
   });
@@ -361,9 +361,9 @@ describe("encodeBearerJwtClaims", () => {
     expect(encodeBearerJwtClaims(claims)).toBe('{"custom":{"a":2,"z":1},"role":"anon"}');
   });
 
-  it("keeps Go's true lexicographic order for numeric-looking custom claim keys (CLI-1961 Codex review finding)", () => {
+  it("keeps true lexicographic order for numeric-looking custom claim keys", () => {
     // JS objects reorder integer-like string keys into ascending numeric order on
-    // enumeration, but Go's lexicographic string-key sort keeps "10" before "2".
+    // enumeration, but a lexicographic string-key sort keeps "10" before "2".
     const claims = { role: "anon", 10: "a", 2: "b" };
     expect(encodeBearerJwtClaims(claims)).toBe('{"10":"a","2":"b","role":"anon"}');
   });

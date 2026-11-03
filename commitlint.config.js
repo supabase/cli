@@ -2,7 +2,6 @@ const PROJECT_SCOPES = [
   "api",
   "cli",
   "cli-e2e",
-  "cli-go",
   "cli-test-helpers",
   "config",
   "docs",

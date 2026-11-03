@@ -47,14 +47,14 @@ describe("toPostgresURL", () => {
   });
 
   it("appends the pooler `options` runtime param after connect_timeout", () => {
-    // Go's ToPostgresURL appends RuntimeParams; the Supavisor tenant routing
+    // The Supavisor tenant routing
     // `options=reference=<ref>` must reach pg-delta (`=` escaped to %3D).
     expect(toPostgresURL({ ...base, options: "reference=abcdefghijklmnop" })).toBe(
       "postgresql://postgres:postgres@127.0.0.1:54322/postgres?connect_timeout=10&options=reference%3Dabcdefghijklmnop",
     );
   });
 
-  it("matches Go's url.QueryEscape for options (space → +)", () => {
+  it("query-escapes options (space → +)", () => {
     expect(toPostgresURL({ ...base, options: "-c search_path=public" })).toContain(
       "&options=-c+search_path%3Dpublic",
     );
@@ -67,7 +67,7 @@ describe("toPostgresURL", () => {
     );
   });
 
-  it("appends every runtimeParams entry (sorted) after options, like Go ToPostgresURL", () => {
+  it("appends every runtimeParams entry (sorted) after options", () => {
     expect(
       toPostgresURL({
         ...base,
@@ -79,7 +79,7 @@ describe("toPostgresURL", () => {
     );
   });
 
-  it("escapes runtimeParams values like Go's url.QueryEscape", () => {
+  it("query-escapes runtimeParams values", () => {
     expect(toPostgresURL({ ...base, runtimeParams: { search_path: "a b,c" } })).toContain(
       "&search_path=a+b%2Cc",
     );

@@ -1,4 +1,4 @@
-import { legacyProjectStatePaths } from "./legacy-project-state.paths.ts";
+import { legacyProjectStatePaths } from "../shared/config/legacy-project-state.paths.ts";
 import { usesStackState } from "./stack-backend.ts";
 import { Effect, type FileSystem, type Path } from "effect";
 import { dockerfileServiceImageRaw } from "../shared/services/dockerfile-images.ts";

@@ -446,7 +446,7 @@ jobs:
   backfill-release-notes:
     uses: ./.github/workflows/backfill-release-notes.yml
     needs: publish
-    if: ${{ !inputs.dry_run && needs.publish.result == 'success' }}
+    if: ${{ !cancelled() && !inputs.dry_run && needs.publish.result == 'success' }}
     with:
       tag: v${{ inputs.version }}
       apply: true
@@ -472,7 +472,7 @@ jobs:
 
   publish-homebrew:
     needs: publish
-    if: ${{ !inputs.dry_run && inputs.publish_brew_scoop }}
+    if: ${{ !cancelled() && !inputs.dry_run && inputs.publish_brew_scoop && needs.publish.result == 'success' }}
     # github-hosted to share a cache store with build-github/publish, whose
     # -github-v1 artifacts this job's checksums must match.
     runs-on: ubuntu-latest
@@ -533,7 +533,7 @@ jobs:
 
   publish-scoop:
     needs: publish
-    if: ${{ !inputs.dry_run && inputs.publish_brew_scoop }}
+    if: ${{ !cancelled() && !inputs.dry_run && inputs.publish_brew_scoop && needs.publish.result == 'success' }}
     # github-hosted to share a cache store with build-github/publish, whose
     # -github-v1 artifacts this job's checksums must match.
     runs-on: ubuntu-latest
