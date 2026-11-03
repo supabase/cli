@@ -116,9 +116,9 @@ function quoteIdent(value: string): string {
   return `"${value.replaceAll('"', '""')}"`;
 }
 
-/** Single-quotes a value as a SQL string literal, escaping embedded quotes. */
+/** Quotes a value as an escape-string literal, so it parses the same under any `standard_conforming_strings`. */
 function quoteLiteral(value: string): string {
-  return `'${value.replaceAll("'", "''")}'`;
+  return `E'${value.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`;
 }
 
 export function amcheckStatements(rows: ReadonlyArray<DriftRow>): string[] {
@@ -253,7 +253,7 @@ export function buildCollationDriftReport(
           },
           {
             title: "Rebuild every listed index",
-            body: "Run each statement on its own, outside a transaction block. CONCURRENTLY keeps the application online during the rebuild.",
+            body: "Run each statement on its own, outside a transaction block. CONCURRENTLY keeps the application online during the rebuild; exclusion-constraint indexes cannot use it and block writes while they rebuild.",
             sql: reindexStatements(indexes),
           },
           {

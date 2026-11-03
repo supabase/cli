@@ -106,12 +106,12 @@ describe("buildCollationDriftReport", () => {
 });
 
 describe("generated statements", () => {
-  it("keeps the amcheck literal intact for quote-bearing index names", () => {
-    const evil = { ...icuRow, name: `public."evil'; DROP TABLE users; --"` };
-    const statements = amcheckStatements([evil] as never);
-    const statement = statements[0] ?? "";
-    expect(statement).toContain(`'public."evil''; DROP TABLE users; --"'::regclass`);
-    expect(statement.split("'").length % 2).toBe(1); // even quote count = literal broke
+  it("escapes quotes and backslashes in the amcheck literal", () => {
+    const crafted = { ...icuRow, name: `public."x\\'::text::regclass) WHERE false;SELECT 1;--"` };
+    const [statement] = amcheckStatements([crafted] as never);
+    expect(statement).toBe(
+      `SELECT bt_index_check(E'public."x\\\\\\'::text::regclass) WHERE false;SELECT 1;--"'::regclass, heapallindexed => true);`,
+    );
   });
 
   it("marks key-backing indexes in the amcheck list", () => {
