@@ -28,7 +28,7 @@ export function mockContainerCliSpawner(route: (args: ReadonlyArray<string>) => 
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) =>
       Effect.gen(function* () {
-        const args = command._tag === "StandardCommand" ? command.args : [];
+        const args = command._tag === "StandardCommand" ? command.args.map(String) : [];
         spawned.push({ args });
 
         if (command._tag !== "StandardCommand") {

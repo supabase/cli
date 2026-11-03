@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, PlatformError, Sink, Stream } from "effect";
+import { Deferred, Effect, PlatformError, type Redacted, Sink, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
@@ -31,14 +31,14 @@ function mockSpawner(
   const spawned: Array<ReadonlyArray<string>> = [];
   const spawnedOptions: Array<{
     readonly args: ReadonlyArray<string>;
-    readonly env: Record<string, string | undefined> | undefined;
+    readonly env: Record<string, string | Redacted.Redacted<string> | undefined> | undefined;
     readonly extendEnv: boolean | undefined;
     readonly stdin: ChildProcess.CommandInput | ChildProcess.StdinConfig | undefined;
   }> = [];
 
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
-      const args = command._tag === "StandardCommand" ? command.args : [];
+      const args = command._tag === "StandardCommand" ? command.args.map(String) : [];
       spawned.push(args);
       if (command._tag === "StandardCommand") {
         spawnedOptions.push({

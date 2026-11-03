@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { PgClient } from "@effect/sql-pg";
 import { describe, expect, it } from "@effect/vitest";
 import { Context, Effect, FileSystem, Layer, Redacted, Ref, Schema, Stream } from "effect";
@@ -141,7 +141,11 @@ it.effect("credential lookup leaves a fresh stack untouched for custom database 
       });
       expect((yield* state.read(stack.id))?.credentials?.jwtSecret).toBe(jwtSecret);
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live("forwards and rotates saved identity across composed services in one owner", () =>
@@ -391,7 +395,11 @@ it.live("forwards and rotates saved identity across composed services in one own
         (yield* state.read(stack.id).pipe(Effect.map((saved) => saved?.credentials)))?.jwtSecret,
       ).toBe(customJwtSecret);
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.effect("publishes service removal and composition pruning together", () =>
@@ -447,7 +455,11 @@ it.effect("publishes service removal and composition pruning together", () =>
       expect(saved.instances).toEqual([]);
       expect(saved.composition).toEqual({ members: [], dependencies: [] });
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live(
@@ -548,7 +560,11 @@ it.live(
         expect((yield* state.read(stack.id))?.instances).toHaveLength(3);
         expect((yield* reopenedOwner.rpc.status({ id: database.id })).lifecycle).toBe("stopped");
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   { timeout: 180_000 },
 );
 
@@ -600,7 +616,11 @@ it.effect("isolates owner graphs built in one scope", () =>
         .pipe(Effect.flip);
       expect(isolated.operation).toBe("configureComposition");
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live(
@@ -669,7 +689,11 @@ it.live(
         expect(response.status).toBe(200);
         expect(yield* response.json).toEqual([{ value: "factory-row" }]);
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   { timeout: 180_000 },
 );
 
@@ -762,7 +786,11 @@ it.effect("validates Supabase composition recipes before creating instances", ()
         .pipe(Effect.flip);
       expect(missingSql.message).toBe("database requires configured sql endpoint");
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.effect("lets a retry choose other credentials after the first database creation failed", () =>
@@ -794,7 +822,11 @@ it.effect("lets a retry choose other credentials after the first database creati
       yield* owner.rpc.createService(database("second-password"));
       expect((yield* state.read(stack.id))?.credentials?.databasePassword).toBe("second-password");
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.effect(
@@ -845,6 +877,7 @@ it.effect(
       Effect.provide(
         Layer.mergeAll(
           NodeServices.layer,
+          NodeCrypto.layer,
           NodeHttpClient.layerNodeHttp,
           PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
         ),
@@ -891,6 +924,7 @@ it.live("destroying one service deletes its port reservation", () =>
     Effect.provide(
       Layer.mergeAll(
         NodeServices.layer,
+        NodeCrypto.layer,
         NodeHttpClient.layerNodeHttp,
         PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
       ),
@@ -921,6 +955,7 @@ it.live("destroying a stack leaves its data root empty after an owner was killed
     Effect.provide(
       Layer.mergeAll(
         NodeServices.layer,
+        NodeCrypto.layer,
         NodeHttpClient.layerNodeHttp,
         PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
       ),
@@ -961,6 +996,7 @@ it.live("refuses to destroy one service after its data directory became a symlin
     Effect.provide(
       Layer.mergeAll(
         NodeServices.layer,
+        NodeCrypto.layer,
         NodeHttpClient.layerNodeHttp,
         PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
       ),
@@ -993,6 +1029,7 @@ it.live("refuses to destroy a stack whose data directory is a symlink and keeps 
     Effect.provide(
       Layer.mergeAll(
         NodeServices.layer,
+        NodeCrypto.layer,
         NodeHttpClient.layerNodeHttp,
         PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
       ),
@@ -1033,7 +1070,11 @@ it.effect("refuses to generate credentials for a stack whose saved instances con
       expect(current?.credentials).toBeUndefined();
       expect(current?.instances).toHaveLength(1);
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live("blocks a credential change while a standalone credential consumer runs", () =>
@@ -1079,7 +1120,11 @@ it.live("blocks a credential change while a standalone credential consumer runs"
       expect(yield* owner.getStackCredentials).toEqual(before);
       yield* owner.rpc.stopService({ id: standalone.id });
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live(
@@ -1134,7 +1179,11 @@ it.live(
         yield* owner.rpc.startService({ id: rest.id });
         yield* owner.rpc.stopService({ id: rest.id });
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
 );
 
 it.live("rejects a missing required input before starting or stopping the service", () =>
@@ -1181,7 +1230,11 @@ it.live("rejects a missing required input before starting or stopping the servic
       });
       yield* owner.rpc.stopService({ id: provided.id });
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live(
@@ -1246,6 +1299,7 @@ it.live(
       Effect.provide(
         Layer.mergeAll(
           NodeServices.layer,
+          NodeCrypto.layer,
           NodeHttpClient.layerNodeHttp,
           PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
         ),
@@ -1338,6 +1392,7 @@ describe.runIf(testEngine === "docker")("Docker volume storage", () => {
         Effect.provide(
           Layer.mergeAll(
             NodeServices.layer,
+            NodeCrypto.layer,
             NodeHttpClient.layerNodeHttp,
             PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
           ),

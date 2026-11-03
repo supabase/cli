@@ -1,7 +1,6 @@
 import {
   Cause,
   Config,
-  Crypto,
   Duration,
   Effect,
   Exit,
@@ -18,6 +17,7 @@ import {
   Stream,
   Tracer,
 } from "effect";
+import { SecureRandom } from "effect/crypto";
 import { Headers, HttpTraceContext } from "effect/http";
 import { CLI_VERSION } from "../cli/version.ts";
 import { CliSettings } from "../config/cli-settings.service.ts";
@@ -250,7 +250,7 @@ const debugConsoleTracer = Effect.fnUntraced(function* (
 
 const sinkTracer = Effect.fnUntraced(function* (sink: TraceSink) {
   const runtimeInfo = yield* RuntimeInfo;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const sinkModule = yield* Effect.promise(() => import("./otlp-trace-sink.ts"));
   const resource = {
     serviceVersion: CLI_VERSION,
@@ -258,7 +258,7 @@ const sinkTracer = Effect.fnUntraced(function* (sink: TraceSink) {
       os: runtimeInfo.platform,
       arch: runtimeInfo.arch,
       is_ci: yield* detectCi,
-      "service.instance.id": yield* Effect.orDie(crypto.randomUUIDv4),
+      "service.instance.id": yield* crypto.uuidV4(),
     },
   };
   const make = (url: string, headers: Redacted.Redacted<Readonly<Record<string, string>>>) =>
@@ -280,7 +280,7 @@ const sinkTracer = Effect.fnUntraced(function* (sink: TraceSink) {
  */
 export const withDebugConsole = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R | CliSettings | Crypto.Crypto | Stdio.Stdio> =>
+): Effect.Effect<A, E, R | CliSettings | SecureRandom.SecureRandom | Stdio.Stdio> =>
   Effect.gen(function* () {
     const settings = yield* CliSettings;
     const enabled =
@@ -310,7 +310,11 @@ export const withTraceExport =
   (settings: TraceSettings, attributes: Readonly<Record<string, unknown>>) =>
   <A, E, R>(
     effect: Effect.Effect<A, E, R>,
-  ): Effect.Effect<A, E, R | Crypto.Crypto | FileSystem.FileSystem | RuntimeInfo | Stdio.Stdio> => {
+  ): Effect.Effect<
+    A,
+    E,
+    R | SecureRandom.SecureRandom | FileSystem.FileSystem | RuntimeInfo | Stdio.Stdio
+  > => {
     const untraced = effect.pipe(Effect.withTracerEnabled(false));
     if (Option.isNone(settings.sink)) return untraced;
     const sink = settings.sink.value;

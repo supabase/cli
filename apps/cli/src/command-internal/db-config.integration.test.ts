@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -279,7 +279,7 @@ describe("dbConfigResolver (local + db-url)", () => {
       const dir = yield* withWorkdir('[api]\nschemas = ["app", "public"]');
       const result = yield* resolveConnection(dir, inputFor(target));
       expect(result.exposedSchemas).toEqual(["app", "public"]);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("local mode: uses 127.0.0.1 with config.toml db.port/password and is local", () =>
@@ -308,7 +308,7 @@ describe("dbConfigResolver (local + db-url)", () => {
         }),
       ),
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     ),
   );
 
@@ -326,7 +326,7 @@ describe("dbConfigResolver (local + db-url)", () => {
         }),
       ),
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     ),
   );
 
@@ -344,7 +344,7 @@ describe("dbConfigResolver (local + db-url)", () => {
         );
         const r = yield* resolveConnection(dir, inputFor(localTarget));
         expect(r.conn.suggestionContext).toMatchObject({ linkedCheckout: true });
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect(
@@ -356,7 +356,7 @@ describe("dbConfigResolver (local + db-url)", () => {
           projectId: "abcdefghijklmnopqrst",
         });
         expect(r.conn.suggestionContext).toMatchObject({ linkedCheckout: true });
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("local mode on an unlinked checkout adds no --linked pointer", () =>
@@ -364,7 +364,7 @@ describe("dbConfigResolver (local + db-url)", () => {
       const dir = yield* withWorkdir();
       const r = yield* resolveConnection(dir, inputFor(localTarget));
       expect(r.conn.suggestionContext?.linkedCheckout).toBeUndefined();
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("local mode: falls back to default port/password without a config.toml", () =>
@@ -380,7 +380,7 @@ describe("dbConfigResolver (local + db-url)", () => {
         }),
       ),
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     ),
   );
 
@@ -409,7 +409,7 @@ describe("dbConfigResolver (local + db-url)", () => {
         }),
       ),
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     ),
   );
 
@@ -427,7 +427,7 @@ describe("dbConfigResolver (local + db-url)", () => {
         }),
       ),
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     ),
   );
 
@@ -445,7 +445,7 @@ describe("dbConfigResolver (local + db-url)", () => {
         }),
       ),
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     ),
   );
 
@@ -465,7 +465,7 @@ describe("dbConfigResolver (local + db-url)", () => {
           }),
         ),
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide([BunServices.layer, BunCrypto.layer]),
       ),
   );
 
@@ -485,7 +485,7 @@ describe("dbConfigResolver (local + db-url)", () => {
           }),
         ),
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide([BunServices.layer, BunCrypto.layer]),
       ),
   );
 
@@ -506,7 +506,7 @@ describe("dbConfigResolver (local + db-url)", () => {
         }),
       ),
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     ),
   );
 
@@ -527,7 +527,7 @@ describe("dbConfigResolver (local + db-url)", () => {
         }),
       ),
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     ),
   );
 
@@ -554,7 +554,7 @@ describe("dbConfigResolver (local + db-url)", () => {
           }),
         ),
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide([BunServices.layer, BunCrypto.layer]),
       );
     },
   );
@@ -573,7 +573,7 @@ describe("dbConfigResolver (local + db-url)", () => {
         }),
       ),
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     );
   });
 
@@ -595,7 +595,7 @@ describe("dbConfigResolver (local + db-url)", () => {
         }),
       ),
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     ),
   );
 
@@ -625,7 +625,7 @@ describe("dbConfigResolver (local + db-url)", () => {
           }),
         ),
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide([BunServices.layer, BunCrypto.layer]),
       );
     },
   );
@@ -741,14 +741,14 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
         stackApi: projectStackApi(dir, "running"),
       }).pipe(Effect.provide(stackBackendLayer("stack")));
       expect(resolved.exposedSchemas).toEqual(["app", "public"]);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("treats the url printed by `stack status --env` as the local database", () =>
     Effect.gen(function* () {
       const resolved = yield* resolveOnStack(yield* withWorkdir(), stackUrl(STACK_SQL_PORT));
       expect(resolved.isLocal).toBe(true);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("fills a passwordless stack url from the stack's credentials, not [db].password", () =>
@@ -760,14 +760,14 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
       );
       expect(resolved.isLocal).toBe(true);
       expect(resolved.conn.password).toBe("stack-password");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("keeps a loopback url on another port remote so it still requires TLS", () =>
     Effect.gen(function* () {
       const resolved = yield* resolveOnStack(yield* withWorkdir(), stackUrl(STACK_SQL_PORT + 1));
       expect(resolved.isLocal).toBe(false);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("fills from the stack's credentials when the stack port is also [db].port", () =>
@@ -781,7 +781,7 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
       );
       expect(resolved.isLocal).toBe(true);
       expect(resolved.conn.password).toBe("stack-password");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   for (const state of ["unregistered", "stopped"] as const) {
@@ -794,7 +794,7 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
           projectStackApi(dir, state),
         );
         expect(resolved.isLocal).toBe(false);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
     );
   }
 
@@ -806,7 +806,7 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
       );
       expect(resolved.conn.fallbacks).toEqual([{ host: "db.example.com", port: 5432 }]);
       expect(resolved.isLocal).toBe(false);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("does not consult the stack for a non-loopback host", () =>
@@ -824,7 +824,7 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
         untouchedStackApi,
       );
       expect(resolved.isLocal).toBe(false);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 });
 
@@ -861,7 +861,7 @@ describe("dbConfigResolver (linked config ordering)", () => {
         }),
       ),
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     );
   });
 
@@ -1021,7 +1021,7 @@ describe("dbConfigResolver (linked config ordering)", () => {
         }),
       ),
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     );
   });
 
@@ -1186,7 +1186,7 @@ describe("dbConfigResolver (linked config ordering)", () => {
           }),
         ),
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide([BunServices.layer, BunCrypto.layer]),
       );
     },
   );
@@ -1314,7 +1314,7 @@ describe("dbConfigResolver (linked config ordering)", () => {
         }),
       ),
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     );
   });
 });
@@ -1421,7 +1421,7 @@ describe("dbConfigResolver (an explicit --project-ref fetches the pooler config)
           }),
         ),
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide([BunServices.layer, BunCrypto.layer]),
       );
     },
   );
@@ -1539,7 +1539,7 @@ describe("dbConfigResolver (an explicit --project-ref fetches the pooler config)
           }),
         ),
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide([BunServices.layer, BunCrypto.layer]),
       );
     },
   );
@@ -1589,7 +1589,7 @@ describe("dbConfigResolver (an explicit --project-ref fetches the pooler config)
           }),
         ),
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide([BunServices.layer, BunCrypto.layer]),
       );
     },
   );
@@ -1640,7 +1640,7 @@ describe("dbConfigResolver (an explicit --project-ref fetches the pooler config)
           }),
         ),
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide([BunServices.layer, BunCrypto.layer]),
       );
     },
   );
@@ -1673,7 +1673,7 @@ describe("dbConfigResolver (Management API calls)", () => {
       const r = yield* resolveConnection(dir, inputFor(localTarget));
       expect(r.isLocal).toBe(true);
       noApiCalls(requests, { local: true });
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
   });
 
   it.effect("--db-url makes no Management API request and the block declares none", () => {
@@ -1687,7 +1687,7 @@ describe("dbConfigResolver (Management API calls)", () => {
       );
       expect(r.isLocal).toBe(false);
       noApiCalls(requests, { "db-url": true });
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
   });
 
   it.effect(
@@ -1729,7 +1729,7 @@ describe("dbConfigResolver (Management API calls)", () => {
           }),
         ),
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide([BunServices.layer, BunCrypto.layer]),
       );
     },
   );
@@ -1781,7 +1781,7 @@ describe("dbConfigResolver (Management API calls)", () => {
         `/v1/projects/${ref}/cli/login-role`,
       );
       assertDbConfigDrift(requests, { linked: true, "project-ref": ref, password: "" });
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
   });
 
   for (const forbidden of ["retrieve", "delete"] as const) {
@@ -1862,7 +1862,7 @@ describe("dbConfigResolver (Management API calls)", () => {
               : { method: "DELETE", path: `/v1/projects/${ref}/network-bans` },
           );
           assertDbConfigDrift(requests, { linked: true, "project-ref": ref });
-        }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+        }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
       },
     );
   }
@@ -1926,7 +1926,7 @@ describe("dbConfigResolver (container pooler fallback)", () => {
         { method: "POST", path: loginRolePath },
       ]);
       assertFallbackDrift(requests, { linked: true });
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
   });
 
   it.effect("fetches the pooler config but mints no login role when a password is set", () => {
@@ -1948,7 +1948,7 @@ describe("dbConfigResolver (container pooler fallback)", () => {
       );
       expect(requests).toEqual([{ method: "GET", path: poolerPath }]);
       assertFallbackDrift(requests, { linked: true, password: "secret" });
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
   });
 
   it.effect("returns no pooler when the pooler config is forbidden", () => {
@@ -1967,7 +1967,7 @@ describe("dbConfigResolver (container pooler fallback)", () => {
       expect(Option.isNone(pooler)).toBe(true);
       expect(requests).toEqual([{ method: "GET", path: poolerPath }]);
       assertFallbackDrift(requests, { linked: true });
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
   });
 
   it.effect("--local returns no pooler and makes no Management API request", () => {
@@ -1979,7 +1979,7 @@ describe("dbConfigResolver (container pooler fallback)", () => {
       expect(Option.isNone(pooler)).toBe(true);
       expect(requests).toEqual([]);
       assertFallbackDrift(requests, { local: true });
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
   });
 });
 
@@ -2230,7 +2230,7 @@ describe("dbConfigResolver.resolveConnection", () => {
       expect(r.isLocal).toBe(true);
       expect(r.target).toEqual({ kind: "local" });
       expect(output.stderrText).toBe("Target: local stack (127.0.0.1:55555)\n");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("db-url target announces the host and never the credentials", () =>
@@ -2242,7 +2242,7 @@ describe("dbConfigResolver.resolveConnection", () => {
       expect(r.conn).toMatchObject({ host: "db.example.com", port: 6543, user: "alice" });
       expect(r.isLocal).toBe(false);
       expect(output.stderrText).toBe("Target: custom Postgres (db.example.com:6543)\n");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("a db-url that fails to parse echoes the url with the password redacted", () =>
@@ -2252,7 +2252,7 @@ describe("dbConfigResolver.resolveConnection", () => {
       const exit = yield* Effect.exit(resolveConnection(dir, inputFor({ kind: "db-url", url })));
       expect(failureText(exit)).toContain("DbConfigParseUrlError");
       expect(failureText(exit)).not.toContain("secret");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   const directTargets: ReadonlyArray<readonly [string, ResolvedTarget]> = [
@@ -2272,14 +2272,14 @@ describe("dbConfigResolver.resolveConnection", () => {
         );
         expect(failureText(exit)).toContain("TargetPasswordConflictError");
         expect(output.stderrText).toBe("");
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
     );
 
     it.effect(`accepts an empty --password for a ${label} target`, () =>
       Effect.gen(function* () {
         const dir = yield* withWorkdir();
         yield* resolveConnection(dir, inputFor(target, { password: Option.some("") }));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
     );
   }
 
@@ -2309,7 +2309,7 @@ describe("dbConfigResolver.resolveConnection", () => {
       expect(r.target).toEqual(target);
       expect(requests).toEqual([]);
       expect(output.stderrText).toBe("");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
   });
 
   it.effect(
@@ -2338,7 +2338,7 @@ describe("dbConfigResolver.resolveConnection", () => {
           { method: "GET", path: `/v1/projects/${ref}/config/database/pooler` },
         ]);
         assertDbConfigDrift(requests, { remote: true });
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
     },
   );
 
@@ -2376,7 +2376,7 @@ describe("dbConfigResolver.resolveConnection", () => {
             }),
           ),
           Effect.scoped,
-          Effect.provide(BunServices.layer),
+          Effect.provide([BunServices.layer, BunCrypto.layer]),
         );
       },
     );
@@ -2415,7 +2415,7 @@ describe("dbConfigResolver.resolveConnection", () => {
       expect(requests).toEqual([
         { method: "GET", path: `/v1/projects/${ref}/config/database/pooler` },
       ]);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
   });
 
   describe("network bans on the temporary login role", () => {
@@ -2515,7 +2515,7 @@ describe("dbConfigResolver.resolveConnection", () => {
           );
           expect(connection.attempts.count).toBe(9);
           expect(requests.some((request) => request.method === "DELETE")).toBe(false);
-        }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+        }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
       },
     );
 
@@ -2533,7 +2533,7 @@ describe("dbConfigResolver.resolveConnection", () => {
         expect(r.conn).toMatchObject({ user: `cli_login_role.${ref}` });
         expect(connection.attempts.count).toBe(4);
         expect(requests.some((request) => request.method === "DELETE")).toBe(false);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
     });
 
     it.effect("keeps retrying without removing anything when no ban is listed", () => {
@@ -2550,7 +2550,7 @@ describe("dbConfigResolver.resolveConnection", () => {
         expect(r.conn).toMatchObject({ user: `cli_login_role.${ref}` });
         expect(connection.attempts.count).toBe(4);
         expect(requests.some((request) => request.method === "DELETE")).toBe(false);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
     });
 
     it.effect("removes the bans and says so once the caller holds a --yes approval", () => {
@@ -2576,7 +2576,7 @@ describe("dbConfigResolver.resolveConnection", () => {
         });
         expect(output.stderrText).toContain("Removing network bans (203.0.113.7)...\n");
         assertDbConfigDrift(requests, { linked: true, "project-ref": ref });
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
     });
 
     it.effect("does not remove bans for an approval obtained by prompting", () => {
@@ -2599,7 +2599,7 @@ describe("dbConfigResolver.resolveConnection", () => {
         const exit = yield* Fiber.await(fiber);
         expect(failureText(exit)).toContain("LinkedDbNetworkBannedError");
         expect(requests.some((request) => request.method === "DELETE")).toBe(false);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
     });
 
     it.effect(
@@ -2629,7 +2629,7 @@ describe("dbConfigResolver.resolveConnection", () => {
           );
           expect(failureText(exit)).not.toContain("--yes");
           expect(connection.attempts.count).toBe(9);
-        }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+        }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
       },
     );
 
@@ -2649,7 +2649,7 @@ describe("dbConfigResolver.resolveConnection", () => {
         expect(failureText(exit)).toContain("DbConfigConnectTempRoleError");
         expect(failureText(exit)).not.toContain("--yes");
         expect(requests.some((request) => request.method === "DELETE")).toBe(false);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
     });
 
     it.effect("keeps a failed removal when a later listing fails under --yes", () => {
@@ -2688,7 +2688,7 @@ describe("dbConfigResolver.resolveConnection", () => {
         const exit = yield* Fiber.await(fiber);
         expect(failureText(exit)).toContain("DbConfigUnbanStatusError");
         expect(listCalls).toBeGreaterThan(1);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
     });
   });
 });

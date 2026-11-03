@@ -205,7 +205,7 @@ export function dockerModel(hooks: DockerModelHooks = {}) {
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) =>
       Effect.gen(function* () {
-        const args = ChildProcess.isStandardCommand(command) ? command.args : [];
+        const args = ChildProcess.isStandardCommand(command) ? command.args.map(String) : [];
         commands.push(args);
         const override = hooks.before === undefined ? undefined : yield* hooks.before(args);
         const result = override ?? handle(args);

@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Context, Data, Effect, Fiber, FileSystem, Layer, Option, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -20,7 +20,7 @@ class LifetimeTestError extends Data.TaggedError("LifetimeTestError")<{
   readonly message: string;
 }> {}
 
-const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+const layer = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp);
 const cacheRoot = testArtifactCacheRoot;
 const sessionFixture = fileURLToPath(
   new URL("../tests/session-client-fixture.ts", import.meta.url),

@@ -1,6 +1,5 @@
 import {
   Cause,
-  Crypto,
   Effect,
   Exit,
   Fiber,
@@ -13,6 +12,7 @@ import {
   Semaphore,
   Stream,
 } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
 import { ChildProcess } from "effect/process";
 import type {
   ChildProcessHandle,
@@ -145,7 +145,8 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
     readonly cacheRoot: string;
     readonly fs: FileSystem.FileSystem;
     readonly path: Path.Path;
-    readonly crypto: Crypto.Crypto;
+    readonly crypto: SecureRandom.SecureRandom["Service"];
+    readonly digest: Digest.Digest["Service"];
     readonly container: ContainerRuntime | undefined;
     readonly spawner: ChildProcessSpawnerService["Service"];
     readonly helpers?: DockerHelperRegistry;
@@ -168,12 +169,13 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
       const stateRoot = options.path.dirname(options.path.dirname(options.root));
       const dataNamespace = `instance-${options.stackId}-${options.instanceId}`;
       const hash = (value: string) =>
-        options.crypto.digest("SHA-256", new TextEncoder().encode(value)).pipe(
-          Effect.map((bytes) =>
-            Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(""),
-          ),
-          Effect.mapError((cause) => errorFor("identity", cause)),
-        );
+        options.digest
+          .digest(Digest.sha256, new TextEncoder().encode(value))
+          .pipe(
+            Effect.map((bytes) =>
+              Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(""),
+            ),
+          );
       const encodeMarker = Schema.encodeEffect(Schema.fromJsonString(Marker));
       const validateMarker = (marker: Marker) =>
         Effect.gen(function* () {
@@ -810,9 +812,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                   .prepareImage(image)
                   .pipe(Effect.mapError((cause) => errorFor("helper", cause))),
               );
-              const token = yield* options.crypto.randomUUIDv4.pipe(
-                Effect.mapError((cause) => errorFor("helper", cause)),
-              );
+              const token = yield* options.crypto.uuidV4();
               const name = `supabase-db-helper-${token}`;
               // Register the owned name before remote create so interrupted startup can remove it.
               yield* Ref.set(helperId, name);
@@ -1256,7 +1256,8 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
         }).pipe(
           Effect.provideService(FileSystem.FileSystem, options.fs),
           Effect.provideService(Path.Path, options.path),
-          Effect.provideService(Crypto.Crypto, options.crypto),
+          Effect.provideService(SecureRandom.SecureRandom, options.crypto),
+          Effect.provideService(Digest.Digest, options.digest),
         );
       };
       const saveSnapshot = Effect.fn("DockerDatabaseStorage.saveSnapshot")(

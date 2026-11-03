@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import { vi } from "vitest";
@@ -174,7 +174,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(YesFlag, opts.yes ?? false),
     Layer.succeed(CliArgs, { args: opts.args ?? ["migration", "fetch"] }),
-    commandRuntimeLayer(["migration", "fetch"]).pipe(Layer.provide(BunServices.layer)),
+    commandRuntimeLayer(["migration", "fetch"]).pipe(
+      Layer.provide([BunServices.layer, BunCrypto.layer]),
+    ),
     branchApi.layer,
     Layer.succeed(OutputFlag, Option.none()),
     Layer.succeed(TargetPolicy, { group: "selectable", consent: "none" }),
@@ -185,6 +187,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       opts.pipedInput ?? (opts.confirm === undefined ? undefined : opts.confirm ? "y\n" : "n\n"),
     ),
     BunServices.layer,
+    BunCrypto.layer,
   );
   return {
     layer,

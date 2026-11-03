@@ -1,5 +1,6 @@
 import { Effect, Schema } from "effect";
 import { secret } from "../lib/env.ts";
+import { withRecordValueDecodingDefault } from "../lib/schema.ts";
 
 const tags = ["auth"];
 
@@ -58,7 +59,7 @@ const template = Schema.Struct({
     default: defaultContentPath,
     description: "Path to the HTML template.",
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultContentPath))),
-}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+}).pipe(withRecordValueDecodingDefault(Effect.succeed({})));
 
 const notification = Schema.Struct({
   enabled: Schema.Boolean.annotate({
@@ -73,7 +74,7 @@ const notification = Schema.Struct({
     default: defaultContentPath,
     description: "Path to the HTML notification template.",
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultContentPath))),
-}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+}).pipe(withRecordValueDecodingDefault(Effect.succeed({})));
 
 export const email = Schema.Struct({
   enabled: Schema.optionalKey(

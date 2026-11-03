@@ -1,8 +1,7 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Context,
-  Crypto,
   Data,
   Effect,
   Exit,
@@ -16,6 +15,7 @@ import {
   Scope,
   Stream,
 } from "effect";
+import { SecureRandom } from "effect/crypto";
 import { HttpClient } from "effect/http";
 import { testArtifactCacheRoot as cacheRoot } from "../tests/artifact-cache.ts";
 import { engineTarget, testEngine } from "../tests/engine-target.ts";
@@ -28,7 +28,7 @@ import type { SavedStack } from "./StackNamespace.ts";
 import { selection } from "../tests/pins.ts";
 import { failOnStall } from "../tests/stall-guard.ts";
 
-const services = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+const services = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp);
 
 const stackFor = (id: string, runtime: SavedStack["runtime"]): SavedStack => ({
   id,
@@ -47,13 +47,10 @@ const openOwner = (
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const path = yield* Path.Path;
     const root = kept?.root ?? (yield* fs.makeTempDirectoryScoped({ prefix }));
-    const stack = stackFor(
-      `owner-logs-${(yield* crypto.randomUUIDv4).replaceAll("-", "")}`,
-      runtime,
-    );
+    const stack = stackFor(`owner-logs-${(yield* crypto.uuidV4()).replaceAll("-", "")}`, runtime);
     const state = Context.get(
       yield* Layer.build(StackNamespace.layer({ root: `${root}/state` })),
       StackNamespace.Service,

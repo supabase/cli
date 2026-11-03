@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -283,7 +283,11 @@ it.live("preserves composition outcomes over RPC", () =>
       ]);
       yield* shutdownOwner(runtime.access, true);
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live("stops serving after a failed shutdown and keeps reporting that failure", () =>
@@ -324,7 +328,11 @@ it.live("stops serving after a failed shutdown and keeps reporting that failure"
       const again = yield* runtime.shutdown(true).pipe(Effect.flip);
       expect(again.message).toContain("Shutdown mode is already selected");
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live("reports a destroy failure and the owner exits", () =>
@@ -387,7 +395,11 @@ it.live("reports a destroy failure and the owner exits", () =>
       // is reclaimed by the next stop or destroy.
       yield* Deferred.await(runtime.exit).pipe(Effect.timeout("5 seconds"));
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live("rejects destroy while stop is in flight", () =>
@@ -432,7 +444,11 @@ it.live("rejects destroy while stop is in flight", () =>
       yield* Fiber.join(stop);
       yield* Deferred.await(runtime.exit).pipe(Effect.timeout("5 seconds"));
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live("exits after a namespace shutdown defect without rerunning cleanup", () =>
@@ -475,7 +491,11 @@ it.live("exits after a namespace shutdown defect without rerunning cleanup", () 
       // The stop would succeed if it ran again; the failure is final for this owner.
       expect(Exit.isFailure(yield* runtime.shutdown(false).pipe(Effect.exit))).toBe(true);
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live(
@@ -677,7 +697,11 @@ it.live(
         yield* waitForOwnerExit(endpoint.pid, ownerExitProbe(fs));
         yield* Ref.set(stopped, true);
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   { timeout: 120_000 },
 );
 
@@ -728,7 +752,11 @@ it.live("finishes detached shutdown after the caller disconnects", () =>
       yield* Deferred.succeed(allow, undefined);
       yield* Deferred.await(runtime.exit).pipe(Effect.timeout("5 seconds"));
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live("withdraws a command waiting for its prerequisite", () =>
@@ -788,7 +816,11 @@ it.live("withdraws a command waiting for its prerequisite", () =>
       expect((yield* client.status({ id: mail.id })).lifecycle).toBe("stopped");
       yield* shutdownOwner(runtime.access, false);
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 const disconnectFixture = (prefix: string) =>
@@ -875,7 +907,11 @@ it.live("finishes a service creation after its caller disconnects", () =>
       yield* Deferred.await(runtime.exit).pipe(Effect.timeout("5 seconds"));
       expect(yield* state.read(saved.id)).toBeUndefined();
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live("persists a composition change after its caller disconnects", () =>
@@ -941,7 +977,11 @@ it.live("persists a composition change after its caller disconnects", () =>
       yield* shutdownOwner(runtime.access, true);
       yield* Deferred.await(runtime.exit).pipe(Effect.timeout("5 seconds"));
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 const abandonedComposition = (prefix: string, destroy: boolean) =>
@@ -1023,7 +1063,11 @@ it.live("stops a stack only after an abandoned composition settles", () =>
       expect(instanceIds).toHaveLength(1);
       expect(current?.composition.members.map(({ id }) => id)).toEqual(instanceIds);
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live("destroys a stack only after an abandoned composition settles", () =>
@@ -1039,7 +1083,11 @@ it.live("destroys a stack only after an abandoned composition settles", () =>
       const data = `${root}/data`;
       expect((yield* fs.exists(data)) ? yield* fs.readDirectory(data) : []).toEqual([]);
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 const endedOwnership = (prefix: string) =>
@@ -1109,7 +1157,11 @@ it.live.skipIf(process.platform === "win32")(
         );
         yield* shutdownOwner(successor, false);
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   { timeout: 60_000 },
 );
 
@@ -1132,6 +1184,10 @@ it.live.skipIf(process.platform === "win32")(
 
         expect(yield* fs.readFileString(kept)).toBe("data");
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   { timeout: 60_000 },
 );

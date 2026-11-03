@@ -1,4 +1,5 @@
-import { Config, Crypto, Effect, FileSystem, Option, Path, Schema } from "effect";
+import { Config, Effect, FileSystem, Option, Path, Schema } from "effect";
+import { Digest } from "effect/crypto";
 
 import type { ResolvedCliConfig } from "../config/cli-config-values.service.ts";
 import type { CliConfigLoadError } from "../shared/config/cli-config-load.errors.ts";
@@ -73,15 +74,10 @@ const dockerContextEndpointHost = (contextName: string) => {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* Digest.Digest;
     const configDir = yield* dockerConfigDir();
-    const digest = yield* crypto
-      .digest("SHA-256", new TextEncoder().encode(contextName))
-      .pipe(Effect.option);
-    if (Option.isNone(digest)) return Option.none<string>();
-    const contextId = Array.from(digest.value, (byte) => byte.toString(16).padStart(2, "0")).join(
-      "",
-    );
+    const digest = yield* crypto.digest(Digest.sha256, new TextEncoder().encode(contextName));
+    const contextId = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
     const metaPath = path.join(configDir, "contexts", "meta", contextId, "meta.json");
     const content = yield* fs.readFileString(metaPath).pipe(Effect.option);
     if (Option.isNone(content)) return Option.none<string>();
@@ -120,7 +116,7 @@ export function platformDefaultDockerHost(platform: NodeJS.Platform): string {
 export const resolveDockerDaemonEndpoint = Effect.fnUntraced(function* (): Effect.fn.Return<
   Option.Option<string>,
   Config.ConfigError,
-  RuntimeInfo | FileSystem.FileSystem | Path.Path | Crypto.Crypto
+  RuntimeInfo | FileSystem.FileSystem | Path.Path | Digest.Digest
 > {
   const runtime = yield* RuntimeInfo;
   const dockerHost = yield* shellOption("DOCKER_HOST");
@@ -138,7 +134,7 @@ export const getHostname = (
 ): Effect.Effect<
   string,
   Config.ConfigError | CliConfigLoadError,
-  RuntimeInfo | FileSystem.FileSystem | Path.Path | Crypto.Crypto
+  RuntimeInfo | FileSystem.FileSystem | Path.Path | Digest.Digest
 > =>
   Effect.gen(function* () {
     const { SUPABASE_SERVICES_HOSTNAME: override } = yield* resolvedConfig.envValues([

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { FetchHttpClient } from "effect/http";
 import { Effect, FileSystem, Layer, Option, Redacted, Ref, Stream } from "effect";
@@ -16,7 +16,7 @@ import { destroyTestStack } from "../../tests/helpers/stack-cleanup.ts";
 import { selection } from "../../tests/helpers/pins.ts";
 
 const runtimes = ["native", "docker"] as const;
-const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
+const liveStackApi = stackApiLayer.pipe(Layer.provide([BunServices.layer, BunCrypto.layer]));
 
 describe("managed pg_dump against a live stack", { timeout: 180_000 }, () => {
   for (const runtime of runtimes) {

@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import {
   Context,
@@ -339,7 +339,11 @@ it.live("starts exactly one owner for concurrent launchers and attaches the othe
         expect(new Set(launched.map(({ endpoint }) => endpoint.port)).size).toBe(1);
       }).pipe(Effect.ensuring(bestEffortShutdownByState(root, state, "stack")));
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live("relaunches after shutdown while a foreign listener holds the previous control port", () =>
@@ -388,7 +392,11 @@ it.live("relaunches after shutdown while a foreign listener holds the previous c
       expect(relaunched.endpoint.port).not.toBe(endpoint.port);
       expect(yield* connectHost(state, "stack")).toEqual(relaunched);
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live("ignores a stale endpoint record once no process holds the lease", () =>
@@ -424,7 +432,11 @@ it.live("ignores a stale endpoint record once no process holds the lease", () =>
       expect(published?.role === "owner" ? published.port : undefined).toBe(launched.endpoint.port);
       expect(unresponsive.connections()).toBe(0);
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live("discovers dead stacks from their free leases without contacting recorded endpoints", () =>
@@ -453,7 +465,11 @@ it.live("discovers dead stacks from their free leases without contacting recorde
       expect(entries.every(({ host }) => host === undefined)).toBe(true);
       expect(unresponsive.connections()).toBe(0);
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live(
@@ -490,7 +506,11 @@ it.live(
           expect(connected.endpoint).toEqual(endpoint);
         }).pipe(Effect.ensuring(bestEffortShutdownByState(root, state, "stack")));
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
 );
 
 it.live("terminates a detached child when readiness is interrupted", () =>
@@ -525,7 +545,11 @@ it.live("terminates a detached child when readiness is interrupted", () =>
       yield* Fiber.interrupt(launch);
       expect(() => process.kill(pid, 0)).toThrow();
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live("reports a structured owner startup error without the owner log tail", () =>
@@ -545,7 +569,11 @@ it.live("reports a structured owner startup error without the owner log tail", (
       expect(failure.message).toContain("owner log:");
       expect(failure.message).not.toContain("failing-owner-diagnostic");
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live("keeps the owner secret out of recorded HTTP span attributes", () =>
@@ -578,7 +606,11 @@ it.live("keeps the owner secret out of recorded HTTP span attributes", () =>
       const attributes = spans.flatMap((span) => Array.from(span.attributes));
       expect(attributes.filter(([, value]) => String(value).includes(access.secret))).toEqual([]);
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live(
@@ -619,7 +651,11 @@ it.live(
         expect(argv).not.toContain(marker);
         expect(argv).not.toContain(registerMarker);
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   { timeout: 120_000 },
 );
 
@@ -646,7 +682,11 @@ it.live("hands the owner a private startup payload file that it deletes once rea
         expect(yield* leftoverStartupPayloads(ownerDir)).toEqual([]);
       }).pipe(Effect.ensuring(bestEffortShutdown(root)(access)));
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live("deletes the spawned owner's startup payload file once it reports ready", () =>
@@ -672,7 +712,11 @@ it.live("deletes the spawned owner's startup payload file once it reports ready"
         Effect.ensuring(bestEffortShutdown(root)(access)),
       );
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live("deletes the spawned owner's startup payload file even when its startup fails", () =>
@@ -697,7 +741,11 @@ it.live("deletes the spawned owner's startup payload file even when its startup 
       expect(failure.message).toContain("owner startup failed");
       expect(yield* leftoverStartupPayloads(ownerDir)).toEqual([]);
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live("deletes a startup payload file that fails to write after creating partial content", () =>
@@ -750,7 +798,11 @@ it.live("deletes a startup payload file that fails to write after creating parti
       expect(failure.message).toContain("injected write failure");
       expect(yield* leftoverStartupPayloads(ownerDir)).toEqual([]);
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live("waits out a sweeper's hold before spawning the owner of a stack it registers", () =>
@@ -801,5 +853,9 @@ it.live("waits out a sweeper's hold before spawning the owner of a stack it regi
       yield* Effect.acquireRelease(Fiber.join(launching), bestEffortShutdown(root));
       expect(yield* state.read("stack")).toBeDefined();
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );

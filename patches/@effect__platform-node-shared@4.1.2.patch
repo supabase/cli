@@ -1,0 +1,13 @@
+diff --git a/dist/NodeWS.js b/dist/NodeWS.js
+index e29eb7dae33882898922845f57a3ac21cbc41181..d3cdda830f7bc4e6bb393e6d1a96638e29f9b90f 100644
+--- a/dist/NodeWS.js
++++ b/dist/NodeWS.js
+@@ -10,5 +10,7 @@
+  * @category re-exports
+  * @since 4.1.0
+  */
+-export * from "ws";
++// Bun's bundler drops values re-exported with `export *` from a side-effect-free
++// package, which crashes the compiled CLI: https://github.com/oven-sh/bun/issues/18008
++export { createWebSocketStream, Receiver, Sender, WebSocket, WebSocketServer } from "ws";
+ //# sourceMappingURL=NodeWS.js.map

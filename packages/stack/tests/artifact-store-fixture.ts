@@ -1,5 +1,6 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
-import { Console, Crypto, Effect, FileSystem, Layer } from "effect";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { Console, Effect, FileSystem, Layer } from "effect";
+import { SecureRandom } from "effect/crypto";
 import {
   makeArtifactStore,
   type ArtifactRequest,
@@ -52,9 +53,9 @@ const fastSource: ArtifactSource = {
       yield* fs.makeDirectory(`${destination}/etc`, { recursive: true });
       yield* fs.writeFileString(`${destination}/bin/postgres`, "native postgres", { mode: 0o755 });
       yield* fs.writeFileString(`${destination}/etc/postgres.conf`, "config", { mode: 0o644 });
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       yield* verifySha256(archive, expectedSha256).pipe(
-        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provideService(SecureRandom.SecureRandom, crypto),
       );
     }).pipe(mapMaterializeError),
 };
@@ -88,6 +89,10 @@ const program = Effect.scoped(
     }
     throw new Error(`Unknown fixture mode: ${mode}`);
   }),
-).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)));
+).pipe(
+  Effect.provide(
+    Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+  ),
+);
 
 await Effect.runPromise(program);

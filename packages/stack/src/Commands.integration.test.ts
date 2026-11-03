@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Context,
@@ -235,7 +235,11 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
           expect(yield* fs.readDirectory(`${root}/jobs`)).toEqual([]);
           yield* service.destroy;
         }),
-      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
     );
   }
 
@@ -436,7 +440,11 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
             }
             yield* service.destroy;
           }),
-        ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+        ).pipe(
+          Effect.provide(
+            Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+          ),
+        ),
       );
     }
   }
