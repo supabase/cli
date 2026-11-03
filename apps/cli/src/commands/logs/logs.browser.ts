@@ -10,9 +10,11 @@ import {
   initialBrowserState,
   renderBrowser,
   resizeBrowser,
+  type LogsBrowserWindow,
 } from "./logs.browser.format.ts";
 
 export interface LogsBrowserSink {
+  readonly window: (window: LogsBrowserWindow) => Effect.Effect<void>;
   readonly entry: (row: Schema.JsonObject) => Effect.Effect<void>;
   readonly notice: (message: string) => Effect.Effect<void>;
 }
@@ -30,6 +32,7 @@ export const useLogsBrowser = Effect.fnUntraced(function* () {
 });
 
 type BrowserEvent<E> =
+  | { readonly kind: "window"; readonly window: LogsBrowserWindow }
   | { readonly kind: "entry"; readonly row: Schema.JsonObject }
   | { readonly kind: "notice"; readonly message: string }
   | { readonly kind: "key"; readonly input: Terminal.UserInput }
@@ -77,6 +80,7 @@ export const browseLogs = Effect.fn("Logs.browser")(function* <E, R>(
         Effect.forkScoped,
       );
       yield* produce({
+        window: (window) => Queue.offer(events, { kind: "window", window }).pipe(Effect.asVoid),
         entry: (row) => Queue.offer(events, { kind: "entry", row }).pipe(Effect.asVoid),
         notice: (message) => Queue.offer(events, { kind: "notice", message }).pipe(Effect.asVoid),
       }).pipe(
@@ -95,6 +99,9 @@ export const browseLogs = Effect.fn("Logs.browser")(function* <E, R>(
         );
         const event = yield* Queue.take(events);
         switch (event.kind) {
+          case "window":
+            state = { ...state, window: event.window };
+            break;
           case "entry":
             state = appendBrowserRow(state, event.row, mode);
             break;

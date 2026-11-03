@@ -1,4 +1,3 @@
-import type { Schema } from "effect";
 import { beforeEach, afterEach, vi } from "vitest";
 import { stripControlSequences } from "../../shared/output/strip-control-sequences.ts";
 import { stringWidth } from "../../command-internal/string-width.ts";
@@ -10,6 +9,7 @@ import {
   initialBrowserState,
   renderBrowser,
   resizeBrowser,
+  type LogsBrowserWindow,
 } from "./logs.browser.format.ts";
 
 beforeEach(() => {
@@ -19,33 +19,37 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-const rangeCases: ReadonlyArray<{
-  readonly rows: ReadonlyArray<Schema.JsonObject>;
+const requestCases: ReadonlyArray<{
+  readonly window: LogsBrowserWindow | undefined;
   readonly label: string;
 }> = [
-  { rows: [{ ts_ms: 0 }], label: "Loaded: Jan 01 00:00:00 UTC" },
   {
-    rows: [
-      { timestamp: "2026-11-03T17:14:55Z" },
-      { timestamp: "2026-11-03T17:13:35Z" },
-      { timestamp: "2026-11-03T17:14:00Z" },
-    ],
-    label: "Loaded: Nov 03 17:13:35–17:14:55 UTC",
+    window: { kind: "range", start: "2026-11-03T17:13:35Z", end: "2026-11-03T17:14:55Z" },
+    label: "Window: Nov 03 17:13:35–17:14:55 UTC",
   },
   {
-    rows: [{ timestamp: "2026-11-04T00:00:01Z" }, { timestamp: "2026-11-03T23:59:59Z" }],
-    label: "Loaded: Nov 03 23:59:59–Nov 04 00:00:01 UTC",
+    window: { kind: "range", start: "2026-11-03T23:59:59Z", end: "2026-11-04T00:00:01Z" },
+    label: "Window: Nov 03 23:59:59–Nov 04 00:00:01 UTC",
   },
   {
-    rows: [{ timestamp: "2027-01-01T00:00:01Z" }, { timestamp: "2026-12-31T23:59:59Z" }],
-    label: "Loaded: Dec 31 2026 23:59:59–Jan 01 2027 00:00:01 UTC",
+    window: { kind: "range", start: "2026-12-31T23:59:59Z", end: "2027-01-01T00:00:01Z" },
+    label: "Window: Dec 31 2026 23:59:59–Jan 01 2027 00:00:01 UTC",
   },
   {
-    rows: [{ timestamp: "2026-11-03T18:13:35+01:00" }, { count: 8 }, { timestamp: "invalid" }],
-    label: "Loaded: Nov 03 17:13:35 UTC | 2 unknown",
+    window: { kind: "since", start: "2026-11-03T11:00:00Z", live: false },
+    label: "Window: since Nov 03 2026 11:00:00 UTC",
   },
-  { rows: [{ count: 8 }, { ts_ms: 8640000000000001 }], label: "Loaded: unavailable (2 unknown)" },
-  { rows: [], label: "Loaded: no logs" },
+  {
+    window: { kind: "since", start: "2026-11-03T11:00:00Z", live: true },
+    label: "Window: since Nov 03 2026 11:00:00 UTC → now (live)",
+  },
+  { window: { kind: "launch", live: false }, label: "Window: since each service's latest launch" },
+  {
+    window: { kind: "launch", live: true, newEntriesOnly: true },
+    label: "Window: new entries only; since each service's latest launch → now (live)",
+  },
+  { window: { kind: "all", live: false }, label: "Window: all retained history" },
+  { window: undefined, label: "Window: resolving…" },
 ];
 
 describe("log browser formatting", () => {
@@ -64,20 +68,31 @@ describe("log browser formatting", () => {
     expect(browserTimestamp(row)).toBe(expected);
   });
 
-  it.each(rangeCases)("shows the known UTC span of loaded rows: $label", ({ rows, label }) => {
-    let state = initialBrowserState;
-    for (const row of rows) state = appendBrowserRow(state, row, "query");
-    for (const columns of [80, 120]) {
-      const lines = renderBrowser(state, columns, 8).split("\r\n");
-      expect(lines[0]).toContain(`${rows.length} retained`);
-      expect(lines[1]).toBe(label);
-      expect(lines).toHaveLength(8);
-      expect(lines.every((line) => stringWidth(line) < columns)).toBe(true);
-    }
-  });
+  it.each(requestCases)(
+    "shows resolved request metadata regardless of row timestamps: $label",
+    ({ window, label }) => {
+      let state = { ...initialBrowserState, window };
+      state = appendBrowserRow(state, { count: 8 }, "query");
+      state = appendBrowserRow(state, { timestamp: "invalid" }, "query");
+      state = appendBrowserRow(state, { ts_ms: 0 }, "query");
+      for (const columns of [80, 120]) {
+        const lines = renderBrowser(state, columns, 8).split("\r\n");
+        expect(lines[0]).toContain("3 retained");
+        expect(lines[1]).toBe(label);
+        expect(lines).toHaveLength(8);
+        expect(lines.every((line) => stringWidth(line) < columns)).toBe(true);
+      }
+    },
+  );
 
-  it("keeps loaded bounds outside the viewport and preserves two-header geometry on resize and details", () => {
-    let state = resizeBrowser(initialBrowserState, 8);
+  it("preserves the requested window through scrolling, resize, and details", () => {
+    let state = resizeBrowser(
+      {
+        ...initialBrowserState,
+        window: { kind: "range", start: "2026-11-03T10:00:00Z", end: "2026-11-03T12:00:00Z" },
+      },
+      8,
+    );
     for (let index = 0; index < 15; index++)
       state = appendBrowserRow(
         state,
@@ -85,7 +100,7 @@ describe("log browser formatting", () => {
         "query",
       );
     const first = renderBrowser(state, 80, 8).split("\r\n");
-    expect(first[1]).toBe("Loaded: Nov 03 17:14:46–17:15:00 UTC");
+    expect(first[1]).toBe("Window: Nov 03 10:00:00–12:00:00 UTC");
     expect(first.slice(2, 7).map((line) => line.match(/range-\d+/u)?.[0])).toEqual([
       "range-0",
       "range-1",
@@ -94,8 +109,7 @@ describe("log browser formatting", () => {
       "range-4",
     ]);
     for (let index = 0; index < 5; index++) state = browserKey(state, "down", 79, 8);
-    const edge = renderBrowser(state, 80, 8).split("\r\n");
-    expect(edge[2]).toContain("range-1");
+    expect(renderBrowser(state, 80, 8).split("\r\n")[2]).toContain("range-1");
     state = browserKey(state, "up", 79, 8);
     expect(
       renderBrowser(state, 80, 8)
@@ -111,32 +125,35 @@ describe("log browser formatting", () => {
     expect(details[5]).toContain("Esc back");
     state = resizeBrowser(state, 6);
     state = browserKey(state, "escape", 119, 6);
-    const resized = renderBrowser(state, 120, 6).split("\r\n");
-    expect(resized[1]).toBe(first[1]);
-    expect(resized[4]).toContain("> Nov 03 - 17:14:56 UTC — range-4");
+    expect(renderBrowser(state, 120, 6).split("\r\n")[1]).toBe(first[1]);
+    expect(renderBrowser(state, 120, 6).split("\r\n")[4]).toContain(
+      "> Nov 03 - 17:14:56 UTC — range-4",
+    );
   });
 
-  it("updates the loaded range after retention evicts the previous minimum", () => {
-    let state = initialBrowserState;
+  it("keeps the requested live start fixed when retention evicts rows", () => {
+    let state: typeof initialBrowserState = {
+      ...initialBrowserState,
+      window: { kind: "since", start: "2026-11-03T11:00:00Z", live: true },
+    };
     for (let index = 0; index < 1000; index++)
       state = appendBrowserRow(state, { ts_ms: index * 1000 });
-    expect(renderBrowser(state, 80, 8).split("\r\n")[1]).toBe(
-      "Loaded: Jan 01 00:00:00–00:16:39 UTC",
-    );
+    const expected = "Window: since Nov 03 2026 11:00:00 UTC → now (live)";
+    expect(renderBrowser(state, 80, 8).split("\r\n")[1]).toBe(expected);
     state = appendBrowserRow(state, { ts_ms: 1000000 });
     expect(state.dropped).toBe(1);
-    expect(renderBrowser(state, 80, 8).split("\r\n")[1]).toBe(
-      "Loaded: Jan 01 00:00:01–00:16:40 UTC",
-    );
+    expect(renderBrowser(state, 80, 8).split("\r\n")[1]).toBe(expected);
   });
 
-  it("keeps the range and controls visible when the terminal only fits headers and footer", () => {
-    const state = appendBrowserRow(initialBrowserState, { ts_ms: 0 });
+  it("keeps the window and controls visible when only headers and footer fit", () => {
+    const state: typeof initialBrowserState = {
+      ...appendBrowserRow(initialBrowserState, { ts_ms: 0 }),
+      window: { kind: "range", start: "2026-11-03T10:00:00Z", end: "2026-11-03T12:00:00Z" },
+    };
     const lines = renderBrowser(state, 80, 3).split("\r\n");
     expect(lines).toHaveLength(3);
-    expect(lines[1]).toBe("Loaded: Jan 01 00:00:00 UTC");
+    expect(lines[1]).toBe("Window: Nov 03 10:00:00–12:00:00 UTC");
     expect(lines[2]).toContain("C copy · q quit");
-    expect(lines.join(" ")).not.toContain("Waiting");
   });
 
   it("keeps visible rows stationary while selection moves inside a multi-screen list", () => {

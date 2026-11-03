@@ -7,7 +7,19 @@ import { renderLogsRows, wrapLogsText } from "./logs.display.ts";
 const browserHeaderRows = 2;
 const browserReservedRows = browserHeaderRows + 1;
 
+export type LogsBrowserWindow =
+  | { readonly kind: "range"; readonly start: string; readonly end: string }
+  | {
+      readonly kind: "since";
+      readonly start: string;
+      readonly live: boolean;
+      readonly newEntriesOnly?: boolean;
+    }
+  | { readonly kind: "launch"; readonly live: boolean; readonly newEntriesOnly?: boolean }
+  | { readonly kind: "all"; readonly live: boolean; readonly newEntriesOnly?: boolean };
+
 export interface BrowserState {
+  readonly window: LogsBrowserWindow | undefined;
   readonly rows: ReadonlyArray<Schema.JsonObject>;
   readonly sizes: ReadonlyArray<number>;
   readonly bytes: number;
@@ -22,6 +34,7 @@ export interface BrowserState {
 }
 
 export const initialBrowserState: BrowserState = {
+  window: undefined,
   rows: [],
   sizes: [],
   bytes: 0,
@@ -115,28 +128,25 @@ export function browserTimestamp(row: Schema.JsonObject): string {
   return time === undefined ? "—" : `${dateLabel(time)} - ${timeLabel(time)} UTC`;
 }
 
-function loadedRange(rows: ReadonlyArray<Schema.JsonObject>): string {
-  if (rows.length === 0) return "Loaded: no logs";
-  let earliest = Infinity;
-  let latest = -Infinity;
-  let unknown = 0;
-  for (const row of rows) {
-    const time = timestampMillis(row);
-    if (time === undefined) unknown++;
-    else {
-      earliest = Math.min(earliest, time);
-      latest = Math.max(latest, time);
-    }
+function requestedWindow(window: LogsBrowserWindow | undefined): string {
+  if (window === undefined) return "Window: resolving…";
+  if (window.kind === "range") {
+    const start = Date.parse(window.start);
+    const end = Date.parse(window.end);
+    const first = DateTime.toPartsUtc(DateTime.makeUnsafe(start));
+    const last = DateTime.toPartsUtc(DateTime.makeUnsafe(end));
+    const crossYear = first.year !== last.year;
+    const sameDay = !crossYear && first.month === last.month && first.day === last.day;
+    const from = `${dateLabel(start, crossYear)} ${timeLabel(start)}`;
+    const to = sameDay ? timeLabel(end) : `${dateLabel(end, crossYear)} ${timeLabel(end)}`;
+    return `Window: ${from}–${to} UTC`;
   }
-  if (unknown === rows.length) return `Loaded: unavailable (${unknown} unknown)`;
-  const first = DateTime.toPartsUtc(DateTime.makeUnsafe(earliest));
-  const last = DateTime.toPartsUtc(DateTime.makeUnsafe(latest));
-  const crossYear = first.year !== last.year;
-  const sameDay = !crossYear && first.month === last.month && first.day === last.day;
-  const start = `${dateLabel(earliest, crossYear)} ${timeLabel(earliest)}`;
-  const end = sameDay ? timeLabel(latest) : `${dateLabel(latest, crossYear)} ${timeLabel(latest)}`;
-  const range = earliest === latest ? start : `${start}–${end}`;
-  return `Loaded: ${range} UTC${unknown > 0 ? ` | ${unknown} unknown` : ""}`;
+  const prefix = window.newEntriesOnly ? "new entries only; " : "";
+  const live = window.live ? " → now (live)" : "";
+  if (window.kind === "launch") return `Window: ${prefix}since each service's latest launch${live}`;
+  if (window.kind === "all") return `Window: ${prefix}all retained history${live}`;
+  const start = Date.parse(window.start);
+  return `Window: ${prefix}since ${dateLabel(start, true)} ${timeLabel(start)} UTC${live}`;
 }
 
 const clip = (value: string, width: number): string => {
@@ -227,7 +237,7 @@ export function renderBrowser(
     state.detail === undefined
       ? "↑/↓ select · Enter details · C copy · q quit"
       : "↑/↓ scroll · Esc back · C copy · q quit";
-  const lines = [heading, loadedRange(state.rows), ...body];
+  const lines = [heading, requestedWindow(state.window), ...body];
   while (lines.length < height - 1) lines.push("");
   const notice = clip(state.notice, width);
   const help = stringWidth(notice) + 3 + stringWidth(keys) <= width ? keys : "C copy · q quit";
