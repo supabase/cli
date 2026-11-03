@@ -104,6 +104,21 @@ export function inspectBacktickStmt(value: unknown): string {
   return stmt === "" ? "``" : stmt;
 }
 
+/** Resolves the target and connection every `inspect db` subcommand queries. */
+export const resolveInspectConnection = Effect.fnUntraced(function* (
+  flags: InspectConnectionFlags,
+  dnsResolver: "native" | "https",
+) {
+  const resolver = yield* DbConfigResolver;
+  const target = yield* resolveTarget(flags);
+  return yield* resolver.resolveConnection({
+    target,
+    dnsResolver,
+    password: Option.none(),
+    networkBanRemoval: yield* hostedMutationPreapproval,
+  });
+});
+
 /**
  * Runs an `inspect db` subcommand's query and renders the result: resolve the target and its
  * connection, run the query, then render the table — or, in `json`/`stream-json` mode, emit the
@@ -115,16 +130,8 @@ export const runInspectQuery = Effect.fn("Inspect.runQuery")(function* (
   dnsResolver: "native" | "https",
 ) {
   const output = yield* Output;
-  const resolver = yield* DbConfigResolver;
   const dbConn = yield* DbConnection;
-
-  const target = yield* resolveTarget(flags);
-  const cfg = yield* resolver.resolveConnection({
-    target,
-    dnsResolver,
-    password: Option.none(),
-    networkBanRemoval: yield* hostedMutationPreapproval,
-  });
+  const cfg = yield* resolveInspectConnection(flags, dnsResolver);
 
   const rows = yield* Effect.scoped(
     Effect.gen(function* () {

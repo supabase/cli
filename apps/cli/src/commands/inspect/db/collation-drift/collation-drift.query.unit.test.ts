@@ -71,8 +71,8 @@ describe("buildCollationDriftReport", () => {
   it("orders the workflow verify → rebuild → refresh", () => {
     const steps = stepsBlock(buildCollationDriftReport([libcRow])).steps;
     expect(steps.map((s) => s.title)).toEqual([
-      "Confirm which indexes are actually mis-ordered",
-      "Rebuild the affected indexes",
+      "Diagnose the listed indexes (optional)",
+      "Rebuild every listed index",
       "Record the new collation version — only after every rebuild has finished",
     ]);
   });

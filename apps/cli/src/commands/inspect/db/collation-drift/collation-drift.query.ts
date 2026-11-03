@@ -156,7 +156,7 @@ export function buildCollationDriftReport(rawRows: ReadonlyArray<Record<string, 
         {
           kind: "callout",
           severity: "ok",
-          text: "No collation version drift detected. Indexes match the current system sorting rules. Re-run this check after a PostgreSQL upgrade or instance migration.",
+          text: "No recorded collation version mismatch on btree index key columns. This compares version labels and does not verify index ordering or expression indexes. Re-run this check after a PostgreSQL upgrade or instance migration.",
         },
       ],
     };
@@ -231,18 +231,18 @@ export function buildCollationDriftReport(rawRows: ReadonlyArray<Record<string, 
         kind: "steps",
         steps: [
           {
-            title: "Confirm which indexes are actually mis-ordered",
-            body: "amcheck raises an error for a mis-ordered index and returns silently for a healthy one. Check keys and unique indexes first.",
+            title: "Diagnose the listed indexes (optional)",
+            body: "amcheck raises an error when it finds a mis-ordered index. A clean result does not prove the index is safe, so it does not replace step 2.",
             sql: ["CREATE EXTENSION IF NOT EXISTS amcheck;", ...amcheckStatements(indexes)],
           },
           {
-            title: "Rebuild the affected indexes",
-            body: "Rebuild anything that failed step 1 — or all of them, which is safe if you would rather not check individually. CONCURRENTLY keeps the application online during the rebuild.",
+            title: "Rebuild every listed index",
+            body: "Run each statement on its own, outside a transaction block. CONCURRENTLY keeps the application online during the rebuild.",
             sql: reindexStatements(indexes),
           },
           {
             title: "Record the new collation version — only after every rebuild has finished",
-            body: "Refreshing first hides the problem without fixing it: it updates a label and silences the warning while leaving the indexes mis-ordered.",
+            body: "Refreshing first hides the problem without fixing it: it updates a label and silences the warning while leaving the indexes mis-ordered. The list above covers btree key columns only; also rebuild expression indexes and any other index or constraint that uses these collations before refreshing.",
             sql: refreshStatements(rows),
           },
         ],

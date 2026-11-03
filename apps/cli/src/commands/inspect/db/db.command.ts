@@ -1,9 +1,9 @@
 import { Command } from "effect/cli";
 import { inspectDbBloatCommand } from "./bloat/bloat.command.ts";
 import { inspectDbBlockingCommand } from "./blocking/blocking.command.ts";
+import { inspectDbCacheHitCommand } from "./cache-hit/cache-hit.command.ts";
 import { inspectDbCallsCommand } from "./calls/calls.command.ts";
 import { inspectDbCollationDriftCommand } from "./collation-drift/collation-drift.command.ts";
-import { inspectDbCacheHitCommand } from "./cache-hit/cache-hit.command.ts";
 import { inspectDbDbStatsCommand } from "./db-stats/db-stats.command.ts";
 import { inspectDbIndexSizesCommand } from "./index-sizes/index-sizes.command.ts";
 import { inspectDbIndexStatsCommand } from "./index-stats/index-stats.command.ts";
