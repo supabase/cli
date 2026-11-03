@@ -29,6 +29,7 @@ const SUBCOMMANDS = [
   { name: "vacuum-stats", fixtureKey: "vacuum-stats", assertValue: "public.events" },
   { name: "table-stats", fixtureKey: "table-stats", assertValue: "public.orders" },
   { name: "traffic-profile", fixtureKey: "traffic-profile", assertValue: "sessions" },
+  { name: "toast-sizes", fixtureKey: "toast-sizes", assertValue: "public.documents" },
 ] as const;
 
 describe("inspect:flags", () => {
