@@ -23,7 +23,6 @@ default `max_worker_processes` to 17 to leave room for those workers; `postgresq
 | `supabase stack outdated` | Report which locked service versions `stack update` would change.                 |
 | `supabase stack start`    | Create or resume the project's stack.                                             |
 | `supabase stack status`   | Show identity, readiness, and drift, or export connection variables with `--env`. |
-| `supabase stack logs`     | Print retained stack logs; `-f` streams new lines.                                |
 | `supabase stack restart`  | Restart an existing stack using its saved effective configuration.                |
 | `supabase stack stop`     | Stop a stack while retaining its data.                                            |
 
@@ -275,26 +274,26 @@ lint transaction (always rolled back). It does not launch a client binary.
 
 ## Reading stack logs
 
-`supabase stack logs` prints the retained stdout/stderr of composition members, plus
-the `gateway` request lines of the shared API port, and exits; `-f/--follow` then
-streams new lines until interrupted. Select `--stack <name>` or `--stack-id <id>`; the
-repeatable `--service <kind-or-instance-id>` can include standalone services too, and
-`--service gateway` reads only the request lines. History is read from the persisted
-log files, so it works while the stack is stopped; `--follow` requires a running owner
-and fails before printing anything without one. Neither mode starts an owner or
-service, and Ctrl-C leaves services running.
+`supabase logs tail` prints retained stdout/stderr from composition members,
+plus `gateway` request lines from the shared API port, then follows new lines until
+interrupted. Add `--no-follow` to exit after history. Select `--stack <name>` or
+`--stack-id <id>`; repeat `--service <kind>` to select services, use
+`--service postgres` for the database, or `--resource <instance-id>` for one instance.
+`--service gateway` reads only request lines. History works while the stack is
+stopped; following requires a running owner and fails before printing without one.
+Neither mode starts an owner or service, and Ctrl-C leaves services running.
 
-`--tail N` (default 200) keeps the newest lines across the selected services and
-`--since` takes a duration (`10m`, `1h30m`), an ISO-8601 time, or `start` for each
-service's latest launch. Text uses `<service> | <HH:MM:SS.mmm> <line>` with aligned
-labels, shows launches and lost output as dim separators, strips terminal control
-sequences, and notes on stderr when the tail hides older lines. For automation use
-`--output-format stream-json`: each `log-entry` contains `timestamp`, `service`,
-`instance_id`, `stream`, `line`, and `source` (`history` or `live`), and markers are
-`log-marker` events with `kind` and, for lost output, `count`. `--output-format json`
-prints the history as one array and does not accept `--follow`. Missing stacks,
-unmatched services, and `--follow` without an owner fail with status 1; interruption
-exits 130.
+`--tail N` (default 100) keeps the newest lines across selected services. `--since`
+accepts a duration (`10m`, `1h30m`), an ISO-8601 time, or `start` for each service's
+latest launch; the default is the last hour. Text aligns service labels, shows
+launches and lost output as separators, strips terminal control sequences, and
+notes on stderr when the tail hides older lines. For automation, use
+`--output-format stream-json`: `log-entry` events contain `timestamp`, `service`,
+`instance_id`, `stream`, `line`, `source` (`history` or `live`), and the retained
+record in `data`. Markers are `log-marker` events with `kind` and, for lost output,
+`count`, plus their retained record in `data`. `--output-format json --no-follow`
+prints retained history as one array. Missing stacks, unmatched services, and
+following without an owner fail with status 1; interruption exits 130.
 
 ## Data and configuration
 
@@ -441,7 +440,7 @@ unavailable fails with `StackStorageUnavailableError`, guiding the user to run `
 status`/`supabase stack restart`, or `supabase start` when the stack has never been configured.
 Missing Storage HTTP endpoints fail with `StackStorageCapabilityError`, as do other Storage
 capability failures. A stack-gateway 502/503 encountered while Storage activates is reported as
-`StackStorageCapabilityError` guiding the user to `supabase stack logs` then `supabase stack
+`StackStorageCapabilityError` guiding the user to `supabase logs tail --service storage --no-follow` then `supabase stack
 restart`, not as a raw status body — but only for a local target; a `--remote` failure passes
 through unchanged. All of these failures exit `1` for
 `storage`/`seed buckets`, and no HTTP

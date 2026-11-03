@@ -36,8 +36,11 @@ When enabled, the CLI exposes:
 - `supabase compute push`
 - `supabase compute list`
 - `supabase compute status`
-- `supabase compute logs`
 - `supabase compute delete`
+
+Read Compute logs with `supabase logs tail --remote --service compute`. Use
+`--resource <name>` to select an application and `--kind app|requests|builds` to
+select its log stream. Add `--no-follow` to exit after history.
 
 Compute source directories live under `supabase/compute/<name>/`.
 

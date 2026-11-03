@@ -239,7 +239,8 @@ export const withStackStorageGuidance = <A, E, R>(
             message: `The stack gateway returned HTTP ${error.status} for Storage${
               body.length === 0 ? "." : `: ${body}`
             }`,
-            suggestion: "Run supabase stack logs to inspect Storage, then supabase stack restart.",
+            suggestion:
+              "Run supabase logs tail --service storage --no-follow to inspect Storage, then supabase stack restart.",
             cause: error,
           }),
         );

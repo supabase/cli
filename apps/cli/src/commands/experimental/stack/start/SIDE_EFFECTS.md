@@ -257,7 +257,7 @@ again in halves; one that is still not stored on its own is skipped with a warni
 stored a later request, and kept otherwise. NUL characters and unpaired
 surrogates in shipped lines are replaced with U+FFFD. Shipping never wakes Analytics
 and does not count as idle activity, so a lazy Analytics still stops on its idle timer while other
-services log. Service log streams and `supabase stack logs` are never blocked by shipping.
+services log. Service log streams and `supabase logs tail` are never blocked by shipping.
 
 After an explicit stop, start compares the project configuration with the saved composition through
 the stack package's composition plan, ignoring values the composition and stack credentials supply.
