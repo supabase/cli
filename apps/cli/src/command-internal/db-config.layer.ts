@@ -207,7 +207,7 @@ const missingPrivilegedRoleError = (error: Errors.DbConfigLoginRoleStatusError) 
   new Errors.DbConfigLoginRoleMissingPrivilegedRoleError({
     message: `failed to create a temporary login role, likely because the project database is missing supabase_privileged_role: ${error.body}`,
     suggestion:
-      "Connect with your database password instead, which skips the temporary login role: --password where the command supports it, SUPABASE_DB_PASSWORD for the linked project, or a --db-url that includes the password. Contact support at https://supabase.com/dashboard/support/new to repair the project's roles.",
+      "Connect with your database password instead, which skips the temporary login role: --password where the command supports it, SUPABASE_DB_PASSWORD for the linked project, or a Postgres URL that includes the password (--db-url, or --from/--to for db diff). Contact support at https://supabase.com/dashboard/support/new to repair the project's roles.",
   });
 
 const listBansErrorMapper = mapHttpError({
