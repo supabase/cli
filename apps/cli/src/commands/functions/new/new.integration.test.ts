@@ -1,6 +1,6 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Layer, Path } from "effect";
+import { Effect, Exit, FileSystem, Layer, Path, Stdio } from "effect";
 
 import {
   mockCommandSettings,
@@ -8,8 +8,16 @@ import {
   useTempWorkdir,
   withConfigEnv,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
+import {
+  mockContextualAnalytics,
+  mockOutput,
+  mockProcessControl,
+  mockStdin,
+  mockTty,
+} from "../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { YesFlag } from "../../../command-internal/global-flags.ts";
 import { CliConfigValueError } from "../../../config/cli-config.errors.ts";
 import { configValuesLayer } from "../../../../tests/helpers/config-values-layer.ts";
@@ -190,6 +198,44 @@ describe("functions new integration", () => {
       expect(error).toBeInstanceOf(CliConfigValueError);
       expect(yield* fs.exists(path.join(workdir, "supabase", "functions", "hello"))).toBe(false);
     }).pipe(Effect.provide(layer), (body) => withConfigEnv({ SUPABASE_API_PORT: "abc" }, body));
+  });
+
+  it.effect("records the failing config key on the failed command event", () => {
+    const { layer, workdir } = setup();
+    const analytics = mockContextualAnalytics();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(workdir, "supabase", "config.toml"),
+        "[inbucket]\nenabled = true\n",
+      );
+
+      const exit = yield* functionsNew({ functionName: "hello", auth: "apikey" }).pipe(
+        withCommandTelemetry(),
+        Effect.exit,
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(analytics.captured).toHaveLength(1);
+      expect(analytics.captured[0]?.properties).toMatchObject({
+        command: "functions new",
+        exit_code: 1,
+        error_category: "invalid_config",
+        config_key: "inbucket",
+      });
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layer,
+          analytics.layer,
+          mockProcessControl().layer,
+          Stdio.layerTest({ args: Effect.succeed(["functions", "new", "hello"]) }),
+          commandRuntimeLayer(["functions", "new"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
+      ),
+    );
   });
 
   it.effect("warns and skips the config append when the function is already declared", () => {

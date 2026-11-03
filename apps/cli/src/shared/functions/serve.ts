@@ -94,6 +94,8 @@ import {
 import { CliConfigKeys } from "../../config/cli-config-keys.ts";
 import { resolveConfigSubtree } from "../../config/cli-config-subtree.ts";
 import { CliConfigValues } from "../../config/cli-config-values.service.ts";
+import { recordCommandTelemetry } from "../../telemetry/command-telemetry-attributes.ts";
+import { PropEdgeRuntimeExitCode, PropServeEndReason } from "../telemetry/event-catalog.ts";
 
 const dockerRuntimeServerPort = 8081;
 const dockerRuntimeInspectorPort = 8083;
@@ -128,6 +130,7 @@ const shutdownSignalGracePeriod = Duration.millis(50);
 // not a self-raised crash signal; 137 is excluded because it needs `OOMKilled` to tell a
 // memory-limit kill from a kill the CLI cannot attribute.
 const externalTerminationExitCodes = new Set([
+  15, // SIGTERM as edge-runtime reports it: the raw signal number, not 128 + 15
   129, // SIGHUP
   130, // SIGINT
   131, // SIGQUIT
@@ -1205,6 +1208,42 @@ type ServeStartOutcome = Data.TaggedEnum<{
 }>;
 const ServeStartOutcome = Data.taggedEnum<ServeStartOutcome>();
 
+/** How a `functions serve` session ended, as recorded on the command's telemetry event. */
+export type ServeEndReason =
+  | "signal"
+  | "container_stopped"
+  | "container_exited"
+  | "container_removed"
+  | "container_crashed";
+
+const recordServeEnd = (reason: ServeEndReason, exitCode?: number) =>
+  Effect.andThen(
+    Effect.annotateCurrentSpan({
+      "functions.serve.end_reason": reason,
+      ...(exitCode === undefined ? {} : { "container.exit_code": exitCode }),
+    }),
+    recordCommandTelemetry({
+      [PropServeEndReason]: reason,
+      ...(exitCode === undefined ? {} : { [PropEdgeRuntimeExitCode]: exitCode }),
+    }),
+  );
+
+const recordContainerLogsEnd = (reason: ContainerLogsEndReason) =>
+  ContainerLogsEndReason.$match(reason, {
+    ContainerExited: () => recordServeEnd("container_exited", 0),
+    SupervisorTerminated: ({ exitCode }) => recordServeEnd("container_stopped", exitCode),
+    ContainerGone: () => recordServeEnd("container_removed"),
+  });
+
+// A log-stream failure over a clean or supervisor stop is the stream's failure, not a crash.
+const crashedContainerExitCode = (error: unknown): number | undefined => {
+  if (error instanceof EdgeRuntimeContainerCrashedError) return error.exitCode;
+  const exitCode = error instanceof DockerLogsStreamError ? error.containerExitCode : undefined;
+  return exitCode !== undefined && exitCode !== 0 && !externalTerminationExitCodes.has(exitCode)
+    ? exitCode
+    : undefined;
+};
+
 type Spawner = ChildProcessSpawner.ChildProcessSpawner["Service"];
 
 /**
@@ -1368,6 +1407,7 @@ const streamContainerLogs = Effect.fn("functions.serve.streamContainerLogs")(fun
       stderr: trimmedStderr,
       daemonDown: false,
       oomKilled: inspected.success.oomKilled,
+      containerExitCode: inspected.success.exitCode,
     });
   }
 });
@@ -2047,7 +2087,11 @@ export const serveFunctions = Effect.fn("functions.serve")(function* (
       );
 
       const keepServing = yield* ServeStartOutcome.$match(startOutcome, {
-        Shutdown: () => writeStoppedServingMessage().pipe(Effect.as(false)),
+        Shutdown: () =>
+          recordServeEnd("signal").pipe(
+            Effect.andThen(writeStoppedServingMessage()),
+            Effect.as(false),
+          ),
         Started: ({ started }) =>
           Effect.gen(function* () {
             const outcome = yield* withShutdownGrace(
@@ -2068,6 +2112,12 @@ export const serveFunctions = Effect.fn("functions.serve")(function* (
               gracePeriod,
               () => ServeSessionOutcome.Shutdown(),
             ).pipe(
+              Effect.tapError((error) => {
+                const exitCode = crashedContainerExitCode(error);
+                return exitCode === undefined
+                  ? Effect.void
+                  : recordServeEnd("container_crashed", exitCode);
+              }),
               Effect.ensuring(
                 bestEffortRemoveContainer(started.containerId).pipe(
                   Effect.ensuring(started.cleanup),
@@ -2077,8 +2127,16 @@ export const serveFunctions = Effect.fn("functions.serve")(function* (
 
             return yield* ServeSessionOutcome.$match(outcome, {
               Restart: () => Effect.succeed(true),
-              Shutdown: () => writeStoppedServingMessage().pipe(Effect.as(false)),
-              Exited: ({ reason }) => writeContainerEndedMessage(reason).pipe(Effect.as(false)),
+              Shutdown: () =>
+                recordServeEnd("signal").pipe(
+                  Effect.andThen(writeStoppedServingMessage()),
+                  Effect.as(false),
+                ),
+              Exited: ({ reason }) =>
+                recordContainerLogsEnd(reason).pipe(
+                  Effect.andThen(writeContainerEndedMessage(reason)),
+                  Effect.as(false),
+                ),
             });
           }),
       });

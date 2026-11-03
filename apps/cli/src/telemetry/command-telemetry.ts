@@ -22,6 +22,7 @@ import {
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../shared/telemetry/runtime.service.ts";
 import {
+  CliErrorCategory,
   type CliErrorActionability,
   classifyCliErrorActionability,
   unknownProcessControlledFailureActionability,
@@ -30,7 +31,9 @@ import { DbAdvisorsFailOnError } from "../commands/db/advisors/advisors.errors.t
 import { DbLintFailOnError } from "../commands/db/lint/lint.errors.ts";
 import {
   EventCommandExecuted,
+  PropConfigKey,
   PropDurationMs,
+  PropErrorCategory,
   PropExitCode,
   PropOutputFormat,
   PropStackBackend,
@@ -513,7 +516,8 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
           Effect.exit,
         );
         const finishedAt = yield* Clock.currentTimeMillis;
-        const recordedAttributes = yield* Ref.get(attributes);
+        // A config failure the command swallowed must not label a success or an unrelated failure.
+        const { [PropConfigKey]: configKey, ...recordedAttributes } = yield* Ref.get(attributes);
 
         // A command that resolves its own `--output` (e.g. `db query`, defaulting `table`/`json`
         // by agent mode) records it here; read optionally so commands that don't provide the
@@ -580,6 +584,10 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
             ...(Option.isSome(stackBackend) ? { [PropStackBackend]: stackBackend.value.kind } : {}),
             ...recordedAttributes,
             ...failureMetadata,
+            ...(configKey !== undefined &&
+            failureMetadata[PropErrorCategory] === CliErrorCategory.InvalidConfig
+              ? { [PropConfigKey]: configKey }
+              : {}),
           })
           .pipe(
             withAnalyticsContext(captureContext),
