@@ -208,6 +208,7 @@ const runStatusEnv = (input: {
           explicitWorkdir: Option.isSome(workdirFlag),
           workdirEnvValue: Option.none(),
           userAgent: "SupabaseCLI/pointer-test",
+          apiMaxRetries: Option.none(),
         });
       }),
     );

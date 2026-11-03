@@ -23,7 +23,7 @@ import {
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
 import { isSqlState } from "../connect-errors.ts";
-import { isContainerNotFoundMessage } from "../container-cli.ts";
+import { dockerSupportsHealthStartInterval, isContainerNotFoundMessage } from "../container-cli.ts";
 import { checkDbToml } from "../db-config.toml-read.ts";
 import { DbConnection, type DbSession } from "../db-connection.service.ts";
 import { DbExecError, type DbConnectError } from "../db-connection.errors.ts";
@@ -292,7 +292,10 @@ const recreateLocalDatabase15 = <E>(
       ...input.postgresSpec,
       image: resolvedPostgresImage,
     });
-    yield* createContainer(spawner, postgresSpec, input.containerOpts);
+    yield* createContainer(spawner, postgresSpec, {
+      ...input.containerOpts,
+      healthStartInterval: yield* dockerSupportsHealthStartInterval(spawner),
+    });
 
     // Never swallowed — reset has no `--from-backup`-equivalent gate.
     yield* waitForPostgresReady(
