@@ -263,6 +263,8 @@ describe("stack-owned functions bootstrap", () => {
       );
       const invalidSignature = yield* invoke(wrongToken);
       expect(invalidSignature.status).toBe(401);
+      expect(invalidSignature.headers.get("access-control-allow-origin")).toBe("*");
+      expect(invalidSignature.headers.get("access-control-expose-headers")).toBe("sb-error-code");
       expect(yield* Effect.tryPromise(() => invalidSignature.json())).toMatchObject({
         code: "UNAUTHORIZED_JWT",
       });
@@ -356,6 +358,7 @@ describe("stack-owned functions bootstrap", () => {
         registered.handler(new Request("http://127.0.0.1/missing")),
       );
       expect(missing.status).toBe(404);
+      expect(missing.headers.get("access-control-allow-origin")).toBe("*");
       expect(yield* Effect.tryPromise(() => missing.text())).toBe("Function not found");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
