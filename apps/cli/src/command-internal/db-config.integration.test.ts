@@ -1952,7 +1952,7 @@ describe("dbConfigResolver (container pooler fallback)", () => {
         }).pipe(Effect.flip);
         expect(error._tag).toBe("DbConfigLoginRoleMissingPrivilegedRoleError");
         expect(error).toMatchObject({ suggestion: expect.stringContaining("--password") });
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
     },
   );
 
@@ -1976,7 +1976,7 @@ describe("dbConfigResolver (container pooler fallback)", () => {
         configEnv: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
       }).pipe(Effect.flip);
       expect(error._tag).toBe("DbConfigLoginRoleStatusError");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
   });
 
   it.effect("fetches the pooler config but mints no login role when a password is set", () => {

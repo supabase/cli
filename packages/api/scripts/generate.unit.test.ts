@@ -271,9 +271,7 @@ describe("generate", () => {
         anyOf: [{ type: "string" }, { type: "number" }, { type: "boolean" }],
         nullable: true,
       }),
-    ).toBe(
-      'Schema.Union([Schema.String, Schema.Number.check(Schema.isFinite().annotate({ "expected": "a finite number" })), Schema.Boolean, Schema.Null])',
-    );
+    ).toBe("Schema.Union([Schema.String, Schema.Finite, Schema.Boolean, Schema.Null])");
   });
 
   test("accepts booleans for string-encoded boolean query parameters", () => {

@@ -509,6 +509,21 @@ function replaceBinarySchemaCode(code: string): string {
   return code.replace(/Schema\.String\.annotate\(\{\s*"format":\s*"binary"\s*\}\)/g, "BinaryInput");
 }
 
+// Renders the shorthands newer Effect codegen emits in their expanded form, so the committed
+// contracts stay byte-stable across Effect releases; both spellings build the same checks.
+function expandSchemaShorthands(code: string): string {
+  return code
+    .replace(
+      /Schema\.Int(?![\w$])/g,
+      'Schema.Number.check(Schema.isInt().annotate({ "expected": "an integer" }))',
+    )
+    .replace(
+      /Schema\.Finite(?![\w$])/g,
+      'Schema.Number.check(Schema.isFinite().annotate({ "expected": "a finite number" }))',
+    )
+    .replace(/new globalThis\.RegExp\(/g, "new RegExp(");
+}
+
 function replaceOpenStringCode(code: string): string {
   return code.replace(
     new RegExp(
@@ -999,7 +1014,7 @@ function renderSchemaSource(
   );
 
   const finalizeCode = (code: string): string => {
-    const withOpenStrings = replaceOpenStringCode(code);
+    const withOpenStrings = replaceOpenStringCode(expandSchemaShorthands(code));
     return hasBinaryInputs ? replaceBinarySchemaCode(withOpenStrings) : withOpenStrings;
   };
 

@@ -1,3 +1,18 @@
+diff --git a/dist/Channel.js b/dist/Channel.js
+index f42ac740a5927835f288afb938bec0dcf2dbeab8..35051ba558fb365321cd6b9ab4235fc7d6e5da3f 100644
+--- a/dist/Channel.js
++++ b/dist/Channel.js
+@@ -3463,7 +3463,9 @@ export const unwrapUpstreamFailure = cause => hasUpstreamFailure(cause) ? Cause.
+  *
+  * @internal
+  */
+-export const restoreUpstreamFailure = effect => Effect.catchCause(effect, cause => Effect.failCause(unwrapUpstreamFailure(cause)));
++// Failure handlers are skipped in an interrupted fiber, so unwrap outside the
++// interruptible region or the encoded upstream failure leaks as a defect.
++export const restoreUpstreamFailure = effect => Effect.uninterruptibleMask(restore => Effect.catchCause(restore(effect), cause => Effect.failCause(unwrapUpstreamFailure(cause))));
+ /**
+  * Constructs a `Channel` from a scoped effect that will result in a
+  * `Channel` if successful.
 diff --git a/dist/cli/Command.js b/dist/cli/Command.js
 index 0561587191e2fe2fff812729b955db15b3224568..8285aac8ee9a25894744100a1129982262ff31d8 100644
 --- a/dist/cli/Command.js
