@@ -6,6 +6,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { CliConfigParseError } from "@supabase/config";
 import {
   Cause,
+  Clock,
   Deferred,
   Duration,
   Effect,
@@ -504,6 +505,39 @@ function serveWithTimers(flags: FunctionsServeFlags, timers: FunctionsServeTimer
       timers,
     }).pipe(Effect.ensuring(telemetryState.flush));
   });
+}
+
+// Opens when serve starts its shutdown-grace timer, so a test signals inside the window
+// instead of racing the failure it is meant to outlast.
+function shutdownGraceProbe() {
+  const period = Duration.millis(2_345);
+  const opened = Deferred.makeUnsafe<void>();
+
+  return {
+    period,
+    provide: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      Clock.clockWith((clock) =>
+        Effect.provideService(effect, Clock.Clock, {
+          currentTimeMillisUnsafe: () => clock.currentTimeMillisUnsafe(),
+          currentTimeMillis: clock.currentTimeMillis,
+          currentTimeNanosUnsafe: () => clock.currentTimeNanosUnsafe(),
+          currentTimeNanos: clock.currentTimeNanos,
+          monotonicTimeNanosUnsafe: () => clock.monotonicTimeNanosUnsafe(),
+          monotonicTimeNanos: clock.monotonicTimeNanos,
+          sleep: (duration) =>
+            Duration.equals(duration, period)
+              ? Deferred.succeed(opened, undefined).pipe(Effect.andThen(clock.sleep(duration)))
+              : clock.sleep(duration),
+        }),
+      ),
+    awaitOpened: Effect.fnUntraced(function* (serving: Fiber.Fiber<unknown, unknown>) {
+      const didOpen = yield* Effect.raceFirst(
+        Deferred.await(opened).pipe(Effect.as(true)),
+        Fiber.await(serving).pipe(Effect.as(false)),
+      );
+      expect(didOpen, "serve ended before the shutdown grace window opened").toBe(true);
+    }),
+  };
 }
 
 const writeCliConfig = Effect.fnUntraced(function* (content: string) {
@@ -2325,30 +2359,25 @@ describe("functions serve integration", () => {
       () => {
         deployMockState.runHandler = baseDockerRunHandler();
         const processControl = mockQueuedProcessControl();
+        const grace = shutdownGraceProbe();
+        const childSpawner = mockDockerLogSpawner([
+          { exitCode: 1, stderr: "docker logs killed by signal" },
+        ]);
 
         return Effect.gen(function* () {
-          const scope = yield* Effect.scope;
-          // Delays the signal past the log-stream failure so only the grace window, not a
-          // same-tick race, can produce a clean exit. A generous injected grace period keeps
-          // this margin independent of the real clock.
-          const childSpawner = mockDockerLogSpawner([
-            {
-              exitCode: 1,
-              stderr: "docker logs killed by signal",
-              onSpawn: () =>
-                Effect.sleep(Duration.millis(15)).pipe(
-                  Effect.andThen(Effect.sync(() => processControl.signal("SIGINT"))),
-                  Effect.forkIn(scope),
-                  Effect.asVoid,
-                ),
-            },
-          ]);
           yield* writeHelloFunction;
 
           const { layer, out } = setupServe({ processControl, childSpawner });
           const fiber = yield* serveWithTimers(baseFlags(), {
-            shutdownSignalGracePeriod: Duration.seconds(2),
-          }).pipe(Effect.provide(layer), Effect.forkChild({ startImmediately: true }));
+            shutdownSignalGracePeriod: grace.period,
+          }).pipe(
+            Effect.provide(layer),
+            grace.provide,
+            Effect.forkChild({ startImmediately: true }),
+          );
+
+          yield* grace.awaitOpened(fiber);
+          processControl.signal("SIGINT");
 
           const exit = yield* Fiber.await(fiber);
           expect(Exit.isSuccess(exit)).toBe(true);
@@ -2367,26 +2396,19 @@ describe("functions serve integration", () => {
       () => {
         const processControl = mockQueuedProcessControl();
         const telemetry = mockCommandTelemetry();
+        const grace = shutdownGraceProbe();
 
         return Effect.gen(function* () {
-          const scope = yield* Effect.scope;
-          // Delays the signal past the startup failure so only the grace window, not a
-          // same-tick race, can produce a clean exit. A generous injected grace period keeps
-          // this margin independent of the real clock.
           deployMockState.runHandler = (command, args) => {
             if (command !== "docker") {
               throw new Error(`unexpected process: ${command}`);
             }
             if (args[0] === "container" && args[1] === "inspect") {
-              return Effect.sleep(Duration.millis(15)).pipe(
-                Effect.andThen(Effect.sync(() => processControl.signal("SIGINT"))),
-                Effect.forkIn(scope),
-                Effect.as({
-                  exitCode: 1,
-                  stdout: "",
-                  stderr: "Error: No such container: supabase_db_test-project",
-                }),
-              );
+              return {
+                exitCode: 1,
+                stdout: "",
+                stderr: "Error: No such container: supabase_db_test-project",
+              };
             }
             throw new Error(`unexpected docker args: ${args.join(" ")}`);
           };
@@ -2394,12 +2416,16 @@ describe("functions serve integration", () => {
 
           const { layer, out } = setupServe({ processControl });
           const fiber = yield* serveWithTimers(baseFlags(), {
-            shutdownSignalGracePeriod: Duration.seconds(2),
+            shutdownSignalGracePeriod: grace.period,
           }).pipe(
             Effect.provide(layer),
             telemetry.provide,
+            grace.provide,
             Effect.forkChild({ startImmediately: true }),
           );
+
+          yield* grace.awaitOpened(fiber);
+          processControl.signal("SIGINT");
 
           const exit = yield* Fiber.await(fiber);
           expect(Exit.isSuccess(exit)).toBe(true);
@@ -2488,30 +2514,29 @@ describe("functions serve integration", () => {
         deployMockState.runHandler = baseDockerRunHandler();
         const processControl = mockQueuedProcessControl();
         const telemetry = mockCommandTelemetry();
+        const grace = shutdownGraceProbe();
+        const childSpawner = mockDockerLogSpawner([
+          { exitCode: 0 },
+          inspectStateBehavior(false, 1),
+        ]);
 
         return Effect.gen(function* () {
-          const scope = yield* Effect.scope;
-          // Starts the signal's delay when the exit-code inspect spawns, so it lands after
-          // the crash surfaces and only the grace window can end the session as a clean shutdown.
-          const childSpawner = mockDockerLogSpawner([
-            { exitCode: 0 },
-            {
-              ...inspectStateBehavior(false, 1),
-              onSpawn: () =>
-                Effect.sleep(Duration.millis(15)).pipe(
-                  Effect.andThen(Effect.sync(() => processControl.signal("SIGINT"))),
-                  Effect.forkIn(scope),
-                  Effect.asVoid,
-                ),
-            },
-          ]);
           yield* writeHelloFunction;
 
           const { layer } = setupServe({ processControl, childSpawner });
-          const exit = yield* serveWithTimers(baseFlags(), {
-            shutdownSignalGracePeriod: Duration.seconds(2),
-          }).pipe(Effect.provide(layer), telemetry.provide, Effect.exit);
+          const fiber = yield* serveWithTimers(baseFlags(), {
+            shutdownSignalGracePeriod: grace.period,
+          }).pipe(
+            Effect.provide(layer),
+            telemetry.provide,
+            grace.provide,
+            Effect.forkChild({ startImmediately: true }),
+          );
 
+          yield* grace.awaitOpened(fiber);
+          processControl.signal("SIGINT");
+
+          const exit = yield* Fiber.await(fiber);
           expect(Exit.isSuccess(exit)).toBe(true);
           expect(containerInspectCalls(childSpawner)).toHaveLength(1);
           expect(yield* telemetry.recorded).toStrictEqual([{ serve_end_reason: "signal" }]);
