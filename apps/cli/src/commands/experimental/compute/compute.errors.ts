@@ -18,20 +18,3 @@ export class ComputeEnvNotSupportedError extends Data.TaggedError("ComputeEnvNot
     return actionability.invalidInput;
   }
 }
-
-/**
- * `--follow` cannot be combined with an output format that promises exactly
- * one terminal payload (`-o json|yaml|toml`, `--output-format json`) — an
- * unbounded tail has no last element to put in it. Refused up front so a
- * query isn't paid for only to fail on the first emission. `--output-format
- * stream-json` is unaffected.
- */
-export class ComputeFollowNotSupportedError extends Data.TaggedError(
-  "ComputeFollowNotSupportedError",
-)<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}

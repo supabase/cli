@@ -67,7 +67,7 @@ export const unexpectedStatus = Effect.fnUntraced(function* (
   });
 });
 
-export const decodeBody = <A, I>(
+const decodeBody = <A, I>(
   schema: Schema.Codec<A, I>,
   operation: string,
   body: unknown,
