@@ -2033,17 +2033,25 @@ project_id = "${OTHER}"
 });
 
 describe("CliConfigValues failure telemetry", () => {
-  const recordingSink = () => {
+  const withCommandRun = <A, E, R>(
+    body: (telemetry: {
+      readonly records: ReadonlyArray<CommandTelemetryAttributeValues>;
+      readonly configKey: () => string | undefined;
+    }) => Effect.Effect<A, E, R>,
+  ) => {
+    const records: Array<CommandTelemetryAttributeValues> = [];
     let attributes: CommandTelemetryAttributeValues = {};
-    return {
-      configKey: () => attributes.config_key,
-      sink: {
-        record: (values: CommandTelemetryAttributeValues) =>
-          Effect.sync(() => {
-            attributes = { ...attributes, ...values };
-          }),
-      },
+    const sink = {
+      record: (values: CommandTelemetryAttributeValues) =>
+        Effect.sync(() => {
+          records.push(values);
+          attributes = { ...attributes, ...values };
+        }),
     };
+    return body({ records, configKey: () => attributes.config_key }).pipe(
+      Effect.provide(configValuesLayer()),
+      Effect.provideService(CommandTelemetryAttributes, sink),
+    );
   };
 
   const load = (workdir: string) =>
@@ -2054,110 +2062,99 @@ describe("CliConfigValues failure telemetry", () => {
       values.load({ workdir, projectRef: Option.none(), tolerateInvalid: true }),
     );
 
+  it.live("records nothing for a successful load and lookup with no earlier failure", () =>
+    withCommandRun(({ records }) =>
+      Effect.gen(function* () {
+        const root = yield* project("[db]\nport = 54400\n");
+
+        const resolvedConfig = yield* load(root);
+        const port = yield* resolvedConfig.get(CliConfigKeys.db.port);
+
+        expect(port.value).toBe(54400);
+        expect(records).toEqual([]);
+      }),
+    ).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
   it.live("records the key of a tolerated invalid value when it is read", () =>
-    Effect.gen(function* () {
-      const root = yield* project('[db]\nport = "not-a-port"\n');
-      const { configKey, sink } = recordingSink();
+    withCommandRun(({ records }) =>
+      Effect.gen(function* () {
+        const root = yield* project('[db]\nport = "not-a-port"\n');
 
-      const resolvedConfig = yield* loadTolerating(root).pipe(
-        Effect.provide(configValuesLayer()),
-        Effect.provideService(CommandTelemetryAttributes, sink),
-      );
-      expect(configKey()).toBeUndefined();
+        const resolvedConfig = yield* loadTolerating(root);
+        expect(records).toEqual([]);
 
-      const error = yield* resolvedConfig
-        .get(CliConfigKeys.db.port)
-        .pipe(Effect.flip, Effect.provideService(CommandTelemetryAttributes, sink));
+        const error = yield* resolvedConfig.get(CliConfigKeys.db.port).pipe(Effect.flip);
 
-      expect(error).toMatchObject({ _tag: "CliConfigValueError", path: "db.port" });
-      expect(configKey()).toBe("db.port");
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+        expect(error).toMatchObject({ _tag: "CliConfigValueError", path: "db.port" });
+        expect(records).toEqual([{ config_key: "db.port" }]);
+      }),
+    ).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("records no key when the load failure names no config key", () =>
-    Effect.gen(function* () {
-      const root = yield* project("[db\nport = ");
-      const { configKey, sink } = recordingSink();
+    withCommandRun(({ records }) =>
+      Effect.gen(function* () {
+        const root = yield* project("[db\nport = ");
 
-      const error = yield* load(root).pipe(
-        Effect.provide(configValuesLayer()),
-        Effect.provideService(CommandTelemetryAttributes, sink),
-        Effect.flip,
-      );
+        const error = yield* load(root).pipe(Effect.flip);
 
-      expect(error._tag).toBe("CliConfigParseError");
-      expect(configKey()).toBeUndefined();
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+        expect(error._tag).toBe("CliConfigParseError");
+        expect(records).toEqual([]);
+      }),
+    ).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("records no key for a keyless load failure after a recovered keyed lookup failure", () =>
-    Effect.gen(function* () {
-      const invalid = yield* project('[db]\nport = "not-a-port"\n');
-      const malformed = yield* project("[db\nport = ");
-      const { configKey, sink } = recordingSink();
+    withCommandRun(({ configKey }) =>
+      Effect.gen(function* () {
+        const invalid = yield* project('[db]\nport = "not-a-port"\n');
+        const malformed = yield* project("[db\nport = ");
 
-      const lookup = yield* loadTolerating(invalid).pipe(
-        Effect.flatMap((resolvedConfig) =>
-          resolvedConfig.get(CliConfigKeys.db.port).pipe(Effect.flip),
-        ),
-        Effect.provide(configValuesLayer()),
-        Effect.provideService(CommandTelemetryAttributes, sink),
-      );
-      expect(lookup).toMatchObject({ _tag: "CliConfigValueError", path: "db.port" });
-      expect(configKey()).toBe("db.port");
+        const resolvedConfig = yield* loadTolerating(invalid);
+        const lookup = yield* resolvedConfig.get(CliConfigKeys.db.port).pipe(Effect.flip);
+        expect(lookup).toMatchObject({ _tag: "CliConfigValueError", path: "db.port" });
+        expect(configKey()).toBe("db.port");
 
-      const error = yield* load(malformed).pipe(
-        Effect.provide(configValuesLayer()),
-        Effect.provideService(CommandTelemetryAttributes, sink),
-        Effect.flip,
-      );
+        const error = yield* load(malformed).pipe(Effect.flip);
 
-      expect(error._tag).toBe("CliConfigParseError");
-      expect(configKey()).toBeUndefined();
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+        expect(error._tag).toBe("CliConfigParseError");
+        expect(configKey()).toBeUndefined();
+      }),
+    ).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("clears the key of a recovered lookup failure when a later load succeeds", () =>
-    Effect.gen(function* () {
-      const invalid = yield* project('[db]\nport = "not-a-port"\n');
-      const valid = yield* project("[db]\nport = 54400\n");
-      const { configKey, sink } = recordingSink();
+    withCommandRun(({ configKey }) =>
+      Effect.gen(function* () {
+        const invalid = yield* project('[db]\nport = "not-a-port"\n');
+        const valid = yield* project("[db]\nport = 54400\n");
 
-      const lookup = yield* loadTolerating(invalid).pipe(
-        Effect.flatMap((resolvedConfig) =>
-          resolvedConfig.get(CliConfigKeys.db.port).pipe(Effect.flip),
-        ),
-        Effect.provide(configValuesLayer()),
-        Effect.provideService(CommandTelemetryAttributes, sink),
-      );
-      expect(lookup).toMatchObject({ _tag: "CliConfigValueError", path: "db.port" });
-      expect(configKey()).toBe("db.port");
+        const resolvedConfig = yield* loadTolerating(invalid);
+        const lookup = yield* resolvedConfig.get(CliConfigKeys.db.port).pipe(Effect.flip);
+        expect(lookup).toMatchObject({ _tag: "CliConfigValueError", path: "db.port" });
+        expect(configKey()).toBe("db.port");
 
-      yield* load(valid).pipe(
-        Effect.provide(configValuesLayer()),
-        Effect.provideService(CommandTelemetryAttributes, sink),
-      );
+        yield* load(valid);
 
-      expect(configKey()).toBeUndefined();
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+        expect(configKey()).toBeUndefined();
+      }),
+    ).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("clears the key of a recovered lookup failure when a later lookup succeeds", () =>
-    Effect.gen(function* () {
-      const root = yield* project('[db]\nport = "not-a-port"\n');
-      const { configKey, sink } = recordingSink();
+    withCommandRun(({ configKey }) =>
+      Effect.gen(function* () {
+        const root = yield* project('[db]\nport = "not-a-port"\n');
 
-      const resolvedConfig = yield* loadTolerating(root).pipe(Effect.provide(configValuesLayer()));
-      yield* resolvedConfig
-        .get(CliConfigKeys.db.port)
-        .pipe(Effect.flip, Effect.provideService(CommandTelemetryAttributes, sink));
-      expect(configKey()).toBe("db.port");
+        const resolvedConfig = yield* loadTolerating(root);
+        yield* resolvedConfig.get(CliConfigKeys.db.port).pipe(Effect.flip);
+        expect(configKey()).toBe("db.port");
 
-      yield* resolvedConfig
-        .get(CliConfigKeys.db.majorVersion)
-        .pipe(Effect.provideService(CommandTelemetryAttributes, sink));
+        yield* resolvedConfig.get(CliConfigKeys.db.majorVersion);
 
-      expect(configKey()).toBeUndefined();
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+        expect(configKey()).toBeUndefined();
+      }),
+    ).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 });

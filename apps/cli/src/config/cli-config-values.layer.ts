@@ -16,6 +16,7 @@ import {
   Layer,
   Option,
   Path,
+  Ref,
   Result,
 } from "effect";
 
@@ -67,15 +68,6 @@ import {
   type CliConfigWithheldEnv,
 } from "./cli-config-values.service.ts";
 import { CliConfigRemovedEnvError, CliConfigValueError } from "./cli-config.errors.ts";
-
-/** The latest config load or lookup decides `config_key`, so a recovered failure cannot label a later one. */
-const tracksConfigFailureKey = <A, E, R>(self: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
-  self.pipe(
-    Effect.tapError((error) =>
-      recordCommandTelemetry({ [PropConfigKey]: cliConfigFailureKey(error) }),
-    ),
-    Effect.tap(() => recordCommandTelemetry({ [PropConfigKey]: undefined })),
-  );
 
 class LoadKey extends Data.Class<{
   readonly workdir: string;
@@ -231,6 +223,21 @@ export const cliConfigValuesLayer = Layer.effect(
       warned.add(line);
       return output.raw(line, "stderr");
     };
+
+    // The latest config load or lookup decides `config_key`, so a recovered failure cannot label
+    // a later one; only changes are recorded.
+    const recordedFailureKey = yield* Ref.make<string | undefined>(undefined);
+    const settleFailureKey = (key: string | undefined) =>
+      Ref.getAndSet(recordedFailureKey, key).pipe(
+        Effect.flatMap((previous) =>
+          previous === key ? Effect.void : recordCommandTelemetry({ [PropConfigKey]: key }),
+        ),
+      );
+    const tracksConfigFailureKey = <A, E, R>(self: Effect.Effect<A, E, R>) =>
+      self.pipe(
+        Effect.tapError((error) => settleFailureKey(cliConfigFailureKey(error))),
+        Effect.tap(() => settleFailureKey(undefined)),
+      );
 
     const parsedDocuments = yield* Cache.makeWith(
       (workdir: string) => withPlatform(parseCliConfigDocumentFile(workdir, { search: false })),
