@@ -169,7 +169,7 @@ const waitForOutput = (spawned: SpawnedSupabase, pattern: RegExp, timeoutMs: num
     Effect.mapError(
       (cause) =>
         new StartE2eProcessError({
-          message: "stack logs follower did not produce live output",
+          message: "logs tail follower did not produce live output",
           cause,
         }),
     ),
@@ -344,13 +344,12 @@ describe("stack start (compiled e2e)", () => {
               /* The scope owns the follower: closing it SIGKILLs the group and awaits its exit. */
               const followed = yield* spawnSupabase(
                 [
-                  "stack",
                   "logs",
-                  "--follow",
+                  "tail",
                   "--stack-id",
                   idText,
                   "--service",
-                  "database",
+                  "postgres",
                   "--output-format",
                   "stream-json",
                 ],
@@ -522,12 +521,12 @@ describe("stack start (compiled e2e)", () => {
           yield* access(join(databasePath, "data", "PG_VERSION"));
 
           const stoppedLogsArgs = [
-            "stack",
             "logs",
+            "tail",
             "--stack-id",
             idText,
             "--service",
-            "database",
+            "postgres",
             "--output-format",
             "stream-json",
           ];
@@ -537,7 +536,10 @@ describe("stack start (compiled e2e)", () => {
             env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
             exitTimeoutMs: CLEANUP_TIMEOUT_MS,
           };
-          const stoppedHistory = yield* runSupabaseEffect(stoppedLogsArgs, stoppedOptions);
+          const stoppedHistory = yield* runSupabaseEffect(
+            [...stoppedLogsArgs, "--no-follow"],
+            stoppedOptions,
+          );
           expect(
             stoppedHistory.exitCode,
             `stdout:\n${stoppedHistory.stdout}\nstderr:\n${stoppedHistory.stderr}`,
@@ -557,10 +559,7 @@ describe("stack start (compiled e2e)", () => {
                 event.service === "database",
             ),
           ).toBe(true);
-          const stoppedFollow = yield* runSupabaseEffect(
-            [...stoppedLogsArgs, "--follow"],
-            stoppedOptions,
-          );
+          const stoppedFollow = yield* runSupabaseEffect(stoppedLogsArgs, stoppedOptions);
           expect(stoppedFollow.exitCode).not.toBe(0);
           expect(stoppedFollow.stdout).not.toContain("log-entry");
           expect(`${stoppedFollow.stdout}\n${stoppedFollow.stderr}`).toMatch(/not running/iu);
