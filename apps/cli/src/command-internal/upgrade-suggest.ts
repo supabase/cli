@@ -1,7 +1,7 @@
 import { styleText } from "node:util";
 
 import type { SupabaseApiError } from "@supabase/api/effect";
-import { Effect, Option, type Redacted } from "effect";
+import { Effect, Option } from "effect";
 import * as HttpClientError from "effect/http/HttpClientError";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 
@@ -76,21 +76,6 @@ export const suggestUpgrade = Effect.fn("UpgradeSuggest.check")(function* (opts:
   readonly featureKey?: string;
   readonly statusCode: number;
   readonly response?: HttpClientResponse.HttpClientResponse;
-  /**
-   * Overrides the API base URL of the fallback project + entitlement GETs,
-   * for commands that reconcile a profile differing from the config layer's
-   * (sso add/update), so the gate requests hit the same host as their main
-   * calls. Defaults to `CommandSettings.apiUrl`.
-   */
-  readonly apiUrl?: string;
-  /**
-   * Overrides the bearer token of the fallback GETs, complementing `apiUrl`:
-   * a caller passing a reconciled `apiUrl` must also pass that profile's
-   * token, or the stale profile's token would reach the reconciled host.
-   * `Some` uses that token, `None` skips the fallback (the client cannot send
-   * an unauthenticated request), `undefined` uses the client's own token.
-   */
-  readonly accessToken?: Option.Option<Redacted.Redacted<string>>;
   /** Set false for call sites that must not fire `EventUpgradeSuggested` (vanity check-availability). */
   readonly trackAnalytics?: boolean;
 }) {
@@ -124,18 +109,8 @@ export const suggestUpgrade = Effect.fn("UpgradeSuggest.check")(function* (opts:
       return false;
     }
 
-    if (opts.accessToken !== undefined && Option.isNone(opts.accessToken)) {
-      return false;
-    }
-
     const api = yield* CommandPlatformApi;
-    const requestOptions = {
-      baseUrl: opts.apiUrl,
-      accessToken: opts.accessToken === undefined ? undefined : opts.accessToken.value,
-    };
-    const project = yield* api.v1
-      .getProject({ ref: opts.projectRef }, requestOptions)
-      .pipe(Effect.option);
+    const project = yield* api.v1.getProject({ ref: opts.projectRef }).pipe(Effect.option);
     if (Option.isNone(project)) {
       return false;
     }
@@ -145,7 +120,7 @@ export const suggestUpgrade = Effect.fn("UpgradeSuggest.check")(function* (opts:
     }
 
     const entitlements = yield* api.v1
-      .getOrganizationEntitlements({ slug: orgSlug }, requestOptions)
+      .getOrganizationEntitlements({ slug: orgSlug })
       .pipe(Effect.option);
     if (Option.isNone(entitlements)) {
       return false;

@@ -291,7 +291,7 @@ describe("sso list integration", () => {
       expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         `GET https://api.supabase.com/v1/projects/${VALID_REF}/config/auth/sso/providers`,
       ]);
-      assertPermissionDrift({ command: "sso list", requests: api.requests });
+      assertPermissionDrift({ command: "sso list", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 

@@ -29,9 +29,6 @@ Target: hosted, no consent — see [Command target](../../../../docs/command-tar
 | `GET`  | `/v1/projects/{ref}/config/auth/sso/providers/{provider_id}` | Bearer token | none         | `{id, saml?, domains?, created_at?, updated_at?}`                                                                                                                                                                                                        |
 | `GET`  | `/v1/projects/{ref}`                                         | Bearer token | none         | `{ref, name, organization_id, organization_slug}` — `linkedProjectCache` fill, best-effort, skipped when `.temp/linked-project.json` exists, `.temp/project-ref` names another ref, or no token is available                                             |
 
-Note: Unlike `list`/`add`/`update`/`remove`, `show` does **not** make upgrade-gate
-side-calls.
-
 ## Environment Variables
 
 | Variable                | Purpose                                              | Required?                                               |

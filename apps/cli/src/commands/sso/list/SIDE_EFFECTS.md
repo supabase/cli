@@ -41,7 +41,7 @@ Target: hosted, no consent — see [Command target](../../../../docs/command-tar
 | Code | Condition                                       |
 | ---- | ----------------------------------------------- |
 | `0`  | success                                         |
-| `1`  | `SsoListUnexpectedStatusError` — other non-2xx  |
+| `1`  | `SsoListUnexpectedStatusError` — any non-2xx    |
 | `1`  | `SsoListNetworkError` — transport-level failure |
 
 ## Telemetry Events Fired

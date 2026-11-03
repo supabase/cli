@@ -977,7 +977,7 @@ describe("sso add integration", () => {
       expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         `POST ${DEFAULT_API_URL}/v1/projects/${VALID_REF}/config/auth/sso/providers`,
       ]);
-      assertPermissionDrift({ command: "sso add", requests: api.requests });
+      assertPermissionDrift({ command: "sso add", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
@@ -1001,6 +1001,7 @@ describe("sso add integration", () => {
       expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         `POST ${DEFAULT_API_URL}/v1/projects/${VALID_REF}/config/auth/sso/providers`,
       ]);
+      assertPermissionDrift({ command: "sso add", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
