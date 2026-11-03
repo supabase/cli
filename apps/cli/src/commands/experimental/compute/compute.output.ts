@@ -90,3 +90,10 @@ export const computeRemoteSuffix = (flags: ProjectTargetFlagValues, ref: string)
   Option.isSome(flags.projectRef) || Option.exists(flags.remote, (value) => value._tag !== "Linked")
     ? ` --remote=${ref}`
     : "";
+
+export const computeRenderFormat = Effect.fnUntraced(function* () {
+  const output = yield* Output;
+  const outputFlagFormat = Option.getOrUndefined(yield* OutputFlag);
+  const forcesText = outputFlagFormat !== undefined && !emitsPayloadFor(outputFlagFormat);
+  return forcesText ? ("text" as const) : output.format;
+});

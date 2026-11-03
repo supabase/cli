@@ -1,4 +1,5 @@
-import { operationDefinitions, type ApiClient } from "@supabase/api/effect";
+import { requestLogs } from "../../command-internal/logs/request.ts";
+import { type ApiClient } from "@supabase/api/effect";
 import { Effect, Schema } from "effect";
 import { LogsApiError } from "./logs.errors.ts";
 
@@ -13,18 +14,11 @@ export const queryLogs = Effect.fn("Logs.query")(function* (
   sql: string,
   window: { readonly start: string; readonly end: string },
 ) {
-  const response = yield* api
-    .executeRaw(operationDefinitions.v1GetProjectLogs, {
-      ref,
-      sql,
-      iso_timestamp_start: window.start,
-      iso_timestamp_end: window.end,
-    })
-    .pipe(
-      Effect.mapError(
-        () => new LogsApiError({ message: "Could not reach the logs API.", status: 503 }),
-      ),
-    );
+  const response = yield* requestLogs(api, ref, sql, window).pipe(
+    Effect.mapError(
+      () => new LogsApiError({ message: "Could not reach the logs API.", status: 503 }),
+    ),
+  );
   if (response.status !== 200)
     return yield* new LogsApiError({
       status: response.status,

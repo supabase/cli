@@ -278,3 +278,32 @@ export class ComputeApiUnexpectedStatusError extends Data.TaggedError(
     return statusCodeActionability(this.status);
   }
 }
+
+export class ComputeLogsQueryFailedError extends Data.TaggedError("ComputeLogsQueryFailedError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return { ...actionability.apiStatus, fingerprint_suffix: "query" };
+  }
+}
+
+export class ComputeLogsUsageExceededError extends Data.TaggedError(
+  "ComputeLogsUsageExceededError",
+)<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return { ...actionability.planLimit, fingerprint_suffix: "plan_limit" };
+  }
+}
+
+export class ComputeLogsRateLimitedError extends Data.TaggedError("ComputeLogsRateLimitedError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return { ...actionability.apiStatus, fingerprint_suffix: "api_status" };
+  }
+}

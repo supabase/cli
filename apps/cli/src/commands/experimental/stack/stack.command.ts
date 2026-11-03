@@ -14,6 +14,7 @@ import { stackStartCommand as stackStartCommandBase } from "./start/start.comman
 import { stackStopCommand as stackStopCommandBase } from "./stop/stop.command.ts";
 import { stackStatusCommand as stackStatusCommandBase } from "./status/status.command.ts";
 import { stackDestroyCommand as stackDestroyCommandBase } from "./destroy/destroy.command.ts";
+import { stackLogsCommand as stackLogsCommandBase } from "./logs/logs.command.ts";
 import { stackListCommand as stackListCommandBase } from "./list/list.command.ts";
 import { stackRestartCommand as stackRestartCommandBase } from "./restart/restart.command.ts";
 import { stackInstallCommand as stackInstallCommandBase } from "./install/install.command.ts";
@@ -39,9 +40,6 @@ export const stackRuntimeLayer = Layer.mergeAll(
   telemetryStateLayer,
 );
 
-// Same static `HttpClient`/Management-API-factory requirement as `dbResetRuntimeLayer` in
-// `commands/db/reset/reset.layers.ts`; scoped to `start` so sibling stack subcommands don't
-// pick up its `--dns-resolver` requirement.
 const startCliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 const startHttpClient = httpClientLayer.pipe(Layer.provide(debugLoggerLayer));
 const startCredentials = commandCredentialsLayer.pipe(
@@ -73,6 +71,9 @@ const stackStatusCommand = stackStatusCommandBase.pipe(
 const stackDestroyCommand = stackDestroyCommandBase.pipe(
   Command.provide(commandRuntimeLayer(["stack", "destroy"])),
 );
+const stackLogsCommand = stackLogsCommandBase.pipe(
+  Command.provide(commandRuntimeLayer(["stack", "logs"])),
+);
 const stackListCommand = stackListCommandBase.pipe(
   Command.provide(commandRuntimeLayer(["stack", "list"])),
 );
@@ -99,6 +100,7 @@ export const stackCommand = Command.make("stack").pipe(
     stackDestroyCommand,
     stackInstallCommand,
     stackListCommand,
+    stackLogsCommand,
     stackOutdatedCommand,
     stackRestartCommand,
     stackStartCommand,

@@ -1,8 +1,4 @@
-export const COMPUTE_LOG_STREAMS = {
-  app: "worker_guest_logs",
-  requests: "worker_ingress_logs",
-  builds: "worker_api_logs",
-} as const;
+export { COMPUTE_LOG_STREAMS } from "../../shared/compute/compute-logs.sql.ts";
 
 export const hostedSources = [
   { service: "edge", source: "edge_logs" },

@@ -18,3 +18,13 @@ export class ComputeEnvNotSupportedError extends Data.TaggedError("ComputeEnvNot
     return actionability.invalidInput;
   }
 }
+
+export class ComputeFollowNotSupportedError extends Data.TaggedError(
+  "ComputeFollowNotSupportedError",
+)<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}

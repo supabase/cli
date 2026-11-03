@@ -1,3 +1,4 @@
+import { followLogs } from "../../command-internal/logs/follow.ts";
 import { unsupportedOutputFlagMessage } from "../../command-internal/output-formats.ts";
 import { Clock, DateTime, Effect, FileSystem, Option, Path, Schedule, Schema } from "effect";
 import { Output } from "../../shared/output/output.service.ts";
@@ -6,7 +7,6 @@ import { Stdin } from "../../shared/runtime/stdin.service.ts";
 import { CommandPlatformApiFactory } from "../../auth/command-platform-api-factory.service.ts";
 import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
-import { ProcessControl } from "../../shared/runtime/process-control.service.ts";
 import { resolveProjectTarget } from "../../command-internal/target/resolve-project-target.ts";
 import { resolveTarget } from "../../command-internal/target/resolve-target.ts";
 import { stackLogs } from "../../command-internal/stack-logs/retained-logs.ts";
@@ -108,7 +108,6 @@ const hostedTail = Effect.fn("logs.tail.remote")(function* (
 ) {
   const output = yield* Output;
   const cache = yield* LinkedProjectCache;
-  const processControl = yield* ProcessControl;
   yield* Effect.gen(function* () {
     if (Option.isSome(flags.stack) || Option.isSome(flags.stackId))
       return yield* new LogsInputError({ message: "--stack and --stack-id are local selectors." });
@@ -271,20 +270,15 @@ const hostedTail = Effect.fn("logs.tail.remote")(function* (
       yield* emit(rows, "live");
       newest = Math.max(newest, end - 60_000);
     });
-    yield* Effect.raceFirst(
+    yield* followLogs(
       poll().pipe(
         Effect.retry({
           schedule: Schedule.spaced("10 seconds").pipe(Schedule.upTo({ duration: "1 minute" })),
           while: (error) =>
             Schema.is(LogsApiError)(error) && (error.status === 429 || error.status >= 500),
         }),
-        Effect.repeat(Schedule.spaced("10 seconds")),
       ),
-      processControl
-        .awaitSignal()
-        .pipe(
-          Effect.flatMap((signal) => processControl.setExitCode(signal === "SIGINT" ? 130 : 0)),
-        ),
+      Schedule.spaced("10 seconds"),
     );
   }).pipe(Effect.ensuring(cache.cache(ref)));
 });

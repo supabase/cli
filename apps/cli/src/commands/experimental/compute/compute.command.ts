@@ -1,6 +1,7 @@
 import { Command } from "effect/cli";
 import { computeDeleteCommand } from "./delete/delete.command.ts";
 import { computeListCommand } from "./list/list.command.ts";
+import { computeLogsCommand } from "./logs/logs.command.ts";
 import { computeNewCommand } from "./new/new.command.ts";
 import { computePushCommand } from "./push/push.command.ts";
 import { computeStatusCommand } from "./status/status.command.ts";
@@ -15,6 +16,7 @@ export const computeCommand = Command.make("compute").pipe(
     computePushCommand,
     computeListCommand,
     computeStatusCommand,
+    computeLogsCommand,
     computeDeleteCommand,
   ]),
 );
