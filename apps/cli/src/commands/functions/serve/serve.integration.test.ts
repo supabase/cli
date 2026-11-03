@@ -23,6 +23,7 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { TestClock } from "effect/testing";
 import { beforeEach, vi } from "vitest";
 
 import {
@@ -313,9 +314,18 @@ function mockCommandTelemetry() {
   };
 }
 
-function mockFileWatcher(expectedPaths: ReadonlyArray<string> = []) {
-  const pubsub = Effect.runSync(PubSub.unbounded<ReadonlyArray<FileWatchEvent>>({ replay: 8 }));
+// `replay: false` delivers an event only to streams already subscribed, so a restart's
+// re-subscription cannot see it again.
+function mockFileWatcher(
+  expectedPaths: ReadonlyArray<string> = [],
+  { replay = true }: { readonly replay?: boolean } = {},
+) {
+  const pubsub = Effect.runSync(
+    PubSub.unbounded<ReadonlyArray<FileWatchEvent>>({ replay: replay ? 8 : 0 }),
+  );
   const expectedWatch = Deferred.makeUnsafe<void>();
+  const expectedSubscription = Deferred.makeUnsafe<void>();
+  const subscribedPaths = new Set<string>();
   const watchCalls: Array<{
     path: string;
     ignore?: ReadonlyArray<string>;
@@ -339,7 +349,19 @@ function mockFileWatcher(expectedPaths: ReadonlyArray<string> = []) {
           ) {
             Deferred.doneUnsafe(expectedWatch, Exit.void);
           }
-          return Stream.fromPubSub(pubsub);
+          return Stream.unwrap(
+            PubSub.subscribe(pubsub).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  subscribedPaths.add(path);
+                  if (expectedPaths.every((expectedPath) => subscribedPaths.has(expectedPath))) {
+                    Deferred.doneUnsafe(expectedSubscription, Exit.void);
+                  }
+                }),
+              ),
+              Effect.map(Stream.fromSubscription),
+            ),
+          );
         },
       }),
     ),
@@ -350,6 +372,7 @@ function mockFileWatcher(expectedPaths: ReadonlyArray<string> = []) {
       return watchCalls;
     },
     awaitExpectedWatch: Deferred.await(expectedWatch),
+    awaitExpectedSubscription: Deferred.await(expectedSubscription),
   };
 }
 
@@ -507,10 +530,9 @@ function serveWithTimers(flags: FunctionsServeFlags, timers: FunctionsServeTimer
   });
 }
 
-// Opens when serve starts its shutdown-grace timer, so a test signals inside the window
-// instead of racing the failure it is meant to outlast.
-function shutdownGraceProbe() {
-  const period = Duration.millis(2_345);
+// Opens when serve starts a sleep of `period`, so a test acts inside that window instead of
+// racing it.
+function sleepProbe(period: Duration.Duration, window: string) {
   const opened = Deferred.makeUnsafe<void>();
 
   return {
@@ -535,9 +557,13 @@ function shutdownGraceProbe() {
         Deferred.await(opened).pipe(Effect.as(true)),
         Fiber.await(serving).pipe(Effect.as(false)),
       );
-      expect(didOpen, "serve ended before the shutdown grace window opened").toBe(true);
+      expect(didOpen, `serve ended before the ${window} opened`).toBe(true);
     }),
   };
+}
+
+function shutdownGraceProbe() {
+  return sleepProbe(Duration.millis(2_345), "shutdown grace window");
 }
 
 const writeCliConfig = Effect.fnUntraced(function* (content: string) {
@@ -2730,39 +2756,34 @@ describe("functions serve integration", () => {
       },
     );
 
-    it.live("records only the final end, not the watched-file restart before it", () => {
-      const fileWatcher = mockFileWatcher();
+    it.effect("records only the final end, not the watched-file restart before it", () => {
+      deployMockState.runHandler = baseDockerRunHandler();
       const childSpawner = mockDockerLogSpawner([
         { pending: true },
         { exitCode: 0 },
         inspectStateBehavior(false, 15),
       ]);
       const telemetry = mockCommandTelemetry();
+      const restartDebounce = sleepProbe(Duration.millis(500), "restart debounce window");
 
       return Effect.gen(function* () {
         const path = yield* Path.Path;
-        const firstCreate = yield* Deferred.make<void>();
-        const baseHandler = baseDockerRunHandler();
-        deployMockState.runHandler = (command, args) =>
-          args[0] === "create"
-            ? Deferred.succeed(firstCreate, undefined).pipe(Effect.as(baseHandler(command, args)))
-            : baseHandler(command, args);
         yield* writeHelloFunction;
+        const functionsDir = path.join(tempRoot.current, "supabase", "functions");
+        const fileWatcher = mockFileWatcher([functionsDir], { replay: false });
 
         const { layer, out } = setupServe({ fileWatcher, childSpawner });
         const fiber = yield* functionsServe(baseFlags()).pipe(
           Effect.provide(layer),
           telemetry.provide,
+          restartDebounce.provide,
           Effect.forkChild({ startImmediately: true }),
         );
 
-        yield* Deferred.await(firstCreate);
-        fileWatcher.emit([
-          {
-            path: path.join(tempRoot.current, "supabase", "functions", "hello", "index.ts"),
-            type: "update",
-          },
-        ]);
+        yield* fileWatcher.awaitExpectedSubscription;
+        fileWatcher.emit([{ path: path.join(functionsDir, "hello", "index.ts"), type: "update" }]);
+        yield* restartDebounce.awaitOpened(fiber);
+        yield* TestClock.adjust(Duration.millis(500));
 
         const exit = yield* Fiber.await(fiber);
         expect(Exit.isSuccess(exit)).toBe(true);
@@ -2771,6 +2792,7 @@ describe("functions serve integration", () => {
             (call) => call.command === "docker" && call.args[0] === "create",
           ),
         ).toHaveLength(2);
+        expect(fileWatcher.watchCalls.filter((call) => call.path === functionsDir)).toHaveLength(2);
         expect(out.stdoutText).toContain("Edge Runtime container stopped (exit 15).");
         expect(yield* telemetry.recorded).toStrictEqual([
           { serve_end_reason: "container_stopped", edge_runtime_exit_code: 15 },
@@ -2912,12 +2934,17 @@ describe("functions serve integration", () => {
           { exitCode: 1, stderr: "docker logs connection reset" },
           inspectStateBehavior(false, 137, true),
         ]);
+        const telemetry = mockCommandTelemetry();
 
         return Effect.gen(function* () {
           yield* writeHelloFunction;
 
           const { layer } = setupServe({ childSpawner });
-          const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
+          const error = yield* functionsServe(baseFlags()).pipe(
+            Effect.provide(layer),
+            telemetry.provide,
+            Effect.flip,
+          );
 
           expect(error).toBeInstanceOf(DockerLogsStreamError);
           if (error instanceof DockerLogsStreamError) {
@@ -2929,6 +2956,39 @@ describe("functions serve integration", () => {
               fingerprint_suffix: "out_of_memory",
             });
           }
+          expect(yield* telemetry.recorded).toStrictEqual([
+            { serve_end_reason: "container_crashed", edge_runtime_exit_code: 137 },
+          ]);
+        });
+      },
+    );
+
+    it.live.each([0, 15])(
+      "fails with the log-stream error without recording a crash when the stopped container exited with %d",
+      (containerExitCode) => {
+        deployMockState.runHandler = baseDockerRunHandler();
+        const childSpawner = mockDockerLogSpawner([
+          { exitCode: 1, stderr: "docker logs connection reset" },
+          inspectStateBehavior(false, containerExitCode),
+        ]);
+        const telemetry = mockCommandTelemetry();
+
+        return Effect.gen(function* () {
+          yield* writeHelloFunction;
+
+          const { layer } = setupServe({ childSpawner });
+          const error = yield* functionsServe(baseFlags()).pipe(
+            Effect.provide(layer),
+            telemetry.provide,
+            Effect.flip,
+          );
+
+          expect(error).toBeInstanceOf(DockerLogsStreamError);
+          if (error instanceof DockerLogsStreamError) {
+            expect(error.message).toBe("docker logs connection reset");
+            expect(error.oomKilled).toBe(false);
+          }
+          expect(yield* telemetry.recorded).toStrictEqual([]);
         });
       },
     );

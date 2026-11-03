@@ -1235,6 +1235,15 @@ const recordContainerLogsEnd = (reason: ContainerLogsEndReason) =>
     ContainerGone: () => recordServeEnd("container_removed"),
   });
 
+// A log-stream failure over a clean or supervisor stop is the stream's failure, not a crash.
+const crashedContainerExitCode = (error: unknown): number | undefined => {
+  if (error instanceof EdgeRuntimeContainerCrashedError) return error.exitCode;
+  const exitCode = error instanceof DockerLogsStreamError ? error.containerExitCode : undefined;
+  return exitCode !== undefined && exitCode !== 0 && !externalTerminationExitCodes.has(exitCode)
+    ? exitCode
+    : undefined;
+};
+
 type Spawner = ChildProcessSpawner.ChildProcessSpawner["Service"];
 
 /**
@@ -1398,6 +1407,7 @@ const streamContainerLogs = Effect.fn("functions.serve.streamContainerLogs")(fun
       stderr: trimmedStderr,
       daemonDown: false,
       oomKilled: inspected.success.oomKilled,
+      containerExitCode: inspected.success.exitCode,
     });
   }
 });
@@ -2102,11 +2112,12 @@ export const serveFunctions = Effect.fn("functions.serve")(function* (
               gracePeriod,
               () => ServeSessionOutcome.Shutdown(),
             ).pipe(
-              Effect.tapError((error) =>
-                error instanceof EdgeRuntimeContainerCrashedError
-                  ? recordServeEnd("container_crashed", error.exitCode)
-                  : Effect.void,
-              ),
+              Effect.tapError((error) => {
+                const exitCode = crashedContainerExitCode(error);
+                return exitCode === undefined
+                  ? Effect.void
+                  : recordServeEnd("container_crashed", exitCode);
+              }),
               Effect.ensuring(
                 bestEffortRemoveContainer(started.containerId).pipe(
                   Effect.ensuring(started.cleanup),
