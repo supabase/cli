@@ -1,12 +1,22 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import type { V1ListAllBranchesOutput } from "@supabase/api/effect";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Predicate, Schema } from "effect";
+import {
+  Cause,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  PlatformError,
+  Predicate,
+  Schema,
+} from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequestModule from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import { PlatformError, SystemError } from "effect/PlatformError";
 
 import {
   mockAnalytics,
@@ -308,15 +318,13 @@ const failRemoveFsLayer = (name: string): Layer.Layer<FileSystem.FileSystem> =>
         remove: (path, options) =>
           path.endsWith(name)
             ? Effect.fail(
-                new PlatformError(
-                  new SystemError({
-                    _tag: "PermissionDenied",
-                    module: "FileSystem",
-                    method: "remove",
-                    pathOrDescriptor: path,
-                    description: "simulated remove failure",
-                  }),
-                ),
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "remove",
+                  pathOrDescriptor: path,
+                  description: "simulated remove failure",
+                }),
               )
             : real.remove(path, options),
       }),
@@ -611,68 +619,91 @@ describe("link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    const VERSION_PINS = ["rest-version", "gotrue-version", "storage-version"] as const;
-    const PROJECT_PINS = ["storage-migration", ...VERSION_PINS] as const;
+    const TENANT_VERSION_FILES = ["rest-version", "gotrue-version", "storage-version"];
+    const VERSION_FILES = ["storage-migration", ...TENANT_VERSION_FILES];
 
     it.effect(
-      "re-linking to another project drops the old pins when the probes are skipped",
+      "re-linking to another project drops the old version files when the version checks are skipped",
       () => {
         const { layer, workdir } = setup({ apiKeys: { fail: statusCodeFailure(403) } });
         return Effect.gen(function* () {
           yield* writeLinkedParentRef(workdir, FILE_ONLY_REF);
-          for (const name of PROJECT_PINS) yield* writeTempContent(workdir, name, "old-project");
+          for (const name of VERSION_FILES) yield* writeTempContent(workdir, name, "old-project");
           yield* link(flags());
           expect(yield* readTemp(workdir, "storage-migration")).toBe("2026-01-01-000000");
-          for (const name of VERSION_PINS) expect(yield* existsTemp(workdir, name)).toBe(false);
+          for (const name of TENANT_VERSION_FILES)
+            expect(yield* existsTemp(workdir, name)).toBe(false);
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.effect("re-linking to another project drops the old pins when the probes fail", () => {
-      const { layer, workdir } = setup({
-        storageConfig: { fail: statusCodeFailure(500) },
-        tenant: "fail",
-      });
-      return Effect.gen(function* () {
-        yield* writeLinkedParentRef(workdir, FILE_ONLY_REF);
-        for (const name of PROJECT_PINS) yield* writeTempContent(workdir, name, "old-project");
-        yield* link(flags());
-        expect(yield* readTemp(workdir, "project-ref")).toBe(VALID_REF);
-        for (const name of PROJECT_PINS) expect(yield* existsTemp(workdir, name)).toBe(false);
-      }).pipe(Effect.provide(layer));
-    });
-
     it.effect(
-      "re-linking to another project fails and keeps the old ref when a pin cannot be removed",
+      "re-linking to another project drops the old version files when the service calls fail",
       () => {
         const { layer, workdir } = setup({
-          apiKeys: { fail: statusCodeFailure(403) },
+          storageConfig: { fail: statusCodeFailure(500) },
+          tenant: "fail",
+        });
+        return Effect.gen(function* () {
+          yield* writeLinkedParentRef(workdir, FILE_ONLY_REF);
+          for (const name of VERSION_FILES) yield* writeTempContent(workdir, name, "old-project");
+          yield* link(flags());
+          for (const name of VERSION_FILES) expect(yield* existsTemp(workdir, name)).toBe(false);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.effect(
+      "re-linking to another project still links when a version file cannot be removed",
+      () => {
+        const { layer, workdir } = setup({
+          storageConfig: { fail: statusCodeFailure(500) },
+          tenant: "fail",
           fileSystem: failRemoveFsLayer("rest-version"),
         });
         return Effect.gen(function* () {
           yield* writeLinkedParentRef(workdir, FILE_ONLY_REF);
-          for (const name of PROJECT_PINS) yield* writeTempContent(workdir, name, "old-project");
-          const exit = yield* Effect.exit(link(flags()));
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit))
-            expect(Cause.pretty(exit.cause)).toContain("simulated remove failure");
-          expect(yield* readTemp(workdir, "project-ref")).toBe(FILE_ONLY_REF);
+          for (const name of VERSION_FILES) yield* writeTempContent(workdir, name, "old-project");
+          yield* link(flags());
+          expect(yield* readTemp(workdir, "project-ref")).toBe(VALID_REF);
+          expect(yield* readTemp(workdir, "rest-version")).toBe("old-project");
+          for (const name of ["storage-migration", "gotrue-version", "storage-version"])
+            expect(yield* existsTemp(workdir, name)).toBe(false);
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.effect("re-linking the same project keeps its pins when the probes fail", () => {
-      const { layer, workdir } = setup({
-        storageConfig: { fail: statusCodeFailure(500) },
-        tenant: "fail",
-      });
-      return Effect.gen(function* () {
-        yield* writeLinkedParentRef(workdir, VALID_REF);
-        for (const name of PROJECT_PINS) yield* writeTempContent(workdir, name, "pinned");
-        yield* link(flags());
-        for (const name of PROJECT_PINS) expect(yield* readTemp(workdir, name)).toBe("pinned");
-      }).pipe(Effect.provide(layer));
-    });
+    it.effect(
+      "linking with no saved project-ref drops leftover version files when the service calls fail",
+      () => {
+        const { layer, workdir } = setup({
+          storageConfig: { fail: statusCodeFailure(500) },
+          tenant: "fail",
+        });
+        return Effect.gen(function* () {
+          for (const name of VERSION_FILES) yield* writeTempContent(workdir, name, "leftover");
+          yield* link(flags());
+          for (const name of VERSION_FILES) expect(yield* existsTemp(workdir, name)).toBe(false);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.effect(
+      "re-linking the same project keeps its version files when the service calls fail",
+      () => {
+        const { layer, workdir } = setup({
+          storageConfig: { fail: statusCodeFailure(500) },
+          tenant: "fail",
+        });
+        return Effect.gen(function* () {
+          yield* writeLinkedParentRef(workdir, VALID_REF);
+          for (const name of VERSION_FILES) yield* writeTempContent(workdir, name, "same-project");
+          yield* link(flags());
+          for (const name of VERSION_FILES)
+            expect(yield* readTemp(workdir, name)).toBe("same-project");
+        }).pipe(Effect.provide(layer));
+      },
+    );
 
     it.effect("removes pooler-url and skips the pooler fetch when --skip-pooler is set", () => {
       const { layer, workdir, apiMock } = setup();

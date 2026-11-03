@@ -44,11 +44,9 @@ export interface LinkServicesInput {
  * storage-version}`. Each probe is independently best-effort — an
  * unreachable service never fails the caller. Does not write `project-ref`,
  * the linked-project cache, or fire `cli_project_linked`; the `link` command
- * owns those, and `bootstrap` calls this directly to skip them. When the saved
- * `project-ref` names another project or cannot be read, the files above except
- * `pooler-url` are removed first and a failed removal fails the call, since their
- * readers do no ref check; callers therefore save the new `project-ref` only after
- * this succeeds.
+ * owns those, and `bootstrap` calls this directly to skip them. Unless the saved
+ * `project-ref` is `ref`, the files above except `pooler-url` are removed first,
+ * since their readers do no ref check.
  */
 export const linkServicesCore = Effect.fn("LinkServices.write")(function* (
   input: LinkServicesInput,
@@ -63,14 +61,14 @@ export const linkServicesCore = Effect.fn("LinkServices.write")(function* (
   const { workdir } = input;
 
   const refChanged = yield* state.readProjectRef(workdir).pipe(
-    Effect.map(Option.exists((ref) => ref !== input.ref)),
+    Effect.map((linked) => !Option.contains(linked, input.ref)),
     Effect.orElseSucceed(() => true),
   );
   yield* Effect.annotateCurrentSpan("link.ref_changed", refChanged);
   if (refChanged) {
     yield* Effect.forEach(
       ["storageMigration", "restVersion", "gotrueVersion", "storageVersion"] as const,
-      (file) => state.remove(workdir, file),
+      (file) => state.remove(workdir, file).pipe(Effect.ignore),
       { discard: true },
     );
   }
