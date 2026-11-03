@@ -129,14 +129,18 @@ jobs:
           set -euo pipefail
           deadline=$((SECONDS + 7200))
           while true; do
-            run_ids="$(gh run list --repo "$REPO" --workflow release.yml --branch main --json databaseId,status --jq '.[] | select(.status != "completed") | .databaseId')"
             pending=0
-            for run_id in $run_ids; do
-              publish_status="$(gh api "repos/${REPO}/actions/runs/${run_id}/jobs" --paginate --jq '.jobs[] | select(.name == "Release / publish") | .status')"
-              if [[ "$publish_status" != completed ]]; then
-                pending=$((pending + 1))
-              fi
-            done
+            if run_ids="$(gh run list --repo "$REPO" --workflow release.yml --branch main --json databaseId,status --jq '.[] | select(.status != "completed") | .databaseId')"; then
+              for run_id in $run_ids; do
+                publish_status="$(gh api "repos/${REPO}/actions/runs/${run_id}/jobs" --paginate --jq '.jobs[] | select(.name == "Release / publish") | .status')" || publish_status=unknown
+                if [[ "$publish_status" != completed ]]; then
+                  pending=$((pending + 1))
+                fi
+              done
+            else
+              echo "::warning::Could not list Release runs on main; retrying."
+              pending=1
+            fi
             if [[ "$pending" -eq 0 ]]; then
               break
             fi

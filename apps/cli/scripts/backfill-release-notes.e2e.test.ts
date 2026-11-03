@@ -23,18 +23,25 @@ const isolatedGit = {
 };
 
 const spawn = (argv: ReadonlyArray<string>, cwd: string, env: Record<string, string | undefined>) =>
-  Effect.gen(function* () {
-    const child = Bun.spawn([...argv], { cwd, env, stdout: "pipe", stderr: "pipe" });
-    const [exitCode, stdout, stderr] = yield* Effect.all(
-      [
-        Effect.promise(() => child.exited),
-        Effect.promise(() => new Response(child.stdout).text()),
-        Effect.promise(() => new Response(child.stderr).text()),
-      ],
-      { concurrency: "unbounded" },
-    );
-    return { exitCode, stdout, stderr };
-  });
+  Effect.acquireUseRelease(
+    Effect.sync(() => Bun.spawn([...argv], { cwd, env, stdout: "pipe", stderr: "pipe" })),
+    (child) =>
+      Effect.gen(function* () {
+        const [exitCode, stdout, stderr] = yield* Effect.all(
+          [
+            Effect.promise(() => child.exited),
+            Effect.promise(() => new Response(child.stdout).text()),
+            Effect.promise(() => new Response(child.stderr).text()),
+          ],
+          { concurrency: "unbounded" },
+        );
+        return { exitCode, stdout, stderr };
+      }),
+    (child) =>
+      child.exitCode === null && child.signalCode === null
+        ? Effect.sync(() => child.kill()).pipe(Effect.andThen(Effect.promise(() => child.exited)))
+        : Effect.void,
+  );
 
 interface SeedHistory {
   readonly git: (...args: ReadonlyArray<string>) => Effect.Effect<string>;
