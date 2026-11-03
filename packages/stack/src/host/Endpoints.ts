@@ -119,7 +119,14 @@ export const sharedRoutes = (
         { prefix: route, upstreamPrefix: "/", keyRewrite: { policy: "bearer", keys } },
       ];
     case "functions":
-      return [{ prefix: route, upstreamPrefix: "/", keyRewrite: { policy: "sb-api-key", keys } }];
+      return [
+        {
+          prefix: route,
+          upstreamPrefix: "/",
+          keyRewrite: { policy: "sb-api-key", keys },
+          upstreamCors: true,
+        },
+      ];
     default:
       return [{ prefix: route, upstreamPrefix: "/" }];
   }
