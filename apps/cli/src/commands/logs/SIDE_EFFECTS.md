@@ -51,7 +51,9 @@ Local follow preserves the existing stack process-signal behavior.
 
 `--output-format text|json|stream-json` selects native output. Every `-o/--output` value is rejected with guidance to use `--output-format` before reads or target resolution.
 
-- Query and sources: text tables by default; JSON writes a result array, and stream JSON emits one `result` event containing that array.
+- Query: text uses tables for scalar rows that fit the terminal, and wrapped vertical records for wide or nested results. All fields remain visible.
+- Sources: text shows a compact service overview. `--service` shows wrapped SQL and capability details with readable lists. JSON and stream JSON preserve the full source records.
+- Finite JSON output uses two-space indentation. Query, source discovery, and hosted/local tail arrays keep their existing data shape. Stream JSON remains one compact event per line. Text uses terminal width when available, otherwise 80 columns. Hosted tail text wraps long lines.
 - Tail: text lines by default. With `--no-follow`, JSON writes an array of full hosted or local records. Following with JSON fails before any reads and points to `--output-format stream-json`.
 - Tail stream JSON emits standard `log-entry` and `log-marker` events with timestamp, service, and history/live source. Their JSON-object `data` field preserves the full record. Hosted rows keep IDs, source, severity, attributes, derived level, and ISO/millisecond timestamps. Local rows keep instance IDs, launch IDs, positions, and loss markers.
 - Diagnostics and truncation notices use stderr. Text strips terminal control sequences from log fields.
