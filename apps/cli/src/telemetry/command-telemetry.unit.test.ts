@@ -247,6 +247,24 @@ describe("withCommandTelemetry", () => {
       }),
     );
 
+    it.live("omits a config key that a later config outcome cleared", () =>
+      Effect.gen(function* () {
+        const { properties } = yield* capturedEvent(
+          recordCommandTelemetry({ [PropConfigKey]: "db.port" }).pipe(
+            Effect.andThen(recordCommandTelemetry({ [PropConfigKey]: undefined })),
+            Effect.andThen(
+              Effect.fail(
+                new CliConfigValueError({ path: "db.port", tier: "config", message: "invalid" }),
+              ),
+            ),
+          ),
+        );
+
+        expect(properties).toMatchObject({ exit_code: 1, error_category: "invalid_config" });
+        expect(properties).not.toHaveProperty(PropConfigKey);
+      }),
+    );
+
     it.live("omits the recorded config key from a failure in another category", () =>
       Effect.gen(function* () {
         const { properties } = yield* capturedEvent(

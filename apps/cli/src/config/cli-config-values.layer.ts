@@ -68,10 +68,14 @@ import {
 } from "./cli-config-values.service.ts";
 import { CliConfigRemovedEnvError, CliConfigValueError } from "./cli-config.errors.ts";
 
-const recordConfigFailureKey = (error: unknown): Effect.Effect<void> => {
-  const key = cliConfigFailureKey(error);
-  return key === undefined ? Effect.void : recordCommandTelemetry({ [PropConfigKey]: key });
-};
+/** The latest config load or lookup decides `config_key`, so a recovered failure cannot label a later one. */
+const tracksConfigFailureKey = <A, E, R>(self: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+  self.pipe(
+    Effect.tapError((error) =>
+      recordCommandTelemetry({ [PropConfigKey]: cliConfigFailureKey(error) }),
+    ),
+    Effect.tap(() => recordCommandTelemetry({ [PropConfigKey]: undefined })),
+  );
 
 class LoadKey extends Data.Class<{
   readonly workdir: string;
@@ -542,7 +546,7 @@ export const cliConfigValuesLayer = Layer.effect(
           const picked = pickCliConfigKey(key, sources);
           if (Result.isFailure(picked)) return yield* picked.failure;
           return picked.success;
-        }).pipe(Effect.tapError(recordConfigFailureKey));
+        }).pipe(tracksConfigFailureKey);
 
       for (const message of overrideWarnings) yield* warnOnce(message);
       if (Option.isSome(debugLogger)) {
@@ -608,7 +612,7 @@ export const cliConfigValuesLayer = Layer.effect(
             tolerateUnreadableLinkedRef: target.tolerateUnreadableLinkedRef === true,
             tolerateInvalid: target.tolerateInvalid === true,
           }),
-        ).pipe(Effect.tapError(recordConfigFailureKey)),
+        ).pipe(tracksConfigFailureKey),
       writeThrough: (write) => Effect.ensuring(write, invalidate),
       invalidate,
     });

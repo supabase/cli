@@ -32,6 +32,9 @@ const loadFailure = (config: string) =>
 const remoteDbPort = (remote: string) =>
   `[remotes."${remote}"]\nproject_id = "${REMOTE_REF}"\n[remotes."${remote}".db]\nport = "x"\n`;
 
+const remoteDbSection = (remote: string) =>
+  `[remotes."${remote}"]\nproject_id = "${REMOTE_REF}"\ndb = "invalid"\n`;
+
 describe("cliConfigFailureKey for a removed key", () => {
   it.live.each([
     {
@@ -168,6 +171,11 @@ describe("cliConfigFailureKey for a config document that does not decode", () =>
       name: "a key inside a remote named after a config section",
       config: remoteDbPort("auth"),
       key: "db.port",
+    },
+    {
+      name: "a section inside a remote named after a config section",
+      config: remoteDbSection("auth"),
+      key: "db",
     },
   ])("names $name", ({ config, key }) =>
     Effect.gen(function* () {

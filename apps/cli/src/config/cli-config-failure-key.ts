@@ -54,15 +54,11 @@ const knownPrefix = (segments: ReadonlyArray<string>): string | undefined => {
   return undefined;
 };
 
-/** Remote blocks decode as a record, so their issue paths start with the remote name instead of `remotes`. */
-const parseIssueKey = (path: ReadonlyArray<string>): string | undefined => {
-  const asRoot = knownPrefix(path);
-  const asRemote = knownPrefix(path.slice(1));
-  if (asRemote === undefined) return asRoot;
-  return asRoot === undefined || asRemote.split(".").length > asRoot.split(".").length
-    ? asRemote
-    : asRoot;
-};
+/** Remote blocks decode as one record, so their issue paths start with the remote name instead of `remotes`. */
+const decodedAsRemoteBlocks = (issue: SchemaIssue.Issue): boolean =>
+  issue._tag === "Composite" &&
+  issue.ast._tag === "Objects" &&
+  issue.ast.propertySignatures.length === 0;
 
 const firstIssuePath = (
   issue: SchemaIssue.Issue,
@@ -100,8 +96,10 @@ export const cliConfigFailureKey = (error: unknown): string | undefined => {
     return knownPrefix(error.path.split("."));
   }
   if (isParseError(error) && Schema.isSchemaError(error.cause)) {
-    const path = firstIssuePath(error.cause.issue, []);
-    return path === undefined ? undefined : parseIssueKey(path);
+    const { issue } = error.cause;
+    const path = firstIssuePath(issue, []);
+    if (path === undefined) return undefined;
+    return knownPrefix(decodedAsRemoteBlocks(issue) ? path.slice(1) : path);
   }
   return undefined;
 };
