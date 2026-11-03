@@ -103,6 +103,7 @@ export const EnvSignalPresenceKeys: ReadonlyArray<string> = [
 export const EnvSignalValueKeys: ReadonlyArray<string> = [
   "AI_AGENT",
   "CURSOR_EXTENSION_HOST_ROLE",
+  "SUPABASE_API_MAX_RETRIES",
   "TERM",
   "TERM_PROGRAM",
   "TERM_PROGRAM_VERSION",

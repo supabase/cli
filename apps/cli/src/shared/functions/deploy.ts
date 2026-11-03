@@ -96,6 +96,8 @@ interface FunctionsDeployFlags {
 
 interface DeployFunctionsDependencies<ResolveError, ResolveRequirements> {
   readonly api: ApiClient;
+  /** `SUPABASE_API_MAX_RETRIES`; none keeps this command's own retries. */
+  readonly apiMaxRetries: Option.Option<number>;
   readonly cwd: string;
   readonly flagCwd: string;
   readonly projectRoot: string;
@@ -1685,11 +1687,14 @@ const bundleFunctionWithDocker = Effect.fn("functions.deploy.bundleWithDocker")(
 const listRemoteFunctions = Effect.fn("functions.deploy.listRemoteFunctions")(function* (
   api: ApiClient,
   projectRef: string,
+  apiMaxRetries: Option.Option<number>,
 ) {
   return yield* Effect.gen(function* () {
-    const response = yield* api
-      .executeRaw(operationDefinitions.v1ListAllFunctions, { ref: projectRef })
-      .pipe(Effect.mapError((error) => mapTransportError("failed to list functions", error)));
+    const response = yield* cappedRequest("listing functions", apiMaxRetries, (options) =>
+      api
+        .executeRaw(operationDefinitions.v1ListAllFunctions, { ref: projectRef }, options)
+        .pipe(Effect.mapError((error) => mapTransportError("failed to list functions", error))),
+    );
     const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
     if (response.status === 200) {
       // A 200 whose body is not the expected JSON is an API-response problem,
@@ -1713,9 +1718,11 @@ const listRemoteFunctions = Effect.fn("functions.deploy.listRemoteFunctions")(fu
   }).pipe(
     Effect.retry({
       schedule: Schedule.exponential(Duration.seconds(1)),
-      times: 3,
+      times: cappedRetries(apiMaxRetries, 3),
       while: (error) =>
-        !(error instanceof FunctionsApiStatusError) || error.status >= 500 || error.status === 429,
+        !(error instanceof FunctionsApiStatusError) ||
+        error.status >= 500 ||
+        (error.status === 429 && Option.isNone(apiMaxRetries)),
     }),
   );
 });
@@ -1758,24 +1765,29 @@ function rateLimitDelayText(milliseconds: number) {
 // The command's own 429 loop is the only retry layer.
 const NO_CLIENT_RETRY = { retry: { maxRetries: 0 } } as const;
 
-const rateLimitedRequest = Effect.fnUntraced(function* <A>(
+// `SUPABASE_API_MAX_RETRIES` caps a command loop without ever raising it.
+const cappedRetries = (apiMaxRetries: Option.Option<number>, commandRetries: number) =>
+  Math.min(
+    Option.getOrElse(apiMaxRetries, () => commandRetries),
+    commandRetries,
+  );
+
+interface RateLimitedResponse {
+  readonly status: number;
+  readonly headers: Readonly<Record<string, string | undefined>>;
+}
+
+const rateLimitedRequest = Effect.fnUntraced(function* <R extends RateLimitedResponse, E>(
   action: string,
-  request: () => Effect.Effect<
-    {
-      readonly status: number;
-      readonly headers: Readonly<Record<string, string | undefined>>;
-      readonly body: Effect.Effect<A, Error>;
-    },
-    Error
-  >,
+  apiMaxRetries: Option.Option<number>,
+  request: () => Effect.Effect<R, E>,
 ) {
   const output = yield* Output;
+  const maxRetries = cappedRetries(apiMaxRetries, DEPLOY_RATE_LIMIT_MAX_RETRIES);
   return yield* Effect.repeat(Effect.suspend(request), ($) =>
     $(Schedule.forever).pipe(
       Schedule.passthrough,
-      Schedule.while(
-        ({ input, attempt }) => input.status === 429 && attempt <= DEPLOY_RATE_LIMIT_MAX_RETRIES,
-      ),
+      Schedule.while(({ input, attempt }) => input.status === 429 && attempt <= maxRetries),
       Schedule.modifyDelay(({ input, attempt, now }) =>
         Effect.succeed(Duration.millis(rateLimitDelayMillis(input.headers, attempt - 1, now))),
       ),
@@ -1789,6 +1801,17 @@ const rateLimitedRequest = Effect.fnUntraced(function* <A>(
   );
 });
 
+// Once `SUPABASE_API_MAX_RETRIES` is set, 429s go through the capped loop that reads the rate-limit
+// headers, and the client stays out so attempts don't multiply.
+const cappedRequest = <R extends RateLimitedResponse, E>(
+  action: string,
+  apiMaxRetries: Option.Option<number>,
+  request: (options?: typeof NO_CLIENT_RETRY) => Effect.Effect<R, E>,
+) =>
+  Option.isSome(apiMaxRetries)
+    ? rateLimitedRequest(action, apiMaxRetries, () => request(NO_CLIENT_RETRY))
+    : request();
+
 const uploadFunctionSource = Effect.fn("functions.deploy.uploadFunctionSource")(function* (
   api: ApiClient,
   projectRef: string,
@@ -1797,6 +1820,7 @@ const uploadFunctionSource = Effect.fn("functions.deploy.uploadFunctionSource")(
   config: ResolvedDeployFunctionConfig,
   metadata: SourceDeployMetadata,
   bundleOnly: boolean,
+  apiMaxRetries: Option.Option<number>,
 ) {
   const output = yield* Output;
   const files = yield* joinDetached(
@@ -1810,33 +1834,36 @@ const uploadFunctionSource = Effect.fn("functions.deploy.uploadFunctionSource")(
       ),
     ),
   );
-  const response = yield* rateLimitedRequest(`deploying function ${config.slug}`, () =>
-    api
-      .executeRaw(
-        operationDefinitions.v1DeployAFunction,
-        {
-          ref: projectRef,
-          slug: config.slug,
-          ...(bundleOnly ? { bundleOnly: true } : {}),
-          body: {
-            metadata,
-            file: files,
+  const response = yield* rateLimitedRequest(
+    `deploying function ${config.slug}`,
+    apiMaxRetries,
+    () =>
+      api
+        .executeRaw(
+          operationDefinitions.v1DeployAFunction,
+          {
+            ref: projectRef,
+            slug: config.slug,
+            ...(bundleOnly ? { bundleOnly: true } : {}),
+            body: {
+              metadata,
+              file: files,
+            },
           },
-        },
-        NO_CLIENT_RETRY,
-      )
-      .pipe(
-        // Read the body as text (never failing) so the status check below wins:
-        // a non-201 with a non-JSON body, or a 201 with malformed JSON, must
-        // classify as a status/response problem — not fall through
-        // `mapTransportError` as a network failure.
-        Effect.map((raw) => ({
-          status: raw.status,
-          headers: raw.headers,
-          body: raw.text.pipe(Effect.orElseSucceed(() => "")),
-        })),
-        Effect.mapError((error) => mapTransportError("failed to deploy function", error)),
-      ),
+          NO_CLIENT_RETRY,
+        )
+        .pipe(
+          // Read the body as text (never failing) so the status check below wins:
+          // a non-201 with a non-JSON body, or a 201 with malformed JSON, must
+          // classify as a status/response problem — not fall through
+          // `mapTransportError` as a network failure.
+          Effect.map((raw) => ({
+            status: raw.status,
+            headers: raw.headers,
+            body: raw.text.pipe(Effect.orElseSucceed(() => "")),
+          })),
+          Effect.mapError((error) => mapTransportError("failed to deploy function", error)),
+        ),
   );
   const body = yield* response.body;
   if (response.status !== 201) {
@@ -1903,9 +1930,10 @@ const bulkUpdateRemoteFunctions = Effect.fn("functions.deploy.bulkUpdateFunction
   api: ApiClient,
   projectRef: string,
   functions: ReadonlyArray<BulkUpdateFunction>,
+  apiMaxRetries: Option.Option<number>,
 ) {
   return yield* Effect.gen(function* () {
-    const response = yield* rateLimitedRequest("bulk updating functions", () =>
+    const response = yield* rateLimitedRequest("bulk updating functions", apiMaxRetries, () =>
       api
         .executeRaw(
           operationDefinitions.v1BulkUpdateFunctions,
@@ -1937,7 +1965,7 @@ const bulkUpdateRemoteFunctions = Effect.fn("functions.deploy.bulkUpdateFunction
   }).pipe(
     Effect.retry({
       schedule: Schedule.exponential(Duration.seconds(1)),
-      times: 3,
+      times: cappedRetries(apiMaxRetries, 3),
       while: (error) => !(error instanceof FunctionsApiStatusError) || error.status >= 500,
     }),
   );
@@ -1948,7 +1976,9 @@ const upsertBundledFunction = Effect.fn("functions.deploy.upsertFunction")(funct
   projectRef: string,
   bundled: BundledFunction,
   exists: boolean,
+  apiMaxRetries: Option.Option<number>,
 ) {
+  const retries = cappedRetries(apiMaxRetries, 3);
   const shouldUpdateRef = yield* Ref.make(exists);
 
   const upsert = Effect.gen(function* () {
@@ -1971,14 +2001,20 @@ const upsertBundledFunction = Effect.fn("functions.deploy.upsertFunction")(funct
       slug: bundled.slug,
       name: bundled.slug,
     };
-    const request = shouldUpdate
-      ? api.executeRaw(operationDefinitions.v1UpdateAFunction, {
-          ...updateInput,
-          function_slug: bundled.slug,
-        })
-      : api.executeRaw(operationDefinitions.v1CreateAFunction, createInput);
-    const response = yield* request.pipe(
-      Effect.mapError((error) => mapTransportError(`failed to ${action} function`, error)),
+    const response = yield* cappedRequest(
+      `${shouldUpdate ? "updating" : "creating"} function ${bundled.slug}`,
+      apiMaxRetries,
+      (options) =>
+        (shouldUpdate
+          ? api.executeRaw(
+              operationDefinitions.v1UpdateAFunction,
+              { ...updateInput, function_slug: bundled.slug },
+              options,
+            )
+          : api.executeRaw(operationDefinitions.v1CreateAFunction, createInput, options)
+        ).pipe(
+          Effect.mapError((error) => mapTransportError(`failed to ${action} function`, error)),
+        ),
     );
 
     const expectedStatus = shouldUpdate ? 200 : 201;
@@ -2013,8 +2049,19 @@ const upsertBundledFunction = Effect.fn("functions.deploy.upsertFunction")(funct
   return yield* upsert.pipe(
     Effect.retry({
       schedule: Schedule.exponential(Duration.millis(500)),
-      times: 3,
-      while: (error) => !(error instanceof FunctionsApiStatusError && error.decode === true),
+      // A duplicated create still becomes an update when no retries are allowed.
+      times: Math.max(retries, 1),
+      while: (error) =>
+        Ref.get(shouldUpdateRef).pipe(
+          Effect.map(
+            (shouldUpdate) =>
+              !(
+                error instanceof FunctionsApiStatusError &&
+                (error.decode === true || (Option.isSome(apiMaxRetries) && error.status === 429))
+              ) &&
+              (retries > 0 || shouldUpdate !== exists),
+          ),
+        ),
     }),
   );
 });
@@ -2238,6 +2285,7 @@ const deployViaApi = Effect.fn("functions.deploy.viaApi")(function* (
   configs: ReadonlyArray<ResolvedDeployFunctionConfig>,
   api: ApiClient,
   jobs: number,
+  apiMaxRetries: Option.Option<number>,
 ) {
   const output = yield* Output;
   const path = yield* Path.Path;
@@ -2258,7 +2306,9 @@ const deployViaApi = Effect.fn("functions.deploy.viaApi")(function* (
   }
 
   const remoteBySlug = enabled.some((config) => config.verifyJwt === undefined)
-    ? new Map((yield* listRemoteFunctions(api, projectRef)).map((fn) => [fn.slug, fn]))
+    ? new Map(
+        (yield* listRemoteFunctions(api, projectRef, apiMaxRetries)).map((fn) => [fn.slug, fn]),
+      )
     : new Map<string, RemoteFunction>();
 
   const [singleConfig] = enabled;
@@ -2271,6 +2321,7 @@ const deployViaApi = Effect.fn("functions.deploy.viaApi")(function* (
       singleConfig,
       createSourceMetadata(path, projectRoot, singleConfig, remoteBySlug.get(singleConfig.slug)),
       false,
+      apiMaxRetries,
     );
     return;
   }
@@ -2293,6 +2344,7 @@ const deployViaApi = Effect.fn("functions.deploy.viaApi")(function* (
             config,
             createSourceMetadata(path, projectRoot, config, remoteBySlug.get(config.slug)),
             true,
+            apiMaxRetries,
           ),
         );
       }).pipe(
@@ -2318,7 +2370,7 @@ const deployViaApi = Effect.fn("functions.deploy.viaApi")(function* (
     return yield* Effect.fail(new AggregateError(causes, messages.join("\n")));
   }
 
-  const updated = yield* bulkUpdateRemoteFunctions(api, projectRef, deployed).pipe(
+  const updated = yield* bulkUpdateRemoteFunctions(api, projectRef, deployed, apiMaxRetries).pipe(
     Effect.map(() => ({ success: true as const })),
     Effect.catch((error) => Effect.succeed({ success: false as const, error })),
   );
@@ -2338,6 +2390,7 @@ interface DeployViaDockerOptions {
   readonly functionsDir: string;
   readonly configs: ReadonlyArray<ResolvedDeployFunctionConfig>;
   readonly api: ApiClient;
+  readonly apiMaxRetries: Option.Option<number>;
   /** Already resolved (explicit flag > `SUPABASE_NETWORK_ID` > generated) — see the caller. */
   readonly networkMode: string;
   readonly verbose?: boolean;
@@ -2355,6 +2408,7 @@ const deployViaDocker = Effect.fn("functions.deploy.viaDocker")(function* (
     functionsDir,
     configs,
     api,
+    apiMaxRetries,
     networkMode,
     verbose = false,
     styleEmphasis = (text: string) => text,
@@ -2362,7 +2416,7 @@ const deployViaDocker = Effect.fn("functions.deploy.viaDocker")(function* (
   } = options;
   const output = yield* Output;
   yield* Effect.annotateCurrentSpan({ "function.count": configs.length });
-  const remoteFunctions = yield* listRemoteFunctions(api, projectRef);
+  const remoteFunctions = yield* listRemoteFunctions(api, projectRef, apiMaxRetries);
 
   const remoteBySlug = new Map(remoteFunctions.map((fn) => [fn.slug, fn]));
   const changed: BulkUpdateFunction[] = [];
@@ -2399,13 +2453,19 @@ const deployViaDocker = Effect.fn("functions.deploy.viaDocker")(function* (
     );
     changed.push(
       yield* toBulkUpdateItem(
-        yield* upsertBundledFunction(api, projectRef, bundled, current !== undefined),
+        yield* upsertBundledFunction(
+          api,
+          projectRef,
+          bundled,
+          current !== undefined,
+          apiMaxRetries,
+        ),
       ),
     );
   }
 
   if (changed.length > 1) {
-    yield* bulkUpdateRemoteFunctions(api, projectRef, changed);
+    yield* bulkUpdateRemoteFunctions(api, projectRef, changed, apiMaxRetries);
   }
 });
 
@@ -2413,8 +2473,9 @@ const findPruneCandidates = Effect.fn("functions.deploy.pruneCandidates")(functi
   projectRef: string,
   configs: ReadonlyArray<ResolvedDeployFunctionConfig>,
   api: ApiClient,
+  apiMaxRetries: Option.Option<number>,
 ) {
-  const remoteFunctions = yield* listRemoteFunctions(api, projectRef);
+  const remoteFunctions = yield* listRemoteFunctions(api, projectRef, apiMaxRetries);
   const localSlugs = new Set(configs.map((config) => config.slug));
   return remoteFunctions
     .filter((remote) => remote.status !== "REMOVED" && !localSlugs.has(remote.slug))
@@ -2580,7 +2641,7 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
 
   const toDeploy = configs.filter((config) => config.enabled).map((config) => config.slug);
   const toPrune = flags.prune
-    ? yield* findPruneCandidates(projectRef, configs, dependencies.api)
+    ? yield* findPruneCandidates(projectRef, configs, dependencies.api, dependencies.apiMaxRetries)
     : [];
   if (toDeploy.length > 0 || toPrune.length > 0) {
     yield* requireDeployConsent(toDeploy, toPrune);
@@ -2592,6 +2653,7 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
     configs,
     dependencies.api,
     jobs,
+    dependencies.apiMaxRetries,
   ).pipe(
     Effect.as(Option.none<string>()),
     Effect.catchIf(
@@ -2628,6 +2690,7 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
           functionsDir: path.join(dependencies.projectRoot, SUPABASE_FUNCTIONS_DIR),
           configs,
           api: dependencies.api,
+          apiMaxRetries: dependencies.apiMaxRetries,
           networkMode,
           verbose: debugEnabled,
           styleEmphasis,

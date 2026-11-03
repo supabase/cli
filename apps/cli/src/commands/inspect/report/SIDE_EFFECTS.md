@@ -36,7 +36,7 @@ or an unknown rule key aborts the command before connecting. Rules and `env(VAR)
 The 15 CSV basenames (underscored, matching the SQL filenames — **not** the
 `inspect db` command names): `bloat`, `blocking`, `calls`, `db_stats`,
 `index_stats`, `locks`, `long_running_queries`, `outliers`, `replication_slots`,
-`role_stats`, `table_stats`, `traffic_profile`, `unused_indexes`, `vacuum_stats`,
+`role_stats`, `table_stats`, `toast_sizes`, `traffic_profile`, `unused_indexes`, `vacuum_stats`,
 `xid_age`.
 
 The date folder is **local-time** `YYYY-MM-DD`. A relative `--output-dir` resolves

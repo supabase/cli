@@ -57,7 +57,7 @@ Local targets and database URLs make none.
 ## Database Queries
 
 Each subcommand runs one read-only `SELECT` (the embedded `<name>.sql`). The
-6 schema-filtered queries take `$1` = the LIKE-escaped internal-schema list;
+7 schema-filtered queries take `$1` = the LIKE-escaped internal-schema list;
 `db-stats` additionally takes `$2` = the database name.
 
 | Subcommand           | SQL file                 | InternalSchemas param?      |
@@ -67,6 +67,7 @@ Each subcommand runs one read-only `SELECT` (the embedded `<name>.sql`). The
 | bloat                | bloat.sql                | yes (`$1`)                  |
 | vacuum-stats         | vacuum_stats.sql         | yes (`$1`)                  |
 | table-stats          | table_stats.sql          | yes (`$1`)                  |
+| toast-sizes          | toast_sizes.sql          | yes (`$1`)                  |
 | xid-age              | xid_age.sql              | yes (`$1`)                  |
 | replication-slots    | replication_slots.sql    | no                          |
 | locks                | locks.sql                | no                          |

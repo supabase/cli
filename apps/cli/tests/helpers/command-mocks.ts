@@ -427,6 +427,7 @@ export function mockCommandSettings(opts: {
   readonly userAgent?: string;
   readonly supabaseHome?: string;
   readonly githubToken?: Option.Option<Redacted.Redacted<string>>;
+  readonly apiMaxRetries?: Option.Option<number>;
 }): Layer.Layer<CommandSettings> {
   return Layer.succeed(CommandSettings, {
     githubToken: opts.githubToken ?? Option.none(),
@@ -444,6 +445,7 @@ export function mockCommandSettings(opts: {
     workdirEnvValue:
       opts.workdirEnvValue === undefined ? Option.none() : Option.some(opts.workdirEnvValue),
     userAgent: opts.userAgent ?? DEFAULT_USER_AGENT,
+    apiMaxRetries: opts.apiMaxRetries ?? Option.none(),
   });
 }
 
@@ -538,6 +540,7 @@ export interface MockCommandPlatformApiOpts {
   readonly apiUrl?: string;
   readonly userAgent?: string;
   readonly accessToken?: string;
+  readonly clientMaxRetries?: number;
 }
 
 export interface MockCommandPlatformApiResult {
@@ -609,7 +612,7 @@ export function mockCommandPlatformApi(
         accessToken: opts.accessToken ?? VALID_TOKEN,
         userAgent: opts.userAgent ?? DEFAULT_USER_AGENT,
       },
-      { retry: { maxRetries: 0 } },
+      { retry: { maxRetries: opts.clientMaxRetries ?? 0 } },
     ),
   ).pipe(Layer.provide(httpClientLayer));
 
