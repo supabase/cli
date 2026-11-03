@@ -96,6 +96,12 @@ const NATIVE_SMS_SIGNUP_COMMENT = `# Allow/disallow the phone provider. When fal
 # To block new signups only, set enable_signup = false under [auth] instead.
 enabled = false`;
 
+/* Only the native template documents `require_current_password`. */
+const NATIVE_REQUIRE_CURRENT_PASSWORD = `secure_password_change = false
+# If enabled, users will need to provide their current password to change their password, unless
+# they signed in with a one-time password, magic link, or recovery link.
+# require_current_password = true`;
+
 const renderExpectedNativeEject = renderExpectedInitOutput.pipe(
   Effect.map((eject) =>
     eject
@@ -107,6 +113,7 @@ const renderExpectedNativeEject = renderExpectedInitOutput.pipe(
       .replace(SCAFFOLD_SIGNUP_COMMENT, NATIVE_SIGNUP_COMMENT)
       .replace(SCAFFOLD_EMAIL_SIGNUP_COMMENT, NATIVE_EMAIL_SIGNUP_COMMENT)
       .replace(SCAFFOLD_SMS_SIGNUP_COMMENT, NATIVE_SMS_SIGNUP_COMMENT)
+      .replace("secure_password_change = false", NATIVE_REQUIRE_CURRENT_PASSWORD)
       .replace("rows returns from", "rows returned from")
       .replace("(SIWS, EIP-4361)", "(SIWS)")
       .replace(

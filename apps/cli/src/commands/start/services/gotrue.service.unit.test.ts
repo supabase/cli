@@ -34,6 +34,7 @@ const baseEnvInput: BuildGotrueEnvInput = {
     double_confirm_changes: true,
     enable_confirmations: false,
     secure_password_change: false,
+    require_current_password: false,
     max_frequency: "1s",
     otp_length: 6,
     otp_expiry: 3600,
@@ -94,6 +95,16 @@ const baseEnvInput: BuildGotrueEnvInput = {
 };
 
 describe("buildGotrueEnv", () => {
+  test("forwards require_current_password to its own Auth env var", () => {
+    const env = buildGotrueEnv({
+      ...baseEnvInput,
+      email: { ...baseEnvInput.email, require_current_password: true },
+    });
+
+    expect(env["GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD"]).toBe("true");
+    expect(env["GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_REAUTHENTICATION"]).toBe("false");
+  });
+
   describe("TestBuildGotrueEnv parity", () => {
     test("uses auth scoped external url and absolute mailer verify urls", () => {
       const env = buildGotrueEnv({

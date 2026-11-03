@@ -909,6 +909,19 @@
                 }
               ]
             },
+            "require_current_password": {
+              "description": "If enabled, users will need to provide their current password to change their password, unless they signed in with a one-time password, magic link, or recovery link.",
+              "default": false,
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^env\\((.*)\\)$"
+                }
+              ]
+            },
             "max_frequency": {
               "type": "string",
               "description": "Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.",
@@ -5477,6 +5490,19 @@
                           },
                           "secure_password_change": {
                             "description": "If enabled, users will need to reauthenticate or have logged in recently to change their password.",
+                            "default": false,
+                            "anyOf": [
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "string",
+                                "pattern": "^env\\((.*)\\)$"
+                              }
+                            ]
+                          },
+                          "require_current_password": {
+                            "description": "If enabled, users will need to provide their current password to change their password, unless they signed in with a one-time password, magic link, or recovery link.",
                             "default": false,
                             "anyOf": [
                               {

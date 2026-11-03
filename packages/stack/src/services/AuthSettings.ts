@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 
 const Hook = Schema.Struct({
   enabled: Schema.Boolean,
@@ -62,6 +62,10 @@ const Email = Schema.Struct({
   double_confirm_changes: Schema.Boolean,
   enable_confirmations: Schema.Boolean,
   secure_password_change: Schema.Boolean,
+  /* Stacks saved before this key omit it. */
+  require_current_password: Schema.Boolean.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(false)),
+  ),
   max_frequency: Schema.String,
   otp_length: Schema.Finite,
   otp_expiry: Schema.Finite,
@@ -193,6 +197,7 @@ export const settingsEnvironment = (
     put("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED", email.double_confirm_changes);
     put("GOTRUE_MAILER_AUTOCONFIRM", !email.enable_confirmations);
     put("GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_REAUTHENTICATION", email.secure_password_change);
+    put("GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD", email.require_current_password);
     put("GOTRUE_MAILER_OTP_LENGTH", email.otp_length);
     put("GOTRUE_MAILER_OTP_EXP", email.otp_expiry);
     put("GOTRUE_SMTP_MAX_FREQUENCY", email.max_frequency);
