@@ -159,14 +159,22 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
           expect(dump.jobId).not.toBe(sql.jobId);
           expect(yield* Ref.get(stdout)).toContain("COPY public.tool_story");
           expect(yield* Ref.get(stdout)).toContain("streamed-row");
+          const clientFailure = (label: string, exitCode: number) =>
+            Effect.gen(function* () {
+              const [out, err] = [yield* Ref.get(stdout), yield* Ref.get(stderr)];
+              return `${label} psql exited ${exitCode}\nstdout:\n${out}\nstderr:\n${err}`;
+            });
+          yield* Ref.set(stdout, "");
+          yield* Ref.set(stderr, "");
           const failed = yield* runPostgres(runner, {
             postgres: postgres.psql({ pin: selection.database }),
             args: ["-X", "-v", "ON_ERROR_STOP=1", "-c", "SELECT missing_column FROM tool_story"],
             env,
             ...output,
           });
-          expect(failed.exitCode).not.toBe(0);
-          expect(yield* Ref.get(stderr)).toContain("missing_column");
+          const failedReport = yield* clientFailure("-c", failed.exitCode);
+          expect(failed.exitCode, failedReport).not.toBe(0);
+          expect(yield* Ref.get(stderr), failedReport).toContain("missing_column");
           const rejected = yield* Effect.flip(
             runPostgres(runner, {
               postgres: postgres.psql({ pin: selection.database }),
@@ -177,6 +185,7 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
             }),
           );
           expect(rejected.message).toContain("pgProve options require the pg_prove command");
+          yield* Ref.set(stdout, "");
           yield* Ref.set(stderr, "");
           const early = yield* runPostgres(runner, {
             postgres: postgres.psql({ pin: selection.database }),
@@ -189,8 +198,9 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
             ),
             ...output,
           });
-          expect(early.exitCode).not.toBe(0);
-          expect(yield* Ref.get(stderr)).toContain("missing_column");
+          const earlyReport = yield* clientFailure("early-exit stdin", early.exitCode);
+          expect(early.exitCode, earlyReport).not.toBe(0);
+          expect(yield* Ref.get(stderr), earlyReport).toContain("missing_column");
           const attached = yield* Deferred.make<void>();
           const job = yield* runPostgres(runner, {
             postgres: postgres.psql({ pin: selection.database }),
