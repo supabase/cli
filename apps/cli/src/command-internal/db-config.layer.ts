@@ -198,15 +198,16 @@ const loginRoleErrorMapper = mapHttpError({
   statusMessage: (status, body) => `unexpected login role status ${status}: ${body}`,
 });
 
+// The Management API surfaces Postgres 42501 from `ALTER ROLE`, which on these projects means
+// `supabase_privileged_role` was never granted to the login-role creator.
 const isMissingPrivilegedRole = (error: Errors.DbConfigLoginRoleStatusError): boolean =>
-  error.status === 400 &&
-  (error.body.includes("42501") || /permission denied to alter role/i.test(error.body));
+  error.status === 400 && /permission denied to alter role/i.test(error.body);
 
 const missingPrivilegedRoleError = (error: Errors.DbConfigLoginRoleStatusError) =>
   new Errors.DbConfigLoginRoleMissingPrivilegedRoleError({
-    message: `failed to create a temporary login role: the project database is missing supabase_privileged_role: ${error.body}`,
+    message: `failed to create a temporary login role, likely because the project database is missing supabase_privileged_role: ${error.body}`,
     suggestion:
-      "Retry with your database password (--password or SUPABASE_DB_PASSWORD), which skips the temporary login role, and contact support at https://supabase.com/dashboard/support/new to repair the project's roles.",
+      "Connect with your database password instead, which skips the temporary login role: --password where the command supports it, SUPABASE_DB_PASSWORD for the linked project, or a --db-url that includes the password. Contact support at https://supabase.com/dashboard/support/new to repair the project's roles.",
   });
 
 const listBansErrorMapper = mapHttpError({

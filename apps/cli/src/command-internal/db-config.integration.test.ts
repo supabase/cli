@@ -1939,7 +1939,7 @@ describe("dbConfigResolver (container pooler fallback)", () => {
             return Response.json(primaryPoolerConfigs(ref));
           if (method === "POST" && path === loginRolePath) {
             return Response.json(
-              { message: "Failed to create login role: 42501: permission denied to alter role" },
+              { message: "Failed to create login role: permission denied to alter role" },
               { status: 400 },
             );
           }
@@ -1955,6 +1955,29 @@ describe("dbConfigResolver (container pooler fallback)", () => {
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
     },
   );
+
+  it.effect("keeps the generic status error for an unrelated login-role 400", () => {
+    const requests: Array<{ readonly method: string; readonly path: string }> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, (method, path) => {
+        if (method === "GET" && path === poolerPath)
+          return Response.json(primaryPoolerConfigs(ref));
+        if (method === "POST" && path === loginRolePath) {
+          return Response.json(
+            { message: "42501: permission denied for table x" },
+            { status: 400 },
+          );
+        }
+        return undefined;
+      });
+      const dir = yield* withWorkdir();
+      const error = yield* resolvePoolerFallback(dir, inputFor(explicitRefTarget(ref)), {
+        dbConnection: connects,
+        configEnv: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+      }).pipe(Effect.flip);
+      expect(error._tag).toBe("DbConfigLoginRoleStatusError");
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+  });
 
   it.effect("fetches the pooler config but mints no login role when a password is set", () => {
     const requests: Array<{ readonly method: string; readonly path: string }> = [];
