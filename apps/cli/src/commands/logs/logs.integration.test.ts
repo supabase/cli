@@ -1,3 +1,4 @@
+import { LogsClipboard } from "./logs.clipboard.ts";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Fiber, Layer, Option, Stream, Schema, Queue, Terminal } from "effect";
@@ -82,6 +83,7 @@ const prepare = Effect.fnUntraced(function* (
   const api = yield* CommandPlatformApi.pipe(Effect.provide(setup.layer));
   const layer = Layer.mergeAll(
     setup.layer,
+    Layer.mock(LogsClipboard, {}),
     Layer.mock(StackApi, {}),
     Layer.mock(StackTargetResolver, {}),
     Layer.succeed(DebugFlag, false),

@@ -1,3 +1,4 @@
+import { LogsClipboard } from "../../../logs/logs.clipboard.ts";
 import { Command } from "effect/cli";
 import { stackLogsCommand } from "./logs.command.ts";
 import {
@@ -236,6 +237,7 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
       const telemetry = mockTelemetryStateTracked();
       const layer = Layer.mergeAll(
         output.layer,
+        Layer.mock(LogsClipboard, {}),
         telemetry.layer,
         Layer.provideMerge(stackTargetResolverLayer, Layer.merge(settings, fakeApi)),
       );

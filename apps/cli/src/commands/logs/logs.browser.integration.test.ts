@@ -1,3 +1,4 @@
+import { LogsClipboard } from "./logs.clipboard.ts";
 import process from "node:process";
 import { expect, it } from "@effect/vitest";
 import { Cause, Exit, Deferred, Effect, Fiber, Layer, Option, Queue, Terminal } from "effect";
@@ -47,7 +48,14 @@ it.effect("navigates full details, resizes, and interrupts the live producer on 
         return yield* Effect.never;
       }).pipe(Effect.ensuring(Deferred.succeed(stopped, undefined))),
     ).pipe(
-      Effect.provide(Layer.mergeAll(terminal, output.layer, mockProcessControl().layer)),
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(LogsClipboard, {}),
+          terminal,
+          output.layer,
+          mockProcessControl().layer,
+        ),
+      ),
       Effect.forkScoped,
     );
     expect(yield* Queue.take(screens)).toContain("?1049h");
@@ -102,7 +110,13 @@ it.effect("persists a resized live viewport when more rows arrive while browsing
           display: (text) => Queue.offer(screens, text).pipe(Effect.asVoid),
         }),
       ),
-      Effect.provide(Layer.mergeAll(mockOutput().layer, mockProcessControl().layer)),
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(LogsClipboard, {}),
+          mockOutput().layer,
+          mockProcessControl().layer,
+        ),
+      ),
       Effect.forkScoped,
     );
     yield* Queue.take(screens);
@@ -150,7 +164,13 @@ it.effect("restores the terminal and propagates producer failures", () =>
             }),
         }),
       ),
-      Effect.provide(Layer.mergeAll(mockOutput().layer, mockProcessControl().layer)),
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(LogsClipboard, {}),
+          mockOutput().layer,
+          mockProcessControl().layer,
+        ),
+      ),
       Effect.result,
     );
     expect(result).toMatchObject({ _tag: "Failure", failure: "producer failed" });
@@ -174,7 +194,9 @@ it.effect("sets exit 130 for a raw Ctrl-C key and restores terminal state", () =
           display: (text) => Queue.offer(screens, text).pipe(Effect.asVoid),
         }),
       ),
-      Effect.provide(Layer.mergeAll(mockOutput().layer, control.layer)),
+      Effect.provide(
+        Layer.mergeAll(Layer.mock(LogsClipboard, {}), mockOutput().layer, control.layer),
+      ),
       Effect.forkScoped,
     );
     yield* Queue.take(screens);
@@ -223,7 +245,13 @@ it.effect("quits while a large producer is backpressured and finalizes it", () =
             }),
         }),
       ),
-      Effect.provide(Layer.mergeAll(mockOutput().layer, mockProcessControl().layer)),
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(LogsClipboard, {}),
+          mockOutput().layer,
+          mockProcessControl().layer,
+        ),
+      ),
       Effect.forkScoped,
     );
     yield* Fiber.join(browser);
@@ -251,7 +279,9 @@ it.effect("exits empty finite results with the normal message", () =>
             }),
         }),
       ),
-      Effect.provide(Layer.mergeAll(output.layer, mockProcessControl().layer)),
+      Effect.provide(
+        Layer.mergeAll(Layer.mock(LogsClipboard, {}), output.layer, mockProcessControl().layer),
+      ),
     );
     expect(screens.at(-1)).toContain("?1049l");
     expect(output.rawChunks).toEqual([{ text: "No log rows.\n", stream: "stdout" }]);
@@ -299,7 +329,13 @@ it.effect("restores the screen when entering the terminal fails after a partial 
             }),
         }),
       ),
-      Effect.provide(Layer.mergeAll(mockOutput().layer, mockProcessControl().layer)),
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(LogsClipboard, {}),
+          mockOutput().layer,
+          mockProcessControl().layer,
+        ),
+      ),
       Effect.exit,
     );
     expect(Exit.isFailure(exit) && Cause.pretty(exit.cause)).toContain("partial display failure");

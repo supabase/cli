@@ -192,11 +192,13 @@ export function renderBrowser(
       : "Log details";
   const keys =
     state.detail === undefined
-      ? "↑/↓ select · Enter details · q quit"
-      : "↑/↓ scroll · Esc back · q quit";
+      ? "↑/↓ select · Enter details · C copy · q quit"
+      : "↑/↓ scroll · Esc back · C copy · q quit";
   const lines = [heading, ...body];
   while (lines.length < height - 1) lines.push("");
-  if (height > 1) lines.push(`${keys}${state.notice ? ` | ${state.notice}` : ""}`);
+  const notice = clip(state.notice, width);
+  const help = stringWidth(notice) + 3 + stringWidth(keys) <= width ? keys : "C copy · q quit";
+  if (height > 1) lines.push(notice ? `${notice} | ${help}` : keys);
   return lines
     .slice(0, height)
     .map((line, index) => {

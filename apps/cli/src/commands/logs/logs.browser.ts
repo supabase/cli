@@ -1,3 +1,4 @@
+import { LogsClipboard } from "./logs.clipboard.ts";
 import process from "node:process";
 import { Effect, Exit, Option, Queue, Schema, Stream, Terminal } from "effect";
 import { Output } from "../../shared/output/output.service.ts";
@@ -32,9 +33,16 @@ type BrowserEvent<E> =
   | { readonly kind: "entry"; readonly row: Schema.JsonObject }
   | { readonly kind: "notice"; readonly message: string }
   | { readonly kind: "key"; readonly input: Terminal.UserInput }
+  | { readonly kind: "copied"; readonly message: string }
   | { readonly kind: "resize" }
   | { readonly kind: "closed" }
   | { readonly kind: "complete"; readonly exit: Exit.Exit<void, E> };
+
+const isCopyKey = (key: Terminal.Key) => !key.ctrl && !key.meta && key.name.toLowerCase() === "c";
+
+const encodeClipboardRecord = Schema.encodeEffect(
+  Schema.fromJsonString(Schema.JsonObject, { space: 2 }),
+);
 
 export const browseLogs = Effect.fn("Logs.browser")(function* <E, R>(
   produce: (sink: LogsBrowserSink) => Effect.Effect<void, E, R>,
@@ -77,6 +85,7 @@ export const browseLogs = Effect.fn("Logs.browser")(function* <E, R>(
         Effect.forkScoped,
       );
       let state = initialBrowserState;
+      let copying = false;
       while (true) {
         const columns = yield* terminal.columns;
         const rows = yield* terminal.rows;
@@ -92,6 +101,10 @@ export const browseLogs = Effect.fn("Logs.browser")(function* <E, R>(
           case "notice":
             state = { ...state, notice: event.message };
             break;
+          case "copied":
+            copying = false;
+            state = { ...state, notice: event.message };
+            break;
           case "resize":
             break;
           case "closed":
@@ -102,9 +115,26 @@ export const browseLogs = Effect.fn("Logs.browser")(function* <E, R>(
             state = { ...state, complete: true };
             break;
           case "key":
-            if (event.input.key.ctrl && event.input.key.name === "c") {
+            if (event.input.key.ctrl && event.input.key.name.toLowerCase() === "c") {
               yield* processControl.setExitCode(130);
               return;
+            }
+            if (isCopyKey(event.input.key)) {
+              const row = state.detail ?? state.rows[state.selected];
+              if (row === undefined || copying) break;
+              const clipboard = yield* LogsClipboard;
+              copying = true;
+              state = { ...state, notice: "Copying log…" };
+              const text = yield* encodeClipboardRecord(row).pipe(Effect.orDie);
+              yield* clipboard.copy(text).pipe(
+                Effect.match({
+                  onSuccess: () => "Copied log to clipboard.",
+                  onFailure: (error) => error.message,
+                }),
+                Effect.flatMap((message) => Queue.offer(events, { kind: "copied", message })),
+                Effect.forkScoped,
+              );
+              break;
             }
             if (
               event.input.key.name === "q" ||
