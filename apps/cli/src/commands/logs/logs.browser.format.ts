@@ -4,6 +4,9 @@ import { stripControlSequences } from "../../shared/output/strip-control-sequenc
 import { stringWidth } from "../../command-internal/string-width.ts";
 import { renderLogsRows, wrapLogsText } from "./logs.display.ts";
 
+const browserHeaderRows = 2;
+const browserReservedRows = browserHeaderRows + 1;
+
 export interface BrowserState {
   readonly rows: ReadonlyArray<Schema.JsonObject>;
   readonly sizes: ReadonlyArray<number>;
@@ -23,7 +26,7 @@ export const initialBrowserState: BrowserState = {
   sizes: [],
   bytes: 0,
   viewport: 0,
-  visibleRows: 22,
+  visibleRows: 24 - browserReservedRows,
   selected: 0,
   detail: undefined,
   scroll: 0,
@@ -33,7 +36,7 @@ export const initialBrowserState: BrowserState = {
 };
 
 export function resizeBrowser(state: BrowserState, height: number): BrowserState {
-  const visibleRows = Math.max(1, Math.floor(height) - 2);
+  const visibleRows = Math.max(1, Math.floor(height) - browserReservedRows);
   const lastStart = Math.max(0, state.rows.length - visibleRows);
   let viewport = Math.min(state.viewport, lastStart);
   if (state.selected < viewport) viewport = state.selected;
@@ -71,11 +74,11 @@ export function appendBrowserRow(
       dropped: state.dropped + dropped,
       selected: following ? rows.length - 1 : Math.max(0, state.selected - dropped),
     },
-    state.visibleRows + 2,
+    state.visibleRows + browserReservedRows,
   );
 }
 
-export function browserTimestamp(row: Schema.JsonObject): string {
+function timestampMillis(row: Schema.JsonObject): number | undefined {
   const millis = row["ts_ms"];
   const timestamp = row["timestamp"];
   const time =
@@ -91,24 +94,49 @@ export function browserTimestamp(row: Schema.JsonObject): string {
               : `${timestamp.replace(" ", "T")}Z`,
           )
         : Number.NaN;
-  if (!Number.isFinite(time) || Math.abs(time) > 8_640_000_000_000_000) return "—";
+  return Number.isFinite(time) && Math.abs(time) <= 8_640_000_000_000_000 ? time : undefined;
+}
+
+const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const pad = (value: number) => String(value).padStart(2, "0");
+
+function dateLabel(time: number, includeYear = false): string {
   const parts = DateTime.toPartsUtc(DateTime.makeUnsafe(time));
-  const month = [
-    "Jan",
-    "Feb",
-    "Mar",
-    "Apr",
-    "May",
-    "Jun",
-    "Jul",
-    "Aug",
-    "Sep",
-    "Oct",
-    "Nov",
-    "Dec",
-  ][parts.month - 1];
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `${month} ${pad(parts.day)} - ${pad(parts.hour)}:${pad(parts.minute)}:${pad(parts.second)} UTC`;
+  return `${months[parts.month - 1]} ${pad(parts.day)}${includeYear ? ` ${parts.year}` : ""}`;
+}
+
+function timeLabel(time: number): string {
+  const parts = DateTime.toPartsUtc(DateTime.makeUnsafe(time));
+  return `${pad(parts.hour)}:${pad(parts.minute)}:${pad(parts.second)}`;
+}
+
+export function browserTimestamp(row: Schema.JsonObject): string {
+  const time = timestampMillis(row);
+  return time === undefined ? "—" : `${dateLabel(time)} - ${timeLabel(time)} UTC`;
+}
+
+function loadedRange(rows: ReadonlyArray<Schema.JsonObject>): string {
+  if (rows.length === 0) return "Loaded: no logs";
+  let earliest = Infinity;
+  let latest = -Infinity;
+  let unknown = 0;
+  for (const row of rows) {
+    const time = timestampMillis(row);
+    if (time === undefined) unknown++;
+    else {
+      earliest = Math.min(earliest, time);
+      latest = Math.max(latest, time);
+    }
+  }
+  if (unknown === rows.length) return `Loaded: unavailable (${unknown} unknown)`;
+  const first = DateTime.toPartsUtc(DateTime.makeUnsafe(earliest));
+  const last = DateTime.toPartsUtc(DateTime.makeUnsafe(latest));
+  const crossYear = first.year !== last.year;
+  const sameDay = !crossYear && first.month === last.month && first.day === last.day;
+  const start = `${dateLabel(earliest, crossYear)} ${timeLabel(earliest)}`;
+  const end = sameDay ? timeLabel(latest) : `${dateLabel(latest, crossYear)} ${timeLabel(latest)}`;
+  const range = earliest === latest ? start : `${start}–${end}`;
+  return `Loaded: ${range} UTC${unknown > 0 ? ` | ${unknown} unknown` : ""}`;
 }
 
 const clip = (value: string, width: number): string => {
@@ -145,7 +173,11 @@ export function browserKey(
       scroll: Math.max(
         0,
         Math.min(
-          Math.max(0, browserDetailLines(state.detail, width).length - Math.max(1, height - 2)),
+          Math.max(
+            0,
+            browserDetailLines(state.detail, width).length -
+              Math.max(1, height - browserReservedRows),
+          ),
           state.scroll + delta,
         ),
       ),
@@ -168,7 +200,7 @@ export function renderBrowser(
   state = resizeBrowser(state, rows);
   const width = Math.max(1, Math.floor(columns) - 1);
   const height = Math.max(1, Math.floor(rows));
-  const bodyHeight = Math.max(0, height - 2);
+  const bodyHeight = Math.max(0, height - browserReservedRows);
   let body: ReadonlyArray<string>;
   if (state.detail !== undefined) {
     const lines = browserDetailLines(state.detail, width);
@@ -184,7 +216,8 @@ export function renderBrowser(
       ).replaceAll(/\s+/gu, " ");
       return `${start + index === state.selected ? ">" : " "} ${browserTimestamp(row)} ${summary}`;
     });
-    if (body.length === 0) body = [state.complete ? "No log rows." : "Waiting for logs…"];
+    if (body.length === 0 && bodyHeight > 0)
+      body = [state.complete ? "No log rows." : "Waiting for logs…"];
   }
   const heading =
     state.detail === undefined
@@ -194,7 +227,7 @@ export function renderBrowser(
     state.detail === undefined
       ? "↑/↓ select · Enter details · C copy · q quit"
       : "↑/↓ scroll · Esc back · C copy · q quit";
-  const lines = [heading, ...body];
+  const lines = [heading, loadedRange(state.rows), ...body];
   while (lines.length < height - 1) lines.push("");
   const notice = clip(state.notice, width);
   const help = stringWidth(notice) + 3 + stringWidth(keys) <= width ? keys : "C copy · q quit";
@@ -203,9 +236,11 @@ export function renderBrowser(
     .slice(0, height)
     .map((line, index) => {
       const plain = clip(line, width);
-      const rowIndex = state.viewport + index - 1;
+      const rowIndex = state.viewport + index - browserHeaderRows;
       const row =
-        index > 0 && index <= body.length && state.detail === undefined
+        index >= browserHeaderRows &&
+        index < body.length + browserHeaderRows &&
+        state.detail === undefined
           ? state.rows[rowIndex]
           : undefined;
       if (row === undefined) return plain;
