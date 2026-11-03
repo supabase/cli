@@ -275,7 +275,7 @@ jobs:
     # count as self-hosted from sigstore's POV, so this job must stay on a github-hosted runner
     # (it's short and not compute-bound, so the cost is negligible).
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       CHANNEL: ${{ inputs.channel }}
       NPM_TAG: ${{ inputs.npm_tag }}
@@ -283,6 +283,7 @@ jobs:
       LINEAR_CLI_STABLE_RELEASE_ACCESS_KEY: ${{ secrets.LINEAR_CLI_STABLE_RELEASE_ACCESS_KEY }}
       LINEAR_CLI_BETA_RELEASE_ACCESS_KEY: ${{ secrets.LINEAR_CLI_BETA_RELEASE_ACCESS_KEY }}
     permissions:
+      attestations: write
       contents: write
       id-token: write
     steps:
@@ -408,6 +409,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: bun apps/cli/scripts/upload-release-assets.ts verify --version "${VERSION}"
+
+      # Lets installers such as aqua and mise verify each asset with `gh attestation verify`; the
+      # unversioned tarball aliases share their versioned twin's digest, so they are covered too.
+      - name: Attest release assets
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            dist/supabase_${{ inputs.version }}_*
+            dist/checksums.txt
+            install
 
       - name: Publish GitHub Release (immutable)
         env:

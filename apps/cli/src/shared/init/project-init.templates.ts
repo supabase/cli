@@ -1,7 +1,9 @@
+import { CLI_CONFIG_SCHEMA_URL } from "@supabase/config";
 import { orioledbVersions, postgresMajor } from "@supabase/stack/internal/artifacts";
 import { postgresVersionCompare } from "../../command-internal/db-bootstrap/postgres.service.ts";
 
-const CONFIG_TEMPLATE_RAW = `# For detailed configuration reference documentation, visit:
+const CONFIG_TEMPLATE_RAW = `#:schema ${CLI_CONFIG_SCHEMA_URL}
+# For detailed configuration reference documentation, visit:
 # https://supabase.com/docs/guides/local-development/cli/config
 # A string used to distinguish different Supabase projects on the same host. Defaults to the
 # working directory name when running \`supabase init\`.
@@ -231,6 +233,9 @@ double_confirm_changes = true
 enable_confirmations = false
 # If enabled, users will need to reauthenticate or have logged in recently to change their password.
 secure_password_change = false
+# If enabled, users will need to provide their current password to change their password, unless
+# they signed in with a one-time password, magic link, or recovery link.
+# require_current_password = true
 # Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.
 max_frequency = "1s"
 # Number of characters used in the email OTP.
@@ -462,6 +467,9 @@ export const VSCODE_SETTINGS_TEMPLATE = `{
   ],
   "[typescript]": {
     "editor.defaultFormatter": "denoland.vscode-deno"
+  },
+  "json.schemaDownload.trustedDomains": {
+    "https://supabase.com/schemas/": true
   }
 }
 `;

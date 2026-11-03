@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Path, Schema } from "effect";
+import { Effect, FileSystem, Path, Predicate, Schema } from "effect";
 import { promptYesNo } from "../../command-internal/prompt-yes-no.ts";
 import { sanitizeProjectId } from "../config/project-id.ts";
 import { Output } from "../output/output.service.ts";
@@ -144,6 +144,21 @@ function writeJsonFile(pathname: string, contents: Record<string, unknown>) {
   });
 }
 
+function mergeJsonObjects(
+  existing: Readonly<Record<string, unknown>>,
+  template: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...existing };
+  for (const [key, value] of Object.entries(template)) {
+    const current = merged[key];
+    merged[key] =
+      Predicate.isObject(current) && Predicate.isObject(value)
+        ? mergeJsonObjects(current, value)
+        : value;
+  }
+  return merged;
+}
+
 function updateJsonFile(pathname: string, template: string) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -159,10 +174,10 @@ function updateJsonFile(pathname: string, template: string) {
       return;
     }
 
-    const merged = {
-      ...(yield* parseJsonObject(pathname, existing)),
-      ...(yield* parseJsonObject(pathname, template)),
-    };
+    const merged = mergeJsonObjects(
+      yield* parseJsonObject(pathname, existing),
+      yield* parseJsonObject(pathname, template),
+    );
     yield* writeJsonFile(pathname, merged);
   });
 }

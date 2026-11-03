@@ -1,9 +1,11 @@
 name: setup-cli Smoke Test
 
 # Smoke test for the `supabase/setup-cli` GitHub Action against a specific published CLI
-# version. Runs automatically after every beta release and also manually via workflow_dispatch
-# when debugging setup-cli regressions. Catches regressions like supabase/setup-cli#427, where
-# musl libc + archive layout changes silently broke the action on Alpine.
+# version. Runs automatically after every published release and also manually via
+# workflow_dispatch when debugging setup-cli regressions. Catches regressions like
+# supabase/setup-cli#427, where musl libc + archive layout changes silently broke the action on
+# Alpine. v3 installs from npm: each v3 runner first waits until npm serves the version, and the
+# job fails if setup-cli fell back to the GitHub release. A separate job forces that fallback.
 
 on:
   workflow_call:
@@ -39,7 +41,7 @@ jobs:
           - v2
           - v3
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 10
+    timeout-minutes: 25
     env:
       VERSION: ${{ inputs.version }}
     steps:
@@ -53,9 +55,24 @@ jobs:
         uses: supabase/setup-cli@afb1b15109756ea5cf9d8985a359d9095235ca2b # v2.1.2
         with:
           version: ${{ inputs.version }}
-      - name: Install Supabase CLI via setup-cli@v3
+      - name: Checkout the npm wait script
         if: matrix.major-version == 'v3'
-        uses: supabase/setup-cli@45a513f8c64c0bc8e0e3dfe572b5c95be85f6359 # v3.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: .smoke-tooling
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+      - name: Wait for npm to serve the version
+        if: matrix.major-version == 'v3'
+        shell: bash
+        run: |
+          set -euo pipefail
+          platform="$(node -p 'process.platform + "-" + process.arch')"
+          bash .smoke-tooling/.github/scripts/wait-for-npm-version.sh "${VERSION#v}" supabase "@supabase/cli-${platform/win32/windows}"
+      - name: Install Supabase CLI via setup-cli@v3
+        id: setup-cli-v3
+        if: matrix.major-version == 'v3'
+        uses: supabase/setup-cli@689adcfb80d947100a1eab127289b97d1fb07b13 # v3.2.0
         with:
           version: ${{ inputs.version }}
       - name: Verify supabase --version matches the expected version
@@ -70,6 +87,17 @@ jobs:
           echo "supabase --version: ${actual}"
           if [ "${actual}" != "${expected}" ]; then
             echo "Version mismatch: expected ${expected}, got ${actual}" >&2
+            exit 1
+          fi
+      - name: Verify setup-cli installed from npm
+        if: matrix.major-version == 'v3'
+        shell: bash
+        env:
+          INSTALL_SOURCE: ${{ steps.setup-cli-v3.outputs.install-source }}
+        run: |
+          set -euo pipefail
+          if [ "${INSTALL_SOURCE}" != "npm" ]; then
+            echo "::error::setup-cli fell back to ${INSTALL_SOURCE} because installing supabase@${VERSION#v} from npm failed; check the setup-cli step log"
             exit 1
           fi
 
@@ -87,7 +115,7 @@ jobs:
           - v2
           - v3
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     # `node:20-alpine` ships a musl-linked Node, required for JavaScript-based actions to launch
     # here — the runner's mounted glibc Node won't execute inside an Alpine container.
     container:
@@ -99,7 +127,7 @@ jobs:
       VERSION: ${{ inputs.version }}
     steps:
       - name: Install Alpine prerequisites
-        run: apk add --no-cache bash curl tar
+        run: apk add --no-cache bash curl git jq tar
       - name: Install Supabase CLI via setup-cli@v1
         if: matrix.major-version == 'v1'
         uses: supabase/setup-cli@1dedf2c611547ede7232d26866dd3c56ab903bbb # v1.7.3
@@ -110,9 +138,24 @@ jobs:
         uses: supabase/setup-cli@afb1b15109756ea5cf9d8985a359d9095235ca2b # v2.1.2
         with:
           version: ${{ inputs.version }}
-      - name: Install Supabase CLI via setup-cli@v3
+      - name: Checkout the npm wait script
         if: matrix.major-version == 'v3'
-        uses: supabase/setup-cli@45a513f8c64c0bc8e0e3dfe572b5c95be85f6359 # v3.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: .smoke-tooling
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+      - name: Wait for npm to serve the version
+        if: matrix.major-version == 'v3'
+        shell: bash
+        run: |
+          set -euo pipefail
+          platform="$(node -p 'process.platform + "-" + process.arch')"
+          bash .smoke-tooling/.github/scripts/wait-for-npm-version.sh "${VERSION#v}" supabase "@supabase/cli-${platform}-musl"
+      - name: Install Supabase CLI via setup-cli@v3
+        id: setup-cli-v3
+        if: matrix.major-version == 'v3'
+        uses: supabase/setup-cli@689adcfb80d947100a1eab127289b97d1fb07b13 # v3.2.0
         with:
           version: ${{ inputs.version }}
       - name: Verify supabase --version matches the expected version
@@ -127,5 +170,55 @@ jobs:
           echo "supabase --version: ${actual}"
           if [ "${actual}" != "${expected}" ]; then
             echo "Version mismatch: expected ${expected}, got ${actual}" >&2
+            exit 1
+          fi
+      - name: Verify setup-cli installed from npm
+        if: matrix.major-version == 'v3'
+        shell: bash
+        env:
+          INSTALL_SOURCE: ${{ steps.setup-cli-v3.outputs.install-source }}
+        run: |
+          set -euo pipefail
+          if [ "${INSTALL_SOURCE}" != "npm" ]; then
+            echo "::error::setup-cli fell back to ${INSTALL_SOURCE} because installing supabase@${VERSION#v} from npm failed; check the setup-cli step log"
+            exit 1
+          fi
+
+  setup-cli-smoke-test-github-release:
+    name: setup-cli v3 GitHub release fallback (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VERSION: ${{ inputs.version }}
+      # An npm executable that always fails sends setup-cli down its GitHub release fallback.
+      SUPABASE_SETUP_CLI_NPM: "false"
+    steps:
+      - name: Install Supabase CLI via setup-cli@v3
+        id: setup-cli-v3
+        uses: supabase/setup-cli@689adcfb80d947100a1eab127289b97d1fb07b13 # v3.2.0
+        with:
+          version: ${{ inputs.version }}
+      - name: Verify supabase --version matches the expected version
+        shell: bash
+        run: |
+          set -euo pipefail
+          # `supabase --version` prints the version without the leading `v`,
+          # while release tags / setup-cli inputs include it, so strip it
+          # before comparing.
+          expected="${VERSION#v}"
+          actual="$(supabase --version | tr -d '\r' | head -n1)"
+          echo "supabase --version: ${actual}"
+          if [ "${actual}" != "${expected}" ]; then
+            echo "Version mismatch: expected ${expected}, got ${actual}" >&2
+            exit 1
+          fi
+      - name: Verify setup-cli installed from the GitHub release
+        shell: bash
+        env:
+          INSTALL_SOURCE: ${{ steps.setup-cli-v3.outputs.install-source }}
+        run: |
+          set -euo pipefail
+          if [ "${INSTALL_SOURCE}" != "github-release" ]; then
+            echo "::error::setup-cli installed from ${INSTALL_SOURCE} instead of falling back to the GitHub release with npm disabled"
             exit 1
           fi

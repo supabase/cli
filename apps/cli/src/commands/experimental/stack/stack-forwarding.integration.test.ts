@@ -243,7 +243,10 @@ root_key = ""
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("forwards Auth policies, providers and custom SMTP ahead of local mail", () =>
+  it.effect.each([
+    { secure_password_change: true, require_current_password: false },
+    { secure_password_change: false, require_current_password: true },
+  ])("forwards Auth policies, providers and custom SMTP ahead of local mail with %j", (policy) =>
     Effect.gen(function* () {
       const root = yield* createStackConfigProject(
         `project_id = "auth-forwarding"
@@ -265,7 +268,8 @@ sign_in_sign_ups = 33
 [auth.email]
 enable_confirmations = true
 double_confirm_changes = false
-secure_password_change = true
+secure_password_change = ${policy.secure_password_change}
+require_current_password = ${policy.require_current_password}
 otp_length = 8
 otp_expiry = 120
 max_frequency = "10s"
@@ -376,7 +380,12 @@ allow_dynamic_registration = true
         GOTRUE_RATE_LIMIT_OTP: "33",
         GOTRUE_MAILER_AUTOCONFIRM: "false",
         GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED: "false",
-        GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_REAUTHENTICATION: "true",
+        GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_REAUTHENTICATION: String(
+          policy.secure_password_change,
+        ),
+        GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD: String(
+          policy.require_current_password,
+        ),
         GOTRUE_MAILER_OTP_LENGTH: "8",
         GOTRUE_MAILER_OTP_EXP: "120",
         GOTRUE_SMTP_MAX_FREQUENCY: "10s",

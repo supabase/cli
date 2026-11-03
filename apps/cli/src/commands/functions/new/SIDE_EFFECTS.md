@@ -9,7 +9,7 @@
 | `<workdir>/supabase/config.toml`                | TOML       | best-effort when resolving template values, detecting existing `[functions.<name>]` declarations, and scanning declared function slugs |
 | `<workdir>/supabase/functions/*/index.ts`       | TypeScript | when checking whether this is the first local function                                                                                 |
 | `<workdir>/.vscode/extensions.json`             | JSONC      | when merging VS Code recommendations into an existing file                                                                             |
-| `<workdir>/.vscode/settings.json`               | JSONC      | when merging Deno settings into an existing file                                                                                       |
+| `<workdir>/.vscode/settings.json`               | JSONC      | when merging Deno settings into an existing file (nested objects merge key by key, template values win)                                |
 | `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON       | when present, before post-run telemetry state is refreshed                                                                             |
 
 ## Files Written
@@ -80,5 +80,6 @@ Emits a structured success result event with `path`, `function_name`, and `auth`
 - The `[functions.<name>]` config section is **appended** (`O_APPEND` semantics, `flag: "a"`), never rewritten, so the existing file is left byte-for-byte untouched and a partial write cannot truncate it.
 - Existing-declaration detection scans the raw `config.toml` text (`^\s*\[functions\.<slug>\]\s*$`) rather than a parsed config map. For all well-formed configs the two approaches agree.
 - IDE settings scaffolding (`.vscode`, `.idea`) only runs in `--output-format text`; json / stream-json runs are payload-only.
+- The VS Code settings come from the shared `init` helper, so `.vscode/settings.json` also includes `json.schemaDownload.trustedDomains` trusting `https://supabase.com/schemas/`.
 - No Management API requests are made; all behavior is local filesystem work plus telemetry flush.
 - A non-existent `--workdir`/`SUPABASE_WORKDIR` now fails before any directory or file is created (CLI-2285) — previously a typo'd `--workdir` could scaffold a fresh `supabase/functions/…` tree (plus a new `config.toml`) at the wrong path.
