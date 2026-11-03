@@ -1,6 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Path } from "effect";
+import { Effect, FileSystem, Path, Predicate } from "effect";
+import { CLI_CONFIG_SCHEMA_URL, PROJECT_CONFIG_SCHEMA_URL } from "@supabase/config";
 import { applyConfigEdits, loadCliConfig, type ConfigEdit } from "@supabase/config/internal";
 import { orioledbVersions, postgresMajor } from "@supabase/stack/internal/artifacts";
 import { postgresVersionCompare } from "../../command-internal/db-bootstrap/postgres.service.ts";
@@ -175,6 +176,13 @@ describe("project init templates", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
+  it("starts the generated config with the schema directive", () => {
+    for (const experimentalStack of [false, true]) {
+      const rendered = renderCliConfigTemplate("demo-project", false, experimentalStack);
+      expect(rendered.split("\n")[0]).toBe(`#:schema ${CLI_CONFIG_SCHEMA_URL}`);
+    }
+  });
+
   it("enables pg-delta by default in the generated config", () => {
     const rendered = renderCliConfigTemplate("demo-project", false);
     expect(rendered).toContain("[experimental.pgdelta]\nenabled = true");
@@ -218,6 +226,22 @@ describe("project init templates", () => {
       );
     }).pipe(Effect.provide(BunServices.layer)),
   );
+
+  it("trusts the hosted schema URLs in the VS Code settings", () => {
+    const settings: unknown = JSON.parse(VSCODE_SETTINGS_TEMPLATE);
+    const trustedDomains = Predicate.isObject(settings)
+      ? settings["json.schemaDownload.trustedDomains"]
+      : undefined;
+    const trusted = Predicate.isObject(trustedDomains)
+      ? Object.entries(trustedDomains)
+          .filter(([, enabled]) => enabled === true)
+          .map(([prefix]) => prefix)
+      : [];
+
+    for (const url of [CLI_CONFIG_SCHEMA_URL, PROJECT_CONFIG_SCHEMA_URL]) {
+      expect(trusted.some((prefix) => url.startsWith(prefix))).toBe(true);
+    }
+  });
 
   it.effect("matches the IntelliJ scaffold", () =>
     Effect.gen(function* () {
