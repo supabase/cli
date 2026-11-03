@@ -1,3 +1,5 @@
+import { semver } from "bun";
+
 const MAINTENANCE_TAG = /^v[1-9]\d*\.stable$/;
 const PUBLISHABLE_TAGS = new Set(["latest", "alpha", "beta", "next"]);
 
@@ -52,19 +54,17 @@ function versionBase(version: string): readonly [number, number, number] | undef
   return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : undefined;
 }
 
-/** The smallest release type that takes `lastVersion` to `version`, or null when `version` is not later. */
+/** The smallest release type that takes `lastVersion` to `version`, or null unless `version` is later by SemVer precedence. */
 export function releaseTypeBetween(
   lastVersion: string | undefined,
   version: string,
 ): "major" | "minor" | "patch" | null {
-  const last = lastVersion === undefined ? undefined : versionBase(lastVersion);
+  if (lastVersion === undefined || semver.order(version, lastVersion) !== 1) return null;
+  const last = versionBase(lastVersion);
   const next = versionBase(version);
   if (!last || !next) return null;
 
-  const [lastMajor, lastMinor, lastPatch] = last;
-  const [major, minor, patch] = next;
-  if (major !== lastMajor) return major > lastMajor ? "major" : null;
-  if (minor !== lastMinor) return minor > lastMinor ? "minor" : null;
-  if (patch !== lastPatch) return patch > lastPatch ? "patch" : null;
-  return lastVersion !== version ? "patch" : null;
+  if (next[0] !== last[0]) return "major";
+  if (next[1] !== last[1]) return "minor";
+  return "patch";
 }

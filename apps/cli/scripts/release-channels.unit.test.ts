@@ -110,6 +110,8 @@ describe("releaseTypeBetween", () => {
     ["2.122.1", "2.122.1", null],
     ["2.122.1", "2.122.0", null],
     ["3.1.0", "2.151.0", null],
+    ["3.1.0-beta.5", "3.1.0-beta.4", null],
+    ["3.1.0", "3.1.0-beta.1", null],
   ] as const)("%s -> %s requires %s", (lastVersion, version, expected) => {
     expect(releaseTypeBetween(lastVersion, version)).toBe(expected);
   });

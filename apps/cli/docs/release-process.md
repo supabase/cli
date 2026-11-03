@@ -281,7 +281,7 @@ gh workflow run release.yml \
 
 Auto-trigger paths leave `version` empty: semantic-release computes it from commits since the last tag. A dispatch with an empty `version` does the same for the dispatched ref, and fails if the channel does not match the ref or if semantic-release computes no release.
 
-The `develop` and `next` plans wait, up to 60 minutes, until the `publish` job of any in-flight `Release` run on `main` has finished before reading tags: that job pushes the stable tag after the npm publish, so a prerelease planned earlier would miss it and compute a stale version. The rest of the `main` run (Homebrew, Scoop, smoke tests) does not delay the plan. If the wait times out, the plan job fails; re-run it once that job has finished.
+The `develop` and `next` plans wait, up to 120 minutes, until the `publish` job of any in-flight `Release` run on `main` has finished before reading tags: that job pushes the stable tag after the npm publish, so a prerelease planned earlier would miss it and compute a stale version. The rest of the `main` run (Homebrew, Scoop, smoke tests) does not delay the plan. If the wait times out, the plan job fails; re-run it once that job has finished.
 
 The plan job refuses a dispatch when:
 

@@ -16,18 +16,19 @@ timeout="${WAIT_TIMEOUT_SECONDS:-900}"
 
 npm_serves_version() {
   local pkg="$1"
-  npm view "${pkg}@${version}" version --prefer-online > /dev/null &&
+  npm view "${pkg}@${version}" version --prefer-online --fetch-timeout=30000 --fetch-retries=0 > /dev/null &&
     curl -fsSL --max-time 30 -H 'Accept: application/vnd.npm.install-v1+json' "https://registry.npmjs.org/${pkg//\//%2f}" |
     jq -e --arg v "$version" '.versions | has($v)' > /dev/null
 }
 
 deadline=$((SECONDS + timeout))
 for pkg in "$@"; do
-  until npm_serves_version "$pkg"; do
+  while true; do
     if (( SECONDS >= deadline )); then
       echo "::error::npm does not serve ${pkg}@${version} after ${timeout} seconds"
       exit 1
     fi
+    npm_serves_version "$pkg" && break
     echo "Waiting for npm to serve ${pkg}@${version}..."
     sleep 15
   done

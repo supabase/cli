@@ -98,7 +98,7 @@ jobs:
       contains(fromJSON('["success","skipped"]'), needs.test-next.result) &&
       !(github.event_name == 'push' && github.ref_name == 'next' && needs.next-ahead.outputs.ahead != 'true') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 135
     permissions:
       contents: read
       actions: read
@@ -127,7 +127,7 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          deadline=$((SECONDS + 3600))
+          deadline=$((SECONDS + 7200))
           while true; do
             run_ids="$(gh run list --repo "$REPO" --workflow release.yml --branch main --json databaseId,status --jq '.[] | select(.status != "completed") | .databaseId')"
             pending=0
@@ -141,12 +141,27 @@ jobs:
               break
             fi
             if (( SECONDS >= deadline )); then
-              echo "::error::The publish job of a Release run on main is still in progress after 60 minutes. Re-run this job once it finishes."
+              echo "::error::The publish job of a Release run on main is still in progress after 120 minutes. Re-run this job once it finishes."
               exit 1
             fi
             echo "Waiting for the publish job of ${pending} Release run(s) on main to finish..."
             sleep 30
           done
+      # A major cut can fast-forward develop onto next while the tests and the wait above run.
+      - id: next-still-ahead
+        if: ${{ github.ref_name == 'next' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          ahead_by="$(gh api "repos/${REPO}/compare/develop...${SHA}" --jq .ahead_by)"
+          if [[ "$ahead_by" -gt 0 ]]; then
+            echo "ahead=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ahead=false" >> "$GITHUB_OUTPUT"
+          fi
       # semantic-release runs `git push --dry-run HEAD:<branch>` as part of verifyAuth even in
       # `dry_run: true` mode, so the token needs push access to the protected develop/main
       # branches — the default GITHUB_TOKEN doesn't have it.
@@ -179,6 +194,7 @@ jobs:
           DISPATCH_CHANNEL: ${{ inputs.channel }}
           DISPATCH_VERSION: ${{ inputs.version }}
           DISPATCH_DRY_RUN: ${{ inputs.dry_run }}
+          NEXT_AHEAD: ${{ steps.next-still-ahead.outputs.ahead }}
           SR_PUBLISHED: ${{ steps.semantic-release.outputs.new_release_published }}
           SR_VERSION: ${{ steps.semantic-release.outputs.new_release_version }}
         run: |
@@ -195,6 +211,15 @@ jobs:
             next) natural=next ;;
             *) [[ "$REF_NAME" =~ $maint_re ]] && natural=maintenance ;;
           esac
+          if [[ "$REF_NAME" == next && "$NEXT_AHEAD" != true ]]; then
+            if [[ "$EVENT" == "workflow_dispatch" ]]; then
+              echo "::error::next has no commits beyond develop, so a next release would tag a commit develop already released"
+              exit 1
+            fi
+            echo "::notice::next has no commits beyond develop, so there is nothing to release"
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [[ "$EVENT" == "workflow_dispatch" ]]; then
             channel="$DISPATCH_CHANNEL"
             dry_run="$DISPATCH_DRY_RUN"
