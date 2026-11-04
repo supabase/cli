@@ -35,10 +35,11 @@ side-calls.
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                               |
-| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_PROFILE`      | profile selector (built-in name or YAML file path)   | no (defaults to `supabase`)                             |
+| Variable                   | Purpose                                                          | Required?                                               |
+| -------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN`    | auth token (bypasses credential file/keyring lookup)             | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_PROFILE`         | profile selector (built-in name or YAML file path)               | no (defaults to `supabase`)                             |
+| `SUPABASE_API_MAX_RETRIES` | Management API retries after the first attempt (`0` = send once) | no (SSO reads fall back to 1)                           |
 
 ## Exit Codes
 
