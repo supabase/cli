@@ -387,6 +387,14 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("does not warn when the failing project is healthy", () => {
+    const { layer, out } = setup({ status: 500, body: {}, projectStatus: "ACTIVE_HEALTHY" });
+    return Effect.gen(function* () {
+      yield* Effect.exit(ssoList({ remote: Option.none(), projectRef: Option.none() }));
+      expect(out.messages.some((m) => m.type === "warn")).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("reports network error on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {

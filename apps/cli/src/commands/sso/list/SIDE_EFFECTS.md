@@ -30,6 +30,7 @@ Target: hosted, no consent — see [Command target](../../../../docs/command-tar
 | `GET`  | `/v1/projects/{ref}`                           | Bearer token | none         | `{organization_slug}` — upgrade-gate side-call on a 4xx with no plan-gate error in the body                                                                                                                                                              |
 | `GET`  | `/v1/organizations/{slug}/entitlements`        | Bearer token | none         | `{entitlements[].feature.key, .hasAccess}` — upgrade-gate side-call on a 4xx with no plan-gate error in the body                                                                                                                                         |
 | `GET`  | `/v1/projects/{ref}`                           | Bearer token | none         | `{ref, name, organization_id, organization_slug}` — `linkedProjectCache` fill, best-effort, skipped when `.temp/linked-project.json` exists, `.temp/project-ref` names another ref, or no token is available                                             |
+| `GET`  | `/v1/projects/{ref}`                           | Bearer token | none         | `{status}` — health lookup after a transport failure or 5xx from the SSO call; warns when not `ACTIVE_HEALTHY`, no retries, 10s timeout                                                                                                                  |
 
 ## Environment Variables
 
