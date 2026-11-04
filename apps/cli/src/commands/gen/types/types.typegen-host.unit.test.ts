@@ -1,7 +1,17 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import type { SpawnRequest, SpawnResult } from "@supabase/typegen";
-import { Data, Deferred, Effect, FileSystem, Path, PlatformError, Sink, Stream } from "effect";
+import {
+  Data,
+  Deferred,
+  Effect,
+  FileSystem,
+  Path,
+  PlatformError,
+  type Redacted,
+  Sink,
+  Stream,
+} from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { makeTypegenHost } from "./types.typegen-host.ts";
 
@@ -9,7 +19,9 @@ interface SpawnCall {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
   readonly cwd: string | undefined;
-  readonly env: Readonly<Record<string, string | undefined>> | undefined;
+  readonly env:
+    | Readonly<Record<string, string | Redacted.Redacted<string> | undefined>>
+    | undefined;
   readonly extendEnv: boolean | undefined;
   readonly shell: boolean | string | undefined;
   stdin: string;
@@ -36,7 +48,7 @@ function fakeSpawner(
       }
       const call: SpawnCall = {
         command: command.command,
-        args: command.args,
+        args: command.args.map(String),
         cwd: command.options.cwd,
         env: command.options.env,
         extendEnv: command.options.extendEnv,

@@ -1,4 +1,4 @@
-import { NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 import { sourceDigest } from "./release.ts";
@@ -18,5 +18,5 @@ it.live("digests only regular module files, ignoring dangling editor lock links"
     expect(yield* sourceDigest(root)).toBe(clean);
     yield* fs.writeFileString(path.join(root, "nested", "Module.ts"), "export const a = 2;\n");
     expect(yield* sourceDigest(root)).not.toBe(clean);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide([NodeServices.layer, NodeCrypto.layer])),
 );

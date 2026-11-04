@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import type { CliConfig } from "@supabase/config";
 import { loadCliConfig } from "@supabase/config/internal";
@@ -1351,7 +1351,11 @@ policy = "per_worker"
       });
       expect(originAt("auth.email.smtp.port")).toMatchObject({ tier: "config" });
       expect(originAt("db.password")).toEqual({ tier: "default" });
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
+      (effect) => withShell({}, effect),
+      Effect.scoped,
+    ),
   );
 
   it.live("agrees with the stack config overlay for a matched remote and shell overrides", () =>
@@ -1387,7 +1391,7 @@ major_version = 15
       expect(originAt("auth.site_url")).toMatchObject({ tier: "config", remote: "staging" });
       expect(originAt("api.schemas")).toMatchObject({ tier: "shell" });
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
       (effect) => withShell({ SUPABASE_API_SCHEMAS: "public,shell_api" }, effect),
       Effect.scoped,
     ),

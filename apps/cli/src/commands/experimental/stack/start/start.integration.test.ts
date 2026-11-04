@@ -1,5 +1,5 @@
 import { generateKeyPairSync } from "node:crypto";
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import {
   ConfigProvider,
@@ -724,7 +724,7 @@ describe("experimental stack start", () => {
         expect(error.message).toContain(message);
         expect(fixture.composed).toBe(0);
       }
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("rejects malformed configuration before creating a stack", () =>
@@ -753,7 +753,7 @@ describe("experimental stack start", () => {
       );
       expect(result).toMatchObject({ reason: "invalid-config" });
       expect(created).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect(
@@ -796,7 +796,7 @@ describe("experimental stack start", () => {
           message: expect.stringContaining("Native artifacts are unsupported on win32/x64"),
         });
         expect(created).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect(
@@ -852,7 +852,7 @@ describe("experimental stack start", () => {
             "Docker didn't answer, so this new stack uses the Podman runtime",
           ),
         });
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("applies capability selection across repeated starts", () =>
@@ -933,7 +933,7 @@ describe("experimental stack start", () => {
       yield* fixture.stack.composition.stop;
       yield* stackStart(flags(excluded)).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.composed).toBe(5);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("reports connection details and lazy services once the stack is ready", () =>
@@ -995,7 +995,7 @@ describe("experimental stack start", () => {
       expect(byPrefix.stdoutText).toContain(
         `Run supabase status --env --workdir ${workdir} --stack-id ${fixture.stack.id} to export`,
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("keeps storage uploads under SUPABASE_HOME and never touches supabase/.temp", () =>
@@ -1015,7 +1015,7 @@ describe("experimental stack start", () => {
 
       expect(yield* fs.exists(`${root}/.supabase/stacks/${fixture.stack.id}/uploads`)).toBe(true);
       expect(legacyStateAccesses(recorder.accessed)).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("returns the connection env for an already-running stack in JSON", () =>
@@ -1039,7 +1039,7 @@ describe("experimental stack start", () => {
         MCP_URL: "http://127.0.0.1:23457/mcp",
         DB_URL: "postgresql://postgres:postgres@127.0.0.1:23456/postgres",
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("returns the connection env for a resumed stack in JSON", () =>
@@ -1068,7 +1068,7 @@ describe("experimental stack start", () => {
         DB_URL: "postgresql://postgres:postgres@127.0.0.1:23456/postgres",
         API_URL: "http://127.0.0.1:23457",
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("names the services that failed when the composition start fails", () =>
@@ -1100,7 +1100,7 @@ describe("experimental stack start", () => {
         message: "Composition start had failures",
         detail: "analytics (analytics-member-1): Service health timed out",
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("loads Functions env only when Functions are selected", () =>
@@ -1169,7 +1169,7 @@ describe("experimental stack start", () => {
       const refreshedStatus = yield* refreshed.status;
       if (refreshedStatus.config.service === "functions")
         expect(refreshedStatus.config.config.env).toEqual({ CUSTOM_VALUE: "changed" });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("rejects Studio without REST before changing the composition", () =>
@@ -1187,7 +1187,7 @@ describe("experimental stack start", () => {
       expect(result).toMatchObject({ reason: "flags" });
       expect(fixture.stopped).toBe(0);
       expect(fixture.composed).toBe(0);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("applies signing-key file changes only after the stack is stopped", () =>
@@ -1223,7 +1223,7 @@ describe("experimental stack start", () => {
       expect(fixture.savedCredentials.gotrueJwtKeys).not.toBe(savedKeys);
       expect(fixture.savedCredentials.anonKey).not.toBe(savedAnonKey);
       expect(fixture.members.find(({ service }) => service === "auth")?.service).toBe("auth");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect(
@@ -1250,7 +1250,7 @@ describe("experimental stack start", () => {
         expect(fixture.composed).toBe(2);
         expect(fixture.members.map(({ id }) => id)).toEqual(firstIds);
         expect(fixture.catalogApplied).toBe(1);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("creates the supabase_functions schema once when restarting a stack without it", () =>
@@ -1278,7 +1278,7 @@ describe("experimental stack start", () => {
       );
       expect(database.schemaCreations).toBe(1);
       expect(fixture.catalogApplied).toBe(1);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("skips invalid config while running and reports it after stop", () =>
@@ -1311,7 +1311,7 @@ describe("experimental stack start", () => {
       expect(error).toMatchObject({ reason: "invalid-config" });
       expect(fixture.composed).toBe(1);
       expect(fixture.stopped).toBe(1);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("rejects a partially active stack before reading changed config", () =>
@@ -1343,7 +1343,7 @@ describe("experimental stack start", () => {
       });
       expect(fixture.stopped).toBe(0);
       expect(fixture.composed).toBe(1);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("rejects a stack whose database alone was started before reading changed config", () =>
@@ -1375,7 +1375,7 @@ describe("experimental stack start", () => {
       expect(fixture.compositionStarts).toBe(1);
       expect(fixture.composed).toBe(1);
       expect(fixture.stopped).toBe(0);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect(
@@ -1437,7 +1437,7 @@ describe("experimental stack start", () => {
             "Resuming the saved stack services. Run `supabase stack stop`, then `supabase stack start` to apply configuration or service-selection changes.",
         });
         expect(output.messages).toContainEqual({ type: "success", message: "Stack is ready." });
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect(
@@ -1475,7 +1475,7 @@ describe("experimental stack start", () => {
         expect(output.messages.map(({ message }) => message)).not.toContain(
           "Stack is already running with its current services. Run `supabase stack stop`, then `supabase stack start` to apply configuration or service-selection changes.",
         );
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect(
@@ -1507,7 +1507,7 @@ describe("experimental stack start", () => {
           expect(fixture.stopped).toBe(1);
           expect(fixture.composed).toBe(1);
         }
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("applies changed service configuration after the stack is stopped", () =>
@@ -1532,7 +1532,7 @@ describe("experimental stack start", () => {
       const status = yield* rest.status;
       expect(status.config.service === "rest" ? status.config.config.maxRows : undefined).toBe(500);
       expect(fixture.composed).toBe(2);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect(
@@ -1578,7 +1578,7 @@ describe("experimental stack start", () => {
           Effect.provide(layers(root, fixture, secondOutput)),
         );
         expect(secondOutput.messages.some(({ message }) => message.includes("→"))).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("passes requested creations to a live owner, which ignores them", () =>
@@ -1616,7 +1616,7 @@ describe("experimental stack start", () => {
       expect(result).toBe(fixture.stack.id);
       expect(requested).toEqual([expect.any(Array)]);
       expect(fixture.composed).toBe(1);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("re-plans when the owner it observed running is gone by the time the stack opens", () =>
@@ -1660,7 +1660,7 @@ describe("experimental stack start", () => {
       );
 
       expect(output.messages.map(({ message }) => message)).toContain("api: 23457 → 54999");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("adds endpoint_changes to the json and stream-json success payloads", () =>
@@ -1706,7 +1706,7 @@ describe("experimental stack start", () => {
       yield* stackStart(flags(onlyRest)).pipe(Effect.provide(layer));
       const event = yield* machineEnvelope(stdio.stdout.at(-1));
       expect(event.data).toMatchObject({ endpoint_changes: expected });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect(
@@ -1756,7 +1756,7 @@ describe("experimental stack start", () => {
           Array.isArray(data?.endpoint_changes) ? data.endpoint_changes : [],
         );
         expect(change.keys).not.toContain("studio.http");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect(
@@ -1787,7 +1787,7 @@ describe("experimental stack start", () => {
           message: expect.stringContaining("[api] port: saved"),
           suggestion: `Run \`supabase stack stop --stack-id ${fixture.stack.id}\`, then \`supabase stack start --stack-id ${fixture.stack.id}\` to apply the new ports.`,
         });
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect(
@@ -1818,7 +1818,7 @@ describe("experimental stack start", () => {
           expect.arrayContaining([expect.objectContaining({ key: "[api] port" })]),
         );
         expect(envelope).not.toHaveProperty("recreate_command");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect(
@@ -1852,7 +1852,7 @@ describe("experimental stack start", () => {
         expect(envelope.recreate_command).toBe(
           `supabase stack destroy --stack-id ${fixture.stack.id}`,
         );
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect(
@@ -1897,7 +1897,7 @@ describe("experimental stack start", () => {
             /`api\.port` in supabase\/config\.toml.*already saved this port.*previous automatic port is released/,
           ),
         });
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect(
@@ -1930,7 +1930,7 @@ describe("experimental stack start", () => {
           reason: "invalid-config",
           message: expect.stringContaining("[api] port: saved 54321, requested 54999"),
         });
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect(
@@ -1967,7 +1967,7 @@ describe("experimental stack start", () => {
         expect(error).toBeInstanceOf(StackCommandStartError);
         if (error instanceof StackCommandStartError)
           expect(error.message).not.toContain("[api] port");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect(
@@ -1997,7 +1997,7 @@ describe("experimental stack start", () => {
           reason: "invalid-config",
           message: expect.stringContaining("[api] port: saved automatic, requested 54999"),
         });
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   // A saved fixed shared-API port going back to automatic is an incompatible endpoint path, like
@@ -2021,7 +2021,7 @@ describe("experimental stack start", () => {
       // Does not throw: every sibling sharing the "api" port reports a purely-endpoint
       // incompatible path, so the whole composition re-plans instead of rejecting the start.
       yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect(
@@ -2057,7 +2057,7 @@ describe("experimental stack start", () => {
           expect(error.suggestion).toContain(
             "Revert the settings listed to their saved values to keep the stack and its data",
           );
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect(
@@ -2092,7 +2092,7 @@ describe("experimental stack start", () => {
           reason: "invalid-config",
           message: expect.stringContaining("SUPABASE_API_PORT: saved 54321, requested 54999"),
         });
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect(
@@ -2124,7 +2124,7 @@ describe("experimental stack start", () => {
           ),
         });
         expect(error).toMatchObject({ suggestion: expect.stringContaining("database data") });
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect(
@@ -2149,7 +2149,7 @@ describe("experimental stack start", () => {
         }
         expect(pins.get("database")).toEqual(database15);
         expect(pins.get("rest")).toEqual(selection.rest);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   const retiredOrioledbPin = (pin: ArtifactPin): ArtifactPin => ({
@@ -2217,7 +2217,7 @@ describe("experimental stack start", () => {
             `${target.revert} to keep the stack and its data, or run \`supabase stack destroy --stack-id ${fixture.stack.id}\``,
           ),
         });
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     );
 
   it.effect("offers no revert to an OrioleDB build the catalog no longer pins", () =>
@@ -2248,7 +2248,7 @@ describe("experimental stack start", () => {
           "This CLI release starts a different [db] orioledb_version than the saved stack.",
         ),
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect(
@@ -2297,7 +2297,7 @@ describe("experimental stack start", () => {
             `supabase stack destroy --stack-id ${fixture.stack.id}`,
           );
         }
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("emits structured stack_changes and recreate_command on the JSON error envelope", () =>
@@ -2337,7 +2337,7 @@ describe("experimental stack start", () => {
       expect(envelope.recreate_command).toBe(
         `supabase stack destroy --stack-id ${fixture.stack.id}`,
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("emits the same structured error fields on the stream-json terminal event", () =>
@@ -2374,7 +2374,7 @@ describe("experimental stack start", () => {
         },
       ]);
       expect(event.recreate_command).toBe(`supabase stack destroy --stack-id ${fixture.stack.id}`);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("always suggests --stack-id for a named stack, naming the stack as plain text", () =>
@@ -2416,7 +2416,7 @@ describe("experimental stack start", () => {
       expect(error).toBeInstanceOf(StackCommandStartError);
       if (error instanceof StackCommandStartError)
         expect(error.suggestion).not.toContain("--stack feature-a");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("reuses the saved database member when the selected pin is unchanged", () =>
@@ -2437,7 +2437,7 @@ describe("experimental stack start", () => {
       yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.members.find(({ service }) => service === "database")?.id).toBe(database.id);
       expect(fixture.composed).toBe(2);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   const unreachableDocker = [
@@ -2528,7 +2528,7 @@ describe("experimental stack start", () => {
               expect(stacks).toEqual([]);
             }),
           );
-        }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+        }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
     );
   }
 
@@ -2564,7 +2564,7 @@ describe("experimental stack start", () => {
           expect(fixture.hostStopped).toBe(1);
           expect(fixture.hostDestroyed).toBe(0);
         }
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 });
 
@@ -2668,7 +2668,7 @@ describe("experimental stack start service lock", () => {
       yield* second.run;
       expect(yield* lockText(root)).toBe(written);
       expect(resolvedReports(second.output)).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live("resolves a version override through the release host and runs the stack on it", () =>
@@ -2689,7 +2689,7 @@ describe("experimental stack start service lock", () => {
       expect(lock.services.auth.resolved).toEqual(selection.auth);
       expect(memberPin(stack, "rest")).toEqual(lock.services.rest.resolved);
       expect(resolvedReports(output)[0]).toContain("v99.0.0-r1");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live("goes back to the bundled version when the override is removed", () =>
@@ -2712,7 +2712,7 @@ describe("experimental stack start service lock", () => {
         rest: undefined,
       });
       expect(resolvedReports(output)[0]).toContain("specifier linked ≠ locked v99.0.0");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live("restores the linked version when the override is removed, without a new probe", () =>
@@ -2742,7 +2742,7 @@ describe("experimental stack start service lock", () => {
         linked: { version: "v99.0.0" },
         resolved: { upstreamVersion: "v99.0.0", revision: 1 },
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("warns when the checkout targets another remote than the lock observed", () =>
@@ -2767,7 +2767,7 @@ describe("experimental stack start service lock", () => {
         type: "warn",
         message: `lock observed ${LINKED_MAIN.project}, this checkout targets ${LINKED_MAIN.project}/${LINKED_BRANCH_REF}; run supabase stack update`,
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("warns when this CLI bundles a newer revision of a locked version, offline", () =>
@@ -2803,7 +2803,7 @@ describe("experimental stack start service lock", () => {
         type: "warn",
         message: `This CLI bundles newer revisions of locked versions: ${kind} ${upstreamVersion}-r0 → ${upstreamVersion}-r${revision}. Run supabase stack outdated to review, supabase stack update to adopt them.`,
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live("fails with invalid-config on a missing signing keys file, writing no lock", () =>
@@ -2815,7 +2815,7 @@ describe("experimental stack start service lock", () => {
 
       expect(error).toMatchObject({ reason: "invalid-config" });
       expect(yield* fs.exists(lockPath(root))).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live(
@@ -2847,7 +2847,7 @@ describe("experimental stack start service lock", () => {
           ),
         });
         expect(error.message).not.toContain("[db]");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live(
@@ -2870,7 +2870,7 @@ describe("experimental stack start service lock", () => {
           resolved: { upstreamVersion: "17.0.0.000-orioledb", revision: 0 },
         });
         expect(memberPin(stack, "database")).toEqual(lock.services.database.resolved);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("re-resolves the database when db.major_version changes", () =>
@@ -2889,7 +2889,7 @@ describe("experimental stack start service lock", () => {
         resolved: database15,
       });
       expect(resolvedReports(output)[0]).toContain("db.major_version 15 ≠ locked 17");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live("fails a frozen start on a missing or stale lock and leaves the project untouched", () =>
@@ -2938,7 +2938,7 @@ describe("experimental stack start service lock", () => {
       expect(yield* fs.exists(leasePath(root))).toBe(false);
       expect(stack.composed).toBe(composed);
       expect(host.requests).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live("fails a frozen start on a stale lock while the stack is running", () =>
@@ -2961,7 +2961,7 @@ describe("experimental stack start service lock", () => {
       expect(yield* lockText(root)).toBe(written);
       expect(stack.composed).toBe(composed);
       expect(host.requests).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live.each([
@@ -3014,7 +3014,7 @@ describe("experimental stack start service lock", () => {
       expect(causeDeclaration(error)).toMatchObject({ fingerprint_suffix: row.suffix });
       expect(yield* fs.exists(lockPath(root))).toBe(false);
       expect(stack.composed).toBe(0);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live("resolves and warns to commit when CI starts without a lock, then freezes it", () =>
@@ -3042,7 +3042,7 @@ describe("experimental stack start service lock", () => {
       expect(stale.message).toContain("supabase/supabase.lock is stale for: rest");
       expect(yield* lockText(root)).toBe(written);
       expect(host.requests).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live("uses a teammate's committed lock as-is, with no probe, link or login", () =>
@@ -3065,7 +3065,7 @@ describe("experimental stack start service lock", () => {
       expect(yield* lockText(teammate)).toBe(yield* lockText(author));
       expect(memberPin(stack, "rest")).toMatchObject({ upstreamVersion: "v99.0.0", revision: 1 });
       expect(yield* fs.exists(`${teammate}/supabase/.link.json`)).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live("serializes concurrent starts on the project lease so the versions resolve once", () =>
@@ -3082,7 +3082,7 @@ describe("experimental stack start service lock", () => {
       expect(new Set(sums).size).toBe(sums.length);
       expect(resolvedReports(first.output).length + resolvedReports(second.output).length).toBe(1);
       expect(memberPin(first.stack, "rest")).toEqual(memberPin(second.stack, "rest"));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live("applies default to every service and lets an entry override it", () =>
@@ -3100,7 +3100,7 @@ describe("experimental stack start service lock", () => {
         specifier: "v99.0.0-r1",
         resolved: { upstreamVersion: "v99.0.0", revision: 1 },
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("rejects orioledb_version next to a different database version", () =>
@@ -3114,7 +3114,7 @@ describe("experimental stack start service lock", () => {
         reason: "invalid-config",
         message: expect.stringContaining("conflicts with local.services.database.version"),
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("rejects a database version of another Postgres major than db.major_version", () =>
@@ -3128,7 +3128,7 @@ describe("experimental stack start service lock", () => {
         reason: "invalid-config",
         message: expect.stringContaining("requires db.major_version"),
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("re-resolves a lock whose database pin was edited to contradict its own entry", () =>
@@ -3155,7 +3155,7 @@ describe("experimental stack start service lock", () => {
           selection.database,
         );
       }
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("fails on a malformed or newer lock whether or not the start is frozen", () =>
@@ -3177,6 +3177,6 @@ describe("experimental stack start service lock", () => {
           expect(yield* lockText(root)).toBe(contents);
         }
       }
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 });

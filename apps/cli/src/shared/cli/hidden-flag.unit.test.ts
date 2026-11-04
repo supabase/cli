@@ -1,6 +1,6 @@
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Schema, Stdio } from "effect";
 import { legacyProjectStateLayer } from "../config/legacy-project-state.layer.ts";
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { CliOutput, Command, type HelpDoc } from "effect/cli";
 import { describe, expect, it } from "@effect/vitest";
 import { branchesCommand } from "../../commands/branches/branches.command.ts";
@@ -51,7 +51,8 @@ const testRootLayer = (formatter: CliOutput.Formatter, args: ReadonlyArray<strin
     out.layer,
     commandTargetLayer.pipe(Layer.provide(out.layer)),
     BunServices.layer,
-    legacyProjectStateLayer.pipe(Layer.provide(BunServices.layer)),
+    BunCrypto.layer,
+    legacyProjectStateLayer.pipe(Layer.provide([BunServices.layer, BunCrypto.layer])),
     mockRuntimeInfo(),
     mockAnalytics().layer,
     mockTelemetryRuntime(),
@@ -172,6 +173,7 @@ describe("native hidden flags", () => {
     );
     const parserLayer = Layer.mergeAll(
       BunServices.layer,
+      BunCrypto.layer,
       CliOutput.layer(silentCliOutputFormatter),
     );
     const runParser = (args: ReadonlyArray<string>) =>
@@ -306,7 +308,7 @@ describe("hidden subcommands", () => {
           expect(error.message).toBe(`supabase ${path.join(" ")} was removed.`);
           expect(error.suggestion).toBe(suggestion);
         }
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it("does not list the removed inspect db aliases in help", () => {
@@ -344,7 +346,7 @@ describe("hidden subcommands", () => {
       expect(Exit.isFailure(unknownExit)).toBe(true);
       if (!Exit.isFailure(unknownExit)) return;
       expect(Cause.hasFails(unknownExit.cause)).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 });
 

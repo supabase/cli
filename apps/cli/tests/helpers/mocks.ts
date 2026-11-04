@@ -1,6 +1,6 @@
 import { tmpdir } from "node:os";
 import process from "node:process";
-import { BunPath, BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunPath, BunServices } from "@effect/platform-bun";
 import { ConfigEnvPins, definedEnv } from "./config-env-pins.ts";
 import {
   Console,
@@ -732,6 +732,7 @@ export function emptyEnv(env: Readonly<Record<string, string | undefined>> = {})
   const analytics = mockAnalytics();
   return Layer.mergeAll(
     BunServices.layer,
+    BunCrypto.layer,
     runtimeInfoLayer,
     cliProjectContextLayer,
     cliProjectHomeLayer,

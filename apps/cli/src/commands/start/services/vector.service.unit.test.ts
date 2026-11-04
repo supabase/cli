@@ -23,7 +23,7 @@ function mockSpawner(
 
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.sync(() => {
-      const args = ChildProcess.isStandardCommand(command) ? command.args : [];
+      const args = ChildProcess.isStandardCommand(command) ? command.args.map(String) : [];
       spawned.push(args);
       const result = handler(args);
 

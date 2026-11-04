@@ -10,7 +10,7 @@ import {
   Sink,
   Stdio,
 } from "effect";
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { epipe, mockRuntimeInfo, overrideStreamErrored } from "../../../tests/helpers/mocks.ts";
 import { CliSettings } from "../config/cli-settings.service.ts";
 import { resolveTraceSettings, withDebugConsole, withTraceExport } from "./trace-export.layer.ts";
@@ -35,6 +35,7 @@ const resolveWithEnv = (env: Readonly<Record<string, string | undefined>>) => {
       Layer.mergeAll(
         ConfigProvider.layer(ConfigProvider.fromUnknown(env)),
         BunServices.layer,
+        BunCrypto.layer,
         stderr.layer,
       ),
     ),
@@ -67,7 +68,7 @@ describe("resolveTraceSettings", () => {
         _tag: "File",
         path: path.join(process.cwd(), "traces", "run.jsonl"),
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("appends the OTLP traces path to a collector base URL", () =>
@@ -177,7 +178,13 @@ const runWithDebugConsole = Effect.fnUntraced(function* (
       : consoled.pipe(withTraceExport({ sink: Option.none() }, {}))
   ).pipe(
     Effect.provide(
-      Layer.mergeAll(BunServices.layer, stderr.layer, mockRuntimeInfo(), debugSettings(debug)),
+      Layer.mergeAll(
+        BunServices.layer,
+        BunCrypto.layer,
+        stderr.layer,
+        mockRuntimeInfo(),
+        debugSettings(debug),
+      ),
     ),
   );
   return stderr.text();

@@ -1,6 +1,7 @@
-import { NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Crypto, DateTime, Effect, FileSystem, Path } from "effect";
+import { DateTime, Effect, FileSystem, Path } from "effect";
+import { SecureRandom } from "effect/crypto";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { runEngine } from "./docker-fixture.ts";
 import {
@@ -74,8 +75,8 @@ describe("test-run Docker volume cleanup", { timeout: 120_000 }, () => {
   it.live("removes exactly the volumes labelled for this run", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const crypto = yield* Crypto.Crypto;
-        const suffix = (yield* crypto.randomUUIDv4).slice(0, 8);
+        const crypto = yield* SecureRandom.SecureRandom;
+        const suffix = (yield* crypto.uuidV4()).slice(0, 8);
         const runId = `run-${suffix}`;
         const otherRunId = `other-run-${suffix}`;
         const owned = `sb-test-run-owned-${suffix}`;
@@ -102,7 +103,7 @@ describe("test-run Docker volume cleanup", { timeout: 120_000 }, () => {
         expect(yield* volumeExists(foreign)).toBe(true);
         expect(yield* volumeExists(unlabelled)).toBe(true);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 });
 
@@ -114,9 +115,9 @@ describe("dead test-run recovery", { timeout: 120_000 }, () => {
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const crypto = yield* Crypto.Crypto;
+          const crypto = yield* SecureRandom.SecureRandom;
           const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-          const suffix = (yield* crypto.randomUUIDv4).slice(0, 8);
+          const suffix = (yield* crypto.uuidV4()).slice(0, 8);
           const deadRunId = `recovery-dead-${suffix}`;
           const liveRunId = `recovery-live-${suffix}`;
           const deadVolume = `sb-recovery-dead-volume-${suffix}`;
@@ -197,6 +198,6 @@ describe("dead test-run recovery", { timeout: 120_000 }, () => {
           expect(yield* volumeExists(unlabelledVolume)).toBe(true);
           expect(yield* containerExists(unlabelledContainer)).toBe(true);
         }),
-      ).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 });

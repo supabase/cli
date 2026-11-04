@@ -1,3 +1,4 @@
+import * as BunCrypto from "@effect/platform-bun/BunCrypto";
 import * as BunServices from "@effect/platform-bun/BunServices";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
@@ -94,6 +95,7 @@ function setup() {
   });
   const dependencies = Layer.mergeAll(
     BunServices.layer,
+    BunCrypto.layer,
     shadow,
     unusedAdapter,
     debug,

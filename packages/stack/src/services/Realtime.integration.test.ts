@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Data, Effect, Layer, Redacted, Ref, Stream } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
@@ -214,7 +214,11 @@ describe("service catalog", () => {
             yield* trace.enter("database", "scope teardown");
           }),
         ).pipe(trace.guard("110 seconds"));
-      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
     { timeout: 120_000 },
   );
 });

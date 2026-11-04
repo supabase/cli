@@ -1,4 +1,5 @@
-import { Crypto, Effect } from "effect";
+import { Effect } from "effect";
+import { Digest } from "effect/crypto";
 import { ArtifactIntegrityError, PreparationError } from "./Errors.ts";
 
 const SHA256 = /^[0-9a-f]{64}$/i;
@@ -25,14 +26,8 @@ export const verifySha256 = Effect.fn("Integrity.verifySha256")(function* (
 ) {
   yield* Effect.gen(function* () {
     const canonical = yield* validateSha256(expected);
-    const crypto = yield* Crypto.Crypto;
-    const digest = yield* crypto
-      .digest("SHA-256", bytes)
-      .pipe(
-        Effect.mapError((cause) =>
-          integrityError("Unable to compute artifact SHA-256", { expected: canonical, cause }),
-        ),
-      );
+    const crypto = yield* Digest.Digest;
+    const digest = yield* crypto.digest(Digest.sha256, bytes);
     const actual = digestHex(digest);
     if (actual !== canonical)
       return yield* integrityError(`expected ${canonical}, got ${actual}`, {

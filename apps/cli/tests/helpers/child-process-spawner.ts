@@ -45,7 +45,9 @@ export function mockChildProcessSpawner(
       ChildProcessSpawner.make((command) =>
         Effect.gen(function* () {
           const cmd = Predicate.isTagged(command, "StandardCommand") ? command.command : "";
-          const args = Predicate.isTagged(command, "StandardCommand") ? command.args : [];
+          const args = Predicate.isTagged(command, "StandardCommand")
+            ? command.args.map(String)
+            : [];
           const record: SpawnRecord = { command: cmd, args };
           yield* opts.beforeSpawn?.(record) ?? Effect.void;
           spawned.push(record);
@@ -132,7 +134,7 @@ export function containerEngineSpawner(engines: {
   const spawner = (delegate?: ChildProcessSpawner.ChildProcessSpawner["Service"]) =>
     ChildProcessSpawner.make((command) => {
       const cmd = Predicate.isTagged(command, "StandardCommand") ? command.command : "";
-      const args = Predicate.isTagged(command, "StandardCommand") ? command.args : [];
+      const args = Predicate.isTagged(command, "StandardCommand") ? command.args.map(String) : [];
       if (cmd !== "docker" && cmd !== "podman")
         return delegate === undefined ? Effect.fail(notFound(cmd)) : delegate.spawn(command);
       spawned.push({ command: cmd, args });

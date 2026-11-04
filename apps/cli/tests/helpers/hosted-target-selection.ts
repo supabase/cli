@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path, Stdio } from "effect";
 
@@ -221,7 +221,7 @@ const hostedLayer = (
 ) =>
   Layer.mergeAll(
     buildTestRuntime(runtime),
-    commandRuntimeLayer(words).pipe(Layer.provide(BunServices.layer)),
+    commandRuntimeLayer(words).pipe(Layer.provide([BunServices.layer, BunCrypto.layer])),
     Layer.succeed(YesFlag, true),
     Layer.succeed(TargetPolicy, { group: "hosted", consent: "yes" }),
     Stdio.layerTest({ args: Effect.succeed(argv) }),

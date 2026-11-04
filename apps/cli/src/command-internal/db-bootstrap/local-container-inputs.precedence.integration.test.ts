@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, it } from "@effect/vitest";
 import { ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect";
 import { ChildProcessSpawner } from "effect/process";
@@ -146,6 +146,7 @@ describe("local container inputs precedence goldens", () => {
 
         const layer = Layer.mergeAll(
           BunServices.layer,
+          BunCrypto.layer,
           cliConfigValuesTestLayer,
           Layer.succeed(ConfigEnvPins, fixture.shellEnv ?? {}),
           mockRuntimeInfo({ platform: "linux" }),

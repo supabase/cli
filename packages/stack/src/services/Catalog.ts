@@ -1,4 +1,5 @@
-import { Crypto, Effect, FileSystem, Path, Ref, Schema, Tuple } from "effect";
+import { Effect, FileSystem, Path, Ref, Schema, Tuple } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
 import { ChildProcessSpawner } from "effect/process";
 import { HttpClient } from "effect/http";
 import { makeContainerRuntime } from "../runtime/Container.ts";
@@ -317,7 +318,8 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
       );
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const digest = yield* Digest.Digest;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const client = yield* HttpClient.HttpClient;
       if (creation.service === "database") {
@@ -362,6 +364,7 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
         fs,
         path,
         crypto,
+        digest,
         client,
         spawner,
         container,

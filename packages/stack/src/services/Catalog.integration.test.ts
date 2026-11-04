@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer, Redacted } from "effect";
 import { selection } from "../../tests/pins.ts";
@@ -42,7 +42,11 @@ describe("service catalog", () => {
         ).pipe(Effect.exit);
         expect(Exit.isFailure(unpinnedDatabase)).toBe(true);
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   );
 
   it.live("rejects Storage creation without a file path", () =>
@@ -63,6 +67,10 @@ describe("service catalog", () => {
         expect(error.operation).toBe("config");
         expect(error.message).toContain("Invalid service creation");
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   );
 });

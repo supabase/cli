@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { PgClient } from "@effect/sql-pg";
 import { describe, expect, it } from "@effect/vitest";
 import { Context, Effect, Exit, FileSystem, Layer, Redacted, Ref, Scope } from "effect";
@@ -106,7 +106,7 @@ const socketRelay = (path: string) =>
     (relay) => Effect.sync(relay.close),
   );
 
-const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+const layer = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp);
 
 describe("LogflareStorage", { timeout: 180_000 }, () => {
   it.live(

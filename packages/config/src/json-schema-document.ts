@@ -9,6 +9,12 @@ const DATA_KEYWORDS = new Set(["default", "examples", "enum", "const"]);
 const SCHEMA_MAP_KEYWORDS = new Set(["properties", "patternProperties"]);
 
 /**
+ * Annotation that keeps a union rendered as its own nested `anyOf` inside an enclosing union, which
+ * effect 4.1 otherwise splices into the parent; the key itself is not published.
+ */
+export const NESTED_UNION_ANNOTATION = "x-nested-union";
+
+/**
  * Renders a published draft-07 JSON Schema document, carrying the `x-secret` marker through and
  * keeping pattern-keyed records open: the generator writes a boolean `additionalProperties` on them
  * (effect 4.0) with no per-schema setting, while the published documents never carried one there.
@@ -25,10 +31,10 @@ export function toPublishedJsonSchemaDocument(
 ) {
   const document = Schema.toJsonSchemaDocument(schema, {
     onExcessProperty: options.onExcessProperty,
-    includeAnnotationKey: (key) => key === "x-secret",
+    includeAnnotationKey: (key) => key === "x-secret" || key === NESTED_UNION_ANNOTATION,
   });
-  const root = openPatternKeyedRecords(document.schema);
-  const definitions = openPatternKeyedRecords(document.definitions);
+  const root = withoutSafeIntegerBounds(normalizeGeneratedSchema(document.schema));
+  const definitions = withoutSafeIntegerBounds(normalizeGeneratedSchema(document.definitions));
   const published = JsonSchema.toDocumentDraft07({
     dialect: "draft-2020-12",
     schema: options.acceptEnvReferences ? acceptEnvReferences(root) : root,
@@ -43,15 +49,29 @@ export function toPublishedJsonSchemaDocument(
   };
 }
 
-function openPatternKeyedRecords<T>(node: T): T {
-  if (Array.isArray(node)) return node.map(openPatternKeyedRecords) as T;
+function normalizeGeneratedSchema<T>(node: T): T {
+  if (Array.isArray(node)) return node.map(normalizeGeneratedSchema) as T;
   if (typeof node !== "object" || node === null) return node;
   const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(node)) out[key] = openPatternKeyedRecords(value);
+  for (const [key, value] of Object.entries(node)) out[key] = normalizeGeneratedSchema(value);
+  delete out[NESTED_UNION_ANNOTATION];
   if (isRecordLike(out) && typeof out["additionalProperties"] === "boolean") {
     delete out["additionalProperties"];
   }
   return (singleObjectAllOf(out) ?? out) as T;
+}
+
+/** Drops the safe-integer bounds effect 4.1 renders for `isInt`, which published schemas never carried. */
+export function withoutSafeIntegerBounds<T>(node: T): T {
+  if (Array.isArray(node)) return node.map(withoutSafeIntegerBounds) as T;
+  if (typeof node !== "object" || node === null) return node;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(node)) out[key] = withoutSafeIntegerBounds(value);
+  if (out["type"] === "integer") {
+    if (out["minimum"] === Number.MIN_SAFE_INTEGER) delete out["minimum"];
+    if (out["maximum"] === Number.MAX_SAFE_INTEGER) delete out["maximum"];
+  }
+  return out as T;
 }
 
 function singleObjectAllOf(node: Record<string, unknown>): Record<string, unknown> | undefined {

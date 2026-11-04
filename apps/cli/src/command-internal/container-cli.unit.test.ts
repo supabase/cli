@@ -30,7 +30,7 @@ function mockSpawner(
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
       const cmd = command._tag === "StandardCommand" ? command.command : "";
-      const args = command._tag === "StandardCommand" ? command.args : [];
+      const args = command._tag === "StandardCommand" ? command.args.map(String) : [];
       spawned.push({ command: cmd, args });
 
       if ((opts.dockerMissing && cmd === "docker") || opts.bothMissing === true) {
