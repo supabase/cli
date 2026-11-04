@@ -114,7 +114,7 @@ it.effect("copies pinned details after a manual refresh evicts their original ro
         pass === 1
           ? emit(first)
           : Effect.forEach(
-              Array.from({ length: 1000 }, (_, index) => index),
+              Array.from({ length: 1100 }, (_, index) => index),
               (index) =>
                 emit({
                   id: `replacement-${index}`,
@@ -129,14 +129,14 @@ it.effect("copies pinned details after a manual refresh evicts their original ro
     expect(yield* Queue.take(ui.screens)).toContain("Log details");
     yield* Queue.offer(ui.input, key("L"));
     let loaded = "";
-    while (!loaded.includes("Newer logs loaded.")) loaded = yield* Queue.take(ui.screens);
+    while (!loaded.includes("1100 new logs loaded.")) loaded = yield* Queue.take(ui.screens);
     yield* Queue.offer(ui.input, key("C"));
     yield* Queue.take(ui.screens);
     expect(decodeRecord(yield* Queue.take(copied))).toEqual(first);
     expect(yield* Queue.take(ui.screens)).toContain("Copied log to clipboard.");
     yield* Queue.offer(ui.input, key("escape"));
     const retained = yield* Queue.take(ui.screens);
-    expect(retained).toContain("replacement-0");
+    expect(retained).toContain("replacement-100");
     expect(retained).not.toContain("full first log");
     yield* Queue.offer(ui.input, key("q"));
     yield* Fiber.join(ui.fiber);
@@ -160,7 +160,7 @@ it.effect("reports copy failure visibly and permits navigation and retry", () =>
     yield* Queue.take(ui.screens);
     const footer = (yield* Queue.take(ui.screens)).split("\r\n").at(-1);
     expect(footer).toContain("Install wl-clipboard");
-    expect(footer).toContain("L newer");
+    expect(footer).toContain("L load more");
     expect(footer).toContain("C copy · q quit");
     yield* Queue.offer(ui.input, key("up"));
     expect(yield* Queue.take(ui.screens)).toContain("> Nov 03 - 16:51:32 UTC");
@@ -192,7 +192,7 @@ it.effect("ignores empty copy and cancels pending clipboard work on quit", () =>
     expect(copies).toBe(0);
     yield* Queue.offer(ui.input, key("L"));
     let loaded = "";
-    while (!loaded.includes("Newer logs loaded.")) loaded = yield* Queue.take(ui.screens);
+    while (!loaded.includes("1 new log loaded.")) loaded = yield* Queue.take(ui.screens);
     yield* Queue.offer(ui.input, key("c"));
     yield* Queue.take(ui.screens);
     yield* Deferred.await(ready);

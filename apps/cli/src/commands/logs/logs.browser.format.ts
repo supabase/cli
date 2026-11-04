@@ -293,11 +293,11 @@ export function renderBrowser(
       : "Log details";
   const keys =
     state.detail === undefined
-      ? `↑/↓ select · Enter details · ${mode === "replace" ? "L rerun" : "L newer"} · C copy · q quit`
-      : `↑/↓ scroll · Esc back · ${mode === "replace" ? "L rerun" : "L newer"} · C copy · q quit`;
+      ? `↑/↓ select · Enter details · ${mode === "replace" ? "L rerun" : "L load more"} · C copy · q quit`
+      : `↑/↓ scroll · Esc back · ${mode === "replace" ? "L rerun" : "L load more"} · C copy · q quit`;
   const lines = [heading, requestedWindow(state.window), ...body];
   while (lines.length < height - 1) lines.push("");
-  const compact = `${mode === "replace" ? "L rerun" : "L newer"} · C copy · q quit`;
+  const compact = `${mode === "replace" ? "L rerun" : "L load more"} · C copy · q quit`;
   const fullNotice = clip(state.notice, width);
   const help = stringWidth(fullNotice) + 3 + stringWidth(keys) <= width ? keys : compact;
   const notice = clip(state.notice, Math.max(0, width - stringWidth(help) - 3));

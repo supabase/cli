@@ -100,7 +100,7 @@ export const browseLogs = Effect.fn("Logs.browser")(function* <E>(
               ? "Loading logs…"
               : session.mode === "replace"
                 ? "Rerunning query…"
-                : "Loading newer logs…",
+                : "Loading more logs…",
         };
         let staged: BrowserState = initialBrowserState;
         yield* session
@@ -145,6 +145,7 @@ export const browseLogs = Effect.fn("Logs.browser")(function* <E>(
               };
             } else {
               const initial = state.window === undefined;
+              const loadedCount = event.result.value.rows.length + event.result.value.dropped;
               state = applyBrowserBatch(state, event.result.value, session.mode);
               state = {
                 ...state,
@@ -152,11 +153,9 @@ export const browseLogs = Effect.fn("Logs.browser")(function* <E>(
                 complete: true,
                 notice: initial
                   ? ""
-                  : event.result.value.rows.length === 0
-                    ? "No newer logs."
-                    : session.mode === "replace"
-                      ? "Query reloaded."
-                      : "Newer logs loaded.",
+                  : session.mode === "replace"
+                    ? "Query reloaded."
+                    : `${loadedCount} new ${loadedCount === 1 ? "log" : "logs"} loaded.`,
               };
             }
             break;

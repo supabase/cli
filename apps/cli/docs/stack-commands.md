@@ -276,7 +276,7 @@ lint transaction (always rolled back). It does not launch a client binary.
 
 `supabase logs` reads retained stdout/stderr from composition members and `gateway`
 request lines from the shared API port. Interactive terminals open a browser; press `L`
-to load newer records. Pipes and machine output perform one finite read and exit.
+to load more records. Pipes and machine output perform one finite read and exit.
 
 Select `--stack <name>` or `--stack-id <id>`. Repeat `--service <kind>` to select
 services, use `--service postgres` for the database, or `--resource <instance-id>`

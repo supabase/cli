@@ -40,7 +40,7 @@ When enabled, the CLI exposes:
 
 Read Compute logs with `supabase logs --remote --service compute`. Use
 `--resource <name>` to select an application and `--kind app|requests|builds` to
-select its log stream. Press `L` in the interactive browser to load newer logs.
+select its log stream. Press `L` in the interactive browser to load more logs.
 
 Compute source directories live under `supabase/compute/<name>/`.
 

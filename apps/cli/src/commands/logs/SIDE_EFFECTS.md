@@ -50,7 +50,7 @@ A failed interactive reload shows a notice and leaves the browser usable.
 
 `--output-format text|json|stream-json` selects native output. `-o/--output` is rejected before reads or target resolution.
 
-Interactive text requires terminal stdin and stdout with interaction allowed. The browser reserves two header rows for count/status and the requested window. It shows compact UTC timestamps, service names, and messages. Color settings apply; a selection marker remains visible without color. Up/down selects rows, Enter opens scrollable details, Escape returns, C copies, L loads newer logs, and q exits. Resize preserves selection. Selection and viewport stay stable after a reload where retention permits. Open details stay pinned to their record.
+Interactive text requires terminal stdin and stdout with interaction allowed. The browser reserves two header rows for count/status and the requested window. It shows compact UTC timestamps, service names, and messages. Color settings apply; a selection marker remains visible without color. Up/down selects rows, Enter opens scrollable details, Escape returns, C copies, L loads more logs, and q exits. Resize preserves selection. Selection and viewport stay stable after a reload where retention permits. Open details stay pinned to their record.
 
 Filtered reads retain up to 1000 rows and approximately 8 MiB, with visible discarded-row counts. A single oversized record remains complete and is marked oversized. SQL preserves returned row order. Empty results keep the interactive browser open for another load. Raw input, resize listeners, cursor, screen, and background work are scoped to the viewer and restored on exit or failure.
 

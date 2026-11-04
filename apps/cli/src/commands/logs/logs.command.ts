@@ -140,7 +140,7 @@ export const logsCommandFor = (localEnabled: boolean, computeEnabled = false) =>
   Command.make("logs", config).pipe(
     Command.annotate(OptionalSubcommand, true),
     Command.withDescription(
-      "Browse local or hosted logs. Arrows select, Enter details, C copies, L loads newer logs, and q quits. Custom SQL uses L to rerun. Pipes and machine output read once.",
+      "Browse local or hosted logs. Arrows select, Enter details, C copies, L loads more logs, and q quits. Custom SQL uses L to rerun. Pipes and machine output read once.",
     ),
     withPermissions(readPermissions(logsReadFlags)),
     Command.withHandler((flags) =>

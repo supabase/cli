@@ -87,10 +87,10 @@ it.effect(
       yield* Queue.offer(ui.input, key("up"));
       yield* ui.frame("> Jan 01 - 00:00:00 UTC — row-18");
       yield* Queue.offer(ui.input, key("L"));
-      const loading = yield* ui.frame("Loading newer logs");
+      const loading = yield* ui.frame("Loading more logs");
       expect(loading).not.toContain("row-29");
       yield* Queue.offer(ui.input, key("l"));
-      yield* ui.frame("Loading newer logs");
+      yield* ui.frame("Loading more logs");
       expect(calls).toBe(2);
       yield* Queue.offer(ui.input, key("up"));
       yield* ui.frame("> Jan 01 - 00:00:00 UTC — row-17");
@@ -99,7 +99,7 @@ it.effect(
       ui.resize(100, 8);
       yield* ui.frame("Log details");
       yield* Deferred.succeed(release, undefined);
-      expect(yield* ui.frame("Newer logs loaded.")).toContain("row-17");
+      expect(yield* ui.frame("10 new logs loaded.")).toContain("row-17");
       yield* Queue.offer(ui.input, key("escape"));
       const refreshed = yield* ui.frame("Enter details");
       expect(refreshed).toContain("> Jan 01 - 00:00:00 UTC — row-17");
@@ -167,13 +167,15 @@ it.effect("keeps an empty result open for L and preserves raw Ctrl-C exit130", (
       load: (_end, emit) =>
         Effect.gen(function* () {
           calls++;
-          if (calls > 1) yield* emit({ message: "arrived" });
+          if (calls > 2) yield* emit({ message: "arrived" });
           return window;
         }),
     });
     expect(yield* ui.frame(" | ready")).toContain("No log rows.");
     yield* Queue.offer(ui.input, key("L"));
-    expect(yield* ui.frame("Newer logs loaded.")).toContain("arrived");
+    expect(yield* ui.frame("0 new logs loaded.")).toContain("No log rows.");
+    yield* Queue.offer(ui.input, key("L"));
+    expect(yield* ui.frame("1 new log loaded.")).toContain("arrived");
     yield* Queue.offer(ui.input, key("c", true));
     yield* Fiber.join(ui.fiber);
     expect(ui.control.exitCode).toBe(130);
