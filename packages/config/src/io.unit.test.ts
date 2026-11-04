@@ -1113,6 +1113,101 @@ major_version = 16
       }),
     ));
 
+  test("saving over a commented config.jsonc keeps comments, updates changed values and removes dropped keys cleanly", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const jsoncPath = join(cwd, "supabase", "config.jsonc");
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          jsoncPath,
+          `{
+  // project identity
+  "project_id": "old_ref", // renamed below
+  /* database settings */
+  "db": {
+    "pooler": {
+      "enabled": true, // keep pooling on
+      "pool_mode": "session",
+    },
+  },
+}
+`,
+        );
+
+        const saved = yield* saveCliConfig({ cwd, config: sampleConfig });
+
+        expect(saved.path).toBe(jsoncPath);
+        expect(yield* fs.readFileString(jsoncPath)).toBe(`{
+  // project identity
+  "project_id": "ref_123", // renamed below
+  /* database settings */
+  "db": {
+    "pooler": {
+      "enabled": true, // keep pooling on
+    },
+  },
+}
+`);
+        const loaded = yield* loadCliConfig(cwd);
+        expect(loaded?.config).toEqual(sampleConfig);
+      }),
+    ));
+
+  test("removing the last key of an object in a strict config.json keeps the file valid JSON", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const jsonPath = yield* configJsonPath(cwd);
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          jsonPath,
+          `{
+  "project_id": "ref_123",
+  "db": {
+    "pooler": {
+      "enabled": true,
+      "pool_mode": "session"
+    }
+  }
+}
+`,
+        );
+
+        yield* saveCliConfig({ cwd, config: sampleConfig });
+
+        const written = yield* fs.readFileString(jsonPath);
+        expect(yield* decodeJson(written)).toMatchObject({
+          project_id: "ref_123",
+          db: { pooler: { enabled: true } },
+        });
+        expect(written).not.toContain("pool_mode");
+      }),
+    ));
+
+  test("saving TOML over a config.toml keeps its leading #:schema directive first", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const tomlPath = yield* configTomlPath(cwd);
+        const directive = "#:schema https://example.com/config.schema.json";
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(tomlPath, `${directive}\nproject_id = "old_ref"\n`);
+
+        yield* saveCliConfig({ cwd, config: sampleConfig });
+
+        const written = yield* fs.readFileString(tomlPath);
+        expect(written.split("\n")[0]).toBe(directive);
+        expect(written).toContain('project_id = "ref_123"');
+      }),
+    ));
+
   test("preserves the discovered project format when saving from a nested cwd", () =>
     runConfigEffect(
       Effect.gen(function* () {

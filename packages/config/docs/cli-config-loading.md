@@ -160,6 +160,11 @@ these rules:
 - otherwise default new writes to `supabase/config.json`
 - if both `config.json` and `config.jsonc` exist, saving fails with `CliConfigFileConflictError`
 - callers can still force a format explicitly via `SaveCliConfigOptions.format`
+- when the target is an existing JSON/JSONC file, the save applies minimal `jsonc-parser` edits towards
+  the regenerated document so comments and key order survive, and falls back to the regenerated text
+  if the edited text does not re-parse to exactly that document; new files and format switches
+  always write the regenerated text
+- a TOML save keeps the existing file's first-line `#:schema <url>` directive
 - after writing, it removes every other config file among `config.json`, `config.jsonc` and
   `config.toml`, so a project never ends up with more than one after a save
 

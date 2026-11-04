@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { Clock, Effect, FileSystem, Path, Predicate, Redacted } from "effect";
+import { Clock, Effect, FileSystem, Option, Path, Predicate, Redacted } from "effect";
 import * as SmolToml from "smol-toml";
 import { CliConfigSchema, type CliConfig } from "./base.ts";
 import {
@@ -12,6 +12,7 @@ import {
   type CliConfigValueSource,
   type SaveCliConfigOptions,
 } from "./config-document.ts";
+import { updateJsonDocument } from "./config-edit.ts";
 import type { ConfigFormat } from "./config-format.ts";
 import {
   CliConfigFileConflictError,
@@ -818,6 +819,10 @@ const readExistingSchemaRef = Effect.fnUntraced(function* (cwd: string) {
   return getSchemaRef(document);
 });
 
+const SCHEMA_DIRECTIVE_LINE = /^#:schema[ \t]+\S+(?=\r?\n|$)/;
+
+/** Saves `config`; an existing JSON/JSONC file is edited in place so comments survive, and a TOML
+ * file keeps its `#:schema` directive. */
 export const saveCliConfig = Effect.fn("CliConfig.save")(function* (options: SaveCliConfigOptions) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -829,10 +834,23 @@ export const saveCliConfig = Effect.fn("CliConfig.save")(function* (options: Sav
       ? undefined
       : yield* readExistingSchemaRef(baseCwd);
   const schemaRef = options.schemaRef ?? existingSchemaRef;
-  const content =
+  let content =
     format === "json"
       ? encodeCliConfigToJsonDocument(options.config, schemaRef)
       : encodeCliConfigToTomlDocument(options.config, schemaRef);
+  const existingText = (yield* fs.exists(filePath))
+    ? yield* fs.readFileString(filePath).pipe(Effect.option)
+    : Option.none<string>();
+  if (Option.isSome(existingText)) {
+    if (format === "json") {
+      content = updateJsonDocument(existingText.value, parseJsonc(content)) ?? content;
+    } else {
+      const directive = SCHEMA_DIRECTIVE_LINE.exec(existingText.value)?.[0];
+      if (directive !== undefined && !content.startsWith("#:schema")) {
+        content = `${directive}\n${content}`;
+      }
+    }
+  }
 
   yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
   yield* writeFileAtomic(filePath, content);

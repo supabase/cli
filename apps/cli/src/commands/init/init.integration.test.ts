@@ -212,6 +212,66 @@ describe("init", () => {
     });
   });
 
+  it.effect.each([
+    { existing: ["config.json", "config.jsonc", "config.toml"], named: "config.json" },
+    { existing: ["config.jsonc", "config.toml"], named: "config.jsonc" },
+    { existing: ["config.jsonc"], named: "config.jsonc" },
+  ])("names $named when $existing already exist", ({ existing, named }) => {
+    const tempDir = tempRoot.current;
+
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(tempDir, "supabase"), { recursive: true });
+      for (const file of existing) {
+        yield* fs.writeFileString(path.join(tempDir, "supabase", file), "{}\n");
+      }
+      const { layer } = setup(tempDir);
+
+      const exit = yield* init({
+        interactive: false,
+        useOrioledb: false,
+        force: false,
+        withVscodeWorkspace: false,
+        withVscodeSettings: false,
+        withIntellijSettings: false,
+      }).pipe(Effect.provide(layer), Effect.exit);
+
+      expect(findFailure(exit)).toMatchObject({
+        message: `failed to create config file: open supabase/${named}: file exists`,
+      });
+      for (const file of existing) {
+        expect(yield* fs.readFileString(path.join(tempDir, "supabase", file))).toBe("{}\n");
+      }
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.effect("--force writes config.toml and removes config.json and config.jsonc", () => {
+    const tempDir = tempRoot.current;
+
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(tempDir, "supabase"), { recursive: true });
+      yield* fs.writeFileString(path.join(tempDir, "supabase", "config.json"), "{}\n");
+      yield* fs.writeFileString(path.join(tempDir, "supabase", "config.jsonc"), "{}\n");
+      const { layer } = setup(tempDir);
+
+      yield* init({
+        interactive: false,
+        useOrioledb: false,
+        force: true,
+        withVscodeWorkspace: false,
+        withVscodeSettings: false,
+        withIntellijSettings: false,
+      }).pipe(Effect.provide(layer));
+
+      expect(yield* fs.exists(path.join(tempDir, "supabase", "config.json"))).toBe(false);
+      expect(yield* fs.exists(path.join(tempDir, "supabase", "config.jsonc"))).toBe(false);
+      expect(yield* readTextFile(tempDir, "supabase", "config.toml")).toContain("major_version");
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
   it.effect("renders the Windows form of the already-exists error on win32", () => {
     const tempDir = tempRoot.current;
 

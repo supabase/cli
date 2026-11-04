@@ -1235,7 +1235,7 @@ function lineEndAfterTrailer(
  * same-line trailing comment onto the new key; this appends after the line instead. */
 function insertAfterLastProperty(
   text: string,
-  leaf: LeafEdit,
+  leaf: { readonly path: ReadonlyArray<string>; readonly value: unknown },
   formatting: FormattingOptions,
 ): string | undefined {
   const root = parseTree(text, undefined, { allowTrailingComma: true });
@@ -1272,6 +1272,88 @@ function insertAfterLastProperty(
     insertion +
     text.slice(trailer.end)
   );
+}
+
+/** Edits `source` towards `target` with minimal span edits so comments survive; undefined when
+ * the result cannot be verified. */
+export function updateJsonDocument(source: string, target: unknown): string | undefined {
+  try {
+    const current = parseJsonc(source);
+    if (!isPlainRecord(current) || !isPlainRecord(target)) {
+      return undefined;
+    }
+    const formattingOptions = detectJsonFormatting(source);
+    let text = source;
+    const sync = (
+      path: ReadonlyArray<string>,
+      from: Readonly<Record<string, unknown>>,
+      to: Readonly<Record<string, unknown>>,
+    ): void => {
+      for (const key of Object.keys(from)) {
+        if (!Object.hasOwn(to, key)) {
+          text =
+            removeProperty(text, [...path, key]) ??
+            applyJsonEditsToText(
+              text,
+              modify(text, [...path, key], undefined, { formattingOptions }),
+            );
+        }
+      }
+      for (const [key, value] of Object.entries(to)) {
+        const keyPath = [...path, key];
+        const existing = Object.hasOwn(from, key) ? from[key] : undefined;
+        if (!Object.hasOwn(from, key)) {
+          text =
+            insertAfterLastProperty(text, { path: keyPath, value }, formattingOptions) ??
+            applyJsonEditsToText(text, modify(text, keyPath, value, { formattingOptions }));
+        } else if (isPlainRecord(existing) && isPlainRecord(value)) {
+          sync(keyPath, existing, value);
+        } else if (!deepEqualValue(existing, value)) {
+          text = applyJsonEditsToText(text, modify(text, keyPath, value, { formattingOptions }));
+        }
+      }
+    };
+    sync([], current, target);
+    return deepEqualValue(parseJsonc(text), target) ? text : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** `modify` removes from the end of the previous value, which moves a trailing comment onto the
+ * wrong key; this removes the property's own line and keeps the previous key's separator strict. */
+function removeProperty(text: string, path: ReadonlyArray<string>): string | undefined {
+  const root = parseTree(text, undefined, { allowTrailingComma: true });
+  const property = root === undefined ? undefined : findNodeAtLocation(root, [...path])?.parent;
+  const object = property?.parent;
+  if (property?.type !== "property" || object?.type !== "object" || object.children === undefined) {
+    return undefined;
+  }
+  const lineStart = text.lastIndexOf("\n", property.offset - 1) + 1;
+  if (!/^[ \t]*$/.test(text.slice(lineStart, property.offset))) {
+    return undefined;
+  }
+  const trailer = lineEndAfterTrailer(text, property.offset + property.length);
+  if (trailer === null) {
+    return undefined;
+  }
+  const eolLength = text.startsWith("\r\n", trailer.end) ? 2 : text[trailer.end] === "\n" ? 1 : 0;
+  const removed = text.slice(0, lineStart) + text.slice(trailer.end + eolLength);
+  const prev = object.children[object.children.length - 2];
+  if (
+    object.children[object.children.length - 1] !== property ||
+    trailer.hadComma ||
+    prev === undefined
+  ) {
+    return removed;
+  }
+  let commaPos = prev.offset + prev.length;
+  while (text[commaPos] === " " || text[commaPos] === "\t") {
+    commaPos++;
+  }
+  return text[commaPos] === ","
+    ? removed.slice(0, commaPos) + removed.slice(commaPos + 1)
+    : undefined;
 }
 
 function applyJsonEdits(source: string, edits: ReadonlyArray<ConfigEdit>): ConfigEditOutcome {

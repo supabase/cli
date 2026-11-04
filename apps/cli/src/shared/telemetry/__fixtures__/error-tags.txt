@@ -58,7 +58,6 @@ ComputeConfigWriteUnsafeError
 ComputeDirectoryExistsError
 ComputeEnvNotSupportedError
 ComputeFollowNotSupportedError
-ComputeJsonConfigUnsupportedError
 ComputeLogsQueryFailedError
 ComputeLogsRateLimitedError
 ComputeLogsUsageExceededError

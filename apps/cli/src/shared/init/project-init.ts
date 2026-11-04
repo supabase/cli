@@ -210,10 +210,12 @@ const ensureSupabaseGitignore = Effect.fnUntraced(function* (cwd: string) {
 /**
  * Scaffolds the local project files (config.toml, .gitignore, optional IDE
  * settings). This owns the mechanical filesystem work only — it does not
- * decide how an already-initialized project is reported. When
- * `config.toml` already exists and `force` is not set it short-circuits
- * with `created: false` and writes nothing, leaving the caller free to
- * treat that as a hard error or a graceful no-op.
+ * decide how an already-initialized project is reported. When a
+ * `config.json`, `config.jsonc` or `config.toml` already exists and `force` is
+ * not set it short-circuits with `created: false` and the existing file's path,
+ * leaving the caller free to treat that as a hard error or a graceful no-op.
+ * With `force`, the JSON files are removed so the fresh `config.toml` is the
+ * one the loader reads.
  */
 export const initProject = Effect.fnUntraced(function* (options: ProjectInitOptions) {
   const fs = yield* FileSystem.FileSystem;
@@ -223,15 +225,24 @@ export const initProject = Effect.fnUntraced(function* (options: ProjectInitOpti
 
   const supabaseDir = path.join(options.cwd, "supabase");
   const configTomlPath = path.join(supabaseDir, "config.toml");
-  const existingToml = yield* fs.exists(configTomlPath);
+  const jsonConfigPaths = ["config.json", "config.jsonc"].map((name) =>
+    path.join(supabaseDir, name),
+  );
 
-  if (existingToml && !options.force) {
-    return { created: false, configPath: configTomlPath };
+  if (!options.force) {
+    for (const candidate of [...jsonConfigPaths, configTomlPath]) {
+      if (yield* fs.exists(candidate)) {
+        return { created: false, configPath: candidate };
+      }
+    }
   }
 
   const projectId = sanitizeProjectId(path.basename(options.cwd)) || "supabase";
 
   yield* fs.makeDirectory(supabaseDir, { recursive: true, mode: INIT_DIR_MODE });
+  for (const jsonConfigPath of jsonConfigPaths) {
+    yield* fs.remove(jsonConfigPath, { force: true });
+  }
   yield* fs.writeFileString(
     configTomlPath,
     renderCliConfigTemplate(projectId, options.useOrioledb, options.experimentalStack === true),
