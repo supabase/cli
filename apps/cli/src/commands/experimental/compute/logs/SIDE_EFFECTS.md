@@ -172,4 +172,4 @@ preserved so a stack trace survives intact.
 
 ## Deprecation
 
-The command prints a warning on stderr before reading logs. It names `supabase logs tail --remote --service compute --resource <name> --no-follow` as the replacement and v4 as the removal version. Existing flags, history defaults, follow defaults, and output remain unchanged.
+The command prints a warning on stderr before reading logs. It names `supabase logs --remote --service compute --resource <name>` as the replacement and v4 as the removal version. Existing flags, history defaults, follow defaults, and output remain unchanged.

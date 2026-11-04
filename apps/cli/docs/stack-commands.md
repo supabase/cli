@@ -274,26 +274,28 @@ lint transaction (always rolled back). It does not launch a client binary.
 
 ## Reading stack logs
 
-`supabase logs tail` prints retained stdout/stderr from composition members,
-plus `gateway` request lines from the shared API port, then follows new lines until
-interrupted. Add `--no-follow` to exit after history. Select `--stack <name>` or
-`--stack-id <id>`; repeat `--service <kind>` to select services, use
-`--service postgres` for the database, or `--resource <instance-id>` for one instance.
-`--service gateway` reads only request lines. History works while the stack is
-stopped; following requires a running owner and fails before printing without one.
-Neither mode starts an owner or service, and Ctrl-C leaves services running.
+`supabase logs` reads retained stdout/stderr from composition members and `gateway`
+request lines from the shared API port. Interactive terminals open a browser; press `L`
+to load newer records. Pipes and machine output perform one finite read and exit.
 
-`--tail N` (default 100) keeps the newest lines across selected services. `--since`
+Select `--stack <name>` or `--stack-id <id>`. Repeat `--service <kind>` to select
+services, use `--service postgres` for the database, or `--resource <instance-id>`
+for one instance. `--service gateway` reads only request lines. Reads work while
+the stack is stopped and never start an owner or service.
+
+`--limit N` (default 100, maximum 1000) selects the initial newest lines. `--since`
 accepts a duration (`10m`, `1h30m`), an ISO-8601 time, or `start` for each service's
-latest launch; the default is the last hour. Text aligns service labels, shows
-launches and lost output as separators, strips terminal control sequences, and
-notes on stderr when the tail hides older lines. For automation, use
-`--output-format stream-json`: `log-entry` events contain `timestamp`, `service`,
-`instance_id`, `stream`, `line`, `source` (`history` or `live`), and the retained
-record in `data`. Markers are `log-marker` events with `kind` and, for lost output,
-`count`, plus their retained record in `data`. `--output-format json --no-follow`
-prints retained history as one array. Missing stacks, unmatched services, and
-following without an owner fail with status 1; interruption exits 130.
+latest launch. The default is the last hour. The requested lower bound stays fixed
+when you load newer logs, and the header shows the captured end of each successful
+load. Failed loads preserve the displayed rows and window.
+
+Use `--output-format json` for an array of retained records, or `stream-json` for
+`log-entry` and `log-marker` events. Each event's `data` preserves the retained
+record, including instance IDs, launch IDs, and positions. Missing stacks and
+unmatched services fail with status 1. Browser interruption exits 130.
+
+The deprecated `supabase stack logs` keeps its existing `--tail` and `--follow`
+behavior until removal in v4.
 
 ## Data and configuration
 
@@ -440,7 +442,7 @@ unavailable fails with `StackStorageUnavailableError`, guiding the user to run `
 status`/`supabase stack restart`, or `supabase start` when the stack has never been configured.
 Missing Storage HTTP endpoints fail with `StackStorageCapabilityError`, as do other Storage
 capability failures. A stack-gateway 502/503 encountered while Storage activates is reported as
-`StackStorageCapabilityError` guiding the user to `supabase logs tail --service storage --no-follow` then `supabase stack
+`StackStorageCapabilityError` guiding the user to `supabase logs --service storage` then `supabase stack
 restart`, not as a raw status body — but only for a local target; a `--remote` failure passes
 through unchanged. All of these failures exit `1` for
 `storage`/`seed buckets`, and no HTTP

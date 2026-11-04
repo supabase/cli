@@ -82,4 +82,4 @@ contents are not custom telemetry properties. Telemetry flushes on every exit to
 
 ## Deprecation
 
-The command prints a warning on stderr before reading logs. It names `supabase logs tail --local --no-follow` as the replacement and v4 as the removal version. Existing flags, history defaults, follow defaults, and output remain unchanged.
+The command prints a warning on stderr before reading logs. It names `supabase logs` as the replacement and v4 as the removal version. Existing flags, history defaults, follow defaults, and output remain unchanged.
