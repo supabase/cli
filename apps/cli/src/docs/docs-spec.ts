@@ -1,3 +1,4 @@
+import { hasOptionalSubcommand } from "../shared/output/optional-subcommand-usage.ts";
 import { Option } from "effect";
 import { stringify } from "yaml";
 import { GlobalFlag } from "effect/cli";
@@ -337,7 +338,8 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
     const docId = commandPath.join("-");
     const children = docsVisibleChildren(command);
     const internals = commandInternals(command);
-    const isLeaf = children.length === 0;
+    const optionalSubcommand = hasOptionalSubcommand(command);
+    const isExecutable = children.length === 0 || optionalSubcommand;
     emittedIds.add(docId);
 
     const overlayPath = docsOverlayPath(commandPath);
@@ -348,7 +350,7 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
     );
 
     const flags: Array<DocsFlag> = [];
-    if (isLeaf) {
+    if (isExecutable) {
       const declared = flagDocsFor(commandPath, internals.config.flags);
       const declaredIds = new Set(declared.map((flag) => flag.id));
       const extraFlags = DOCS_EXTRA_FLAGS[docId];
@@ -381,7 +383,7 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
     }
 
     let usage: string | undefined;
-    if (isLeaf) {
+    if (isExecutable) {
       const argOverride = DOCS_ARG_OVERRIDES[docId];
       if (argOverride !== undefined) consumedArgOverrideIds.add(docId);
       const argUsages =
@@ -390,7 +392,12 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
           : internals.config.arguments
               .map((param) => docsArgumentUsage(commandPath, param))
               .filter((part) => part !== undefined);
-      usage = [...commandPath, ...argUsages, "[flags]"].join(" ");
+      usage = [
+        ...commandPath,
+        ...argUsages,
+        ...(optionalSubcommand ? ["[subcommand]"] : []),
+        "[flags]",
+      ].join(" ");
     }
 
     const tags = DOCS_TAGS[docId];

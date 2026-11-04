@@ -296,14 +296,26 @@ describe("buildDocsSpec", () => {
     expect(output?.accepted_values?.map((value) => value.id)).toEqual(["json", "table", "csv"]);
   });
 
-  it.each(["query", "sources", "tail"])(
+  it.each(["supabase-logs", "supabase-logs-sources"])(
     "keeps legacy output off the native logs %s page",
-    (leaf) => {
-      const command = builtSpec().byId.get(`supabase-logs-${leaf}`);
+    (id) => {
+      const command = builtSpec().byId.get(id);
       expect(command).toBeDefined();
       expect(command?.flags.some((flag) => flag.id === "output")).toBe(false);
     },
   );
+
+  it("documents the executable logs root alongside its source catalog", () => {
+    const { byId } = builtSpec();
+    const logs = byId.get("supabase-logs");
+    expect(logs?.usage).toBe("supabase logs [subcommand] [flags]");
+    expect(logs?.flags.map((flag) => flag.id)).toEqual(
+      expect.arrayContaining(["sql", "file", "limit", "since", "from", "to", "service"]),
+    );
+    expect(byId.has("supabase-logs-sources")).toBe(true);
+    expect(byId.has("supabase-logs-query")).toBe(false);
+    expect(byId.has("supabase-logs-tail")).toBe(false);
+  });
 
   it("quotes YAML 1.1 boolean-like scalars in the serialized spec", () => {
     const { spec } = builtSpec();

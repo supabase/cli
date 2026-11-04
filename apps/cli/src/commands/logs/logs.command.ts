@@ -120,29 +120,29 @@ const readPermissions = (flags: ReadonlyArray<string>) =>
     branchResolution,
   );
 
+const logsReadFlags = [
+  "stack",
+  "stack-id",
+  "service",
+  "resource",
+  "kind",
+  "level",
+  "search",
+  "since",
+  "from",
+  "to",
+  "limit",
+  "sql",
+  "file",
+];
+
 export const logsCommandFor = (localEnabled: boolean, computeEnabled = false) =>
   Command.make("logs", config).pipe(
     Command.annotate(OptionalSubcommand, true),
     Command.withDescription(
       "Browse local or hosted logs. Arrows select, Enter details, C copies, L loads newer logs, and q quits. Custom SQL uses L to rerun. Pipes and machine output read once.",
     ),
-    withPermissions(
-      readPermissions([
-        "stack",
-        "stack-id",
-        "service",
-        "resource",
-        "kind",
-        "level",
-        "search",
-        "since",
-        "from",
-        "to",
-        "limit",
-        "sql",
-        "file",
-      ]),
-    ),
+    withPermissions(readPermissions(logsReadFlags)),
     Command.withHandler((flags) =>
       logs(flags, localEnabled, computeEnabled).pipe(
         withCommandTelemetry({ flags, config, outputFormats: GLOBAL_OUTPUT_FORMATS }),
@@ -168,7 +168,7 @@ export const logsCommandFor = (localEnabled: boolean, computeEnabled = false) =>
         ),
         withPermissions(
           compose(
-            { operations: [], noApiEffectFlags: ["stack", "stack-id", "service"] },
+            { operations: [], noApiEffectFlags: logsReadFlags },
             projectRefPicker,
             branchResolution,
           ),
