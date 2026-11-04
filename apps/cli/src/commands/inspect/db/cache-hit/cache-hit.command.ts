@@ -20,7 +20,7 @@ export const inspectDbCacheHitCommand = makeCommand("cache-hit", INSPECT_DB_FLAG
   Command.withShortDescription("Show cache hit rates (deprecated)"),
   withDocs({
     category: "inspect",
-    deprecated: { replacement: "supabase inspect db db-stats", removedIn: "v3" },
+    deprecated: { replacement: "supabase inspect db db-stats" },
   }),
   Command.withExamples([
     {

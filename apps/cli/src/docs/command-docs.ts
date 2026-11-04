@@ -59,7 +59,7 @@ export interface CommandDocs {
   /** The command requires `--experimental`. */
   readonly experimental?: boolean;
   /** The command is kept for compatibility and left out of the published reference. */
-  readonly deprecated?: { readonly replacement: string; readonly removedIn: string };
+  readonly deprecated?: { readonly replacement: string };
 }
 
 /** Context key under which a command's docs metadata is stored in `Command.annotations`. */

@@ -99,19 +99,23 @@ const docsFor = (
 ): ParamDocs => {
   const hasDefault = "default" in spec;
   const isOptional = spec.optional === true || hasDefault;
-  const documentedDefault =
-    spec.docs?.default ?? (hasDefault ? displayDefault(name, spec.default) : undefined);
-  return {
+  const docs: ParamDocs = {
     kind,
     name,
     required:
       spec.docs?.required === true ||
       (!isOptional && (variadicMin === undefined || variadicMin > 0)),
-    ...(documentedDefault === undefined ? {} : { default: documentedDefault }),
     hidden: spec.hidden === true,
     ...(variadicMin === undefined ? {} : { variadicMin }),
     ...(spec.metavar === undefined ? {} : { metavar: spec.metavar }),
   };
+  if (spec.docs?.default !== undefined) return { ...docs, default: spec.docs.default };
+  if (!hasDefault) return docs;
+  // Formatted when the reference reads it, so an undisplayable default never blocks CLI startup.
+  return Object.defineProperty(docs, "default", {
+    enumerable: true,
+    get: () => displayDefault(name, spec.default),
+  });
 };
 
 const withPresence = <Kind extends Param.ParamKind>(
