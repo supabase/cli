@@ -137,7 +137,13 @@ const runProbes = (baseUrl: string, probes: ReadonlyArray<Probe>) =>
         probe: probe.name,
         status: response.status,
         ...Object.fromEntries(
-          recordedHeaders.map((name) => [name, response.headers[name] ?? null]),
+          recordedHeaders
+            // PostgREST, not the gateway, sets expose-headers on REST responses.
+            .filter(
+              (name) =>
+                !(probe.path.startsWith("/rest/") && name === "access-control-expose-headers"),
+            )
+            .map((name) => [name, response.headers[name] ?? null]),
         ),
       };
     }),

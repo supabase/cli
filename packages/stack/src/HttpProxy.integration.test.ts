@@ -755,6 +755,8 @@ it.live(
         const backend = createServer((incoming, response) => {
           if (incoming.headers.origin === "https://app.example.com")
             response.setHeader("access-control-allow-origin", "https://app.example.com");
+          const vary = incoming.headers["x-backend-vary"];
+          if (typeof vary === "string") response.setHeader("vary", vary);
           response.statusCode = incoming.method === "OPTIONS" ? 403 : 200;
           response.end(incoming.method);
         });
@@ -818,6 +820,14 @@ it.live(
         );
         expect(originless.headers["access-control-allow-origin"]).toBe("*");
         expect(originless.headers["vary"]).toBe("Origin");
+        const merged = yield* send("POST", "/rest/v1/todos", "https://other.example.com", {
+          "x-backend-vary": "accept-encoding",
+        });
+        expect(merged.headers["vary"]).toBe("accept-encoding, Origin");
+        const wildcard = yield* send("POST", "/rest/v1/todos", "https://other.example.com", {
+          "x-backend-vary": "*",
+        });
+        expect(wildcard.headers["vary"]).toBe("*");
       }),
     ).pipe(Effect.provide(Layer.mergeAll(NodeHttpClient.layerNodeHttp, NodeServices.layer))),
 );
