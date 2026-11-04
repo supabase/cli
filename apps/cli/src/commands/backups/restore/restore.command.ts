@@ -12,21 +12,24 @@ import { backupsRestore } from "./restore.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
+import { cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
-  timestamp: Flag.Int("timestamp").pipe(
-    Flag.withAlias("t"),
-    Flag.withDescription("The recovery time target in seconds since epoch."),
-    Flag.optional,
-  ),
+  timestamp: cliFlag("timestamp", Flag.Int, {
+    description: "Recovery target time, as a Unix timestamp in seconds.",
+    alias: "t",
+    optional: true,
+  }),
 } as const;
 
 export type BackupsRestoreFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const backupsRestoreCommand = Command.make("restore", config).pipe(
-  Command.withDescription("Restore to a specific timestamp using PITR"),
-  Command.withShortDescription("Restore to a specific timestamp using PITR"),
+export const backupsRestoreCommand = makeCommand("restore", config).pipe(
+  Command.withDescription(
+    "Restore the project database to a point in time using PITR. Changes made after that time are lost.\n\nAsks for confirmation before changing anything; pass `--yes` in scripts and CI.",
+  ),
+  Command.withShortDescription("Restore a project to a point in time"),
   Command.withExamples([
     {
       command: "supabase backups restore --timestamp 1707407047",

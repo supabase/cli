@@ -29,7 +29,7 @@ import { inspectDbXidAgeCommand } from "./xid-age/xid-age.command.ts";
 
 export const inspectDbCommand = Command.make("db").pipe(
   Command.withDescription(
-    "Tools to inspect your Supabase database. They inspect the local database by default; pass --remote for the linked project, or --remote=<ref|branch|url> for another database.",
+    "Run diagnostics on locks, query performance, indexes, table sizes, vacuuming, and connections. Subcommands inspect the local database by default; pass --remote for the linked project, or --remote=<ref|branch|url> for another database.",
   ),
   Command.withShortDescription("Inspect database"),
   Command.withSubcommands([

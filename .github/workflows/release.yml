@@ -321,7 +321,8 @@ jobs:
             args+=(--dry-run)
           fi
           bun scripts/generate-docs-spec.ts "$VERSION" \
-            | bun scripts/publish-docs-spec.ts --version "$VERSION" "${args[@]}"
+            | bun scripts/publish-docs-spec.ts --version "$VERSION" \
+              --spec-path apps/docs/spec/cli_v2_commands.yaml "${args[@]}"
       - name: Publish the config schemas
         id: schemas
         continue-on-error: true

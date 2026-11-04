@@ -1,6 +1,6 @@
 # db-index-sizes
 
-This command displays the size of each each index in the database. It is calculated by taking the number of pages (reported in `relpages`) and multiplying it by the page size (8192 bytes).
+Show the size of each index in the database. Size is the number of pages (`relpages`) multiplied by the page size of 8192 bytes.
 
 ```
               NAME              │    SIZE

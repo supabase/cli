@@ -19,25 +19,6 @@ supabase-login:
       You can generate an access token from https://supabase.com/dashboard/account/tokens
       Enter your access token: sbp_****************************************
       Finished supabase login.
-supabase-link:
-  - id: basic-usage
-    name: Basic usage
-    code: supabase link ********************
-    response: |
-      Enter your database password (or leave blank to skip): ********
-      Finished supabase link.
-  - id: without-password
-    name: Link without database password
-    code: supabase link ******************** <<< ""
-    response: |
-      Enter your database password (or leave blank to skip):
-      Finished supabase link.
-  - id: using-alternate-dns
-    name: Link using DNS-over-HTTPS resolver
-    code: supabase link ******************** --dns-resolver https
-    response: |
-      Enter your database password (or leave blank to skip):
-      Finished supabase link.
 supabase-start:
   - id: basic-usage
     name: Basic usage
@@ -239,59 +220,6 @@ supabase-db-lint:
           ]
         }
       ]
-supabase-db-pull:
-  - id: basic-usage
-    name: Basic usage
-    code: supabase db pull --remote
-    response: |
-      Target: project My Project (abcdefghijklmnopqrst) · production
-      ◇  Update the remote migration history table on project My Project (abcdefghijklmnopqrst) · production?
-      │  Yes
-      Schema written to supabase/migrations/20240414044403_remote_schema.sql
-      Repaired migration history: [20240414044403] => applied
-      Finished supabase db pull.
-  - id: local-studio
-    name: Local studio
-    code: supabase db pull
-    response: |
-      Target: local stack (127.0.0.1:54322)
-      Creating shadow database...
-      Seeding globals from roles.sql...
-      Applying migration 20240414044403_remote_schema.sql...
-      Diffing schemas...
-      No schema changes found
-      The remote database is already in sync with your local migrations — nothing to pull.
-  - id: custom-schemas
-    name: Custom schemas
-    code: supabase db pull --schema public,extensions --remote
-    response: |
-      Target: project My Project (abcdefghijklmnopqrst) · production
-      Creating shadow database...
-      Seeding globals from roles.sql...
-      Applying migration 20240414044403_remote_schema.sql...
-      Diffing schemas: public,extensions
-      No schema changes found
-      The remote database is already in sync with your local migrations — nothing to pull.
-supabase-db-push:
-  - id: basic-usage
-    name: Basic usage
-    code: supabase db push --remote
-    response: |
-      Linked project is up to date.
-  - id: self-hosted
-    name: Self hosted
-    code: supabase db push --remote="postgres://user:pass@db.example.com:5432/postgres"
-    response: |
-      Pushing migration 20230410135622_create_employees_table.sql...
-      Finished supabase db push.
-  - id: dry-run
-    name: Dry run
-    code: supabase db push --dry-run --remote
-    response: |
-      DRY RUN: migrations will *not* be pushed to the database.
-      Would push migration 20230410135622_create_employees_table.sql...
-      Would push migration 20230425064254_my_table.sql...
-      Finished supabase db push.
 supabase-db-reset:
   - id: basic-usage
     name: Basic usage

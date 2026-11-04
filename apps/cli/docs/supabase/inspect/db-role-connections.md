@@ -1,11 +1,10 @@
 # db-role-connections
 
-This command shows the number of active connections for each database roles to see which specific role might be consuming more connections than expected.
+Show the number of active connections for each database role. Use it to find which role consumes more connections than expected.
 
-This is a Supabase specific command. You can see this breakdown on the dashboard as well:
-https://app.supabase.com/project/_/database/roles
+This command is specific to Supabase. The dashboard shows the same breakdown at https://app.supabase.com/project/_/database/roles.
 
-The maximum number of active connections depends [on your instance size](https://supabase.com/docs/guides/platform/compute-add-ons). You can [manually overwrite](https://supabase.com/docs/guides/platform/performance#allowing-higher-number-of-connections) the allowed number of connection but it is not advised.
+The maximum number of active connections depends [on your instance size](https://supabase.com/docs/guides/platform/compute-add-ons). You can [override the limit](https://supabase.com/docs/guides/platform/performance#allowing-higher-number-of-connections), but this is not advised.
 
 ```
 

@@ -7,17 +7,27 @@ import { managementApiRuntimeLayer } from "../../../command-internal/management-
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { orgsCreate } from "./create.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliArgument, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
-  name: Argument.String("name").pipe(
-    Argument.withDescription("Display name for the new organization."),
-  ),
+  name: cliArgument("name", Argument.String, {
+    description: "Display name of the new organization.",
+    required: true,
+  }),
 };
 export type OrgsCreateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const orgsCreateCommand = Command.make("create", config).pipe(
-  Command.withDescription("Create an organization for the logged-in user."),
+export const orgsCreateCommand = makeCommand("create", config).pipe(
+  Command.withDescription(
+    "Create a new organization under your account, which you can then create projects in.",
+  ),
   Command.withShortDescription("Create an organization"),
+  Command.withExamples([
+    {
+      command: "supabase orgs create \"My Organization\"",
+      description: "Create an organization",
+    },
+  ]),
   withPermissions({ operations: [{ operationId: "v1-create-an-organization", kind: "required" }] }),
   Command.withHandler((flags) =>
     orgsCreate(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),

@@ -13,18 +13,19 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
 import { genSigningKey } from "./signing-key.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const ALGORITHM_VALUES = ["ES256", "RS256"] as const;
 
 const config = {
-  algorithm: Flag.Literals("algorithm", ALGORITHM_VALUES).pipe(
-    Flag.withDescription("Algorithm for signing key generation."),
-    Flag.withDefault("ES256" as const),
-  ),
-  append: Flag.Boolean("append").pipe(
-    Flag.withDescription("Append new key to existing keys file instead of overwriting."),
-    Flag.withDefault(false),
-  ),
+  algorithm: cliFlag("algorithm", (name) => Flag.Literals(name, ALGORITHM_VALUES), {
+    description: "Algorithm to generate the signing key with.",
+    default: "ES256" as const,
+  }),
+  append: cliFlag("append", Flag.Boolean, {
+    description: "Append the new key to the existing keys file instead of overwriting it.",
+    default: false,
+  }),
 } as const;
 
 export type GenSigningKeyFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -41,9 +42,9 @@ const genSigningKeyRuntimeLayer = Layer.mergeAll(
   stdinLayer,
 );
 
-export const genSigningKeyCommand = Command.make("signing-key", config).pipe(
+export const genSigningKeyCommand = makeCommand("signing-key", config).pipe(
   Command.withDescription(
-    "Securely generate a private JWT signing key for use in the CLI or to import in the dashboard.\n\n" +
+    "Generate a private JWT signing key to use in the CLI or to import in the dashboard.\n\n" +
       "Supported algorithms:\n" +
       "  ES256 - ECDSA with P-256 curve and SHA-256 (recommended)\n" +
       "  RS256 - RSA with SHA-256",

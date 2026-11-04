@@ -15,6 +15,7 @@ import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...targetFlags({ subject: "database", dbUrl: true }),
@@ -26,24 +27,26 @@ const config = {
   sqlPaths: CliConfigKeys.db.seed.sqlPaths.flag({
     name: "sql-paths",
     description:
-      "Override [db.seed].sql_paths for this reset. May be repeated; each value accepts a SQL file path or glob pattern relative to the supabase directory and force-enables seeding.",
+      "Override [db.seed].sql_paths for this reset with SQL file paths or glob patterns relative to the supabase directory, which also enables seeding.",
     also: [[CliConfigKeys.db.seed.enabled, true]],
   }),
-  version: Flag.String("version").pipe(
-    Flag.withDescription("Reset up to the specified version."),
-    Flag.optional,
-  ),
-  last: Flag.Int("last").pipe(
-    Flag.withDescription("Reset up to the last n migration versions."),
-    Flag.optional,
-  ),
+  version: cliFlag("version", Flag.String, {
+    description: "Reset up to the specified migration version.",
+    optional: true,
+  }),
+  last: cliFlag("last", Flag.Int, {
+    description: "Reset up to the last n migration versions.",
+    optional: true,
+  }),
 } as const;
 
 export type DbResetFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const dbResetCommand = Command.make("reset", config).pipe(
-  Command.withDescription("Resets a database to current migrations."),
-  Command.withShortDescription("Resets a database to current migrations"),
+export const dbResetCommand = makeCommand("reset", config).pipe(
+  Command.withDescription(
+    "Recreate a database from your local migrations and seed it, discarding any other data or schema changes. Use it to get a clean database during development.",
+  ),
+  Command.withShortDescription("Reset a database to the current migrations"),
   withPermissions(
     compose(
       { operations: [], noApiEffectFlags: ["no-seed", "sql-paths", "version", "last"] },

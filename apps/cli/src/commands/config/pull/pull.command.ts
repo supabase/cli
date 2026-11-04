@@ -18,24 +18,23 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { configPull } from "./pull.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
+import { cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
-  remoteLabel: Flag.String("remote-label").pipe(
-    Flag.withDescription(
-      "Name of the [remotes.*] block to write into, overriding the block config pull would otherwise reuse or create.",
-    ),
-    Flag.optional,
-  ),
-  dryRun: Flag.Boolean("dry-run").pipe(
-    Flag.withDescription("Show what would be written without touching the config file."),
-    // Without an explicit default, a boolean flag is required by the parser.
-    Flag.withDefault(false),
-  ),
-  force: Flag.Boolean("force").pipe(
-    Flag.withDescription("Write even when supabase/config.toml has uncommitted changes in git."),
-    Flag.withDefault(false),
-  ),
+  remoteLabel: cliFlag("remote-label", Flag.String, {
+    description:
+      "Name of the `[remotes.*]` block to write into, overriding the block that would otherwise be reused or created.",
+    optional: true,
+  }),
+  dryRun: cliFlag("dry-run", Flag.Boolean, {
+    description: "Show what would be written without touching the config file.",
+    default: false,
+  }),
+  force: cliFlag("force", Flag.Boolean, {
+    description: "Write even when `supabase/config.toml` has uncommitted changes in git.",
+    default: false,
+  }),
 } as const;
 
 export type ConfigPullFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -52,11 +51,11 @@ const configPullHandler = (flags: ConfigPullFlags) =>
     withJsonErrorHandling,
   );
 
-export const configPullCommand = Command.make("pull", config).pipe(
+export const configPullCommand = makeCommand("pull", config).pipe(
   Command.withDescription(
-    "Writes configuration from a remote project or branch into supabase/config.toml. Prompts for confirmation before writing on an interactive TTY, unless --yes is set; --output-format json|stream-json skips the prompt entirely and takes its default answer, while a non-interactive text run still prints the prompt to stderr and reads one line from piped stdin (y/yes/n/no honored, empty takes the default, anything else declines) — use --dry-run to preview first.",
+    "Write the configuration of a remote project or branch into `supabase/config.toml`, so the file reflects what is deployed. Use `--dry-run` to preview first.\n\nOn an interactive terminal it asks for confirmation before writing, unless you pass `--yes`.",
   ),
-  Command.withShortDescription("Pull remote config into supabase/config.toml"),
+  Command.withShortDescription("Pull remote config into config.toml"),
   Command.withExamples([
     {
       command: "supabase config pull",

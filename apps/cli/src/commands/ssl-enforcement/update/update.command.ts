@@ -18,28 +18,35 @@ import {
 } from "../../../telemetry/command-telemetry.ts";
 import { sslEnforcementUpdate } from "./update.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
-  enableDbSslEnforcement: Flag.Boolean("enable-db-ssl-enforcement").pipe(
-    Flag.withDescription(
-      "Whether the DB should enable SSL enforcement for all external connections.",
-    ),
-    Flag.withDefault(false),
-  ),
-  disableDbSslEnforcement: Flag.Boolean("disable-db-ssl-enforcement").pipe(
-    Flag.withDescription(
-      "Whether the DB should disable SSL enforcement for all external connections.",
-    ),
-    Flag.withDefault(false),
-  ),
+  enableDbSslEnforcement: cliFlag("enable-db-ssl-enforcement", Flag.Boolean, {
+    description: "Require SSL for all external database connections.",
+    default: false,
+  }),
+  disableDbSslEnforcement: cliFlag("disable-db-ssl-enforcement", Flag.Boolean, {
+    description: "Stop requiring SSL for external database connections.",
+    default: false,
+  }),
 } as const;
 
 export type SslEnforcementUpdateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const sslEnforcementUpdateCommand = Command.make("update", config).pipe(
-  Command.withDescription("Update SSL enforcement configuration."),
+export const sslEnforcementUpdateCommand = makeCommand("update", config).pipe(
+  Command.withDescription("Turns SSL enforcement on or off for external database connections. Pass exactly one of `--enable-db-ssl-enforcement` or `--disable-db-ssl-enforcement`."),
   Command.withShortDescription("Update SSL enforcement configuration"),
+  Command.withExamples([
+    {
+      command: "supabase ssl-enforcement update --enable-db-ssl-enforcement --experimental --remote=<project-ref>",
+      description: "Require SSL for database connections",
+    },
+    {
+      command: "supabase ssl-enforcement update --disable-db-ssl-enforcement --experimental --remote=<project-ref>",
+      description: "Stop requiring SSL for database connections",
+    },
+  ]),
   withPermissions(
     compose(
       {

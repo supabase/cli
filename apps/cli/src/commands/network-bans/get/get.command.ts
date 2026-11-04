@@ -18,6 +18,7 @@ import {
 } from "../../../telemetry/command-telemetry.ts";
 import { networkBansGet } from "./get.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
@@ -25,9 +26,15 @@ const config = {
 
 export type NetworkBansGetFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const networkBansGetCommand = Command.make("get", config).pipe(
-  Command.withDescription("Get the current network bans."),
+export const networkBansGetCommand = makeCommand("get", config).pipe(
+  Command.withDescription("Lists the IP addresses currently banned from connecting to your project's database."),
   Command.withShortDescription("Get the current network bans"),
+  Command.withExamples([
+    {
+      command: "supabase network-bans get --experimental --remote=<project-ref>",
+      description: "List banned IPs for a project",
+    },
+  ]),
   withPermissions(
     compose(
       {

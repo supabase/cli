@@ -12,30 +12,28 @@ import { managementApiRuntimeLayer } from "../../../command-internal/management-
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { secretsUnset } from "./unset.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliArgument, cliFlag, makeCommand, repeated } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
-  names: Argument.String("NAME").pipe(
-    Argument.withDescription("Secret names to unset."),
-    Argument.variadic(),
-  ),
-  all: Flag.Boolean("all").pipe(
-    Flag.withDescription(
-      "Unset every secret except SUPABASE_ ones. Required when no names are given.",
-    ),
-    Flag.withDefault(false),
-  ),
-  dryRun: Flag.Boolean("dry-run").pipe(
-    Flag.withDescription("Print the secrets that would be unset without unsetting them."),
-    Flag.withDefault(false),
-  ),
+  names: cliArgument("NAME", repeated(Argument.String), { description: "Names of the secrets to unset." }),
+  all: cliFlag("all", Flag.Boolean, {
+    description: "Unset every secret except those prefixed with SUPABASE_; required when no names are given.",
+    default: false,
+  }),
+  dryRun: cliFlag("dry-run", Flag.Boolean, {
+    description: "Print the secrets that would be unset without unsetting them.",
+    default: false,
+  }),
 } as const;
 
 export type SecretsUnsetFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const secretsUnsetCommand = Command.make("unset", config).pipe(
-  Command.withDescription("Unset a secret(s) from the linked Supabase project."),
-  Command.withShortDescription("Unset a secret(s) on Supabase"),
+export const secretsUnsetCommand = makeCommand("unset", config).pipe(
+  Command.withDescription(
+    "Remove one or more secrets from the linked project by name, or every custom secret with `--all`. Use `--dry-run` to preview what would be removed.\n\nAsks for confirmation before changing anything; pass `--yes` in scripts and CI.",
+  ),
+  Command.withShortDescription("Unset secrets on the linked project"),
   Command.withExamples([
     {
       command: "supabase secrets unset MY_SECRET",

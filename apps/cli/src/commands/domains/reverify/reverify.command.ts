@@ -14,16 +14,17 @@ import { domainsReverify } from "./reverify.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
+import { cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
   // Kept parsed (and hidden) only so using it produces the removal error instead of an
   // unknown-flag parse error.
-  includeRawOutput: Flag.Boolean("include-raw-output").pipe(
-    Flag.withDescription("Removed: use -o json instead."),
-    Flag.optional,
-    Flag.withHidden,
-  ),
+  includeRawOutput: cliFlag("include-raw-output", Flag.Boolean, {
+    description: "Removed: use -o json instead.",
+    optional: true,
+    hidden: true,
+  }),
 } as const;
 
 const COMMAND_PATH = ["domains", "reverify"];
@@ -31,8 +32,8 @@ const managementApiLayer = managementApiRuntimeLayer(COMMAND_PATH);
 
 export type DomainsReverifyFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const domainsReverifyCommand = Command.make("reverify", config).pipe(
-  Command.withDescription("Re-verify the custom hostname config for your project."),
+export const domainsReverifyCommand = makeCommand("reverify", config).pipe(
+  Command.withDescription("Asks Supabase to check your DNS records again. Run it after you add or change the CNAME or TXT records for your hostname."),
   Command.withShortDescription("Re-verify the custom hostname config"),
   Command.withExamples([
     {

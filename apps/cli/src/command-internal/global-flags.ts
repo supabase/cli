@@ -13,6 +13,7 @@ import {
   supabaseEnvBoolWithProjectFallback,
 } from "./supabase-env.ts";
 import { OFF_WORDS } from "./target/remote-vocabulary.ts";
+import { cliFlag } from "../shared/cli/cli-params.ts";
 
 // `-o/--output` is tree-wide and can't vary per command, so it takes the union of every command's
 // values and each handler honors its subset.
@@ -29,89 +30,89 @@ export const GLOBAL_OUTPUT_FORMATS = [
 ] as const;
 
 export const OutputFlag = GlobalFlag.Setting("output")({
-  flag: Flag.Literals("output", GLOBAL_OUTPUT_FORMATS).pipe(
-    Flag.withAlias("o"),
-    Flag.withDescription("output format of status variables"),
-    Flag.optional,
-  ),
+  flag: cliFlag("output", (name) => Flag.Literals(name, GLOBAL_OUTPUT_FORMATS), {
+    description: "output format of status variables",
+    alias: "o",
+    optional: true,
+    docs: { default: "pretty" },
+  }),
 });
 
 /** The TS-only `--output-format` global, accepted on any subcommand. */
 export const OutputFormatFlag = GlobalFlag.Setting("output-format")({
-  flag: Flag.Literals("output-format", ["text", "json", "stream-json"]).pipe(
-    Flag.withDescription("Output format: text (default), json, or stream-json (NDJSON)"),
-    Flag.optional,
-  ),
+  flag: cliFlag("output-format", (name) => Flag.Literals(name, ["text", "json", "stream-json"]), {
+    description: "Output format: text (default), json, or stream-json (NDJSON)",
+    optional: true,
+    docs: { default: "text" },
+  }),
 });
 
 export const ProfileFlag = GlobalFlag.Setting("profile")({
-  flag: Flag.String("profile").pipe(
-    Flag.withDescription("use a specific profile for connecting to Supabase API"),
-    Flag.withDefault("supabase"),
-  ),
+  flag: cliFlag("profile", Flag.String, {
+    description: "use a specific profile for connecting to Supabase API",
+    default: "supabase",
+  }),
 });
 
 export const DebugFlag = GlobalFlag.Setting("debug")({
-  flag: Flag.Boolean("debug").pipe(
-    Flag.withDescription("output debug logs to stderr"),
-    Flag.withDefault(false),
-  ),
+  flag: cliFlag("debug", Flag.Boolean, {
+    description: "output debug logs to stderr",
+    default: false,
+  }),
 });
 
 export const WorkdirFlag = GlobalFlag.Setting("workdir")({
-  flag: Flag.String("workdir").pipe(
-    Flag.withDescription(
+  flag: cliFlag("workdir", Flag.String, {
+    description:
       "path to the directory containing your supabase/ folder; used exactly as given, with no ancestor directory search (defaults to searching upward from the current directory)",
-    ),
-    Flag.optional,
-  ),
+    optional: true,
+  }),
 });
 
 export const ExperimentalFlag = GlobalFlag.Setting("experimental")({
-  flag: Flag.Boolean("experimental").pipe(
-    Flag.withDescription("enable experimental features"),
-    Flag.withDefault(false),
-  ),
+  flag: cliFlag("experimental", Flag.Boolean, {
+    description: "enable experimental features",
+    default: false,
+  }),
 });
 
 export const NetworkIdFlag = GlobalFlag.Setting("network-id")({
-  flag: Flag.String("network-id").pipe(
-    Flag.withDescription("use the specified docker network instead of a generated one"),
-    Flag.optional,
-  ),
+  flag: cliFlag("network-id", Flag.String, {
+    description: "use the specified docker network instead of a generated one",
+    optional: true,
+  }),
 });
 
 export const YesFlag = GlobalFlag.Setting("yes")({
-  flag: Flag.Boolean("yes").pipe(
-    Flag.withDescription(
+  flag: cliFlag("yes", Flag.Boolean, {
+    description:
       "answer yes to all prompts; hosted changes only accept this flag or SUPABASE_YES exported in your shell, never supabase/.env or another .env file",
-    ),
-    Flag.withDefault(false),
-  ),
+    default: false,
+  }),
 });
 
 export const DnsResolverFlag = GlobalFlag.Setting("dns-resolver")({
-  flag: Flag.Literals("dns-resolver", ["native", "https"] as const).pipe(
-    Flag.withDescription("lookup domain names using the specified resolver"),
-    Flag.withDefault("native" as const),
-  ),
+  flag: cliFlag("dns-resolver", (name) => Flag.Literals(name, ["native", "https"] as const), {
+    description: "lookup domain names using the specified resolver",
+    default: "native" as const,
+  }),
 });
 
 // Kept parsed (and hidden) only so passing it fails with the removal error from
 // `withCommandTelemetry` instead of an unknown-flag parse error.
 export const CreateTicketFlag = GlobalFlag.Setting("create-ticket")({
-  flag: Flag.Boolean("create-ticket").pipe(
-    Flag.withDescription("Removed: report CLI problems with `supabase issue bug` instead."),
-    Flag.withDefault(false),
-    Flag.withHidden,
-  ),
+  flag: cliFlag("create-ticket", Flag.Boolean, {
+    description: "Removed: report CLI problems with `supabase issue bug` instead.",
+    default: false,
+    hidden: true,
+  }),
 });
 
 export const AgentFlag = GlobalFlag.Setting("agent")({
-  flag: Flag.Literals("agent", ["auto", "yes", "no"] as const).pipe(
-    Flag.withDescription("Override agent detection: yes, no, or auto (default auto)"),
-    Flag.withDefault("auto" as const),
-  ),
+  flag: cliFlag("agent", (name) => Flag.Literals(name, ["auto", "yes", "no"] as const), {
+    description: "Override agent detection: yes, no, or auto (default auto)",
+    default: "auto" as const,
+  }),
 });
 
 /**

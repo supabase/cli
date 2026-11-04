@@ -1,20 +1,24 @@
-# supabase-db-pull
+Pull schema changes from a database into a new migration file in `supabase/migrations`. Use it to capture changes made outside your migrations, such as in the dashboard.
 
-Pulls schema changes from a database. A new migration file will be created under `supabase/migrations` directory.
+It pulls from the local database by default. Pass `--remote` to pull from the linked project, which requires your local project to be linked by running `supabase link`. Pass `--remote=<ref|branch|url>` to pull from another project, a branch of the linked project, or a database URL such as a self-hosted database.
 
-Pulls from the local database by default. Pass `--remote` to pull from the linked project, which requires your local project to be linked by running `supabase link`. Pass `--remote=<ref|branch|url>` to pull from another project, a branch of the linked project, or a database URL such as a self-hosted database. In a linked checkout, a run without `--remote` prints a hint naming the linked project. The command prints a `Target:` line on stderr naming the database it resolved.
+In a linked checkout, a run without `--remote` prints a hint naming the linked project. The command prints a `Target:` line on stderr naming the database it resolved.
 
 `--linked`, `--project-ref`, `--db-url` and `--local` still work in v3 but are deprecated and removed in v4; use `--remote`.
 
 > Note this command requires Docker Desktop (or a running Docker daemon), as it starts a local Postgres container to diff the schema you pull.
 
-After the migration file is written, a new row is inserted into the migration history table to reflect the current state of the database. A hosted database asks for one confirmation first (default No), after the diff and before any file is written; declining stops the command without writing anything. Non-interactive, JSON and agent runs need `--yes` (or `SUPABASE_YES` in the shell environment, not in `supabase/.env`). A pull from the local database and `--declarative` ask nothing.
+After the migration file is written, a new row is inserted into the migration history table to reflect the current state of the database. A hosted database asks for one confirmation first (default No), after the diff and before any file is written; declining stops the command without writing anything. Non-interactive, JSON and agent runs need `--yes` (or `SUPABASE_YES` in the shell environment, not in `supabase/.env`).
+
+A pull from the local database and `--declarative` ask nothing.
 
 If no entries exist in the migration history table, pg-delta (the default diff engine) produces the full migration from the shadow diff alone; with `--diff-engine migra`, the initial pull instead uses `pg_dump` to capture all contents of the schemas you have created. Otherwise, this command will only diff schema changes against the target database, similar to running `db diff --remote`.
 
 Pass `--declarative` to switch to the declarative pg-delta export workflow instead of writing a migration file. The tree lives in `supabase/schemas` by default. Change the location with `experimental.pgdelta.declarative_schema_path`.
 
-On a project that falls back to the legacy migra engine, don't use `--declarative`. The export also points `[db.migrations].schema_paths` at the tree it writes. The next local `db diff` applies those files in lexicographic order without resolving dependencies between them, so it fails when a file sorts before an object it depends on. If you've already run it, re-enable pg-delta, or undo both changes:
+On a project that falls back to the legacy migra engine, don't use `--declarative`. The export also points `[db.migrations].schema_paths` at the tree it writes. The next local `db diff` applies those files in lexicographic order without resolving dependencies between them, so it fails when a file sorts before an object it depends on.
+
+If you've already run it, re-enable pg-delta, or undo both changes:
 
 1. Delete the files the export wrote to the declarative directory (`supabase/schemas/` by default). Files that were already there are left in place.
 2. Restore `[db.migrations].schema_paths` in `config.toml` to its previous value, or remove it if the export added it.
@@ -27,7 +31,9 @@ pg-delta is the default diff engine: the migration-file `db pull` workflow uses 
 
 When pulling with `--remote=<url>`, prefer a direct connection (`db.<project-ref>.supabase.co:5432`) over the connection pooler so pg-delta can introspect the full catalog reliably.
 
-Under the pg-delta engine, a plain `db pull` captures your own customizations in Supabase-managed schemas: triggers on managed tables whose function lives outside the managed schemas (for example a trigger on `auth.users` calling a function in `public`), RLS policies on any `auth` table, and RLS policies on `storage.objects`, `storage.buckets`, and `realtime.messages`. Other objects you create inside managed schemas, such as your own functions or indexes, are not diffed. On later pulls, `--schema` restricts the diff to the listed schemas, so a customization in `auth` is only captured when `auth` is listed or `--schema` is omitted; the initial pull ignores `--schema`. Under the legacy migra engine, the initial pull's `pg_dump` skips the managed schemas, and the migra diff pass that follows appends your trigger and RLS policy changes there to the same migration file. If an older CLI reports that `auth` and `storage` were excluded, capture existing customizations there with `--schema auth,storage`.
+Under the pg-delta engine, a plain `db pull` captures your own customizations in Supabase-managed schemas: triggers on managed tables whose function lives outside the managed schemas (for example a trigger on `auth.users` calling a function in `public`), RLS policies on any `auth` table, and RLS policies on `storage.objects`, `storage.buckets`, and `realtime.messages`. Other objects you create inside managed schemas, such as your own functions or indexes, are not diffed. On later pulls, `--schema` restricts the diff to the listed schemas, so a customization in `auth` is only captured when `auth` is listed or `--schema` is omitted; the initial pull ignores `--schema`.
+
+Under the legacy migra engine, the initial pull's `pg_dump` skips the managed schemas, and the migra diff pass that follows appends your trigger and RLS policy changes there to the same migration file. If an older CLI reports that `auth` and `storage` were excluded, capture existing customizations there with `--schema auth,storage`.
 
 ## Debugging empty pg-delta pulls
 

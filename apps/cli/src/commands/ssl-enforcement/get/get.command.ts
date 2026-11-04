@@ -2,6 +2,7 @@ import { Effect } from "effect";
 import { Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withDocs } from "../../../docs/command-docs.ts";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
@@ -18,6 +19,7 @@ import {
 } from "../../../telemetry/command-telemetry.ts";
 import { sslEnforcementGet } from "./get.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
@@ -25,9 +27,16 @@ const config = {
 
 export type SslEnforcementGetFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const sslEnforcementGetCommand = Command.make("get", config).pipe(
-  Command.withDescription("Get the current SSL enforcement configuration."),
+export const sslEnforcementGetCommand = makeCommand("get", config).pipe(
+  Command.withDescription("Shows whether SSL enforcement is enabled for external database connections."),
   Command.withShortDescription("Get SSL enforcement configuration"),
+  Command.withExamples([
+    {
+      command: "supabase ssl-enforcement get --experimental --remote=<project-ref>",
+      description: "Show the SSL enforcement setting of a project",
+    },
+  ]),
+  withDocs({ category: "ssl-enforcement", experimental: true }),
   withPermissions(
     compose(
       {

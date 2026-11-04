@@ -26,7 +26,7 @@ describe("generate-docs-spec.ts entrypoint", () => {
     const { stdout, stderr } = runScript([]);
     expect(stderr).toBe("");
     const spec = parse(stdout);
-    expect(spec.clispec).toBe("001");
+    expect(spec.clispec).toBe("002");
     expect(spec.info.version).toBe("latest");
     expect(spec.commands.length).toBeGreaterThanOrEqual(144);
   }, 30_000);

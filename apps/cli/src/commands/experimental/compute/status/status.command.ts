@@ -14,15 +14,19 @@ import { computeStatus } from "./status.handler.ts";
 import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 import { branchResolution } from "../../../../command-internal/target/branch-resolution.ts";
 import { projectTargetFlags } from "../../../../command-internal/target/target-flags.ts";
+import { cliArgument, makeCommand } from "../../../../shared/cli/cli-params.ts";
 
 const config = {
-  name: Argument.String("name").pipe(Argument.withDescription("Compute to inspect.")),
+  name: cliArgument("name", Argument.String, {
+    description: "Compute to inspect.",
+    required: true,
+  }),
   ...projectTargetFlags(),
 } as const;
 
 export type ComputeStatusFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const computeStatusCommand = Command.make("status", config).pipe(
+export const computeStatusCommand = makeCommand("status", config).pipe(
   Command.withDescription(
     "Show one compute in detail: build state, size, access, image, live instance tally and source directory.",
   ),

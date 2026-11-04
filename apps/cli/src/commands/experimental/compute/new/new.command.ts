@@ -17,50 +17,41 @@ import { telemetryStateLayer } from "../../../../telemetry/telemetry-state.layer
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { computeNew } from "./new.handler.ts";
 import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
+import { cliArgument, cliFlag, makeCommand } from "../../../../shared/cli/cli-params.ts";
 
 const config = {
-  name: Argument.String("name").pipe(
-    Argument.withDescription(
-      "Compute name. Doubles as its directory, and its hostname. Prompted when omitted.",
-    ),
-    Argument.optional,
-  ),
-  runtime: Flag.Literals("runtime", COMPUTE_RUNTIMES).pipe(
-    Flag.withDescription(
-      "Runtime to scaffold and record in supabase/config.toml. Prompted when omitted.",
-    ),
-    Flag.optional,
-  ),
-  size: Flag.Literals("size", COMPUTE_SIZES).pipe(
-    Flag.withDescription(
+  name: cliArgument("name", Argument.String, {
+    description: "Compute name. Doubles as its directory, and its hostname. Prompted when omitted.",
+    optional: true,
+  }),
+  runtime: cliFlag("runtime", (name) => Flag.Literals(name, COMPUTE_RUNTIMES), {
+    description: "Runtime to scaffold and record in supabase/config.toml. Prompted when omitted.",
+    optional: true,
+  }),
+  size: cliFlag("size", (name) => Flag.Literals(name, COMPUTE_SIZES), {
+    description:
       "Instance size to record in supabase/config.toml. Each size implies its own vCPU count, so there is no separate --cpu. Prompted when omitted.",
-    ),
-    Flag.optional,
-  ),
-  exposure: Flag.Literals("exposure", COMPUTE_EXPOSURES).pipe(
-    Flag.withDescription(
+    optional: true,
+  }),
+  exposure: cliFlag("exposure", (name) => Flag.Literals(name, COMPUTE_EXPOSURES), {
+    description:
       "Whether the compute is reachable from the internet, recorded as `exposure` in supabase/config.toml. Prompted when omitted.",
-    ),
-    Flag.optional,
-  ),
-  instances: Flag.Int("instances").pipe(
-    // Bounded at the parser, the same way `push --instances` and the config
-    // schema's own `instances` are.
-    Flag.filter(
+    optional: true,
+  }),
+  instances: cliFlag("instances", Flag.Int, {
+    description:
+      "Number of instances to record in supabase/config.toml. Not prompted for, and recorded only when it differs from the default of 1.",
+    parse: Flag.filter(
       (instances) => instances >= 0,
       (instances) => `--instances ${instances} is negative; pass zero or more.`,
     ),
-    Flag.withDescription(
-      "Number of instances to record in supabase/config.toml. Not prompted for, and recorded only when it differs from the default of 1.",
-    ),
-    Flag.optional,
-  ),
-  source: Flag.String("source").pipe(
-    Flag.withDescription(
+    optional: true,
+  }),
+  source: cliFlag("source", Flag.String, {
+    description:
       "Scaffold the compute here instead of the default compute directory, recorded as `source` in supabase/config.toml.",
-    ),
-    Flag.optional,
-  ),
+    optional: true,
+  }),
 } as const;
 
 export type ComputeNewFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -74,7 +65,7 @@ const computeNewRuntimeLayer = Layer.mergeAll(
   commandRuntimeLayer(["compute", "new"]),
 );
 
-export const computeNewCommand = Command.make("new", config).pipe(
+export const computeNewCommand = makeCommand("new", config).pipe(
   Command.withDescription(
     "Scaffold a compute directory from a runtime's starter files and record the choices in supabase/config.toml. Nothing is deployed.",
   ),

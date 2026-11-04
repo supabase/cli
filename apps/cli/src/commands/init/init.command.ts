@@ -9,43 +9,44 @@ import { stdinLayer } from "../../shared/runtime/stdin.layer.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { init } from "./init.handler.ts";
 import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
+import { cliFlag, makeCommand } from "../../shared/cli/cli-params.ts";
 
 const config = {
-  interactive: Flag.Boolean("interactive").pipe(
-    Flag.withDescription("Enables interactive mode to configure IDE settings."),
-    Flag.withAlias("i"),
-    Flag.withDefault(false),
-  ),
-  useOrioledb: Flag.Boolean("use-orioledb").pipe(
-    Flag.withDescription("Use OrioleDB storage engine for Postgres."),
-    Flag.withDefault(false),
-  ),
-  force: Flag.Boolean("force").pipe(
-    Flag.withDescription("Overwrite existing supabase/config.toml."),
-    Flag.withDefault(false),
-  ),
-  withVscodeWorkspace: Flag.Boolean("with-vscode-workspace").pipe(
-    Flag.withDescription("Generate VS Code workspace."),
-    Flag.withHidden,
-    Flag.withDefault(false),
-  ),
-  withVscodeSettings: Flag.Boolean("with-vscode-settings").pipe(
-    Flag.withDescription("Generate VS Code settings for Deno."),
-    Flag.withHidden,
-    Flag.withDefault(false),
-  ),
-  withIntellijSettings: Flag.Boolean("with-intellij-settings").pipe(
-    Flag.withDescription("Generate IntelliJ IDEA settings for Deno."),
-    Flag.withHidden,
-    Flag.withDefault(false),
-  ),
+  interactive: cliFlag("interactive", Flag.Boolean, {
+    description: "Prompt to generate IDE settings for Deno.",
+    alias: "i",
+    default: false,
+  }),
+  useOrioledb: cliFlag("use-orioledb", Flag.Boolean, {
+    description: "Use the OrioleDB storage engine for Postgres.",
+    default: false,
+  }),
+  force: cliFlag("force", Flag.Boolean, {
+    description: "Overwrite an existing supabase/config.toml.",
+    default: false,
+  }),
+  withVscodeWorkspace: cliFlag("with-vscode-workspace", Flag.Boolean, {
+    description: "Generate a VS Code workspace.",
+    default: false,
+    hidden: true,
+  }),
+  withVscodeSettings: cliFlag("with-vscode-settings", Flag.Boolean, {
+    description: "Generate VS Code settings for Deno.",
+    default: false,
+    hidden: true,
+  }),
+  withIntellijSettings: cliFlag("with-intellij-settings", Flag.Boolean, {
+    description: "Generate IntelliJ IDEA settings for Deno.",
+    default: false,
+    hidden: true,
+  }),
 } as const;
 
 export type InitFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const initCommand = Command.make("init", config).pipe(
-  Command.withDescription("Initialize a local project."),
-  Command.withShortDescription("Initialize a local project"),
+export const initCommand = makeCommand("init", config).pipe(
+  Command.withDescription("Create a `supabase/config.toml` in the current directory to set up local development."),
+  Command.withShortDescription("Set up a project for local development"),
   withPermissions({
     operations: [],
     noApiEffectFlags: [

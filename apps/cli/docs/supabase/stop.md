@@ -1,9 +1,7 @@
 ## supabase-stop
 
-Stops the Supabase local development stack.
+Stops the containers of the local development stack. Requires a `supabase/config.toml`, which `supabase init` creates.
 
-Requires `supabase/config.toml` to be created in your current working directory by running `supabase init`.
+Docker volumes are kept, so your data survives a restart. Pass `--no-backup` to delete them and reset your local data.
 
-All Docker resources are maintained across restarts. Use `--no-backup` flag to reset your local development data between restarts.
-
-Use the `--all` flag to stop all local Supabase projects instances on the machine. Use with caution with `--no-backup` as it will delete all supabase local projects data.
+Pass `--all` to stop every local Supabase project on the machine. Take care combining it with `--no-backup`, which deletes the data of all of them.

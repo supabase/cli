@@ -19,8 +19,17 @@ import { withTargetPolicy } from "../../../command-internal/target/target-policy
 export type BucketsFlags = TargetFlagValues;
 
 export const bucketsCommand = Command.make("buckets").pipe(
-  Command.withDescription("Seed buckets declared in [storage.buckets]."),
-  Command.withShortDescription("Seed buckets declared in [storage.buckets]"),
+  Command.withDescription(
+    "Create or update the Storage buckets declared in config.toml and upload the files from each bucket's objects_path. A remote project asks for confirmation before the first write.",
+  ),
+  Command.withShortDescription("Seed Storage buckets from config.toml"),
+  Command.withExamples([
+    { command: "supabase seed buckets", description: "Seed buckets on the local stack" },
+    {
+      command: "supabase seed buckets --remote",
+      description: "Seed buckets on the linked project",
+    },
+  ]),
   withPermissions(storagePermissions([])),
   Command.withHandler(() =>
     Effect.gen(function* () {

@@ -20,6 +20,7 @@ import {
 } from "../../../telemetry/command-telemetry.ts";
 import { postgresConfigDelete } from "./delete.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 /**
  * CSV-splits each occurrence into config keys, failing at parse time with a diagnostic
@@ -27,23 +28,29 @@ import { withTargetPolicy } from "../../../command-internal/target/target-policy
  */
 export const postgresConfigDeleteConfigFlag = stringSliceFlag(
   "config",
-  "Config keys to delete (comma-separated)",
+  "Config keys to delete, comma-separated or repeated.",
 );
 
 const config = {
   ...projectTargetFlags(),
   config: postgresConfigDeleteConfigFlag,
-  noRestart: Flag.Boolean("no-restart").pipe(
-    Flag.withDescription("Do not restart the database after deleting config."),
-    Flag.withDefault(false),
-  ),
+  noRestart: cliFlag("no-restart", Flag.Boolean, {
+    description: "Do not restart the database after deleting config.",
+    default: false,
+  }),
 } as const;
 
 export type PostgresConfigDeleteFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const postgresConfigDeleteCommand = Command.make("delete", config).pipe(
-  Command.withDescription("Delete specific Postgres database config overrides."),
+export const postgresConfigDeleteCommand = makeCommand("delete", config).pipe(
+  Command.withDescription("Removes the named overrides so those settings return to their defaults. The database restarts afterwards unless you pass `--no-restart`."),
   Command.withShortDescription("Delete Postgres database config overrides"),
+  Command.withExamples([
+    {
+      command: "supabase postgres-config delete --config work_mem --experimental --remote=<project-ref>",
+      description: "Delete a Postgres config override",
+    },
+  ]),
   withPermissions(
     compose(
       { operations: [], noApiEffectFlags: ["config", "no-restart"] },

@@ -9,15 +9,17 @@ import { FEEDBACK_OUTPUT_FORMATS } from "../feedback-output.ts";
 import { feedbackDelete } from "./delete.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { cliArgument, cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
-  token: Argument.String("token").pipe(
-    Argument.withDescription("Deletion token (UUID) printed when the feedback was submitted."),
-  ),
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project the feedback was submitted with."),
-    Flag.optional,
-  ),
+  token: cliArgument("token", Argument.String, {
+    description: "Deletion token (UUID) printed when the feedback was submitted.",
+    required: true,
+  }),
+  projectRef: cliFlag("project-ref", Flag.String, {
+    description: "Project ref the feedback was submitted with.",
+    optional: true,
+  }),
 } as const;
 
 export type FeedbackDeleteArgs = CliCommand.Command.Config.Infer<typeof config>;
@@ -36,9 +38,9 @@ export const feedbackDeleteHandler = (args: FeedbackDeleteArgs) =>
     withJsonErrorHandling,
   );
 
-export const feedbackDeleteCommand = Command.make("delete", config).pipe(
-  Command.withDescription("Delete previously submitted feedback using its deletion token."),
-  Command.withShortDescription("Delete previously submitted feedback"),
+export const feedbackDeleteCommand = makeCommand("delete", config).pipe(
+  Command.withDescription("Remove feedback you sent earlier. Use the deletion token printed when you submitted it."),
+  Command.withShortDescription("Delete submitted feedback"),
   Command.withExamples([
     {
       command: "supabase feedback delete 123e4567-e89b-12d3-a456-426614174000",

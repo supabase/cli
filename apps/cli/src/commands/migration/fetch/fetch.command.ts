@@ -14,14 +14,23 @@ import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = targetFlags({ subject: "database", dbUrl: true });
 
 export type MigrationFetchFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const migrationFetchCommand = Command.make("fetch", config).pipe(
-  Command.withDescription("Fetch migration files from history table."),
-  Command.withShortDescription("Fetch migration files from history table"),
+export const migrationFetchCommand = makeCommand("fetch", config).pipe(
+  Command.withDescription(
+    "Download the migrations recorded in a database's migration history table and write them to supabase/migrations. Use it when the history of a project is missing from your local files.",
+  ),
+  Command.withShortDescription("Fetch migration files from a database"),
+  Command.withExamples([
+    {
+      command: "supabase migration fetch --remote",
+      description: "Write the migration history of the linked project to supabase/migrations",
+    },
+  ]),
   withPermissions(
     compose(
       { operations: [], noApiEffectFlags: [] },

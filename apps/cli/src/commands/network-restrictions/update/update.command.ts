@@ -19,6 +19,7 @@ import {
 } from "../../../telemetry/command-telemetry.ts";
 import { networkRestrictionsUpdate } from "./update.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 /**
  * CSV-splits each occurrence (`--db-allow-cidr=1.2.3.0/24,5.6.7.0/24` → two CIDRs) and
@@ -27,27 +28,37 @@ import { withTargetPolicy } from "../../../command-internal/target/target-policy
  */
 export const networkRestrictionsUpdateDbAllowCidrFlag = stringSliceFlag(
   "db-allow-cidr",
-  "CIDR to allow DB connections from.",
+  "CIDR range allowed to connect to the database, comma-separated or repeated.",
 );
 
 const config = {
   ...projectTargetFlags(),
   dbAllowCidr: networkRestrictionsUpdateDbAllowCidrFlag,
-  bypassCidrChecks: Flag.Boolean("bypass-cidr-checks").pipe(
-    Flag.withDescription("Bypass some of the CIDR validation checks."),
-    Flag.withDefault(false),
-  ),
-  append: Flag.Boolean("append").pipe(
-    Flag.withDescription("Append to existing restrictions instead of replacing them."),
-    Flag.withDefault(false),
-  ),
+  bypassCidrChecks: cliFlag("bypass-cidr-checks", Flag.Boolean, {
+    description: "Allow private IP ranges that CIDR validation would otherwise reject.",
+    default: false,
+  }),
+  append: cliFlag("append", Flag.Boolean, {
+    description: "Append to existing restrictions instead of replacing them.",
+    default: false,
+  }),
 } as const;
 
 export type NetworkRestrictionsUpdateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const networkRestrictionsUpdateCommand = Command.make("update", config).pipe(
-  Command.withDescription("Update network restrictions."),
+export const networkRestrictionsUpdateCommand = makeCommand("update", config).pipe(
+  Command.withDescription("Sets the CIDR ranges allowed to connect to your project's database. By default the ranges you pass replace the existing ones; use `--append` to add to them."),
   Command.withShortDescription("Update network restrictions"),
+  Command.withExamples([
+    {
+      command: "supabase network-restrictions update --db-allow-cidr 203.0.113.0/24 --experimental --remote=<project-ref>",
+      description: "Replace the allowed CIDR ranges",
+    },
+    {
+      command: "supabase network-restrictions update --db-allow-cidr 198.51.100.0/24 --append --experimental --remote=<project-ref>",
+      description: "Add a CIDR range to the existing ones",
+    },
+  ]),
   withPermissions(
     compose(
       {

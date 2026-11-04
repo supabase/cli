@@ -18,6 +18,7 @@ import {
 } from "../../../telemetry/command-telemetry.ts";
 import { vanitySubdomainsGet } from "./get.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
@@ -25,9 +26,15 @@ const config = {
 
 export type VanitySubdomainsGetFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const vanitySubdomainsGetCommand = Command.make("get", config).pipe(
-  Command.withDescription("Get the current vanity subdomain."),
+export const vanitySubdomainsGetCommand = makeCommand("get", config).pipe(
+  Command.withDescription("Shows the vanity subdomain configured for your project, along with its status."),
   Command.withShortDescription("Get the current vanity subdomain"),
+  Command.withExamples([
+    {
+      command: "supabase vanity-subdomains get --experimental --remote=<project-ref>",
+      description: "Show the vanity subdomain of a project",
+    },
+  ]),
   withPermissions(
     compose(
       {

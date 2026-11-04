@@ -19,51 +19,37 @@ import { computePush } from "./push.handler.ts";
 import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 import { branchResolution } from "../../../../command-internal/target/branch-resolution.ts";
 import { projectTargetFlags } from "../../../../command-internal/target/target-flags.ts";
+import { cliArgument, cliFlag, makeCommand, repeated } from "../../../../shared/cli/cli-params.ts";
 
 const config = {
-  names: Argument.String("name").pipe(
-    Argument.withDescription("Compute to deploy. Deploys every compute in the project if omitted."),
-    Argument.variadic(),
-  ),
-  instances: Flag.Int("instances").pipe(
-    // Bounded at the parser: left unchecked, a negative value reached the deploy
-    // endpoint after the build context was already packaged and uploaded.
-    Flag.filter(
+  names: cliArgument("name", repeated(Argument.String), {
+    description: "Compute to deploy. Deploys every compute in the project if omitted.",
+  }),
+  instances: cliFlag("instances", Flag.Int, {
+    description:
+      "Number of instances to run, overriding `instances` in supabase/config.toml for this deploy. Falls back to the recorded value, then 1.",
+    parse: Flag.filter(
       (instances) => instances >= 0,
       (instances) => `--instances ${instances} is negative; pass zero or more.`,
     ),
-    Flag.withDescription(
-      "Number of instances to run, overriding `instances` in supabase/config.toml for this deploy. Falls back to the recorded value, then 1.",
-    ),
-    Flag.optional,
-  ),
-  exposure: Flag.Literals("exposure", COMPUTE_EXPOSURES).pipe(
-    // A closed set at the parser, the way `new --runtime` and `new --size` are:
-    // the accepted values get listed in the refusal, and nothing unrecognized
-    // reaches the deploy endpoint after a build context has been uploaded.
-    // `[compute.<name>] exposure` stays a plain string, so a value the API
-    // grows before this CLI does can still be recorded there.
-    Flag.withDescription(
+    optional: true,
+  }),
+  exposure: cliFlag("exposure", (name) => Flag.Literals(name, COMPUTE_EXPOSURES), {
+    description:
       "Whether the compute is reachable from the internet, overriding `exposure` in supabase/config.toml for this deploy. Falls back to the recorded value, then public.",
-    ),
-    Flag.optional,
-  ),
-  noWait: Flag.Boolean("no-wait").pipe(
-    // The deploy POST returns once the platform accepts the spec and context; the
-    // server-side build that follows can run for minutes. Waiting stays the
-    // default so a plain push reports the build's verdict; `--no-wait` opts out
-    // for callers that only need the deploy accepted.
-    Flag.withDescription(
+    optional: true,
+  }),
+  noWait: cliFlag("no-wait", Flag.Boolean, {
+    description:
       "Return once the deploy is accepted, without waiting for the server-side build to finish.",
-    ),
-    Flag.withDefault(false),
-  ),
+    default: false,
+  }),
   ...projectTargetFlags(),
 } as const;
 
 export type ComputePushFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const computePushCommand = Command.make("push", config).pipe(
+export const computePushCommand = makeCommand("push", config).pipe(
   Command.withAlias("deploy"),
   Command.withDescription(
     "Build and deploy compute into the linked Supabase project. Reads each compute's runtime, size, exposure and source directory from supabase/config.toml.",

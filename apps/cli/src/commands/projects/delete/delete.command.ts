@@ -8,17 +8,20 @@ import { managementApiRuntimeLayer } from "../../../command-internal/management-
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { projectsDelete } from "./delete.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliArgument, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
-  ref: Argument.String("ref").pipe(
-    Argument.withDescription("Project ref to delete."),
-    Argument.optional,
-  ),
+  ref: cliArgument("ref", Argument.String, {
+    description: "Ref of the project to delete.",
+    optional: true,
+  }),
 };
 export type ProjectsDeleteFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const projectsDeleteCommand = Command.make("delete", config).pipe(
-  Command.withDescription("Delete a Supabase project."),
+export const projectsDeleteCommand = makeCommand("delete", config).pipe(
+  Command.withDescription(
+    "Delete a Supabase project by its ref. In an interactive terminal, omit the ref to pick a project from a list.\n\nAsks for confirmation before changing anything; pass `--yes` in scripts and CI.",
+  ),
   Command.withShortDescription("Delete a project"),
   Command.withExamples([
     {

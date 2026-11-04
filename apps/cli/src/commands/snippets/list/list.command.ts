@@ -12,14 +12,17 @@ import { managementApiRuntimeLayer } from "../../../command-internal/management-
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { snippetsList } from "./list.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
 };
 export type SnippetsListFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const snippetsListCommand = Command.make("list", config).pipe(
-  Command.withDescription("List all SQL snippets of the linked project."),
+export const snippetsListCommand = makeCommand("list", config).pipe(
+    Command.withDescription(
+    "Show the SQL snippets of the linked project. Use it to find the ID that `snippets download` needs.",
+  ),
   Command.withShortDescription("List all SQL snippets"),
   Command.withExamples([
     {

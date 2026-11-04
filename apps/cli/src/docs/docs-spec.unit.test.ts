@@ -4,12 +4,14 @@ import { Effect, FileSystem, Path } from "effect";
 import { Command, Flag } from "effect/cli";
 import type { PlatformError } from "effect/PlatformError";
 
+import { cliFlag, makeCommand, withGlobalParams } from "../shared/cli/cli-params.ts";
 import { ExperimentalFlag } from "../command-internal/global-flags.ts";
-import { hostedRemoteFlag, remoteFlag } from "../../tests/helpers/remote-flag-fixture.ts";
+import { projectTargetFlags, targetFlags } from "../command-internal/target/target-flags.ts";
 
 import { rootCommand } from "../cli/root.ts";
 import { DocsExamplesError, readDocsContent, type DocsContent } from "./docs-spec.content.ts";
 import {
+  buildDocsBundle,
   buildDocsSpec,
   docsFlagDoc,
   docsOverlayPath,
@@ -17,7 +19,9 @@ import {
   stringifyDocsSpec,
 } from "./docs-spec.ts";
 import type { DocsCommand } from "./docs-spec.ts";
-import { DOCS_EXCLUDED, DOCS_EXPERIMENTAL } from "./docs-spec.tables.ts";
+import { DOCS_CATEGORIES, withDocs } from "./command-docs.ts";
+import { BREAKING_CHANGES } from "./breaking-changes/registry.ts";
+import { DOCS_EXCLUDED } from "./docs-spec.tables.ts";
 
 interface BuiltSpecFixture {
   readonly content: DocsContent;
@@ -90,16 +94,43 @@ describe("docsStripOverlayHeading", () => {
 
 describe("docsFlagDoc", () => {
   it("renders --remote with the value hint its declaration carries", () => {
-    const doc = docsFlagDoc(["supabase", "db", "push"], remoteFlag);
+    const doc = docsFlagDoc(
+      ["supabase", "db", "push"],
+      targetFlags({ subject: "database", dbUrl: true }).remote,
+    );
 
     expect(doc?.name).toBe("--remote[=<ref|branch|url>]");
     expect(doc?.id).toBe("remote");
   });
 
-  it("renders the narrower hint of a hosted command's --remote", () => {
-    expect(docsFlagDoc(["supabase", "functions", "deploy"], hostedRemoteFlag)?.name).toBe(
-      "--remote[=<ref|branch>]",
+  it("documents the default a flag parses with and the one its handler applies", () => {
+    const timeout = cliFlag("timeout", Flag.String, {
+      description: "Query timeout.",
+      default: "15s",
+    });
+    const engine = cliFlag("engine", Flag.String, {
+      description: "Diff engine.",
+      optional: true,
+      docs: { default: "pg-delta" },
+    });
+
+    expect(docsFlagDoc(["supabase", "db", "query"], timeout)).toMatchObject({
+      name: "--timeout <string>",
+      default_value: "15s",
+    });
+    expect(docsFlagDoc(["supabase", "db", "query"], engine)?.default_value).toBe("pg-delta");
+  });
+
+  it("refuses a flag built without the cli-params constructors", () => {
+    expect(() => docsFlagDoc(["supabase", "db", "query"], Flag.String("raw"))).toThrow(
+      /not built with cliFlag\/cliArgument/,
     );
+  });
+
+  it("renders the narrower hint of a hosted command's --remote", () => {
+    expect(
+      docsFlagDoc(["supabase", "functions", "deploy"], projectTargetFlags().remote)?.name,
+    ).toBe("--remote[=<ref|branch>]");
   });
 });
 
@@ -140,7 +171,8 @@ describe("buildDocsSpec", () => {
 
   it("emits the clispec envelope with the requested version", () => {
     const { spec } = builtSpec();
-    expect(spec.clispec).toBe("001");
+    expect(spec.clispec).toBe("002");
+    expect(spec.prerelease).toBeUndefined();
     expect(spec.info.id).toBe("cli");
     expect(spec.info.version).toBe("1.2.3");
     expect(spec.info.tags.map((tag) => tag.id)).toEqual([
@@ -149,6 +181,74 @@ describe("buildDocsSpec", () => {
       "management-api",
       "other-commands",
     ]);
+  });
+
+  it("reports registry breaking changes per major and writes the migration guide", () => {
+    const { content } = builtSpec();
+    const build = (major: number) =>
+      buildDocsBundle({
+        root: rootCommand,
+        version: "1.2.3",
+        major,
+        breakingChanges: BREAKING_CHANGES,
+        overlays: content.overlays,
+        examples: content.examples,
+      });
+    const entry = (bundle: ReturnType<typeof build>) =>
+      bundle.spec.commands.find((command) => command.id === "supabase-db-push")
+        ?.breaking_changes?.[0];
+
+    const v2 = build(2);
+    const v3 = build(3);
+    expect(entry(v2)).toMatchObject({
+      id: "target-flags-default",
+      major: 3,
+      direction: "upcoming",
+      migration_url: "/docs/reference/cli/v3/migrating-from-v2#target-flags-default",
+    });
+    expect(entry(v3)).toMatchObject({ direction: "changed", flags: ["--remote", "--linked"] });
+    expect(v2.spec.commands.filter((command) => command.breaking_changes).length).toBe(2);
+    expect(v2.migrationGuide).toBeUndefined();
+    expect(v2.sections.some((section) => section.title === "Migrating from v2")).toBe(false);
+
+    expect(v3.sections[2]).toMatchObject({ id: "migrating-from-v2", type: "markdown" });
+    const guide = v3.migrationGuide ?? "";
+    expect(guide).toContain("Do not edit");
+    expect(guide).toContain('<span id="target-flags-default" />');
+    expect(guide).toContain("## Targeting");
+    expect(guide).toContain("--linked is deprecated and will be removed in v4");
+    expect(guide).toContain("- `supabase db pull`: [target-flags-default](#target-flags-default)");
+  });
+
+  it("emits sidebar sections listing every published command once, by category order", () => {
+    const { content, spec } = builtSpec();
+    const { sections, spec: prerelease } = buildDocsBundle({
+      root: rootCommand,
+      version: "1.2.3",
+      prerelease: true,
+      overlays: content.overlays,
+      examples: content.examples,
+    });
+    expect(prerelease.prerelease).toBe(true);
+    expect(sections.slice(0, 2).map((section) => section.title)).toEqual([
+      "Introduction",
+      "Global flags",
+    ]);
+    const categories = sections.flatMap((section) =>
+      section.type === "category" ? [section] : [],
+    );
+    const titleOrder = Object.values(DOCS_CATEGORIES).map((category) => category.title);
+    const titles = categories.map((category) => category.title);
+    expect(titles).toEqual(titleOrder.filter((title) => titles.includes(title)));
+    const listed = categories.flatMap((category) => category.items.map((item) => item.id));
+    expect(listed.toSorted()).toEqual(spec.commands.map((command) => command.id).toSorted());
+    const general = categories.find((category) => category.title === "General");
+    expect(general?.items.find((item) => item.id === "supabase-link")).toEqual({
+      id: "supabase-link",
+      title: "supabase link",
+      slug: "supabase-link",
+      type: "cli-command",
+    });
   });
 
   it("excludes gated Compute and Stack commands from the default docs spec", () => {
@@ -204,16 +304,21 @@ describe("buildDocsSpec", () => {
     expect(whoami?.description).toBe("Show information about the currently logged-in user.");
   });
 
-  it("renders link with its overlay description and flag display names", () => {
+  it("renders link from its withDocs body and examples, with flag display names", () => {
     const { byId, content } = builtSpec();
     const link = byId.get("supabase-link");
     expect(link).toBeDefined();
     expect(link?.tags).toEqual(["local-dev"]);
     expect(link?.usage).toBe("supabase link [ref-or-branch] [flags]");
     expect(link?.flags.map((flag) => flag.id)).toEqual(["project-ref", "skip-pooler"]);
-    expect(link?.description).toBe(
-      docsStripOverlayHeading(content.overlays.get("supabase/link.md") ?? ""),
+    expect(link?.description).toMatch(
+      /^Connects the current directory to a hosted Supabase project/,
     );
+    expect(link?.examples?.map((example) => example.id)).toEqual([
+      "basic-usage",
+      "without-password",
+      "using-alternate-dns",
+    ]);
     expect(content.overlays.has("supabase/db/diff.md")).toBe(true);
     expect(byId.get("supabase-db-diff")?.description).toBe(
       docsStripOverlayHeading(content.overlays.get("supabase/db/diff.md") ?? ""),
@@ -334,7 +439,7 @@ describe("review fixes stay fixed", () => {
     expect(byId.get("supabase-domains-get")?.flags.map((flag) => flag.id)).toContain("remote");
   });
 
-  it("renders required variadic usage from the override table", () => {
+  it("renders a variadic argument documented as required in angle brackets", () => {
     const { byId } = builtSpec();
     expect(byId.get("supabase-storage-rm")?.usage).toBe("supabase storage rm <file> ... [flags]");
     expect(byId.get("supabase-secrets-set")?.usage).toBe(
@@ -377,18 +482,40 @@ describe("build guards fail loudly", () => {
     expect(() => buildDocsSpec({ root, ...emptyInput })).toThrow(/no --experimental global flag/);
   });
 
-  it("throws for a top-level command without a docs section tag", () => {
+  it("throws for a command without a docs category", () => {
     const root = Command.make("supabase").pipe(
       Command.withSubcommands([Command.make("not-a-real-command")]),
-      Command.withGlobalFlags([ExperimentalFlag]),
+      withGlobalParams([ExperimentalFlag]),
+    );
+    expect(() => buildDocsSpec({ root, ...emptyInput })).toThrow(
+      /"supabase-not-a-real-command" has no docs category/,
+    );
+  });
+
+  it("throws for a top-level command without a docs section tag", () => {
+    const root = Command.make("supabase").pipe(
+      Command.withSubcommands([
+        Command.make("not-a-real-command").pipe(withDocs({ category: "general" })),
+      ]),
+      withGlobalParams([ExperimentalFlag]),
     );
     expect(() => buildDocsSpec({ root, ...emptyInput })).toThrow(/no DOCS_TAGS entry/);
   });
 
+  it("throws when withDocs and a legacy table describe the same command", () => {
+    const root = Command.make("supabase").pipe(
+      Command.withSubcommands([Command.make("init").pipe(withDocs({ category: "general" }))]),
+      withGlobalParams([ExperimentalFlag]),
+    );
+    expect(() => buildDocsSpec({ root, ...emptyInput })).toThrow(
+      /"supabase-init" sets withDocs category and still has a DOCS_CATEGORY entry/,
+    );
+  });
+
   it("throws listing stale static-table entries for a shrunken tree", () => {
     const root = Command.make("supabase").pipe(
-      Command.withSubcommands([Command.make("link")]),
-      Command.withGlobalFlags([ExperimentalFlag]),
+      Command.withSubcommands([Command.make("init")]),
+      withGlobalParams([ExperimentalFlag]),
     );
     expect(() => buildDocsSpec({ root, ...emptyInput })).toThrow(
       /stale static-table entries[^]*DOCS_EXPERIMENTAL[^]*DOCS_EXTRA_FLAGS/,
@@ -399,10 +526,14 @@ describe("build guards fail loudly", () => {
     const root = Command.make("supabase").pipe(
       Command.withSubcommands([
         Command.make("db").pipe(
-          Command.withSubcommands([Command.make("query", { output: Flag.String("output") })]),
+          Command.withSubcommands([
+            makeCommand("query", {
+              output: cliFlag("output", Flag.String, { description: "Output.", required: true }),
+            }),
+          ]),
         ),
       ]),
-      Command.withGlobalFlags([ExperimentalFlag]),
+      withGlobalParams([ExperimentalFlag]),
     );
     expect(() => buildDocsSpec({ root, ...emptyInput })).toThrow(
       /DOCS_EXTRA_FLAGS entry "supabase-db-query" is shadowed by declared flag\(s\) --output/,
@@ -413,8 +544,8 @@ describe("build guards fail loudly", () => {
     Effect.gen(function* () {
       yield* loadDocsContent;
       const root = Command.make("supabase").pipe(
-        Command.withSubcommands([Command.make("link")]),
-        Command.withGlobalFlags([ExperimentalFlag]),
+        Command.withSubcommands([Command.make("init")]),
+        withGlobalParams([ExperimentalFlag]),
       );
       const overlays = new Map([["supabase/lonk.md", "## x\n\nBody.\n"]]);
       const build = () =>
@@ -515,7 +646,7 @@ describe("readDocsContent walk", () => {
   );
 });
 
-describe("DOCS_EXPERIMENTAL mirrors the runtime gate", () => {
+describe("documented experimental leaves mirror the runtime gate", () => {
   it.effect("matches the requireExperimental call sites exactly", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -545,7 +676,13 @@ describe("DOCS_EXPERIMENTAL mirrors the runtime gate", () => {
           }
         });
       yield* walk(commandsDir);
-      expect([...gated].sort()).toEqual([...DOCS_EXPERIMENTAL].sort());
+      yield* loadDocsContent;
+      const documented = builtSpec()
+        .spec.commands.filter((command) =>
+          command.flags.some((flag) => flag.id === "experimental" && flag.required === true),
+        )
+        .map((command) => command.id);
+      expect([...gated].sort()).toEqual(documented.sort());
     }).pipe(Effect.provide(BunServices.layer)),
   );
 });

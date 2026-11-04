@@ -2,6 +2,7 @@ import { Effect, Option } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withDocs } from "../../docs/command-docs.ts";
 import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose, withContext } from "../../command-internal/command-permissions/model.ts";
 import { linkServices } from "../../command-internal/link-services-core.ts";
@@ -14,37 +15,36 @@ import { Output } from "../../shared/output/output.service.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
+import body from "./link.docs.md" with { type: "text" };
 import { link } from "./link.handler.ts";
 import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
+import { cliArgument, cliFlag, makeCommand } from "../../shared/cli/cli-params.ts";
 
 const config = {
-  refOrBranch: Argument.String("ref-or-branch").pipe(
-    Argument.withDescription(
-      "Project ref, or the name (or UUID) of a branch of the currently linked project. Values that are exactly 20 lowercase letters are always treated as project refs.",
-    ),
-    Argument.optional,
-  ),
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription(
-      "Project ref of the Supabase project, or the name of one of its branches.",
-    ),
-    Flag.optional,
-  ),
+  refOrBranch: cliArgument("ref-or-branch", Argument.String, {
+    description:
+      "Project ref, or the name or UUID of a branch of the linked project; 20 lowercase letters are always read as a project ref.",
+    optional: true,
+  }),
+  projectRef: cliFlag("project-ref", Flag.String, {
+    description: "Project ref, or the name of one of its branches; deprecated in favor of the argument.",
+    optional: true,
+  }),
   password: CliConfigKeys.linkedDb.password.flag({
     name: "password",
     alias: "p",
     description: "Password to your remote Postgres database.",
     hidden: true,
   }),
-  skipPooler: Flag.Boolean("skip-pooler").pipe(
-    Flag.withDescription("Use direct connection instead of pooler."),
-    Flag.withDefault(false),
-  ),
-  frozen: Flag.Boolean("frozen").pipe(
-    Flag.withDescription("Leave supabase/supabase.lock untouched (stack mode only)."),
-    Flag.withDefault(false),
-    Flag.withHidden,
-  ),
+  skipPooler: cliFlag("skip-pooler", Flag.Boolean, {
+    description: "Use a direct connection instead of the connection pooler.",
+    default: false,
+  }),
+  frozen: cliFlag("frozen", Flag.Boolean, {
+    description: "Leave supabase/supabase.lock untouched in stack mode.",
+    default: false,
+    hidden: true,
+  }),
 } as const;
 
 export type LinkFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -63,9 +63,39 @@ const warnPasswordIgnored = Effect.fnUntraced(function* (flags: LinkFlags) {
   yield* output.warn("link ignores --password; remove it from your scripts.");
 });
 
-export const linkCommand = Command.make("link", config).pipe(
-  Command.withDescription("Link to a Supabase project."),
-  Command.withShortDescription("Link to a Supabase project"),
+export const linkCommand = makeCommand("link", config).pipe(
+  Command.withDescription("Link the local project to a hosted Supabase project."),
+  Command.withShortDescription("Link to a hosted Supabase project"),
+  withDocs({
+    category: "general",
+    body,
+    examples: [
+      {
+        id: "basic-usage",
+        name: "Basic usage",
+        code: "supabase link ********************",
+        response: `Enter your database password (or leave blank to skip): ********
+Finished supabase link.
+`,
+      },
+      {
+        id: "without-password",
+        name: "Link without database password",
+        code: 'supabase link ******************** <<< ""',
+        response: `Enter your database password (or leave blank to skip):
+Finished supabase link.
+`,
+      },
+      {
+        id: "using-alternate-dns",
+        name: "Link using DNS-over-HTTPS resolver",
+        code: "supabase link ******************** --dns-resolver https",
+        response: `Enter your database password (or leave blank to skip):
+Finished supabase link.
+`,
+      },
+    ],
+  }),
   Command.withExamples([
     {
       command: "supabase link abcdefghijklmnopqrst",

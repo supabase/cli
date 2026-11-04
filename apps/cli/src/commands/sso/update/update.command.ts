@@ -15,22 +15,23 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { SSO_NAME_ID_FORMATS } from "../sso.saml.ts";
 import { ssoUpdate } from "./update.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliArgument, cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 // All three domain flags are CSV string-slice flags; malformed CSV reports
 // a diagnostic (see `stringSliceFlag`).
 export const ssoUpdateDomainsFlag = stringSliceFlag(
   "domains",
-  "Replace domains with this comma separated list of email domains.",
+  "Email domains that replace the current list, comma-separated or repeated.",
 );
 
 export const ssoUpdateAddDomainsFlag = stringSliceFlag(
   "add-domains",
-  "Add this comma separated list of email domains to the identity provider.",
+  "Email domains to add to the identity provider, comma-separated or repeated.",
 );
 
 export const ssoUpdateRemoveDomainsFlag = stringSliceFlag(
   "remove-domains",
-  "Remove this comma separated list of email domains from the identity provider.",
+  "Email domains to remove from the identity provider, comma-separated or repeated.",
 );
 
 const config = {
@@ -38,47 +39,40 @@ const config = {
   domains: ssoUpdateDomainsFlag,
   addDomains: ssoUpdateAddDomainsFlag,
   removeDomains: ssoUpdateRemoveDomainsFlag,
-  metadataFile: Flag.String("metadata-file").pipe(
-    Flag.withDescription(
-      "File containing a SAML 2.0 Metadata XML document describing the identity provider.",
-    ),
-    Flag.optional,
-  ),
-  metadataUrl: Flag.String("metadata-url").pipe(
-    Flag.withDescription(
-      "URL pointing to a SAML 2.0 Metadata XML document describing the identity provider.",
-    ),
-    Flag.optional,
-  ),
-  skipUrlValidation: Flag.Boolean("skip-url-validation").pipe(
-    Flag.withDescription(
-      "Skip local validation of the SAML 2.0 Metadata URL (HTTPS requirement, live GET probe, and UTF-8 body decode). Use in air-gapped CI where the IDP is not reachable from the build agent.",
-    ),
-    Flag.withDefault(false),
-  ),
-  attributeMappingFile: Flag.String("attribute-mapping-file").pipe(
-    Flag.withDescription(
-      "File containing a JSON mapping between SAML attributes to custom JWT claims.",
-    ),
-    Flag.optional,
-  ),
-  nameIdFormat: Flag.Literals("name-id-format", SSO_NAME_ID_FORMATS).pipe(
-    Flag.withDescription(
-      "URI reference representing the classification of string-based identifier information.",
-    ),
-    Flag.optional,
-  ),
-  providerId: Argument.String("provider-id").pipe(
-    Argument.withDescription("The ID of the SSO identity provider to update."),
-  ),
+  metadataFile: cliFlag("metadata-file", Flag.String, {
+    description:
+      "Path to a SAML 2.0 Metadata XML file describing the identity provider.",
+    optional: true,
+  }),
+  metadataUrl: cliFlag("metadata-url", Flag.String, {
+    description:
+      "URL of a SAML 2.0 Metadata XML document describing the identity provider.",
+    optional: true,
+  }),
+  skipUrlValidation: cliFlag("skip-url-validation", Flag.Boolean, {
+    description:
+      "Skip local validation of the metadata URL, such as in CI where the identity provider is unreachable.",
+    default: false,
+  }),
+  attributeMappingFile: cliFlag("attribute-mapping-file", Flag.String, {
+    description: "Path to a JSON file mapping SAML attributes to custom JWT claims.",
+    optional: true,
+  }),
+  nameIdFormat: cliFlag("name-id-format", (name) => Flag.Literals(name, SSO_NAME_ID_FORMATS), {
+    description:
+      "SAML name ID format URI used to identify users.",
+    optional: true,
+  }),
+  providerId: cliArgument("provider-id", Argument.String, {
+    description: "The ID of the SSO identity provider to update.",
+    required: true,
+  }),
 };
 export type SsoUpdateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const ssoUpdateCommand = Command.make("update", config).pipe(
-  // The `of a already added` grammar slip is part of the established output
-  // string — don't fix it here.
+export const ssoUpdateCommand = makeCommand("update", config).pipe(
   Command.withDescription(
-    "Update the configuration settings of a already added SSO identity provider.",
+    "Changes the email domains, metadata, attribute mapping or name ID format of a connected identity provider.",
   ),
   Command.withShortDescription("Update information about an SSO identity provider"),
   Command.withExamples([

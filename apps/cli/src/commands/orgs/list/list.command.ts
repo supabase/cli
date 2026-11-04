@@ -7,13 +7,26 @@ import { managementApiRuntimeLayer } from "../../../command-internal/management-
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { orgsList } from "./list.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {};
 export type OrgsListFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const orgsListCommand = Command.make("list", config).pipe(
-  Command.withDescription("List all organizations the logged-in user belongs."),
+export const orgsListCommand = makeCommand("list", config).pipe(
+  Command.withDescription(
+    "Show the organizations the logged-in user belongs to, with their IDs.",
+  ),
   Command.withShortDescription("List all organizations"),
+  Command.withExamples([
+    {
+      command: "supabase orgs list",
+      description: "List all organizations you belong to",
+    },
+    {
+      command: "supabase orgs list --output-format json",
+      description: "List organizations as JSON",
+    },
+  ]),
   withPermissions({ operations: [{ operationId: "v1-list-all-organizations", kind: "required" }] }),
   Command.withHandler((flags) =>
     orgsList(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),

@@ -7,26 +7,27 @@ import { withJsonErrorHandling } from "../../shared/output/json-error-handling.t
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { issueBug, issueDocs, issueFeature } from "./issue.handler.ts";
 import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { cliFlag, makeCommand } from "../../shared/cli/cli-params.ts";
 
-const issueNoBrowserFlag = Flag.Boolean("no-browser").pipe(
-  Flag.withDescription("Print the issue form URL without opening a browser."),
-  Flag.withDefault(false),
-);
+const issueNoBrowserFlag = cliFlag("no-browser", Flag.Boolean, {
+  description: "Print the form URL without opening a browser.",
+  default: false,
+});
 
 const issueOptionalTextFlag = (name: string, description: string) =>
-  Flag.String(name).pipe(Flag.withDescription(description), Flag.optional);
+  cliFlag(name, Flag.String, { description: description, optional: true });
 
 const issueCommonContextFlag = issueOptionalTextFlag(
   "additional-context",
-  "Extra context to prefill on the issue form.",
+  "Extra context to prefill on the form.",
 );
 
 const issueBugConfig = {
   area: issueOptionalTextFlag("area", "Affected CLI area."),
   command: issueOptionalTextFlag("command", "Command that failed."),
   actualOutput: issueOptionalTextFlag("actual-output", "Actual output or error text."),
-  expectedBehavior: issueOptionalTextFlag("expected-behavior", "Expected behavior."),
-  reproduce: issueOptionalTextFlag("reproduce", "Steps to reproduce."),
+  expectedBehavior: issueOptionalTextFlag("expected-behavior", "What you expected to happen."),
+  reproduce: issueOptionalTextFlag("reproduce", "Steps to reproduce the problem."),
   crashReportId: issueOptionalTextFlag(
     "crash-report-id",
     "Crash report or support ticket ID, if you have one.",
@@ -40,14 +41,14 @@ const issueBugConfig = {
 } as const;
 
 const issueFeatureConfig = {
-  existingIssues: Flag.Boolean("existing-issues").pipe(
-    Flag.withDescription("Prefill the existing issues checklist."),
-    Flag.withDefault(false),
-  ),
+  existingIssues: cliFlag("existing-issues", Flag.Boolean, {
+    description: "Prefill the checklist item for having searched existing issues.",
+    default: false,
+  }),
   area: issueOptionalTextFlag("area", "Affected CLI area."),
   problem: issueOptionalTextFlag("problem", "Problem the feature should solve."),
-  proposedSolution: issueOptionalTextFlag("proposed-solution", "Proposed solution."),
-  alternatives: issueOptionalTextFlag("alternatives", "Alternatives considered."),
+  proposedSolution: issueOptionalTextFlag("proposed-solution", "Solution you would like to see."),
+  alternatives: issueOptionalTextFlag("alternatives", "Alternatives you considered."),
   additionalContext: issueCommonContextFlag,
   noBrowser: issueNoBrowserFlag,
 } as const;
@@ -56,7 +57,7 @@ const issueDocsConfig = {
   link: issueOptionalTextFlag("link", "Relevant documentation link."),
   issueType: issueOptionalTextFlag("issue-type", "Documentation issue type."),
   problem: issueOptionalTextFlag("problem", "What is confusing, missing, or incorrect."),
-  improvement: issueOptionalTextFlag("improvement", "Suggested documentation improvement."),
+  improvement: issueOptionalTextFlag("improvement", "Suggested improvement to the documentation."),
   additionalContext: issueCommonContextFlag,
   noBrowser: issueNoBrowserFlag,
 } as const;
@@ -65,8 +66,8 @@ export type IssueBugFlags = CliCommand.Command.Config.Infer<typeof issueBugConfi
 export type IssueFeatureFlags = CliCommand.Command.Config.Infer<typeof issueFeatureConfig>;
 export type IssueDocsFlags = CliCommand.Command.Config.Infer<typeof issueDocsConfig>;
 
-const issueBugCommand = Command.make("bug", issueBugConfig).pipe(
-  Command.withDescription("Open a GitHub bug report with local CLI details prefilled."),
+const issueBugCommand = makeCommand("bug", issueBugConfig).pipe(
+  Command.withDescription("Report a problem with the CLI. The form opens with your local CLI details already filled in."),
   Command.withShortDescription("Open a bug report"),
   Command.withExamples([
     {
@@ -101,8 +102,8 @@ const issueBugCommand = Command.make("bug", issueBugConfig).pipe(
   withTargetPolicy({ group: "local-only", consent: "none" }),
 );
 
-const issueFeatureCommand = Command.make("feature", issueFeatureConfig).pipe(
-  Command.withDescription("Open a GitHub feature request with useful context prefilled."),
+const issueFeatureCommand = makeCommand("feature", issueFeatureConfig).pipe(
+  Command.withDescription("Propose a new CLI feature or an improvement to an existing one."),
   Command.withShortDescription("Open a feature request"),
   Command.withExamples([
     {
@@ -131,8 +132,8 @@ const issueFeatureCommand = Command.make("feature", issueFeatureConfig).pipe(
   withTargetPolicy({ group: "local-only", consent: "none" }),
 );
 
-const issueDocsCommand = Command.make("docs", issueDocsConfig).pipe(
-  Command.withDescription("Open a GitHub documentation issue with useful context prefilled."),
+const issueDocsCommand = makeCommand("docs", issueDocsConfig).pipe(
+  Command.withDescription("Report documentation that is confusing, missing, or incorrect."),
   Command.withShortDescription("Open a documentation issue"),
   Command.withExamples([
     {
@@ -161,7 +162,10 @@ const issueDocsCommand = Command.make("docs", issueDocsConfig).pipe(
 );
 
 export const issueCommand = Command.make("issue").pipe(
-  Command.withDescription("Open Supabase CLI GitHub issue forms."),
-  Command.withShortDescription("Open GitHub issue forms"),
+  Command.withDescription(
+    "Open a prefilled Supabase CLI issue form on GitHub to report a bug, request a feature, or flag a documentation problem. " +
+      "Use the flags to prefill form fields, or pass --no-browser to print the URL instead.",
+  ),
+  Command.withShortDescription("Open a GitHub issue form"),
   Command.withSubcommands([issueBugCommand, issueFeatureCommand, issueDocsCommand]),
 );

@@ -12,23 +12,32 @@ import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-ru
 import { STORAGE_PERMISSIONS, storageTargetFlags } from "../storage.flags.ts";
 import { storageMv } from "./mv.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliArgument, cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
-  src: Argument.String("src").pipe(Argument.withDescription("Source path to move from.")),
-  dst: Argument.String("dst").pipe(Argument.withDescription("Destination path to move to.")),
-  recursive: Flag.Boolean("recursive").pipe(
-    Flag.withAlias("r"),
-    Flag.withDescription("Recursively move a directory."),
-    Flag.withDefault(false),
-  ),
+  src: cliArgument("src", Argument.String, {
+    description: "Source path to move from.",
+    required: true,
+  }),
+  dst: cliArgument("dst", Argument.String, {
+    description: "Destination path to move to.",
+    required: true,
+  }),
+  recursive: cliFlag("recursive", Flag.Boolean, {
+    description: "Recursively move a directory.",
+    alias: "r",
+    default: false,
+  }),
   ...storageTargetFlags,
 } as const;
 
 export type StorageMvFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const storageMvCommand = Command.make("mv", config).pipe(
-  Command.withDescription("Move objects from src to dst path."),
-  Command.withShortDescription("Move objects from src to dst path"),
+export const storageMvCommand = makeCommand("mv", config).pipe(
+  Command.withDescription(
+    "Move or rename objects within a Storage bucket; moving between buckets is not supported.\n\nThe command asks for confirmation before changing anything. Requires the `--experimental` flag.",
+  ),
+  Command.withShortDescription("Move objects within a Storage bucket"),
   Command.withExamples([
     {
       command: "supabase storage mv -r ss:///bucket/docs ss:///bucket/www/docs",

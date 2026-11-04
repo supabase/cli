@@ -11,16 +11,21 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { testNew } from "./new.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliArgument, cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const TEMPLATE_VALUES = ["pgtap"] as const;
 
 const config = {
-  name: Argument.String("name").pipe(Argument.withDescription("Name of the test file to create.")),
-  template: Flag.Literals("template", TEMPLATE_VALUES).pipe(
-    Flag.withAlias("t"),
-    Flag.withDescription("Template framework to generate."),
-    Flag.optional,
-  ),
+  name: cliArgument("name", Argument.String, {
+    description: "Name for the new test file; the _test.sql suffix is added.",
+    required: true,
+  }),
+  template: cliFlag("template", (name) => Flag.Literals(name, TEMPLATE_VALUES), {
+    description: "Test framework to generate the file for.",
+    alias: "t",
+    optional: true,
+    docs: { default: "pgtap" },
+  }),
 } as const;
 
 export type TestNewFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -36,9 +41,14 @@ const testNewRuntimeLayer = Layer.mergeAll(
   commandRuntimeLayer(["test", "new"]),
 );
 
-export const testNewCommand = Command.make("new", config).pipe(
-  Command.withDescription("Create a new test file."),
+export const testNewCommand = makeCommand("new", config).pipe(
+  Command.withDescription(
+    "Create a test file in supabase/tests to start writing database tests from a template.",
+  ),
   Command.withShortDescription("Create a new test file"),
+  Command.withExamples([
+    { command: "supabase test new users", description: "Create a pgTAP test file" },
+  ]),
   withPermissions({ operations: [], noApiEffectFlags: ["template"] }),
   Command.withHandler((flags) =>
     testNew(flags).pipe(

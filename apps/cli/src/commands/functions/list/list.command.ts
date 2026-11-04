@@ -11,6 +11,7 @@ import { functionsList } from "./list.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
+import { makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
@@ -18,9 +19,11 @@ const config = {
 
 export type FunctionsListFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const functionsListCommand = Command.make("list", config).pipe(
-  Command.withDescription("List all Functions in the linked Supabase project."),
-  Command.withShortDescription("List all Functions in Supabase"),
+export const functionsListCommand = makeCommand("list", config).pipe(
+  Command.withDescription(
+    "Show the Edge Functions deployed to the linked project.",
+  ),
+  Command.withShortDescription("List deployed Edge Functions"),
   Command.withExamples([
     {
       command: "supabase functions list",

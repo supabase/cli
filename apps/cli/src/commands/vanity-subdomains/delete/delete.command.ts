@@ -18,6 +18,7 @@ import {
 } from "../../../telemetry/command-telemetry.ts";
 import { vanitySubdomainsDelete } from "./delete.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
@@ -25,11 +26,17 @@ const config = {
 
 export type VanitySubdomainsDeleteFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const vanitySubdomainsDeleteCommand = Command.make("delete", config).pipe(
+export const vanitySubdomainsDeleteCommand = makeCommand("delete", config).pipe(
   Command.withDescription(
-    "Deletes the vanity subdomain for a project, and reverts to using the project ref for routing.",
+    "Removes the vanity subdomain, so requests are routed by project ref again.",
   ),
   Command.withShortDescription("Delete the vanity subdomain"),
+  Command.withExamples([
+    {
+      command: "supabase vanity-subdomains delete --experimental --remote=<project-ref>",
+      description: "Delete the vanity subdomain of a project",
+    },
+  ]),
   withPermissions(
     compose(
       {

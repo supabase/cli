@@ -19,6 +19,7 @@ import {
 } from "../../../telemetry/command-telemetry.ts";
 import { networkBansRemove } from "./remove.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { makeCommand } from "../../../shared/cli/cli-params.ts";
 
 /**
  * CSV-splits each occurrence (`--db-unban-ip=1.2.3.4,5.6.7.8` → two IPs) and appends across
@@ -27,7 +28,7 @@ import { withTargetPolicy } from "../../../command-internal/target/target-policy
  */
 export const networkBansRemoveDbUnbanIpFlag = stringSliceFlag(
   "db-unban-ip",
-  "IP to allow DB connections from.",
+  "IP address to unblock, comma-separated or repeated.",
 );
 
 const config = {
@@ -37,9 +38,19 @@ const config = {
 
 export type NetworkBansRemoveFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const networkBansRemoveCommand = Command.make("remove", config).pipe(
-  Command.withDescription("Remove a network ban."),
+export const networkBansRemoveCommand = makeCommand("remove", config).pipe(
+  Command.withDescription("Unblocks banned IP addresses. If you pass no IP, it unblocks the IP address of the machine you run it from."),
   Command.withShortDescription("Remove a network ban"),
+  Command.withExamples([
+    {
+      command: "supabase network-bans remove --db-unban-ip 203.0.113.7 --experimental --remote=<project-ref>",
+      description: "Unban a single IP address",
+    },
+    {
+      command: "supabase network-bans remove --experimental --remote=<project-ref>",
+      description: "Unban the IP address of this machine",
+    },
+  ]),
   withPermissions(
     compose(
       {

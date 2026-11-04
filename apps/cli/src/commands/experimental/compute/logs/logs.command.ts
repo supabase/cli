@@ -16,6 +16,7 @@ import { computeLogs } from "./logs.handler.ts";
 import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 import { branchResolution } from "../../../../command-internal/target/branch-resolution.ts";
 import { projectTargetFlags } from "../../../../command-internal/target/target-flags.ts";
+import { cliArgument, cliFlag, makeCommand } from "../../../../shared/cli/cli-params.ts";
 
 /**
  * The endpoint's own ceiling is the SQL `LIMIT`, so this bound is the CLI's
@@ -28,40 +29,36 @@ import { projectTargetFlags } from "../../../../command-internal/target/target-f
 const MAX_TAIL = 1000;
 
 const config = {
-  name: Argument.String("name").pipe(Argument.withDescription("Compute to read logs for.")),
+  name: cliArgument("name", Argument.String, {
+    description: "Compute to read logs for.",
+    required: true,
+  }),
   ...projectTargetFlags(),
-  kind: Flag.Literals("kind", COMPUTE_LOG_KINDS).pipe(
-    Flag.withDescription(
+  kind: cliFlag("kind", (name) => Flag.Literals(name, COMPUTE_LOG_KINDS), {
+    description:
       "Limit to one log stream: app (the compute's own output), requests (HTTP access), " +
-        "builds (deploy lifecycle). Defaults to all three.",
-    ),
-    Flag.optional,
-  ),
-  follow: Flag.Boolean("follow").pipe(
-    Flag.withAlias("f"),
-    Flag.withDescription(
-      `Keep printing new lines until interrupted, polling every ${COMPUTE_LOG_POLL_SECONDS} seconds.`,
-    ),
-    // Required: `Flag.Boolean` alone builds a *required* param, which breaks
-    // invocations that omit the flag. `boolean-flag-defaults.unit.test.ts`
-    // walks the command tree and fails any bare boolean.
-    Flag.withDefault(false),
-  ),
-  tail: Flag.Int("tail").pipe(
-    Flag.filter(
+      "builds (deploy lifecycle). Defaults to all three.",
+    optional: true,
+  }),
+  follow: cliFlag("follow", Flag.Boolean, {
+    description: `Keep printing new lines until interrupted, polling every ${COMPUTE_LOG_POLL_SECONDS} seconds.`,
+    alias: "f",
+    default: false,
+  }),
+  tail: cliFlag("tail", Flag.Int, {
+    description:
+      "Number of log lines to print. Use 0 with --follow to skip history and print only new lines.",
+    parse: Flag.filter(
       (tail) => tail >= 0 && tail <= MAX_TAIL,
       (tail) => `Expected --tail between 0 and ${MAX_TAIL}, got ${tail}`,
     ),
-    Flag.withDescription(
-      "Number of log lines to print. Use 0 with --follow to skip history and print only new lines.",
-    ),
-    Flag.withDefault(100),
-  ),
+    default: 100,
+  }),
 } as const;
 
 export type ComputeLogsFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const computeLogsCommand = Command.make("logs", config).pipe(
+export const computeLogsCommand = makeCommand("logs", config).pipe(
   Command.withDescription(
     "Print a compute's recent logs: its own output, the HTTP requests it served, and its " +
       "deploy lifecycle events.\n\n" +

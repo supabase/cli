@@ -21,31 +21,29 @@ import { pullRuntimeLayer } from "./pull.layers.ts";
 import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
 import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
 import { projectTargetFlags } from "../../command-internal/target/target-flags.ts";
+import { cliFlag, makeCommand } from "../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
-  remoteLabel: Flag.String("remote-label").pipe(
-    Flag.withDescription(
-      "Name of the [remotes.*] block the config step writes into, overriding the block it would otherwise reuse or create.",
-    ),
-    Flag.optional,
-  ),
-  dryRun: Flag.Boolean("dry-run").pipe(
-    Flag.withDescription("Show what would be pulled without writing or changing anything."),
-    Flag.withDefault(false),
-  ),
-  force: Flag.Boolean("force").pipe(
-    Flag.withDescription(
-      "Write even when supabase/config.toml (or config.json), supabase/migrations, or supabase/functions has uncommitted or untracked changes in git.",
-    ),
-    Flag.withDefault(false),
-  ),
-  withMigrationHistory: Flag.Boolean("with-migration-history").pipe(
-    Flag.withDescription(
-      "Fetch the remote migration history table into supabase/migrations, even when it already has files. Runs automatically when supabase/migrations is missing or empty.",
-    ),
-    Flag.withDefault(false),
-  ),
+  remoteLabel: cliFlag("remote-label", Flag.String, {
+    description:
+      "Name of the [remotes.*] block the config step writes into.",
+    optional: true,
+  }),
+  dryRun: cliFlag("dry-run", Flag.Boolean, {
+    description: "Show what would be pulled without writing or changing anything.",
+    default: false,
+  }),
+  force: cliFlag("force", Flag.Boolean, {
+    description:
+      "Write even when supabase/config.toml, supabase/migrations, or supabase/functions has uncommitted changes in git.",
+    default: false,
+  }),
+  withMigrationHistory: cliFlag("with-migration-history", Flag.Boolean, {
+    description:
+      "Fetch the remote migration history into supabase/migrations even when it already has files.",
+    default: false,
+  }),
 } as const;
 
 // `--dry-run` returns after the target and config reads, so the database and function steps run
@@ -68,11 +66,14 @@ export const pullHandler = (flags: PullFlags) =>
     withJsonErrorHandling,
   );
 
-export const pullCommand = Command.make("pull", config).pipe(
+export const pullCommand = makeCommand("pull", config).pipe(
   Command.withDescription(
-    "Refreshes local project state from a linked Supabase project or branch in one step: pulls config into supabase/config.toml, optionally fetches the remote migration history table, pulls the database schema into supabase/migrations (also updating that database's migration history), and downloads every Edge Function's source. Asks for confirmation (default No) before writing, because the database step records the migration in the remote migration history table: an interactive terminal is prompted, and --output-format json|stream-json or a non-interactive run needs --yes (or SUPABASE_YES in the shell environment) — use --dry-run to preview first.",
+    "Refresh your local project from a linked Supabase project or branch in one step. " +
+      "It pulls the config, the database schema, and every Edge Function's source, and fetches the remote migration history on a fresh checkout.\n\n" +
+      "The database step also updates the migration history table on the remote project, so the command asks for confirmation (default No) before writing. " +
+      "Pass --yes, or run with --dry-run to preview first.",
   ),
-  Command.withShortDescription("Pull remote project state into the local checkout"),
+  Command.withShortDescription("Pull remote project state locally"),
   Command.withExamples([
     {
       command: "supabase pull",
