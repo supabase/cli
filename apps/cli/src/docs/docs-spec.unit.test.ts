@@ -316,7 +316,7 @@ describe("buildDocsSpec", () => {
     );
     expect(link?.examples?.map((example) => example.id)).toEqual([
       "basic-usage",
-      "without-password",
+      "link-branch",
       "using-alternate-dns",
     ]);
     expect(content.overlays.has("supabase/db/diff.md")).toBe(true);

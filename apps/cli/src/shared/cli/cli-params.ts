@@ -11,7 +11,7 @@ export interface ParamDocs {
   readonly name: string;
   /** Shown as required: parse-required, a variadic with a positive minimum, or `docs.required`. */
   readonly required: boolean;
-  /** The default as the reference shows it; absent when it is the value type's zero value. */
+  /** The default as the reference shows it; absent when neither a parse default nor `docs.default` is set. */
   readonly default?: string;
   readonly hidden: boolean;
   /** Present on a repeatable param: the minimum occurrence count. */

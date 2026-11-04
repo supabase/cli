@@ -20,7 +20,7 @@ interface AstNode {
   readonly _tag: string;
   readonly annotations?: Readonly<Record<string, unknown>>;
   readonly context?: { readonly isOptional?: boolean };
-  readonly encoding?: ReadonlyArray<unknown>;
+  readonly encoding?: ReadonlyArray<{ readonly to?: AstNode }>;
   readonly checks?: ReadonlyArray<{ readonly annotations?: Readonly<Record<string, unknown>> }>;
   readonly propertySignatures?: ReadonlyArray<{
     readonly name: PropertyKey;
@@ -136,8 +136,7 @@ function withCheckAnnotations(node: AstNode): Readonly<Record<string, unknown>> 
  * Annotations of a leaf. An array's `description`/`tags`/`links` may live on its element schema
  * instead of the array, so fall back to the first element's.
  */
-function leafAnnotations(node: AstNode, element: AstNode | undefined) {
-  const own = withCheckAnnotations(node);
+function leafAnnotations(own: Record<string, unknown>, element: AstNode | undefined) {
   const inner = element === undefined ? {} : withCheckAnnotations(element);
   const pick = (key: string) => own[key] ?? inner[key];
   return {
@@ -185,7 +184,10 @@ export function collectEntries(root: AstNode): ReadonlyArray<Entry> {
       const childTags = tags.length > 0 ? tags : (sectionTag ?? []);
       for (const prop of props) {
         const child = structural(prop.type);
-        const optional = prop.type.context?.isOptional === true || prop.type.encoding !== undefined;
+        // A decoding default makes the decoded key required, so omission is read from the encoded side.
+        const encoded = prop.type.encoding?.at(-1)?.to;
+        const optional =
+          prop.type.context?.isOptional === true || encoded?.context?.isOptional === true;
         visit(
           prop.type,
           [...path, String(prop.name)],
@@ -198,7 +200,7 @@ export function collectEntries(root: AstNode): ReadonlyArray<Entry> {
     }
 
     const element = node._tag === "Arrays" ? (node.rest?.[0] ?? node.elements?.[0]) : undefined;
-    const leaf = leafAnnotations(node, element);
+    const leaf = leafAnnotations(annotations, element);
     const effectiveTags = leaf.tags ?? tags;
     entries.push({
       path: joined,
