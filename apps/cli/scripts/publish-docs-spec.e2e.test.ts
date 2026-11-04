@@ -69,8 +69,8 @@ describe("publish-docs-spec.ts entrypoint", () => {
   }, 30_000);
 
   it("summarizes a valid spec in dry-run mode without publishing", () => {
-    const spec = validSpec("1.0.0");
-    const { exitCode, stdout, stderr } = runScript(["--version", "1.0.0", "--dry-run"], spec);
+    const spec = validSpec("2.0.0");
+    const { exitCode, stdout, stderr } = runScript(["--version", "2.0.0", "--dry-run"], spec);
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe(

@@ -462,6 +462,7 @@ export function buildDocsBundle(input: DocsSpecInput): DocsBundle {
   const categories = new Map<string, DocsCategory>();
   const emittedIds = new Set<string>();
   const skippedExcludedIds = new Set<string>();
+  const deprecatedIds = new Set<string>();
   const seenFlagKeys = new Set<string>(rootFlags.map((flag) => `supabase ${flag.id}`));
   const consumedExcludedFlagKeys = new Set<string>();
   const consumedExtraFlagIds = new Set<string>();
@@ -490,6 +491,7 @@ export function buildDocsBundle(input: DocsSpecInput): DocsBundle {
     const fromDocs = docsOf(child)?.deprecated !== undefined;
     assertSingleSource(childId, "deprecated", "DOCS_EXCLUDED", fromTable && fromDocs);
     if (fromTable) skippedExcludedIds.add(childId);
+    if (fromTable || fromDocs) deprecatedIds.add(childId);
     if (fromTable || fromDocs) allowedOrphanOverlayPaths.add(docsOverlayPath(childPath));
     return fromTable || fromDocs;
   };
@@ -702,7 +704,7 @@ export function buildDocsBundle(input: DocsSpecInput): DocsBundle {
   }
   validateDocsContent(input, {
     emittedIds,
-    skippedExcludedIds,
+    deprecatedIds,
     consumedOverlayPaths,
     allowedOrphanOverlayPaths,
   });
@@ -837,7 +839,7 @@ function validateDocsContent(
   input: DocsSpecInput,
   seen: {
     readonly emittedIds: ReadonlySet<string>;
-    readonly skippedExcludedIds: ReadonlySet<string>;
+    readonly deprecatedIds: ReadonlySet<string>;
     readonly consumedOverlayPaths: ReadonlySet<string>;
     readonly allowedOrphanOverlayPaths: ReadonlySet<string>;
   },
@@ -849,7 +851,7 @@ function validateDocsContent(
     }
   }
   for (const docId of Object.keys(input.examples)) {
-    if (!seen.emittedIds.has(docId) && !seen.skippedExcludedIds.has(docId)) {
+    if (!seen.emittedIds.has(docId) && !seen.deprecatedIds.has(docId)) {
       orphaned.push(`examples.yaml: "${docId}"`);
     }
   }
