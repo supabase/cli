@@ -272,6 +272,35 @@ describe("init", () => {
     }).pipe(Effect.provide(BunServices.layer));
   });
 
+  it.effect("--force keeps config.json when config.toml cannot be written", () => {
+    const tempDir = tempRoot.current;
+
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const supabaseDir = path.join(tempDir, "supabase");
+      yield* fs.makeDirectory(supabaseDir, { recursive: true });
+      yield* fs.writeFileString(path.join(supabaseDir, "config.json"), "{}\n");
+      yield* fs.writeFileString(path.join(supabaseDir, "config.toml"), "");
+      yield* fs.chmod(path.join(supabaseDir, "config.toml"), 0o444);
+      const { layer } = setup(tempDir);
+
+      const exit = yield* Effect.exit(
+        init({
+          interactive: false,
+          useOrioledb: false,
+          force: true,
+          withVscodeWorkspace: false,
+          withVscodeSettings: false,
+          withIntellijSettings: false,
+        }).pipe(Effect.provide(layer)),
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(yield* fs.readFileString(path.join(supabaseDir, "config.json"))).toBe("{}\n");
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
   it.effect("renders the Windows form of the already-exists error on win32", () => {
     const tempDir = tempRoot.current;
 

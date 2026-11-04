@@ -1,3 +1,4 @@
+import { configDisplayPath } from "../../command-internal/config-advice.ts";
 import { scratchDir } from "../../command-internal/scratch-paths.ts";
 import { brotliCompressSync, constants as zlibConstants } from "node:zlib";
 import { URL } from "node:url";
@@ -2194,7 +2195,7 @@ export const resolveFunctionConfigs = Effect.fn("functions.deploy.resolveConfigs
         message: `import_map.json in a function directory is no longer supported: ${[...unsupportedImportMaps.keys()].join(", ")}`,
         suggestion:
           input.configPath !== undefined && cliConfigFormatForPath(input.configPath) === "json"
-            ? `Rename it to deno.json, or set \`functions.${slug}.import_map\` to \`"${configPath}"\` in ${path.relative(input.projectRoot, input.configPath)} to keep the file.`
+            ? `Rename it to deno.json, or set \`functions.${slug}.import_map\` to \`"${configPath}"\` in ${configDisplayPath(path, input.projectRoot, input.configPath)} to keep the file.`
             : `Rename it to deno.json, or set functions.${slug}.import_map = "${configPath}" in config.toml to keep the file.`,
       });
     }

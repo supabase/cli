@@ -214,8 +214,8 @@ const ensureSupabaseGitignore = Effect.fnUntraced(function* (cwd: string) {
  * `config.json`, `config.jsonc` or `config.toml` already exists and `force` is
  * not set it short-circuits with `created: false` and the existing file's path,
  * leaving the caller free to treat that as a hard error or a graceful no-op.
- * With `force`, the JSON files are removed so the fresh `config.toml` is the
- * one the loader reads.
+ * With `force`, the JSON files are removed once the fresh `config.toml` is
+ * written, so it is the one the loader reads.
  */
 export const initProject = Effect.fnUntraced(function* (options: ProjectInitOptions) {
   const fs = yield* FileSystem.FileSystem;
@@ -240,14 +240,14 @@ export const initProject = Effect.fnUntraced(function* (options: ProjectInitOpti
   const projectId = sanitizeProjectId(path.basename(options.cwd)) || "supabase";
 
   yield* fs.makeDirectory(supabaseDir, { recursive: true, mode: INIT_DIR_MODE });
-  for (const jsonConfigPath of jsonConfigPaths) {
-    yield* fs.remove(jsonConfigPath, { force: true });
-  }
   yield* fs.writeFileString(
     configTomlPath,
     renderCliConfigTemplate(projectId, options.useOrioledb, options.experimentalStack === true),
     { mode: INIT_FILE_MODE },
   );
+  for (const jsonConfigPath of jsonConfigPaths) {
+    yield* fs.remove(jsonConfigPath, { force: true });
+  }
   yield* ensureSupabaseGitignore(options.cwd);
 
   // Requires text mode (json/stream-json stay payload-only and never scaffold
