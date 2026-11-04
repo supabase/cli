@@ -23,7 +23,7 @@ import {
   SsoTomlEncodeError,
 } from "../sso.errors.ts";
 import { quoteSsoString, renderSingleProvider, validateUuid } from "../sso.format.ts";
-import { warnIfProjectUnhealthy } from "../sso.project-health.ts";
+import { warnIfProjectUnhealthy } from "../sso.request-policy.ts";
 import type { SsoRemoveFlags } from "./remove.command.ts";
 
 const mapStatusOrNetwork = mapHttpError({

@@ -21,7 +21,7 @@ import {
   SsoListUnexpectedStatusError,
   SsoTomlEncodeError,
 } from "../sso.errors.ts";
-import { SSO_READ_REQUEST_OPTIONS, warnIfProjectUnhealthy } from "../sso.project-health.ts";
+import { SSO_READ_REQUEST_OPTIONS, warnIfProjectUnhealthy } from "../sso.request-policy.ts";
 import { renderListProviders } from "../sso.format.ts";
 import type { SsoListFlags } from "./list.command.ts";
 
