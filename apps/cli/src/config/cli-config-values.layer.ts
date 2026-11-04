@@ -257,6 +257,15 @@ export const cliConfigValuesLayer = Layer.effect(
       for (const deprecatedPath of parsed?.deprecatedPaths ?? []) {
         yield* printOnce(deprecatedKeyLine(deprecatedPath));
       }
+      if (parsed !== null) {
+        const used = path.relative(target.workdir, parsed.path);
+        for (const ignoredPath of parsed.ignoredPaths) {
+          const ignored = path.relative(target.workdir, ignoredPath);
+          yield* warnOnce(
+            `Ignoring ${ignored} because ${used} takes precedence. Delete the file you don't use.`,
+          );
+        }
+      }
       const rawDocument = parsed?.rawDocument ?? {};
 
       const shell = yield* readShellEnvironment({

@@ -46,6 +46,8 @@ export {
   decodeCliConfigDocumentForValidationEffect,
   type DecodeCliConfigDocumentForValidationEffectOptions,
   parseCliConfigDocument,
+  cliConfigFormatForPath,
 } from "./io.ts";
+export { JsoncSyntaxError, parseJsonc } from "./jsonc.ts";
 export { PROVIDER_SIGNUP_ALIASES } from "./lib/provider-signup.ts";
 export { CliConfigWriteError } from "./errors.ts";

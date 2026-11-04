@@ -456,6 +456,116 @@ describe("CliConfigValues deprecated keys", () => {
   );
 });
 
+describe("CliConfigValues JSON config files", () => {
+  const load = (root: string) =>
+    CliConfigValues.use((values) => values.load({ workdir: root, projectRef: Option.none() }));
+
+  const writeSupabaseFile = (root: string, name: string, content: string) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.writeFileString(path.join(root, "supabase", name), content);
+    });
+
+  it.live("warns once that config.toml is ignored and reads values from config.jsonc", () =>
+    Effect.gen(function* () {
+      const root = yield* project("[db]\nport = 54111\n");
+      yield* writeSupabaseFile(
+        root,
+        "config.jsonc",
+        '{\n  // wins\n  "db": { "port": 54222, },\n}\n',
+      );
+      const output = mockOutput();
+
+      const first = yield* Effect.gen(function* () {
+        const loaded = yield* load(root);
+        yield* load(root);
+        return loaded;
+      }).pipe(Effect.provide(configValuesLayer({ output: output.layer })));
+
+      expect(first.materialized.config.db.port).toBe(54222);
+      expect(output.messages).toEqual([
+        {
+          type: "warn",
+          message:
+            "Ignoring supabase/config.toml because supabase/config.jsonc takes precedence. Delete the file you don't use.",
+        },
+      ]);
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("warns that config.toml is ignored when a strict config.json shadows it", () =>
+    Effect.gen(function* () {
+      const root = yield* project("[db]\nport = 54111\n");
+      yield* writeSupabaseFile(root, "config.json", '{"db": {"port": 54333}}');
+      const output = mockOutput();
+
+      const loaded = yield* load(root).pipe(
+        Effect.provide(configValuesLayer({ output: output.layer })),
+      );
+
+      expect(loaded.materialized.config.db.port).toBe(54333);
+      expect(output.messages).toEqual([
+        {
+          type: "warn",
+          message:
+            "Ignoring supabase/config.toml because supabase/config.json takes precedence. Delete the file you don't use.",
+        },
+      ]);
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("prints no ignored-file warning when only config.toml exists", () =>
+    Effect.gen(function* () {
+      const root = yield* project("[db]\nport = 54111\n");
+      const output = mockOutput();
+
+      yield* load(root).pipe(Effect.provide(configValuesLayer({ output: output.layer })));
+
+      expect(output.messages).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("resolves a value from a commented config.jsonc-only project", () =>
+    Effect.gen(function* () {
+      const root = yield* project("");
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.remove(path.join(root, "supabase", "config.toml"));
+      yield* writeSupabaseFile(
+        root,
+        "config.jsonc",
+        '{\n  /* local port */\n  "db": { "port": 54444, },\n}\n',
+      );
+      const output = mockOutput();
+
+      const loaded = yield* load(root).pipe(
+        Effect.provide(configValuesLayer({ output: output.layer })),
+      );
+
+      expect(loaded.materialized.config.db.port).toBe(54444);
+      expect(output.messages).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live(
+    "fails with CliConfigFileConflictError when config.json and config.jsonc both exist",
+    () =>
+      Effect.gen(function* () {
+        const root = yield* project("");
+        yield* writeSupabaseFile(root, "config.json", "{}");
+        yield* writeSupabaseFile(root, "config.jsonc", "{}");
+
+        const failure = yield* load(root).pipe(Effect.flip, Effect.provide(configValuesLayer()));
+
+        expect(failure).toMatchObject({ _tag: "CliConfigFileConflictError" });
+        expect(failure.message).toBe(
+          "Found both supabase/config.json and supabase/config.jsonc. Keep one and delete the other.",
+        );
+      }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+});
+
 describe("CliConfigValues memoisation", () => {
   it.live("memoises a load per target and drops the memo after a write", () =>
     Effect.gen(function* () {

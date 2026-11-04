@@ -14,6 +14,7 @@ import {
 } from "./config-document.ts";
 import type { ConfigFormat } from "./config-format.ts";
 import {
+  CliConfigFileConflictError,
   DuplicateRemoteProjectIdError,
   InvalidRemoteProjectIdError,
   CliConfigParseError,
@@ -21,6 +22,7 @@ import {
 } from "./errors.ts";
 import { interpolateEnvReferencesAgainstSchema } from "./lib/env.ts";
 import { normalizeDeprecatedProviderSignupKeys } from "./lib/provider-signup.ts";
+import { parseJsonc } from "./jsonc.ts";
 import { findCliProjectPaths } from "./paths.ts";
 import { rejectRemovedConfigKeys } from "./removed-config-keys.ts";
 import { setOwnProperty } from "./sparse.ts";
@@ -35,8 +37,13 @@ function configTomlPathWith(path: Path.Path, cwd: string): string {
   return path.join(cwd, "supabase", "config.toml");
 }
 
-function siblingConfigPathWith(path: Path.Path, cwd: string, format: ConfigFormat): string {
-  return format === "json" ? configTomlPathWith(path, cwd) : configJsonPathWith(path, cwd);
+function configJsoncPathWith(path: Path.Path, cwd: string): string {
+  return path.join(cwd, "supabase", "config.jsonc");
+}
+
+/** Not covered by semver — exported from `@supabase/config/internal` only. Maps a config file path to its document format. */
+export function cliConfigFormatForPath(filePath: string): ConfigFormat {
+  return filePath.endsWith(".json") || filePath.endsWith(".jsonc") ? "json" : "toml";
 }
 
 /**
@@ -218,7 +225,7 @@ const applyRemoteOverride = Effect.fnUntraced(function* (
 });
 
 export function parseCliConfigDocument(content: string, format: ConfigFormat): unknown {
-  return format === "json" ? JSON.parse(content) : SmolToml.parse(content);
+  return format === "json" ? parseJsonc(content) : SmolToml.parse(content);
 }
 
 /**
@@ -375,7 +382,7 @@ export const configTomlPath = Effect.fnUntraced(function* (cwd: string) {
 
 const readCliConfigDocumentFile = Effect.fnUntraced(function* (filePath: string) {
   const fs = yield* FileSystem.FileSystem;
-  const format = filePath.endsWith(".json") ? "json" : "toml";
+  const format = cliConfigFormatForPath(filePath);
   const content = yield* fs.readFileString(filePath);
   const document = yield* Effect.try({
     try: () => parseCliConfigDocument(content, format),
@@ -628,27 +635,35 @@ const locateCliConfigFile = Effect.fnUntraced(function* (
   options: { readonly search?: boolean; readonly tomlOnly?: boolean } | undefined,
 ) {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const project = yield* findCliProjectPaths(cwd, { search: options?.search });
 
   if (project === null) {
     return null;
   }
 
-  const jsonPath = project.configPath.endsWith(".json")
-    ? project.configPath
-    : project.configPath.replace(/config\.toml$/, "config.json");
-  const tomlPath = project.configPath.endsWith(".toml")
-    ? project.configPath
-    : project.configPath.replace(/config\.json$/, "config.toml");
+  const jsonPath = path.join(project.supabaseDir, "config.json");
+  const jsoncPath = path.join(project.supabaseDir, "config.jsonc");
+  const tomlPath = path.join(project.supabaseDir, "config.toml");
+  const tomlExists = yield* fs.exists(tomlPath);
 
-  if (!options?.tomlOnly && (yield* fs.exists(jsonPath))) {
-    return {
-      filePath: jsonPath,
-      ignoredPaths: (yield* fs.exists(tomlPath)) ? [tomlPath] : [],
-    };
+  if (!options?.tomlOnly) {
+    const jsonExists = yield* fs.exists(jsonPath);
+    const jsoncExists = yield* fs.exists(jsoncPath);
+
+    if (jsonExists && jsoncExists) {
+      return yield* new CliConfigFileConflictError({ paths: [jsonPath, jsoncPath] });
+    }
+
+    if (jsonExists || jsoncExists) {
+      return {
+        filePath: jsonExists ? jsonPath : jsoncPath,
+        ignoredPaths: tomlExists ? [tomlPath] : [],
+      };
+    }
   }
 
-  if (yield* fs.exists(tomlPath)) {
+  if (tomlExists) {
     return { filePath: tomlPath, ignoredPaths: [] };
   }
 
@@ -748,28 +763,28 @@ export const mergeParsedCliConfig = Effect.fn("CliConfig.mergeParsed")(function*
   } satisfies MergedCliConfigDocument;
 });
 
-const resolveSaveFormat = Effect.fnUntraced(function* (
+const resolveSaveTarget = Effect.fnUntraced(function* (
   cwd: string,
   format: ConfigFormat | undefined,
 ) {
-  if (format !== undefined) {
-    return format;
-  }
-
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const jsonPath = configJsonPathWith(path, cwd);
+  const jsoncPath = configJsoncPathWith(path, cwd);
   const tomlPath = configTomlPathWith(path, cwd);
+  const jsonExists = yield* fs.exists(jsonPath);
+  const jsoncExists = yield* fs.exists(jsoncPath);
 
-  if (yield* fs.exists(jsonPath)) {
-    return "json" as const;
+  if (jsonExists && jsoncExists) {
+    return yield* new CliConfigFileConflictError({ paths: [jsonPath, jsoncPath] });
   }
 
-  if (yield* fs.exists(tomlPath)) {
-    return "toml" as const;
-  }
+  const resolved =
+    format ??
+    (jsonExists || jsoncExists || !(yield* fs.exists(tomlPath)) ? ("json" as const) : "toml");
+  const filePath = resolved === "toml" ? tomlPath : jsoncExists ? jsoncPath : jsonPath;
 
-  return "json" as const;
+  return { format: resolved, filePath, allPaths: [jsonPath, jsoncPath, tomlPath] } as const;
 });
 
 const DEFAULT_CLI_CONFIG_FILE_MODE = 0o644;
@@ -808,15 +823,12 @@ export const saveCliConfig = Effect.fn("CliConfig.save")(function* (options: Sav
   const path = yield* Path.Path;
   const project = yield* findCliProjectPaths(options.cwd);
   const baseCwd = project?.projectRoot ?? options.cwd;
-  const format = yield* resolveSaveFormat(baseCwd, options.format);
+  const { format, filePath, allPaths } = yield* resolveSaveTarget(baseCwd, options.format);
   const existingSchemaRef =
     options.schemaRef !== undefined || project === null
       ? undefined
       : yield* readExistingSchemaRef(baseCwd);
   const schemaRef = options.schemaRef ?? existingSchemaRef;
-  const filePath =
-    format === "json" ? configJsonPathWith(path, baseCwd) : configTomlPathWith(path, baseCwd);
-  const siblingPath = siblingConfigPathWith(path, baseCwd, format);
   const content =
     format === "json"
       ? encodeCliConfigToJsonDocument(options.config, schemaRef)
@@ -824,8 +836,10 @@ export const saveCliConfig = Effect.fn("CliConfig.save")(function* (options: Sav
 
   yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
   yield* writeFileAtomic(filePath, content);
-  if (yield* fs.exists(siblingPath)) {
-    yield* fs.remove(siblingPath);
+  for (const otherPath of allPaths) {
+    if (otherPath !== filePath && (yield* fs.exists(otherPath))) {
+      yield* fs.remove(otherPath);
+    }
   }
 
   return {

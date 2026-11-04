@@ -1,4 +1,5 @@
 import { Effect, FileSystem, Path, Predicate, Schema } from "effect";
+import { parseJsonc } from "@supabase/config/internal";
 import { promptYesNo } from "../../command-internal/prompt-yes-no.ts";
 import { sanitizeProjectId } from "../config/project-id.ts";
 import { Output } from "../output/output.service.ts";
@@ -12,88 +13,7 @@ import {
 } from "./project-init.templates.ts";
 import { InitParseSettingsError } from "./project-init.errors.ts";
 
-// Strips line and block comments and trailing commas while preserving
-// string contents, so an existing JSONC settings file parses correctly.
-function stripJsonComments(contents: string): string {
-  const src = contents.replace(/^\uFEFF/, "");
-  const out: Array<string> = [];
-  let pendingCommaIndex = -1;
-  let i = 0;
-  while (i < src.length) {
-    const char = src.charAt(i);
-
-    if (char === '"') {
-      pendingCommaIndex = -1;
-      out.push(char);
-      i++;
-      while (i < src.length) {
-        const stringChar = src.charAt(i);
-        out.push(stringChar);
-        i++;
-        if (stringChar === "\\") {
-          if (i < src.length) {
-            out.push(src.charAt(i));
-            i++;
-          }
-        } else if (stringChar === '"') {
-          break;
-        }
-      }
-      continue;
-    }
-
-    if (char === "/" && src.charAt(i + 1) === "/") {
-      i += 2;
-      while (i < src.length && src.charAt(i) !== "\n") {
-        i++;
-      }
-      continue;
-    }
-
-    if (char === "/" && src.charAt(i + 1) === "*") {
-      i += 2;
-      while (i < src.length && !(src.charAt(i) === "*" && src.charAt(i + 1) === "/")) {
-        i++;
-      }
-      i += 2;
-      continue;
-    }
-
-    // A comma is "trailing" if the next significant token is a closing brace or
-    // bracket; drop it in that case to match jsonc's trailing-comma handling.
-    if (char === ",") {
-      pendingCommaIndex = out.length;
-      out.push(char);
-      i++;
-      continue;
-    }
-
-    if (char === "}" || char === "]") {
-      if (pendingCommaIndex >= 0) {
-        out[pendingCommaIndex] = "";
-        pendingCommaIndex = -1;
-      }
-      out.push(char);
-      i++;
-      continue;
-    }
-
-    if (char === " " || char === "\t" || char === "\n" || char === "\r") {
-      out.push(char);
-      i++;
-      continue;
-    }
-
-    pendingCommaIndex = -1;
-    out.push(char);
-    i++;
-  }
-  return out.join("");
-}
-
-const decodeJsonObject = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
-);
+const decodeJsonObject = Schema.decodeUnknownEffect(Schema.Record(Schema.String, Schema.Unknown));
 
 const encodePrettyJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }));
 
@@ -101,13 +21,17 @@ const encodePrettyJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknow
 // as a typed `InitParseSettingsError` (never a fiber defect) and a
 // non-object document is rejected.
 function parseJsonObject(pathname: string, contents: string) {
-  return decodeJsonObject(stripJsonComments(contents)).pipe(
-    Effect.mapError(
-      (error) =>
-        new InitParseSettingsError({
-          detail: `Could not parse JSON in ${pathname}: ${error.message}`,
-          suggestion: `Fix or remove ${pathname}, then rerun \`supabase init\`.`,
-        }),
+  const parseFailure = (reason: string) =>
+    new InitParseSettingsError({
+      detail: `Could not parse JSON in ${pathname}: ${reason}`,
+      suggestion: `Fix or remove ${pathname}, then rerun \`supabase init\`.`,
+    });
+  return Effect.try({
+    try: () => parseJsonc(contents),
+    catch: (error) => parseFailure(error instanceof Error ? error.message : String(error)),
+  }).pipe(
+    Effect.flatMap((value) =>
+      decodeJsonObject(value).pipe(Effect.mapError((error) => parseFailure(error.message))),
     ),
   );
 }

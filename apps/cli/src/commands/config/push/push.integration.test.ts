@@ -539,7 +539,9 @@ describe("config push integration", () => {
       const message = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
         Effect.catchTag("ConfigPushLoadConfigError", (error) => Effect.succeed(error.message)),
       );
-      expect(message).toBe("failed to parse supabase/config.json: JSON Parse error: Expected '}'");
+      expect(message).toBe(
+        "failed to parse supabase/config.json: Invalid symbol (line 1, column 2)",
+      );
       expect(api.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });

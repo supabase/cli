@@ -391,6 +391,38 @@ describe("init", () => {
     }).pipe(Effect.provide(BunServices.layer));
   });
 
+  it.effect.each([
+    ["malformed JSON", `{ "a": }`],
+    ["a non-object document", "[]"],
+  ] as const)(
+    "fails with InitParseSettingsError for %s and leaves settings.json unchanged",
+    ([, contents]) => {
+      const tempDir = tempRoot.current;
+
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const settingsPath = path.join(tempDir, ".vscode", "settings.json");
+        yield* fs.makeDirectory(path.dirname(settingsPath), { recursive: true });
+        yield* fs.writeFileString(settingsPath, contents);
+        const { layer } = setup(tempDir);
+
+        const exit = yield* init({
+          ...BASE_INIT_FLAGS,
+          interactive: false,
+          withVscodeSettings: true,
+        }).pipe(Effect.provide(layer), Effect.exit);
+
+        const error = findFailure(exit);
+        expect(Predicate.isTagged(error, "InitParseSettingsError")).toBe(true);
+        const detail = (error as { detail: string }).detail;
+        expect(detail.startsWith(`Could not parse JSON in ${settingsPath}: `)).toBe(true);
+        expect(detail.length).toBeGreaterThan(`Could not parse JSON in ${settingsPath}: `.length);
+        expect(yield* readTextFile(settingsPath)).toBe(contents);
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
+
   it.effect("writes the stack-opt-in template when SUPABASE_EXPERIMENTAL_STACK=1", () => {
     const tempDir = tempRoot.current;
 

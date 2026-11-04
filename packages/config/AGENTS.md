@@ -38,7 +38,8 @@ artifacts (`./schema.json`, `./project-schema.json`).
   `InternalResolveCliConfigOptions`, is package-internal and not itself re-exported) — plus the
   otherwise-internal registry data (`AUTH_HOOK_NAMES`, `unmappedSecretApiPaths`,
   `projectConfigMappingRows`, `ProjectConfigMappingRow`, `ProjectConfigApiAttributes`,
-  `ENV_CAPTURE_REGEX`). It also carries `supabase config pull`/`diff`'s own support surface
+  `ENV_CAPTURE_REGEX`), the JSONC parser (`parseJsonc`, `JsoncSyntaxError`) and
+  `cliConfigFormatForPath`. It also carries `supabase config pull`/`diff`'s own support surface
   (CLI-2064): the format-preserving surgical editor (`applyConfigEdits` and its
   `ConfigEdit`/`ConfigEditOutcome`/`ConfigEditRefusal`/`ConfigEditRefusalReason`/`ConfigEditValue`/
   `AppliedConfigEdit` types — the config diff engine itself, `diffProjectConfig` and its

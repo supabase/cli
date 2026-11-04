@@ -1625,6 +1625,30 @@ describe("start integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
+    it.effect("reports a config.json and config.jsonc conflict without an error-class prefix", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const workdir = tempRoot.current;
+        yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+        yield* fs.writeFileString(path.join(workdir, "supabase", "config.json"), "{}");
+        yield* fs.writeFileString(path.join(workdir, "supabase", "config.jsonc"), "{}");
+        const { layer, child } = yield* setup({ skipConfig: true });
+
+        const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const error = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+          expect(error).toMatchObject({
+            _tag: "StartConfigLoadError",
+            message:
+              "Found both supabase/config.json and supabase/config.jsonc. Keep one and delete the other.",
+          });
+        }
+        expect(child.spawned).toEqual([]);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
     it.effect("fails when auth.jwt_secret is configured but shorter than 16 characters", () =>
       Effect.gen(function* () {
         const { layer, child } = yield* setup({

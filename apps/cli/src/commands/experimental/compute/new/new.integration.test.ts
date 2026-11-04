@@ -943,6 +943,34 @@ describe("compute new", () => {
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
+  it.effect.each([false, true])(
+    "refuses config.jsonc before prompts or writes (TOML present: %s)",
+    (withToml) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const configJsonc = '// keep me\n{"project_id":"demo",}\n';
+        const repo = yield* makeComputeProject({
+          "supabase/config.jsonc": configJsonc,
+          ...(withToml ? { "supabase/config.toml": CONFIG_WITH_COMMENTS } : {}),
+        });
+        const { layer, out } = setupCompute({ workdir: repo.dir });
+        return yield* Effect.gen(function* () {
+          const error = yield* computeNew(flags({ name: Option.none() })).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(ComputeJsonConfigUnsupportedError);
+          expect(error).toMatchObject({
+            detail: expect.stringContaining("supabase/config.jsonc"),
+          });
+          expect(out.promptTextCalls).toEqual([]);
+          expect(out.promptSelectCalls).toEqual([]);
+          expect(yield* fs.readFileString(path.join(repo.dir, "supabase", "config.jsonc"))).toBe(
+            configJsonc,
+          );
+          expect(yield* fs.exists(path.join(repo.dir, "supabase", "compute"))).toBe(false);
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
   it.effect("refuses an unconfigured JSON-only ancestor before asking for a name", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;

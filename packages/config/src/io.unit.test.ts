@@ -38,6 +38,9 @@ import {
   writeCliConfigDocumentText,
 } from "./io.ts";
 import { loadCliConfig as loadCliConfigFromNode } from "./node.ts";
+import { findCliProjectPaths } from "./paths.ts";
+import { JsoncSyntaxError } from "./jsonc.ts";
+import { CliConfigFileConflictError, CliConfigParseError } from "./errors.ts";
 import { cliConfigStoreLayer } from "./cli-config.layer.ts";
 import { CliConfigStore } from "./cli-config.service.ts";
 import { CLI_CONFIG_SCHEMA_URL } from "./schema-metadata.ts";
@@ -208,7 +211,7 @@ describe("config io", () => {
       }),
     ));
 
-  test("rejects JSON comments and trailing commas", () =>
+  test("loads config.json with comments and trailing commas", () =>
     runConfigEffect(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -221,7 +224,7 @@ describe("config io", () => {
           path,
           `{
   // project ref
-  "project_id": "abc123",
+  "project_id": "abcdefghijklmnopqrst",
   "db": {
     "major_version": 16,
   }
@@ -229,9 +232,9 @@ describe("config io", () => {
 `,
         );
 
-        const exit = yield* Effect.exit(loadCliConfigFile(path));
+        const loaded = yield* loadCliConfigFile(path);
 
-        expect(Exit.isFailure(exit)).toBe(true);
+        expect(loaded.config.db.major_version).toBe(16);
       }),
     ));
 
@@ -476,6 +479,177 @@ stack = true
       }),
     ));
 
+  test("loads a commented config.jsonc and discovers it from a nested cwd", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const nestedCwd = join(cwd, "apps", "web");
+        const jsoncPath = join(cwd, "supabase", "config.jsonc");
+
+        yield* fs.makeDirectory(nestedCwd, { recursive: true });
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          jsoncPath,
+          `{
+  // project ref
+  "project_id": "jsonc_ref",
+  "db": { "major_version": 16, },
+}
+`,
+        );
+
+        const loaded = yield* loadCliConfig(nestedCwd);
+        expect(loaded?.format).toBe("json");
+        expect(loaded?.path.endsWith("config.jsonc")).toBe(true);
+        expect(loaded?.config.project_id).toBe("jsonc_ref");
+        expect(loaded?.config.db.major_version).toBe(16);
+
+        const paths = yield* findCliProjectPaths(nestedCwd);
+        expect(paths?.configPath).toBe(jsoncPath);
+        expect(paths?.projectRoot).toBe(cwd);
+      }),
+    ));
+
+  test("fails loading with CliConfigFileConflictError when config.json and config.jsonc both exist", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const jsonPath = join(cwd, "supabase", "config.json");
+        const jsoncPath = join(cwd, "supabase", "config.jsonc");
+
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(jsonPath, `{"project_id": "from_json"}`);
+        yield* fs.writeFileString(jsoncPath, `{"project_id": "from_jsonc"}`);
+
+        const exit = yield* Effect.exit(loadCliConfig(cwd));
+        const error = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();
+
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect(error.value).toBeInstanceOf(CliConfigFileConflictError);
+          if (error.value instanceof CliConfigFileConflictError) {
+            expect(error.value.paths).toEqual([jsonPath, jsoncPath]);
+            expect(error.value.message).toBe(
+              "Found both supabase/config.json and supabase/config.jsonc. Keep one and delete the other.",
+            );
+          }
+        }
+      }),
+    ));
+
+  test("fails saving with CliConfigFileConflictError and leaves both files untouched", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const jsonPath = join(cwd, "supabase", "config.json");
+        const jsoncPath = join(cwd, "supabase", "config.jsonc");
+        const jsonText = `{"project_id": "from_json"}`;
+        const jsoncText = `// keep me\n{"project_id": "from_jsonc"}`;
+
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(jsonPath, jsonText);
+        yield* fs.writeFileString(jsoncPath, jsoncText);
+
+        const exit = yield* Effect.exit(saveCliConfig({ cwd, config: sampleConfig }));
+        const error = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();
+
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect(error.value).toBeInstanceOf(CliConfigFileConflictError);
+          if (error.value instanceof CliConfigFileConflictError) {
+            expect(error.value.paths).toEqual([jsonPath, jsoncPath]);
+            expect(error.value.message).toBe(
+              "Found both supabase/config.json and supabase/config.jsonc. Keep one and delete the other.",
+            );
+          }
+        }
+        expect(yield* fs.readFileString(jsonPath)).toBe(jsonText);
+        expect(yield* fs.readFileString(jsoncPath)).toBe(jsoncText);
+      }),
+    ));
+
+  test("prefers config.jsonc over config.toml and reports the toml as ignored", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const jsoncPath = join(cwd, "supabase", "config.jsonc");
+        const tomlPath = yield* configTomlPath(cwd);
+
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(jsoncPath, `{ // wins\n "project_id": "jsonc_ref" }`);
+        yield* fs.writeFileString(tomlPath, `project_id = "toml-ref"\n`);
+
+        const loaded = yield* loadCliConfig(cwd);
+        expect(loaded?.path).toBe(jsoncPath);
+        expect(loaded?.config.project_id).toBe("jsonc_ref");
+        expect(loaded?.ignoredPaths).toEqual([tomlPath]);
+      }),
+    ));
+
+  test("saves back to config.jsonc without creating config.json and removes a sibling config.toml", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const jsonPath = join(cwd, "supabase", "config.json");
+        const jsoncPath = join(cwd, "supabase", "config.jsonc");
+        const tomlPath = yield* configTomlPath(cwd);
+
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(jsoncPath, `{ // old\n "project_id": "old_ref" }`);
+        yield* fs.writeFileString(tomlPath, `project_id = "toml-ref"\n`);
+
+        const saved = yield* saveCliConfig({ cwd, config: sampleConfig });
+
+        expect(saved.format).toBe("json");
+        expect(saved.path).toBe(jsoncPath);
+        expect(yield* fs.exists(jsonPath)).toBe(false);
+        expect(yield* fs.exists(tomlPath)).toBe(false);
+        const reloaded = yield* loadCliConfig(cwd);
+        expect(reloaded?.path).toBe(jsoncPath);
+        expect(reloaded?.config.project_id).toBe("ref_123");
+      }),
+    ));
+
+  test("returns a CliConfigParseError caused by a JsoncSyntaxError with line and column for malformed config.jsonc", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const jsoncPath = join(cwd, "supabase", "config.jsonc");
+
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(jsoncPath, `{\n  // note\n  "project_id": ,\n}`);
+
+        const exit = yield* Effect.exit(loadCliConfig(cwd));
+        const error = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();
+
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect(error.value).toBeInstanceOf(CliConfigParseError);
+          if (error.value instanceof CliConfigParseError) {
+            expect(error.value.path).toBe(jsoncPath);
+            expect(error.value.format).toBe("json");
+            expect(error.value.cause).toBeInstanceOf(JsoncSyntaxError);
+            if (error.value.cause instanceof JsoncSyntaxError) {
+              expect(error.value.cause.line).toBe(3);
+              expect(error.value.cause.column).toBe(17);
+            }
+          }
+        }
+      }),
+    ));
+
   test("loads TOML instead of JSON when tomlOnly is set, even if JSON exists", () =>
     runConfigEffect(
       Effect.gen(function* () {
@@ -518,6 +692,61 @@ stack = true
 
         const loaded = yield* loadCliConfig(cwd, { tomlOnly: true });
         expect(loaded).toBeNull();
+      }),
+    ));
+
+  test("loads TOML with tomlOnly when config.json and config.jsonc conflict", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(join(cwd, "supabase", "config.json"), `{"project_id": "a"}`);
+        yield* fs.writeFileString(join(cwd, "supabase", "config.jsonc"), `{"project_id": "b"}`);
+        yield* fs.writeFileString(
+          join(cwd, "supabase", "config.toml"),
+          `project_id = "toml-ref"\n`,
+        );
+
+        const loaded = yield* loadCliConfig(cwd, { tomlOnly: true });
+        expect(loaded?.format).toBe("toml");
+        expect(loaded?.config.project_id).toBe("toml-ref");
+      }),
+    ));
+
+  test("returns null when tomlOnly is set and only config.jsonc exists", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(join(cwd, "supabase", "config.jsonc"), `{"project_id": "b"}`);
+
+        const loaded = yield* loadCliConfig(cwd, { tomlOnly: true });
+        expect(loaded).toBeNull();
+      }),
+    ));
+
+  test("writes config.toml and removes config.jsonc when saving TOML in a JSONC project", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const jsoncPath = join(cwd, "supabase", "config.jsonc");
+
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(jsoncPath, `// c\n{"project_id": "b"}`);
+
+        const saved = yield* saveCliConfig({ cwd, config: sampleConfig, format: "toml" });
+
+        expect(saved.path).toBe(join(cwd, "supabase", "config.toml"));
+        expect(yield* fs.exists(saved.path)).toBe(true);
+        expect(yield* fs.exists(jsoncPath)).toBe(false);
       }),
     ));
 

@@ -72,13 +72,12 @@ export const loadComputeProject = Effect.gen(function* () {
  * As {@link loadComputeProject}, for the `[compute.<name>]` entry writer.
  *
  * `commitComputeEntry` is a TOML text editor, so a JSON project is rejected: appending a
- * `[compute.<name>]` table to `config.json` would make the file unparseable.
+ * `[compute.<name>]` table to `config.json`/`config.jsonc` would make the file unparseable.
  */
 export const loadComputeProjectForEntryWrite = Effect.fnUntraced(function* () {
   const settings = yield* CommandSettings;
-  const path = yield* Path.Path;
   const paths = yield* findCliProjectPaths(settings.workdir, { search: false });
-  if (paths !== null && path.basename(paths.configPath) === "config.json") {
+  if (paths !== null && !paths.configPath.endsWith(".toml")) {
     return yield* new ComputeJsonConfigUnsupportedError({
       detail: `This project is configured by ${paths.configPath}, which the compute new command cannot edit safely.`,
       suggestion: `Create the source files manually and add the compute entry to ${paths.configPath}, or convert the whole project configuration to TOML before scaffolding it.`,

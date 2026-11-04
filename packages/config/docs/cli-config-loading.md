@@ -5,7 +5,7 @@ This document explains how the CLI's on-disk config document loading works, acro
 
 ## Vocabulary
 
-- `CliConfig`: the persisted config-file document (`supabase/config.toml` / `supabase/config.json`)
+- `CliConfig`: the persisted config-file document (`supabase/config.toml`, `supabase/config.json`, or `supabase/config.jsonc`)
   — the full local superset, including local-only sections (`studio`, ports, `edge_runtime`,
   `analytics`, …) plus `[remotes.*]` overrides. Owned by `@supabase/config`.
 - `ProjectConfig`: the hosted-project subset — the sections a hosted project manages (`api`,
@@ -89,13 +89,15 @@ upward until it finds the nearest ancestor containing one of:
 
 - `supabase/config.toml`
 - `supabase/config.json`
+- `supabase/config.jsonc`
 
 The first match wins. A caller that already holds an authoritative, pre-resolved root — for
 example one derived from an explicit `--workdir`/`SUPABASE_WORKDIR` — can pass `{ search: false }`
 to check only that exact directory, with no ancestor climb.
 
-Within one discovered `supabase/` directory, `config.json` takes precedence over `config.toml`
-when both files exist.
+Within one discovered `supabase/` directory, `config.json` or `config.jsonc` takes precedence over
+`config.toml` when both exist. Discovery never fails on a `config.json` + `config.jsonc` pair; loading
+and saving do.
 
 This produces a `CliProjectPaths` (the type is exported from `@supabase/config`):
 
@@ -116,13 +118,13 @@ and env files under `supabase/`.
 
 The project-scoped files are:
 
-- `supabase/config.toml` or `supabase/config.json`
+- `supabase/config.toml`, `supabase/config.json`, or `supabase/config.jsonc`
 - `supabase/.env`
 - `supabase/.env.local`
 
 Their intended roles are:
 
-- `config.toml` or `config.json`: the shared, committed `CliConfig` document
+- `config.toml`, `config.json`, or `config.jsonc`: the shared, committed `CliConfig` document
 - `.env`: managed or shared project env values
 - `.env.local`: user-editable local overrides
 
@@ -138,8 +140,13 @@ defines the full config/env scope for that invocation.
 these rules:
 
 - `loadCliConfig(cwd)` discovers the project, then:
-  - if both `supabase/config.json` and `supabase/config.toml` exist, JSON wins
-  - the returned `LoadedCliConfig.ignoredPaths` reports the shadowed config file path
+  - `config.json` and `config.jsonc` are both parsed as JSONC (comments and trailing commas
+    allowed); parse errors report the line and column
+  - if both `supabase/config.json` and `supabase/config.jsonc` exist, loading fails with
+    `CliConfigFileConflictError` naming both files
+  - if a JSON file and `supabase/config.toml` both exist, JSON wins, and the returned
+    `LoadedCliConfig.ignoredPaths` reports the shadowed `config.toml`; the CLI warns that it is
+    ignored
   - if only one config file exists, that file is loaded
   - if no config file exists in the discovered project, loading returns `null`
 - `loadCliConfigFile(path)` loads one explicit file path directly instead of discovering or
@@ -147,12 +154,14 @@ these rules:
 
 `saveCliConfig()` uses these rules:
 
-- if the discovered project already has `config.json`, save back to JSON
+- if the discovered project already has `config.jsonc`, save back to it; otherwise, if it has
+  `config.json`, save back to that
 - otherwise if it already has `config.toml`, save back to TOML
 - otherwise default new writes to `supabase/config.json`
+- if both `config.json` and `config.jsonc` exist, saving fails with `CliConfigFileConflictError`
 - callers can still force a format explicitly via `SaveCliConfigOptions.format`
-- after writing, it removes the sibling config file in the other format, if one exists, so a
-  project never ends up with both after a save
+- after writing, it removes every other config file among `config.json`, `config.jsonc` and
+  `config.toml`, so a project never ends up with more than one after a save
 
 The saved file may also preserve a top-level `"$schema"` key as editor metadata: when a caller
 doesn't pass an explicit `schemaRef`, saving reuses whatever `$schema` the project's existing
@@ -186,7 +195,7 @@ The `ambient` source label just means the value came from `process.env`.
 
 ## Raw Config Loading
 
-`CliConfig` is loaded by parsing the TOML/JSON file and decoding it against `CliConfigSchema`.
+`CliConfig` is loaded by parsing the TOML/JSON(C) file and decoding it against `CliConfigSchema`.
 
 Before decoding, most string values matching `env(NAME)` are substituted automatically using the
 resolved `CliProjectEnvironment` — this is required so numeric and boolean fields don't crash the
@@ -374,7 +383,7 @@ one order (ADR 0032):
 1. an explicit flag
 2. shell environment
 3. project `.env*` files
-4. config: `config.json` when present, else `config.toml`, with the matched `[remotes.*]` block
+4. config: `config.json` or `config.jsonc` when present, else `config.toml`, with the matched `[remotes.*]` block
    over the base document
 5. the default
 
@@ -470,8 +479,9 @@ The CLI also rejects a non-empty `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` enviro
 
 `@supabase/config/internal` exposes the stages the CLI composes in place of `loadCliConfig`:
 
-1. `parseCliConfigDocumentFile` reads `config.json` or `config.toml` without decoding, and fails
-   with `CliConfigRemovedKeyError` when the document uses a removed key.
+1. `parseCliConfigDocumentFile` reads `config.json`, `config.jsonc` or `config.toml` without decoding, and
+   fails with `CliConfigRemovedKeyError` when the document uses a removed key, or
+   `CliConfigFileConflictError` when both JSON files exist.
 2. `mergeParsedCliConfig` applies the remote chosen by the `selectRemote` callback.
 3. The CLI overlays flag, env and default values onto the merged document.
 4. `decodeMergedCliConfig` expands `env()` references, then decodes and validates the overlaid
@@ -496,8 +506,8 @@ Neither is part of `@supabase/config`'s input.
 
 Important distinction:
 
-- `@supabase/config` discovers committed config only from `supabase/config.toml` or
-  `supabase/config.json`
+- `@supabase/config` discovers committed config only from `supabase/config.toml`,
+  `supabase/config.json` or `supabase/config.jsonc`
 - the CLI may still resolve a project root from the nearest `.supabase/project.json` when it needs
   to find local machine state for commands like `link`, `unlink`, `start`, `stop`, `status`,
   `stack list`, or `logs`
