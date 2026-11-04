@@ -11,7 +11,7 @@ import {
   Stdio,
 } from "effect";
 import { BunCrypto, BunServices } from "@effect/platform-bun";
-import { mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
+import { epipe, mockRuntimeInfo, overrideStreamErrored } from "../../../tests/helpers/mocks.ts";
 import { CliSettings } from "../config/cli-settings.service.ts";
 import { resolveTraceSettings, withDebugConsole, withTraceExport } from "./trace-export.layer.ts";
 
@@ -250,6 +250,18 @@ describe("withDebugConsole", () => {
       );
 
       expect(output).toContain("Probe.span");
+    }),
+  );
+
+  it.effect("skips span lines once a direct write broke stderr", () =>
+    Effect.gen(function* () {
+      yield* overrideStreamErrored(process.stderr, epipe);
+      const output = yield* runWithDebugConsole(
+        { debug: "1" },
+        Effect.void.pipe(Effect.withSpan("Probe.span")),
+      );
+
+      expect(output).toBe("");
     }),
   );
 
