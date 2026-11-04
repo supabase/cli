@@ -192,10 +192,11 @@ describe("service catalog", () => {
             ).pipe(
               HttpClientRequest.setHeader("Authorization", `Bearer ${serviceToken}`),
               HttpClientRequest.setHeader("apikey", serviceToken),
+              HttpClientRequest.setHeader("accept", "image/webp,*/*"),
             ),
           );
           expect(transformedImage.status).toBe(200);
-          expect(transformedImage.headers["content-type"]).toContain("image/");
+          expect(transformedImage.headers["content-type"]).toBe("image/webp");
           yield* imgproxy.stop;
           yield* storage.stop;
           yield* auth.stop;

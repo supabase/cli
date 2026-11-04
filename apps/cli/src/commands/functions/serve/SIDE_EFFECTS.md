@@ -133,8 +133,10 @@ when the owner remains reachable. Import-map and inspector flags are rejected be
 mutation. Stack mode writes no project files and does not stop or restart the whole composition.
 It reads the shared Functions `.env` when creating a temporary service, or the explicit `--env-file`;
 per-function `.env` files are not read, and reserved `SUPABASE_*` entries are ignored.
-For Stack mode, TOML `edge_runtime.secrets` overrides the shared `.env`; an explicit
-`--env-file` overrides matching shared secrets while retaining other saved values.
+For Stack mode, TOML `edge_runtime.secrets` names are uppercased, empty or unresolved `env()`
+values and `SUPABASE_`-prefixed names are dropped, encrypted values are decrypted, and the result
+overrides the shared `.env`; an explicit `--env-file` overrides matching shared secrets while
+retaining other saved values.
 Per-function TOML `env` remains the final override for that function.
 Without a configured `import_map`, a function uses its own `deno.json` or `deno.jsonc`; a
 per-function `import_map.json` is not read and does not fail the command.
