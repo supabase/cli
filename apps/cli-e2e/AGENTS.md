@@ -45,6 +45,9 @@ the running tests exercise. The implications:
 
 - A recording run **must exercise every test that should have a fixture**. Don't
   skip tests when recording — anything not run loses its fixtures.
+- Scenarios under `fixtures/scenarios/docs-*` are hand-authored for the CLI docs examples
+  (`apps/cli/tests/helpers/docs-example-scenarios.ts`). Recording neither wipes nor writes them;
+  edit them by hand and keep their data fake (no real emails, refs, or names).
 - `test.todo` tests have no scenario file. Either turn the test into a real
   `testBehaviour` before recording, or accept that no fixture is produced.
 - Container/image SHAs in URL paths are normalized to `__CONTAINER_ID__` so each
