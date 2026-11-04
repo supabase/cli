@@ -1,4 +1,5 @@
 import { Effect, Schema } from "effect";
+import { DEFAULT_LOCAL_S3_ACCESS_KEY_ID, DEFAULT_LOCAL_S3_SECRET_ACCESS_KEY } from "../Defaults.ts";
 import { EndpointIntent, serviceCreation } from "./Recipe.ts";
 import { databaseConnection, serviceJwt } from "./ServiceConfig.ts";
 import { type ProcessRecipeSpec } from "./ProcessRecipe.ts";
@@ -53,6 +54,8 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
       const values: Record<string, string> = {
         ...(http === undefined ? {} : { PORT: String(http.port) }),
         HOSTNAME: container ? "0.0.0.0" : "127.0.0.1",
+        S3_PROTOCOL_ACCESS_KEY_ID: DEFAULT_LOCAL_S3_ACCESS_KEY_ID,
+        S3_PROTOCOL_ACCESS_KEY_SECRET: DEFAULT_LOCAL_S3_SECRET_ACCESS_KEY,
       };
       if (creation.config.databaseUrl !== undefined) {
         // Studio encrypts a connection string from these for pg-meta; the bootstrap gives the
