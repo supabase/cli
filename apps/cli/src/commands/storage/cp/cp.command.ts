@@ -17,8 +17,9 @@ import { storageCp } from "./cp.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { cliArgument, cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
-// Effect CLI renders no flag defaults, so the established `(default …)` tokens are written into
-// the descriptions below (`--content-type`'s actual runtime default is `""` for auto-detect).
+// Effect CLI renders no flag defaults, so the `(default …)` tokens are written into the
+// descriptions below for `--help`; the reference strips them and shows `docs.default` instead
+// (`--content-type`'s actual runtime default is `""` for auto-detect).
 // Flags are declared before `src`/`dst` on purpose: Effect CLI validates flags before positional
 // args in declaration order, so a malformed `--jobs` must fail before a missing-operand error.
 const config = {
@@ -28,17 +29,17 @@ const config = {
     default: false,
   }),
   cacheControl: cliFlag("cache-control", Flag.String, {
-    description: "Custom Cache-Control header for HTTP upload.",
+    description: 'Custom Cache-Control header for HTTP upload. (default "max-age=3600")',
     optional: true,
     docs: { default: "max-age=3600" },
   }),
   contentType: cliFlag("content-type", Flag.String, {
-    description: "Custom Content-Type header for HTTP upload.",
+    description: 'Custom Content-Type header for HTTP upload. (default "auto-detect")',
     optional: true,
     docs: { default: "auto-detect" },
   }),
   jobs: cliFlag("jobs", Flag.String, {
-    description: "Maximum number of parallel jobs.",
+    description: "Maximum number of parallel jobs. (default 1)",
     alias: "j",
     metavar: "integer",
     parse: Flag.mapTryCatch(

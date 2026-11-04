@@ -13,8 +13,6 @@ export interface ParamDocs {
   readonly required: boolean;
   /** The default as the reference shows it; absent when it is the value type's zero value. */
   readonly default?: string;
-  /** The environment variable the value falls back to. */
-  readonly env?: string;
   readonly hidden: boolean;
   /** Present on a repeatable param: the minimum occurrence count. */
   readonly variadicMin?: number;

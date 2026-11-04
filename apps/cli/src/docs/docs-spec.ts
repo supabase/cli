@@ -119,7 +119,7 @@ export type DocsSection = DocsMarkdownSection | DocsCategorySection;
 export interface DocsBundle {
   readonly spec: DocsSpec;
   readonly sections: ReadonlyArray<DocsSection>;
-  /** The generated `migrating-from-v2` page; present only when the spec is for a major that has one. */
+  /** The generated `migrating-from-v<major - 1>` page; present only when the spec is for a major that has one. */
   readonly migrationGuide?: string;
 }
 
@@ -156,13 +156,13 @@ const DOCS_INTRO_SECTIONS: ReadonlyArray<DocsMarkdownSection> = [
   },
 ];
 
-const DOCS_MIGRATION_SECTION: DocsMarkdownSection = {
-  title: "Migrating from v2",
-  id: "migrating-from-v2",
-  slug: "migrating-from-v2",
+const migrationSection = (major: number): DocsMarkdownSection => ({
+  title: `Migrating from v${major - 1}`,
+  id: `migrating-from-v${major - 1}`,
+  slug: `migrating-from-v${major - 1}`,
   isFunc: false,
   type: "markdown",
-};
+});
 
 /**
  * Overlay file path for a command path — the layout contract of
@@ -241,6 +241,16 @@ function docsTypeDefault(type: Completions.FlagType, isVariadic: boolean): strin
  */
 function docsNormalizeText(text: string): string {
   return text.replaceAll("\t", "    ");
+}
+
+/**
+ * `--help` shows defaults through a trailing `(default …)` token in the description; the reference
+ * carries the default as its own field, so the token is dropped when one is recorded.
+ */
+function docsStripDefaultToken(description: string, recordedDefault: string | undefined): string {
+  return recordedDefault === undefined
+    ? description
+    : description.replace(/\s*\(default [^)]*\)\.?$/, "");
 }
 
 /** `--help` is built into the parser, so its docs are declared here rather than recorded. */
@@ -330,7 +340,9 @@ function docsFlagFrom(
   return {
     id: descriptor.name,
     name,
-    description: docsNormalizeText(descriptor.description ?? ""),
+    description: docsNormalizeText(
+      docsStripDefaultToken(descriptor.description ?? "", docs.default),
+    ),
     ...(docs.required ? { required: true } : {}),
     default_value: docs.default ?? docsTypeDefault(descriptor.type, isVariadic),
     ...(acceptedValues === undefined ? {} : { accepted_values: acceptedValues }),
@@ -712,11 +724,12 @@ export function buildDocsBundle(input: DocsSpecInput): DocsBundle {
     flags: rootFlags,
     commands,
   };
-  const hasGuide = major >= 3 && registry.length > 0;
+  const guideChanges = registry.filter((change) => change.major === major);
+  const hasGuide = guideChanges.length > 0;
   return {
     spec,
-    sections: buildDocsSections(commands, categories, hasGuide),
-    ...(hasGuide ? { migrationGuide: migrationGuideMdx(registry) } : {}),
+    sections: buildDocsSections(commands, categories, hasGuide ? major : undefined),
+    ...(hasGuide ? { migrationGuide: migrationGuideMdx(major, guideChanges) } : {}),
   };
 }
 
@@ -724,7 +737,7 @@ export function buildDocsBundle(input: DocsSpecInput): DocsBundle {
 function buildDocsSections(
   commands: ReadonlyArray<DocsCommand>,
   categories: ReadonlyMap<string, DocsCategory>,
-  hasMigrationGuide: boolean,
+  guideMajor: number | undefined,
 ): ReadonlyArray<DocsSection> {
   const categorySections = Object.entries(DOCS_CATEGORIES)
     .toSorted(([, a], [, b]) => a.order - b.order)
@@ -741,7 +754,7 @@ function buildDocsSections(
     });
   return [
     ...DOCS_INTRO_SECTIONS,
-    ...(hasMigrationGuide ? [DOCS_MIGRATION_SECTION] : []),
+    ...(guideMajor === undefined ? [] : [migrationSection(guideMajor)]),
     ...categorySections,
   ];
 }

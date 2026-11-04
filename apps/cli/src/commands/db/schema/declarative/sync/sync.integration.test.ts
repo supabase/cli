@@ -418,7 +418,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     BunServices.layer,
     BunCrypto.layer,
     recorder.layer,
-    // `child.layer` must be listed after `BunServices.layer, BunCrypto.layer, BunCrypto.layer` — `Layer.mergeAll` resolves a
+    // `child.layer` must be listed after `BunServices.layer` — `Layer.mergeAll` resolves a
     // duplicate service tag to whichever layer is listed last, so this mock overrides Bun's
     // real `ChildProcessSpawner` instead of the reverse.
     child.layer,

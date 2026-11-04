@@ -35,7 +35,8 @@ const config = {
   ...projectTargetFlags(),
   config: postgresConfigUpdateConfigFlag,
   replaceExistingOverrides: cliFlag("replace-existing-overrides", Flag.Boolean, {
-    description: "Replace all existing overrides with the ones provided instead of merging them.",
+    description:
+      "If true, replaces all existing overrides with the ones provided. If false (default), merges existing overrides with the ones provided.",
     default: false,
   }),
   noRestart: cliFlag("no-restart", Flag.Boolean, {

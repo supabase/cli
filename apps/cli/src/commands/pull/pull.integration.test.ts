@@ -812,7 +812,7 @@ function setupRuntime(
     }),
     Layer.succeed(YesFlag, opts.yes ?? false),
     Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
-    // Listed after `buildTestRuntime` so its spawner overrides the real one `BunServices.layer, BunCrypto.layer, BunCrypto.layer`
+    // Listed after `buildTestRuntime` so its spawner overrides the real one `BunServices.layer`
     // provides (last-wins).
     substrate.layer,
   );

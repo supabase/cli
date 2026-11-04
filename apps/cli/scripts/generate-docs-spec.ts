@@ -9,7 +9,7 @@
  * version is a semantic-release placeholder and is never used here.
  */
 import { BunServices } from "@effect/platform-bun";
-import { Effect, FileSystem } from "effect";
+import { Console, Effect, FileSystem } from "effect";
 import process from "node:process";
 import { parseArgs } from "node:util";
 import { stringifyDocsSections, stringifyDocsSpec } from "../src/docs/docs-spec.ts";
@@ -32,10 +32,15 @@ function resolveVersion(): string {
 
 await Effect.runPromise(
   Effect.gen(function* () {
+    const major = Number(values.major);
+    if (!Number.isInteger(major) || major < 1) {
+      yield* Console.error(`--major must be a positive integer such as 3, got "${values.major}".`);
+      return yield* Effect.sync(() => process.exit(1));
+    }
     const bundle = yield* loadDocsBundle({
       version: resolveVersion(),
       prerelease: values.prerelease,
-      major: Number(values.major),
+      major,
     });
     if (values.sections !== undefined) {
       const fs = yield* FileSystem.FileSystem;

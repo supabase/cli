@@ -19,7 +19,7 @@ const config = {
   }),
   projectRef: cliFlag("project-ref", Flag.String, {
     description:
-      "Project ref to attribute the feedback to, instead of SUPABASE_PROJECT_ID or the linked project.",
+      "Project ref to attribute the feedback to (defaults to SUPABASE_PROJECT_ID, then the linked project).",
     optional: true,
   }),
 } as const;

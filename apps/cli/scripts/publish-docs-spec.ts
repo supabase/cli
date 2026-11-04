@@ -77,6 +77,12 @@ const publishLocal = (docsRepo: string) =>
       prerelease: values.prerelease!,
       major: Number(major.slice(1)),
     });
+    if (values["dry-run"]) {
+      yield* Console.log(
+        `Would write ${bundle.spec.commands.length} commands to ${specDir}${bundle.migrationGuide === undefined ? "" : " and the migration guide"}`,
+      );
+      return;
+    }
     const prettier = path.resolve(import.meta.dir, "../node_modules/.bin/prettier");
     const specTarget = path.join(specDir, `cli_${major}_commands.yaml`);
     const sectionsTarget = path.join(specDir, sectionsFile);
@@ -87,7 +93,7 @@ const publishLocal = (docsRepo: string) =>
     if (bundle.migrationGuide !== undefined) {
       const guideTarget = path.join(
         path.resolve(docsRepo),
-        `apps/docs/docs/ref/cli/${major}/migrating-from-v2.mdx`,
+        `apps/docs/docs/ref/cli/${major}/migrating-from-v${Number(major.slice(1)) - 1}.mdx`,
       );
       yield* fs.makeDirectory(path.dirname(guideTarget), { recursive: true });
       yield* fs.writeFileString(guideTarget, bundle.migrationGuide);

@@ -118,12 +118,10 @@ export const makeCliConfigKeyFlag = <A, X, F extends CliConfigFlagDeclaration>(
   const aliased =
     options.alias === undefined ? described : described.pipe(Flag.withAlias(options.alias));
   const flag = options.hidden === true ? aliased.pipe(Flag.withHidden) : aliased;
-  const env = key.env[0];
   recordParamDocs(flag, {
     kind: Param.flagKind,
     name: options.name,
     required: false,
-    ...(env === undefined ? {} : { env }),
     hidden: options.hidden === true,
     ...(key.codec.kind === "commaList" ? { variadicMin: 0 } : {}),
   });

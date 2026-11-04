@@ -43,7 +43,7 @@ const config = {
   ...targetFlags({ subject: "database", dbUrl: true }),
   projectId: deprecatedProjectIdFlag,
   lang: cliFlag("lang", (name) => Flag.Literals(name, GEN_TYPES_LANGUAGES), {
-    description: "Output language of the generated types.",
+    description: "Output language of the generated types. (default typescript)",
     default: "typescript",
   }),
   schema: cliFlag("schema", repeated(Flag.String, { min: 0 }), {
@@ -61,7 +61,7 @@ const config = {
     hidden: true,
   }),
   queryTimeout: cliFlag("query-timeout", Flag.String, {
-    description: "Maximum time allowed for the database query.",
+    description: "Maximum timeout allowed for the database query. (default 15s)",
     default: "15s",
   }),
 } as const;

@@ -5,7 +5,7 @@ Source content for the [CLI reference](https://supabase.com/docs/reference/cli) 
 - `withDocs` on a `*.command.ts` (`src/docs/command-docs.ts`) — sidebar category, page body
   imported from the sibling `*.docs.md`, examples, experimental and deprecated markers
 - `cliFlag`, `cliArgument` and `makeCommand` (`src/shared/cli/cli-params.ts`) — every flag
-  and argument is built through them, which records its default, required badge, env fallback,
+  and argument is built through them, which records its default, required badge,
   visibility and variadic minimum for the reference
 - `supabase/` — long-form command descriptions, one file per command path, for commands without
   a `withDocs` body
