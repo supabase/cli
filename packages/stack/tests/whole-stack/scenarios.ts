@@ -682,6 +682,10 @@ export const writeConfinement = (runtime: Runtime) =>
  */
 export const loopbackOnly = withFixture("native", (fixture) =>
   Effect.gen(function* () {
+    // PostgREST only sees the table once it loads its schema cache, so create it before REST starts.
+    yield* fixture.stack.composition.start;
+    yield* prepareSchema(fixture);
+    yield* fixture.stack.composition.stop;
     yield* setActivation(fixture.stack, "eager");
     yield* fixture.stack.composition.start;
     yield* assertLifecycle(fixture, "running");
