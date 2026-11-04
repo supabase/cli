@@ -1871,6 +1871,27 @@ describe("experimental stack start", () => {
       }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
+  it.effect("warns once about reserved Functions env names when it restarts a stopped stack", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-stopped-env-" });
+      yield* fs.makeDirectory(`${root}/supabase/functions`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "stopped-functions-env"\n[edge_runtime]\nenabled = true\n',
+      );
+      const fixture = fakeStack();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      yield* fs.writeFileString(`${root}/supabase/functions/.env`, "CUSTOM=x\nSUPABASE_SKIP=x\n");
+      yield* fixture.stack.composition.stop;
+
+      const output = mockOutput();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture, output)));
+      const warning = "Env name cannot start with SUPABASE_, skipping: SUPABASE_SKIP\n";
+      expect(output.stderrText.split(warning).length - 1).toBe(1);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
   it.effect(
     "omits recreate_command from the JSON envelope when a live idle owner meets a port",
     () =>
