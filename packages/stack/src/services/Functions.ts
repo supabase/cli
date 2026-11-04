@@ -1,4 +1,5 @@
-import { Crypto, Effect, FileSystem, Path, Schema } from "effect";
+import { Effect, FileSystem, Path, Schema } from "effect";
+import { Digest } from "effect/crypto";
 import {
   makeFunctionsBootstrapOwner,
   type FunctionsBootstrapOwner,
@@ -266,7 +267,7 @@ export const makeRecipe = Effect.fn("Functions.makeRecipe")(
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, deps.fs),
         Effect.provideService(Path.Path, deps.path),
-        Effect.provideService(Crypto.Crypto, deps.crypto),
+        Effect.provideService(Digest.Digest, deps.digest),
         Effect.mapError(
           (cause) =>
             new CatalogError({

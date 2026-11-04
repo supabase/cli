@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeRuntime, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeRuntime, NodeServices } from "@effect/platform-node";
 import { Console, Effect, Layer } from "effect";
 import { catalogPins, prepareNativeArtifact } from "../src/Artifacts.ts";
 import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
@@ -21,6 +21,13 @@ const printImages = Effect.forEach(catalogPins(), ({ pin }) => Console.log(pin.i
 });
 
 (process.argv.includes("--images") ? printImages : prepareNative).pipe(
-  Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+  Effect.provide(
+    Layer.mergeAll(
+      NodeServices.layer,
+      NodeCrypto.layerSecureRandom,
+      NodeCrypto.layerDigest,
+      NodeHttpClient.layerNodeHttp,
+    ),
+  ),
   NodeRuntime.runMain,
 );

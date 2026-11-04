@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import {
   Context,
@@ -142,7 +142,11 @@ it.live("removes a managed SMTP binding when Mail is excluded", () =>
         }),
       () => owner.namespace.destroy,
     );
-  }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live("cleans created registrations when composition is interrupted", () =>
@@ -332,7 +336,11 @@ it.live(
         );
         expect(remove.status).toBe(200);
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   { timeout: 180_000 },
 );
 
@@ -430,7 +438,11 @@ it.live(
         expect((yield* client.get(restAddress.url)).status).toBe(200);
         expect((yield* client.get(`${authAddress.url}/health`)).status).toBe(200);
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   { timeout: 180_000 },
 );
 
@@ -492,7 +504,11 @@ it.live(
         });
         expect((yield* state.read(stack.id))?.composition.members).toHaveLength(1);
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   { timeout: 180_000 },
 );
 
@@ -580,7 +596,11 @@ it.live(
         if (studioCredentials.url === undefined) return yield* Effect.die("Studio URL missing");
         expect(new URL(studioCredentials.url).port).toBe(String(FIXED_STUDIO_PORT));
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   { timeout: 180_000 },
 );
 
@@ -624,7 +644,11 @@ it.live(
         ]);
         yield* owner.rpc.stopComposition();
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   { timeout: 180_000 },
 );
 
@@ -686,6 +710,10 @@ it.live(
         ]);
         yield* owner.rpc.stopService({ id: standaloneMail.id });
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   { timeout: 180_000 },
 );

@@ -7,6 +7,7 @@
  * internal-only `cliCompat` knob.
  */
 export { ENV_CAPTURE_REGEX } from "./lib/env.ts";
+export { withoutSafeIntegerBounds } from "./json-schema-document.ts";
 export {
   DEFAULT_MIGRATION_CHECK_SEVERITY,
   MIGRATION_CHECK_RULES,

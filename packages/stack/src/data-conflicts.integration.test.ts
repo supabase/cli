@@ -1,4 +1,4 @@
-import { NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 import { findDataConflicts } from "./effect.ts";
@@ -32,7 +32,7 @@ const project = Effect.gen(function* () {
 });
 
 const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  effect.pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+  effect.pipe(Effect.scoped, Effect.provide([NodeServices.layer, NodeCrypto.layer]));
 
 it.effect(
   "reports initialized data built by another upstream, but not a newer revision of its own",

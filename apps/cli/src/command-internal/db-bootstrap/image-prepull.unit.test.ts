@@ -15,7 +15,7 @@ function mockSpawner(
 
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
-      const args = command._tag === "StandardCommand" ? command.args : [];
+      const args = command._tag === "StandardCommand" ? command.args.map(String) : [];
       spawned.push(args);
       const result = handler(args);
 
@@ -114,7 +114,7 @@ describe("ensureImagesCached", () => {
 
       const spawner = ChildProcessSpawner.make((command) =>
         Effect.gen(function* () {
-          const args = command._tag === "StandardCommand" ? command.args : [];
+          const args = command._tag === "StandardCommand" ? command.args.map(String) : [];
           if (args[0] === "image" && args[1] === "inspect") {
             const count = yield* Ref.updateAndGet(inFlight, (n) => n + 1);
             yield* Ref.update(peak, (n) => Math.max(n, count));

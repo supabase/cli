@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { Effect, FileSystem, Layer, Path } from "effect";
 
 import { commandRuntimeLayer } from "../../src/shared/runtime/command-runtime.layer.ts";
@@ -67,7 +67,9 @@ export function describeComputeTargetSelection(
       return {
         layer: Layer.mergeAll(
           layer,
-          commandRuntimeLayer(path.split(" ")).pipe(Layer.provide(BunServices.layer)),
+          commandRuntimeLayer(path.split(" ")).pipe(
+            Layer.provide([BunServices.layer, BunCrypto.layer]),
+          ),
         ),
         requests: () => http.driftRequests,
         warnings: () => warningsOf(out),

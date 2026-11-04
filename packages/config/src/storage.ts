@@ -1,4 +1,6 @@
 import { Effect, Schema, SchemaGetter } from "effect";
+import { NESTED_UNION_ANNOTATION } from "./json-schema-document.ts";
+import { withRecordValueDecodingDefault } from "./lib/schema.ts";
 
 const links = [
   {
@@ -35,7 +37,7 @@ const defaultVectorBuckets = {};
 const emptyTable = Schema.Union([
   Schema.Record(Schema.String, Schema.Unknown),
   Schema.Array(Schema.Unknown),
-]);
+]).annotate({ [NESTED_UNION_ANNOTATION]: true });
 
 // Accepts a human-readable string (`"50MiB"`) or a bare byte count (`5000000`); a numeric
 // value is normalized to its decimal string so the decoded type is always a `string`.
@@ -77,7 +79,7 @@ const bucketSchema = Schema.Struct({
     description: "The path to the objects in the bucket.",
     tags,
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultBucketObjectsPath))),
-}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+}).pipe(withRecordValueDecodingDefault(Effect.succeed({})));
 
 export const storage = Schema.Struct({
   enabled: Schema.Boolean.annotate({
@@ -146,7 +148,9 @@ export const storage = Schema.Struct({
     }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMaxCatalogs))),
     buckets: Schema.Record(
       Schema.String,
-      emptyTable.pipe(Schema.withDecodingDefault(Effect.succeed({ ...defaultAnalyticsBuckets }))),
+      emptyTable.pipe(
+        withRecordValueDecodingDefault(Effect.succeed({ ...defaultAnalyticsBuckets })),
+      ),
     )
       .annotate({
         default: defaultAnalyticsBuckets,
@@ -176,7 +180,7 @@ export const storage = Schema.Struct({
     }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMaxIndexes))),
     buckets: Schema.Record(
       Schema.String,
-      emptyTable.pipe(Schema.withDecodingDefault(Effect.succeed({ ...defaultVectorBuckets }))),
+      emptyTable.pipe(withRecordValueDecodingDefault(Effect.succeed({ ...defaultVectorBuckets }))),
     )
       .annotate({
         default: defaultVectorBuckets,

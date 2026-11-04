@@ -1,4 +1,4 @@
-import { NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, FileSystem, Fiber, Path } from "effect";
 import { StackIdSchema } from "../identity/StackId.ts";
@@ -40,7 +40,7 @@ describe("functions bootstrap owner", () => {
       expect(((yield* fs.stat(path.dirname(target))).mode ?? 0) & 0o777).toBe(0o700);
       expect(((yield* fs.stat(target)).mode ?? 0) & 0o777).toBe(0o600);
       expect(yield* fs.readFileString(target)).toBe("export default 1");
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("returns the canonical published path for a symlinked state root", () =>
@@ -72,7 +72,7 @@ describe("functions bootstrap owner", () => {
       expect(path.basename(target)).toBe("index.ts");
       expect(yield* fs.readFileString(target)).toBe("export default 2");
       expect(((yield* fs.stat(target)).mode ?? 0) & 0o777).toBe(0o600);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("keeps every published file's identity when identical content is written twice", () =>
@@ -87,7 +87,7 @@ describe("functions bootstrap owner", () => {
       expect(second).toBe(first);
       expect(yield* generationInodes(fs, path, second)).toEqual(before);
       expect(yield* fs.readFileString(first)).toBe("export default 1");
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("converges concurrent writers of identical content on one complete generation", () =>
@@ -108,6 +108,6 @@ describe("functions bootstrap owner", () => {
       expect(new Set(targets).size).toBe(1);
       const target = targets[0]!;
       expect(yield* fs.readFileString(target)).toBe("export default race");
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 });

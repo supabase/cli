@@ -1,0 +1,28 @@
+diff --git a/dist/NodeSink.js b/dist/NodeSink.js
+index e04ed48a8a21a7323b37c5f7ef5df8f531c94b95..4fbe8198796491de7e2ab92a58b1dc79413c8d11 100644
+--- a/dist/NodeSink.js
++++ b/dist/NodeSink.js
+@@ -86,7 +86,9 @@ export const pullIntoWritable = options => Effect.withFiber(fiber => {
+   const cleanup = finished(options.writable, {
+     readable: false
+   }, error => {
+-    if (error) {
++    // A writable closed by its reader, such as the stdin of a child that already
++    // exited, has nothing left to deliver; later writes still fail through their callback.
++    if (error && error.code !== "ERR_STREAM_PREMATURE_CLOSE") {
+       onError(error);
+     } else {
+       Deferred.doneUnsafe(completion, Effect.void);
+diff --git a/dist/NodeWS.js b/dist/NodeWS.js
+index e29eb7dae33882898922845f57a3ac21cbc41181..d3cdda830f7bc4e6bb393e6d1a96638e29f9b90f 100644
+--- a/dist/NodeWS.js
++++ b/dist/NodeWS.js
+@@ -10,5 +10,7 @@
+  * @category re-exports
+  * @since 4.1.0
+  */
+-export * from "ws";
++// Bun's bundler drops values re-exported with `export *` from a side-effect-free
++// package, which crashes the compiled CLI: https://github.com/oven-sh/bun/issues/18008
++export { createWebSocketStream, Receiver, Sender, WebSocket, WebSocketServer } from "ws";
+ //# sourceMappingURL=NodeWS.js.map

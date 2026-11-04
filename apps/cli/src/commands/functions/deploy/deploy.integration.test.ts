@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -125,7 +125,7 @@ const deployedFunction = (slug: string) => ({
 const removeTempRoot = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   yield* fs.remove(tempRoot.current, { recursive: true, force: true });
-}).pipe(Effect.provide(BunServices.layer), Effect.orDie);
+}).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]), Effect.orDie);
 
 // Each sleep advances the test clock itself, so retry backoff costs no real time.
 const withAdvancingClock = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -188,7 +188,7 @@ function mockDockerBundleSpawner() {
       const outputPath = resolveDockerOutputPath(record.args);
       yield* fs.makeDirectory(path.dirname(outputPath), { recursive: true });
       yield* fs.writeFileString(outputPath, "eszip-test-output");
-    }).pipe(Effect.provide(BunServices.layer), Effect.orDie);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]), Effect.orDie);
   return mockChildProcessSpawner(spawnerOpts);
 }
 
@@ -484,7 +484,9 @@ describe("functions deploy", () => {
           cliSettings: mockCommandSettings({ workdir: tempRoot.current, projectId: Option.none() }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
-        commandRuntimeLayer(["functions", "deploy"]).pipe(Layer.provide(BunServices.layer)),
+        commandRuntimeLayer(["functions", "deploy"]).pipe(
+          Layer.provide([BunServices.layer, BunCrypto.layer]),
+        ),
         approvedHostedMutation,
         cliArgsLayer(prepareCliArgs(rootCommandForFeatures(), args)).pipe(
           Layer.provideMerge(Stdio.layerTest({ args: Effect.succeed(args) })),

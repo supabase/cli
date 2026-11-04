@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Cause, Context, Effect, Exit, FileSystem, Layer, Option } from "effect";
 import * as Net from "node:net";
@@ -17,7 +17,11 @@ import { selection } from "../tests/pins.ts";
  * or fails with a structured `PortConflict`, and destroy (but never stop or a kill) releases them.
  */
 
-const servicesLayer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+const servicesLayer = Layer.mergeAll(
+  NodeServices.layer,
+  NodeCrypto.layer,
+  NodeHttpClient.layerNodeHttp,
+);
 const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(servicesLayer));
 

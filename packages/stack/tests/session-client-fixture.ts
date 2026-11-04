@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { Effect, Layer, Schema } from "effect";
 import { create } from "../src/effect.ts";
 import { selection } from "./pins.ts";
@@ -33,5 +33,9 @@ const program = Effect.scoped(
 );
 
 await Effect.runPromise(
-  program.pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  program.pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );

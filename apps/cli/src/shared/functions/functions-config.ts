@@ -1,4 +1,5 @@
-import { Crypto, Effect, type FileSystem, Option, type Path, Redacted } from "effect";
+import { Effect, type FileSystem, Option, type Path, Redacted } from "effect";
+import { Digest } from "effect/crypto";
 import type { RuntimeInfo } from "../runtime/runtime-info.service.ts";
 import type { LoadedCliConfig } from "@supabase/config/effect";
 import { CliConfigValues, type ResolvedCliConfig } from "../../config/cli-config-values.service.ts";
@@ -40,7 +41,7 @@ export interface FunctionsLocalConfigLoader {
       readonly denoVersion: number;
     },
     Error,
-    FileSystem.FileSystem | Path.Path | RuntimeInfo | Crypto.Crypto | CliConfigValues
+    FileSystem.FileSystem | Path.Path | RuntimeInfo | Digest.Digest | CliConfigValues
   >;
 }
 

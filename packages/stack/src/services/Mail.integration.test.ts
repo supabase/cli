@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Data, Effect, Exit, FileSystem, Layer, Path, Ref, Stream } from "effect";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
@@ -116,7 +116,11 @@ describe("service catalog", () => {
           yield* Ref.set(phase, "scope teardown");
         }),
       ).pipe(mailStall("25 seconds", phase, logs));
-    }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   );
 
   it.live(
@@ -154,7 +158,11 @@ describe("service catalog", () => {
             concurrency: "unbounded",
           });
         }),
-      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
   );
 
   it.live("keeps a captured email after a native mail stop and start", () =>
@@ -186,7 +194,11 @@ describe("service catalog", () => {
         );
         yield* instance.stop;
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   );
 
   it.live("keeps a captured email after a Docker mail stop and start", () =>
@@ -220,7 +232,11 @@ describe("service catalog", () => {
         );
         yield* instance.stop;
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   );
 
   it.live("removes the native mail instance directory when destroyed", () =>
@@ -244,7 +260,11 @@ describe("service catalog", () => {
         yield* instance.destroy;
         expect(yield* fs.exists(instanceRoot)).toBe(false);
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   );
 
   it.live("rejects a traversal instance id and creates nothing outside the root", () =>
@@ -265,6 +285,10 @@ describe("service catalog", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         expect(yield* fs.exists(path.join(root, "..", "escaped"))).toBe(false);
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   );
 });

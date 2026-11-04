@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Path, Stdio } from "effect";
 import { CliOutput, Command } from "effect/cli";
@@ -73,7 +73,7 @@ const runDbPull = (
       Effect.exit,
     );
     return { exit, out, analytics, workdir };
-  }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+  }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
 
 const removedError = (exit: Exit.Exit<unknown, unknown>) => {
   expect(Exit.isFailure(exit)).toBe(true);

@@ -349,7 +349,9 @@ function mockInspectSpawner(
   const calls: Array<{
     readonly command: string;
     readonly args: ReadonlyArray<string>;
-    readonly env: Readonly<Record<string, string | undefined>> | undefined;
+    readonly env:
+      | Readonly<Record<string, string | Redacted.Redacted<string> | undefined>>
+      | undefined;
     readonly extendEnv: boolean | undefined;
   }> = [];
   const encoder = new TextEncoder();
@@ -360,7 +362,7 @@ function mockInspectSpawner(
       Effect.gen(function* () {
         const isStandard = ChildProcess.isStandardCommand(command);
         const cmd = isStandard ? command.command : "";
-        const args = isStandard ? command.args : [];
+        const args = isStandard ? command.args.map(String) : [];
         const options = isStandard ? command.options : undefined;
         calls.push({ command: cmd, args, env: options?.env, extendEnv: options?.extendEnv });
 

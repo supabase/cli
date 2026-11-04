@@ -1,4 +1,5 @@
-import { Clock, Crypto, Effect, FileSystem, Layer, Path, Ref } from "effect";
+import { Clock, Effect, FileSystem, Layer, Path, Ref } from "effect";
+import { Digest } from "effect/crypto";
 import type { Pool } from "pg";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
@@ -134,7 +135,7 @@ export const pgDeltaNextEngineLayer = Layer.effect(
     const shadowService = yield* PgDeltaNextShadow;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* Digest.Digest;
     const debugLogger = yield* DebugLogger;
     const settings = yield* CommandSettings;
     const output = yield* Output;
@@ -152,7 +153,7 @@ export const pgDeltaNextEngineLayer = Layer.effect(
           path,
           yield* pgdeltaScratchDir(workdir).pipe(
             Effect.provideService(CommandSettings, settings),
-            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.provideService(Digest.Digest, crypto),
           ),
           id,
           operation,

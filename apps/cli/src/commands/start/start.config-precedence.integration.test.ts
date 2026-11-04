@@ -1,6 +1,16 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, it } from "@effect/vitest";
-import { ConfigProvider, Effect, FileSystem, Layer, Option, Path, Sink, Stream } from "effect";
+import {
+  ConfigProvider,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  type Redacted,
+  Sink,
+  Stream,
+} from "effect";
 import { ChildProcessSpawner } from "effect/process";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -150,7 +160,7 @@ interface RouteResult {
 
 interface CreateRecord {
   readonly args: ReadonlyArray<string>;
-  readonly env: Readonly<Record<string, string | undefined>>;
+  readonly env: Readonly<Record<string, string | Redacted.Redacted<string> | undefined>>;
 }
 
 function concatByteChunks(chunks: ReadonlyArray<unknown>): Uint8Array | undefined {
@@ -202,7 +212,7 @@ function mockDockerSpawner() {
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) =>
       Effect.gen(function* () {
-        const args = command._tag === "StandardCommand" ? command.args : [];
+        const args = command._tag === "StandardCommand" ? command.args.map(String) : [];
         const env = command._tag === "StandardCommand" ? (command.options?.env ?? {}) : {};
         const stdin = command._tag === "StandardCommand" ? command.options.stdin : undefined;
         if (args[0] === "create") creates.push({ args, env });
@@ -300,6 +310,7 @@ describe("start container env precedence goldens", () => {
           cliConfigValuesTestLayer,
           Layer.succeed(ConfigEnvPins, fixture.shellEnv ?? {}),
           BunServices.layer,
+          BunCrypto.layer,
           out.layer,
           mockCommandSettings({ workdir }),
           mockTelemetryStateTracked().layer,

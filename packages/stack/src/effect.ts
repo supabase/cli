@@ -1,7 +1,6 @@
 import {
   Cause,
   Context,
-  Crypto,
   Deferred,
   Effect,
   Exit,
@@ -18,6 +17,7 @@ import {
   Semaphore,
   Stream,
 } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import { RpcClientError } from "effect/rpc/RpcClientError";
@@ -390,12 +390,13 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
       | HttpClient.HttpClient
       | FileSystem.FileSystem
       | Path.Path
-      | Crypto.Crypto
+      | SecureRandom.SecureRandom
+      | Digest.Digest
       | ChildProcessSpawner.ChildProcessSpawner
       | Scope.Scope
     >(),
   );
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const handleScope = yield* Scope.Scope;
@@ -717,9 +718,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
           Effect.mapError((cause) => failure("command", cause)),
         );
         const { rpc } = current;
-        const attachmentId = yield* crypto.randomUUIDv4.pipe(
-          Effect.mapError((cause) => failure("command", cause)),
-        );
+        const attachmentId = yield* crypto.uuidV4();
         const scope = yield* Scope.Scope;
         const inputFailure = yield* Deferred.make<never, E | StackError>();
         const result = yield* Ref.make<{ jobId: string; exitCode: number } | undefined>(undefined);

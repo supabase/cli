@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { loadCliConfig } from "@supabase/config/internal";
 import {
@@ -280,6 +280,7 @@ const setupSeedBuckets = Effect.fnUntraced(function* (
     ConfigProvider.layer(ConfigProvider.fromEnvRecord(process.env, { preserveEmptyStrings: true })),
     mockCommandSettings({ workdir, explicitWorkdir: opts.explicitWorkdir ?? false }),
     BunServices.layer,
+    BunCrypto.layer,
     recorder.layer,
     cliConfigValuesTestLayer,
     runtimeInfoLayer,
@@ -287,7 +288,9 @@ const setupSeedBuckets = Effect.fnUntraced(function* (
     mockTty({ stdinIsTty: true, stdoutIsTty: false }),
     mockStdin(true, opts.pipedAnswers ? `${opts.pipedAnswers.join("\n")}\n` : undefined),
     Layer.succeed(CliArgs, { args: opts.args ?? ["seed", "buckets"] }),
-    commandRuntimeLayer(["seed", "buckets"]).pipe(Layer.provide(BunServices.layer)),
+    commandRuntimeLayer(["seed", "buckets"]).pipe(
+      Layer.provide([BunServices.layer, BunCrypto.layer]),
+    ),
     Layer.succeed(YesFlag, opts.yes ?? false),
     projectRefLayer,
     recorded === undefined
@@ -352,7 +355,7 @@ describe("seed buckets", () => {
   ): Effect.Effect<A, E> =>
     OVERRIDE_ENV_KEYS.reduce<Effect.Effect<A, E>>(
       (acc, key) => withEnvVar(key, undefined, acc),
-      body.pipe(Effect.provide(BunServices.layer)),
+      body.pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     );
 
   it.effect("short-circuits with no output when nothing is configured", () =>
@@ -3004,7 +3007,7 @@ describe("seed buckets", () => {
         const loaded = yield* loadCliConfig(tmp.current, {
           cliCompat: true,
           search: false,
-        }).pipe(Effect.provide(BunServices.layer));
+        }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
         if (loaded === null) {
           throw new Error("test setup: config.toml failed to load");
         }
@@ -3050,7 +3053,7 @@ describe("stack backend", () => {
         requests.some((r) => r.method === "POST" && r.url.endsWith("/storage/v1/bucket")),
       ).toBe(true);
       expect(requests.some((r) => r.url.includes("/storage/v1/object/"))).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("seeds buckets without reading or writing supabase/.temp", () =>
@@ -3073,7 +3076,7 @@ describe("stack backend", () => {
 
       expect(accessed.some((entry) => entry.endsWith("a.txt"))).toBe(true);
       expect(legacyStateAccesses(accessed)).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("a malformed SUPABASE_API_PORT fails the config load under either backend", () =>
@@ -3093,7 +3096,7 @@ describe("stack backend", () => {
         }
         expect(requests).toHaveLength(0);
       }
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect(
@@ -3113,7 +3116,7 @@ describe("stack backend", () => {
         expect(capability).toBeInstanceOf(StackStorageCapabilityError);
         expect(capability?.suggestion).toContain("--exclude storage");
         expect(requests).toHaveLength(0);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect(
@@ -3133,7 +3136,7 @@ describe("stack backend", () => {
         expect(unavailable).toBeInstanceOf(StackStorageUnavailableError);
         expect(unavailable?.suggestion).toContain("supabase start");
         expect(requests).toHaveLength(0);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 });
 

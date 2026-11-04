@@ -81,7 +81,7 @@ function fakeFileInfo(type: FileSystem.File.Type): FileSystem.File.Info {
     mtime: Option.none(),
     atime: Option.none(),
     birthtime: Option.none(),
-    dev: 0,
+    dev: 0n,
     ino: Option.none(),
     mode: 0,
     nlink: Option.none(),

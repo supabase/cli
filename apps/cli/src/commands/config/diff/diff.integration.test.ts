@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { type V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Schema, Stdio } from "effect";
@@ -1437,7 +1437,9 @@ describe("config diff -o/--output wrapper wiring", () => {
       Effect.provide(
         Layer.mergeAll(
           layer,
-          commandRuntimeLayer(["config", "diff"]).pipe(Layer.provide(BunServices.layer)),
+          commandRuntimeLayer(["config", "diff"]).pipe(
+            Layer.provide([BunServices.layer, BunCrypto.layer]),
+          ),
           Stdio.layerTest({ args: Effect.succeed(["config", "diff", "-o", "table"]) }),
         ),
       ),

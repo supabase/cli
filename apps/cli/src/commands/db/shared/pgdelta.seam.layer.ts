@@ -1,4 +1,5 @@
 import { Effect, FileSystem, Layer, Option, Path, Schema, Stream } from "effect";
+import type { SecureRandom } from "effect/crypto";
 import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
@@ -83,7 +84,7 @@ export const declarativeSeamLayer = Layer.effect(
     const cliArgs = yield* CliArgs;
     const stackCatalogSetup = yield* StackCatalogSetup;
     const cliConfigValues = yield* CliConfigValues;
-    const context = yield* Effect.context<StartLocalDatabaseDeps>();
+    const context = yield* Effect.context<StartLocalDatabaseDeps | SecureRandom.SecureRandom>();
 
     return DeclarativeSeam.of({
       ensureLocalDatabaseStarted: Effect.gen(function* () {

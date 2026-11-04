@@ -1,9 +1,8 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import {
   Clock,
   Context,
-  Crypto,
   Data,
   Effect,
   Fiber,
@@ -13,6 +12,7 @@ import {
   Queue,
   Stream,
 } from "effect";
+import { SecureRandom } from "effect/crypto";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- test-only native watcher for synchronous attachment, no Effect wrapper gives this guarantee.
 import { watch as nodeWatch } from "node:fs";
@@ -131,8 +131,8 @@ it.live.skipIf(process.platform === "win32")(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
-        const suffix = (yield* crypto.randomUUIDv4).replaceAll("-", "");
+        const crypto = yield* SecureRandom.SecureRandom;
+        const suffix = (yield* crypto.uuidV4()).replaceAll("-", "");
         const deadId = `dead-${suffix}`;
         const dataA = yield* makeDockerDatabaseRoot("stack-sweep-a-", deadId).pipe(
           Effect.flatMap(fs.realPath),
@@ -221,7 +221,11 @@ it.live.skipIf(process.platform === "win32")(
         expect(yield* state.read(sessionId)).toBeUndefined();
         expect(yield* state.leased(deadId), "the sweeper released the dead stack").toBe(false);
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   { timeout: 180_000 },
 );
 
@@ -269,7 +273,11 @@ it.live(
         expect(yield* fs.exists(path.join(root, "old-with-lock", "owner.lock"))).toBe(true);
         expect(yield* fs.exists(path.join(root, "old-kept", "data"))).toBe(true);
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
 );
 
 it.live("reclaiming a session stack refuses a symlinked data directory and keeps its target", () =>
@@ -301,7 +309,11 @@ it.live("reclaiming a session stack refuses a symlinked data directory and keeps
       expect(yield* fs.readFileString(path.join(outside, "precious.txt"))).toBe("keep");
       expect(yield* state.read(stack.id), "the registration stays for a retry").toBeDefined();
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live("sweeps deleted stacks of its own root only, on the engine its owner pinned", () =>
@@ -387,7 +399,11 @@ it.live("sweeps deleted stacks of its own root only, on the engine its owner pin
         "the sweeper's lease leaves no directory behind",
       ).toBe(false);
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live("does not reclaim a stack that is registered as a deleted one", () =>

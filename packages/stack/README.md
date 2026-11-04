@@ -256,7 +256,7 @@ const test = Effect.gen(function* () {
 The Effect entrypoint exposes the same operations as Effects and Streams. `create` and `open` return a handle that lasts until the enclosing `Scope` closes; closing the creating scope of a session stack destroys it. Database secrets use `Redacted` in the Effect configuration:
 
 ```ts
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { Effect, Layer } from "effect";
 import * as Stack from "@supabase/stack/effect";
 
@@ -271,7 +271,14 @@ const program = Effect.gen(function* () {
 await Effect.runPromise(
   program.pipe(
     Effect.scoped,
-    Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeHttpClient.layerNodeHttp,
+        NodeCrypto.layerSecureRandom,
+        NodeCrypto.layerDigest,
+      ),
+    ),
   ),
 );
 ```

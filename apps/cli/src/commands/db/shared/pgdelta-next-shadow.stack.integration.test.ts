@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { FetchHttpClient } from "effect/http";
 import { Effect, FileSystem, Layer, Option } from "effect";
@@ -97,7 +97,7 @@ describe("pg-delta next stack shadow provisioning", () => {
         const output = mockOutput().layer;
         const apiLayer = stackApiLayer.pipe(
           Layer.provide(FetchHttpClient.layer),
-          Layer.provide(BunServices.layer),
+          Layer.provide([BunServices.layer, BunCrypto.layer]),
         );
         const shadowLayer = pgDeltaNextShadowLayer.pipe(
           Layer.provide(apiLayer),
@@ -114,7 +114,7 @@ describe("pg-delta next stack shadow provisioning", () => {
           Layer.provide(Layer.succeed(CliArgs, { args: [] })),
           // Without a reachable container engine, automatic selection keeps the shadows native.
           Layer.provide(engines.hidingLayer),
-          Layer.provide(BunServices.layer),
+          Layer.provide([BunServices.layer, BunCrypto.layer]),
         );
         const services = Layer.mergeAll(
           FetchHttpClient.layer,
