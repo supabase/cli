@@ -11,7 +11,13 @@ export type NetworkRuntime = "native" | "docker" | "podman";
 /* `target` serves a route from another backend than its endpoint's, like PostgREST's admin port. */
 type RouteContribution = Pick<
   HttpRoute,
-  "prefix" | "upstreamPrefix" | "upstreamHost" | "addHeaders" | "forwardedPrefix" | "keyRewrite"
+  | "prefix"
+  | "upstreamPrefix"
+  | "upstreamHost"
+  | "addHeaders"
+  | "forwardedPrefix"
+  | "keyRewrite"
+  | "upstreamCors"
 > &
   Partial<Pick<HttpRoute, "target">>;
 
