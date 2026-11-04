@@ -14,7 +14,7 @@ import {
 } from "../stack-summary.ts";
 import { gray } from "../../../../command-internal/colors.ts";
 import { currentShellPlatform } from "../../../../command-internal/shell-quote.ts";
-import { withProjectFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
+import { withProjectFunctionsConfig } from "../../../../command-internal/stack-functions-env.ts";
 import { statusEnvPointer } from "./start-summary.format.ts";
 import {
   automaticRuntimeNotice,
@@ -38,6 +38,7 @@ import {
 import { Output } from "../../../../shared/output/output.service.ts";
 import { MachineErrorContext } from "../../../../shared/output/machine-error-context.service.ts";
 import {
+  DebugFlag,
   OutputFlag,
   resolveExperimentalWithProjectEnv,
 } from "../../../../command-internal/global-flags.ts";
@@ -559,6 +560,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     const resolver = yield* StackTargetResolver;
     const stackApi = yield* StackApi;
     const outputFlag = yield* Effect.serviceOption(OutputFlag);
+    const debug = yield* DebugFlag;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     yield* rejectStackOutput(outputFlag).pipe(
@@ -617,6 +619,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     const resolveRequested = (
       stackId: string,
       config: Effect.Success<ReturnType<typeof loadStartConfig>>["config"],
+      warn = true,
     ) =>
       Effect.gen(function* () {
         const creations = yield* config.creations(stackId).pipe(
@@ -630,9 +633,8 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
               }),
           ),
         );
-        return yield* Effect.forEach(
-          selectedCreations(creations, exclusions),
-          withProjectFunctionsEnv,
+        return yield* Effect.forEach(selectedCreations(creations, exclusions), (creation) =>
+          withProjectFunctionsConfig(creation, { warn, debug }),
         ).pipe(
           Effect.mapError(
             (cause) =>
@@ -655,7 +657,8 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     const resolveForReplan = (stackId: string) =>
       Effect.gen(function* () {
         const loaded = yield* startConfig;
-        return yield* resolveRequested(stackId, loaded.config);
+        /* A running owner keeps its plan, so this resolve must not warn about values it never loads. */
+        return yield* resolveRequested(stackId, loaded.config, !target.hostRunning);
       });
     const requestedForReplan =
       target.id === undefined

@@ -78,7 +78,7 @@ import {
 } from "../../../../command-internal/db-connection.service.ts";
 import { writeProjectLink } from "../../../../shared/config/project-link.ts";
 import { StackCatalogSetup } from "../../../../command-internal/stack-catalog-setup.ts";
-import { ExperimentalFlag, YesFlag } from "../../../../command-internal/global-flags.ts";
+import { DebugFlag, ExperimentalFlag, YesFlag } from "../../../../command-internal/global-flags.ts";
 import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api-factory.service.ts";
 import { causeDeclaration } from "../../../../shared/telemetry/error-actionability.ts";
 import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
@@ -615,6 +615,7 @@ const layers = (
     target,
     api,
     Layer.succeed(ExperimentalFlag, false),
+    Layer.succeed(DebugFlag, false),
     ciUnsetLayer,
     Layer.succeed(CliArgs, { args: ["stack", "start"] }),
     Layer.succeed(StackCatalogSetup, {
@@ -704,26 +705,63 @@ const liveIdleOwner = (root: string, fixture: ReturnType<typeof fakeStack>) =>
   );
 
 describe("experimental stack start", () => {
-  it.effect("rejects incompatible Functions env before changing composition", () =>
+  it.effect("starts Functions with the env and debug mode legacy start resolves", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-functions-env-" });
+      yield* fs.makeDirectory(`${root}/supabase/functions/echo`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "functions-env"\n[edge_runtime.secrets]\nshared = "secret"\nsecret_pem = "a\\r\\nb"\nSUPABASE_TOML = "x"\nUNSET_NAME = "env(STACK_START_FUNCTIONS_UNSET)"\n',
+      );
+      yield* fs.writeFileString(`${root}/supabase/functions/echo/.env`, "PER_FN=never-read\n");
+      yield* fs.writeFileString(
+        `${root}/supabase/functions/.env`,
+        'SHARED=file\nMULTI="first\nsecond"\nLEGACY.NAME=value\nSUPABASE_SKIP=x\n',
+      );
+      const fixture = fakeStack();
+      const output = mockOutput();
+      yield* stackStart(flags()).pipe(
+        Effect.provide(Layer.merge(layers(root, fixture, output), Layer.succeed(DebugFlag, true))),
+      );
+      const functions = fixture.members.find(({ service }) => service === "functions");
+      if (functions?.service !== "functions") return yield* Effect.die("Functions missing");
+      const status = yield* functions.status;
+      if (status.config.service !== "functions") return yield* Effect.die("Functions missing");
+      expect(status.config.config.env).toEqual({
+        SHARED: "file",
+        SECRET_PEM: "a\r\nb",
+        MULTI: "first\nsecond",
+        "LEGACY.NAME": "value",
+      });
+      expect(status.config.config.functions?.echo).toBeUndefined();
+      expect(status.config.config.debug).toBe(true);
+      expect(output.stderrText).toContain(
+        "Env name cannot start with SUPABASE_, skipping: SUPABASE_SKIP\n",
+      );
+      expect(output.stderrText).toContain(
+        "Env name cannot start with SUPABASE_, skipping: SUPABASE_TOML\n",
+      );
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("rejects a malformed Functions env file before changing composition", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-functions-env-" });
       yield* fs.makeDirectory(`${root}/supabase/functions`, { recursive: true });
       yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "functions-env"\n');
+      yield* fs.writeFileString(`${root}/supabase/functions/.env`, "API-KEY=secret-value\n");
       const fixture = fakeStack();
-      for (const [contents, message] of [
-        ["INVALID.KEY=value\n", "Environment names"],
-        ['VALUE="first\nsecond"\n', "Multiline"],
-      ] as const) {
-        yield* fs.writeFileString(`${root}/supabase/functions/.env`, contents);
-        const error = yield* stackStart(flags()).pipe(
-          Effect.provide(layers(root, fixture)),
-          Effect.flip,
-        );
-        expect(error).toMatchObject({ reason: "invalid-config" });
-        expect(error.message).toContain(message);
-        expect(fixture.composed).toBe(0);
-      }
+      const error = yield* stackStart(flags()).pipe(
+        Effect.provide(layers(root, fixture)),
+        Effect.flip,
+      );
+      expect(error).toMatchObject({ reason: "invalid-config" });
+      expect(error.message).toBe(
+        `failed to parse environment file: ${root}/supabase/functions/.env (unexpected character '-' in variable name)`,
+      );
+      expect(fixture.composed).toBe(0);
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 

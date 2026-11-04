@@ -52,6 +52,7 @@ import {
 import { assertPermissionDrift } from "../../../tests/helpers/permission-drift.ts";
 import { unusedStackServices } from "../../../tests/helpers/unused-stack.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
+import { normalizeCliError } from "../../shared/output/normalize-error.ts";
 import {
   classifyCliCauseActionability,
   classifyCliErrorActionability,
@@ -5670,6 +5671,71 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(envFileContent).toContain("MY_LOWER_SECRET=keep-me");
           expect(envFileContent).not.toContain("my_lower_secret=");
           expect(envFileContent).not.toContain("EMPTY_SECRET=");
+        }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    );
+
+    it.effect(
+      "lets supabase/functions/.env override secrets and leaves unresolved secrets out",
+      () =>
+        Effect.gen(function* () {
+          const { layer, child, workdir } = yield* setup({
+            configContents:
+              'project_id = "demo"\n[edge_runtime.secrets]\nSHARED = "secret"\nUNSET_SECRET = "env(LEGACY_START_UNSET_SECRET)"\n',
+          });
+
+          const fs = yield* FileSystem.FileSystem;
+          yield* fs.makeDirectory(`${workdir}/supabase/functions/hello`, { recursive: true });
+          yield* fs.writeFileString(`${workdir}/supabase/functions/.env`, "SHARED=dotenv\n");
+          yield* fs.writeFileString(`${workdir}/supabase/functions/hello/.env`, "PER_FN=hello\n");
+          yield* start(flags()).pipe(Effect.provide(layer));
+          const edgeRuntimeRunCall = child.spawned.find((s) => isEdgeRuntimeCreate(s.args));
+          const args = edgeRuntimeRunCall?.args ?? [];
+          const envFileIndex = args.indexOf("--env-file");
+          const envFilePath = envFileIndex !== -1 ? args[envFileIndex + 1] : undefined;
+          expect(envFilePath).toBeDefined();
+          const envFileContent = yield* fs.readFileString(envFilePath ?? "");
+          expect(envFileContent).toContain("SHARED=dotenv");
+          expect(envFileContent).not.toContain("UNSET_SECRET");
+          expect(envFileContent).not.toContain("PER_FN");
+        }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    );
+
+    it.effect("fails on a malformed supabase/functions/.env with the legacy error code", () =>
+      Effect.gen(function* () {
+        const { layer, workdir } = yield* setup();
+
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.makeDirectory(`${workdir}/supabase/functions`, { recursive: true });
+        yield* fs.writeFileString(`${workdir}/supabase/functions/.env`, "API-KEY=secret-value\n");
+        const error = yield* start(flags()).pipe(Effect.provide(layer), Effect.flip);
+
+        expect(error.message).toContain("failed to parse environment file:");
+        expect(error.message).not.toContain("secret-value");
+        expect(normalizeCliError(error).code).toBe("UnknownError");
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    );
+
+    it.effect(
+      "skips a disabled function and creates the runtime cache volume before a malformed supabase/functions/.env fails",
+      () =>
+        Effect.gen(function* () {
+          const { layer, out, child, workdir } = yield* setup({
+            configContents: 'project_id = "demo"\n[functions.off]\nenabled = false\n',
+          });
+
+          const fs = yield* FileSystem.FileSystem;
+          yield* fs.makeDirectory(`${workdir}/supabase/functions`, { recursive: true });
+          yield* fs.writeFileString(`${workdir}/supabase/functions/.env`, "API-KEY=secret-value\n");
+          const error = yield* start(flags()).pipe(Effect.provide(layer), Effect.flip);
+
+          expect(error.message).toContain("failed to parse environment file:");
+          expect(out.stderrText).toContain("Skipped serving Function: off\n");
+          expect(
+            child.spawned.some(
+              (spawn) =>
+                spawn.args[0] === "volume" && spawn.args.includes("supabase_edge_runtime_demo"),
+            ),
+          ).toBe(true);
         }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     );
 

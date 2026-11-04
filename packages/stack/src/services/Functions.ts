@@ -47,6 +47,7 @@ export const Config = Schema.Struct({
   policy: Schema.optionalKey(Schema.String),
   verifyJwt: Schema.optionalKey(Schema.Boolean),
   inspector: Schema.optionalKey(Schema.Boolean),
+  debug: Schema.optionalKey(Schema.Boolean),
 });
 
 export interface Config extends Schema.Schema.Type<typeof Config> {}
@@ -109,6 +110,13 @@ export const makeSpec = (
         container && filesRoot === undefined
           ? "/__supabase_functions"
           : runtimePath(creation.config.functionsRoot);
+      /* A process env cannot carry these names or values; the JSON runtime config carries them
+         once in $default, which the bootstrap merges under each function's own env. */
+      const portable = ([name, value]: readonly [string, string]) =>
+        /^[A-Za-z_][A-Za-z0-9_]*$/u.test(name) && !/[\0\r\n]/u.test(value);
+      const entries = Object.entries(creation.config.env ?? {});
+      const configEnv = Object.fromEntries(entries.filter((entry) => !portable(entry)));
+      const hasConfigEnv = Object.keys(configEnv).length > 0;
       const functions = Object.fromEntries(
         Object.entries(creation.config.functions ?? {}).map(([name, settings]) => [
           name,
@@ -133,11 +141,16 @@ export const makeSpec = (
       const serviceRoleKey =
         creation.config.serviceRoleKey ??
         (jwt === undefined ? undefined : yield* serviceJwt("service_role", jwt));
+      const apiUrl =
+        creation.config.apiUrl === undefined ? null : URL.parse(creation.config.apiUrl);
+      /* URL.port is empty for the scheme's default port. */
+      const hostPort =
+        apiUrl === null ? undefined : apiUrl.port || (apiUrl.protocol === "https:" ? "443" : "80");
       return {
         // The image has no passwd entry: Docker then defaults HOME to /, Podman leaves it unset,
         // and the runtime needs it to place its Deno cache.
         ...(container ? { HOME: "/" } : {}),
-        ...creation.config.env,
+        ...Object.fromEntries(entries.filter(portable)),
         ...(http === undefined ? {} : { EDGE_RUNTIME_PORT: String(http.port) }),
         SUPABASE_INTERNAL_FUNCTIONS_ROOT: root,
         ...(filesRoot === undefined
@@ -153,12 +166,20 @@ export const makeSpec = (
         ...(creation.config.secretKey === undefined
           ? {}
           : { SUPABASE_INTERNAL_SECRET_KEY: creation.config.secretKey }),
-        ...(creation.config.verifyJwt === undefined && creation.config.functions === undefined
+        ...(creation.config.verifyJwt === undefined &&
+        creation.config.functions === undefined &&
+        !hasConfigEnv
           ? {}
           : {
               SUPABASE_INTERNAL_FUNCTIONS_CONFIG: yield* Schema.encodeEffect(
                 FunctionsRuntimeConfigJson,
-              )({ $default: { verifyJWT: creation.config.verifyJwt ?? true }, ...functions }).pipe(
+              )({
+                $default: {
+                  verifyJWT: creation.config.verifyJwt ?? true,
+                  ...(hasConfigEnv ? { env: configEnv } : {}),
+                },
+                ...functions,
+              }).pipe(
                 Effect.mapError(
                   (cause) =>
                     new ServiceError({
@@ -170,6 +191,8 @@ export const makeSpec = (
               ),
             }),
         ...(creation.config.apiUrl === undefined ? {} : { SUPABASE_URL: creation.config.apiUrl }),
+        ...(hostPort === undefined ? {} : { SUPABASE_INTERNAL_HOST_PORT: hostPort }),
+        ...(creation.config.debug === true ? { SUPABASE_INTERNAL_DEBUG: "true" } : {}),
         ...(creation.config.databaseUrl === undefined
           ? {}
           : { SUPABASE_DB_URL: creation.config.databaseUrl }),
@@ -207,6 +230,7 @@ export const makeSpec = (
         ...(creation.config.inspector === true && inspector !== undefined
           ? [`--inspect=${context.container ? "0.0.0.0" : "127.0.0.1"}:${inspector.port}`]
           : []),
+        ...(creation.config.debug === true ? ["--verbose"] : []),
       ];
     }),
   mounts: (creation) =>

@@ -239,6 +239,7 @@ FunctionImportNotDirectoryError
 FunctionNotFoundError
 FunctionsApiStatusError
 FunctionsApiTransportError
+FunctionsEnvError
 FunctionsEnvNotSupportedError
 FunctionsListNetworkError
 FunctionsListUnexpectedStatusError
@@ -499,7 +500,6 @@ StackArtifactSelectionError
 StackBootstrapError
 StackCatalogSetupError
 StackConfigError
-StackFunctionsEnvError
 StackNativeEngineError
 StackRoutingError
 StackRuntimeSelectionError
