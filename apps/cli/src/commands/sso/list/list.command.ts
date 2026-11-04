@@ -21,7 +21,9 @@ const config = {
 export type SsoListFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const ssoListCommand = makeCommand("list", config).pipe(
-  Command.withDescription("Shows the identity providers connected to your project, with their IDs and email domains."),
+  Command.withDescription(
+    "Shows the identity providers connected to your project, with their IDs and email domains.",
+  ),
   Command.withShortDescription("List all SSO identity providers"),
   Command.withExamples([
     {

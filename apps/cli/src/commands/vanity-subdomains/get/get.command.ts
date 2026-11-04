@@ -27,7 +27,9 @@ const config = {
 export type VanitySubdomainsGetFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const vanitySubdomainsGetCommand = makeCommand("get", config).pipe(
-  Command.withDescription("Shows the vanity subdomain configured for your project, along with its status."),
+  Command.withDescription(
+    "Shows the vanity subdomain configured for your project, along with its status.",
+  ),
   Command.withShortDescription("Get the current vanity subdomain"),
   Command.withExamples([
     {

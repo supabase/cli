@@ -35,15 +35,19 @@ const config = {
 export type SslEnforcementUpdateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const sslEnforcementUpdateCommand = makeCommand("update", config).pipe(
-  Command.withDescription("Turns SSL enforcement on or off for external database connections. Pass exactly one of `--enable-db-ssl-enforcement` or `--disable-db-ssl-enforcement`."),
+  Command.withDescription(
+    "Turns SSL enforcement on or off for external database connections. Pass exactly one of `--enable-db-ssl-enforcement` or `--disable-db-ssl-enforcement`.",
+  ),
   Command.withShortDescription("Update SSL enforcement configuration"),
   Command.withExamples([
     {
-      command: "supabase ssl-enforcement update --enable-db-ssl-enforcement --experimental --remote=<project-ref>",
+      command:
+        "supabase ssl-enforcement update --enable-db-ssl-enforcement --experimental --remote=<project-ref>",
       description: "Require SSL for database connections",
     },
     {
-      command: "supabase ssl-enforcement update --disable-db-ssl-enforcement --experimental --remote=<project-ref>",
+      command:
+        "supabase ssl-enforcement update --disable-db-ssl-enforcement --experimental --remote=<project-ref>",
       description: "Stop requiring SSL for database connections",
     },
   ]),

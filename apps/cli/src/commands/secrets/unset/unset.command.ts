@@ -16,9 +16,12 @@ import { cliArgument, cliFlag, makeCommand, repeated } from "../../../shared/cli
 
 const config = {
   ...projectTargetFlags(),
-  names: cliArgument("NAME", repeated(Argument.String), { description: "Names of the secrets to unset." }),
+  names: cliArgument("NAME", repeated(Argument.String), {
+    description: "Names of the secrets to unset.",
+  }),
   all: cliFlag("all", Flag.Boolean, {
-    description: "Unset every secret except those prefixed with SUPABASE_; required when no names are given.",
+    description:
+      "Unset every secret except those prefixed with SUPABASE_; required when no names are given.",
     default: false,
   }),
   dryRun: cliFlag("dry-run", Flag.Boolean, {

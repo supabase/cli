@@ -42,7 +42,7 @@ export const encryptionUpdateRootKeyCommand = makeCommand("update-root-key", con
       description: "Update the root encryption key, entering the new key at the prompt",
     },
     {
-      command: "echo \"<new-root-key>\" | supabase encryption update-root-key --yes",
+      command: 'echo "<new-root-key>" | supabase encryption update-root-key --yes',
       description: "Update the root encryption key from stdin without confirmation",
     },
   ]),

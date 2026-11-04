@@ -20,7 +20,7 @@ const config = {
 export type SnippetsListFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const snippetsListCommand = makeCommand("list", config).pipe(
-    Command.withDescription(
+  Command.withDescription(
     "Show the SQL snippets of the linked project. Use it to find the ID that `snippets download` needs.",
   ),
   Command.withShortDescription("List all SQL snippets"),

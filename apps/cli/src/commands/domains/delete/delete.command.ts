@@ -33,7 +33,9 @@ const managementApiLayer = managementApiRuntimeLayer(COMMAND_PATH);
 export type DomainsDeleteFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const domainsDeleteCommand = makeCommand("delete", config).pipe(
-  Command.withDescription("Removes the custom hostname configuration so the project is served only on its Supabase-provisioned domain. Use it to start over, or to move to a vanity subdomain."),
+  Command.withDescription(
+    "Removes the custom hostname configuration so the project is served only on its Supabase-provisioned domain. Use it to start over, or to move to a vanity subdomain.",
+  ),
   Command.withShortDescription("Delete the custom hostname config"),
   Command.withExamples([
     {

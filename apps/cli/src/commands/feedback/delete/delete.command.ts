@@ -39,7 +39,9 @@ export const feedbackDeleteHandler = (args: FeedbackDeleteArgs) =>
   );
 
 export const feedbackDeleteCommand = makeCommand("delete", config).pipe(
-  Command.withDescription("Remove feedback you sent earlier. Use the deletion token printed when you submitted it."),
+  Command.withDescription(
+    "Remove feedback you sent earlier. Use the deletion token printed when you submitted it.",
+  ),
   Command.withShortDescription("Delete submitted feedback"),
   Command.withExamples([
     {

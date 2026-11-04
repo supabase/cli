@@ -45,7 +45,9 @@ const config = {
 export type InitFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const initCommand = makeCommand("init", config).pipe(
-  Command.withDescription("Create a `supabase/config.toml` in the current directory to set up local development."),
+  Command.withDescription(
+    "Create a `supabase/config.toml` in the current directory to set up local development.",
+  ),
   Command.withShortDescription("Set up a project for local development"),
   withPermissions({
     operations: [],

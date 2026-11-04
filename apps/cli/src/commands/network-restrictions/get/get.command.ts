@@ -27,7 +27,9 @@ const config = {
 export type NetworkRestrictionsGetFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const networkRestrictionsGetCommand = makeCommand("get", config).pipe(
-  Command.withDescription("Shows the CIDR ranges allowed to connect to your project's database, and whether they are applied."),
+  Command.withDescription(
+    "Shows the CIDR ranges allowed to connect to your project's database, and whether they are applied.",
+  ),
   Command.withShortDescription("Get the current network restrictions"),
   Command.withExamples([
     {

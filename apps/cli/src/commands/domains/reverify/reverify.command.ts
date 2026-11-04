@@ -33,7 +33,9 @@ const managementApiLayer = managementApiRuntimeLayer(COMMAND_PATH);
 export type DomainsReverifyFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const domainsReverifyCommand = makeCommand("reverify", config).pipe(
-  Command.withDescription("Asks Supabase to check your DNS records again. Run it after you add or change the CNAME or TXT records for your hostname."),
+  Command.withDescription(
+    "Asks Supabase to check your DNS records again. Run it after you add or change the CNAME or TXT records for your hostname.",
+  ),
   Command.withShortDescription("Re-verify the custom hostname config"),
   Command.withExamples([
     {

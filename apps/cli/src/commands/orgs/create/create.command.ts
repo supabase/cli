@@ -24,7 +24,7 @@ export const orgsCreateCommand = makeCommand("create", config).pipe(
   Command.withShortDescription("Create an organization"),
   Command.withExamples([
     {
-      command: "supabase orgs create \"My Organization\"",
+      command: 'supabase orgs create "My Organization"',
       description: "Create an organization",
     },
   ]),

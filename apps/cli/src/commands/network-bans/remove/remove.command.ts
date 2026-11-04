@@ -39,11 +39,14 @@ const config = {
 export type NetworkBansRemoveFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const networkBansRemoveCommand = makeCommand("remove", config).pipe(
-  Command.withDescription("Unblocks banned IP addresses. If you pass no IP, it unblocks the IP address of the machine you run it from."),
+  Command.withDescription(
+    "Unblocks banned IP addresses. If you pass no IP, it unblocks the IP address of the machine you run it from.",
+  ),
   Command.withShortDescription("Remove a network ban"),
   Command.withExamples([
     {
-      command: "supabase network-bans remove --db-unban-ip 203.0.113.7 --experimental --remote=<project-ref>",
+      command:
+        "supabase network-bans remove --db-unban-ip 203.0.113.7 --experimental --remote=<project-ref>",
       description: "Unban a single IP address",
     },
     {

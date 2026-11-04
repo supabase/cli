@@ -123,7 +123,7 @@ const interactivePicker = withContext(
 export type ProjectsCreateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const projectsCreateCommand = makeCommand("create", config).pipe(
-    Command.withDescription(
+  Command.withDescription(
     "Create a new Supabase project in an organization.\n\nIn an interactive terminal the command prompts for missing values. Without one, you must pass the project name, `--org-id`, `--db-password` and `--region`.",
   ),
   Command.withShortDescription("Create a project"),

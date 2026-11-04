@@ -41,7 +41,8 @@ export const vanitySubdomainsActivateCommand = makeCommand("activate", config).p
   Command.withShortDescription("Activate a vanity subdomain"),
   Command.withExamples([
     {
-      command: "supabase vanity-subdomains activate --desired-subdomain my-app --experimental --remote=<project-ref>",
+      command:
+        "supabase vanity-subdomains activate --desired-subdomain my-app --experimental --remote=<project-ref>",
       description: "Activate a vanity subdomain for a project",
     },
   ]),

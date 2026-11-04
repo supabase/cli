@@ -20,9 +20,7 @@ const config = {
 export type FunctionsListFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const functionsListCommand = makeCommand("list", config).pipe(
-  Command.withDescription(
-    "Show the Edge Functions deployed to the linked project.",
-  ),
+  Command.withDescription("Show the Edge Functions deployed to the linked project."),
   Command.withShortDescription("List deployed Edge Functions"),
   Command.withExamples([
     {

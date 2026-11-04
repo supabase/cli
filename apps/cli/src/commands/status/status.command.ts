@@ -30,11 +30,9 @@ export const statusOverrideNameFlag = stringSliceFlag(
   "Rename an exported variable, as key=NAME pairs or a comma-separated list.",
 );
 
-export const statusExcludeFlag = stringSliceFlag(
-  "exclude",
-  "Containers to omit from the output.",
-  { hidden: true },
-);
+export const statusExcludeFlag = stringSliceFlag("exclude", "Containers to omit from the output.", {
+  hidden: true,
+});
 
 const config = {
   overrideName: statusOverrideNameFlag,

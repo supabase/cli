@@ -14,7 +14,9 @@ export type TelemetryDisableFlags = CliCommand.Command.Config.Infer<typeof confi
 export const telemetryDisableCommand = makeCommand("disable", config).pipe(
   Command.withDescription("Turn off anonymous CLI usage telemetry for this machine."),
   Command.withShortDescription("Disable CLI telemetry"),
-  Command.withExamples([{ command: "supabase telemetry disable", description: "Turn telemetry off" }]),
+  Command.withExamples([
+    { command: "supabase telemetry disable", description: "Turn telemetry off" },
+  ]),
   withPermissions({ operations: [] }),
   Command.withHandler((flags) =>
     // `cli_command_executed` fires based on the consent value read at layer-construction

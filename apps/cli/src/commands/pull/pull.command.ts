@@ -26,8 +26,7 @@ import { cliFlag, makeCommand } from "../../shared/cli/cli-params.ts";
 const config = {
   ...projectTargetFlags(),
   remoteLabel: cliFlag("remote-label", Flag.String, {
-    description:
-      "Name of the [remotes.*] block the config step writes into.",
+    description: "Name of the [remotes.*] block the config step writes into.",
     optional: true,
   }),
   dryRun: cliFlag("dry-run", Flag.Boolean, {

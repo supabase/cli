@@ -15,7 +15,7 @@ const config = {};
 export type ProjectsListFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const projectsListCommand = makeCommand("list", config).pipe(
-    Command.withDescription(
+  Command.withDescription(
     "Show the projects the logged-in user can access. The project linked to the current directory is marked.",
   ),
   Command.withShortDescription("List all projects"),

@@ -43,11 +43,14 @@ const config = {
 export type PostgresConfigDeleteFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const postgresConfigDeleteCommand = makeCommand("delete", config).pipe(
-  Command.withDescription("Removes the named overrides so those settings return to their defaults. The database restarts afterwards unless you pass `--no-restart`."),
+  Command.withDescription(
+    "Removes the named overrides so those settings return to their defaults. The database restarts afterwards unless you pass `--no-restart`.",
+  ),
   Command.withShortDescription("Delete Postgres database config overrides"),
   Command.withExamples([
     {
-      command: "supabase postgres-config delete --config work_mem --experimental --remote=<project-ref>",
+      command:
+        "supabase postgres-config delete --config work_mem --experimental --remote=<project-ref>",
       description: "Delete a Postgres config override",
     },
   ]),

@@ -40,13 +40,11 @@ const config = {
   addDomains: ssoUpdateAddDomainsFlag,
   removeDomains: ssoUpdateRemoveDomainsFlag,
   metadataFile: cliFlag("metadata-file", Flag.String, {
-    description:
-      "Path to a SAML 2.0 Metadata XML file describing the identity provider.",
+    description: "Path to a SAML 2.0 Metadata XML file describing the identity provider.",
     optional: true,
   }),
   metadataUrl: cliFlag("metadata-url", Flag.String, {
-    description:
-      "URL of a SAML 2.0 Metadata XML document describing the identity provider.",
+    description: "URL of a SAML 2.0 Metadata XML document describing the identity provider.",
     optional: true,
   }),
   skipUrlValidation: cliFlag("skip-url-validation", Flag.Boolean, {
@@ -59,8 +57,7 @@ const config = {
     optional: true,
   }),
   nameIdFormat: cliFlag("name-id-format", (name) => Flag.Literals(name, SSO_NAME_ID_FORMATS), {
-    description:
-      "SAML name ID format URI used to identify users.",
+    description: "SAML name ID format URI used to identify users.",
     optional: true,
   }),
   providerId: cliArgument("provider-id", Argument.String, {

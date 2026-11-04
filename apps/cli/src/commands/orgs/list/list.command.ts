@@ -13,9 +13,7 @@ const config = {};
 export type OrgsListFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const orgsListCommand = makeCommand("list", config).pipe(
-  Command.withDescription(
-    "Show the organizations the logged-in user belongs to, with their IDs.",
-  ),
+  Command.withDescription("Show the organizations the logged-in user belongs to, with their IDs."),
   Command.withShortDescription("List all organizations"),
   Command.withExamples([
     {

@@ -47,15 +47,19 @@ const config = {
 export type NetworkRestrictionsUpdateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const networkRestrictionsUpdateCommand = makeCommand("update", config).pipe(
-  Command.withDescription("Sets the CIDR ranges allowed to connect to your project's database. By default the ranges you pass replace the existing ones; use `--append` to add to them."),
+  Command.withDescription(
+    "Sets the CIDR ranges allowed to connect to your project's database. By default the ranges you pass replace the existing ones; use `--append` to add to them.",
+  ),
   Command.withShortDescription("Update network restrictions"),
   Command.withExamples([
     {
-      command: "supabase network-restrictions update --db-allow-cidr 203.0.113.0/24 --experimental --remote=<project-ref>",
+      command:
+        "supabase network-restrictions update --db-allow-cidr 203.0.113.0/24 --experimental --remote=<project-ref>",
       description: "Replace the allowed CIDR ranges",
     },
     {
-      command: "supabase network-restrictions update --db-allow-cidr 198.51.100.0/24 --append --experimental --remote=<project-ref>",
+      command:
+        "supabase network-restrictions update --db-allow-cidr 198.51.100.0/24 --append --experimental --remote=<project-ref>",
       description: "Add a CIDR range to the existing ones",
     },
   ]),

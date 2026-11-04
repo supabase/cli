@@ -38,11 +38,14 @@ export const vanitySubdomainsCheckAvailabilityCommand = makeCommand(
   "check-availability",
   config,
 ).pipe(
-  Command.withDescription("Tells you whether a subdomain is free to use. Run it before `supabase vanity-subdomains activate`."),
+  Command.withDescription(
+    "Tells you whether a subdomain is free to use. Run it before `supabase vanity-subdomains activate`.",
+  ),
   Command.withShortDescription("Check subdomain availability"),
   Command.withExamples([
     {
-      command: "supabase vanity-subdomains check-availability --desired-subdomain my-app --experimental --remote=<project-ref>",
+      command:
+        "supabase vanity-subdomains check-availability --desired-subdomain my-app --experimental --remote=<project-ref>",
       description: "Check whether a subdomain is available",
     },
   ]),

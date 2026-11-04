@@ -28,7 +28,9 @@ const config = {
 export type SslEnforcementGetFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const sslEnforcementGetCommand = makeCommand("get", config).pipe(
-  Command.withDescription("Shows whether SSL enforcement is enabled for external database connections."),
+  Command.withDescription(
+    "Shows whether SSL enforcement is enabled for external database connections.",
+  ),
   Command.withShortDescription("Get SSL enforcement configuration"),
   Command.withExamples([
     {

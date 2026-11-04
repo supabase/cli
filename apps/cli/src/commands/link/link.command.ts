@@ -27,7 +27,8 @@ const config = {
     optional: true,
   }),
   projectRef: cliFlag("project-ref", Flag.String, {
-    description: "Project ref, or the name of one of its branches; deprecated in favor of the argument.",
+    description:
+      "Project ref, or the name of one of its branches; deprecated in favor of the argument.",
     optional: true,
   }),
   password: CliConfigKeys.linkedDb.password.flag({

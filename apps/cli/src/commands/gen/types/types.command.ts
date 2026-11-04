@@ -121,7 +121,7 @@ const genTypesHandler = (flags: CliCommand.Command.Config.Infer<typeof commandCo
   );
 
 export const genTypesCommand = makeCommand("types", commandConfig).pipe(
-    Command.withDescription(
+  Command.withDescription(
     "Generate typed definitions for the tables, views and functions in your Postgres schema, so your code gets type safety and autocompletion.",
   ),
   Command.withShortDescription("Generate types from Postgres schema"),

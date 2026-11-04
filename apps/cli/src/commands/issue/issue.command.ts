@@ -67,7 +67,9 @@ export type IssueFeatureFlags = CliCommand.Command.Config.Infer<typeof issueFeat
 export type IssueDocsFlags = CliCommand.Command.Config.Infer<typeof issueDocsConfig>;
 
 const issueBugCommand = makeCommand("bug", issueBugConfig).pipe(
-  Command.withDescription("Report a problem with the CLI. The form opens with your local CLI details already filled in."),
+  Command.withDescription(
+    "Report a problem with the CLI. The form opens with your local CLI details already filled in.",
+  ),
   Command.withShortDescription("Open a bug report"),
   Command.withExamples([
     {

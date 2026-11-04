@@ -35,8 +35,7 @@ const config = {
   ...projectTargetFlags(),
   config: postgresConfigUpdateConfigFlag,
   replaceExistingOverrides: cliFlag("replace-existing-overrides", Flag.Boolean, {
-    description:
-      "Replace all existing overrides with the ones provided instead of merging them.",
+    description: "Replace all existing overrides with the ones provided instead of merging them.",
     default: false,
   }),
   noRestart: cliFlag("no-restart", Flag.Boolean, {
@@ -48,15 +47,19 @@ const config = {
 export type PostgresConfigUpdateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const postgresConfigUpdateCommand = makeCommand("update", config).pipe(
-  Command.withDescription("Sets Postgres setting overrides for your project. By default they merge with existing overrides, and the database restarts afterwards unless you pass `--no-restart`."),
+  Command.withDescription(
+    "Sets Postgres setting overrides for your project. By default they merge with existing overrides, and the database restarts afterwards unless you pass `--no-restart`.",
+  ),
   Command.withShortDescription("Update Postgres database config"),
   Command.withExamples([
     {
-      command: "supabase postgres-config update --config work_mem=100MB --experimental --remote=<project-ref>",
+      command:
+        "supabase postgres-config update --config work_mem=100MB --experimental --remote=<project-ref>",
       description: "Set a Postgres config override",
     },
     {
-      command: "supabase postgres-config update --config work_mem=100MB --replace-existing-overrides --no-restart --experimental --remote=<project-ref>",
+      command:
+        "supabase postgres-config update --config work_mem=100MB --replace-existing-overrides --no-restart --experimental --remote=<project-ref>",
       description: "Replace all overrides without restarting",
     },
   ]),

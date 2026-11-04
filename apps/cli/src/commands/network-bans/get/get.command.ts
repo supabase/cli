@@ -27,7 +27,9 @@ const config = {
 export type NetworkBansGetFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const networkBansGetCommand = makeCommand("get", config).pipe(
-  Command.withDescription("Lists the IP addresses currently banned from connecting to your project's database."),
+  Command.withDescription(
+    "Lists the IP addresses currently banned from connecting to your project's database.",
+  ),
   Command.withShortDescription("Get the current network bans"),
   Command.withExamples([
     {

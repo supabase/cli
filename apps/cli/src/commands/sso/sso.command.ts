@@ -7,7 +7,9 @@ import { ssoShowCommand } from "./show/show.command.ts";
 import { ssoUpdateCommand } from "./update/update.command.ts";
 
 export const ssoCommand = Command.make("sso").pipe(
-  Command.withDescription("Let users sign in to your project through your organization's SAML 2.0 identity provider."),
+  Command.withDescription(
+    "Let users sign in to your project through your organization's SAML 2.0 identity provider.",
+  ),
   Command.withShortDescription("Manage Single Sign-On (SSO) authentication"),
   Command.withSubcommands([
     ssoListCommand,

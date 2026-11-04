@@ -31,7 +31,10 @@ const config = {
     optional: true,
   }),
   ...projectTargetFlags({ parent: true }),
-  name: cliFlag("name", Flag.String, { description: "New name for the preview branch.", optional: true }),
+  name: cliFlag("name", Flag.String, {
+    description: "New name for the preview branch.",
+    optional: true,
+  }),
   gitBranch: cliFlag("git-branch", Flag.String, {
     description: "New git branch to associate with the preview branch.",
     optional: true,
