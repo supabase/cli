@@ -51,7 +51,7 @@ const config = {
 
 export const stackLogsCommand = Command.make("logs", config).pipe(
   Command.withDescription(
-    "Deprecated; removed in v4. Use supabase logs tail instead. Print retained service logs and exit; with --follow, keep streaming new lines. History is readable while the stack is stopped.",
+    "Deprecated; removed in v4. Use supabase logs instead. Print retained service logs and exit; with --follow, keep streaming new lines. History is readable while the stack is stopped.",
   ),
   Command.withShortDescription("Show managed local stack logs"),
   Command.withExamples([
@@ -75,7 +75,7 @@ export const stackLogsCommand = Command.make("logs", config).pipe(
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       yield* (yield* Output).raw(
-        "Warning: stack logs is deprecated and will be removed in v4. Use supabase logs tail --local --no-follow instead; omit --no-follow to follow.\n",
+        "Warning: stack logs is deprecated and will be removed in v4. Use supabase logs instead; press L in the interactive browser to load newer logs.\n",
         "stderr",
       );
       yield* stackLogs(flags);

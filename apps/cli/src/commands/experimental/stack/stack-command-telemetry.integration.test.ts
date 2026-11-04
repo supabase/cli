@@ -146,18 +146,15 @@ describe("stack command telemetry", () => {
     return setup().pipe(
       Effect.flatMap((fixture) => {
         const command = rootCommandForFeatures({ stackBackend: "stack" }).pipe(
+          Command.provide(mockTty({ stdinIsTty: true, stdoutIsTty: false })),
           Command.provide(fixture.layer),
         );
         return Effect.gen(function* () {
-          yield* Command.runWith(command, { version: "0.0.0-test" })([
-            "logs",
-            "tail",
-            "--no-follow",
-          ]).pipe(Effect.flip);
+          yield* Command.runWith(command, { version: "0.0.0-test" })(["logs"]).pipe(Effect.flip);
           const event = fixture.analytics.captured.find(
             (candidate) => candidate.event === EventCommandExecuted,
           );
-          expect(event?.properties[PropCommand]).toBe("logs tail");
+          expect(event?.properties[PropCommand]).toBe("logs");
         }).pipe(Effect.provide(fixture.layer));
       }),
       Effect.provide(BunServices.layer),

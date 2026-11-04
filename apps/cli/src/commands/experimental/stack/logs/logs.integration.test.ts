@@ -37,6 +37,7 @@ import {
 } from "@supabase/stack/effect";
 import { LinkedProjectCache } from "../../../../telemetry/linked-project-cache.service.ts";
 import { ProjectRefResolver } from "../../../../config/project-ref.service.ts";
+import { Stdin } from "../../../../shared/runtime/stdin.service.ts";
 import { ProcessControl } from "../../../../shared/runtime/process-control.service.ts";
 import { Tty } from "../../../../shared/runtime/tty.service.ts";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
@@ -51,7 +52,7 @@ import {
 } from "../../../../command-internal/stack-target.ts";
 import type { RetainedLogsFlags as StackLogsFlags } from "../../../../command-internal/stack-logs/retained-logs.ts";
 import { stackLogs } from "../../../../command-internal/stack-logs/retained-logs.ts";
-import { logsTail } from "../../../logs/logs.handler.ts";
+import { logs } from "../../../logs/logs.handler.ts";
 import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api-factory.service.ts";
 import { TargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
@@ -218,7 +219,7 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
             screens.push(text);
             if (
               !openedDetails &&
-              (text.includes(" | complete") || flags.follow === true) &&
+              text.includes(" | ready") &&
               text.includes("local browser payload")
             ) {
               openedDetails = true;
@@ -261,7 +262,7 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
             ),
           );
         if (mode === "unified" || mode === "browser")
-          return yield* logsTail(
+          return yield* logs(
             {
               remote: Option.none(),
               projectRef: Option.none(),
@@ -275,8 +276,11 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
               level: [],
               search: Option.none(),
               since: flags.since ?? Option.some("start"),
-              tail: flags.tail ?? 100,
-              noFollow: !(flags.follow ?? false),
+              limit: flags.tail ?? 100,
+              from: Option.none(),
+              to: Option.none(),
+              sql: Option.none(),
+              file: Option.none(),
             },
             true,
             false,
@@ -284,6 +288,13 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
             Effect.provide(
               Layer.mergeAll(
                 Layer.succeed(OutputFlag, Option.none()),
+                Layer.succeed(Stdin, {
+                  isTTY: mode === "browser",
+                  readPipedText: Effect.succeed(Option.none()),
+                  readPipedBytes: Effect.succeed(Option.none()),
+                  pipedBytesStream: Stream.empty,
+                  readLine: () => Effect.succeed(Option.none()),
+                }),
                 Layer.succeed(Tty, {
                   stdinIsTty: mode === "browser",
                   stdoutIsTty: mode === "browser",
@@ -343,6 +354,7 @@ describe("retained local logs", () => {
 
   it.effect("browses real retained local records with full positions and instance details", () =>
     Effect.gen(function* () {
+      yield* TestClock.setTime(t0 + 100);
       const f = yield* fixture({ instances: [database("db-browser")], members: ["db-browser"] });
       yield* f.writeSegment("database", "db-browser", [
         launch(t0),
@@ -365,14 +377,17 @@ describe("retained local logs", () => {
   );
 
   it.effect.each([
-    { since: Option.none<string>(), expected: "Window: since Nov 03 2026 11:00:00 UTC" },
+    { since: Option.none<string>(), expected: "Window: Nov 03 11:00:00–12:00:00 UTC" },
     {
       since: Option.some("2026-11-03T10:00:00Z"),
-      expected: "Window: since Nov 03 2026 10:00:00 UTC",
+      expected: "Window: Nov 03 10:00:00–12:00:00 UTC",
     },
-    { since: Option.some("start"), expected: "Window: since each service's latest launch" },
+    {
+      since: Option.some("start"),
+      expected: "Window: since each service's latest launch → Nov 03 2026 12:00:00 UTC",
+    },
   ])(
-    "uses the resolved retained-reader lower bound without inventing an end: $expected",
+    "shows the frozen local lower bound and captured snapshot end: $expected",
     ({ since, expected }) =>
       Effect.gen(function* () {
         const readTime = Date.parse("2026-11-03T12:00:00Z");
@@ -392,52 +407,9 @@ describe("retained local logs", () => {
       }).pipe(Effect.scoped, Effect.provide(live)),
   );
 
-  it.effect(
-    "labels new local entries with the actual since bound even for delayed timestamps",
-    () =>
-      Effect.gen(function* () {
-        const readTime = Date.parse("2026-11-03T12:00:00Z");
-        yield* TestClock.setTime(readTime);
-        let requestedSince: string | undefined;
-        const f = yield* fixture({
-          instances: [mail("mail-window")],
-          members: ["mail-window"],
-          running: true,
-          handles: () => [
-            followingMail("mail-window", (options) => {
-              requestedSince = options?.since;
-              return Stream.make({
-                kind: "stdout",
-                timestamp: "2026-11-03T11:30:00Z",
-                text: "local browser payload",
-              }).pipe(Stream.concat(Stream.never));
-            }),
-          ],
-        });
-        const { exit, screens } = yield* f.run(
-          { service: ["mail"], since: Option.none(), tail: 0, follow: true },
-          "text",
-          "browser",
-        );
-        expect(Exit.isSuccess(exit)).toBe(true);
-        expect(requestedSince).toBe("2026-11-03T11:00:00.000Z");
-        expect(
-          screens.some((screen) =>
-            screen.includes(
-              "Window: new entries only; since Nov 03 2026 11:00:00 UTC → now (live)",
-            ),
-          ),
-        ).toBe(true);
-        expect(
-          screens.some((screen) =>
-            screen.includes("Nov 03 - 11:30:00 UTC mail local browser payload"),
-          ),
-        ).toBe(true);
-      }).pipe(Effect.scoped, Effect.provide(live)),
-  );
-
   it.effect("preserves full retained records and markers in native JSON while stopped", () =>
     Effect.gen(function* () {
+      yield* TestClock.setTime(t0 + 100);
       const f = yield* fixture({ instances: [database("db-a")], members: ["db-a"] });
       yield* f.writeSegment("database", "db-a", [
         launch(t0),
@@ -658,8 +630,7 @@ describe("retained local logs", () => {
 
       expect(failure(followed.exit)).toMatchObject({
         reason: "lifecycle",
-        suggestion:
-          "Run supabase logs tail --no-follow to read retained logs, or supabase stack start first.",
+        suggestion: "Run supabase logs to read retained logs, or supabase stack start first.",
       });
       expect(followed.output.stdoutText).toBe("");
       expect(followed.output.stderrText).toBe("");

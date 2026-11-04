@@ -55,7 +55,7 @@ export type ComputeLogsFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const computeLogsCommand = Command.make("logs", config).pipe(
   Command.withDescription(
-    "Deprecated; removed in v4. Use supabase logs tail instead. Print a compute's recent logs: its own output, the HTTP requests it served, and its " +
+    "Deprecated; removed in v4. Use supabase logs instead. Print a compute's recent logs: its own output, the HTTP requests it served, and its " +
       "deploy lifecycle events.\n\n" +
       "Covers the last 24 hours, which is the longest window the logs API will answer in one " +
       "query. Lines are printed oldest first.\n\n" +
@@ -108,7 +108,7 @@ export const computeLogsCommand = Command.make("logs", config).pipe(
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       yield* (yield* Output).raw(
-        "Warning: compute logs is deprecated and will be removed in v4. Use supabase logs tail --remote --service compute --resource <name> --no-follow instead; omit --no-follow to follow.\n",
+        "Warning: compute logs is deprecated and will be removed in v4. Use supabase logs --remote --service compute --resource <name> instead; press L in the interactive browser to load newer logs.\n",
         "stderr",
       );
       yield* computeLogs(flags);

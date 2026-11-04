@@ -82,7 +82,7 @@ stack = true
         expect(yield* resolve({ args: ["storage", "ls"], cwd: root, env: {} })).toBe("stack");
         expect(yield* resolve({ args: ["seed", "buckets"], cwd: root, env: {} })).toBe("stack");
         expect(yield* resolve({ args: ["services"], cwd: root, env: {} })).toBe("stack");
-        expect(yield* resolve({ args: ["logs", "tail"], cwd: root, env: {} })).toBe("stack");
+        expect(yield* resolve({ args: ["logs"], cwd: root, env: {} })).toBe("stack");
         expect(yield* resolve({ args: ["logs", "sources"], cwd: root, env: {} })).toBe("stack");
       }),
     );
@@ -99,10 +99,10 @@ stack = true
             env: { SUPABASE_EXPERIMENTAL_STACK: "0" },
           }),
         ).toBe("legacy");
-        for (const leaf of ["tail", "sources"]) {
+        for (const args of [["logs"], ["logs", "sources"]]) {
           expect(
             yield* resolve({
-              args: ["logs", leaf],
+              args,
               cwd: root,
               env: { SUPABASE_EXPERIMENTAL_STACK: "0" },
             }),
@@ -117,7 +117,9 @@ stack = true
       Effect.gen(function* () {
         const root = yield* project("[experimental]\nstack = true\n");
         expect(yield* resolve({ args: ["link"], cwd: root, env: {} })).toBeUndefined();
-        expect(yield* resolve({ args: ["logs", "query"], cwd: root, env: {} })).toBeUndefined();
+        expect(
+          yield* resolve({ args: ["logs", "--remote", "--sql", "select 1"], cwd: root, env: {} }),
+        ).toBeUndefined();
       }),
     );
   });

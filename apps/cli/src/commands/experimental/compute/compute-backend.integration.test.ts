@@ -149,7 +149,7 @@ describe("resolveComputeEnabled", () => {
 
   it.effect.each([
     ["functions", "list"],
-    ["logs", "query"],
+    ["logs", "--remote", "--sql", "select 1"],
   ])("ignores compute configuration for unrelated commands %j", (args) =>
     Effect.gen(function* () {
       expect(

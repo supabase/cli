@@ -120,7 +120,7 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (
     if (Option.isSome(outputFlag))
       return yield* new StackCommandLogsError({
         reason: "flags",
-        message: unsupportedOutputFlagMessage("logs tail"),
+        message: unsupportedOutputFlagMessage("logs"),
       });
     yield* validateStackTarget({
       stack: Option.getOrUndefined(flags.stack),
@@ -159,8 +159,7 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (
       return yield* new StackCommandLogsError({
         reason: "lifecycle",
         message: "The stack is not running, so there are no new lines to follow.",
-        suggestion:
-          "Run supabase logs tail --no-follow to read retained logs, or supabase stack start first.",
+        suggestion: "Run supabase logs to read retained logs, or supabase stack start first.",
       });
     const selected = yield* select(target.definition, flags.service);
     yield* Effect.annotateCurrentSpan({ "stack.service_count": selected.length });
@@ -227,7 +226,7 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (
             reason: "lifecycle",
             message:
               "The running stack serves none of the selected services, so there are no new lines to follow.",
-            suggestion: "Run supabase logs tail --no-follow to read retained logs.",
+            suggestion: "Run supabase logs to read retained logs.",
           });
         if (missing.length > 0)
           yield* (sink?.notice ?? output.warn)(

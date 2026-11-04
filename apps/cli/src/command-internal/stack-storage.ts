@@ -240,7 +240,7 @@ export const withStackStorageGuidance = <A, E, R>(
               body.length === 0 ? "." : `: ${body}`
             }`,
             suggestion:
-              "Run supabase logs tail --service storage --no-follow to inspect Storage, then supabase stack restart.",
+              "Run supabase logs --service storage to inspect Storage, then supabase stack restart.",
             cause: error,
           }),
         );
