@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
-import { Clock, Effect, FileSystem, Path, Schema } from "effect";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { Clock, Effect, FileSystem, Layer, Path, Schema } from "effect";
 import { useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
 import { makeTelemetryIdentity, resetIdentity, resolveIdentity } from "./identity.ts";
 import { TelemetryConfigSchema, type TelemetryConfig } from "./types.ts";
@@ -28,7 +28,7 @@ const readConfig = (dir: string) =>
     return yield* Schema.decodeEffect(TelemetryConfigJson)(content);
   });
 
-const fsLayer = BunServices.layer;
+const fsLayer = Layer.merge(BunServices.layer, BunCrypto.layer);
 
 const tempRoot = useTempWorkdir("supabase-identity-test-");
 

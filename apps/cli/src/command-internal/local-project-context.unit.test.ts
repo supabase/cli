@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Config, ConfigProvider, Data, Effect, FileSystem, Layer, Option, Path } from "effect";
 
@@ -51,11 +51,13 @@ const layerWithShellEnv = (env: Readonly<Record<string, string>> = {}) =>
   Layer.fresh(
     Layer.mergeAll(
       BunServices.layer,
+      BunCrypto.layer,
       runtimeInfoLayer,
       cliConfigValuesLayer.pipe(
         Layer.provide(
           Layer.mergeAll(
             BunServices.layer,
+            BunCrypto.layer,
             mockOutput().layer,
             Layer.succeed(CliConfigFlagInputs, makeCliConfigFlagInputs()),
           ),

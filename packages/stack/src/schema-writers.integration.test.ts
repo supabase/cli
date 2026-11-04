@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import {
   Data,
@@ -23,7 +23,7 @@ import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
 import { selection } from "../tests/pins.ts";
 import { destroyTestStack } from "../tests/stack-cleanup.ts";
 
-const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+const layer = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp);
 const jwtSecret = "schema-writers-jwt-secret-with-at-least-32-chars";
 const database = {
   service: "database",

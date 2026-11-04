@@ -8,6 +8,7 @@ import { experimental } from "./experimental.ts";
 import { functions } from "./functions.ts";
 import { inbucket } from "./inbucket.ts";
 import { local } from "./local.ts";
+import { withRecordValueDecodingDefault } from "./lib/schema.ts";
 import { toPublishedJsonSchemaDocument } from "./json-schema-document.ts";
 import { realtime } from "./realtime.ts";
 import { storage } from "./storage.ts";
@@ -59,7 +60,7 @@ const remoteCliConfigBlock = Schema.Struct({
   studio,
   compute,
   experimental,
-}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+}).pipe(withRecordValueDecodingDefault(Effect.succeed({})));
 
 /**
  * Exported separately (not inlined into {@link CliConfigSchema}) so

@@ -1,11 +1,11 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Path } from "effect";
 import { StackApi, stackApiLayer } from "../../src/command-internal/stack-api.ts";
 import { destroyTestStacks } from "./stack-cleanup.ts";
 import { selection } from "./pins.ts";
 
-const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
+const liveStackApi = stackApiLayer.pipe(Layer.provide([BunServices.layer, BunCrypto.layer]));
 
 describe("test stack cleanup", () => {
   it.live(

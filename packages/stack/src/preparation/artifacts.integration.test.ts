@@ -1,8 +1,7 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
-  Crypto,
   Data,
   DateTime,
   Deferred,
@@ -18,6 +17,7 @@ import {
   Scope,
   Stream,
 } from "effect";
+import { SecureRandom } from "effect/crypto";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -28,7 +28,7 @@ import { ArtifactIntegrityError, PreparationError } from "./Errors.ts";
 import { makeArtifactStore, type ArtifactRequest, type ArtifactSource } from "./ArtifactStore.ts";
 import { verifySha256 } from "./Integrity.ts";
 
-const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+const layer = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp);
 const archive = new TextEncoder().encode("archive");
 const archiveSha256 = "0eb3e36bfb24dcd9bb1d1bece1531216b59539a8fde17ee80224af0653c92aa3";
 const request: ArtifactRequest = {
@@ -64,8 +64,7 @@ const sourceWriting = (bytes: Uint8Array = archive): ArtifactSource => ({
       yield* fs.makeDirectory(`${destination}/etc`, { recursive: true });
       yield* fs.writeFileString(`${destination}/bin/postgres`, "native postgres", { mode: 0o755 });
       yield* fs.writeFileString(`${destination}/etc/postgres.conf`, "config", { mode: 0o644 });
-      const crypto = yield* Crypto.Crypto;
-      yield* verifySha256(bytes, expectedSha256).pipe(Effect.provideService(Crypto.Crypto, crypto));
+      yield* verifySha256(bytes, expectedSha256);
     }).pipe(mapMaterializeError),
 });
 
@@ -83,18 +82,15 @@ const sourceWritingAlt = (): ArtifactSource => ({
         mode: 0o755,
       });
       yield* fs.writeFileString(`${destination}/etc/postgres.conf`, "config alt", { mode: 0o644 });
-      const crypto = yield* Crypto.Crypto;
-      yield* verifySha256(archiveAlt, expectedSha256).pipe(
-        Effect.provideService(Crypto.Crypto, crypto),
-      );
+      yield* verifySha256(archiveAlt, expectedSha256);
     }).pipe(mapMaterializeError),
 });
 
 /** A cache miss under a fresh key: the only event that triggers a retirement sweep. */
 const triggerSweep = (root: string) =>
   Effect.gen(function* () {
-    const crypto = yield* Crypto.Crypto;
-    const key = `database/postgres-sweep-${yield* crypto.randomUUIDv4}`;
+    const crypto = yield* SecureRandom.SecureRandom;
+    const key = `database/postgres-sweep-${yield* crypto.uuidV4()}`;
     const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWritingAlt() });
     return yield* store.prepare({ ...request, key });
   });
@@ -564,10 +560,7 @@ describe("a required path missing from the archive", () => {
         yield* fs.writeFileString(`${destination}/bin/postgres`, "native postgres", {
           mode: 0o755,
         });
-        const crypto = yield* Crypto.Crypto;
-        yield* verifySha256(archive, expectedSha256).pipe(
-          Effect.provideService(Crypto.Crypto, crypto),
-        );
+        yield* verifySha256(archive, expectedSha256);
       }).pipe(mapMaterializeError),
   });
 

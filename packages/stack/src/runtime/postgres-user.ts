@@ -1,4 +1,5 @@
-import { Config, Context, Crypto, Effect, FileSystem, Option, Path } from "effect";
+import { Config, Context, Effect, FileSystem, Option, Path } from "effect";
+import { Digest } from "effect/crypto";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { PlatformError } from "effect/PlatformError";
 import { contentDigestHex } from "../internal/content-digest.ts";
@@ -238,13 +239,13 @@ const resolveNativeRuntimeRootForRecovery = Effect.fn(
  * (this directory plus `/.s.PGSQL.5432`) to 103 bytes, which bounds the runtime root base.
  */
 export const nativeSocketDirectoryPath = (
-  crypto: Crypto.Crypto,
+  digest: Digest.Digest["Service"],
   path: Path.Path,
   runtimeRoot: string,
   dataRoot: string,
   instanceId: string,
 ) =>
-  contentDigestHex(crypto, `${dataRoot}\0${instanceId}`).pipe(
+  contentDigestHex(digest, `${dataRoot}\0${instanceId}`).pipe(
     Effect.map((digest) => path.join(runtimeRoot, `pg-${digest}`)),
   );
 
@@ -257,7 +258,7 @@ export const removeNativeSocketDirectory = Effect.fn("NativePostgresUser.removeS
   function* (dataRoot: string, instanceId: string) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const crypto = yield* Crypto.Crypto;
+    const digest = yield* Digest.Digest;
     const runtimeRoot = yield* resolveNativeRuntimeRootForRecovery().pipe(Effect.option);
     if (Option.isNone(runtimeRoot)) {
       const base = yield* NativeRuntimeRootBase;
@@ -269,7 +270,7 @@ export const removeNativeSocketDirectory = Effect.fn("NativePostgresUser.removeS
       return;
     }
     yield* fs.remove(
-      yield* nativeSocketDirectoryPath(crypto, path, runtimeRoot.value, dataRoot, instanceId),
+      yield* nativeSocketDirectoryPath(digest, path, runtimeRoot.value, dataRoot, instanceId),
       { recursive: true, force: true },
     );
   },

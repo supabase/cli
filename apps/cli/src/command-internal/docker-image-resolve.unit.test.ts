@@ -26,7 +26,7 @@ function mockSpawner(
 
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
-      const args = command._tag === "StandardCommand" ? command.args : [];
+      const args = command._tag === "StandardCommand" ? command.args.map(String) : [];
 
       if (args[0] === "image" && args[1] === "inspect") {
         if (command._tag === "StandardCommand") imageInspectOptions.push(command.options);

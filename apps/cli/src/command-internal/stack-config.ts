@@ -8,7 +8,8 @@ import {
 } from "@supabase/stack/defaults";
 import { type ServiceCreationInput as ServiceCreationType } from "@supabase/stack/effect";
 import { type ArtifactSelection } from "@supabase/stack/internal/artifacts";
-import { Crypto, Effect, Data, FileSystem, Option, Path, Redacted, Schema } from "effect";
+import { Effect, Data, FileSystem, Option, Path, Redacted, Schema } from "effect";
+import { SecureRandom } from "effect/crypto";
 import { FetchHttpClient } from "effect/http";
 
 import { CliConfigKeys, type AnyCliConfigKey } from "../config/cli-config-keys.ts";
@@ -97,7 +98,7 @@ type StackConfigEffect<E, R> = Effect.Effect<
   | FileSystem.FileSystem
   | Path.Path
   | RuntimeInfo
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | CommandSettings
   | CliConfigValues
   | R
@@ -119,7 +120,7 @@ interface StackConfigOptions<E, R> {
   ) => Effect.Effect<
     ArtifactSelection,
     StackConfigError | LockResolutionError | E,
-    FileSystem.FileSystem | Path.Path | Crypto.Crypto | R
+    FileSystem.FileSystem | Path.Path | SecureRandom.SecureRandom | R
   >;
   /** Fails with `frozen-missing` when there is no `supabase/config.toml` to lock. */
   readonly frozen?: boolean;

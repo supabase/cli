@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { FetchHttpClient } from "effect/http";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Redacted } from "effect";
@@ -33,7 +33,7 @@ import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-laye
 import { selection } from "../../tests/helpers/pins.ts";
 
 const runtimes = ["native", "docker"] as const;
-const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
+const liveStackApi = stackApiLayer.pipe(Layer.provide([BunServices.layer, BunCrypto.layer]));
 
 const databaseCreation = {
   service: "database" as const,

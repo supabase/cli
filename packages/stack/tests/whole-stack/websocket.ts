@@ -1,5 +1,5 @@
 import { Effect, Queue, Schedule, Schema, Scope } from "effect";
-import { NodeSocket } from "@effect/platform-node";
+import { NodeWS } from "@effect/platform-node";
 import * as Socket from "effect/socket/Socket";
 
 class RealtimeProbeError extends Schema.TaggedError<RealtimeProbeError>()("RealtimeProbeError", {
@@ -53,7 +53,7 @@ export const openWebSocket = Effect.fn("WholeStack.openWebSocket")(
     Effect.gen(function* () {
       const messages = yield* Queue.unbounded<string, WebSocketChannelError>();
       const socket = yield* Socket.makeWebSocket(url, { openTimeout: "60 seconds" }).pipe(
-        Effect.provide(NodeSocket.layerWebSocketConstructorWS),
+        Effect.provide(NodeWS.layerWebSocketConstructor),
       );
       const pull = yield* Socket.readerString(socket).pipe(Effect.mapError(channelError));
       yield* pull.pipe(

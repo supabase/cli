@@ -1,4 +1,5 @@
-import { Crypto, Data, Effect, FileSystem, Path, type PlatformError, Schema } from "effect";
+import { Data, Effect, FileSystem, Path, type PlatformError, Schema } from "effect";
+import { Digest } from "effect/crypto";
 import { contentDigestHex } from "../internal/content-digest.ts";
 import { publishGeneration } from "../internal/generation-publish.ts";
 import { StackIdSchema, type StackId } from "../identity/StackId.ts";
@@ -42,7 +43,7 @@ export const makeFunctionsBootstrapOwner = Effect.fn("FunctionsBootstrap.makeOwn
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   yield* Schema.decodeEffect(StackIdSchema)(options.stackId).pipe(
     Effect.mapError((cause) => failure("Invalid stack identity", { cause })),
   );
@@ -57,7 +58,7 @@ export const makeFunctionsBootstrapOwner = Effect.fn("FunctionsBootstrap.makeOwn
     const hash = yield* mapFs(
       root,
       "hash functions bootstrap content",
-      contentDigestHex(crypto, input.content),
+      contentDigestHex(digest, input.content),
     );
     const generation = yield* mapFs(
       root,

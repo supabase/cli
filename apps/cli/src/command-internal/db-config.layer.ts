@@ -1,7 +1,6 @@
 import * as net from "node:net";
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import {
-  Crypto,
   Duration,
   Effect,
   FileSystem,
@@ -12,6 +11,7 @@ import {
   Redacted,
   Struct,
 } from "effect";
+import { Digest } from "effect/crypto";
 
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
@@ -679,7 +679,7 @@ export const dbConfigResolverLayer = Layer.effect(
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const runtimeInfo = yield* RuntimeInfo;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* Digest.Digest;
     const debug = yield* DebugLogger;
     const output = yield* Output;
     const dbConn = yield* DbConnection;
@@ -742,6 +742,7 @@ export const dbConfigResolverLayer = Layer.effect(
         onSome: (value) => Layer.succeed(CliArgs, value),
       }),
       BunServices.layer,
+      BunCrypto.layerSecureRandom,
     );
     // Compile-time guard: if `linkedDbResolverRuntimeLayer`'s requirements ever
     // grow a service not captured above, this assignment fails to type-check (the
@@ -775,7 +776,7 @@ export const dbConfigResolverLayer = Layer.effect(
         Effect.provideService(RuntimeInfo, runtimeInfo),
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
-        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provideService(Digest.Digest, crypto),
         Effect.catchTag("CliConfigLoadError", (error) =>
           Effect.fail(new Errors.DbConfigLoadError({ message: error.message })),
         ),

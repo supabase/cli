@@ -1,4 +1,5 @@
-import { Crypto, Effect, Path } from "effect";
+import { Effect, Path } from "effect";
+import { Digest } from "effect/crypto";
 
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { legacyProjectStatePaths } from "../shared/config/legacy-project-state.paths.ts";
@@ -19,8 +20,8 @@ export const pgdeltaScratchDir = Effect.fnUntraced(function* (projectRoot: strin
   const path = yield* Path.Path;
   const root = path.join(yield* scratchDir(projectRoot), "pgdelta");
   if (!(yield* usesStackState)) return root;
-  const digest = yield* (yield* Crypto.Crypto).digest(
-    "SHA-256",
+  const digest = yield* (yield* Digest.Digest).digest(
+    Digest.sha256,
     new TextEncoder().encode(path.resolve(projectRoot)),
   );
   return path.join(

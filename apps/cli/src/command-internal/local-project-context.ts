@@ -1,5 +1,6 @@
 import type { CliConfig } from "@supabase/config";
-import { Crypto, Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
+import { Digest } from "effect/crypto";
 
 import { CliConfigValues, type ResolvedCliConfig } from "../config/cli-config-values.service.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
@@ -30,7 +31,7 @@ export const loadLocalProjectContext = <E>(
 ): Effect.Effect<
   LocalProjectContext,
   E,
-  FileSystem.FileSystem | Path.Path | RuntimeInfo | Crypto.Crypto | CliConfigValues
+  FileSystem.FileSystem | Path.Path | RuntimeInfo | Digest.Digest | CliConfigValues
 > =>
   Effect.gen(function* () {
     const { resolvedConfig, config, projectEnvValues, hostname, projectId } =

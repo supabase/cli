@@ -393,7 +393,7 @@ function mockDockerLogSpawner(behaviors: ReadonlyArray<LogProcessBehavior>) {
 
           const record = {
             command: command.command,
-            args: [...command.args],
+            args: command.args.map(String),
           };
           spawned.push(record);
           yield* Effect.acquireRelease(

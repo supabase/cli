@@ -1,9 +1,8 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
   ConfigProvider,
-  Crypto,
   Deferred,
   Duration,
   Effect,
@@ -14,6 +13,7 @@ import {
   Option,
   Schedule,
 } from "effect";
+import { Digest } from "effect/crypto";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- the redirect test owns a local native listener.
 import { createServer, type Server } from "node:http";
 import { zstdCompress } from "node:zlib";
@@ -80,8 +80,8 @@ const bucketMirror = {
 };
 
 const sha256Of = Effect.fn(function* (bytes: Uint8Array) {
-  const crypto = yield* Crypto.Crypto;
-  return digestHex(yield* crypto.digest("SHA-256", bytes));
+  const crypto = yield* Digest.Digest;
+  return digestHex(yield* crypto.digest(Digest.sha256, bytes));
 });
 
 /** Pins `base` to the digests of the given archive and manifest bytes. */
@@ -275,7 +275,11 @@ describe("slim-services artifact source", () => {
           redirected.sha256,
         );
         expect(yield* fs.readFileString(`${destination}/bin/demo`)).toBe("demo");
-      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
     ),
   );
 
@@ -302,7 +306,7 @@ describe("slim-services artifact source", () => {
         const cached = yield* withFetch(fetcher, store.prepare(request));
         expect(cached.outcome).toBe("cached");
         expect(requested).toHaveLength(2);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -341,7 +345,7 @@ describe("slim-services artifact source", () => {
         expect(yield* fs.readFileString(`${destination}/bin/demo`)).toBe("demo");
         expect(attempts.get(demo.mirrors[0].manifestUrl)).toBe(2);
         expect(attempts.get(demo.mirrors[0].downloadUrl)).toBe(2);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -384,7 +388,7 @@ describe("slim-services artifact source", () => {
         );
         expect(errorOf(failed)).toBeInstanceOf(PreparationError);
         expect(missing).toBe(1);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -412,7 +416,7 @@ describe("slim-services artifact source", () => {
           bucketMirror.manifestUrl,
           bucketMirror.downloadUrl,
         ]);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -446,7 +450,7 @@ describe("slim-services artifact source", () => {
           bucketMirror.manifestUrl,
           bucketMirror.downloadUrl,
         ]);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -480,7 +484,7 @@ describe("slim-services artifact source", () => {
           bucketMirror.manifestUrl,
           bucketMirror.downloadUrl,
         ]);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -514,7 +518,7 @@ describe("slim-services artifact source", () => {
             `expected ${mirrored.manifestSha256}, got ${yield* sha256Of(tamperedManifest)})`,
         );
         expect(yield* fs.exists(`${destination}/bin/demo`)).toBe(false);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -541,7 +545,7 @@ describe("slim-services artifact source", () => {
           "Slim-services manifest does not match the catalog artifact",
         );
         expect(requested).toEqual([demo.mirrors[0].manifestUrl]);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -560,7 +564,7 @@ describe("slim-services artifact source", () => {
         );
         expect(errorOf(failed)).toBeInstanceOf(PreparationError);
         expect(yield* fs.exists(`${destination}/outside`)).toBe(false);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -591,7 +595,7 @@ describe("slim-services artifact source", () => {
             .pipe(Effect.exit),
         );
         expect(errorOf(failed)).toBeInstanceOf(PreparationError);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -617,7 +621,7 @@ describe("slim-services artifact source", () => {
         );
         expect(errorOf(failed)).toBeInstanceOf(PreparationError);
         expect(yield* fs.exists(`${destination}/outside`)).toBe(false);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -649,7 +653,7 @@ describe("slim-services artifact source", () => {
         yield* Fiber.interrupt(fiber);
         expect(signal?.aborted).toBe(true);
         expect(yield* fs.readDirectory(destination)).toEqual([]);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -677,7 +681,7 @@ describe("slim-services artifact source", () => {
         current = demo;
         const prepared = yield* withFetch(fetcher, store.prepare(request));
         expect(yield* fs.readFileString(`${prepared.path}/bin/demo`)).toBe("demo");
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -726,7 +730,7 @@ describe("slim-services artifact source", () => {
         expect(signal?.aborted).toBe(true);
         expect(canceled).toBe(true);
         expect(yield* fs.readDirectory(destination)).toEqual([]);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -763,7 +767,7 @@ describe("slim-services artifact source", () => {
         yield* Fiber.interrupt(fiber);
         expect(destroyed).toBe(true);
         expect(yield* fs.readDirectory(destination)).toEqual([]);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -780,7 +784,7 @@ describe("slim-services artifact source", () => {
           makeSlimServicesSource(() => demo).materialize(request, destination, demo.sha256),
         );
         expect(yield* fs.exists(`${destination}/${longName}`)).toBe(true);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 });
@@ -829,7 +833,7 @@ describe("native artifact catalog", () => {
           expect(message).toContain(
             `${bucket}/${asset}.tar.zst (Slim-services manifest does not match its pin`,
           );
-        }).pipe(Effect.provide(NodeServices.layer)),
+        }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
       ),
   );
 
@@ -861,7 +865,7 @@ describe("native artifact catalog", () => {
         expect(requested[0]).toBe(
           `https://releases.fixture.test/base/postgrest-${releaseVersion}/${asset}.manifest.json`,
         );
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -897,7 +901,7 @@ describe("native artifact catalog", () => {
           expect(prepared.root).toBe(seeded.path);
           expect(yield* fs.readFileString(prepared.executable)).toBe("pinned");
           expect(requested).toEqual([]);
-        }).pipe(Effect.provide(NodeServices.layer)),
+        }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
       ),
   );
 

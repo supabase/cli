@@ -1,7 +1,6 @@
 import {
   Context,
   Config,
-  Crypto,
   Effect,
   FileSystem,
   Layer,
@@ -10,6 +9,7 @@ import {
   PlatformError,
   Stream,
 } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
 import { FetchHttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import {
@@ -216,7 +216,8 @@ export const bundledPostgresClientLayer: Layer.Layer<
   never,
   | FileSystem.FileSystem
   | Path.Path
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
+  | Digest.Digest
   | ChildProcessSpawner.ChildProcessSpawner
   | DockerRun
   | RuntimeInfo
@@ -228,7 +229,8 @@ export const bundledPostgresClientLayer: Layer.Layer<
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
+    const digest = yield* Digest.Digest;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const docker = yield* DockerRun;
     const runtimeInfo = yield* RuntimeInfo;
@@ -258,7 +260,8 @@ export const bundledPostgresClientLayer: Layer.Layer<
             Effect.provide(FetchHttpClient.layer),
             Effect.provideService(FileSystem.FileSystem, fileSystem),
             Effect.provideService(Path.Path, path),
-            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.provideService(SecureRandom.SecureRandom, crypto),
+            Effect.provideService(Digest.Digest, digest),
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
             Effect.mapError(mapArtifactError),
           );

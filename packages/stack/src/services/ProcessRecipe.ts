@@ -2,7 +2,6 @@ import { withAttemptCount } from "../internal/attempts.ts";
 import {
   Cause,
   Clock,
-  Crypto,
   Data,
   Deferred,
   Duration,
@@ -17,6 +16,7 @@ import {
   Scope,
   Stream,
 } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
 import { ChildProcessSpawner } from "effect/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/process/ChildProcessSpawner";
 import { HttpClient, HttpClientRequest } from "effect/http";
@@ -188,7 +188,8 @@ export const resolveStartupCommand = <C extends RecipeCreation<ServiceKind, unkn
 export interface ProcessDependencies {
   readonly fs: FileSystem.FileSystem;
   readonly path: Path.Path;
-  readonly crypto: Crypto.Crypto;
+  readonly crypto: SecureRandom.SecureRandom["Service"];
+  readonly digest: Digest.Digest["Service"];
   readonly client: HttpClient.HttpClient;
   readonly spawner: ChildProcessSpawnerService["Service"];
   readonly container: ContainerRuntime | undefined;
@@ -446,7 +447,8 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
         ).pipe(
           Effect.provideService(FileSystem.FileSystem, deps.fs),
           Effect.provideService(Path.Path, deps.path),
-          Effect.provideService(Crypto.Crypto, deps.crypto),
+          Effect.provideService(SecureRandom.SecureRandom, deps.crypto),
+          Effect.provideService(Digest.Digest, deps.digest),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, deps.spawner),
           Effect.provideService(HttpClient.HttpClient, deps.client),
           Effect.mapError((cause) => serviceError("prepare", cause)),
@@ -480,7 +482,8 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
           Scope.provide(launchScope),
           Effect.provideService(FileSystem.FileSystem, deps.fs),
           Effect.provideService(Path.Path, deps.path),
-          Effect.provideService(Crypto.Crypto, deps.crypto),
+          Effect.provideService(SecureRandom.SecureRandom, deps.crypto),
+          Effect.provideService(Digest.Digest, deps.digest),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, deps.spawner),
           Effect.provideService(HttpClient.HttpClient, deps.client),
           Effect.mapError((cause) => serviceError("launch", cause)),

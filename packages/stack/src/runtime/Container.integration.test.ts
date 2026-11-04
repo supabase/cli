@@ -1,10 +1,9 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
   ConfigProvider,
   Context,
-  Crypto,
   Data,
   Deferred,
   Effect,
@@ -21,6 +20,7 @@ import {
   Sink,
   Stream,
 } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
 import { TestClock } from "effect/testing";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/process/ChildProcessSpawner";
@@ -90,7 +90,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
       );
       expect(ensured).toEqual({ image: pinnedImage, pulled: false });
       expect(yield* Ref.get(pullAttempted)).toBe(false);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   for (const [engine, stderr] of [
@@ -108,7 +108,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
       () =>
         Effect.gen(function* () {
           const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-          const token = yield* (yield* Crypto.Crypto).randomUUIDv4;
+          const token = yield* (yield* SecureRandom.SecureRandom).uuidV4();
           const spawner = makePullFailureSpawner(delegate, yield* Ref.make(false), stderr);
           const result = yield* makeContainerRuntime({ target: containerTarget, root: "." }).pipe(
             Effect.flatMap((runtime) =>
@@ -118,14 +118,14 @@ describe("container process adapter", { timeout: 120_000 }, () => {
           );
           if (Exit.isSuccess(result)) return yield* Effect.die("pull unexpectedly succeeded");
           expect(failureKind(result.cause)).toBe("engine-unavailable");
-        }).pipe(Effect.provide(NodeServices.layer)),
+        }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     );
 
   it.live("keeps missing image pull failures observable", () =>
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const crypto = yield* Crypto.Crypto;
-      const token = yield* crypto.randomUUIDv4;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const token = yield* crypto.uuidV4();
       const pullAttempted = yield* Ref.make(false);
       const spawner = makePullFailureSpawner(delegate, pullAttempted);
       const result = yield* makeContainerRuntime({
@@ -143,7 +143,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         expect(Cause.pretty(result.cause)).toContain("pull rejected");
         expect(failureKind(result.cause)).toBe("image-pull");
       }
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("prepares, launches, streams, waits, and removes one exact container", () =>
@@ -181,7 +181,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         }),
       );
       expect(yield* exists(id)).toBe(false);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("streams tool input and output and preserves a nonzero exit", () =>
@@ -222,7 +222,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         }),
       );
       expect(yield* exists(id)).toBe(false);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("maps the stack host alias to an explicit IPv4 host gateway only", () =>
@@ -257,7 +257,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
           `${DOCKER_HOST_ALIAS}:${addresses[0]}`,
         );
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("probes the host gateway once for concurrent launches across runtimes", () =>
@@ -300,7 +300,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
           expect(aliases[0]?.slice(DOCKER_HOST_ALIAS.length + 1)).toMatch(ipv4);
         }
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("launches without awaiting a background probe that later launches share", () =>
@@ -345,7 +345,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         expect(aliases[0]?.slice(DOCKER_HOST_ALIAS.length + 1)).toMatch(ipv4);
         expect(yield* Ref.get(probes)).toBe(1);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("maps the host alias to the IPv4 gateway listed after an IPv6 one", () =>
@@ -380,7 +380,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
           `${DOCKER_HOST_ALIAS}:192.168.65.254`,
         );
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("falls back to host-gateway without reprobing when the gateway has no IPv4 address", () =>
@@ -418,7 +418,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         }
         expect(yield* Ref.get(probes)).toBe(1);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("retries a probe whose image lacks cat before launching", () =>
@@ -457,7 +457,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         expect(aliases[0]?.slice(DOCKER_HOST_ALIAS.length + 1)).toMatch(ipv4);
         expect(yield* Ref.get(probes)).toBe(2);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("maps the host alias to the engine's own host address when it rejects host-gateway", () =>
@@ -489,7 +489,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         expect(yield* inspectExtraHosts(process.id)).toContain(`${DOCKER_HOST_ALIAS}:10.88.0.1`);
         expect(yield* Ref.get(probes)).toBe(2);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("retries the engine host probe after it fails transiently", () =>
@@ -525,7 +525,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         expect(yield* inspectExtraHosts(process.id)).toContain(`${DOCKER_HOST_ALIAS}:10.88.0.1`);
         expect(yield* Ref.get(probes)).toBe(4);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("fails launches actionably when an engine rejecting host-gateway maps no IPv4 host", () =>
@@ -563,7 +563,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         );
       }
       expect(yield* Ref.get(probes)).toBe(2);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("recreates an unawaited launch the engine rejects for host-gateway", () =>
@@ -598,7 +598,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         expect(yield* inspectExtraHosts(process.id)).toContain(`${DOCKER_HOST_ALIAS}:10.88.0.1`);
         expect(yield* Ref.get(probes)).toBe(2);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("names and labels a service container for compose-style grouping", () =>
@@ -626,7 +626,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         expect(labels["com.docker.compose.service"]).toBe("auth");
         expect(labels["com.docker.compose.oneoff"]).toBeUndefined();
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("marks a one-shot container's name and compose labels as a task", () =>
@@ -653,7 +653,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         expect(labels["com.docker.compose.service"]).toBe("auth");
         expect(labels["com.docker.compose.oneoff"]).toBe("True");
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("labels a created container with the configured test run", () =>
@@ -665,8 +665,8 @@ describe("container process adapter", { timeout: 120_000 }, () => {
           hostGateway: sharedHostGateway,
         });
         yield* runtime.prepare(image);
-        const crypto = yield* Crypto.Crypto;
-        const testRunId = `container-test-run-${(yield* crypto.randomUUIDv4).slice(0, 8)}`;
+        const crypto = yield* SecureRandom.SecureRandom;
+        const testRunId = `container-test-run-${(yield* crypto.uuidV4()).slice(0, 8)}`;
         const process = yield* runtime
           .launch({
             image,
@@ -685,7 +685,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         const labels = yield* inspectLabels(process.id);
         expect(labels["com.supabase.stack-test-run"]).toBe(testRunId);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live(
@@ -728,7 +728,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
           yield* Fiber.interrupt(firstReady);
           yield* Fiber.interrupt(secondReady);
         }),
-      ).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("stops a container with its configured stop signal", () =>
@@ -758,7 +758,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
 
       yield* process.remove;
       yield* Fiber.interrupt(logs);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("waits until a discarded container stops before returning", () =>
@@ -788,7 +788,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
       yield* process.remove;
       expect(yield* exists(process.id)).toBe(false);
       yield* Fiber.interrupt(logs);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("returns cleanup authority when container start fails", () =>
@@ -820,7 +820,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         yield* failure.value.process.remove;
         expect(yield* exists(id)).toBe(false);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live(
@@ -872,7 +872,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
           yield* failure.process.remove;
           expect(yield* exists(started[2]!)).toBe(false);
         }),
-      ).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live(
@@ -920,7 +920,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
           expect(yield* fs.exists(envFiles[0]!)).toBe(false);
           expect(yield* fs.exists(envFiles[1]!)).toBe(true);
         }),
-      ).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("keeps exit observation shared after a caller cancels its wait", () =>
@@ -950,7 +950,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         expect(yield* process.exitCode).toBe(23);
         yield* Fiber.interrupt(logs);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("releases a log follower that exits while its container keeps running", () =>
@@ -991,7 +991,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         expect(yield* running(process.id)).toBe(true);
         yield* process.discard;
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("releases a still running log follower when its launch scope closes", () =>
@@ -1023,13 +1023,13 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         }),
       );
       expect(yield* Deferred.isDone(released)).toBe(true);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("treats an externally removed container as already stopped", () =>
     Effect.gen(function* () {
-      const crypto = yield* Crypto.Crypto;
-      const token = yield* crypto.randomUUIDv4;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const token = yield* crypto.uuidV4();
       const instanceId = `externally-removed-${token}`;
       yield* Effect.ensuring(
         Effect.scoped(
@@ -1055,14 +1055,14 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         ),
         removeByInstance(instanceId).pipe(Effect.orDie),
       );
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("confirms absence after the remove client loses its result", () =>
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const crypto = yield* Crypto.Crypto;
-      const token = yield* crypto.randomUUIDv4;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const token = yield* crypto.uuidV4();
       const instanceId = `lost-remove-result-${token}`;
       const lostResult = yield* Ref.make(false);
       const spawner = makeLostRemoveResultSpawner(delegate, lostResult);
@@ -1096,14 +1096,14 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         }),
         removeByInstance(instanceId).pipe(Effect.orDie),
       );
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("retains a remove failure for a still-present non-removing container", () =>
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const crypto = yield* Crypto.Crypto;
-      const token = yield* crypto.randomUUIDv4;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const token = yield* crypto.uuidV4();
       const instanceId = `failed-remove-${token}`;
       const failed = yield* Ref.make(false);
       const spawner = makeRemoveFailureSpawner(delegate, failed);
@@ -1141,14 +1141,14 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         }),
         removeByInstance(instanceId).pipe(Effect.orDie),
       );
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("retains both remove and reconciliation failures", () =>
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const crypto = yield* Crypto.Crypto;
-      const token = yield* crypto.randomUUIDv4;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const token = yield* crypto.uuidV4();
       const instanceId = `failed-reconciliation-${token}`;
       const failed = yield* Ref.make(false);
       const failProbe = yield* Ref.make(true);
@@ -1189,14 +1189,14 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         }),
         removeByInstance(instanceId).pipe(Effect.orDie),
       );
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("waits for a real removal observed as removing", () =>
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const crypto = yield* Crypto.Crypto;
-      const token = yield* crypto.randomUUIDv4;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const token = yield* crypto.uuidV4();
       const instanceId = `pending-remove-${token}`;
       const pendingProbes = yield* Ref.make(2);
       const lostResult = yield* Ref.make(false);
@@ -1232,14 +1232,14 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         }),
         removeByInstance(instanceId).pipe(Effect.orDie),
       );
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("retains the remove failure when removing never reaches absence", () =>
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const crypto = yield* Crypto.Crypto;
-      const token = yield* crypto.randomUUIDv4;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const token = yield* crypto.uuidV4();
       const instanceId = `stalled-remove-${token}`;
       const pendingProbes = yield* Ref.make(Number.POSITIVE_INFINITY);
       const lostResult = yield* Ref.make(false);
@@ -1283,14 +1283,14 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         }),
         removeByInstance(instanceId).pipe(Effect.orDie),
       );
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("preserves caller interruption and reconciles during scope close", () =>
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const crypto = yield* Crypto.Crypto;
-      const token = yield* crypto.randomUUIDv4;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const token = yield* crypto.uuidV4();
       const instanceId = `interrupted-remove-${token}`;
       const completed = yield* Deferred.make<void>();
       const consumed = yield* Ref.make(false);
@@ -1331,7 +1331,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         }),
         removeByInstance(instanceId).pipe(Effect.orDie),
       );
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("reports a scope failure when stop fails and leaves cleanup authority", () =>
@@ -1340,8 +1340,8 @@ describe("container process adapter", { timeout: 120_000 }, () => {
       const failStop = yield* Ref.make(true);
       const processRef = yield* Ref.make<Option.Option<ContainerProcess>>(Option.none());
       const spawner = makeStopFailureSpawner(delegate, failStop);
-      const crypto = yield* Crypto.Crypto;
-      const token = yield* crypto.randomUUIDv4;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const token = yield* crypto.uuidV4();
       const instanceId = `failed-stop-${token}`;
       yield* Effect.ensuring(
         Effect.gen(function* () {
@@ -1390,14 +1390,14 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         }),
         removeByInstance(instanceId).pipe(Effect.orDie),
       );
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("retains cleanup authority when create reports failure after creating a container", () =>
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const crypto = yield* Crypto.Crypto;
-      const token = yield* crypto.randomUUIDv4;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const token = yield* crypto.uuidV4();
       const instanceId = `failed-create-after-commit-${token}`;
       const created = yield* Ref.make(false);
       const spawner = makeCreateFailureSpawner(delegate, created, true);
@@ -1434,14 +1434,14 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
         removeByInstance(instanceId).pipe(Effect.orDie),
       );
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("retains cleanup authority when create fails without creating a container", () =>
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const crypto = yield* Crypto.Crypto;
-      const token = yield* crypto.randomUUIDv4;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const token = yield* crypto.uuidV4();
       const instanceId = `failed-create-empty-${token}`;
       const created = yield* Ref.make(false);
       const spawner = makeCreateFailureSpawner(delegate, created, false);
@@ -1478,14 +1478,14 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         }),
         removeByInstance(instanceId).pipe(Effect.orDie),
       );
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("retains cleanup authority when create is cancelled before its result is exposed", () =>
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const crypto = yield* Crypto.Crypto;
-      const token = yield* crypto.randomUUIDv4;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const token = yield* crypto.uuidV4();
       const instanceId = `pending-create-${token}`;
       const started = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
@@ -1520,7 +1520,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
       ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
       expect(Exit.isFailure(result)).toBe(true);
       expect(yield* Ref.get(present)).toBe(false);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("bounds a hung docker create and removes the container it may still create", () =>
@@ -1546,7 +1546,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         failure instanceof ContainerLaunchError ? failure.failure.message : undefined,
       ).toContain("did not respond");
       expect(engine.commands).toContainEqual(["rm", "--force", engine.createdName()]);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect(
@@ -1574,7 +1574,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         expect(failure instanceof ContainerLaunchError ? failure.failure.message : undefined).toBe(
           "Engine command 'start' did not finish within 30s; stderr: Error: waiting for network sandbox",
         );
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("removes the container a hung docker create may still create when interrupted", () =>
@@ -1593,7 +1593,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
       expect(Exit.hasInterrupts(yield* Fiber.await(launch))).toBe(true);
       expect(engine.createdName()).toMatch(/^supabase-/u);
       expect(engine.commands).toContainEqual(["rm", "--force", engine.createdName()]);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live(
@@ -1619,17 +1619,18 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         const spawner = ChildProcessSpawner.make((command) => {
           if (!ChildProcess.isStandardCommand(command) || command.command !== "docker")
             return Effect.die("Unexpected command");
-          if (command.args[0] === "context" && command.args[1] === "show") {
-            contextCalls.push(command.args);
+          const args = command.args.map(String);
+          if (args[0] === "context" && args[1] === "show") {
+            contextCalls.push(args);
             return Effect.succeed(handle(0, `${activeContext}\n`));
           }
           // Identity is resolved through the same pinned context, so "info" arrives prefixed with
           // the `--context <name>` pin this very call resolved, by name, not by endpoint: pinning
           // by name (rather than an inspected endpoint) is what keeps a TLS context's own
           // certificate material intact for this and every later invocation.
-          if (command.args[0] === "--context" && command.args[2] === "info")
-            return Effect.succeed(handle(0, `daemon-at-${command.args[1]}`));
-          return Effect.die(`Unexpected docker command: ${command.args.join(" ")}`);
+          if (args[0] === "--context" && args[2] === "info")
+            return Effect.succeed(handle(0, `daemon-at-${args[1]}`));
+          return Effect.die(`Unexpected docker command: ${args.join(" ")}`);
         });
         const target = yield* resolveEngineTarget(spawner, "docker");
         // Simulates `docker context use beta` run elsewhere, after this target was resolved.
@@ -1650,7 +1651,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "engine-target-pin-" });
         const commands: Array<ReadonlyArray<string>> = [];
         let activeContext = "alpha";
@@ -1676,11 +1677,11 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         const spawner = ChildProcessSpawner.make((command) => {
           if (!ChildProcess.isStandardCommand(command) || command.command !== "docker")
             return Effect.die("Unexpected command");
-          commands.push(command.args);
+          commands.push(command.args.map(String));
           if (command.args[0] === "context" && command.args[1] === "show")
             return Effect.succeed(handle(0, `${activeContext}\n`));
           // Every other call carries the `--context <name>` pin this test's resolution produced.
-          const unpinned = command.args.slice(2);
+          const unpinned = command.args.slice(2).map(String);
           if (unpinned[0] === "info") return Effect.succeed(handle(0, "fake-daemon-id"));
           if (unpinned[0] === "version") return Effect.succeed(handle(0, "27.0.0|27.0.0"));
           if (unpinned[0] === "inspect")
@@ -1737,6 +1738,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
           fs,
           path,
           crypto,
+          digest: yield* Digest.Digest,
           container,
           spawner,
         });
@@ -1782,7 +1784,11 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         expect(commands.some((args) => args.includes("rm") && args.includes(orphanId))).toBe(true);
       }).pipe(
         Effect.provide(
-          Layer.merge(NodeServices.layer, ConfigProvider.layer(ConfigProvider.fromEnvRecord({}))),
+          Layer.mergeAll(
+            NodeServices.layer,
+            NodeCrypto.layer,
+            ConfigProvider.layer(ConfigProvider.fromEnvRecord({})),
+          ),
         ),
       ),
   );
@@ -1861,7 +1867,7 @@ const makeFailingStartSpawner = (
   const spawner = ChildProcessSpawner.make((command) => {
     if (ChildProcess.isStandardCommand(command) && command.command === testEngine) {
       const envFile = command.args[command.args.indexOf("--env-file") + 1];
-      if (command.args[0] === "create" && envFile !== undefined) envFiles.push(envFile);
+      if (command.args[0] === "create" && typeof envFile === "string") envFiles.push(envFile);
     }
     if (
       !ChildProcess.isStandardCommand(command) ||
@@ -1869,7 +1875,7 @@ const makeFailingStartSpawner = (
       command.args[0] !== "start"
     )
       return delegate.spawn(command);
-    started.push(String(command.args.at(-1)));
+    started.push(String(command.args.map(String).at(-1)));
     return started.length > failures
       ? delegate.spawn(command)
       : delegate.spawn(
@@ -2022,7 +2028,7 @@ const makeRemoveFailureSpawner = (
       command.args[0] === "ps" &&
       // Excludes the host-gateway probe's own throwaway "-task-" container, created and awaited
       // absent during `launch`, before this test's own instance container ever reaches `remove`.
-      command.args.some((arg) => arg.startsWith("name=^/?") && !arg.includes("-task-"))
+      command.args.map(String).some((arg) => arg.startsWith("name=^/?") && !arg.includes("-task-"))
     ) {
       return Effect.gen(function* () {
         if (!(yield* Ref.get(failProbe))) return yield* delegate.spawn(command);
@@ -2068,7 +2074,7 @@ const makePendingRemoveSpawner = (
       command.args[0] === "ps" &&
       // Excludes the host-gateway probe's own throwaway "-task-" container, created and awaited
       // absent during `launch`, before this test's own instance container ever reaches `remove`.
-      command.args.some((arg) => arg.startsWith("name=^/?") && !arg.includes("-task-"))
+      command.args.map(String).some((arg) => arg.startsWith("name=^/?") && !arg.includes("-task-"))
     ) {
       return Effect.gen(function* () {
         const remaining = yield* Ref.get(pendingProbes);
@@ -2268,7 +2274,7 @@ const makeHangingCreateSpawner = Effect.fn("ContainerTest.hangingCreateSpawner")
   const createStarted = yield* Deferred.make<void>();
   const spawner = ChildProcessSpawner.make((command) => {
     if (!ChildProcess.isStandardCommand(command)) return Effect.die("unexpected piped command");
-    commands.push([...command.args]);
+    commands.push(command.args.map(String));
     if (command.args[0] === "info") return Effect.succeed(successfulHandle("fake-daemon-id"));
     if (command.args[0] !== "create") return Effect.succeed(successfulHandle());
     // The engine never answers create; the real daemon may or may not have committed it.

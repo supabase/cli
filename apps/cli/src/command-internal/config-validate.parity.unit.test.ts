@@ -1,5 +1,5 @@
 import { unusedStackServices } from "../../tests/helpers/unused-stack.ts";
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { CliConfigSchema, type CliConfig } from "@supabase/config";
 import { stringify as stringifyToml } from "smol-toml";
@@ -37,14 +37,16 @@ const withConfig = (content: string) =>
     yield* fs.makeDirectory(path.join(dir, "supabase"), { recursive: true });
     yield* fs.writeFileString(path.join(dir, "supabase", "config.toml"), content);
     return dir;
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
 
 const readD = (workdir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     return yield* readDbToml(fs, path, workdir);
-  }).pipe(Effect.provide(Layer.merge(BunServices.layer, cliConfigValuesTestLayer)));
+  }).pipe(
+    Effect.provide(Layer.mergeAll(BunServices.layer, BunCrypto.layer, cliConfigValuesTestLayer)),
+  );
 
 /** Drives D's real pipeline and asserts the failure message contains `message`. */
 function failsWithD(tomlLines: ReadonlyArray<string>, message: string) {
@@ -77,7 +79,7 @@ function failsWithL(
       resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, document),
     );
     expect(error.message).toContain(message);
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
 }
 
 interface ParityScenario {
@@ -344,6 +346,7 @@ describe("shared api + auth validation branches, cross-caller parity (S vs L)", 
             unusedStackServices,
             cliConfigValuesTestLayer,
             BunServices.layer,
+            BunCrypto.layer,
             runtimeInfoLayer,
             mockCommandSettings({ workdir: dir }),
             // Local-path parity only — the remote branch (and with it the
