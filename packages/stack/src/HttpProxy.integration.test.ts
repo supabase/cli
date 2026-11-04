@@ -773,10 +773,15 @@ it.live(
           { id: "rest", prefix: "/rest/v1", target: Effect.succeed(backendAddress) },
         ]);
         const client = yield* HttpClient.HttpClient;
-        const send = (method: "OPTIONS" | "POST", path: string, origin: string) =>
+        const send = (
+          method: "OPTIONS" | "POST",
+          path: string,
+          origin: string,
+          headers: Record<string, string> = {},
+        ) =>
           client.execute(
             HttpClientRequest.make(method)(`http://127.0.0.1:${proxy.port}${path}`).pipe(
-              HttpClientRequest.setHeader("origin", origin),
+              HttpClientRequest.setHeaders({ ...headers, origin }),
             ),
           );
 
@@ -789,8 +794,24 @@ it.live(
         const allowed = yield* send("POST", "/functions/v1/fn", "https://app.example.com");
         expect(allowed.headers["access-control-allow-origin"]).toBe("https://app.example.com");
         const rest = yield* send("OPTIONS", "/rest/v1/todos", "https://other.example.com");
-        expect(rest.status).toBe(204);
+        expect(rest.status).toBe(200);
         expect(rest.headers["access-control-allow-origin"]).toBe("*");
+        expect(rest.headers["access-control-allow-methods"]).toBe(
+          "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS,TRACE,CONNECT",
+        );
+        expect(rest.headers["access-control-allow-headers"]).toBe(
+          "accept-profile,apikey,authorization,x-client-info",
+        );
+        const requested = yield* send("OPTIONS", "/rest/v1/todos", "https://other.example.com", {
+          "access-control-request-headers": "authorization, x-custom-header",
+        });
+        expect(requested.headers["access-control-allow-headers"]).toBe(
+          "authorization, x-custom-header",
+        );
+        const proxied = yield* send("POST", "/rest/v1/todos", "https://other.example.com");
+        expect(yield* proxied.text).toBe("POST");
+        expect(proxied.headers["access-control-allow-origin"]).toBe("https://other.example.com");
+        expect(proxied.headers["access-control-allow-methods"]).toBeUndefined();
       }),
     ).pipe(Effect.provide(Layer.mergeAll(NodeHttpClient.layerNodeHttp, NodeServices.layer))),
 );
