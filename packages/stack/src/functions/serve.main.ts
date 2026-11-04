@@ -208,7 +208,7 @@ const getResponse = (
   return new Response(body, { status, headers });
 };
 
-/** Keeps router errors readable from browsers; functions answer their own CORS, as on the platform. */
+/** Lets browsers read router errors on requests that skip the preflight; preflights still fail. */
 const ERROR_CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey",

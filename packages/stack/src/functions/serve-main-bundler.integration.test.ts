@@ -8,6 +8,7 @@ import { defaultFunctionsBootstrap } from "./generated/serve-main-bundle.ts";
 type ServeOptions = {
   readonly handler: (request: Request) => Promise<Response>;
   readonly onListen: () => void;
+  readonly onError: (error: unknown) => Response;
 };
 
 class MissingFixture extends Data.TaggedError("MissingFixture") {}
@@ -359,6 +360,9 @@ describe("stack-owned functions bootstrap", () => {
       );
       expect(missing.status).toBe(404);
       expect(missing.headers.get("access-control-allow-origin")).toBe("*");
+      const crashed = registered.onError(new Error("boom"));
+      expect(crashed.status).toBe(500);
+      expect(crashed.headers.get("access-control-allow-origin")).toBe("*");
       expect(yield* Effect.tryPromise(() => missing.text())).toBe("Function not found");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
@@ -522,6 +526,7 @@ describe("stack-owned functions bootstrap", () => {
           handler(new Request("http://127.0.0.1/hello")),
         );
         expect(response.status).toBe(500);
+        expect(response.headers.get("access-control-allow-origin")).toBe("*");
         expect(yield* Effect.tryPromise(() => response.json())).toMatchObject({
           code: "WORKER_ERROR",
         });
