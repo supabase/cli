@@ -1,14 +1,23 @@
+import {
+  applyEdits as applyJsonEditsToText,
+  findNodeAtLocation,
+  modify,
+  parseTree,
+  type FormattingOptions,
+} from "jsonc-parser";
 import * as SmolToml from "smol-toml";
 import type { ConfigFormat } from "./config-format.ts";
+import { parseJsonc } from "./jsonc.ts";
 
 /**
- * Format-preserving surgical editor for `supabase/config.{toml,json}`. Pure and synchronous:
+ * Format-preserving surgical editor for `supabase/config.{toml,json,jsonc}`. Pure and synchronous:
  * callers own reading the current file text and writing the returned text back out atomically.
  * Every edited document is re-parsed and deep-compared against the original before being
  * returned; any mismatch refuses rather than shipping wrong bytes. An edit either replaces an
  * existing value's span in place or inserts a new line/table — nothing else is touched, so
- * untouched comments, spacing, and quoting survive byte-for-byte. See ADR 0023 for the design
- * rationale and rejected alternatives.
+ * untouched comments, spacing, and quoting survive byte-for-byte. JSON/JSONC documents are
+ * span-edited through `jsonc-parser`'s `modify`, keeping comments and trailing commas. See ADR
+ * 0023 for the design rationale and rejected alternatives.
  */
 
 export type ConfigEditValue =
@@ -63,9 +72,8 @@ function isRemotesLabelRoot(path: ReadonlyArray<string>): boolean {
   return path.length === 2 && path[0] === REMOTES_TABLE_NAME;
 }
 
-// Duplicated from `lib/env.ts` rather than imported: this module is restricted to `smol-toml`
-// as its only import, so it stays independently embeddable without pulling in this package's
-// wider env-resolution graph.
+// Duplicated from `lib/env.ts` rather than imported so this module avoids pulling in this
+// package's wider env-resolution graph.
 const ENV_CAPTURE_REGEX = /^env\((.*)\)$/;
 
 function isPlainRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -180,26 +188,14 @@ function deepSetOne(root: unknown, path: ReadonlyArray<string>, value: unknown):
   return { ...base, [head]: deepSetOne(existingChild, rest, value) };
 }
 
-/** Applies one `path`/`value` pair per entry on top of `root`, immutably. Shared by `deepSet`
- * (the verification oracle, built from the original un-flattened edits) and the JSON arm's
- * actual per-leaf mutation (built from `flattenEdits`'s output) — the two intentionally use
- * different entry sets so an object-valued edit's write only touches leaves it mentions, while
- * verification still catches a dropped sibling. */
-function applyPathEntries(
-  root: unknown,
-  entries: ReadonlyArray<{ readonly path: ReadonlyArray<string>; readonly value: unknown }>,
-): unknown {
-  return entries.reduce<unknown>(
-    (accumulator, entry) => deepSetOne(accumulator, entry.path, entry.value),
-    root,
-  );
-}
-
 /** Applies every edit's `path`/`value` on top of `root`, immutably, replacing the whole
  * destination subtree for an object-valued edit. This is the expected-value side of mandatory
- * verification for both formats — see `applyPathEntries` for the actual per-leaf mutation. */
+ * verification for both formats. */
 function deepSet(root: unknown, edits: ReadonlyArray<ConfigEdit>): unknown {
-  return applyPathEntries(root, edits);
+  return edits.reduce<unknown>(
+    (accumulator, edit) => deepSetOne(accumulator, edit.path, edit.value),
+    root,
+  );
 }
 
 function describeError(cause: unknown): string {
@@ -1193,19 +1189,95 @@ function detectJsonNewline(source: string): "\n" | "\r\n" {
   return source.includes("\r\n") ? "\r\n" : "\n";
 }
 
-function detectJsonIndent(source: string): string | number {
+function detectJsonFormatting(source: string): FormattingOptions {
   const match = /\n([ \t]+)\S/.exec(source);
-  if (match === null) {
-    return 2;
+  const indent = match?.[1] ?? "  ";
+  const usesTabs = indent.includes("\t");
+  return {
+    insertSpaces: !usesTabs,
+    tabSize: usesTabs ? 1 : indent.length,
+    eol: detectJsonNewline(source),
+  };
+}
+
+function lineEndAfterTrailer(
+  text: string,
+  from: number,
+): { end: number; hadComma: boolean } | null {
+  let pos = from;
+  let hadComma = false;
+  for (;;) {
+    const ch = text[pos];
+    if (ch === " " || ch === "\t") {
+      pos++;
+    } else if (ch === "," && !hadComma) {
+      hadComma = true;
+      pos++;
+    } else if (ch === "/" && text[pos + 1] === "*") {
+      const close = text.indexOf("*/", pos + 2);
+      if (close === -1 || /[\r\n]/.test(text.slice(pos, close))) {
+        return null;
+      }
+      pos = close + 2;
+    } else if (ch === "/" && text[pos + 1] === "/") {
+      while (pos < text.length && text[pos] !== "\r" && text[pos] !== "\n") {
+        pos++;
+      }
+    } else if (ch === undefined || ch === "\r" || ch === "\n") {
+      return { end: pos, hadComma };
+    } else {
+      return null;
+    }
   }
-  const indent = match[1] ?? "";
-  return indent.includes("\t") ? "\t" : indent.length;
+}
+
+/** `modify` inserts right after the previous value and reformats that line, which moves a
+ * same-line trailing comment onto the new key; this appends after the line instead. */
+function insertAfterLastProperty(
+  text: string,
+  leaf: LeafEdit,
+  formatting: FormattingOptions,
+): string | undefined {
+  const root = parseTree(text, undefined, { allowTrailingComma: true });
+  if (root === undefined) {
+    return undefined;
+  }
+  let depth = leaf.path.length;
+  let parent = findNodeAtLocation(root, [...leaf.path]);
+  while (parent === undefined && depth > 0) {
+    depth--;
+    parent = findNodeAtLocation(root, leaf.path.slice(0, depth));
+  }
+  const prev = parent?.children?.[parent.children.length - 1];
+  if (parent?.type !== "object" || depth === leaf.path.length || prev === undefined) {
+    return undefined;
+  }
+  const prevEnd = prev.offset + prev.length;
+  const trailer = lineEndAfterTrailer(text, prevEnd);
+  if (trailer === null) {
+    return undefined;
+  }
+  const eol = formatting.eol ?? "\n";
+  const lineStart = Math.max(text.lastIndexOf("\n", prev.offset), -1) + 1;
+  const baseIndent = /^[ \t]*/.exec(text.slice(lineStart))?.[0] ?? "";
+  const [key, ...rest] = leaf.path.slice(depth);
+  const nested = rest.reduceRight<unknown>((value, segment) => ({ [segment]: value }), leaf.value);
+  const indentUnit = formatting.insertSpaces ? " ".repeat(formatting.tabSize ?? 2) : "\t";
+  const rendered = JSON.stringify(nested, null, indentUnit).split("\n").join(`${eol}${baseIndent}`);
+  const insertion = `${eol}${baseIndent}${JSON.stringify(key)}: ${rendered}${trailer.hadComma ? "," : ""}`;
+  return (
+    text.slice(0, prevEnd) +
+    (trailer.hadComma ? "" : ",") +
+    text.slice(prevEnd, trailer.end) +
+    insertion +
+    text.slice(trailer.end)
+  );
 }
 
 function applyJsonEdits(source: string, edits: ReadonlyArray<ConfigEdit>): ConfigEditOutcome {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(source);
+    parsed = parseJsonc(source);
   } catch (cause) {
     return refused("parse_error", [], describeError(cause));
   }
@@ -1229,24 +1301,29 @@ function applyJsonEdits(source: string, edits: ReadonlyArray<ConfigEdit>): Confi
     }
   }
 
-  const indent = detectJsonIndent(source);
-  const nextValue = applyPathEntries(parsed, leaves);
-  const rendered = JSON.stringify(nextValue, null, indent);
-  // `JSON.stringify` always renders `\n`, so a CRLF source needs its newline flavor restored
-  // post-render — otherwise every edit to a CRLF JSON config would silently flip it to LF.
-  const newline = detectJsonNewline(source);
-  const withNewlineFlavor = newline === "\r\n" ? rendered.replaceAll("\n", "\r\n") : rendered;
-  const nextText = source.endsWith("\n") ? `${withNewlineFlavor}${newline}` : withNewlineFlavor;
+  const formattingOptions = detectJsonFormatting(source);
+  let nextText = source;
+  for (const leaf of leaves) {
+    try {
+      nextText =
+        insertAfterLastProperty(nextText, leaf, formattingOptions) ??
+        applyJsonEditsToText(
+          nextText,
+          modify(nextText, [...leaf.path], leaf.value, { formattingOptions }),
+        );
+    } catch (cause) {
+      return refused("verification_mismatch", leaf.path, describeError(cause));
+    }
+  }
 
   let reparsed: unknown;
   try {
-    reparsed = JSON.parse(nextText);
+    reparsed = parseJsonc(nextText);
   } catch {
     return refused("verification_mismatch", [], "edited document failed to re-parse");
   }
-  // Verified against `deepSet` (the original, un-flattened `edits`), not `nextValue` (the
-  // flattened per-leaf mutation) — comparing against the mutation would be tautological, so a
-  // sibling an object-valued edit silently drops would never surface as a mismatch.
+  // Verified against `deepSet` (the original, un-flattened `edits`) so a sibling an object-valued
+  // edit would silently drop surfaces as a mismatch.
   const expected = deepSet(parsed, edits);
   if (!deepEqualValue(reparsed, expected)) {
     return refused(
