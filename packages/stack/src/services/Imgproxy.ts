@@ -25,6 +25,13 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
         ? {}
         : { IMGPROXY_BIND: `${container ? "0.0.0.0" : "127.0.0.1"}:${http.port}` }),
       IMGPROXY_LOCAL_FILESYSTEM_ROOT: "/",
+      IMGPROXY_MAX_SRC_RESOLUTION: "50",
+      IMGPROXY_MAX_SRC_FILE_SIZE: "25000000",
+      IMGPROXY_MAX_ANIMATION_FRAMES: "60",
+      IMGPROXY_ENABLE_WEBP_DETECTION: "true",
+      IMGPROXY_PRESETS: "default=width:3000/height:8192",
+      IMGPROXY_FORMAT_QUALITY: "jpeg=80,avif=62,webp=80",
+      /* IMGPROXY_USE_ETAG is left out: imgproxy treats the legacy "/" like unset (no ETag). */
     });
   },
   args: () => Effect.succeed([]),
