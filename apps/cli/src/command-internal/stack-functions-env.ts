@@ -2,10 +2,7 @@ import { Effect, Option } from "effect";
 import type { ServiceCreationInput } from "@supabase/stack/effect";
 import { resolveFunctionsEnv } from "../shared/functions/functions-config.ts";
 
-/**
- * Adds the project Functions env, and `debug` when set, to a Functions creation as legacy `start`
- * does.
- */
+/** Adds the project Functions env, plus `debug` when set, to a Functions creation. */
 export const withProjectFunctionsConfig = (
   creation: ServiceCreationInput,
   options: { readonly warn: boolean; readonly debug: boolean },

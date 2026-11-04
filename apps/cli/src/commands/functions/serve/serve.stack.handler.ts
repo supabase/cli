@@ -47,8 +47,8 @@ const runtimeError = (cause: { readonly message: string }) =>
 const invalidConfig = (message: string) =>
   new FunctionsServeStackError({ reason: "invalid-config", message });
 
-/* Like legacy serve: the env file or functions/.env wins over secrets; without an env file each
-   enabled function's own .env joins its settings, under its TOML env. */
+/* The env file, or functions/.env, wins over secrets. Without an env file each enabled function
+   also gets its own .env, under its TOML env. */
 const serveEnv = Effect.fn("functions.serve.env")(function* (
   envFile: Option.Option<string>,
   project: CliConfig,

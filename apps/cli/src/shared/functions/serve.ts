@@ -469,7 +469,7 @@ export function toPlainFunctionRecord(
   );
 }
 
-/* Legacy `start` and `serve` keep their released error shape for env file failures. */
+/* Env file failures keep the plain error `start` and `serve` have always reported. */
 const legacyEnvFailure = <A, R>(effect: Effect.Effect<A, FunctionsEnvError, R>) =>
   effect.pipe(
     Effect.mapError((error) =>

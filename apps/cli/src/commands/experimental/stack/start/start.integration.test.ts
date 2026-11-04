@@ -9,6 +9,7 @@ import {
   FileSystem,
   Layer,
   Option,
+  Path,
   Redacted,
   Schema,
   Sink,
@@ -748,6 +749,7 @@ describe("experimental stack start", () => {
   it.effect("rejects a malformed Functions env file before changing composition", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-functions-env-" });
       yield* fs.makeDirectory(`${root}/supabase/functions`, { recursive: true });
       yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "functions-env"\n');
@@ -759,7 +761,7 @@ describe("experimental stack start", () => {
       );
       expect(error).toMatchObject({ reason: "invalid-config" });
       expect(error.message).toBe(
-        `failed to parse environment file: ${root}/supabase/functions/.env (unexpected character '-' in variable name)`,
+        `failed to parse environment file: ${path.join(root, "supabase", "functions", ".env")} (unexpected character '-' in variable name)`,
       );
       expect(fixture.composed).toBe(0);
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
